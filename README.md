@@ -907,6 +907,8 @@ Then place a `.collection.json` next to each collection's content. The directory
 }
 ```
 
+**Note**: For `type: 'string'` fields, `list: true` renders as a tag input — type a value and press Enter to add it, each value shows as a removable pill, and Backspace on an empty input removes the last one.
+
 ### Field Groups
 
 Field groups let you visually organize related fields in the editor without forcing you to restructure your content files. Two helpers are available:

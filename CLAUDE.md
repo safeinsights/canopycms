@@ -26,7 +26,7 @@
 Always do the following **before** proposing next work or providing a commit message:
 
 1. Run `pnpm exec prettier --write` on any files you created or modified.
-2. Run `pnpm lint` and fix any errors before finishing.
+2. Run `pnpm lint` and fix any errors before finishing. If you touched `packages/canopycms/src/` or `packages/canopycms-next/src/`, also run `pnpm lint:bundle` (client-bundle boundary).
 3. Run the `update-codebase-guide` agent and update the Code Organization list in AGENTS.md if you added, removed, renamed, or changed the API of any module.
 4. Run the `docs-architecture` agent if you made architectural changes, added packages, or made design decisions.
 5. Run the `docs-developing` agent if you introduced new dev patterns, test utilities, or workflows.

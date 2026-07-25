@@ -44,6 +44,11 @@ jobs:
       - name: Lint (ESLint)
         run: pnpm lint
 
+      # Fails fast on node built-ins reachable from canopycms/client; the e2e
+      # production build catches the same class of bug ~3 minutes later.
+      - name: Lint client bundle boundary (dependency-cruiser)
+        run: pnpm lint:bundle
+
       - name: Format check (Prettier)
         run: pnpm exec prettier --check .
 

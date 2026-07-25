@@ -1374,7 +1374,7 @@ import type { CropRect } from '../../assets/transform-directives'
 // import { LocalAssetStore } from '../../assets/store-local'
 ```
 
-This boundary is enforced by convention, not a lint rule -- when adding a new client-facing asset feature, double-check which file you're importing from before assuming it's safe for the browser bundle.
+Imports of node built-ins reachable from `canopycms/client` are caught by `pnpm lint:bundle` (see [Client-Bundle Boundary Check](#client-bundle-boundary-check)). That check does not follow into `node_modules`, so pulling in `sharp` or the S3 SDK from client code is still on you to avoid -- when adding a new client-facing asset feature, double-check which file you're importing from before assuming it's safe for the browser bundle.
 
 ### Dev Gotcha: Adopter Apps Run Against Built `dist/`
 
@@ -2973,6 +2973,33 @@ Before handoff, run typecheck and tests:
 pnpm typecheck
 pnpm test
 ```
+
+### Client-Bundle Boundary Check
+
+The editor reaches browsers through `canopycms/client` and `canopycms-next/client`. Anything reachable from those entries -- at any depth -- must stay free of node built-ins, or an adopter's production `next build` dies with `Module not found: Can't resolve 'fs'`. `next dev` tolerates the violation, so this used to surface only in the e2e production build, minutes after the mistake.
+
+`dependency-cruiser` now enforces the reachability directly:
+
+```bash
+pnpm lint:bundle
+```
+
+It runs in CI right after ESLint, and in the pre-commit hook whenever a commit touches either package's `src/`. Config lives in [.dependency-cruiser.mjs](.dependency-cruiser.mjs). `tsPreCompilationDeps` stays off on purpose, so `import type` edges (erased at compile time) are not followed -- type-only imports of server modules remain legal. A second rule fails on unresolvable relative imports, because an import the resolver can't follow is a subtree the reachability rule can't see.
+
+A violation prints the whole chain from the entry to the built-in, which is usually the fastest way to see where the boundary broke:
+
+```
+error client-bundle-no-node-builtins: packages/canopycms/src/client.ts → fs/promises
+    packages/canopycms/src/editor/CanopyEditor.tsx →
+    ...
+    packages/canopycms/src/editor/hooks/useBranchManager.tsx →
+    packages/canopycms/src/paths/branch.ts →
+    fs/promises
+```
+
+The fix is normally to import the dependency-free sibling instead of the node-importing module -- `paths/branch-name` (not `paths/branch` or the `paths` barrel), `assets/asset-prefixes` (not `assets/keys`), `assets/transform-directives` (not `assets/transform`) -- or to make the import `import type`. If a client-reachable module genuinely needs new browser-safe logic that currently lives in a node-importing file, extract that logic into its own dependency-free module rather than widening the rule.
+
+One limit worth knowing: the check does not follow into `node_modules`, so a server-only npm package (`sharp`, `simple-git`, the S3 SDK) imported from client code slips past it. The e2e production `next build` remains the backstop for that.
 
 ### Public re-exports: attach JSDoc at the entrypoint
 
