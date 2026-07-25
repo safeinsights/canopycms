@@ -383,7 +383,7 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
                       </Group>
                       <Group gap="xs" align="center">
                         {b.updatedAt && (
-                          <Tooltip label={b.updatedAt}>
+                          <Tooltip label={new Date(b.updatedAt).toLocaleString()}>
                             <Text size="xs" c="dimmed">
                               Updated {formatRelativeTime(b.updatedAt)}
                             </Text>

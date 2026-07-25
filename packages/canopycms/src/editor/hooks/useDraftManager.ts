@@ -386,7 +386,7 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
     }
     modals.openConfirmModal({
       title: 'Discard drafts',
-      children: `Discard drafts for ${modifiedCount} file(s)? Unsaved changes will be lost.`,
+      children: `Discard drafts for ${modifiedCount} ${modifiedCount === 1 ? 'file' : 'files'}? Unsaved changes will be lost.`,
       labels: { confirm: 'Discard', cancel: 'Cancel' },
       confirmProps: { color: 'red' },
       onConfirm: performDiscardDrafts,
