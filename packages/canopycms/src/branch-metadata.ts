@@ -34,6 +34,33 @@ export class BranchMetadataConflictError extends Error {
 }
 
 /**
+ * branch.json exists but its content is not valid JSON. Distinguished from
+ * provisioning/IO failures so callers can degrade instead of failing hard:
+ * the registry scan quarantines the branch, and the request handler keeps
+ * serving (with empty internal groups) when the BASE branch is the corrupt
+ * one — otherwise the admin recovery surface would be unreachable exactly
+ * when it is needed.
+ */
+export class BranchMetadataCorruptError extends Error {
+  readonly branchRoot: string
+  /**
+   * [MEDIUM-2] The raw JSON.parse failure message (e.g. "Unexpected token
+   * ..."), with no embedded path. `message` above deliberately keeps the
+   * full `branchRoot`-qualified text for server logs; `parseCause` is what
+   * callers should surface to clients (see branch-health.ts's `parseError`)
+   * so the admin branch-health scan never leaks the absolute workspace path.
+   */
+  readonly parseCause: string
+
+  constructor(branchRoot: string, cause: string) {
+    super(`Corrupt branch metadata in '${branchRoot}': ${cause}`)
+    this.name = 'BranchMetadataCorruptError'
+    this.branchRoot = branchRoot
+    this.parseCause = cause
+  }
+}
+
+/**
  * Manages branch.json — branch status and access ACLs, both security-adjacent
  * state — under `.canopy-meta/` in a branch workspace.
  *
@@ -78,13 +105,17 @@ export class BranchMetadataFileManager {
    * Use this for read-only access (e.g., in registry scanning or loadBranchContext).
    */
   static async loadOnly(branchRoot: string): Promise<BranchMetadataFile | null> {
-    const filePath = path.join(path.resolve(branchRoot), BRANCH_META_DIR, BRANCH_META_FILE)
+    const resolvedRoot = path.resolve(branchRoot)
+    const filePath = path.join(resolvedRoot, BRANCH_META_DIR, BRANCH_META_FILE)
     try {
       const raw = await fs.readFile(filePath, 'utf8')
       return JSON.parse(raw) as BranchMetadataFile
     } catch (err: unknown) {
       if (isNotFoundError(err)) {
         return null
+      }
+      if (err instanceof SyntaxError) {
+        throw new BranchMetadataCorruptError(resolvedRoot, err.message)
       }
       throw err
     }

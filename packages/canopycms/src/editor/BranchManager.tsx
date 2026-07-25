@@ -16,7 +16,7 @@ import {
   Tooltip,
 } from '@mantine/core'
 import type { OperatingMode } from '../operating-mode'
-import type { PullRequestState } from '../types'
+import type { ConflictStatus, PullRequestState, SyncStatus } from '../types'
 import type { CommentThread } from '../comment-store'
 import type { UserSearchResult } from '../auth/types'
 import { BranchComments } from './comments/BranchComments'
@@ -38,6 +38,12 @@ export interface BranchSummary {
   pullRequestNumber?: number
   pullRequestState?: PullRequestState
   mergedAt?: string
+  /** Sync status for async GitHub operations (used when Lambda has no internet) */
+  syncStatus?: SyncStatus
+  /** Whether this branch has unresolved merge conflicts with the base branch */
+  conflictStatus?: ConflictStatus
+  /** ContentIds of entries where --theirs was applied during rebase; cleared on clean rebase */
+  conflictFiles?: string[]
   commentCount?: number
 }
 
@@ -318,6 +324,40 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
                           <Badge color="grape" variant="light">
                             {b.commentCount} {b.commentCount === 1 ? 'comment' : 'comments'}
                           </Badge>
+                        )}
+                        {b.syncStatus === 'sync-failed' && (
+                          <Tooltip label="GitHub sync failed — an admin can retry it from System health.">
+                            <Badge
+                              color="red"
+                              variant="light"
+                              data-testid={`sync-failed-badge-${b.name}`}
+                            >
+                              Sync failed
+                            </Badge>
+                          </Tooltip>
+                        )}
+                        {b.syncStatus === 'pending-sync' && (
+                          <Tooltip label="Changes are on their way to GitHub.">
+                            <Badge
+                              color="gray"
+                              variant="light"
+                              data-testid={`pending-sync-badge-${b.name}`}
+                            >
+                              Syncing…
+                            </Badge>
+                          </Tooltip>
+                        )}
+                        {b.conflictStatus === 'conflicts-detected' && (
+                          <Tooltip label="This branch's version was kept for conflicting entries during a rebase — review the flagged entries.">
+                            <Badge
+                              color="orange"
+                              variant="light"
+                              data-testid={`conflicts-badge-${b.name}`}
+                            >
+                              Conflicts
+                              {b.conflictFiles?.length ? ` (${b.conflictFiles.length})` : ''}
+                            </Badge>
+                          </Tooltip>
                         )}
                       </Group>
                       <Group gap="xs" align="center">

@@ -39,3 +39,15 @@ export interface QueueStats {
 export interface TaskQueueLogger {
   debug(message: string, data?: Record<string, unknown>): void
 }
+
+/**
+ * Metadata for a file quarantined in corrupt/ (unparseable JSON, or JSON
+ * missing required Task fields — see `parseTaskJson`). `listTasks()` silently
+ * drops these; `listCorruptTaskFiles()` surfaces them for diagnosis.
+ */
+export interface CorruptTaskFile {
+  fileName: string
+  size: number
+  mtime: string // ISO
+  rawSnippet: string // first ~500 bytes for diagnosis
+}

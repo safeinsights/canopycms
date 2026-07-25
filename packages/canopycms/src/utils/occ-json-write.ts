@@ -271,7 +271,13 @@ export async function withOccFileLock<T>(filePath: string, fn: () => Promise<T>)
     // Best-effort: a failed release is recovered by `stale` once this
     // process's lockfile heartbeat stops (crash) or the lock naturally
     // expires, so this is logged rather than rethrown.
+    //
+    // [NIT-1] ENOENT specifically is expected, not an error: the lock
+    // marker's target directory legitimately vanishes when an admin purge
+    // (see api/admin-branch-health.ts) renames the branch tree out from
+    // under a held lock. Every other release failure still warns.
     await release().catch((err: unknown) => {
+      if (isNodeError(err) && err.code === 'ENOENT') return
       log.warn('lock', `Failed to release lock for ${filePath}`, { error: getErrorMessage(err) })
     })
   }

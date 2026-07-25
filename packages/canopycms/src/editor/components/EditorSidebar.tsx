@@ -7,6 +7,7 @@ import {
   IconLayoutColumns,
   IconLayoutRows,
   IconSquareDashed,
+  IconActivity,
 } from '@tabler/icons-react'
 import type { PaneLayout } from '../EditorPanes'
 
@@ -65,6 +66,13 @@ export interface EditorSidebarProps {
   onMediaLibraryOpen: () => void
 
   /**
+   * Callback when the System Health panel should be opened. Admin-only:
+   * the "System health" menu item only renders when this is provided --
+   * the caller (Editor.tsx) is responsible for the isAdmin() gate.
+   */
+  onSystemHealthOpen?: () => void
+
+  /**
    * Custom account component to render (e.g., Clerk's UserButton).
    * If provided, replaces the default account button.
    */
@@ -112,6 +120,7 @@ export function EditorSidebar({
   onPermissionManagerOpen,
   onGroupManagerOpen,
   onMediaLibraryOpen,
+  onSystemHealthOpen,
   AccountComponent,
   onAccountClick,
   onLogoutClick,
@@ -172,6 +181,11 @@ export function EditorSidebar({
             <Menu.Item leftSection={<IconPhoto size={14} />} onClick={onMediaLibraryOpen}>
               Media library
             </Menu.Item>
+            {onSystemHealthOpen && (
+              <Menu.Item leftSection={<IconActivity size={14} />} onClick={onSystemHealthOpen}>
+                System health
+              </Menu.Item>
+            )}
           </Menu.Dropdown>
         </Menu>
         {/* Account section - use custom component or default buttons */}

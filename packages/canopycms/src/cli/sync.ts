@@ -72,7 +72,10 @@ async function selectBranch(
   let branches: string[] = []
   if (await filePathExists(branchesDir)) {
     const entries = await fs.readdir(branchesDir, { withFileTypes: true })
-    branches = entries.filter((e) => e.isDirectory()).map((e) => e.name)
+    // Dot-prefixed dirs are never branch workspaces (.canopy-meta, and now
+    // .trash-*/.{dirName}.init.lock from the admin branch-health recovery
+    // surface) -- same skip rule as BranchRegistry.scanBranchDirectories.
+    branches = entries.filter((e) => e.isDirectory() && !e.name.startsWith('.')).map((e) => e.name)
   }
 
   let branchName = options.branch

@@ -24,8 +24,9 @@ import { extractIdFromFilename } from '../content-id-index'
 import { invalidateBranchContentCaches } from '../content-index-generation'
 import { type ContentId, type SanitizedBranchName, ROOT_COLLECTION_ID } from '../paths/types'
 import { sanitizeBranchName } from '../paths/branch'
-import type { PullRequestState } from '../types'
-import { getErrorMessage, isNodeError } from '../utils/error'
+import type { PullRequestState, WorkerStatusReport } from '../types'
+import { getErrorMessage, isNodeError, redactCredentials } from '../utils/error'
+import { writeWorkerStatus } from './worker-status'
 
 /**
  * Auth cache refresh function type.
@@ -77,6 +78,31 @@ export interface CmsWorkerConfig {
 const DEFAULT_TASK_TIMEOUT = 60_000
 const DEFAULT_MAX_RETRIES = 3
 const DEFAULT_LOCK_STALE_MS = 60_000
+
+/**
+ * [C1] Retention window for `.trash-*` branch directories left behind by the
+ * admin purge action (api/admin-branch-health.ts). Matches
+ * cleanupOldTasks's default task retention for consistency.
+ */
+const TRASH_RETENTION_MS = 30 * 24 * 60 * 60_000
+
+/** Matches `.trash-{dirName}-{STAMP}` names, capturing the trailing stamp. */
+const TRASH_DIR_STAMP_RE = /-(\d{8}T\d{6}Z)$/
+
+/**
+ * Parse a purge-generated `YYYYMMDDTHHMMSSZ` stamp into a Date, or null if
+ * malformed. Age comes ONLY from this name-embedded stamp, never the dir's
+ * own mtime -- `fs.rename` preserves the original directory's mtime, so an
+ * mtime-based retention check would delete a months-stale orphan's trash on
+ * the very first cleanup pass after purge.
+ */
+function parseTrashStamp(stamp: string): Date | null {
+  const match = /^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z$/.exec(stamp)
+  if (!match) return null
+  const [, year, month, day, hour, minute, second] = match
+  const date = new Date(`${year}-${month}-${day}T${hour}:${minute}:${second}.000Z`)
+  return Number.isNaN(date.getTime()) ? null : date
+}
 
 /**
  * An error inherent to the task itself (malformed payload, unknown action):
@@ -175,6 +201,25 @@ function optionalString(payload: Record<string, unknown>, key: string, fallback:
 }
 
 /**
+ * Per-cycle outcome of `rebaseActiveBranches()` (PR-W1). Folded by `syncGit()`
+ * into the worker's self-reported status (`WorkerStatusReport.lastGitSync`,
+ * see worker-status.ts) alongside a `durationMs` measured around the whole
+ * sync cycle.
+ */
+interface RebaseSummary {
+  /**
+   * Branches that were behind and completed a rebase onto the base branch
+   * (successfully, whether or not conflicts were resolved via --theirs).
+   * Branches that were already up to date are NOT listed here.
+   */
+  rebased: string[]
+  /** Branches skipped this cycle because their working tree had uncommitted changes. */
+  skippedDirty: string[]
+  /** Branches whose rebase attempt failed (fetch error, unexpected rebase error, or MAX_ROUNDS exceeded). */
+  failed: { branch: string; error: string }[]
+}
+
+/**
  * CMS Worker daemon.
  * Handles operations that Lambda (with no internet) cannot perform:
  * - Processing queued tasks (push branches, create PRs)
@@ -208,6 +253,10 @@ export class CmsWorker {
   private releaseLockFn: (() => Promise<void>) | null = null
   private contentRoot: string
   private log = cmsTaskQueueLogger
+  // PR-W1: self-reported liveness/health snapshot, written to
+  // worker-status.json. Normally initialized once at the top of start();
+  // see ensureStatusReport() for the lazy-init fallback.
+  private statusReport?: WorkerStatusReport
 
   constructor(private config: CmsWorkerConfig) {
     this.octokit = createCanopyOctokit({ auth: config.githubToken })
@@ -224,9 +273,26 @@ export class CmsWorker {
     this.contentRoot = config.contentRoot ?? 'content'
   }
 
+  /**
+   * Lazily get (and initialize if necessary) this worker's self-reported
+   * status object (PR-W1). Normally set once, up front, at the top of
+   * start(). The lazy fallback here covers two cases: (1) something in
+   * start() reaching a status-write point before that normal init runs
+   * (defensive -- see start()'s catch), and (2) unit tests that exercise
+   * syncGit()/processTaskQueue() directly without calling start() first.
+   */
+  private ensureStatusReport(): WorkerStatusReport {
+    if (!this.statusReport) {
+      const now = new Date().toISOString()
+      this.statusReport = { version: 1, startedAt: now, updatedAt: now }
+    }
+    return this.statusReport
+  }
+
   async start(): Promise<void> {
     this.running = true
     console.log('CMS Worker starting...')
+    this.ensureStatusReport()
 
     // Acquire lock to prevent concurrent workers
     await this.acquireLock()
@@ -260,6 +326,27 @@ export class CmsWorker {
       }
       await Promise.allSettled(initialTasks)
     } catch (err) {
+      // PR-W1: surface a startup failure (e.g. the empty-remote guard's
+      // poisoned remote.git) to the admin panel via worker-status.json,
+      // not only journald/CloudWatch. Best-effort and BEFORE releaseLock():
+      // a status-write failure must never block releasing the lock.
+      const report = this.ensureStatusReport()
+      report.lastFatalError = {
+        // [HIGH-1] Persisted to worker-status.json and served to the
+        // browser by the admin panel -- must never carry the bot token
+        // that a poisoned/failed git URL (buildGitHubUrl()) can embed.
+        message: redactCredentials(getErrorMessage(err)),
+        at: new Date().toISOString(),
+        phase: 'startup',
+      }
+      try {
+        await writeWorkerStatus(this.taskDir, report)
+      } catch (writeErr) {
+        console.error(
+          'Failed to write worker status on startup failure:',
+          getErrorMessage(writeErr),
+        )
+      }
       await this.releaseLock()
       throw err
     }
@@ -499,6 +586,12 @@ export class CmsWorker {
         const message = getErrorMessage(err)
         console.error(`Task ${task.id} (${task.action}) failed:`, message)
 
+        // [HIGH-1] task.error is persisted (pending/failed task JSON) and
+        // served to the browser by the admin panel's Tasks tab -- a push
+        // failure's message can embed the bot token via buildGitHubUrl().
+        // Console output above stays raw (journald/CloudWatch is trusted).
+        const persistedMessage = redactCredentials(message)
+
         // DEP-L1: only transient failures (network, 429/5xx, timeouts) are
         // worth retrying; permanent ones (malformed payload, other 4xx) would
         // just burn the retry budget on an identical doomed request.
@@ -506,11 +599,11 @@ export class CmsWorker {
         const retryCount = task.retryCount ?? 0
         const maxRetries = task.maxRetries ?? this.maxRetries
         if (!permanent && retryCount < maxRetries) {
-          await retryTask(this.taskDir, task.id, message, this.log)
+          await retryTask(this.taskDir, task.id, persistedMessage, this.log)
           console.log(`  Will retry (attempt ${retryCount + 1}/${maxRetries})`)
         } else {
-          await failTask(this.taskDir, task.id, message, this.log)
-          await this.updateBranchMetadataOnFailure(task, message)
+          await failTask(this.taskDir, task.id, persistedMessage, this.log)
+          await this.updateBranchMetadataOnFailure(task, persistedMessage)
           console.error(
             permanent
               ? '  Permanently failed (non-retryable error)'
@@ -519,6 +612,18 @@ export class CmsWorker {
         }
       }
       processed++
+    }
+
+    // PR-W1: only stamp/write when work actually happened this poll --
+    // otherwise every idle 5s poll would hit worker-status.json, an EFS
+    // write treadmill for no signal (liveness is already covered by the
+    // lock heartbeat; see api/admin.ts's classifyWorkerLiveness).
+    if (processed > 0) {
+      const report = this.ensureStatusReport()
+      report.lastTaskCycleAt = new Date().toISOString()
+      await writeWorkerStatus(this.taskDir, report).catch((writeErr) =>
+        console.error('Failed to write worker status:', getErrorMessage(writeErr)),
+      )
     }
   }
 
@@ -785,6 +890,7 @@ export class CmsWorker {
     if (!this.running) return
 
     console.log('Syncing git...')
+    const cycleStartedAt = Date.now()
     const git = simpleGit({
       baseDir: this.remoteGitPath,
       // DEP-H1: a hung fetch/push would stall the sync loop forever
@@ -793,22 +899,123 @@ export class CmsWorker {
       timeout: { block: this.taskTimeoutMs },
     })
 
-    // Fetch all branches from GitHub using direct URL (no named remote)
-    // We use raw git commands since simple-git's fetch() with a URL
-    // doesn't support --prune directly
-    await git.raw(['fetch', this.buildGitHubUrl(), '--prune', '+refs/heads/*:refs/heads/*'])
-    console.log('Fetched from GitHub')
+    // PR-W1: the whole cycle is wrapped so both outcomes -- success and
+    // hard failure (e.g. the fetch throwing against a poisoned remote.git)
+    // -- record a worker-status.json snapshot. The status write itself is
+    // always best-effort (.catch below): it must never turn an otherwise
+    // successful cycle into a failure, and must never mask the real error
+    // on a failed one. On failure we rethrow so scheduleLoop's existing
+    // per-cycle catch stays the loud path.
+    try {
+      // Fetch all branches from GitHub using direct URL (no named remote)
+      // We use raw git commands since simple-git's fetch() with a URL
+      // doesn't support --prune directly
+      await git.raw(['fetch', this.buildGitHubUrl(), '--prune', '+refs/heads/*:refs/heads/*'])
+      console.log('Fetched from GitHub')
 
-    // Push settings branches to GitHub (belt-and-suspenders for task queue).
-    // Ensures settings reach GitHub even if a task queue entry is lost.
-    await this.pushSettingsBranches(git)
+      // Push settings branches to GitHub (belt-and-suspenders for task queue).
+      // Ensures settings reach GitHub even if a task queue entry is lost.
+      await this.pushSettingsBranches(git)
 
-    await this.refreshBaseBranchWorkspace()
+      await this.refreshBaseBranchWorkspace()
 
-    await this.rebaseActiveBranches()
+      const rebaseSummary = await this.rebaseActiveBranches()
 
-    // Periodically clean up old completed/failed tasks
-    await cleanupOldTasks(this.taskDir, undefined, this.log)
+      // Periodically clean up old completed/failed tasks
+      await cleanupOldTasks(this.taskDir, undefined, this.log)
+
+      // [C1] Sweep branch directories the admin purge action trashed more
+      // than TRASH_RETENTION_MS ago. Worker-only by design: purge itself
+      // never deletes anything (reversible), and this cycle is the sole
+      // place actual removal happens.
+      const trashRemoved = await this.cleanupTrashedBranchDirs()
+      if (trashRemoved > 0) {
+        console.log(`Removed ${trashRemoved} expired trashed branch dir(s)`)
+      }
+
+      const report = this.ensureStatusReport()
+      report.lastGitSyncAt = new Date().toISOString()
+      delete report.lastGitSyncError
+      report.lastGitSync = {
+        durationMs: Date.now() - cycleStartedAt,
+        rebased: rebaseSummary.rebased,
+        skippedDirty: rebaseSummary.skippedDirty,
+        failed: rebaseSummary.failed,
+      }
+      await writeWorkerStatus(this.taskDir, report).catch((writeErr) =>
+        console.error('Failed to write worker status:', getErrorMessage(writeErr)),
+      )
+    } catch (err) {
+      const report = this.ensureStatusReport()
+      // [HIGH-1] Persisted to worker-status.json and served to the browser
+      // by the admin panel -- a fetch/push failure's message can embed the
+      // bot token via buildGitHubUrl().
+      report.lastGitSyncError = {
+        message: redactCredentials(getErrorMessage(err)),
+        at: new Date().toISOString(),
+      }
+      await writeWorkerStatus(this.taskDir, report).catch((writeErr) =>
+        console.error('Failed to write worker status:', getErrorMessage(writeErr)),
+      )
+      throw err
+    }
+  }
+
+  /**
+   * [C1] Remove `.trash-*` branch directories (created by the admin purge
+   * action, api/admin-branch-health.ts) whose name-embedded stamp is older
+   * than {@link TRASH_RETENTION_MS}. Names that don't match the expected
+   * `.trash-{dirName}-{STAMP}` shape, or whose stamp fails to parse, are
+   * left alone (logged once per cycle, not per file, to avoid flooding logs
+   * if something odd accumulates) -- purge is the only writer of this
+   * naming scheme, so an unparseable name is unexpected and worth a human
+   * looking rather than a silent skip.
+   */
+  private async cleanupTrashedBranchDirs(): Promise<number> {
+    let entries: string[]
+    try {
+      entries = await fs.readdir(this.contentBranchesPath)
+    } catch (err: unknown) {
+      if (isNodeError(err) && err.code === 'ENOENT') return 0
+      throw err
+    }
+
+    const now = Date.now()
+    let removed = 0
+    let loggedUnparseable = false
+
+    for (const name of entries) {
+      if (!name.startsWith('.trash-')) continue
+
+      const stampMatch = TRASH_DIR_STAMP_RE.exec(name)
+      const stampDate = stampMatch ? parseTrashStamp(stampMatch[1]) : null
+      if (!stampDate) {
+        if (!loggedUnparseable) {
+          console.log(`CanopyCMS: Skipping trash dir with unparseable stamp: ${name}`)
+          loggedUnparseable = true
+        }
+        continue
+      }
+
+      if (now - stampDate.getTime() < TRASH_RETENTION_MS) continue
+
+      try {
+        await fs.rm(path.join(this.contentBranchesPath, name), {
+          recursive: true,
+          force: true,
+          maxRetries: 3,
+          retryDelay: 100,
+        })
+        removed++
+      } catch (err: unknown) {
+        console.error(
+          `CanopyCMS: Failed to remove trashed branch dir ${name}:`,
+          getErrorMessage(err),
+        )
+      }
+    }
+
+    return removed
   }
 
   /**
@@ -1006,12 +1213,83 @@ export class CmsWorker {
     }
   }
 
-  private async rebaseActiveBranches(): Promise<void> {
+  /**
+   * Persist a per-branch rebase failure to branch.json (PR-W2), bounded to
+   * roughly one save per failing branch per hour: a branch stuck failing
+   * every cycle must not turn into unbounded save-per-cycle x N-failing-
+   * branches write amplification -- save() eager-regenerates the branch
+   * registry (branch-metadata.ts's invalidateRegistry(), O(branch count) EFS
+   * reads), the same concern the `alreadyClean` no-op guard above exists
+   * for.
+   *
+   * Best-effort and non-fatal like every other metadata write in this
+   * loop's error paths: a corrupt branch.json, a lock-contention error, or
+   * any other save failure here must never abort the per-branch iteration.
+   * This matters doubly at the two call sites -- one is inside the outer
+   * per-branch catch, with no further catch of its own around this call --
+   * so the whole method is wrapped, not just the load.
+   */
+  private async recordRebaseFailure(
+    branchPath: string,
+    branchDir: string,
+    message: string,
+  ): Promise<void> {
+    const RECORD_REFRESH_MS = 60 * 60 * 1000 // 1 hour
+
+    // [HIGH-1] Defense-in-depth redaction: rebaseFailure.message is
+    // persisted to branch.json and served to the browser via the
+    // branch-health admin endpoint. Both call sites in rebaseActiveBranches
+    // already redact before passing in (the failed.push sites below),
+    // redactCredentials is idempotent, so redacting again here is free and
+    // keeps this method safe on its own.
+    const redactedMessage = redactCredentials(message)
+
+    try {
+      const existing = await BranchMetadataFileManager.loadOnly(branchPath)
+      const prior = existing?.branch.rebaseFailure
+      const sameMessage = prior?.message === redactedMessage
+
+      const now = new Date()
+      if (sameMessage) {
+        const lastAtMs = Date.parse(prior.lastAt)
+        if (!Number.isNaN(lastAtMs) && now.getTime() - lastAtMs < RECORD_REFRESH_MS) {
+          // Same failure, refreshed within the last hour -- skip the save.
+          return
+        }
+      }
+
+      const nowIso = now.toISOString()
+      const firstAt = sameMessage ? prior.firstAt : nowIso
+
+      const meta = getBranchMetadataFileManager(branchPath, this.contentBranchesPath)
+      await meta.save({
+        branch: {
+          name: branchDir,
+          rebaseFailure: { message: redactedMessage, firstAt, lastAt: nowIso },
+        },
+      })
+    } catch (err) {
+      // Includes BranchMetadataCorruptError from the load above (a save()
+      // against the same corrupt file would just throw again) as well as
+      // any other load/save failure -- recording is best-effort
+      // observability, never allowed to abort the branch loop.
+      console.warn(`  Failed to record rebase failure for ${branchDir}: ${getErrorMessage(err)}`)
+    }
+  }
+
+  private async rebaseActiveBranches(): Promise<RebaseSummary> {
+    // PR-W1: collected across the loop below and returned as a summary
+    // (folded into worker-status.json by syncGit()). Purely additive
+    // bookkeeping -- doesn't change any control flow or existing logging.
+    const rebased: string[] = []
+    const skippedDirty: string[] = []
+    const failed: { branch: string; error: string }[] = []
+
     let branchDirs: string[]
     try {
       branchDirs = await fs.readdir(this.contentBranchesPath)
     } catch {
-      return
+      return { rebased, skippedDirty, failed }
     }
 
     for (const branchDir of branchDirs) {
@@ -1087,6 +1365,7 @@ export class CmsWorker {
         const dirtyCheck = await branchGit.status()
         if (dirtyCheck.files.length > 0) {
           console.log(`  Skipping ${branchDir}: has uncommitted changes`)
+          skippedDirty.push(branchDir)
           continue
         }
 
@@ -1116,9 +1395,15 @@ export class CmsWorker {
           const currentMeta = await BranchMetadataFileManager.loadOnly(branchPath)
           const conflictStatus = currentMeta?.branch.conflictStatus
           const conflictFiles = currentMeta?.branch.conflictFiles
-          const alreadyClean =
+          const conflictAlreadyClean =
             (conflictStatus === undefined || conflictStatus === 'clean') &&
             (conflictFiles === undefined || conflictFiles.length === 0)
+          // PR-W2: a lingering rebaseFailure must also be cleared once the
+          // branch catches up clean -- otherwise it sticks as a stale
+          // warning forever (nothing else touches this branch once it's
+          // caught up, so no other save site would ever clear it).
+          const alreadyClean =
+            conflictAlreadyClean && currentMeta?.branch.rebaseFailure === undefined
           if (alreadyClean) {
             continue
           }
@@ -1127,6 +1412,7 @@ export class CmsWorker {
               name: branchDir,
               conflictStatus: 'clean',
               conflictFiles: [],
+              rebaseFailure: undefined,
             },
           })
           continue
@@ -1139,6 +1425,9 @@ export class CmsWorker {
         const conflictedFiles: string[] = []
         let nextAction: 'start' | 'continue' | 'skip' = 'start'
         let completed = false
+        // PR-W1: captured only on the "unexpected error" exit below, for the
+        // failed-summary entry pushed at the `if (!completed)` check.
+        let failureReason: string | undefined
         const MAX_ROUNDS = 50 // safety limit against infinite loops
 
         for (let round = 0; round < MAX_ROUNDS && !completed; round++) {
@@ -1179,6 +1468,7 @@ export class CmsWorker {
                 // state. Previous metadata (possibly stale) is preserved until the
                 // next successful rebase cycle corrects it.
                 console.warn(`  Unexpected rebase error in ${branchDir}: ${msg || 'Unknown error'}`)
+                failureReason = msg || 'Unknown error'
                 await branchGit.rebase(['--abort']).catch(() => {})
                 break
               }
@@ -1187,10 +1477,33 @@ export class CmsWorker {
         }
 
         if (!completed) {
+          // PR-W2 (M1 rider): failureReason is only set on the "unexpected
+          // error" break above -- MAX_ROUNDS exhaustion is a distinct exit
+          // path with no error message of its own, so the warn text must
+          // not conflate the two.
           console.warn(
-            `  Rebase of ${branchDir} did not complete within ${MAX_ROUNDS} rounds, aborting`,
+            failureReason !== undefined
+              ? `  Rebase of ${branchDir} aborted due to unexpected error: ${failureReason}`
+              : `  Rebase of ${branchDir} did not complete within ${MAX_ROUNDS} rounds, aborting`,
           )
           await branchGit.rebase(['--abort']).catch(() => {})
+          const rebaseFailureMessage =
+            failureReason ?? `did not complete within ${MAX_ROUNDS} rounds`
+          // [HIGH-1] failed[] folds into worker-status.json's
+          // lastGitSync.failed, served to the browser -- failureReason can
+          // be an arbitrary git error message that embeds the bot token.
+          const redactedRebaseFailureMessage = redactCredentials(rebaseFailureMessage)
+          failed.push({
+            branch: branchDir,
+            error: redactedRebaseFailureMessage,
+          })
+          // PR-W2: record once here for the "!completed" exit -- the
+          // unexpected-error break above is NOT disjoint from this block (it
+          // always falls through here), so recording at the break itself
+          // would double-record. The outer catch below is the only other
+          // record site (a distinct, non-overlapping failure class: errors
+          // outside this round loop, e.g. fetch/rev-list failures).
+          await this.recordRebaseFailure(branchPath, branchDir, redactedRebaseFailureMessage)
           continue
         }
 
@@ -1234,13 +1547,32 @@ export class CmsWorker {
             name: branchDir,
             conflictStatus: hadConflicts ? 'conflicts-detected' : 'clean',
             conflictFiles: conflictIdsDeduped,
+            // PR-W2: the cycle completed successfully -- clear any prior
+            // failure record regardless of conflict outcome.
+            rebaseFailure: undefined,
           },
         })
+        // PR-W1: the branch was behind and the rebase completed (with or
+        // without --theirs conflict resolution) -- it moved, so it belongs
+        // in the summary. Branches already up to date `continue`d above and
+        // are deliberately not listed here.
+        rebased.push(branchDir)
       } catch (err) {
         const message = err instanceof Error ? err.message : 'Unknown error'
         console.warn(`  Failed to sync ${branchDir}: ${message}`)
+        // [HIGH-1] Same rationale as the `if (!completed)` push site above --
+        // this catches fetch/rev-list/unexpected errors, whose message can
+        // embed the bot token.
+        const redactedMessage = redactCredentials(message)
+        failed.push({ branch: branchDir, error: redactedMessage })
+        // PR-W2: second (and only other) record site -- see the comment at
+        // the `if (!completed)` block above for why these two sites are
+        // disjoint.
+        await this.recordRebaseFailure(branchPath, branchDir, redactedMessage)
       }
     }
+
+    return { rebased, skippedDirty, failed }
   }
 
   async refreshAuthCache(): Promise<void> {
