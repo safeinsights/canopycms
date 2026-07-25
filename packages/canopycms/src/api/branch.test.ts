@@ -308,6 +308,41 @@ describe('branch api', () => {
     expect(permissionsLoader.loadPathPermissions).toHaveBeenCalled()
   })
 
+  it('rejects creating a branch with the base branch name (400)', async () => {
+    const res = await createBranch(
+      baseCtx,
+      { user: { type: 'authenticated', userId: 'u1', groups: [] } },
+      { branch: unsafeAsBranchName('main') },
+    )
+    expect(res.ok).toBe(false)
+    expect(res.status).toBe(400)
+    expect(res.error).toBe('Cannot create a branch with the base branch name')
+  })
+
+  it('rejects creating a branch whose name already exists (409)', async () => {
+    // registry.get resolving truthy simulates a name collision with an
+    // existing branch -- see Fix 1's doc comment on the ACL-injection this
+    // guards against (POST /branches with an existing name + a caller
+    // `access` object would otherwise field-merge into that branch's ACL).
+    const registry = createMockRegistry([])
+    registry.get.mockResolvedValue(
+      createMockBranchContext({ branchName: 'feature/test', createdBy: 'someone-else' }),
+    )
+    const ctx = createMockApiContext({
+      branchContext: createMockBranchContext({ branchName: 'main', createdBy: 'system' }),
+      services: { registry: registry as any },
+    })
+
+    const res = await createBranch(
+      ctx,
+      { user: { type: 'authenticated', userId: 'u1', groups: [] } },
+      { branch: unsafeAsBranchName('feature/test') },
+    )
+    expect(res.ok).toBe(false)
+    expect(res.status).toBe(409)
+    expect(res.error).toBe('A branch with this name already exists')
+  })
+
   it('lists all branches for admins', async () => {
     const res = await listBranches(baseCtx, {
       user: {
@@ -364,6 +399,130 @@ describe('branch api', () => {
     })
     expect(res.ok).toBe(true)
     expect(res.data?.branches).toHaveLength(0)
+  })
+
+  it('emits isProtected/readOnly flags on branches -- prod base is true/true, feature is false/false', async () => {
+    const registry = createMockRegistry([
+      createMockBranchContext({
+        branchName: 'main',
+        createdBy: 'canopycms-system',
+        baseRoot: '/test/repo',
+        branchRoot: '/test/repo',
+      }),
+      createMockBranchContext({ branchName: 'feature/x', createdBy: 'u1', baseRoot: '/test/base' }),
+    ])
+    const ctx = createMockApiContext({
+      branchContext: createMockBranchContext({ branchName: 'main', createdBy: 'system' }),
+      services: {
+        registry: registry as any,
+        config: { defaultBaseBranch: 'main', mode: 'prod' } as any,
+      },
+    })
+
+    const res = await listBranches(ctx, {
+      user: { type: 'authenticated', userId: 'admin', groups: [RESERVED_GROUPS.ADMINS] },
+    })
+
+    const main = res.data?.branches.find((b) => b.name === 'main')
+    expect(main?.isProtected).toBe(true)
+    expect(main?.readOnly).toBe(true)
+
+    const feature = res.data?.branches.find((b) => b.name === 'feature/x')
+    expect(feature?.isProtected).toBe(false)
+    expect(feature?.readOnly).toBe(false)
+  })
+
+  it('emits isProtected: true, readOnly: false for the base branch in dev', async () => {
+    const registry = createMockRegistry([
+      createMockBranchContext({
+        branchName: 'main',
+        createdBy: 'canopycms-system',
+        baseRoot: '/test/repo',
+        branchRoot: '/test/repo',
+      }),
+    ])
+    const ctx = createMockApiContext({
+      branchContext: createMockBranchContext({ branchName: 'main', createdBy: 'system' }),
+      services: {
+        registry: registry as any,
+        config: { defaultBaseBranch: 'main', mode: 'dev' } as any,
+      },
+    })
+
+    const res = await listBranches(ctx, {
+      user: { type: 'authenticated', userId: 'admin', groups: [RESERVED_GROUPS.ADMINS] },
+    })
+
+    const main = res.data?.branches.find((b) => b.name === 'main')
+    expect(main?.isProtected).toBe(true)
+    expect(main?.readOnly).toBe(false)
+  })
+
+  it('emits flags on the filtered (non-privileged) listing path too', async () => {
+    const registry = createMockRegistry([
+      createMockBranchContext({
+        branchName: 'main',
+        createdBy: 'canopycms-system',
+        baseRoot: '/test/repo',
+        branchRoot: '/test/repo',
+      }),
+      createMockBranchContext({ branchName: 'feature/x', createdBy: 'u1', baseRoot: '/test/base' }),
+    ])
+    const ctx = createMockApiContext({
+      branchContext: createMockBranchContext({ branchName: 'main', createdBy: 'system' }),
+      services: {
+        registry: registry as any,
+        config: { defaultBaseBranch: 'main', mode: 'prod' } as any,
+      },
+    })
+
+    const res = await listBranches(ctx, {
+      user: { type: 'authenticated', userId: 'u1', groups: [] },
+    })
+
+    // u1 created feature/x; 'main' isn't visible to them via the filter, but
+    // the visible entry still carries correct (unprotected) flags.
+    const feature = res.data?.branches.find((b) => b.name === 'feature/x')
+    expect(feature?.isProtected).toBe(false)
+    expect(feature?.readOnly).toBe(false)
+  })
+
+  it('includes the protected base branch (read-only) for non-privileged users with no ACL access to it', async () => {
+    const registry = createMockRegistry([
+      createMockBranchContext({
+        branchName: 'main',
+        createdBy: 'canopycms-system',
+        baseRoot: '/test/repo',
+        branchRoot: '/test/repo',
+      }),
+      createMockBranchContext({
+        branchName: 'feature/x',
+        createdBy: 'someone-else',
+        baseRoot: '/test/base',
+      }),
+    ])
+    const ctx = createMockApiContext({
+      branchContext: createMockBranchContext({ branchName: 'main', createdBy: 'system' }),
+      services: {
+        registry: registry as any,
+        config: { defaultBaseBranch: 'main', mode: 'prod' } as any,
+      },
+    })
+
+    const res = await listBranches(ctx, {
+      user: { type: 'authenticated', userId: 'u1', groups: [] },
+    })
+
+    // u1 is neither the creator of 'main' nor in its (empty) ACL, but the
+    // base branch must still surface -- see listBranchesHandler's
+    // getBranchProtection short-circuit in the visibleBranches filter.
+    const names = res.data?.branches.map((b) => b.name)
+    expect(names).toContain('main')
+    expect(names).not.toContain('feature/x')
+
+    const main = res.data?.branches.find((b) => b.name === 'main')
+    expect(main?.isProtected).toBe(true)
+    expect(main?.readOnly).toBe(true)
   })
 
   it('reports the effective default branch for all users', async () => {
@@ -478,6 +637,27 @@ describe('deleteBranch api', () => {
     )
     expect(res.status).toBe(400)
     expect(res.error).toBe('Cannot delete branch with open pull request')
+  })
+
+  it('refuses to delete the base (protected) branch, even for an admin', async () => {
+    const ctx = {
+      ...deleteCtx,
+      getBranchContext: vi.fn().mockResolvedValue(
+        createMockBranchContext({
+          branchName: 'main',
+          createdBy: 'canopycms-system',
+          baseRoot: '/test/repo',
+          branchRoot: '/test/repo',
+        }),
+      ),
+    }
+    const res = await deleteBranch(
+      ctx,
+      { user: { type: 'authenticated', userId: 'admin', groups: [RESERVED_GROUPS.ADMINS] } },
+      { branch: unsafeAsBranchName('main') },
+    )
+    expect(res.status).toBe(400)
+    expect(res.error).toBe('Cannot delete the base branch')
   })
 
   it('deletes branch when user is creator', async () => {

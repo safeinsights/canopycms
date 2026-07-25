@@ -414,6 +414,10 @@ const rawAssetHandler = async (
 // ============================================================================
 // Route Definitions with defineEndpoint
 // ============================================================================
+//
+// Deliberately no 'writableBranch' guard on any endpoint below: none take a
+// :branch param -- the asset store is branch-agnostic (a single global store,
+// see assets/factory.ts), so the protected-base-branch predicate doesn't apply.
 
 /**
  * POST /assets/presign

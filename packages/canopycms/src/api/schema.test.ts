@@ -75,11 +75,22 @@ describe('Schema API', () => {
     mockCtx = {
       getBranchContext: vi.fn().mockResolvedValue({
         branchRoot: '/test/branch',
-        branchName: 'main',
+        baseRoot: '/test',
+        branch: {
+          name: 'main',
+          status: 'editing',
+          access: {},
+          createdBy: 'u1',
+          createdAt: 'now',
+          updatedAt: 'now',
+        },
         flatSchema: mockFlatSchema,
       }),
       services: {
-        config: {},
+        // mode omitted (not 'prod') -- the 'writableBranch' guard's readOnly
+        // check is therefore always false here, matching these admin-only
+        // schema-mutation tests' intent (protection isn't under test).
+        config: { defaultBaseBranch: 'main' },
         entrySchemaRegistry: mockEntrySchemaRegistry,
         checkBranchAccess: vi.fn().mockReturnValue({ allowed: true }),
         checkContentAccess: vi.fn().mockResolvedValue({ allowed: true }),

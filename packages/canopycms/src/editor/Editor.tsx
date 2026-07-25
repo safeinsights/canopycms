@@ -898,6 +898,8 @@ export const Editor: React.FC<EditorProps> = ({
             userContext={userContext}
             branchCreatedBy={currentBranch?.createdBy}
             branchAccess={currentBranch?.access}
+            branchIsProtected={currentBranch?.isProtected}
+            branchReadOnly={currentBranch?.readOnly}
             onNavigatorOpen={() => setNavigatorOpen(true)}
             onFileReload={handleReload}
             onFileDiscardDraft={handleDiscardFileDraft}
@@ -1026,6 +1028,7 @@ export const Editor: React.FC<EditorProps> = ({
                 <Group gap="xs">
                   {navCollections &&
                     navCollections.length > 0 &&
+                    !currentBranch?.readOnly &&
                     (navCollections[0].onAdd || navCollections[0].onAddSubCollection) && (
                       <Menu shadow="md" width={200} withinPortal position="bottom-end">
                         <Menu.Target>
@@ -1107,6 +1110,7 @@ export const Editor: React.FC<EditorProps> = ({
                     onReorderEntry={handleReorderEntry}
                     hiddenRootPath={hiddenRootPath}
                     loading={entriesInitializing}
+                    readOnly={currentBranch?.readOnly ?? false}
                   />
                 </Box>
               </Drawer.Body>

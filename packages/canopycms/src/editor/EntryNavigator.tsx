@@ -83,6 +83,13 @@ export interface EntryNavigatorProps {
   hiddenRootPath?: string
   /** When true and the tree is empty, show a loading indicator instead of "No content" */
   loading?: boolean
+  /**
+   * When true, hides all entry/collection mutation affordances (create,
+   * rename, delete, reorder, add/edit collection) -- selection/navigation
+   * stays enabled. Set on a read-only protected base branch, where writes
+   * would only 403 after the fact. Default false.
+   */
+  readOnly?: boolean
 }
 
 export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
@@ -93,12 +100,21 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
   onTreeControllerReady,
   expandedStateRef,
   onExpandedStateChange,
-  onDeleteEntry,
-  onRenameEntry,
-  onReorderEntry,
+  onDeleteEntry: onDeleteEntryProp,
+  onRenameEntry: onRenameEntryProp,
+  onReorderEntry: onReorderEntryProp,
   hiddenRootPath,
   loading,
+  readOnly = false,
 }) => {
+  // Shadow the entry-mutation callbacks with undefined when readOnly, so every
+  // downstream reference (hasEntryMenu, canReorder, the menu items themselves)
+  // sees them as absent rather than threading a readOnly check through each
+  // call site individually.
+  const onDeleteEntry = readOnly ? undefined : onDeleteEntryProp
+  const onRenameEntry = readOnly ? undefined : onRenameEntryProp
+  const onReorderEntry = readOnly ? undefined : onReorderEntryProp
+
   const selectedNodeRef = useRef<HTMLDivElement>(null)
   const hasScrolledRef = useRef(false)
   // Track expanded state synchronously to avoid race conditions on unmount
@@ -379,10 +395,15 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
     level,
   }: RenderTreeNodePayload) => {
     const status = node.nodeProps?.status as string | undefined
-    const onAdd = node.nodeProps?.onAdd as (() => void) | undefined
-    const onEdit = node.nodeProps?.onEdit as (() => void) | undefined
-    const onAddSubCollection = node.nodeProps?.onAddSubCollection as (() => void) | undefined
-    const onDelete = node.nodeProps?.onDelete as (() => void) | undefined
+    // Collection-level mutation callbacks are nulled when readOnly, same as
+    // the entry-level ones above -- this removes the collection menu button
+    // entirely (hasCollectionMenu below) rather than leaving it enabled.
+    const onAdd = readOnly ? undefined : (node.nodeProps?.onAdd as (() => void) | undefined)
+    const onEdit = readOnly ? undefined : (node.nodeProps?.onEdit as (() => void) | undefined)
+    const onAddSubCollection = readOnly
+      ? undefined
+      : (node.nodeProps?.onAddSubCollection as (() => void) | undefined)
+    const onDelete = readOnly ? undefined : (node.nodeProps?.onDelete as (() => void) | undefined)
     const entryPath = node.nodeProps?.entryPath as LogicalPath | undefined
     const contentId = node.nodeProps?.contentId as string | undefined
     const parentCollectionPath = node.nodeProps?.parentCollectionPath as LogicalPath | undefined

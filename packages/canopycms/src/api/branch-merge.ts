@@ -98,6 +98,12 @@ const markAsMergedHandler = async (
 /**
  * Mark a branch as merged and archived after PR is merged on GitHub
  * POST /:branch/mark-merged
+ *
+ * Deliberately no 'submittableBranch' guard: needs no new guard because the
+ * handler above already requires status === 'submitted' AND a recorded
+ * pullRequestNumber, both unreachable for the base branch once the submit
+ * guard lands (and a deployed instance's stranded main has no PR number, so
+ * it's refused there too).
  */
 export const markAsMerged = defineEndpoint({
   namespace: 'workflow',

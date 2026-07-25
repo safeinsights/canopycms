@@ -14,7 +14,7 @@ import {
 import { GitManager, GitConflictError } from './git-manager'
 import { BranchRegistry } from './branch-registry'
 import { SettingsWorkspaceManager } from './settings-workspace'
-import { getDefaultBranchBase } from './paths'
+import { getDefaultBranchBase, sanitizeBranchName } from './paths'
 import { createGitHubService, type GitHubService } from './github-service'
 import { operatingStrategy } from './operating-mode'
 import { BranchSchemaCache } from './branch-schema-cache'
@@ -304,6 +304,17 @@ async function _createCanopyServicesInternal(
     context: BranchContext
     message?: string
   }): Promise<void> => {
+    // Defense-in-depth: refuse to push the base branch to itself even if the
+    // 'submittableBranch' guard was somehow bypassed. Prefer the recorded fork
+    // point (context.branch.baseBranch) over config.defaultBaseBranch — the
+    // closure-captured `config` can go stale after dev refreshActiveBranch().
+    const effectiveBase = options.context.branch.baseBranch ?? config.defaultBaseBranch ?? 'main'
+    if (sanitizeBranchName(options.context.branch.name) === sanitizeBranchName(effectiveBase)) {
+      throw new Error(
+        `Refusing to commit and push the base branch "${options.context.branch.name}" — submitting requires a separate editing branch`,
+      )
+    }
+
     const git = createGitManagerFor(options.context.branchRoot, {
       baseBranch: options.context.branch.baseBranch,
     })

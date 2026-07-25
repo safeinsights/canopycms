@@ -603,6 +603,35 @@ describe('CmsWorker push-and-create-or-update-pr (GIT-H1)', () => {
     expect(meta.branch.pullRequestNumber).toBe(89)
     expect(meta.branch.syncStatus).toBe('synced')
   })
+
+  // -------------------------------------------------------------------------
+  // Protected base branch backstop: head === base must never reach GitHub,
+  // even if the 'submittableBranch' API guard and the syncSubmitPr backstop
+  // were both somehow bypassed (e.g. a task queued before this check
+  // shipped). Defense-in-depth, last line before pushBranchToGitHub/octokit.
+  // -------------------------------------------------------------------------
+
+  it('refuses a push-and-create-or-update-pr task for the base branch (head === base)', async () => {
+    // makePrWorker() doesn't set config.baseBranch, so this.baseBranch
+    // defaults to 'main' (see CmsWorker constructor).
+    const { worker, internals } = makePrWorker()
+    await setupBranchDir('main')
+
+    const id = await enqueueTask(taskDir, {
+      action: 'push-and-create-or-update-pr',
+      payload: { branch: 'main', title: 'Submit main', body: 'desc' },
+    })
+
+    await worker.processTaskQueue()
+
+    expect(internals.pushBranchToGitHub).not.toHaveBeenCalled()
+    expect(internals.octokit.pulls.list).not.toHaveBeenCalled()
+    expect(internals.octokit.pulls.create).not.toHaveBeenCalled()
+    expect(internals.octokit.pulls.update).not.toHaveBeenCalled()
+    // PermanentTaskError -> fails immediately, landing in failed/ rather than
+    // being retried (retrying can't make the branch not be the base branch).
+    expect(await fileExists(path.join(taskDir, 'failed', `${id}.json`))).toBe(true)
+  })
 })
 
 // ---------------------------------------------------------------------------

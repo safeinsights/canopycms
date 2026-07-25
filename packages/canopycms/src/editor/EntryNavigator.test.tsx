@@ -340,6 +340,52 @@ describe('EntryNavigator', () => {
     })
   })
 
+  describe('readOnly mode', () => {
+    it('hides the entry menu even when onDeleteEntry/onRenameEntry/onReorderEntry are provided', () => {
+      renderEntryNavigator({
+        items: [{ path: unsafeAsLogicalPath('posts/hello'), label: 'Hello World' }],
+        onDeleteEntry: vi.fn(),
+        onRenameEntry: vi.fn(),
+        onReorderEntry: vi.fn(),
+        readOnly: true,
+      })
+
+      expect(screen.queryByTestId('entry-menu-hello-world')).toBeNull()
+    })
+
+    it('hides the collection menu even when onAdd/onEdit/onDelete are provided', () => {
+      const collections: EntryNavCollection[] = [
+        {
+          path: unsafeAsLogicalPath('posts'),
+          label: 'Posts',
+          type: 'collection',
+          onAdd: vi.fn(),
+          onEdit: vi.fn(),
+          onAddSubCollection: vi.fn(),
+          onDelete: vi.fn(),
+        },
+      ]
+
+      renderEntryNavigator({ collections, readOnly: true })
+
+      expect(screen.queryByTestId('collection-menu-posts')).toBeNull()
+    })
+
+    it('still allows selecting entries when readOnly', async () => {
+      const user = userEvent.setup()
+      const onSelect = vi.fn()
+
+      renderEntryNavigator({
+        items: [{ path: unsafeAsLogicalPath('posts/hello'), label: 'Hello World' }],
+        onSelect,
+        readOnly: true,
+      })
+
+      await user.click(screen.getByText('Hello World'))
+      expect(onSelect).toHaveBeenCalledWith('posts/hello')
+    })
+  })
+
   describe('entry status badge', () => {
     it('shows status badge on entries with status', () => {
       renderEntryNavigator({

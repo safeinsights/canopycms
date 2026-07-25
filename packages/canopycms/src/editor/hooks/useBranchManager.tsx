@@ -4,9 +4,10 @@ import { useEffect, useMemo, useState } from 'react'
 import { Text } from '@mantine/core'
 import { modals } from '@mantine/modals'
 import { notifications } from '@mantine/notifications'
-import type { BranchMetadata, ConflictStatus, PullRequestState, SyncStatus } from '../../types'
+import type { ConflictStatus, PullRequestState, SyncStatus } from '../../types'
 import type { OperatingMode } from '../../operating-mode'
 import type { CommentThread } from '../../comment-store'
+import type { BranchListItem } from '../../api/branch'
 import { useApiClient } from '../context'
 
 /**
@@ -76,6 +77,8 @@ export interface BranchSummary {
   /** ContentIds of entries where --theirs was applied during rebase; cleared on clean rebase */
   conflictFiles?: string[]
   commentCount: number
+  isProtected: boolean
+  readOnly: boolean
 }
 
 export interface UseBranchManagerOptions {
@@ -103,9 +106,9 @@ export interface UseBranchManagerOptions {
 export interface UseBranchManagerReturn {
   branchName: string
   setBranchName: (name: string) => void
-  branches: BranchMetadata[]
+  branches: BranchListItem[]
   branchSummaries: BranchSummary[]
-  currentBranch: BranchMetadata | undefined
+  currentBranch: BranchListItem | undefined
   branchStatus: string
   handleSubmit: (branchName: string) => Promise<void>
   handleWithdraw: (branchName: string) => Promise<void>
@@ -153,7 +156,7 @@ export interface UseBranchManagerReturn {
 export function useBranchManager(options: UseBranchManagerOptions): UseBranchManagerReturn {
   const apiClient = useApiClient()
   const [branchName, setBranchName] = useState<string>(options.initialBranch)
-  const [branches, setBranches] = useState<BranchMetadata[]>([])
+  const [branches, setBranches] = useState<BranchListItem[]>([])
 
   const currentBranch = branches.find((b) => b.name === branchName)
   const branchStatus = currentBranch?.status ?? 'editing'
@@ -180,6 +183,8 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
         conflictStatus: b.conflictStatus,
         conflictFiles: b.conflictFiles,
         commentCount: unresolvedCount,
+        isProtected: b.isProtected ?? false,
+        readOnly: b.readOnly ?? false,
       }
     })
   }, [branches, branchName, options.comments])

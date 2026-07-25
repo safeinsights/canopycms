@@ -706,6 +706,18 @@ export class CmsWorker {
         // direct-API path) so the list->tiebreak->update/create logic and
         // the draft->ready conversion live in one place.
         const branch = requireString(payload, 'branch')
+        const base = optionalString(payload, 'baseBranch', this.baseBranch)
+        // Defense-in-depth: refuse head===base even if the 'submittableBranch'
+        // API guard and the syncSubmitPr backstop were both somehow bypassed
+        // (e.g. a task queued before this check shipped). PermanentTaskError
+        // (not a plain Error) so this fails immediately instead of burning
+        // the retry budget on an identical doomed request -- retrying can
+        // never make the branch not be the base branch.
+        if (sanitizeBranchName(branch) === this.sanitizedBaseBranch) {
+          throw new PermanentTaskError(
+            `Refusing to push-and-create-or-update-pr for "${branch}": it is the base branch -- submitting the base branch is never valid`,
+          )
+        }
         await this.pushBranchToGitHub(branch)
 
         const result = await createOrUpdatePullRequest({
@@ -713,7 +725,7 @@ export class CmsWorker {
           owner: this.config.githubOwner,
           repo: this.config.githubRepo,
           head: branch,
-          base: optionalString(payload, 'baseBranch', this.baseBranch),
+          base,
           title: optionalString(payload, 'title', `Submit ${branch}`),
           body: optionalString(payload, 'body', ''),
           // Content submits (api/github-sync.ts) set this; settings-branch

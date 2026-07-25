@@ -142,6 +142,10 @@ const resolveCommentHandler = async (
 // ============================================================================
 // Route Definitions with defineEndpoint
 // ============================================================================
+//
+// Deliberately no 'writableBranch' guard on any endpoint below: comments live
+// in .canopy-meta/comments.json, which is never committed to git. Commenting
+// while browsing the (read-only) protected base branch is desirable.
 
 /**
  * List all comment threads for a branch

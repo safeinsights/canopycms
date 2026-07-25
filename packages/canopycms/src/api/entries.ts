@@ -491,7 +491,7 @@ export const deleteEntry = defineEndpoint({
   responseType: 'DeleteEntryResponse',
   response: {} as DeleteEntryResponse,
   defaultMockData: { deleted: true },
-  guards: ['schema'] as const,
+  guards: ['schema', 'writableBranch'] as const,
   handler: deleteEntryHandler,
 })
 

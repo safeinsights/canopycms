@@ -270,6 +270,62 @@ describe('useBranchManager', () => {
     expect(result.current.branchSummaries[1].mergedAt).toBeUndefined()
   })
 
+  it('maps isProtected/readOnly flags into branchSummaries, defaulting to false when absent', async () => {
+    const branchesWithFlags: BranchMetadata[] = [
+      { ...mockBranches[0], isProtected: true, readOnly: true } as BranchMetadata,
+      mockBranches[1], // no flags on the wire -- must default to false, not undefined
+    ]
+    mockClient.branches.list.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      data: { branches: branchesWithFlags },
+    })
+
+    const { result } = renderHook(() => useBranchManager(defaultOptions), {
+      wrapper,
+    })
+
+    await waitFor(() => {
+      expect(result.current.branchSummaries).toHaveLength(2)
+    })
+
+    expect(result.current.branchSummaries[0]).toMatchObject({
+      name: 'main',
+      isProtected: true,
+      readOnly: true,
+    })
+    expect(result.current.branchSummaries[1]).toMatchObject({
+      name: 'feature',
+      isProtected: false,
+      readOnly: false,
+    })
+  })
+
+  it('lands branchless adoption on the protected default branch, carrying its flags', async () => {
+    const branchesWithFlags: BranchMetadata[] = [
+      { ...mockBranches[0], isProtected: true, readOnly: true } as BranchMetadata,
+      mockBranches[1],
+    ]
+    mockClient.branches.list.mockResolvedValue({
+      ok: true,
+      status: 200,
+      data: { branches: branchesWithFlags, defaultBranch: 'main' },
+    })
+
+    const { result } = renderHook(
+      () => useBranchManager({ ...defaultOptions, initialBranch: '' }),
+      { wrapper },
+    )
+
+    await waitFor(() => {
+      expect(result.current.branchName).toBe('main')
+    })
+    await waitFor(() => {
+      expect(result.current.currentBranch?.isProtected).toBe(true)
+      expect(result.current.currentBranch?.readOnly).toBe(true)
+    })
+  })
+
   it('passes syncStatus, conflictStatus, and conflictFiles through branchSummaries unchanged', async () => {
     const branchesWithSyncState: BranchMetadata[] = [
       {

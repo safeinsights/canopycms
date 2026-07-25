@@ -19,6 +19,7 @@
 import type { BranchContext, BranchContextWithSchema } from '../types'
 import type { ApiContext, ApiRequest, ApiResponse } from './types'
 import { isAdmin, isReviewer, isPrivileged } from '../authorization/helpers'
+import { getBranchProtection } from '../authorization/protected-branch'
 
 // ============================================================================
 // Guard IDs and Context Map
@@ -33,6 +34,8 @@ export type GuardId =
   | 'admin'
   | 'reviewer'
   | 'privileged'
+  | 'writableBranch'
+  | 'submittableBranch'
 
 /** Maps each guard ID to the context it contributes */
 export interface GuardContextMap {
@@ -43,6 +46,8 @@ export interface GuardContextMap {
   admin: Record<string, never>
   reviewer: Record<string, never>
   privileged: Record<string, never>
+  writableBranch: { branchContext: BranchContext }
+  submittableBranch: { branchContext: BranchContext }
 }
 
 // ============================================================================
@@ -192,6 +197,63 @@ const runBranchAccessWithSchemaGuard: GuardRunner = async (ctx, req, params, acc
   return { ok: true, context: { branchContext: context as BranchContextWithSchema } }
 }
 
+const runWritableBranchGuard: GuardRunner = async (ctx, _req, params, accumulated) => {
+  const branch = extractBranchName(params)
+  if (typeof branch !== 'string') return { ok: false, response: branch }
+
+  const context = await resolveBranchContext(ctx, params, accumulated)
+  if (!context) {
+    return { ok: false, response: { ok: false, status: 404, error: 'Branch not found' } }
+  }
+
+  const protection = getBranchProtection(
+    ctx.services.config,
+    context.branch.name,
+    context.branch.baseBranch,
+  )
+  if (protection.readOnly) {
+    return {
+      ok: false,
+      response: {
+        ok: false,
+        status: 403,
+        error: `The base branch "${context.branch.name}" is read-only. Create a branch to make changes.`,
+      },
+    }
+  }
+
+  return { ok: true, context: { branchContext: context } }
+}
+
+const runSubmittableBranchGuard: GuardRunner = async (ctx, _req, params, accumulated) => {
+  const branch = extractBranchName(params)
+  if (typeof branch !== 'string') return { ok: false, response: branch }
+
+  const context = await resolveBranchContext(ctx, params, accumulated)
+  if (!context) {
+    return { ok: false, response: { ok: false, status: 404, error: 'Branch not found' } }
+  }
+
+  const protection = getBranchProtection(
+    ctx.services.config,
+    context.branch.name,
+    context.branch.baseBranch,
+  )
+  if (protection.submitBlocked) {
+    return {
+      ok: false,
+      response: {
+        ok: false,
+        status: 403,
+        error:
+          'The base branch cannot be submitted for review. Create a branch and submit that instead.',
+      },
+    }
+  }
+
+  return { ok: true, context: { branchContext: context } }
+}
+
 const runAdminGuard: GuardRunner = async (_ctx, req) => {
   if (!isAdmin(req.user.groups)) {
     return {
@@ -234,6 +296,8 @@ const GUARD_RUNNERS: Record<GuardId, GuardRunner> = {
   admin: runAdminGuard,
   reviewer: runReviewerGuard,
   privileged: runPrivilegedGuard,
+  writableBranch: runWritableBranchGuard,
+  submittableBranch: runSubmittableBranchGuard,
 }
 
 // ============================================================================

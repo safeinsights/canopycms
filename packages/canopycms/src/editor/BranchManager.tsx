@@ -45,6 +45,8 @@ export interface BranchSummary {
   /** ContentIds of entries where --theirs was applied during rebase; cleared on clean rebase */
   conflictFiles?: string[]
   commentCount?: number
+  isProtected?: boolean
+  readOnly?: boolean
 }
 
 export interface UserContext {
@@ -81,7 +83,10 @@ export const getBranchPermissions = (
   const userIsAdmin = isAdmin(user.groups)
   const userIsReviewer = isReviewer(user.groups)
   const userIsCreator = branch.createdBy === user.userId
-  const isSystemBranch = branch.createdBy === 'canopycms-system'
+  // The system-branch grant is disabled on the protected base branch -- its
+  // auto-provision marker (createdBy: 'canopycms-system') would otherwise let
+  // anyone with general access submit/withdraw/delete it.
+  const isSystemBranch = branch.createdBy === 'canopycms-system' && !branch.isProtected
 
   // Check if user is in branch ACL
   const userInACL =
@@ -93,18 +98,24 @@ export const getBranchPermissions = (
   const canPerformWorkflowActions =
     userIsCreator || userInACL || isSystemBranch || userIsAdmin || userIsReviewer
 
-  // Submit: Can perform workflow actions AND branch is in editing status
-  const canSubmit = canPerformWorkflowActions && branch.status === 'editing'
+  // Submit: Can perform workflow actions AND branch is in editing status. The
+  // protected base branch can never be submitted (both modes).
+  const canSubmit = canPerformWorkflowActions && branch.status === 'editing' && !branch.isProtected
 
   // Withdraw: Can perform workflow actions AND branch is in submitted status.
   // Allowed even when the PR was closed without merging -- that's the
   // deliberate recovery path for a closed-unmerged PR (a later resubmit
   // opens a fresh PR). The server skips the now-impossible draft conversion
-  // in that case; see api/branch-withdraw.ts.
+  // in that case; see api/branch-withdraw.ts. Not additionally gated on
+  // !branch.isProtected: withdraw is the recovery path for a protected branch
+  // wrongly stuck in 'submitted' -- creator/ACL/privileged users can still
+  // reach it (the system-branch grant above already excludes them).
   const canWithdraw = canPerformWorkflowActions && branch.status === 'submitted'
 
-  // Delete: Admin or creator (but not if submitted)
-  const canDelete = (userIsAdmin || userIsCreator) && branch.status !== 'submitted'
+  // Delete: Admin or creator (but not if submitted, and never the base branch --
+  // deleting the prod serving clone is never valid)
+  const canDelete =
+    (userIsAdmin || userIsCreator) && branch.status !== 'submitted' && !branch.isProtected
 
   // Request changes: Only Reviewers or Admins can request changes on submitted
   // branches. Same closed-PR restriction as withdraw applies (converts PR to draft).
@@ -305,6 +316,15 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
                             Merged
                           </Badge>
                         )}
+                        {b.isProtected && (
+                          <Badge
+                            color="neutral"
+                            variant="outline"
+                            data-testid={`branch-protected-badge-${b.name}`}
+                          >
+                            Protected
+                          </Badge>
+                        )}
                         {b.pullRequestNumber && (
                           <Badge
                             color={
@@ -467,7 +487,11 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
                         </Tooltip>
                       ) : (
                         <Tooltip
-                          label="Only the branch creator can submit"
+                          label={
+                            b.isProtected
+                              ? 'The base branch cannot be submitted'
+                              : 'Only the branch creator can submit'
+                          }
                           disabled={perms.canSubmit}
                         >
                           <Button

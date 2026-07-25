@@ -5,6 +5,7 @@ import { enqueueTask } from '../worker/task-queue'
 import { getTaskQueueDir } from '../worker/task-queue-config'
 import { clientOperatingStrategy } from '../operating-mode'
 import { getErrorMessage } from '../utils/error'
+import { sanitizeBranchName } from '../paths/branch'
 
 /**
  * Result of a GitHub sync operation.
@@ -28,9 +29,23 @@ export async function syncSubmitPr(
   const mode = ctx.services.config.mode
   const prTitle = context.branch.title || `Submit ${context.branch.name}`
   const prBody = context.branch.description || ''
+  // Target the fork point recorded at branch creation when available.
+  const baseBranch = context.branch.baseBranch ?? ctx.services.config.defaultBaseBranch ?? 'main'
 
   if (!clientOperatingStrategy(mode).supportsPullRequests()) {
     return {}
+  }
+
+  // Defense-in-depth: refuse head===base even if the 'submittableBranch' guard
+  // was somehow bypassed. GitHub would 422 this request anyway, but silently
+  // -- without this check it surfaces only as a swallowed 'sync-failed' while
+  // the branch is already marked 'submitted' (see services.ts submitBranch,
+  // which pushes before this runs).
+  if (sanitizeBranchName(context.branch.name) === sanitizeBranchName(baseBranch)) {
+    console.error(
+      `CanopyCMS: Refusing to open a PR for ${context.branch.name} against itself (head === base)`,
+    )
+    return { syncStatus: 'sync-failed' }
   }
 
   // Direct path: githubService available (has internet)
@@ -80,7 +95,7 @@ export async function syncSubmitPr(
         // can't fail this submit.
         const result = await githubService.createOrUpdatePR({
           head: context.branch.name,
-          base: context.branch.baseBranch ?? ctx.services.config.defaultBaseBranch ?? 'main',
+          base: baseBranch,
           title: prTitle,
           body: prBody,
           markReadyIfDraft: true,
@@ -115,8 +130,7 @@ export async function syncSubmitPr(
       branch: context.branch.name,
       title: prTitle,
       body: prBody,
-      // Target the fork point recorded at branch creation when available
-      baseBranch: context.branch.baseBranch ?? ctx.services.config.defaultBaseBranch ?? 'main',
+      baseBranch,
       pullRequestNumber: context.branch.pullRequestNumber,
       // Content submits are an explicit "ready for review" action — convert
       // a pre-existing draft PR to ready, unlike the settings-branch sync
