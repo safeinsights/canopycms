@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { simpleGit } from 'simple-git'
@@ -92,16 +93,106 @@ export async function workspaceExists(): Promise<boolean> {
 }
 
 /**
- * Reset the workspace by removing the branch working trees.
- * remote.git is preserved between tests — recreating it is expensive (git init + push + clone).
- * Only the branch checkouts need to be wiped for test isolation.
+ * Baseline marker: the main clone's HEAD sha captured right after its first
+ * provisioning. Lives inside .canopy-meta so `git clean -e .canopy-meta`
+ * preserves it. The cheap reset restores the working tree to exactly this
+ * commit — more deterministic than re-cloning from remote.git, whose main
+ * ref accumulates restore/conflict commits across runs.
+ */
+const BASELINE_FILE = 'e2e-baseline-head'
+
+const mainBaselinePath = () => path.join(getMainBranchPath(), '.canopy-meta', BASELINE_FILE)
+
+/** Write a fresh random token to a generation marker (BUMP, never delete:
+ * a missing marker reads as the valid "never bumped" null token, which can
+ * false-match a cache snapshot taken before any bump — see
+ * packages/canopycms/src/resource-generation.ts). */
+async function bumpMarker(dir: string, resource: string): Promise<void> {
+  const markerDir = path.join(dir, '.canopy-meta')
+  await fs.mkdir(markerDir, { recursive: true })
+  await fs.writeFile(path.join(markerDir, `${resource}.generation`), randomUUID(), 'utf8')
+}
+
+/**
+ * Reset the workspace between tests.
+ *
+ * Cheap path (the common case): reset the existing main clone in place —
+ * `git reset --hard <baseline>` + `git clean -fd -e .canopy-meta` undoes
+ * tracked edits, untracked entry files, AND local commits (the conflict
+ * tests commit on main), at a fraction of the cost of the full path's
+ * delete + re-clone. Feature-branch clones are still deleted wholesale.
+ *
+ * Because content changes under the server's feet, every relevant
+ * generation marker is bumped so cross-process caches rebuild:
+ * content-index + schema for main, branch-registry for the branch list
+ * (the registry then rescans per-branch .canopy-meta/branch.json files,
+ * finds only main, and forgets the deleted feature branches).
+ *
+ * Full path (first run, or when the cheap path can't prove the baseline):
+ * delete content-branches/ entirely; ensureMainBranch() re-provisions and
+ * records a fresh baseline. remote.git is preserved between tests either
+ * way — recreating it is expensive (git init + push + clone).
  */
 export async function resetWorkspace(): Promise<void> {
   log.time('resetWorkspace')
   log.info('workspace', 'Starting workspace reset')
+
+  const mainPath = getMainBranchPath()
+  const cheapReset = async (): Promise<boolean> => {
+    const baseline = (await fs.readFile(mainBaselinePath(), 'utf8').catch(() => '')).trim()
+    if (!baseline) return false
+    const git = simpleGit({ baseDir: mainPath })
+    // Verify the baseline commit still exists in this clone before resetting.
+    await git.raw(['cat-file', '-e', baseline])
+    // Clear any in-progress rebase state a crashed test left behind
+    // (reset --hard alone would leave .git/rebase-merge poisoning later ops).
+    await git.raw(['rebase', '--abort']).catch(() => {})
+    await git.raw(['reset', '--hard', baseline])
+    await git.raw(['clean', '-fd', '-e', '.canopy-meta'])
+
+    // Remove feature-branch clones from previous tests.
+    const entries = await fs.readdir(BRANCHES_DIR, { withFileTypes: true }).catch(() => [])
+    for (const entry of entries) {
+      if (entry.isDirectory() && entry.name !== 'main' && entry.name !== '.canopy-meta') {
+        await fs.rm(path.join(BRANCHES_DIR, entry.name), { recursive: true, force: true })
+      }
+    }
+
+    await bumpMarker(mainPath, 'content-index')
+    await bumpMarker(mainPath, 'schema')
+    await bumpMarker(BRANCHES_DIR, 'branch-registry')
+    return true
+  }
+
+  try {
+    if (await cheapReset()) {
+      log.timeEnd('workspace', 'resetWorkspace')
+      return
+    }
+  } catch (err) {
+    log.warn('workspace', 'Cheap reset failed; falling back to full delete', {
+      error: err instanceof Error ? err.message : String(err),
+    })
+  }
+
   log.debug('workspace', 'Deleting branches directory', { path: BRANCHES_DIR })
   await fs.rm(BRANCHES_DIR, { recursive: true, force: true }).catch(() => {})
   log.timeEnd('workspace', 'resetWorkspace')
+}
+
+/**
+ * Record the main clone's pristine HEAD as the cheap-reset baseline.
+ * No-op if a baseline is already recorded (cheap resets return HEAD to it,
+ * so it stays valid for the whole run).
+ */
+export async function recordMainBaseline(): Promise<void> {
+  const existing = await fs.readFile(mainBaselinePath(), 'utf8').catch(() => '')
+  if (existing.trim()) return
+  const git = simpleGit({ baseDir: getMainBranchPath() })
+  const head = (await git.revparse(['HEAD'])).trim()
+  await fs.mkdir(path.dirname(mainBaselinePath()), { recursive: true })
+  await fs.writeFile(mainBaselinePath(), head, 'utf8')
+  log.debug('workspace', 'Recorded main baseline', { head })
 }
 
 /**
@@ -151,6 +242,10 @@ export async function ensureMainBranch(baseUrl: string): Promise<void> {
 
     log.debug('workspace', 'Verifying workspace readiness')
     await verifyWorkspaceReady()
+
+    // Capture the pristine HEAD so resetWorkspace() can restore it cheaply
+    // between tests (no-op when a baseline is already recorded).
+    await recordMainBaseline()
 
     log.info('workspace', 'Main branch ready')
   })
