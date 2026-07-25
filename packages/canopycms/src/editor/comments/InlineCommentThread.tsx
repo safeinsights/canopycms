@@ -6,6 +6,7 @@ import { IconAlertCircle } from '@tabler/icons-react'
 import type { CommentThread } from '../../comment-store'
 import type { UserSearchResult } from '../../auth/types'
 import { UserBadge } from '../components/UserBadge'
+import { formatRelativeTime } from '../relative-time'
 
 export interface InlineCommentThreadProps {
   /** The thread to display */
@@ -71,27 +72,6 @@ export const InlineCommentThread: React.FC<InlineCommentThreadProps> = ({
     return thread.authorId === currentUserId || canResolve
   }
 
-  const formatTimestamp = (timestamp: string) => {
-    try {
-      const date = new Date(timestamp)
-      const now = new Date()
-      const diff = now.getTime() - date.getTime()
-      const days = Math.floor(diff / (1000 * 60 * 60 * 24))
-
-      if (days === 0) {
-        const hours = Math.floor(diff / (1000 * 60 * 60))
-        if (hours === 0) {
-          const minutes = Math.floor(diff / (1000 * 60))
-          return minutes === 0 ? 'just now' : `${minutes}m ago`
-        }
-        return `${hours}h ago`
-      }
-      return `${days}d ago`
-    } catch {
-      return timestamp
-    }
-  }
-
   // Always show full thread view with per-thread scrolling
   return (
     <Paper
@@ -152,7 +132,7 @@ export const InlineCommentThread: React.FC<InlineCommentThreadProps> = ({
                     </Text>
                   )}
                   <Text size="xs" c="dimmed">
-                    {formatTimestamp(comment.timestamp)}
+                    {formatRelativeTime(comment.timestamp)}
                   </Text>
                 </Group>
                 <Text size="sm" style={{ whiteSpace: 'pre-wrap' }}>
@@ -235,7 +215,7 @@ export const InlineCommentThread: React.FC<InlineCommentThreadProps> = ({
             )}
             {thread.resolvedAt && (
               <Text size="xs" c="dimmed" fs="italic">
-                {formatTimestamp(thread.resolvedAt)}
+                {formatRelativeTime(thread.resolvedAt)}
               </Text>
             )}
           </Group>
