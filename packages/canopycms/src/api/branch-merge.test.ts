@@ -115,7 +115,27 @@ describe('branch merge api - markAsMerged', () => {
     expect(result.error).toContain('Admin access required')
   })
 
-  it('returns 400 if branch is not submitted', async () => {
+  it('marks an approved branch as archived (manual fallback reaches everything the merge-poll does)', async () => {
+    ctx.getBranchContext = vi.fn().mockResolvedValue({
+      baseRoot: '/test',
+      branchRoot: '/test/feature-x',
+      branch: {
+        name: 'feature/x',
+        status: 'approved',
+        createdBy: 'user1',
+        updatedAt: new Date().toISOString(),
+        pullRequestNumber: 42,
+      },
+    })
+
+    const result = await markAsMergedHandler(ctx, req, { branch: 'feature/x' as BranchName })
+
+    expect(result.ok).toBe(true)
+    expect(result.status).toBe(200)
+    expect(result.data?.branch.status).toBe('archived')
+  })
+
+  it('returns 400 if branch is not submitted or approved', async () => {
     ctx.getBranchContext = vi.fn().mockResolvedValue({
       baseRoot: '/test',
       branchRoot: '/test/feature-x',
@@ -132,6 +152,7 @@ describe('branch merge api - markAsMerged', () => {
     expect(result.ok).toBe(false)
     expect(result.status).toBe(400)
     expect(result.error).toContain('status is "editing"')
+    expect(result.error).toContain('"submitted" or "approved"')
   })
 
   it('returns 400 if branch has no PR', async () => {

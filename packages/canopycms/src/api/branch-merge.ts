@@ -27,12 +27,16 @@ const markAsMergedHandler = async (
   const { branchContext } = gc
   const { branch: branchName } = params
 
-  // Verify branch is submitted with a PR
-  if (branchContext.branch.status !== 'submitted') {
+  // Verify branch is submitted or approved with a PR. Approved is included
+  // because the worker's merge-poll (pollMergeState) archives merged PRs
+  // from either state — the manual fallback must reach everything the
+  // automatic path does (worker down, PR merged then branch deleted on
+  // GitHub before the poll, dev mode).
+  if (branchContext.branch.status !== 'submitted' && branchContext.branch.status !== 'approved') {
     return {
       ok: false,
       status: 400,
-      error: `Cannot mark as merged: branch status is "${branchContext.branch.status}", expected "submitted"`,
+      error: `Cannot mark as merged: branch status is "${branchContext.branch.status}", expected "submitted" or "approved"`,
     }
   }
 
@@ -94,6 +98,12 @@ const markAsMergedHandler = async (
 /**
  * Mark a branch as merged and archived after PR is merged on GitHub
  * POST /:branch/mark-merged
+ *
+ * Deliberately no 'submittableBranch' guard: needs no new guard because the
+ * handler above already requires status === 'submitted' AND a recorded
+ * pullRequestNumber, both unreachable for the base branch once the submit
+ * guard lands (and a deployed instance's stranded main has no PR number, so
+ * it's refused there too).
  */
 export const markAsMerged = defineEndpoint({
   namespace: 'workflow',

@@ -585,6 +585,8 @@ Both branch identity fields are resolved once at service creation and baked into
 
 This only affects non-editor content serving (public site, `getCanopy()`, AI content). The editor is pinned to its own branch via URL params and stores drafts per-branch in localStorage.
 
+**The resolved base branch is protected** (see [ARCHITECTURE.md](ARCHITECTURE.md#protected-base-branch)): it can never be submitted for review in either mode, and in prod it is read-only in the editor. In dev the base branch — which is your detected HEAD branch when `defaultBaseBranch` is unset — **stays editable** (editing it is the normal local flow, reconciled via `canopycms sync`), but the Submit button is hidden on it: a branch can't PR against itself. Create a CMS editing branch when you want to exercise the submit/review flow locally.
+
 The detection priority for `defaultActiveBranch` is:
 
 1. Explicit `defaultActiveBranch` in config (both modes)

@@ -8,7 +8,7 @@ import { withdrawBranch } from './branch-withdraw'
 import { requestChanges, approveBranch } from './branch-review'
 import { markAsMerged } from './branch-merge'
 import { defineEndpoint } from './route-builder'
-import { canPerformWorkflowAction } from '../authorization'
+import { canPerformWorkflowAction, getBranchProtection } from '../authorization'
 import { syncSubmitPr } from './github-sync'
 import { getErrorMessage, redactCredentials, sanitizeErrorMessage } from '../utils/error'
 
@@ -34,9 +34,18 @@ const submitBranchForMergeHandler = async (
 ): Promise<BranchResponse> => {
   const { branchContext } = gc
 
-  // Check if user can perform workflow actions (creator OR ACL access)
+  // Check if user can perform workflow actions (creator OR ACL access). isProtectedBranch
+  // is passed for defense-in-depth (disables the system-branch grant); the 'submittableBranch'
+  // guard above already refuses base-branch submits outright before the handler runs.
   const defaultAccess = ctx.services.config.defaultBranchAccess ?? 'deny'
-  const canSubmit = canPerformWorkflowAction(branchContext, req.user, defaultAccess)
+  const { isProtected } = getBranchProtection(
+    ctx.services.config,
+    branchContext.branch.name,
+    branchContext.branch.baseBranch,
+  )
+  const canSubmit = canPerformWorkflowAction(branchContext, req.user, defaultAccess, {
+    isProtectedBranch: isProtected,
+  })
   if (!canSubmit) {
     return {
       ok: false,
@@ -77,6 +86,10 @@ const submitBranchForMergeHandler = async (
       pullRequestUrl: prResult.prUrl ?? branchContext.branch.pullRequestUrl,
       pullRequestNumber: prResult.prNumber ?? branchContext.branch.pullRequestNumber,
       ...(prResult.syncStatus !== undefined ? { syncStatus: prResult.syncStatus } : {}),
+      // PR-W2 (M2): the rebase loop skips submitted/approved branches, so a
+      // pre-submit rebase-failure record would otherwise stick as a stale
+      // warning through review and archive.
+      rebaseFailure: undefined,
     },
   })
 
@@ -136,8 +149,9 @@ const submitBranchForMerge = defineEndpoint({
     },
   },
   // Branch-level access not checked here — handler uses canPerformWorkflowAction() for
-  // finer-grained authorization (creator OR ACL access).
-  guards: ['branch'] as const,
+  // finer-grained authorization (creator OR ACL access). 'submittableBranch' blocks the
+  // base branch outright (both modes — submitting it would push straight to itself).
+  guards: ['branch', 'submittableBranch'] as const,
   handler: submitBranchForMergeHandler,
 })
 

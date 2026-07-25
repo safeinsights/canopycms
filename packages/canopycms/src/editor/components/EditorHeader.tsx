@@ -1,11 +1,24 @@
 import { forwardRef } from 'react'
-import { Badge, Box, Button, Group, Menu, Paper, Stack, Text, Title, Tooltip } from '@mantine/core'
-import { IconFolderOpen, IconChevronDown, IconGitBranch } from '@tabler/icons-react'
+import {
+  Alert,
+  Badge,
+  Box,
+  Button,
+  Group,
+  Menu,
+  Paper,
+  Stack,
+  Text,
+  Title,
+  Tooltip,
+} from '@mantine/core'
+import { IconFolderOpen, IconChevronDown, IconGitBranch, IconLock } from '@tabler/icons-react'
 import type { OperatingMode } from '../../operating-mode'
 import type { BranchStatus } from '../../types'
 import type { EditorEntry } from '../Editor'
 import type { LogicalPath } from '../../paths/types'
 import { clientOperatingStrategy } from '../../operating-mode/client'
+import { isAdmin, isReviewer } from '../../authorization/helpers'
 
 /**
  * Props for the EditorHeader component.
@@ -150,6 +163,19 @@ export interface EditorHeaderProps {
    * Branch access control lists.
    */
   branchAccess?: { allowedUsers?: string[]; allowedGroups?: string[] }
+
+  /**
+   * Whether the current branch is the protected base branch (see
+   * authorization/protected-branch.ts). Hides the Submit button (Withdraw
+   * stays, as the recovery path). Default false.
+   */
+  branchIsProtected?: boolean
+
+  /**
+   * Whether the current branch is read-only (protected base branch in prod).
+   * Disables Save and shows the "create a branch" banner below. Default false.
+   */
+  branchReadOnly?: boolean
 }
 
 /**
@@ -229,6 +255,8 @@ export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(functi
     userContext,
     branchCreatedBy,
     branchAccess,
+    branchIsProtected = false,
+    branchReadOnly = false,
   }: EditorHeaderProps,
   ref,
 ) {
@@ -433,15 +461,23 @@ export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(functi
           </Stack>
           <Group gap="xs" wrap="nowrap">
             <Tooltip
-              label={!hasUnsavedChanges && currentEntry ? 'No changes to save' : ''}
-              disabled={hasUnsavedChanges || !currentEntry}
+              label={
+                branchReadOnly
+                  ? 'The base branch is read-only'
+                  : !hasUnsavedChanges && currentEntry
+                    ? 'No changes to save'
+                    : ''
+              }
+              disabled={!branchReadOnly && (hasUnsavedChanges || !currentEntry)}
             >
               <Button
                 data-testid="save-button"
                 variant="light"
                 size="sm"
                 onClick={onSave}
-                disabled={!branchName || !currentEntry || busy || !hasUnsavedChanges}
+                disabled={
+                  !branchName || !currentEntry || busy || !hasUnsavedChanges || branchReadOnly
+                }
               >
                 Save File
               </Button>
@@ -450,17 +486,31 @@ export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(functi
               const isSubmitted = branchStatus === 'submitted'
               const isEditing = branchStatus === 'editing'
 
-              // Check if user can perform workflow actions (creator OR ACL access OR system branch)
+              // The protected base branch can never be submitted for review (both
+              // modes); hide the button entirely rather than showing it disabled.
+              // Withdraw stays available as the recovery path for a base branch
+              // wrongly stuck in 'submitted'.
+              if (branchIsProtected && !isSubmitted) return null
+
+              // Check if user can perform workflow actions (creator OR ACL access OR system
+              // branch OR privileged). Admins/Reviewers must be able to withdraw a protected
+              // base branch wrongly stuck in 'submitted' -- the documented recovery flow --
+              // even when they're neither its creator nor in its ACL; this mirrors the
+              // server's canPerformWorkflowAction and BranchManager.tsx.
               const userIsCreator = userContext?.userId === branchCreatedBy
-              const isSystemBranch = branchCreatedBy === 'canopycms-system'
+              const isSystemBranch = branchCreatedBy === 'canopycms-system' && !branchIsProtected
               const userInACL =
                 userContext &&
                 branchAccess &&
                 (branchAccess.allowedUsers?.includes(userContext.userId) ||
                   userContext.groups?.some((g) => branchAccess.allowedGroups?.includes(g)))
+              const userIsPrivileged =
+                !!userContext &&
+                (isAdmin(userContext.groups ?? []) || isReviewer(userContext.groups ?? []))
 
               const canPerformAction =
-                (userIsCreator || userInACL || isSystemBranch) && (isEditing || isSubmitted)
+                (userIsCreator || userInACL || isSystemBranch || userIsPrivileged) &&
+                (isEditing || isSubmitted)
 
               return (
                 <Tooltip
@@ -485,6 +535,24 @@ export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(functi
             })()}
           </Group>
         </Group>
+        {branchReadOnly && (
+          <Alert
+            icon={<IconLock size={16} />}
+            color="yellow"
+            variant="light"
+            mt="sm"
+            data-testid="protected-branch-banner"
+          >
+            <Group justify="space-between" align="center" gap="sm" wrap="wrap">
+              <Text size="sm">
+                {`You are viewing the protected base branch "${branchName}". Content is read-only — create a branch to make changes.`}
+              </Text>
+              <Button size="xs" variant="light" color="yellow" onClick={onBranchManagerOpen}>
+                Create a branch
+              </Button>
+            </Group>
+          </Alert>
+        )}
       </Box>
     </Paper>
   )

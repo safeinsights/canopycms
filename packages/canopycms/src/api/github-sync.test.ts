@@ -73,6 +73,61 @@ describe('syncSubmitPr (GIT-H1)', () => {
     expect(result).toEqual({})
   })
 
+  // ---------------------------------------------------------------------------
+  // Protected base branch backstop: head === base must never open (or attempt
+  // to open) a PR, on either the direct or worker path. Defense-in-depth --
+  // the 'submittableBranch' API guard should already have refused this.
+  // ---------------------------------------------------------------------------
+
+  describe('protected base branch (head === base)', () => {
+    it('returns sync-failed without calling GitHub, when githubService is available', async () => {
+      const consoleSpy = mockConsole()
+      const githubService = makeGitHubService()
+      const ctx = createMockApiContext({
+        services: { config: baseConfig, githubService },
+      })
+      const branchContext = createMockBranchContext({ branchName: 'main' })
+
+      const result = await syncSubmitPr(ctx, branchContext)
+
+      expect(result).toEqual({ syncStatus: 'sync-failed' })
+      expect(githubService.createOrUpdatePR).not.toHaveBeenCalled()
+      expect(githubService.updatePullRequest).not.toHaveBeenCalled()
+      expect(consoleSpy).toHaveErrored('Refusing to open a PR for main against itself')
+      consoleSpy.restore()
+    })
+
+    it('returns sync-failed without enqueueing a task, on the worker path', async () => {
+      const consoleSpy = mockConsole()
+      const ctx = createMockApiContext({
+        services: { config: baseConfig, githubService: undefined },
+      })
+      const branchContext = createMockBranchContext({ branchName: 'main' })
+
+      const result = await syncSubmitPr(ctx, branchContext)
+
+      expect(result).toEqual({ syncStatus: 'sync-failed' })
+      expect(mockEnqueueTask).not.toHaveBeenCalled()
+      expect(consoleSpy).toHaveErrored('Refusing to open a PR for main against itself')
+      consoleSpy.restore()
+    })
+
+    it('catches a sanitization-equivalent base branch name too', async () => {
+      const consoleSpy = mockConsole()
+      const ctx = createMockApiContext({
+        services: { config: { ...baseConfig, defaultBaseBranch: 'feature/foo' } },
+      })
+      const branchContext = createMockBranchContext({ branchName: 'feature-foo' })
+
+      const result = await syncSubmitPr(ctx, branchContext)
+
+      expect(result).toEqual({ syncStatus: 'sync-failed' })
+      expect(mockEnqueueTask).not.toHaveBeenCalled()
+      expect(consoleSpy).toHaveErrored('Refusing to open a PR for feature-foo against itself')
+      consoleSpy.restore()
+    })
+  })
+
   describe('direct path (githubService available)', () => {
     it('updates the existing PR when pullRequestNumber is already known', async () => {
       const githubService = makeGitHubService()

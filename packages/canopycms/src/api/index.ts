@@ -80,6 +80,21 @@ export type {
 } from '../schema/schema-store-types'
 export type { EntryTypeSummary } from './entries'
 // Content API uses path-based routing now - no separate params/body types exported
+export type {
+  AdminStatusResponse,
+  AdminStatusData,
+  AdminTasksResponse,
+  AdminTasksData,
+  ListAdminTasksParams,
+  AdminRetryTaskResponse,
+  AdminRetryTaskData,
+  RetryTaskParams,
+  AdminDeleteTaskResponse,
+  AdminDeleteTaskData,
+  DeleteTaskParams,
+  WorkerLiveness,
+  WorkerLivenessState,
+} from './admin'
 
 // Export route definitions
 export { USER_ROUTES } from './user'

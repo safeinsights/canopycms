@@ -402,3 +402,31 @@ works.
 **Auth cache empty**: Run `npx canopycms worker run-once` to populate, or wait for the EC2 worker's 15-minute refresh cycle.
 
 **Preview not rendering**: Make sure your page components use `useCanopyPreview` and the CMS Lambda has the same React components as the public site (same app, two builds).
+
+**Stranded edits on the base branch** (editor saves made directly on `main` before
+base-branch protection existed, or via any future bypass): the base clone on EFS has
+uncommitted changes that will never reach a PR. Symptoms: worker logs show
+`Base branch workspace (<base>) has uncommitted changes -- skipping refresh. Dirty
+files: ...` on every sync — the base workspace stops tracking origin until cleaned.
+Recovery:
+
+1. Reach the EFS mount (SSM/SSH into the worker EC2, or any shell with the
+   filesystem) and go to `{workspaceRoot}/content-branches/{baseBranch}`.
+2. Inspect what's stranded: `git status`, and `git log origin/<base>..<base>` for
+   stranded local commits.
+3. In the editor, create a rescue branch (it forks from the origin base). Copy the
+   stranded `content/` changes from the base clone into the rescue branch's clone
+   directory (or, from the base clone, `git checkout -b rescue && git push` and
+   delete the local ref afterwards).
+4. Only after confirming the rescue branch holds the edits, reset the base clone:
+   `git checkout <base> && git reset --hard origin/<base>`, plus `git clean -fd`
+   for untracked strays. The worker's base refresh resumes fast-forwarding
+   automatically on the next sync cycle.
+5. If the base branch's `.canopy-meta/branch.json` was left in
+   `status: "submitted"` / `syncStatus: "sync-failed"` (from a pre-protection
+   submit attempt), set `status` back to `"editing"` and remove `syncStatus` — or
+   have an admin use **Withdraw** in the editor, which is deliberately still
+   allowed on the protected base branch as the recovery path. `mark-merged` is not
+   a cleanup option here: it requires a recorded PR number, which a failed base
+   submit never produced.
+6. Submit the rescue branch through the normal flow.

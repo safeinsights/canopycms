@@ -16,7 +16,7 @@ import {
   Tooltip,
 } from '@mantine/core'
 import type { OperatingMode } from '../operating-mode'
-import type { PullRequestState } from '../types'
+import type { ConflictStatus, PullRequestState, SyncStatus } from '../types'
 import type { CommentThread } from '../comment-store'
 import type { UserSearchResult } from '../auth/types'
 import { BranchComments } from './comments/BranchComments'
@@ -38,7 +38,15 @@ export interface BranchSummary {
   pullRequestNumber?: number
   pullRequestState?: PullRequestState
   mergedAt?: string
+  /** Sync status for async GitHub operations (used when Lambda has no internet) */
+  syncStatus?: SyncStatus
+  /** Whether this branch has unresolved merge conflicts with the base branch */
+  conflictStatus?: ConflictStatus
+  /** ContentIds of entries where --theirs was applied during rebase; cleared on clean rebase */
+  conflictFiles?: string[]
   commentCount?: number
+  isProtected?: boolean
+  readOnly?: boolean
 }
 
 export interface UserContext {
@@ -75,7 +83,10 @@ export const getBranchPermissions = (
   const userIsAdmin = isAdmin(user.groups)
   const userIsReviewer = isReviewer(user.groups)
   const userIsCreator = branch.createdBy === user.userId
-  const isSystemBranch = branch.createdBy === 'canopycms-system'
+  // The system-branch grant is disabled on the protected base branch -- its
+  // auto-provision marker (createdBy: 'canopycms-system') would otherwise let
+  // anyone with general access submit/withdraw/delete it.
+  const isSystemBranch = branch.createdBy === 'canopycms-system' && !branch.isProtected
 
   // Check if user is in branch ACL
   const userInACL =
@@ -87,18 +98,24 @@ export const getBranchPermissions = (
   const canPerformWorkflowActions =
     userIsCreator || userInACL || isSystemBranch || userIsAdmin || userIsReviewer
 
-  // Submit: Can perform workflow actions AND branch is in editing status
-  const canSubmit = canPerformWorkflowActions && branch.status === 'editing'
+  // Submit: Can perform workflow actions AND branch is in editing status. The
+  // protected base branch can never be submitted (both modes).
+  const canSubmit = canPerformWorkflowActions && branch.status === 'editing' && !branch.isProtected
 
   // Withdraw: Can perform workflow actions AND branch is in submitted status.
   // Allowed even when the PR was closed without merging -- that's the
   // deliberate recovery path for a closed-unmerged PR (a later resubmit
   // opens a fresh PR). The server skips the now-impossible draft conversion
-  // in that case; see api/branch-withdraw.ts.
+  // in that case; see api/branch-withdraw.ts. Not additionally gated on
+  // !branch.isProtected: withdraw is the recovery path for a protected branch
+  // wrongly stuck in 'submitted' -- creator/ACL/privileged users can still
+  // reach it (the system-branch grant above already excludes them).
   const canWithdraw = canPerformWorkflowActions && branch.status === 'submitted'
 
-  // Delete: Admin or creator (but not if submitted)
-  const canDelete = (userIsAdmin || userIsCreator) && branch.status !== 'submitted'
+  // Delete: Admin or creator (but not if submitted, and never the base branch --
+  // deleting the prod serving clone is never valid)
+  const canDelete =
+    (userIsAdmin || userIsCreator) && branch.status !== 'submitted' && !branch.isProtected
 
   // Request changes: Only Reviewers or Admins can request changes on submitted
   // branches. Same closed-PR restriction as withdraw applies (converts PR to draft).
@@ -299,6 +316,15 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
                             Merged
                           </Badge>
                         )}
+                        {b.isProtected && (
+                          <Badge
+                            color="neutral"
+                            variant="outline"
+                            data-testid={`branch-protected-badge-${b.name}`}
+                          >
+                            Protected
+                          </Badge>
+                        )}
                         {b.pullRequestNumber && (
                           <Badge
                             color={
@@ -318,6 +344,40 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
                           <Badge color="grape" variant="light">
                             {b.commentCount} {b.commentCount === 1 ? 'comment' : 'comments'}
                           </Badge>
+                        )}
+                        {b.syncStatus === 'sync-failed' && (
+                          <Tooltip label="GitHub sync failed — an admin can retry it from System health.">
+                            <Badge
+                              color="red"
+                              variant="light"
+                              data-testid={`sync-failed-badge-${b.name}`}
+                            >
+                              Sync failed
+                            </Badge>
+                          </Tooltip>
+                        )}
+                        {b.syncStatus === 'pending-sync' && (
+                          <Tooltip label="Changes are on their way to GitHub.">
+                            <Badge
+                              color="gray"
+                              variant="light"
+                              data-testid={`pending-sync-badge-${b.name}`}
+                            >
+                              Syncing…
+                            </Badge>
+                          </Tooltip>
+                        )}
+                        {b.conflictStatus === 'conflicts-detected' && (
+                          <Tooltip label="This branch's version was kept for conflicting entries during a rebase — review the flagged entries.">
+                            <Badge
+                              color="orange"
+                              variant="light"
+                              data-testid={`conflicts-badge-${b.name}`}
+                            >
+                              Conflicts
+                              {b.conflictFiles?.length ? ` (${b.conflictFiles.length})` : ''}
+                            </Badge>
+                          </Tooltip>
                         )}
                       </Group>
                       <Group gap="xs" align="center">
@@ -427,7 +487,11 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
                         </Tooltip>
                       ) : (
                         <Tooltip
-                          label="Only the branch creator can submit"
+                          label={
+                            b.isProtected
+                              ? 'The base branch cannot be submitted'
+                              : 'Only the branch creator can submit'
+                          }
                           disabled={perms.canSubmit}
                         >
                           <Button

@@ -5,7 +5,7 @@ import type { BranchContext } from '../types'
 import type { BranchResponse } from './branch'
 import { getBranchMetadataFileManager } from '../branch-metadata'
 import { defineEndpoint } from './route-builder'
-import { canPerformWorkflowAction } from '../authorization'
+import { canPerformWorkflowAction, getBranchProtection } from '../authorization'
 import { syncConvertToDraft } from './github-sync'
 
 const withdrawBranchHandler = async (
@@ -16,9 +16,19 @@ const withdrawBranchHandler = async (
 ): Promise<BranchResponse> => {
   const { branchContext } = gc
 
-  // Check if user can perform workflow actions (creator OR ACL access)
+  // Check if user can perform workflow actions (creator OR ACL access). On the
+  // protected base branch, the system-branch grant is disabled -- withdraw is
+  // still allowed (it's the only self-serve recovery for a base branch wrongly
+  // stuck in 'submitted'), but restricted to privileged/creator/ACL users.
   const defaultAccess = ctx.services.config.defaultBranchAccess ?? 'deny'
-  const canWithdraw = canPerformWorkflowAction(branchContext, req.user, defaultAccess)
+  const { isProtected } = getBranchProtection(
+    ctx.services.config,
+    branchContext.branch.name,
+    branchContext.branch.baseBranch,
+  )
+  const canWithdraw = canPerformWorkflowAction(branchContext, req.user, defaultAccess, {
+    isProtectedBranch: isProtected,
+  })
   if (!canWithdraw) {
     return {
       ok: false,
@@ -68,6 +78,12 @@ const withdrawBranchHandler = async (
 /**
  * Withdraw a submitted branch, converting the PR to draft and unlocking editing
  * POST /:branch/withdraw
+ *
+ * Deliberately no 'submittableBranch' guard: withdraw is the only self-serve
+ * recovery path for a base branch wrongly stuck in 'submitted' (e.g. a failed
+ * submit backstop, see services.ts submitBranch / github-sync.ts syncSubmitPr).
+ * The handler restricts it on protected branches via canPerformWorkflowAction's
+ * isProtectedBranch option instead of blocking it outright.
  */
 export const withdrawBranch = defineEndpoint({
   namespace: 'workflow',

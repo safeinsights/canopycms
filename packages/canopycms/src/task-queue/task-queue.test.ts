@@ -8,11 +8,13 @@ import {
   completeTask,
   failTask,
   retryTask,
+  requeueFailedTask,
   getTask,
   listTasks,
   getQueueStats,
   recoverOrphanedTasks,
   cleanupOldTasks,
+  listCorruptTaskFiles,
 } from './task-queue'
 
 describe('Task Queue', () => {
@@ -387,6 +389,69 @@ describe('Task Queue', () => {
   })
 
   // ========================================================================
+  // requeueFailedTask
+  // ========================================================================
+
+  describe('requeueFailedTask', () => {
+    it('requeues with a fresh ID and survives the dequeue dedup that would delete a reused ID', async () => {
+      const originalId = await enqueueTask(tmpDir, { action: 'push', payload: { branch: 'x' } })
+      await dequeueTask(tmpDir)
+      await failTask(tmpDir, originalId, 'boom')
+
+      const result = await requeueFailedTask(tmpDir, originalId)
+      expect('newTaskId' in result).toBe(true)
+      const { newTaskId } = result as { newTaskId: string }
+      expect(newTaskId).not.toBe(originalId)
+
+      const pendingContent = JSON.parse(
+        await fs.readFile(path.join(tmpDir, 'pending', `${newTaskId}.json`), 'utf-8'),
+      )
+      expect(pendingContent.id).toBe(newTaskId)
+      expect(pendingContent.status).toBe('pending')
+      expect(pendingContent.retryCount).toBe(0)
+      expect(pendingContent.payload.requeuedFrom).toBe(originalId)
+      expect(pendingContent.payload.branch).toBe('x')
+      expect(pendingContent.createdAt).toBeTruthy()
+
+      // The failed original was unlinked.
+      await expect(fs.stat(path.join(tmpDir, 'failed', `${originalId}.json`))).rejects.toThrow()
+
+      // Proves the dedup-by-ID in dequeueTask (which would silently delete a
+      // pending file whose ID already exists in failed/) does NOT eat this
+      // requeue, because the requeued task has a brand-new ID.
+      const dequeued = await dequeueTask(tmpDir)
+      expect(dequeued).not.toBeNull()
+      expect(dequeued!.id).toBe(newTaskId)
+    })
+
+    it('returns not-found when there is no such file in failed/', async () => {
+      const result = await requeueFailedTask(tmpDir, 'does-not-exist')
+      expect(result).toEqual({ error: 'not-found' })
+    })
+
+    it('returns unparseable and leaves the garbage file in place', async () => {
+      await fs.mkdir(path.join(tmpDir, 'failed'), { recursive: true })
+      await fs.writeFile(path.join(tmpDir, 'failed', 'garbage.json'), 'not json {{{', 'utf-8')
+
+      const result = await requeueFailedTask(tmpDir, 'garbage')
+      expect(result).toEqual({ error: 'unparseable' })
+      await expect(fs.stat(path.join(tmpDir, 'failed', 'garbage.json'))).resolves.toBeTruthy()
+    })
+
+    it('the new pending file and the failed-original unlink are both observable post-call', async () => {
+      const originalId = await enqueueTask(tmpDir, { action: 'push', payload: {} })
+      await dequeueTask(tmpDir)
+      await failTask(tmpDir, originalId, 'boom')
+
+      const result = await requeueFailedTask(tmpDir, originalId)
+      const { newTaskId } = result as { newTaskId: string }
+
+      await expect(fs.stat(path.join(tmpDir, 'pending', `${newTaskId}.json`))).resolves.toBeTruthy()
+      await expect(fs.stat(path.join(tmpDir, 'failed', `${originalId}.json`))).rejects.toThrow()
+    })
+  })
+
+  // ========================================================================
   // Orphan recovery
   // ========================================================================
 
@@ -524,6 +589,56 @@ describe('Task Queue', () => {
         failed: 0,
         corrupt: 0,
       })
+    })
+  })
+
+  // ========================================================================
+  // listCorruptTaskFiles
+  // ========================================================================
+
+  describe('listCorruptTaskFiles', () => {
+    it('returns [] when corrupt/ is missing', async () => {
+      expect(await listCorruptTaskFiles(tmpDir)).toEqual([])
+    })
+
+    it('lists fileName/size/mtime/rawSnippet for files quarantined via dequeue', async () => {
+      await fs.mkdir(path.join(tmpDir, 'pending'), { recursive: true })
+      await fs.writeFile(path.join(tmpDir, 'pending', 'bad.json'), 'not json {{{', 'utf-8')
+
+      // Route the corrupt file through the queue's own quarantine path
+      // (dequeue -> moveToCorrupt) rather than hand-writing into corrupt/.
+      expect(await dequeueTask(tmpDir)).toBeNull()
+
+      const files = await listCorruptTaskFiles(tmpDir)
+      expect(files).toHaveLength(1)
+      expect(files[0].fileName).toBe('bad.json')
+      expect(files[0].size).toBe('not json {{{'.length)
+      expect(files[0].rawSnippet).toBe('not json {{{')
+      expect(() => new Date(files[0].mtime).toISOString()).not.toThrow()
+    })
+
+    it('truncates rawSnippet to 500 bytes for a large file', async () => {
+      await fs.mkdir(path.join(tmpDir, 'corrupt'), { recursive: true })
+      const large = 'x'.repeat(2000)
+      await fs.writeFile(path.join(tmpDir, 'corrupt', 'huge.json'), large, 'utf-8')
+
+      const [file] = await listCorruptTaskFiles(tmpDir)
+      expect(file.rawSnippet).toHaveLength(500)
+      expect(file.size).toBe(2000)
+    })
+
+    it('respects limit and returns newest first', async () => {
+      await fs.mkdir(path.join(tmpDir, 'corrupt'), { recursive: true })
+      await fs.writeFile(path.join(tmpDir, 'corrupt', 'a.json'), 'a', 'utf-8')
+      await fs.utimes(path.join(tmpDir, 'corrupt', 'a.json'), new Date(1000), new Date(1000))
+      await fs.writeFile(path.join(tmpDir, 'corrupt', 'b.json'), 'b', 'utf-8')
+      await fs.utimes(path.join(tmpDir, 'corrupt', 'b.json'), new Date(3000), new Date(3000))
+      await fs.writeFile(path.join(tmpDir, 'corrupt', 'c.json'), 'c', 'utf-8')
+      await fs.utimes(path.join(tmpDir, 'corrupt', 'c.json'), new Date(2000), new Date(2000))
+
+      const files = await listCorruptTaskFiles(tmpDir, 2)
+      expect(files).toHaveLength(2)
+      expect(files.map((f) => f.fileName)).toEqual(['b.json', 'c.json'])
     })
   })
 

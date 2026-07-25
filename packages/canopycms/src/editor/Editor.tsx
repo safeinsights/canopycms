@@ -38,6 +38,10 @@ import { BranchManager } from './BranchManager'
 import { CommentsPanel } from './CommentsPanel'
 import { GroupManager } from './GroupManager'
 import { PermissionManager } from './PermissionManager'
+import { SystemHealthPanel } from './admin/SystemHealthPanel'
+// Import directly from helpers to avoid server-only code in authorization barrel
+// (same rationale as BranchManager.tsx's identical import)
+import { isAdmin } from '../authorization/helpers'
 import type { CommentThread } from '../comment-store'
 import { buildPreviewSrc, buildCollectionLabels, buildBreadcrumbSegments } from './editor-utils'
 import {
@@ -169,6 +173,7 @@ export const Editor: React.FC<EditorProps> = ({
   const [permissionManagerOpen, setPermissionManagerOpen] = useState(false)
   const [branchManagerOpen, setBranchManagerOpen] = useState(false)
   const [mediaLibraryOpen, setMediaLibraryOpen] = useState(false)
+  const [systemHealthOpen, setSystemHealthOpen] = useState(false)
 
   // Schema editor state
   const [collectionEditorOpen, setCollectionEditorOpen] = useState(false)
@@ -205,6 +210,11 @@ export const Editor: React.FC<EditorProps> = ({
 
   // Fetch current user context for permission checks
   const { userContext } = useUserContext()
+
+  // The System Health panel (PR-U1) is admin-only -- gate both the sidebar
+  // menu item and the modal mount on it, same pattern BranchManager.tsx uses
+  // for its own admin-only actions.
+  const showSystemHealth = isAdmin(userContext?.groups)
 
   // Use custom hooks for layout, entry, draft, group, permission, comment, and branch management
   const { layout, setLayout, highlightEnabled, setHighlightEnabled, headerRef, headerHeight } =
@@ -888,6 +898,8 @@ export const Editor: React.FC<EditorProps> = ({
             userContext={userContext}
             branchCreatedBy={currentBranch?.createdBy}
             branchAccess={currentBranch?.access}
+            branchIsProtected={currentBranch?.isProtected}
+            branchReadOnly={currentBranch?.readOnly}
             onNavigatorOpen={() => setNavigatorOpen(true)}
             onFileReload={handleReload}
             onFileDiscardDraft={handleDiscardFileDraft}
@@ -993,6 +1005,7 @@ export const Editor: React.FC<EditorProps> = ({
                 onPermissionManagerOpen={() => setPermissionManagerOpen(true)}
                 onGroupManagerOpen={() => setGroupManagerOpen(true)}
                 onMediaLibraryOpen={() => setMediaLibraryOpen(true)}
+                onSystemHealthOpen={showSystemHealth ? () => setSystemHealthOpen(true) : undefined}
                 AccountComponent={AccountComponent}
                 onAccountClick={onAccountClick}
                 onLogoutClick={onLogoutClick}
@@ -1015,6 +1028,7 @@ export const Editor: React.FC<EditorProps> = ({
                 <Group gap="xs">
                   {navCollections &&
                     navCollections.length > 0 &&
+                    !currentBranch?.readOnly &&
                     (navCollections[0].onAdd || navCollections[0].onAddSubCollection) && (
                       <Menu shadow="md" width={200} withinPortal position="bottom-end">
                         <Menu.Target>
@@ -1096,6 +1110,7 @@ export const Editor: React.FC<EditorProps> = ({
                     onReorderEntry={handleReorderEntry}
                     hiddenRootPath={hiddenRootPath}
                     loading={entriesInitializing}
+                    readOnly={currentBranch?.readOnly ?? false}
                   />
                 </Box>
               </Drawer.Body>
@@ -1229,6 +1244,14 @@ export const Editor: React.FC<EditorProps> = ({
               onClose={() => setPermissionManagerOpen(false)}
             />
           </Drawer>
+
+          {/* System Health Panel (admin-only) */}
+          {showSystemHealth && (
+            <SystemHealthPanel
+              opened={systemHealthOpen}
+              onClose={() => setSystemHealthOpen(false)}
+            />
+          )}
 
           {/* Media Library Drawer */}
           <MediaLibrary

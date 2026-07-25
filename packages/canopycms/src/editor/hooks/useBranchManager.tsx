@@ -4,9 +4,10 @@ import { useEffect, useMemo, useState } from 'react'
 import { Text } from '@mantine/core'
 import { modals } from '@mantine/modals'
 import { notifications } from '@mantine/notifications'
-import type { BranchMetadata, PullRequestState } from '../../types'
+import type { ConflictStatus, PullRequestState, SyncStatus } from '../../types'
 import type { OperatingMode } from '../../operating-mode'
 import type { CommentThread } from '../../comment-store'
+import type { BranchListItem } from '../../api/branch'
 import { useApiClient } from '../context'
 
 /**
@@ -69,7 +70,15 @@ export interface BranchSummary {
   pullRequestNumber?: number
   pullRequestState?: PullRequestState
   mergedAt?: string
+  /** Sync status for async GitHub operations (used when Lambda has no internet) */
+  syncStatus?: SyncStatus
+  /** Whether this branch has unresolved merge conflicts with the base branch */
+  conflictStatus?: ConflictStatus
+  /** ContentIds of entries where --theirs was applied during rebase; cleared on clean rebase */
+  conflictFiles?: string[]
   commentCount: number
+  isProtected: boolean
+  readOnly: boolean
 }
 
 export interface UseBranchManagerOptions {
@@ -97,9 +106,9 @@ export interface UseBranchManagerOptions {
 export interface UseBranchManagerReturn {
   branchName: string
   setBranchName: (name: string) => void
-  branches: BranchMetadata[]
+  branches: BranchListItem[]
   branchSummaries: BranchSummary[]
-  currentBranch: BranchMetadata | undefined
+  currentBranch: BranchListItem | undefined
   branchStatus: string
   handleSubmit: (branchName: string) => Promise<void>
   handleWithdraw: (branchName: string) => Promise<void>
@@ -147,7 +156,7 @@ export interface UseBranchManagerReturn {
 export function useBranchManager(options: UseBranchManagerOptions): UseBranchManagerReturn {
   const apiClient = useApiClient()
   const [branchName, setBranchName] = useState<string>(options.initialBranch)
-  const [branches, setBranches] = useState<BranchMetadata[]>([])
+  const [branches, setBranches] = useState<BranchListItem[]>([])
 
   const currentBranch = branches.find((b) => b.name === branchName)
   const branchStatus = currentBranch?.status ?? 'editing'
@@ -170,7 +179,12 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
         pullRequestNumber: b.pullRequestNumber,
         pullRequestState: b.pullRequestState,
         mergedAt: b.mergedAt,
+        syncStatus: b.syncStatus,
+        conflictStatus: b.conflictStatus,
+        conflictFiles: b.conflictFiles,
         commentCount: unresolvedCount,
+        isProtected: b.isProtected ?? false,
+        readOnly: b.readOnly ?? false,
       }
     })
   }, [branches, branchName, options.comments])

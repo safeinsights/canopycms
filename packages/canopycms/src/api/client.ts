@@ -21,6 +21,7 @@ import type { ExternalGroupsResponse, InternalGroupsResponse, UpdateInternalGrou
 import type { UserInfoResponse } from './user'
 import type { AddEntryTypeApiResponse, CreateCollectionApiResponse, DeleteCollectionApiResponse, GetCollectionApiResponse, GetSchemaApiResponse, InvalidateSchemaCacheApiResponse, RemoveEntryTypeApiResponse, UpdateCollectionApiResponse, UpdateEntryTypeApiResponse, UpdateOrderApiResponse, UpdateOrderBody } from './schema'
 import type { CreateCollectionInput, CreateEntryTypeInput, UpdateCollectionInput, UpdateEntryTypeInput } from './../schema/schema-store-types'
+import type { AdminDeleteTaskResponse, AdminRetryTaskResponse, AdminStatusResponse, AdminTasksResponse, BranchHealthResponse, PurgeBranchDirResponse, RepairBranchDirResponse } from './admin'
 
 /**
  * Options for creating an ApiClient
@@ -434,6 +435,60 @@ export class CanopyApiClient {
      */
     invalidateSchemaCache: (params: Record<string, string>): Promise<InvalidateSchemaCacheApiResponse> => {
       return this.request('POST', this.buildPath('/:branch/schema/invalidate-cache', params))
+    },
+  }
+
+  /**
+   * admin - Auto-generated methods
+   */
+  readonly admin = {
+    /**
+     * branchHealth - GET /admin/branch-health
+     */
+    branchHealth: (): Promise<BranchHealthResponse> => {
+      return this.request('GET', '/admin/branch-health')
+    },
+
+    /**
+     * purgeBranchDir - POST /admin/branch-dirs/:dirName/purge
+     */
+    purgeBranchDir: (params: Record<string, string>): Promise<PurgeBranchDirResponse> => {
+      return this.request('POST', this.buildPath('/admin/branch-dirs/:dirName/purge', params))
+    },
+
+    /**
+     * repairBranchDir - POST /admin/branch-dirs/:dirName/repair-metadata
+     */
+    repairBranchDir: (params: Record<string, string>): Promise<RepairBranchDirResponse> => {
+      return this.request('POST', this.buildPath('/admin/branch-dirs/:dirName/repair-metadata', params))
+    },
+
+    /**
+     * status - GET /admin/status
+     */
+    status: (): Promise<AdminStatusResponse> => {
+      return this.request('GET', '/admin/status')
+    },
+
+    /**
+     * listTasks - GET /admin/tasks/:status
+     */
+    listTasks: (params: Record<string, string>): Promise<AdminTasksResponse> => {
+      return this.request('GET', this.buildPath('/admin/tasks/:status', params))
+    },
+
+    /**
+     * retryTask - POST /admin/tasks/:taskId/retry
+     */
+    retryTask: (params: Record<string, string>): Promise<AdminRetryTaskResponse> => {
+      return this.request('POST', this.buildPath('/admin/tasks/:taskId/retry', params))
+    },
+
+    /**
+     * deleteTask - DELETE /admin/tasks/:status/:fileName
+     */
+    deleteTask: (params: Record<string, string>): Promise<AdminDeleteTaskResponse> => {
+      return this.request('DELETE', this.buildPath('/admin/tasks/:status/:fileName', params))
     },
   }
 

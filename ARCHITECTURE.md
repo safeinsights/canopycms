@@ -897,7 +897,7 @@ Branches have a lifecycle with several states:
 - **locked**: Temporarily locked from editing
 - **archived**: Merged and preserved for audit
 
-Users can work on main branch too—there's nothing preventing it. The branch model provides isolation for team collaboration but doesn't mandate it.
+In dev mode, users normally work directly on the base branch too—that's the expected local flow, and nothing prevents it. In prod mode, the base branch is read-only in the editor (see [Protected Base Branch](#protected-base-branch) below); real edits require creating a separate branch, which then goes through the submit/review/merge flow. The branch model provides isolation for team collaboration and, in prod, enforces it for the base branch specifically.
 
 ### Branch Identity: defaultBaseBranch vs defaultActiveBranch
 
@@ -928,7 +928,30 @@ CanopyCMS distinguishes between two branch concepts that serve different purpose
 
 **Per-request branch tracking:** In dev mode, every content-serving entry point — the API handler and the context factory behind `getCanopy()` — calls `refreshActiveBranch()` on each request. If the developer switches git branches, the active branch (and, when unset, the base branch used for newly provisioned workspaces) silently updates — no server restart needed. The workspace for the new branch is lazily created on the first content request via the handler's auto-create path (`BranchWorkspaceManager.openOrCreateBranch`). This only affects non-editor content serving (the public dev site, `getCanopy()`, AI content); the editor is pinned to its own branch via URL params and has branch-specific drafts in localStorage. An editor opened without a pinned branch (no URL parameter, no client-config value) adopts the server's effective default branch, which the branches-list API reports per request — nothing is hardcoded client-side, and an explicitly pinned branch is never overridden.
 
-**Fallback chain:** Throughout the system, content-serving code resolves the active branch as `defaultActiveBranch ?? defaultBaseBranch ?? 'main'`. The handler auto-creates workspaces for `defaultActiveBranch` on demand, ensuring the active branch is always ready to serve content. The HTTP handler also provisions the base-branch workspace on the first request (it is needed to load internal groups); if that provisioning fails, the handler fails loudly — logging the cause and returning a 503 that names the branch and the underlying reason — rather than letting every endpoint return confusing empty results.
+**Fallback chain:** Throughout the system, content-serving code resolves the active branch as `defaultActiveBranch ?? defaultBaseBranch ?? 'main'`. The handler auto-creates workspaces for `defaultActiveBranch` on demand, ensuring the active branch is always ready to serve content. The HTTP handler also provisions the base-branch workspace on the first request (it is needed to load internal groups); if that provisioning fails outright, the handler fails loudly — logging the cause and returning a 503 that names the branch and the underlying reason — rather than letting every endpoint return confusing empty results.
+
+**Corrupt base-branch metadata is an exception to that 503:** if the base branch's `branch.json` exists but fails to parse, the handler degrades instead of failing — it serves the request with no internal groups (bootstrap admins retain access via their configured IDs) and logs the condition, rather than 503ing every endpoint. A hard 503 here would make the problem unrecoverable through the product itself: the only fix is the admin branch-health repair action (see [Admin Observability and Recovery API](#admin-observability-and-recovery-api)), which is one of those same endpoints. Every other provisioning failure (disk full, filesystem unavailable, etc.) still 503s as before.
+
+### Protected Base Branch
+
+The resolved base branch is **protected**: it can never be submitted for review (submitting it would commit and push directly to itself — a review bypass — and then ask GitHub for a head==base PR, which 422s), and in prod mode it is **read-only in the editor** (content on the base branch only changes via merged PRs, matching the branch-first workflow). In dev mode the base branch stays editable — the developer always lands on it by definition (it follows git HEAD when unset), and editing it is the normal local flow, reconciled via `canopycms sync`.
+
+The single source of truth is `getBranchProtection(config, branchName)` in `authorization/protected-branch.ts`, keyed off the resolved `config.defaultBaseBranch` (never a hard-coded `'main'` — `master`/`develop` bases work) with sanitization-aware comparison (metadata names are sanitized; config holds the raw git name). It returns three flags:
+
+|                 | dev | prod |
+| --------------- | --- | ---- |
+| `isProtected`   | ✓   | ✓    |
+| `submitBlocked` | ✓   | ✓    |
+| `readOnly`      | —   | ✓    |
+
+Enforcement is layered:
+
+- **API guards** (`api/guards.ts`): `writableBranch` (403 on content/entry/schema mutations when `readOnly`) and `submittableBranch` (403 on submit when `submitBlocked`). `deleteBranch` refuses the base branch with a handler-level check.
+- **Workflow authorization** (`authorization/branch.ts`): the system-branch grant in `canPerformWorkflowAction` (the base branch is auto-provisioned with `createdBy: 'canopycms-system'`) is disabled on protected branches, so only admins/reviewers/explicit-ACL users retain workflow rights there.
+- **Backstops** (defense in depth, all refusing sanitized head==base): `services.submitBranch` throws before any git operation; `syncSubmitPr` returns `sync-failed` without calling GitHub or enqueueing; the worker's `push-and-create-or-update-pr` task throws a `PermanentTaskError`.
+- **Editor UI**: renders purely from server-computed wire flags (`isProtected`/`readOnly` on the branches-list response) — Submit is hidden, Save is disabled, and a banner with a "Create a branch" action appears on a read-only branch. The editor still lands on the protected branch for browsing.
+
+**Withdraw is deliberately not blocked** on protected branches: it is the self-serve recovery path for a base branch wrongly stuck in `submitted` (the pre-protection failure mode), and the workflow-authorization change above restricts it to privileged users there.
 
 ## Operating Modes
 
@@ -1077,6 +1100,16 @@ npx canopycms worker run-once
 ```
 
 This processes pending tasks, refreshes the auth cache, and exits. It simulates what the EC2 worker daemon does continuously in production.
+
+#### Admin Observability and Recovery API
+
+In the Lambda + EC2 worker topology, two things fail silently by default: task-queue/worker health (the worker has no HTTP endpoint, and operators may not have SSM Session Manager access into the instance — see [above](#lambda--efs--ec2-worker-aws-cost-optimized)), and branch directories left in a broken state by a crash mid-provision or mid-write (admins have no direct filesystem access in prod). A namespaced `/admin/*` surface addresses both. Every endpoint is guarded by the same `admin` role check used elsewhere (see [Declarative Guard System](#declarative-guard-system)) and reached through the existing catch-all API route — this is observability and recovery tooling, not a new adopter touchpoint. The Editor's admin-only "System Health" panel is the only consumer (see [Editor Architecture](#editor-architecture)).
+
+**Task queue and worker liveness** (`GET /admin/status`): Task-queue stats (counts per status, oldest pending task's age) are read directly from the task-queue directory. Worker liveness is classified from the mtime of the worker's own lock-heartbeat file rather than a live ping — there is nothing to ping. The staleness threshold is deliberately generous, adding a budget on top of the worker's own stale-lock window to absorb EFS attribute-cache staleness: a reader on a different host than the worker can see a heartbeat mtime that lags the true write by that cache's window, and a tight threshold would misreport a healthy worker as crashed. The worker also self-reports a status snapshot on every sync/task cycle — when its last git sync ran and what happened (branches rebased, skipped as dirty, failed with error), the last sync error, and the last fatal error including startup failures (e.g. an unreachable or corrupted git remote). Only the lock-holding worker ever writes this file, and each write is a full-snapshot replace rather than a partial update, so a reader never observes a half-written report; the endpoint tolerates the file being missing or stale.
+
+**Task recovery** (`GET /admin/tasks/:status`, `POST /admin/tasks/:taskId/retry`, `DELETE /admin/tasks/:status/:fileName`): Lists tasks by status, including a dedicated listing for task files the queue itself could not parse. Retrying a failed task requeues it under a freshly generated ID rather than reusing the original one — the queue's own dequeue path dedupes by ID, so replaying the same ID would be silently absorbed instead of actually retried. Both retry and delete are accepted as safe-to-race with the worker (a task that ends up running anyway is treated as harmless, not prevented) rather than coordinated against it.
+
+**Branch directory health and recovery** (`GET /admin/branch-health`, `POST /admin/branch-dirs/:dirName/purge`, `POST /admin/branch-dirs/:dirName/repair-metadata`): Classifies every directory under the branches root as healthy, corrupt-metadata (a `branch.json` that exists but fails to parse — see [registry quarantine](#why-is-the-branch-registry-a-cache-not-a-source-of-truth)), or orphan (no `branch.json` at all, left behind by a partial delete or an interrupted clone). Purge is reversible: the directory is renamed to a trash name rather than deleted outright, with the trash timestamp embedded in the name itself rather than relied on from the directory's mtime (a rename preserves the original mtime, so mtime-based retention would delete a months-stale orphan's trash on the very first sweep). The worker's sync cycle sweeps trashed directories older than 30 days. Repair-metadata recovers a corrupt-metadata directory by archiving the unparseable `branch.json` alongside itself for forensics and recreating a fresh one with default values — including for the base branch, which is the case that matters most, since a corrupt base branch degrades every request until it's repaired (see [Branch Identity](#branch-identity-defaultbasebranch-vs-defaultactivebranch)).
 
 #### Project-Bound CLI Commands
 
@@ -1512,6 +1545,8 @@ Saves run through server-side validation in the content write handler:
 
 **Important**: Clicking "Submit" requests publication—it does not actually publish. The content becomes live only after the PR is merged on GitHub and the site is rebuilt/deployed. This separation means CanopyCMS doesn't control the actual publication moment; that's handled by your CI/CD pipeline.
 
+This flow applies to editing branches. The base branch itself can never be submitted—see [Protected Base Branch](#protected-base-branch).
+
 ### Review Process
 
 1. Reviewers see submitted branches and can add comments
@@ -1529,7 +1564,7 @@ Merge detection is automatic. Once a branch is `submitted` or `approved` and has
 
 If the PR is closed on GitHub **without** merging, the worker records `pullRequestState: 'closed'` but leaves the branch's status untouched — a closed PR isn't necessarily terminal (it can be reopened), so an admin decides the next step rather than the worker guessing. The editor surfaces this as a red "closed" PR badge and disables request-changes (which assumes an open, convertible-to-draft PR); withdraw stays available as the recovery path back to `editing`.
 
-A `markAsMerged` API endpoint still exists, now as a manual/ops fallback rather than the primary path — useful when the worker isn't running or an admin wants to force-resolve a branch immediately instead of waiting for the next poll cycle. It verifies the merge via the GitHub API and builds its update through the same shared helper as the automatic path, so both produce identical archived-branch metadata.
+A `markAsMerged` API endpoint still exists, now as a manual/ops fallback rather than the primary path — useful when the worker isn't running or an admin wants to force-resolve a branch immediately instead of waiting for the next poll cycle. It accepts a branch in either `submitted` or `approved` status (matching the automatic path, which archives from either), so the manual fallback can reach anything the worker's poll could reach — including the case where the worker is down, or the PR was merged and then deleted from GitHub before a poll cycle ran. It verifies the merge via the GitHub API and builds its update through the same shared helper as the automatic path, so both produce identical archived-branch metadata.
 
 ## Branch Synchronization and Conflict Detection
 
@@ -1581,14 +1616,23 @@ The branch metadata stores:
 
 This state is cleared automatically when a subsequent rebase completes without conflicts.
 
+### Rebase Failure Tracking
+
+Conflict resolution (above) is the expected, handled case: files differ, the editor's version wins, and the branch moves on. A rebase can also fail outright — an unexpected git error, or exhausting the safety limit on conflict-resolution rounds — which means the automatic recovery itself broke down and the branch is stuck behind the base branch until someone intervenes. The worker records this as a distinct, persistent `rebaseFailure` marker in the branch's metadata (a message plus first-seen and last-seen timestamps), separate from `conflictStatus`/`conflictFiles`.
+
+To avoid write amplification, a branch that fails every cycle is only re-recorded roughly once an hour rather than on every cycle — each metadata save eager-regenerates the branch registry, so recording unconditionally would multiply that cost across every stuck branch on every worker pass. The marker is cleared automatically once the branch catches up to the base branch cleanly, or when its editor submits it for review — the rebase loop skips submitted/approved branches, so without an explicit clear on submit a stale failure would otherwise persist through the entire review cycle.
+
+This is an operator-facing signal, not an editor-facing one: a stuck rebase means the worker needs attention, not something an editor can act on. It surfaces only in the admin System Health panel's branch list (see [Admin Observability and Recovery API](#admin-observability-and-recovery-api)), not in the editor's own conflict notices below.
+
 ### Editor Conflict Notification
 
-Conflicts are surfaced to editors at two levels in the UI:
+Conflicts are surfaced to editors at three levels in the UI:
 
 - **Entry-level notices**: When an editor opens an entry that has a content conflict, the editor form displays a non-blocking informational notice at the top of the form. The notice tells the editor that someone else recently changed the same content and that a reviewer will reconcile the changes during the review process.
 - **Collection-level badges**: When a collection's `.collection.json` conflicted during rebase, the sidebar navigation shows a conflict badge on that collection. This alerts editors that the collection structure (ordering, entry type configuration) may need review, even if individual entries within the collection are unaffected.
+- **Branch-list badges**: The branch picker itself shows a conflict-count badge alongside a sync-status badge (`pending-sync` / `sync-failed`, from the same metadata `syncStatus` field described in [Task Queue](#task-queue-async-github-operations)) next to each branch name. Unlike the admin-only System Health panel, these badges are visible to any user who can see the branch — they're informational summaries of state every editor on that branch already needs, not a recovery surface.
 
-Both levels use the same `conflictFiles` array from branch metadata, matching each item's ContentId against the recorded conflict IDs.
+The entry- and collection-level notices use the same `conflictFiles` array from branch metadata, matching each item's ContentId against the recorded conflict IDs.
 
 **Design decisions behind this approach:**
 
@@ -1823,6 +1867,12 @@ The system uses a two-phase approach:
 **Why This Approach:**
 
 Alternative approaches (async state, callbacks, separate resolution state) create synchronization problems between two state trees (form data + resolved data). By computing resolved data synchronously from a single source (form data + cache), we eliminate timing issues and race conditions entirely.
+
+### Admin: System Health Panel
+
+The editor has an admin-only "System Health" panel — the first UI surface in the editor gated to a single role rather than to branch/path permissions. It is a thin view over the [Admin Observability and Recovery API](#admin-observability-and-recovery-api): an Overview tab (task-queue stats, worker liveness, the worker's self-reported git-sync summary), a Tasks tab (list/retry/delete task files), and a Branches tab (branch-health classification plus purge/repair-metadata actions, and the manual "mark as merged" fallback).
+
+Visibility is the caller's responsibility, not the panel's own: the editor shell checks the current user's admin membership before rendering the button that opens the panel, the same pattern used for the group and permission managers. The real enforcement is server-side — every endpoint the panel calls carries the same `admin` guard as the rest of the API (see [Declarative Guard System](#declarative-guard-system)) — so the client-side check is purely a UX convenience (no admin-only menu item for a non-admin) rather than the security boundary.
 
 ## Asset & Media System
 
@@ -2358,6 +2408,7 @@ The branch registry (`branches.json`) is a **read-only cache** for fast branch l
 - Concurrent regeneration within one process is deduped to a single scan; across processes, regeneration is still safe—all processes produce identical output from the same `branch.json` files
 - No write conflicts because the cache is never directly updated, only regenerated
 - `get()` forces one throttled fresh regeneration when a looked-up branch is missing from the cached snapshot, bounding staleness for the "branch exists but snapshot predates it" case
+- A single branch directory with a corrupt or unreadable `branch.json` is quarantined out of the scan rather than propagated as a scan failure — one bad file must not turn every branch listing into an outage. The branch stays on disk, invisible to the registry but reported (and repairable) through the admin branch-health surface (see [Admin Observability and Recovery API](#admin-observability-and-recovery-api))
 
 **Why this design:**
 

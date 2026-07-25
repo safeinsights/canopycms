@@ -35,6 +35,7 @@ import '../src/api/permissions.js'
 import '../src/api/groups.js'
 import '../src/api/user.js'
 import '../src/api/schema.js'
+import '../src/api/admin.js'
 
 // Now we can import the populated registry
 import { getAllRoutes, type RouteMetadata } from '../src/api/route-builder.js'
@@ -171,6 +172,7 @@ function namespaceToModule(namespace: string): string {
     permissions: 'permissions',
     groups: 'groups',
     schema: 'schema',
+    admin: 'admin',
   }
   return mapping[namespace] || namespace
 }

@@ -640,7 +640,7 @@ const writeContent = defineEndpoint({
   responseType: 'ContentWriteResponse',
   response: {} as ContentWriteResponse,
   defaultMockData: { format: 'json', data: {} },
-  guards: ['schema'] as const,
+  guards: ['schema', 'writableBranch'] as const,
   handler: writeContentHandler,
 })
 
@@ -680,7 +680,7 @@ const renameEntry = defineEndpoint({
   responseType: 'RenameEntryResponse',
   response: {} as RenameEntryResponse,
   defaultMockData: { newPath: 'content/posts/new-slug' },
-  guards: ['schema'] as const,
+  guards: ['schema', 'writableBranch'] as const,
   handler: renameEntryHandler,
 })
 
