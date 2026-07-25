@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { useBranchManager, UseBranchManagerOptions } from './useBranchManager'
 import type { BranchMetadata } from '../../types'
 import type { MockApiClient } from '../../api/__test__/mock-client'
+import { unsafeAsContentId } from '../../paths/test-utils'
 import {
   setupMockApiClient,
   setupMockLocation,
@@ -323,6 +324,47 @@ describe('useBranchManager', () => {
       expect(result.current.currentBranch?.isProtected).toBe(true)
       expect(result.current.currentBranch?.readOnly).toBe(true)
     })
+  })
+
+  it('passes syncStatus, conflictStatus, and conflictFiles through branchSummaries unchanged', async () => {
+    const branchesWithSyncState: BranchMetadata[] = [
+      {
+        ...mockBranches[0],
+        syncStatus: 'sync-failed',
+        conflictStatus: 'conflicts-detected',
+        conflictFiles: [unsafeAsContentId('content/a.md'), unsafeAsContentId('content/b.md')],
+      },
+      {
+        ...mockBranches[1],
+        syncStatus: 'pending-sync',
+      },
+    ]
+    mockClient.branches.list.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      data: { branches: branchesWithSyncState },
+    })
+
+    const { result } = renderHook(() => useBranchManager(defaultOptions), {
+      wrapper,
+    })
+
+    await waitFor(() => {
+      expect(result.current.branchSummaries).toHaveLength(2)
+    })
+
+    expect(result.current.branchSummaries[0]).toMatchObject({
+      name: 'main',
+      syncStatus: 'sync-failed',
+      conflictStatus: 'conflicts-detected',
+      conflictFiles: ['content/a.md', 'content/b.md'],
+    })
+    expect(result.current.branchSummaries[1]).toMatchObject({
+      name: 'feature',
+      syncStatus: 'pending-sync',
+    })
+    expect(result.current.branchSummaries[1].conflictStatus).toBeUndefined()
+    expect(result.current.branchSummaries[1].conflictFiles).toBeUndefined()
   })
 
   it('computes currentBranch and branchStatus', async () => {

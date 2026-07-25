@@ -12,7 +12,9 @@ import { simpleGit } from 'simple-git'
 
 import { CmsWorker, PermanentTaskError, isPermanentTaskFailure } from './cms-worker'
 import { enqueueTask } from './task-queue'
+import { WORKER_STATUS_FILE } from './worker-status'
 import { initTestRepo, mockConsole } from '../test-utils'
+import type { WorkerStatusReport } from '../types'
 
 const makeWorker = () =>
   new CmsWorker({
@@ -366,6 +368,28 @@ describe('CmsWorker retry behavior (DEP-L1)', () => {
     )
     expect(failed.error).toMatch(/missing required string field: branch/)
     expect(failed.retryCount).toBe(0)
+  })
+
+  // [HIGH-1] task.error is persisted to failed/<id>.json and served to the
+  // browser by the admin panel's Tasks tab. A git push failure's message
+  // can embed the bot token (buildGitHubUrl() builds
+  // https://x-access-token:TOKEN@github.com/...), so it must be redacted
+  // before it reaches disk.
+  it('redacts a token-bearing error message before persisting task.error via failTask', async () => {
+    const id = await runWithFailure(
+      Object.assign(
+        new Error(
+          "fatal: unable to access 'https://x-access-token:ghp_secret123456@github.com/org/repo.git/': Could not resolve host",
+        ),
+        { status: 422 }, // permanent -- goes straight to failTask, not retryTask
+      ),
+    )
+
+    const failed = JSON.parse(
+      await fs.readFile(path.join(taskDir, 'failed', `${id}.json`), 'utf-8'),
+    )
+    expect(failed.error).not.toContain('ghp_secret123456')
+    expect(failed.error).toContain('***')
   })
 })
 
@@ -737,6 +761,15 @@ describe('CmsWorker.ensureRemoteGit() empty-remote guard', () => {
     const contender = makeGuardWorker()
     await lockInternals(contender).acquireLock()
     await lockInternals(contender).releaseLock()
+
+    // PR-W1: the startup failure must be visible to the admin panel via
+    // worker-status.json, not only worker logs -- lastFatalError.phase
+    // distinguishes it from a mid-run failure.
+    const statusPath = path.join(workspacePath, '.tasks', WORKER_STATUS_FILE)
+    const status = JSON.parse(await fs.readFile(statusPath, 'utf-8')) as WorkerStatusReport
+    expect(status.lastFatalError?.phase).toBe('startup')
+    expect(status.lastFatalError?.message).toMatch(/no branch/)
+    expect(status.lastFatalError?.at).toBeTruthy()
   })
 
   it('clones successfully when the fixture already has a base branch commit (happy path unaffected)', async () => {
@@ -750,5 +783,328 @@ describe('CmsWorker.ensureRemoteGit() empty-remote guard', () => {
     // Already-exists fast path must also succeed without error on a second call.
     await internals.ensureRemoteGit()
     expect(await fileExists(remoteGitPath())).toBe(true)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// worker-status.json bookkeeping (PR-W1)
+//
+// The worker self-reports a status snapshot so a dead-or-sick worker is
+// distinguishable from a healthy idle one via the admin panel
+// (api/admin.ts's readWorkerStatus). syncGit() records a per-cycle summary
+// (success or hard failure); processTaskQueue() records only when it did
+// real work, to avoid an EFS write on every idle 5s poll.
+// ---------------------------------------------------------------------------
+
+describe('CmsWorker.syncGit() worker-status.json bookkeeping', () => {
+  let tmpDir: string
+  let workspacePath: string
+  let fixtureRemote: string
+
+  const statusPath = () => path.join(workspacePath, '.tasks', WORKER_STATUS_FILE)
+  const readStatus = async (): Promise<WorkerStatusReport> =>
+    JSON.parse(await fs.readFile(statusPath(), 'utf-8'))
+
+  beforeEach(async () => {
+    mockConsole()
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'canopy-worker-status-sync-test-'))
+    workspacePath = path.join(tmpDir, 'workspace')
+    fixtureRemote = path.join(tmpDir, 'fixture-github.git')
+
+    await fs.mkdir(workspacePath, { recursive: true })
+    // Top-level bare mirror that syncGit() fetches into (mirrors what
+    // ensureRemoteGit() would have provisioned -- these tests call
+    // syncGit() directly, so it's set up by hand here).
+    await simpleGit().raw(['init', '--bare', path.join(workspacePath, 'remote.git')])
+
+    // Simulated "GitHub", seeded with an initial commit on main so
+    // syncGit()'s fetch has something to pull (same fixture pattern as the
+    // ensureRemoteGit() empty-remote-guard tests above).
+    await simpleGit().raw(['init', '--bare', fixtureRemote])
+    const seedPath = path.join(tmpDir, 'fixture-seed')
+    await fs.mkdir(seedPath, { recursive: true })
+    const seedGit = await initTestRepo(seedPath)
+    await seedGit.raw(['branch', '-M', 'main'])
+    await fs.writeFile(path.join(seedPath, 'README.md'), '# hello\n')
+    await seedGit.add(['.'])
+    await seedGit.commit('initial commit')
+    await seedGit.addRemote('origin', fixtureRemote)
+    await seedGit.push('origin', 'main')
+  })
+
+  afterEach(async () => {
+    await fs.rm(tmpDir, { recursive: true, force: true })
+  })
+
+  /**
+   * A branch-workspace clone with its own independent "origin" (unrelated
+   * to remote.git/fixtureRemote above) -- the same shape
+   * cms-worker-rebase.test.ts's createBranchSetup uses, trimmed to what
+   * these tests need.
+   */
+  const createSyncBranch = async (branchName: string) => {
+    const originPath = path.join(tmpDir, `${branchName}-origin`)
+    const branchPath = path.join(workspacePath, 'content-branches', branchName)
+
+    await fs.mkdir(originPath, { recursive: true })
+    const originGit = await initTestRepo(originPath)
+    await originGit.raw(['branch', '-M', 'main'])
+    await fs.writeFile(path.join(originPath, '.gitkeep'), '')
+    await originGit.add(['.'])
+    await originGit.commit('initial commit')
+
+    await fs.mkdir(path.join(workspacePath, 'content-branches'), { recursive: true })
+    await simpleGit().clone(originPath, branchPath)
+
+    const branchGit = simpleGit({ baseDir: branchPath, unsafe: { allowUnsafeEditor: true } })
+    await branchGit.addConfig('user.name', 'Test Bot')
+    await branchGit.addConfig('user.email', 'test@canopycms.test')
+    await branchGit.addConfig('core.editor', 'true')
+    await branchGit.checkoutBranch(branchName, 'origin/main')
+    await branchGit.raw(['branch', '--set-upstream-to=origin/main', branchName])
+
+    return { branchPath, branchGit, originGit, originPath }
+  }
+
+  const makeSyncWorker = () => {
+    const worker = new CmsWorker({
+      workspacePath,
+      githubOwner: 'test-owner',
+      githubRepo: 'test-repo',
+      githubToken: 'fake-token',
+      baseBranch: 'main',
+    })
+    ;(worker as unknown as { buildGitHubUrl(): string }).buildGitHubUrl = () => fixtureRemote
+    ;(worker as unknown as { running: boolean }).running = true
+    return worker
+  }
+
+  it('records lastGitSyncAt and a rebase summary after a successful cycle, including a per-branch rebase failure', async () => {
+    // Behind, no conflicts -> should complete and land in lastGitSync.rebased.
+    const behind = await createSyncBranch('behind-branch')
+    await fs.writeFile(path.join(behind.originPath, 'remote-update.txt'), 'from origin')
+    await behind.originGit.add(['.'])
+    await behind.originGit.commit('advance origin')
+
+    // Origin fetch will throw -> should land in lastGitSync.failed.
+    const broken = await createSyncBranch('broken-branch')
+    await broken.branchGit.raw(['remote', 'set-url', 'origin', '/nonexistent/path'])
+
+    const worker = makeSyncWorker()
+    await worker.syncGit()
+
+    const status = await readStatus()
+    expect(status.lastGitSyncAt).toBeTruthy()
+    expect(status.lastGitSyncError).toBeUndefined()
+    expect(status.lastGitSync).toBeDefined()
+    expect(status.lastGitSync?.durationMs).toBeGreaterThanOrEqual(0)
+    expect(status.lastGitSync?.rebased).toContain('behind-branch')
+    expect(status.lastGitSync?.failed.map((f) => f.branch)).toContain('broken-branch')
+  })
+
+  it('records lastGitSyncError and still rethrows on a hard sync-cycle failure', async () => {
+    const worker = makeSyncWorker()
+    // Point the top-level fetch at a path with no git repo at all -- fails
+    // immediately, no network involved, before any rebase work runs.
+    ;(worker as unknown as { buildGitHubUrl(): string }).buildGitHubUrl = () =>
+      '/nonexistent/definitely-not-a-remote.git'
+
+    await expect(worker.syncGit()).rejects.toThrow()
+
+    const status = await readStatus()
+    expect(status.lastGitSyncError?.message).toBeTruthy()
+    expect(status.lastGitSyncError?.at).toBeTruthy()
+    expect(status.lastGitSyncAt).toBeUndefined()
+  })
+
+  it('redacts a token-bearing error message before persisting it to worker-status.json (HIGH-1)', async () => {
+    const worker = makeSyncWorker()
+    // A local nonexistent path (no `://`) so git fails immediately without
+    // any network attempt, while still echoing the literal string back
+    // verbatim in its fatal message -- simulating a fetch/push error whose
+    // text embeds the bot token, same shape as buildGitHubUrl()'s
+    // https://x-access-token:TOKEN@github.com/... URLs.
+    ;(worker as unknown as { buildGitHubUrl(): string }).buildGitHubUrl = () =>
+      path.join(tmpDir, 'x-access-token:ghp_secret123456@nonexistent', 'remote.git')
+
+    await expect(worker.syncGit()).rejects.toThrow()
+
+    const status = await readStatus()
+    expect(status.lastGitSyncError?.message).toBeTruthy()
+    expect(status.lastGitSyncError?.message).not.toContain('ghp_secret123456')
+    expect(status.lastGitSyncError?.message).toContain('***')
+  })
+})
+
+describe('CmsWorker.processTaskQueue() worker-status.json bookkeeping', () => {
+  let tmpDir: string
+  let taskDir: string
+
+  beforeEach(async () => {
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'canopy-worker-status-task-test-'))
+    taskDir = path.join(tmpDir, '.tasks')
+  })
+
+  afterEach(async () => {
+    await fs.rm(tmpDir, { recursive: true, force: true })
+  })
+
+  const statusPath = () => path.join(taskDir, WORKER_STATUS_FILE)
+
+  const makeWorker = () => {
+    const worker = new CmsWorker({
+      workspacePath: tmpDir,
+      githubOwner: 'test-owner',
+      githubRepo: 'test-repo',
+      githubToken: 'fake-token',
+      taskTimeoutMs: 500,
+    })
+    ;(worker as unknown as TaskInternals).running = true
+    return worker
+  }
+
+  it('sets lastTaskCycleAt after processing >=1 task, and does not rewrite the file on a subsequent idle poll', async () => {
+    const worker = makeWorker()
+    const internals = worker as unknown as TaskInternals
+    internals.executeTask = () => Promise.resolve({ pushed: true })
+
+    await enqueueTask(taskDir, { action: 'push-branch', payload: { branch: 'feature-1' } })
+    await worker.processTaskQueue()
+
+    const raw1 = await fs.readFile(statusPath(), 'utf-8')
+    const status1 = JSON.parse(raw1) as WorkerStatusReport
+    expect(status1.lastTaskCycleAt).toBeTruthy()
+
+    // Idle poll: no pending tasks -- must not touch worker-status.json at
+    // all (liveness already comes from the lock heartbeat; see
+    // api/admin.ts's classifyWorkerLiveness), not even to re-stamp updatedAt.
+    await worker.processTaskQueue()
+    const raw2 = await fs.readFile(statusPath(), 'utf-8')
+    expect(raw2).toBe(raw1)
+  })
+
+  it('does not write worker-status.json at all when no tasks are pending', async () => {
+    const worker = makeWorker()
+    await worker.processTaskQueue()
+
+    await expect(fs.stat(statusPath())).rejects.toThrow()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// cleanupTrashedBranchDirs() [C1] -- worker-only retention sweep for the
+// admin purge action's `.trash-{dirName}-{STAMP}` directories
+// (api/admin-branch-health.ts). Age comes ONLY from the name-embedded stamp
+// (constructed by hand here), never the directory's own mtime -- see the
+// method's doc comment in cms-worker.ts for why.
+// ---------------------------------------------------------------------------
+
+type TrashCleanupInternals = {
+  cleanupTrashedBranchDirs(): Promise<number>
+}
+
+describe('CmsWorker.cleanupTrashedBranchDirs() [C1]', () => {
+  let tmpDir: string
+  let contentBranchesPath: string
+
+  beforeEach(async () => {
+    mockConsole()
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'canopy-worker-trash-cleanup-test-'))
+    contentBranchesPath = path.join(tmpDir, 'content-branches')
+    await fs.mkdir(contentBranchesPath, { recursive: true })
+  })
+
+  afterEach(async () => {
+    await fs.rm(tmpDir, { recursive: true, force: true })
+  })
+
+  const makeWorker = () =>
+    new CmsWorker({
+      workspacePath: tmpDir,
+      githubOwner: 'test-owner',
+      githubRepo: 'test-repo',
+      githubToken: 'fake-token',
+    })
+
+  /** Format a Date as the purge-generated `YYYYMMDDTHHMMSSZ` stamp (no colons). */
+  const stamp = (date: Date) =>
+    date
+      .toISOString()
+      .replace(/[-:]/g, '')
+      .replace(/\.\d{3}Z$/, 'Z')
+
+  const daysAgo = (days: number) => new Date(Date.now() - days * 24 * 60 * 60_000)
+
+  it('removes a trash dir stamped more than 30 days ago', async () => {
+    const dirName = `.trash-old-branch-${stamp(daysAgo(31))}`
+    await fs.mkdir(path.join(contentBranchesPath, dirName), { recursive: true })
+
+    const worker = makeWorker()
+    const removed = await (worker as unknown as TrashCleanupInternals).cleanupTrashedBranchDirs()
+
+    expect(removed).toBe(1)
+    await expect(fs.stat(path.join(contentBranchesPath, dirName))).rejects.toThrow()
+  })
+
+  it('keeps a trash dir stamped 1 day ago', async () => {
+    const dirName = `.trash-recent-branch-${stamp(daysAgo(1))}`
+    await fs.mkdir(path.join(contentBranchesPath, dirName), { recursive: true })
+
+    const worker = makeWorker()
+    const removed = await (worker as unknown as TrashCleanupInternals).cleanupTrashedBranchDirs()
+
+    expect(removed).toBe(0)
+    await expect(fs.stat(path.join(contentBranchesPath, dirName))).resolves.toBeTruthy()
+  })
+
+  it('keeps and logs an unparseable trash dir name instead of throwing', async () => {
+    const dirName = '.trash-foo'
+    await fs.mkdir(path.join(contentBranchesPath, dirName), { recursive: true })
+
+    const worker = makeWorker()
+    const removed = await (worker as unknown as TrashCleanupInternals).cleanupTrashedBranchDirs()
+
+    expect(removed).toBe(0)
+    await expect(fs.stat(path.join(contentBranchesPath, dirName))).resolves.toBeTruthy()
+  })
+
+  it('ignores an mtime-only rewrite of an old-stamped dir -- age comes from the name, not mtime', async () => {
+    // Simulates the exact scenario the [C1] design note warns about:
+    // fs.rename (what purge does) preserves the original directory's mtime,
+    // so a months-stale orphan's trash dir would otherwise look "fresh" only
+    // if cleanup incorrectly used mtime. Here we go the other way -- an
+    // old-stamped name whose mtime we bump to "now" must still be removed,
+    // proving age is read from the name alone.
+    const dirName = `.trash-touched-branch-${stamp(daysAgo(60))}`
+    const dirPath = path.join(contentBranchesPath, dirName)
+    await fs.mkdir(dirPath, { recursive: true })
+    const now = new Date()
+    await fs.utimes(dirPath, now, now)
+
+    const worker = makeWorker()
+    const removed = await (worker as unknown as TrashCleanupInternals).cleanupTrashedBranchDirs()
+
+    expect(removed).toBe(1)
+    await expect(fs.stat(dirPath)).rejects.toThrow()
+  })
+
+  it('returns 0 when contentBranchesPath does not exist yet', async () => {
+    await fs.rm(contentBranchesPath, { recursive: true, force: true })
+
+    const worker = makeWorker()
+    const removed = await (worker as unknown as TrashCleanupInternals).cleanupTrashedBranchDirs()
+
+    expect(removed).toBe(0)
+  })
+
+  it('ignores non-trash directories entirely', async () => {
+    await fs.mkdir(path.join(contentBranchesPath, 'main'), { recursive: true })
+    await fs.mkdir(path.join(contentBranchesPath, '.canopy-meta'), { recursive: true })
+
+    const worker = makeWorker()
+    const removed = await (worker as unknown as TrashCleanupInternals).cleanupTrashedBranchDirs()
+
+    expect(removed).toBe(0)
+    await expect(fs.stat(path.join(contentBranchesPath, 'main'))).resolves.toBeTruthy()
   })
 })

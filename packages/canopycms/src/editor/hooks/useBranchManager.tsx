@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { Text } from '@mantine/core'
 import { modals } from '@mantine/modals'
 import { notifications } from '@mantine/notifications'
-import type { PullRequestState } from '../../types'
+import type { ConflictStatus, PullRequestState, SyncStatus } from '../../types'
 import type { OperatingMode } from '../../operating-mode'
 import type { CommentThread } from '../../comment-store'
 import type { BranchListItem } from '../../api/branch'
@@ -70,6 +70,12 @@ export interface BranchSummary {
   pullRequestNumber?: number
   pullRequestState?: PullRequestState
   mergedAt?: string
+  /** Sync status for async GitHub operations (used when Lambda has no internet) */
+  syncStatus?: SyncStatus
+  /** Whether this branch has unresolved merge conflicts with the base branch */
+  conflictStatus?: ConflictStatus
+  /** ContentIds of entries where --theirs was applied during rebase; cleared on clean rebase */
+  conflictFiles?: string[]
   commentCount: number
   isProtected: boolean
   readOnly: boolean
@@ -173,6 +179,9 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
         pullRequestNumber: b.pullRequestNumber,
         pullRequestState: b.pullRequestState,
         mergedAt: b.mergedAt,
+        syncStatus: b.syncStatus,
+        conflictStatus: b.conflictStatus,
+        conflictFiles: b.conflictFiles,
         commentCount: unresolvedCount,
         isProtected: b.isProtected ?? false,
         readOnly: b.readOnly ?? false,

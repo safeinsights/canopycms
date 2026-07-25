@@ -46,6 +46,12 @@ export interface BranchMetadata {
    * archived any other way.
    */
   mergedAt?: string
+  /**
+   * Set by the worker when a rebase cycle fails for this branch; cleared on
+   * the next successful cycle (and on submit). firstAt survives repeated
+   * failures with the same message so the panel can show "failing since".
+   */
+  rebaseFailure?: { message: string; firstAt: string; lastAt: string }
 }
 
 export interface BranchPaths {
@@ -66,4 +72,26 @@ export interface BranchContext extends BranchPaths {
 /** BranchContext with guaranteed flatSchema (loaded via schema guard or loadSchema: true) */
 export interface BranchContextWithSchema extends BranchContext {
   flatSchema: import('./config').FlatSchemaItem[]
+}
+
+/**
+ * Wire shape of the worker's self-reported status file (worker-status.json,
+ * written under the task queue dir). Written by the CmsWorker daemon
+ * (PR-W1); this type is read-only here — GET /admin/status parses it as-is.
+ */
+export interface WorkerStatusReport {
+  version: 1
+  workerVersion?: string
+  startedAt: string
+  updatedAt: string
+  lastTaskCycleAt?: string
+  lastGitSyncAt?: string
+  lastGitSyncError?: { message: string; at: string }
+  lastGitSync?: {
+    durationMs: number
+    rebased: string[]
+    skippedDirty: string[]
+    failed: { branch: string; error: string }[]
+  }
+  lastFatalError?: { message: string; at: string; phase: 'startup' | 'run' }
 }

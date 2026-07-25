@@ -86,6 +86,10 @@ const submitBranchForMergeHandler = async (
       pullRequestUrl: prResult.prUrl ?? branchContext.branch.pullRequestUrl,
       pullRequestNumber: prResult.prNumber ?? branchContext.branch.pullRequestNumber,
       ...(prResult.syncStatus !== undefined ? { syncStatus: prResult.syncStatus } : {}),
+      // PR-W2 (M2): the rebase loop skips submitted/approved branches, so a
+      // pre-submit rebase-failure record would otherwise stick as a stale
+      // warning through review and archive.
+      rebaseFailure: undefined,
     },
   })
 

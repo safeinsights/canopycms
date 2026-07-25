@@ -98,12 +98,13 @@ Prioritized work items for CanopyCMS development. See [AGENTS.md](AGENTS.md) for
 - Git strategy: rebase from main by default with conflict detection; merge fallback if needed
 - UI to show conflicts
 - Helper to abort/resolve is out of scope initially, but detection/reporting is in
-- **Infrastructure done**: CmsWorker.syncGit() + rebaseActiveBranches() handles background sync and conflict detection. UI still needs branch conflict status display.
+- **Infrastructure done**: CmsWorker.syncGit() + rebaseActiveBranches() handles background sync and conflict detection.
+- **UI done** (git-admin-observability epic, 2026-07): branch list shows sync-failed/pending-sync/conflict badges to all users; per-entry conflict notices were already in the editor.
 
 ### 11. Observability & safety
 
-- Structured logs for git operations, sync, and permission checks
-- Feature flags and timeouts for long-running git tasks
+- **Done** (git-admin-observability epic, 2026-07): admin System health panel (worker liveness + self-reported status file, task-queue inspection with retry/delete, branch-health scan with purge/repair, persistent per-branch rebase-failure records); worker logs ship to CloudWatch (PR #145).
+- Remaining: structured logs for permission checks; feature flags and timeouts for long-running git tasks (task/simple-git timeouts exist; no flags).
 
 ### 12. Customizability
 

@@ -47,12 +47,14 @@ export {
   completeTask,
   failTask,
   retryTask,
+  requeueFailedTask,
   recoverOrphanedTasks,
   cleanupOldTasks,
   getTask,
   getTask as getTaskResult, // backward-compatible alias
   listTasks,
   getQueueStats,
+  listCorruptTaskFiles,
 } from '../task-queue'
 
-export type { Task, TaskStatus, QueueStats, TaskQueueLogger } from '../task-queue'
+export type { Task, TaskStatus, QueueStats, TaskQueueLogger, CorruptTaskFile } from '../task-queue'

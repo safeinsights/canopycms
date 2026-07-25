@@ -167,6 +167,23 @@ describe('branch status api', () => {
     )
   })
 
+  it('clears rebaseFailure on submit (PR-W2 M2)', async () => {
+    mockMetadataUpdate.mockClear()
+
+    const res = await submitBranchForMerge(
+      makeCtx(true),
+      { user: { type: 'authenticated', userId: 'u1', groups: [] } },
+      { branch: 'feature/x' as BranchName },
+    )
+
+    expect(res.ok).toBe(true)
+    expect(mockMetadataUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        branch: expect.objectContaining({ rebaseFailure: undefined }),
+      }),
+    )
+  })
+
   it('sanitizes credentials and absolute paths when the push fails (API-H2)', async () => {
     const ctx = makeCtx(true)
     ctx.services.submitBranch = vi

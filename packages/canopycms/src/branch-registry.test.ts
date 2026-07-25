@@ -7,6 +7,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { BranchRegistry, type BranchRegistrySnapshot } from './branch-registry'
 import { getBranchMetadataFileManager } from './branch-metadata'
 import { resourceGenerationPath } from './resource-generation'
+import { mockConsole } from './test-utils/console-spy'
 import type { BranchContext } from './types'
 
 // Mutable hook state shared with the vi.mock factory below (vi.hoisted lets
@@ -179,6 +180,29 @@ describe('BranchRegistry', () => {
 
       expect(branches).toHaveLength(1)
       expect(branches[0].branch.name).toBe('feature-a')
+    })
+
+    it('quarantines a branch with corrupt metadata instead of failing the whole scan', async () => {
+      const root = await tmpDir()
+      await createBranchWithMetadata(root, 'feature-a')
+      await createBranchWithMetadata(root, 'feature-b')
+      const corruptMetaDir = path.join(root, 'broken-branch', '.canopy-meta')
+      await fs.mkdir(corruptMetaDir, { recursive: true })
+      await fs.writeFile(path.join(corruptMetaDir, 'branch.json'), '{ not json', 'utf8')
+
+      const consoleSpy = mockConsole()
+      try {
+        const registry = new BranchRegistry(root)
+        // The saves above eagerly regenerated the snapshot before the corrupt
+        // dir existed; invalidate to force list() through a fresh scan.
+        await registry.invalidate()
+        const branches = await registry.list()
+
+        expect(branches.map((b) => b.branch.name).sort()).toEqual(['feature-a', 'feature-b'])
+        expect(consoleSpy).toHaveWarned(/broken-branch/)
+      } finally {
+        consoleSpy.restore()
+      }
     })
 
     it('skips hidden directories like .canopycms', async () => {

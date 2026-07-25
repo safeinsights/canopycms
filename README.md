@@ -1984,6 +1984,8 @@ Every entry gets an automatic UUID that stays the same even when you rename or m
 
 The base branch itself (the PR target, usually `main`) is protected — it can never be submitted for review, and in production it's read-only in the editor until someone creates a branch off of it. See [Submitting for Review](#submitting-for-review).
 
+The branch list also surfaces live sync-status badges — `syncing`, `sync-failed`, and `conflict` — visible to every user, so anyone can see at a glance when a branch's underlying git clone needs attention, alongside the existing `Merged` and `PR closed` badges.
+
 ### Comments System
 
 Comments enable asynchronous review workflows at three levels:
@@ -2027,6 +2029,14 @@ Two things to weigh before enabling this:
 A `FORBIDDEN` denial from a server-component read via `readByUrlPath` renders as `null`, so your page's existing `if (!result) return notFound()` produces an ordinary 404 -- not a 500, and without revealing that the content exists but is restricted. The denial reason is still emitted to the debug log (`CANOPYCMS_DEBUG=true`) for troubleshooting.
 
 For this to work, pages that render content at request time should use the null-safe `readByUrlPath` rather than the strict `read()`: `read()` throws on both missing and forbidden content, which surfaces as a 500 error page unless you catch it yourself. Reserve `read()` for contexts where the content is known to exist and be readable (build-time generation, or after an explicit access check).
+
+### System Health (Admins)
+
+Admins get a "System health" panel in the editor's Settings menu for observing the CMS's operational state. It requires no extra integration -- it rides the same Editor component and catch-all API route as everything else:
+
+- **Worker liveness**: See whether the CMS worker daemon (the process that syncs branches with git, detects merges, and archives merged branches) is running, and its last heartbeat.
+- **Task queue**: Inspect queued and failed background tasks, with retry and delete actions.
+- **Branch directory health**: See the health of each branch's git workspace, with repair and purge actions for ones that have drifted or gone stale.
 
 ### Live Preview
 
@@ -2282,6 +2292,10 @@ This section describes how to use the CanopyCMS editor interface from a content 
 
 > The base branch is marked with a "Protected" badge in the branch list. It can't be submitted for review, and in production it can't be edited directly — create a branch instead.
 
+**Branch status badges:**
+
+- The branch selector and Branches panel show status badges -- `syncing`, `sync-failed`, and `conflict` -- so anyone can tell at a glance when a branch's underlying git clone needs attention, alongside the existing `Merged` and `PR closed` badges.
+
 ### Editing Content
 
 **Selecting an entry:**
@@ -2336,6 +2350,15 @@ Admins can configure access control:
 1. Go to Settings (gear icon)
 2. **Groups**: Create groups and add users
 3. **Permissions**: Set path-based access rules
+
+### System Health (Admins)
+
+Admins can check the CMS's operational health from the same Settings menu:
+
+1. Go to Settings (gear icon) → **System Health**
+2. **Worker**: See whether the CMS worker daemon is alive and its last heartbeat
+3. **Task Queue**: Inspect queued and failed background tasks; retry or delete individual tasks
+4. **Branch Directories**: See per-branch workspace health; repair or purge unhealthy ones
 
 ## Adopter Touchpoints Summary
 
