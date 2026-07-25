@@ -2284,6 +2284,8 @@ This section describes how to use the CanopyCMS editor interface from a content 
 3. Enter a descriptive name (e.g., `update-homepage-hero`)
 4. Your branch is created and you can start editing
 
+> Branch names are sanitized for use as git branch names and filesystem paths: any character other than letters, numbers, `.`, `_`, and `-` (e.g. `/`) is replaced with `-`. A name like `feature/hero-update` is created as `feature-hero-update`, and the editor consistently displays and uses that sanitized name everywhere (branch selector, Branches panel, URLs).
+
 **Switching branches:**
 
 1. Click the branch selector
@@ -2308,11 +2310,11 @@ This section describes how to use the CanopyCMS editor interface from a content 
 
 1. Edit fields using the form on the left
 2. See changes reflected in the live preview on the right
-3. Click "Save" to persist changes to your branch (changes are NOT committed yet)
+3. Click "Save" to persist changes to your branch (changes are NOT committed yet) — this also clears your local unsaved draft for that file
 
 **Discarding changes:**
 
-- Use "Discard" to revert unsaved changes to the last saved state
+- Use "Discard" to revert unsaved changes to the last saved state. You'll be asked to confirm before anything is discarded.
 
 ### Submitting for Review
 
@@ -2323,6 +2325,8 @@ When your changes are ready:
 3. The PR can be reviewed using standard GitHub workflows
 4. Once merged, CanopyCMS detects it automatically (within one worker sync cycle) and marks the branch "Merged" in the Branches panel — your changes are also deployed with the next site build
 5. If the PR is closed without merging, the branch shows a "PR closed" badge and stays submitted until an admin follows up
+
+**A submitted branch is locked for content editing.** Once you submit, the editor disables Save and other write actions and shows a banner explaining that the branch is submitted for review (the server rejects edit requests too, so this isn't just a UI restriction). To resume editing, click "Withdraw" in the branch selector or Branches panel — this converts the PR back to a draft and returns the branch to `editing` status — or wait for a reviewer to click "Request changes" on the branch, which does the same thing and signals that revisions are needed.
 
 The base branch (the PR target, usually `main`) can never be submitted — a branch can't be reviewed against itself, so the "Submit for Review" button is hidden whenever you're viewing it, in both dev and production. In production the base branch is also read-only in the editor: you can browse it, but making changes requires creating a branch first (the editor shows a banner with a "Create a branch" button when you're viewing it, and the base branch carries a "Protected" badge in the branch list). In dev mode the base branch stays fully editable — since local development typically starts there — but you'll still need to move your work to a branch before it can be submitted.
 

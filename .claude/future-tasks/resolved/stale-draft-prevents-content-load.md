@@ -28,3 +28,13 @@ docs-site-proto integration. After migrating content to Canopy's ID-based naming
 - `src/editor/Editor.tsx` — load effect that skips API when draft exists
 - `src/editor/hooks/useDraftManager.ts` — localStorage persistence and restore logic
 - `src/editor/editor-utils.ts` — `normalizeContentPayload` (merges body into form values)
+
+## Resolution (2026-07-24, branch claude/ux-review-fixes)
+
+Fixed via option 2 (always load + overlay) plus draft-lifecycle hardening:
+
+- The entry-load effect in `Editor.tsx` now gates on `loadedValues[contentId]` instead of `drafts[contentId]` — a restored localStorage draft no longer suppresses the API fetch. The draft still overlays the loaded value, but dirty-tracking is truthful and fresh server content is always fetched.
+- `handleSave` deletes the draft key after a successful save (previously it was kept forever, which made every subsequent page load look dirty).
+- Both discard actions now confirm before destroying differing drafts.
+
+See commit e43b7a6 and `resolved/ux-review-deploy-test-findings.md`. The "visual draft indicator" idea (option 3) was not implemented; the truthful Save-button state now covers the main need.
