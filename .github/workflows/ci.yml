@@ -68,7 +68,9 @@ jobs:
 
   e2e:
     name: E2E Tests
-    if: false # temporarily disabled while stabilizing tests
+    # Re-enabled 2026-07-24 after the stabilization fix batch (see
+    # apps/test-app/e2e/E2E-FAILURE-ANALYSIS.md) to measure real CI runtime
+    # before deciding per-PR vs run-on-main gating.
     runs-on: ubuntu-latest
     needs: validate
     env:
