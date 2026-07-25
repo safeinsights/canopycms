@@ -33,6 +33,26 @@ and PR head/base names may not round-trip.
   for paths, like cms-worker's raw-vs-sanitized split), or reject slashed
   base-branch names loudly at config validation.
 
+## Partially verified & fixed (2026-07-24, e2e-stabilization branch)
+
+The dev-mode-with-slashed-HEAD scenario was hit for real by the e2e suite
+running from a `claude/...` worktree checkout, confirming parts of the
+suspicion and fixing them (see apps/test-app/e2e/E2E-FAILURE-ANALYSIS.md):
+
+- CONFIRMED+FIXED: `/api/canopycms/branches` returned the RAW git name as
+  `defaultBranch` ('claude/foo'), matching no registry branch name
+  ('claude-foo') — `listBranchesHandler` now sanitizes it.
+- CONFIRMED+FIXED: worker rebase/refresh compared `origin/<raw base>` in
+  --single-branch clones where that remote-tracking ref never exists (every
+  off-main sync died with "ambiguous argument") — now compares FETCH_HEAD
+  after the explicit fetch.
+- VERIFIED WORKING on a slashed-HEAD checkout: workspace provisioning, branch
+  create/switch/edit/save, submit, and the full conflict-detection pipeline
+  (52-test e2e suite green from that checkout).
+
+Still unverified: prod with `defaultBaseBranch: 'release/1.0'`, `canopycms
+sync`, and PR head/base naming against a real GitHub remote.
+
 ## Related
 
 - `paths/branch.ts` `sanitizeBranchName`; `branch-workspace.ts`

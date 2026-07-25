@@ -9,6 +9,7 @@ import {
   createMockBranchContext,
   createMockGitManager,
   createMockSettingsMutation,
+  mockConsole,
 } from '../test-utils'
 
 // Mock authorization module (specifically the permissions loader/mutator)
@@ -228,6 +229,9 @@ describe('permissions API', () => {
     })
 
     it('surfaces a non-200 failure when the settings commit is saved but not pushed (API-H1)', async () => {
+      // The "committed but not pushed" path warns by design; swallow (and
+      // assert) it so it doesn't clutter the test reporter.
+      const consoleSpy = mockConsole()
       const settingsMutation = createMockSettingsMutation({ currentFile: null })
       vi.mocked(permissionsLoader.mutatePermissionsFile).mockImplementation(
         settingsMutation.impl as typeof authorization.mutatePermissionsFile,
@@ -265,6 +269,8 @@ describe('permissions API', () => {
       expect(result.ok).toBe(false)
       expect(result.status).toBe(502)
       expect(result.error).toContain('network unreachable')
+      expect(consoleSpy).toHaveWarned('committed but not pushed')
+      consoleSpy.restore()
     })
 
     it('requires permissions array in body', async () => {

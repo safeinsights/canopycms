@@ -15,6 +15,7 @@ import os from 'node:os'
 import path from 'node:path'
 
 import { CmsWorker } from './cms-worker'
+import { mockConsole, type MockConsole } from '../test-utils'
 import {
   BranchMetadataFileManager,
   getBranchMetadataFileManager,
@@ -39,13 +40,19 @@ type MergePollInternals = {
 describe('CmsWorker.pollMergeState()', () => {
   let tmpDir: string
   let contentBranchesPath: string
+  // pollMergeState logs a line per polled PR by design; swallow that
+  // operational output so the reporter stays quiet. Individual error-path
+  // tests still assert on the captured warning via this spy.
+  let consoleSpy: MockConsole
 
   beforeEach(async () => {
+    consoleSpy = mockConsole()
     tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'canopy-worker-merge-poll-test-'))
     contentBranchesPath = path.join(tmpDir, 'content-branches')
   })
 
   afterEach(async () => {
+    consoleSpy.restore()
     await fs.rm(tmpDir, { recursive: true, force: true })
   })
 
@@ -183,6 +190,7 @@ describe('CmsWorker.pollMergeState()', () => {
     const meta = await readBranchMeta(branchPath)
     expect(meta?.pullRequestState).toBe('open')
     expect(meta?.status).toBe('submitted')
+    expect(consoleSpy).toHaveWarned('Failed to poll PR #46')
   })
 
   it('does not call GitHub when metadata has no pull request number', async () => {
@@ -242,6 +250,7 @@ describe('CmsWorker.pollMergeState()', () => {
     expect(meta?.status).toBe('submitted')
     expect(meta?.pullRequestState).toBe('open')
     expect(meta?.mergedAt).toBeUndefined()
+    expect(consoleSpy).toHaveWarned('Failed to poll PR #49')
   })
 
   describe('dispatch from rebaseActiveBranches()', () => {

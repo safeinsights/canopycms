@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test'
 import { EditorPage } from '../fixtures/editor-page'
-import { switchUser } from '../fixtures/test-users'
+import { switchUser, installE2EFlag } from '../fixtures/test-users'
 import { resetWorkspace, ensureMainBranch } from '../fixtures/test-workspace'
 import { SHORT_TIMEOUT, STANDARD_TIMEOUT, LONG_TIMEOUT } from '../fixtures/timeouts'
 
@@ -13,9 +13,7 @@ test.describe('Entry CRUD Operations', () => {
   let editorPage: EditorPage
 
   test.beforeEach(async ({ page }) => {
-    await page.addInitScript(() => {
-      ;(window as any).__E2E_TEST__ = true
-    })
+    await installE2EFlag(page)
     await test.step('reset workspace', () => resetWorkspace())
     await test.step('ensure main branch', () => ensureMainBranch(BASE_URL))
     editorPage = new EditorPage(page)
@@ -74,15 +72,23 @@ test.describe('Entry CRUD Operations', () => {
       await editorPage.waitForReady()
       await editorPage.openEntryNavigator()
 
-      // Expand the Posts collection (collapsed after reload)
       const postsCollection = page.locator('[data-testid="entry-nav-item-posts"]')
       await postsCollection.waitFor({
         state: 'visible',
         timeout: STANDARD_TIMEOUT,
       })
-      await postsCollection.click()
 
+      // The editor restores the created entry after reload, and the navigator
+      // auto-expands the path to the current entry (EntryNavigator merges
+      // calculatePathToEntry into the expanded state). Only click to expand
+      // when the entry hasn't appeared — an unconditional click would toggle
+      // the collection collapsed and hide the entry we're asserting on. Give
+      // auto-expand a short grace window (not an instant isVisible check) so
+      // it can't land between the check and the click.
       const navItem = page.locator('[data-testid="entry-nav-item-post"]')
+      await navItem
+        .waitFor({ state: 'visible', timeout: 1500 })
+        .catch(() => postsCollection.click())
       await expect(navItem).toBeVisible({ timeout: STANDARD_TIMEOUT })
     })
   })

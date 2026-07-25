@@ -8,6 +8,7 @@ import {
   createMockBranchContext,
   createMockGitManager,
   createMockSettingsMutation,
+  mockConsole,
 } from '../test-utils'
 
 // Mock authorization module (specifically the groups loader/mutator).
@@ -251,6 +252,9 @@ describe('groups API', () => {
     })
 
     it('surfaces a non-200 failure when the settings commit is saved but not pushed (API-H1)', async () => {
+      // The "committed but not pushed" path warns by design; swallow (and
+      // assert) it so it doesn't clutter the test reporter.
+      const consoleSpy = mockConsole()
       const settingsMutation = createMockSettingsMutation<GroupsFile>({ currentFile: null })
       vi.mocked(groupsLoader.mutateGroupsFile).mockImplementation(
         settingsMutation.impl as typeof authorization.mutateGroupsFile,
@@ -286,6 +290,8 @@ describe('groups API', () => {
       expect(result.ok).toBe(false)
       expect(result.status).toBe(502)
       expect(result.error).toContain('network unreachable')
+      expect(consoleSpy).toHaveWarned('committed but not pushed')
+      consoleSpy.restore()
     })
   })
 

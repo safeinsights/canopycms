@@ -34,10 +34,33 @@ export interface ValidationResult {
  *   }
  */
 export class ReferenceValidator {
+  /**
+   * @param resolveCollection - Resolves a schema-declared collection name
+   *   (the documented unprefixed form, e.g. 'posts') to its canonical logical
+   *   path (e.g. 'content/posts'), typically `ContentStore.resolveCollectionItem`.
+   *   Keeps the write boundary consistent with reference-option loading: any
+   *   entry the dropdown offers must also pass validation. Without a resolver,
+   *   names are compared as-is against the index's logical collection paths.
+   */
   constructor(
     private idIndex: ContentIdIndex,
     private schema: readonly FieldConfig[],
+    private resolveCollection?: (name: string) => string | undefined,
   ) {}
+
+  /**
+   * Check whether an entry's collection (canonical logical path from the ID
+   * index, e.g. 'content/posts') satisfies a field's `collections` constraint
+   * (documented unprefixed names, e.g. ['posts']). Subcollections of an
+   * allowed collection are allowed.
+   */
+  private collectionAllowed(entryCollection: string | undefined, allowed: string[]): boolean {
+    return allowed.some((col: string) => {
+      const canonical = this.resolveCollection?.(col) ?? col
+      // Exact match or nested collection match
+      return entryCollection === canonical || entryCollection?.startsWith(canonical + '/')
+    })
+  }
 
   /**
    * Validate all reference fields in the provided data.
@@ -59,8 +82,11 @@ export class ReferenceValidator {
       const ids = Array.isArray(value) ? value : [value]
 
       for (const id of ids) {
-        // Skip null/undefined values (they're handled by required validation)
-        if (id == null) continue
+        // Skip empty values (they're handled by required validation). The
+        // editor sends '' when a single-select reference is cleared
+        // (ReferenceField coerces Mantine's null to ''), so an empty string
+        // means "no reference", not a malformed ID.
+        if (id == null || id === '') continue
 
         // Validate ID format
         if (typeof id !== 'string' || !isValidId(id)) {
@@ -98,10 +124,7 @@ export class ReferenceValidator {
 
         // Validate collection constraint
         if (field.collections && field.collections.length > 0) {
-          const allowed = field.collections.some((col: string) => {
-            // Exact match or nested collection match
-            return location.collection === col || location.collection?.startsWith(col + '/')
-          })
+          const allowed = this.collectionAllowed(location.collection, field.collections)
 
           if (!allowed) {
             errors.push({
@@ -137,6 +160,8 @@ export class ReferenceValidator {
    * Useful for validating user input in real-time.
    */
   async validateSingle(id: string, field: ReferenceFieldConfig): Promise<ValidationError | null> {
+    // '' means "no reference" (cleared single-select) — see validate().
+    if (id === '') return null
     if (!isValidId(id)) {
       return {
         field: field.name,
@@ -166,9 +191,7 @@ export class ReferenceValidator {
     }
 
     if (field.collections && field.collections.length > 0) {
-      const allowed = field.collections.some((col: string) => {
-        return location.collection === col || location.collection?.startsWith(col + '/')
-      })
+      const allowed = this.collectionAllowed(location.collection, field.collections)
 
       if (!allowed) {
         return {

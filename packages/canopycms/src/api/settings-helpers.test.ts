@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest'
 import type { ApiContext } from './types'
-import { createMockApiContext } from '../test-utils'
+import { createMockApiContext, mockConsole } from '../test-utils'
 import { commitSettings } from './settings-helpers'
 
 describe('commitSettings (API-H1)', () => {
@@ -25,6 +25,9 @@ describe('commitSettings (API-H1)', () => {
   })
 
   it('reports pushed: false with a sanitized error when the push fails', async () => {
+    // The "committed but not pushed" path is expected here; swallow (and assert)
+    // the warning so it doesn't clutter the test reporter.
+    const consoleSpy = mockConsole()
     const ctx: ApiContext = createMockApiContext({
       services: {
         config: { mode: 'prod' } as any,
@@ -43,9 +46,12 @@ describe('commitSettings (API-H1)', () => {
     expect(result.error).not.toContain('ghp_leak')
     expect(result.error).not.toContain('/mnt/efs')
     expect(result.error).toContain('***@github.com')
+    expect(consoleSpy).toHaveWarned('committed but not pushed')
+    consoleSpy.restore()
   })
 
   it('falls back to a generic message when the underlying error is empty', async () => {
+    const consoleSpy = mockConsole()
     const ctx: ApiContext = createMockApiContext({
       services: {
         config: { mode: 'prod' } as any,
@@ -57,5 +63,7 @@ describe('commitSettings (API-H1)', () => {
 
     expect(result.pushed).toBe(false)
     expect(result.error).toBe('Settings change was saved but not pushed to git')
+    expect(consoleSpy).toHaveWarned('committed but not pushed')
+    consoleSpy.restore()
   })
 })

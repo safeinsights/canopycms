@@ -82,3 +82,14 @@ export function isReviewer(userId: TestUserId): boolean {
 export function isPrivileged(userId: TestUserId): boolean {
   return isAdmin(userId) || isReviewer(userId)
 }
+
+/**
+ * Mark the page as running under e2e before any app code executes.
+ * Shared helper so specs don't each hand-roll the window cast (the repo's
+ * pre-commit lint rejects `window as any`, which bit several commits).
+ */
+export async function installE2EFlag(page: Page): Promise<void> {
+  await page.addInitScript(() => {
+    ;(window as unknown as { __E2E_TEST__?: boolean }).__E2E_TEST__ = true
+  })
+}

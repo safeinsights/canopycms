@@ -40,7 +40,12 @@ export class EditorPage {
    * Navigate to the editor page.
    */
   async goto(): Promise<void> {
-    await this.page.goto('/edit')
+    // Pin the editor to the 'main' content branch. Without the param the
+    // editor adopts the server's defaultBranch, which dev mode derives from
+    // the *git* HEAD of the checkout running the dev server — so edits would
+    // land on a git-branch-named content branch while the fixtures read
+    // .canopy-dev/content-branches/main/. See e2e/E2E-FAILURE-ANALYSIS.md.
+    await this.page.goto('/edit?branch=main')
   }
 
   /**

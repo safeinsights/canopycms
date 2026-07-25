@@ -9,13 +9,11 @@ import type { OperatingMode } from '../../operating-mode'
 import type { CommentThread } from '../../comment-store'
 import type { BranchListItem } from '../../api/branch'
 import { useApiClient } from '../context'
-// Imported directly from '../../paths/branch' rather than the '../../paths'
-// barrel: that barrel re-exports server-only helpers (resolveBranchPath,
-// ensureBranchRoot) whose module pulls in node:fs/promises and node:path at
-// the top level. sanitizeBranchName itself is pure/dependency-free, but
-// going through the barrel would drag those Node built-ins into this
-// client-side hook's bundle.
-import { sanitizeBranchName } from '../../paths/branch'
+// branch-name, NOT branch or the '../../paths' barrel: both of those pull
+// node:fs/promises + node:path at the top level (path RESOLUTION helpers),
+// which breaks adopters' production `next build` of the editor bundle.
+// paths/branch-name.ts is the dependency-free home of sanitizeBranchName.
+import { sanitizeBranchName } from '../../paths/branch-name'
 
 /**
  * Helper function to show confirmation modal for branch submit action.

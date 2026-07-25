@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test'
 import { EditorPage } from '../fixtures/editor-page'
 import { BranchPage } from '../fixtures/branch-page'
-import { switchUser } from '../fixtures/test-users'
+import { switchUser, installE2EFlag } from '../fixtures/test-users'
 import { STANDARD_TIMEOUT, LONG_TIMEOUT } from '../fixtures/timeouts'
 import {
   resetWorkspace,
@@ -28,9 +28,7 @@ test.describe('Conflict Management', () => {
   let branchPage: BranchPage
 
   test.beforeEach(async ({ page }) => {
-    await page.addInitScript(() => {
-      ;(window as any).__E2E_TEST__ = true
-    })
+    await installE2EFlag(page)
     await test.step('reset workspace', () => resetWorkspace())
     await test.step('ensure main branch', () => ensureMainBranch(BASE_URL))
     editorPage = new EditorPage(page)

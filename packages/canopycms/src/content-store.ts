@@ -1291,19 +1291,24 @@ export class ContentStore {
    * Returns array of entry metadata (relativePath, collection, slug).
    * Returns empty array if the collection doesn't exist.
    */
-  async getCollectionEntryPaths(collectionPath: LogicalPath): Promise<
-    Array<{
-      relativePath: PhysicalPath
-      collection: LogicalPath
-      slug: Slug
-    }>
-  > {
-    const idIndex = await this.idIndex()
-
-    // Try to find the collection in the schema index
+  /**
+   * Resolve a schema collection referenced by name or logical path.
+   *
+   * Accepts either a full logical path ("content/authors") or a bare
+   * collection name ("authors") — the contract reference fields use for
+   * `collections: [...]` (see README). This is the single normalization
+   * point shared by reference-option loading and reference validation so
+   * the dropdown and the write boundary can never disagree.
+   *
+   * CAVEAT: the bare-name fallback matches on the LAST path segment and
+   * returns the first hit in schema order — with two collections sharing a
+   * leaf name (e.g. content/blog/posts and content/news/posts), a bare
+   * 'posts' is ambiguous. Use the full logical path in schemas that nest
+   * same-named collections.
+   */
+  resolveCollectionItem(collectionPath: string): FlatSchemaItem | undefined {
     // The schema index uses normalized logical paths like "content/authors"
-    // But we might receive either "authors" or "content/authors"
-    const normalized = normalizeFilesystemPath(collectionPath)
+    const normalized = normalizeFilesystemPath(collectionPath as LogicalPath)
     let item = this.schemaIndex.get(normalized)
 
     // If not found by full path, try matching the last segment
@@ -1320,12 +1325,23 @@ export class ContentStore {
       }
     }
 
+    return item && item.type === 'collection' ? item : undefined
+  }
+
+  async getCollectionEntryPaths(collectionPath: LogicalPath): Promise<
+    Array<{
+      relativePath: PhysicalPath
+      collection: LogicalPath
+      slug: Slug
+    }>
+  > {
+    const idIndex = await this.idIndex()
+
     // Return empty array if collection doesn't exist or isn't a collection
-    if (!item || item.type !== 'collection') {
+    const collection = this.resolveCollectionItem(collectionPath)
+    if (!collection) {
       return []
     }
-
-    const collection = item
 
     // Get entries from this collection and all subcollections via tree traversal
     const treeEntries = idIndex.getEntriesInCollectionTree(collection.logicalPath)

@@ -870,8 +870,14 @@ export class GitManager {
 
   private async pullBaseInner(): Promise<void> {
     await this.git.fetch(this.remote, this.baseBranch)
+    // Merge the just-fetched tip (pinned to a SHA), not <remote>/<base>:
+    // workspaces are cloned --single-branch, so the remote-tracking ref for
+    // any branch other than the cloned one never exists (same fix as the
+    // worker's rebase loop — see cms-worker.ts), and FETCH_HEAD itself is a
+    // shared mutable file repointed by any other fetch in this clone.
+    const fetchedTip = (await this.git.revparse(['FETCH_HEAD'])).trim()
     try {
-      await this.git.merge([`${this.remote}/${this.baseBranch}`])
+      await this.git.merge([fetchedTip])
     } catch (err) {
       // Capture conflicted files before aborting — abort clears them from status.
       // If status() itself fails (e.g. corrupted .git), still abort and re-throw
@@ -925,8 +931,10 @@ export class GitManager {
 
   private async rebaseOntoBaseInner(): Promise<void> {
     await this.git.fetch(this.remote, this.baseBranch)
+    // Pinned just-fetched tip, not <remote>/<base> — see pullBaseInner.
+    const fetchedTip = (await this.git.revparse(['FETCH_HEAD'])).trim()
     try {
-      await this.git.rebase([`${this.remote}/${this.baseBranch}`])
+      await this.git.rebase([fetchedTip])
     } catch (err) {
       try {
         const status = await this.git.status()

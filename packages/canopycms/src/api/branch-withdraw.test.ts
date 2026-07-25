@@ -262,12 +262,18 @@ describe('branch withdraw api', () => {
     })
 
     it('still allows an admin to withdraw the protected base branch (recovery)', async () => {
+      // The best-effort task enqueue may fail in this mock context (its queue
+      // dir isn't writable) and logs when it does; swallow so the reporter
+      // stays quiet. Not asserted: whether the enqueue fails at all is
+      // environment-dependent, and it isn't the behavior under test.
+      const consoleSpy = mockConsole()
       const res = await withdrawHandler(
         makeProtectedCtx(),
         { user: { type: 'authenticated', userId: 'admin-1', groups: [RESERVED_GROUPS.ADMINS] } },
         { branch: 'main' as BranchName },
       )
       expect(res.ok).toBe(true)
+      consoleSpy.restore()
     })
   })
 })

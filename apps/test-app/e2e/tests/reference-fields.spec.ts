@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test'
 import { EditorPage } from '../fixtures/editor-page'
-import { switchUser } from '../fixtures/test-users'
+import { switchUser, installE2EFlag } from '../fixtures/test-users'
 import { resetWorkspace, ensureMainBranch, readContentFile } from '../fixtures/test-workspace'
 import { SHORT_TIMEOUT, STANDARD_TIMEOUT, LONG_TIMEOUT } from '../fixtures/timeouts'
 
@@ -16,9 +16,7 @@ test.describe('Reference Fields', () => {
   let editorPage: EditorPage
 
   test.beforeEach(async ({ page }) => {
-    await page.addInitScript(() => {
-      Object.assign(window, { __E2E_TEST__: true })
-    })
+    await installE2EFlag(page)
     await test.step('reset workspace', () => resetWorkspace())
     await test.step('ensure main branch', () => ensureMainBranch(BASE_URL))
     editorPage = new EditorPage(page)

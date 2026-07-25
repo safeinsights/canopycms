@@ -11,8 +11,8 @@ import { defineEndpoint } from './route-builder'
 import { createDebugLogger } from '../utils/debug'
 import { clientOperatingStrategy } from '../operating-mode'
 import { isNotFoundError, getErrorMessage } from '../utils/error'
-import { branchNameSchema, branchParamSchema } from './validators'
 import { sanitizeBranchName } from '../paths'
+import { branchNameSchema, branchParamSchema } from './validators'
 
 const log = createDebugLogger({ prefix: 'BranchAPI' })
 
@@ -253,8 +253,13 @@ export const listBranchesHandler = async (
 
   // The branch the editor should open when none is pinned via URL/config.
   // Read per-request so dev-mode refreshActiveBranch() updates are reflected.
-  const defaultBranch =
-    ctx.services.config.defaultActiveBranch ?? ctx.services.config.defaultBaseBranch ?? 'main'
+  // Sanitized: dev mode detects the RAW git HEAD name (e.g. 'claude/foo'),
+  // but registry branch names are filesystem-sanitized ('claude-foo') — the
+  // editor matches defaultBranch against registry names, so return the form
+  // that can actually be found there.
+  const defaultBranch = sanitizeBranchName(
+    ctx.services.config.defaultActiveBranch ?? ctx.services.config.defaultBaseBranch ?? 'main',
+  )
 
   // Attach server-computed protected-base-branch flags; read config per-request
   // so dev-mode refreshActiveBranch() updates are reflected here too.

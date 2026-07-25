@@ -38,7 +38,12 @@ vi.mock('../authorization', async (importOriginal) => {
 })
 
 import { WORKFLOW_ROUTES } from './branch-status'
-import { createMockApiContext, createMockBranchContext, createMockGitManager } from '../test-utils'
+import {
+  createMockApiContext,
+  createMockBranchContext,
+  createMockGitManager,
+  mockConsole,
+} from '../test-utils'
 
 // Extract handlers for testing
 const getBranchStatus = WORKFLOW_ROUTES.getStatus.handler
@@ -185,6 +190,9 @@ describe('branch status api', () => {
   })
 
   it('sanitizes credentials and absolute paths when the push fails (API-H2)', async () => {
+    // The push-failure path logs by design; swallow (and assert) it so the
+    // sanitized error doesn't clutter the test reporter.
+    const consoleSpy = mockConsole()
     const ctx = makeCtx(true)
     ctx.services.submitBranch = vi
       .fn()
@@ -206,5 +214,7 @@ describe('branch status api', () => {
     expect(res.error).not.toContain('ghp_leak123')
     expect(res.error).not.toContain('/mnt/efs')
     expect(res.error).toContain('***@github.com')
+    expect(consoleSpy).toHaveErrored('Failed to push branch changes')
+    consoleSpy.restore()
   })
 })

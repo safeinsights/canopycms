@@ -5,7 +5,7 @@ import { enqueueTask } from '../worker/task-queue'
 import { getTaskQueueDir } from '../worker/task-queue-config'
 import { clientOperatingStrategy } from '../operating-mode'
 import { getErrorMessage } from '../utils/error'
-import { sanitizeBranchName } from '../paths/branch'
+import { sanitizeBranchName } from '../paths/branch-name'
 
 /**
  * Result of a GitHub sync operation.
