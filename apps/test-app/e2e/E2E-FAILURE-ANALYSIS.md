@@ -290,9 +290,20 @@ false` because all tests share one workspace + server). CI runners are slower
      without gating feature PRs.
   3. Opt-in required check via a PR label.
   4. Manual attestation (weak; pair with one of the above).
-- Suggested next step for measuring real CI cost: after the failures are fixed,
-  temporarily flip the CI job on (or add a `workflow_dispatch`) and read the
-  actual wall-clock before deciding per-PR vs on-main.
+- **MEASURED (2026-07-25, run 30137416007 on this branch):** the e2e job was
+  re-enabled and passed on a stock ubuntu runner:
+  - E2E job wall-clock: **10m 51s** (setup ~43s — pnpm cache hit; Playwright
+    browser cache was cold this run and is now saved; `pnpm test:e2e` itself
+    **9m 58s**, suite reported 9.9m).
+  - Result: **51 passed / 1 skipped / 0 failed / 0 flaky** — first-try green
+    on CI, including the tests affected by the intermittent OCC race locally.
+  - Validate job: 3m 20s. With `needs: validate` (serial, as configured),
+    total PR CI latency ≈ **14m 16s**; dropping `needs` would run them in
+    parallel for ≈ 11m total.
+  - Decision inputs: per-PR gating costs ~11 min/PR; run-on-`main` post-merge
+    costs 0 PR latency and surfaces regressions within ~11 min of merge. The
+    job is currently enabled unconditionally on this branch — re-scope (or
+    keep) before/at merge.
 
 ## 8. Related harness notes (lower priority)
 
