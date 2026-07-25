@@ -23,7 +23,7 @@ import {
 import { extractIdFromFilename } from '../content-id-index'
 import { invalidateBranchContentCaches } from '../content-index-generation'
 import { type ContentId, type SanitizedBranchName, ROOT_COLLECTION_ID } from '../paths/types'
-import { sanitizeBranchName } from '../paths/branch'
+import { sanitizeBranchName } from '../paths/branch-name'
 import type { PullRequestState, WorkerStatusReport } from '../types'
 import { getErrorMessage, isNodeError, redactCredentials } from '../utils/error'
 import { writeWorkerStatus } from './worker-status'

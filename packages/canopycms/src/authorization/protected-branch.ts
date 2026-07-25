@@ -10,7 +10,10 @@
  */
 
 import type { CanopyConfig } from '../config'
-import { sanitizeBranchName } from '../paths/branch'
+// branch-name, NOT branch: this module is client-reachable (editor bundle →
+// api/guards.ts → here), and paths/branch.ts drags node:fs into the graph,
+// which breaks adopters' production `next build`.
+import { sanitizeBranchName } from '../paths/branch-name'
 
 export interface BranchProtection {
   /** True when branchName resolves to the configured base branch. */

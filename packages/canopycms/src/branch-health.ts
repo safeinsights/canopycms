@@ -4,7 +4,7 @@ import type { Dirent } from 'node:fs'
 
 import type { BranchMetadata } from './types'
 import { BranchMetadataFileManager, BranchMetadataCorruptError } from './branch-metadata'
-import { sanitizeBranchName } from './paths/branch'
+import { sanitizeBranchName } from './paths/branch-name'
 import { getErrorMessage, isNodeError, isNotFoundError } from './utils/error'
 
 /**
