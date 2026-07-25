@@ -6,6 +6,19 @@ Caveat: the review tab was occluded, so Chrome throttled timers to 1 Hz — all 
 
 Triage note: parallel workstreams were active when this review ran — before picking up any item, check open branches/PRs and existing future-tasks (e.g., [[stale-draft-prevents-content-load]], [[editor-state-context-migration]], [[editor-async-patterns]]) for overlap; some findings may already be in flight.
 
+## Status vs `integration-202607-a` (re-checked 2026-07-24)
+
+The deployment-followups epic (PR #149), git-admin-observability epic (PR #163), and branch protections (PR #153) landed after the review. Re-checked each finding against that branch:
+
+- **Fixed — #4 branch↔PR drift**: worker merge-poll now auto-detects merged PRs and archives the branch (`cms-worker.ts`, PR #144 + mark-merged API); BranchManager shows Merged/Protected badges, PR badges colored by open/closed/merged state, and sync-failed badges.
+- **Fixed (root cause of the review-time symptom) — design question "admins can edit main"**: protected-base-branch work (58c7c4f) makes the base branch read-only in prod (Save disabled + banner + server-side `runWritableBranchGuard` 403) and blocks submitting it in both modes.
+- **Root cause identified, still open — #1 false submit-permission + #3a missing status badge + #7 slash/dash naming are ONE bug**: `useBranchActions.handleCreateBranch` switches to the *raw* name (`performBranchSwitch(branch.name)`) and the URL keeps it, while the registry stores `sanitizeBranchName()`'s dash form; `useBranchManager`'s `branches.find((b) => b.name === branchName)` then never matches, so `currentBranch` is undefined → header gets `branchStatus`/`branchCreatedBy`/`branchAccess`/`branchIsProtected`/`branchReadOnly` all undefined. Badge logic itself is fine. Integration adds an admin/reviewer grant to the header's `canPerformAction`, which masks the false "no permission" tooltip for privileged users only; plain editors creating a `feature/x` branch still hit it, and the badge (and protected/readOnly client flags — server still guards) silently drop for everyone. Fix: adopt the sanitized name returned by the create API (client state + URL), or sanitize before compare.
+- **Still open, mechanism confirmed — #2 phantom dirty**: unchanged on integration and now documented in a code comment ("localStorage-restored drafts without a loaded value count as dirty"): save keeps the draft, the load effect skips the API when a draft exists, so on reload `loadedValues` is empty → `isSelectedDirty()` true → Save enabled + false "Unsaved Changes" branch-create modal. Same root area as [[stale-draft-prevents-content-load]].
+- **Still open — #3b**: saving on a *submitted* branch is still allowed client- and server-side (only the protected base branch is write-guarded).
+- **Still open**: #5 TODO placeholders + "1 files modified" pluralization (both menus, `EditorHeader.tsx:330/392/409`), #6 stale header title after save, #8 raw user IDs (UserBadge + `onGetUserMetadata` wiring exists but the deployed instance still rendered raw IDs; comments surfaces unverified), #9 raw ISO `Updated {b.updatedAt}` (`BranchManager.tsx:386`), #10 no discard confirmation, #11 media fallback, #12 alt-text clear, #13/#14 comments polish.
+- **Retracted — #15 "no save toast"**: a green "Saved" notification exists in `useDraftManager.handleSave`; the review tab's timer throttling hid it. Save also gained client-side pre-save validation with proper error toasts (ED-H1).
+- **Moot — #16** `/editor` 404 is deploy-test-harness-specific.
+
 ## P1 — Correctness / workflow integrity
 
 ### 1. Header "Submit Branch..." wrongly disabled with false permission tooltip
