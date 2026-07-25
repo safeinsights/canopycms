@@ -226,6 +226,17 @@ export async function ensureMainBranch(baseUrl: string): Promise<void> {
       if (body.includes('already exists') || response.status === 409) {
         log.debug('workspace', 'Branch already exists (idempotent)')
         // Continue to wait for workspace - it may still be initializing
+      } else if (body.includes('Cannot create a branch with the base branch name')) {
+        // Benign on checkouts whose git base branch IS 'main' (CI runs on a
+        // detached PR ref, so dev-mode base detection falls back to 'main'):
+        // branch protection refuses the explicit create, but the CMS 'main'
+        // workspace is exactly the base workspace the system auto-provisions.
+        // Auto-provisioning is LAZY (getBranchContext creates the base
+        // workspace when a request references it — http/handler.ts), so issue
+        // one branch-scoped request to trigger it, then fall through to
+        // waitForWorkspace below.
+        log.debug('workspace', "'main' is the protected base branch (auto-provisioning)")
+        await fetch(`${baseUrl}/api/canopycms/main/entries`).catch(() => {})
       } else {
         // Non-idempotent failure: throw error
         log.error('workspace', 'Failed to create main branch', {
