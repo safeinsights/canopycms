@@ -48,7 +48,7 @@ The core package (`packages/canopycms/src/`) is organized into focused modules:
 - `authorization/` - Unified access control (branch + path permissions, groups, protected-base-branch policy — `protected-branch.ts`'s `getBranchProtection()` is the single source of truth for whether a branch is the base branch, submit-blocked, and/or read-only); `settings-file-store.ts` - layered cross-host locking for the settings workspace's mutable JSON files (`mutateSettingsJsonFile` wraps withLock + withOccFileLock + withOccRetry/writeOccJsonFile; permissions/groups loaders expose `mutatePermissionsFile`/`mutateGroupsFile` on top) — see [docs/concurrency.md](docs/concurrency.md)
 - `config/` - Configuration types, schemas, validation
 - `schema/` - Schema loading and resolution
-- `paths/` - Path utilities with branded types (LogicalPath, PhysicalPath)
+- `paths/` - Path utilities with branded types (LogicalPath, PhysicalPath); `branch-name.ts` is the dependency-free home of `sanitizeBranchName` — client-reachable code must import it from there, never from `paths/branch.ts` or the `paths` barrel (both pull `node:fs` into the browser bundle; `pnpm lint:bundle` enforces this)
 - `editor/` - React editor components and hooks
 - `operating-mode/` - Operating mode strategies (prod, dev)
 - `api/` - API handlers (see [api/AGENTS.md](packages/canopycms/src/api/AGENTS.md) for API development guidelines)
@@ -84,7 +84,7 @@ See [ARCHITECTURE.md](ARCHITECTURE.md#module-structure) for detailed module docu
 
 ## Quality Checks
 
-See [DEVELOPING.md](DEVELOPING.md#quality-checks) for testing and typecheck requirements. Claude subagents are available:
+See [DEVELOPING.md](DEVELOPING.md#quality-checks) for testing and typecheck requirements. `pnpm lint:bundle` (dependency-cruiser) fails when anything reachable from `canopycms/client` reaches a node built-in — see [Client-Bundle Boundary Check](DEVELOPING.md#client-bundle-boundary-check). Claude subagents are available:
 
 - `.claude/agents/test.md` - Run tests and fix failures
 - `.claude/agents/typecheck.md` - Type checking
