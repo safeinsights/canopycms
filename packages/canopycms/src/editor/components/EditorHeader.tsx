@@ -260,6 +260,12 @@ export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(functi
   }: EditorHeaderProps,
   ref,
 ) {
+  // The base branch's readOnly flag takes precedence (it's a structural
+  // property, not a workflow state). Otherwise, any non-'editing' status
+  // means content is locked for review — save/add actions must be blocked
+  // client-side too, not just rejected server-side by the writableBranch guard.
+  const statusLocked = !branchReadOnly && branchStatus !== undefined && branchStatus !== 'editing'
+
   return (
     <Paper
       ref={ref}
@@ -327,8 +333,6 @@ export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(functi
                     All Files
                   </Menu.Item>
                   <Menu.Divider />
-                  <Menu.Item disabled>{'TODO: replace with real modified file list'}</Menu.Item>
-                  <Menu.Divider />
                   <Menu.Label>Recently modified</Menu.Label>
                   {editedFiles.slice(0, 3).length === 0 ? (
                     <Menu.Item disabled>&lt;none&gt;</Menu.Item>
@@ -389,7 +393,7 @@ export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(functi
                     Change / Manage Branches
                   </Menu.Item>
                   <Menu.Divider />
-                  <Menu.Label>{`${modifiedCount} files modified`}</Menu.Label>
+                  <Menu.Label>{`${modifiedCount} file${modifiedCount === 1 ? '' : 's'} modified`}</Menu.Label>
                   {editedFiles.length === 0 ? (
                     <Menu.Item disabled>No edited files yet</Menu.Item>
                   ) : (
@@ -405,8 +409,6 @@ export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(functi
                       </Menu.Item>
                     ))
                   )}
-                  <Menu.Divider />
-                  <Menu.Item disabled>{'TODO: replace with real modified file list'}</Menu.Item>
                 </Menu.Dropdown>
               </Menu>
 
@@ -464,11 +466,15 @@ export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(functi
               label={
                 branchReadOnly
                   ? 'The base branch is read-only'
-                  : !hasUnsavedChanges && currentEntry
-                    ? 'No changes to save'
-                    : ''
+                  : statusLocked
+                    ? branchStatus === 'submitted'
+                      ? 'This branch is submitted for review — withdraw it to make changes'
+                      : `This branch is ${branchStatus} — content is read-only`
+                    : !hasUnsavedChanges && currentEntry
+                      ? 'No changes to save'
+                      : ''
               }
-              disabled={!branchReadOnly && (hasUnsavedChanges || !currentEntry)}
+              disabled={!branchReadOnly && !statusLocked && (hasUnsavedChanges || !currentEntry)}
             >
               <Button
                 data-testid="save-button"
@@ -476,7 +482,12 @@ export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(functi
                 size="sm"
                 onClick={onSave}
                 disabled={
-                  !branchName || !currentEntry || busy || !hasUnsavedChanges || branchReadOnly
+                  !branchName ||
+                  !currentEntry ||
+                  busy ||
+                  !hasUnsavedChanges ||
+                  branchReadOnly ||
+                  statusLocked
                 }
               >
                 Save File
@@ -549,6 +560,26 @@ export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(functi
               </Text>
               <Button size="xs" variant="light" color="yellow" onClick={onBranchManagerOpen}>
                 Create a branch
+              </Button>
+            </Group>
+          </Alert>
+        )}
+        {statusLocked && (
+          <Alert
+            icon={<IconLock size={16} />}
+            color="yellow"
+            variant="light"
+            mt="sm"
+            data-testid="status-locked-banner"
+          >
+            <Group justify="space-between" align="center" gap="sm" wrap="wrap">
+              <Text size="sm">
+                {branchStatus === 'submitted'
+                  ? `Branch "${branchName}" is submitted for review and locked for edits. Use Withdraw Branch above to resume editing.`
+                  : `Branch "${branchName}" is ${branchStatus} — content is read-only.`}
+              </Text>
+              <Button size="xs" variant="light" color="yellow" onClick={onBranchManagerOpen}>
+                Manage Branches
               </Button>
             </Group>
           </Alert>

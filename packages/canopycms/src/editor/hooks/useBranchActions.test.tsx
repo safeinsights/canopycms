@@ -187,6 +187,48 @@ describe('useBranchActions', () => {
     expect(mockSetBranchName).toHaveBeenCalledWith('new-branch')
   })
 
+  it('adopts the server-sanitized branch name after create', async () => {
+    // The server sanitizes branch names (e.g. "feature/x" -> "feature-x")
+    // before persisting them. The client must switch to the name the server
+    // actually saved, not the raw name the user typed, or currentBranch
+    // lookups in useBranchManager will never resolve.
+    mockClient.branches.create.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      data: {
+        branch: {
+          name: 'feature-x',
+          status: 'editing',
+          access: { allowedUsers: [], allowedGroups: [] },
+          createdBy: 'user1',
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        },
+      },
+    })
+
+    const { result } = renderHook(() => useBranchActions(defaultOptions), {
+      wrapper,
+    })
+
+    await act(async () => {
+      await result.current.handleCreateBranch({ name: 'feature/x' })
+    })
+
+    expect(mockClient.branches.create).toHaveBeenCalledWith({
+      branch: 'feature/x',
+      title: undefined,
+      description: undefined,
+    })
+    // setBranchName and the URL should reflect the sanitized name the
+    // server persisted, not the raw user-typed name.
+    expect(mockSetBranchName).toHaveBeenCalledWith('feature-x')
+    expect(mockOnBranchSwitch).toHaveBeenCalledWith('feature-x')
+    const calls = (window.history.replaceState as any).mock.calls
+    const urlCall = calls.find((call: any) => call[2].includes('branch=feature-x'))
+    expect(urlCall).toBeTruthy()
+  })
+
   it('handles create branch error', async () => {
     mockClient.branches.create.mockResolvedValueOnce({
       ok: false,

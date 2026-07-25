@@ -222,6 +222,17 @@ const runWritableBranchGuard: GuardRunner = async (ctx, _req, params, accumulate
     }
   }
 
+  if (context.branch.status !== 'editing') {
+    const error =
+      context.branch.status === 'submitted'
+        ? `Branch "${context.branch.name}" is submitted for review and cannot be edited. Withdraw it or request changes to resume editing.`
+        : `Branch "${context.branch.name}" is ${context.branch.status} and cannot be edited.`
+    return {
+      ok: false,
+      response: { ok: false, status: 403, error },
+    }
+  }
+
   return { ok: true, context: { branchContext: context } }
 }
 

@@ -24,6 +24,7 @@ import { UserBadge } from './components/UserBadge'
 // Import directly from helpers to avoid server-only code in authorization barrel
 import { isAdmin, isReviewer } from '../authorization/helpers'
 import { clientOperatingStrategy } from '../operating-mode/client'
+import { formatRelativeTime } from './relative-time'
 
 export interface BranchSummary {
   name: string
@@ -382,9 +383,11 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
                       </Group>
                       <Group gap="xs" align="center">
                         {b.updatedAt && (
-                          <Text size="xs" c="dimmed">
-                            Updated {b.updatedAt}
-                          </Text>
+                          <Tooltip label={new Date(b.updatedAt).toLocaleString()}>
+                            <Text size="xs" c="dimmed">
+                              Updated {formatRelativeTime(b.updatedAt)}
+                            </Text>
+                          </Tooltip>
                         )}
                         {b.createdBy && (
                           <>

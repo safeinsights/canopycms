@@ -130,6 +130,27 @@ describe('content api', () => {
     expect(res.ok).toBe(true)
   })
 
+  it('forbids writing content on a submitted branch (review lock)', async () => {
+    const ctx = createMockApiContext({
+      allowContentAccess: true,
+      getBranchContext: vi.fn().mockResolvedValue({
+        ...branchContextWithSchema,
+        branch: { ...branchContextWithSchema.branch, status: 'submitted' },
+      }),
+    })
+    const res = await writeContent(
+      ctx,
+      { user: { type: 'authenticated', userId: 'u1', groups: [] } },
+      {
+        branch: unsafeAsBranchName('feature/x'),
+        path: unsafeAsLogicalPath('posts/hello'),
+      },
+      { format: 'json', data: { title: 'hi' } },
+    )
+    expect(res.ok).toBe(false)
+    expect(res.status).toBe(403)
+  })
+
   it('returns 409 when store.write throws ContentConflictError', async () => {
     const ctx = allowedCtx()
     const { ContentStore, ContentConflictError } = await import('../content-store')

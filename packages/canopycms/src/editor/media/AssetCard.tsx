@@ -1,9 +1,9 @@
 'use client'
 
-import React from 'react'
+import React, { useState } from 'react'
 
 import { ActionIcon, Card, Text, Tooltip } from '@mantine/core'
-import { IconFileTypePdf, IconTrash } from '@tabler/icons-react'
+import { IconFileTypePdf, IconPhotoOff, IconTrash } from '@tabler/icons-react'
 
 import type { AssetRecord } from '../../api'
 import { assetUrl } from '../../assets/asset-url'
@@ -29,6 +29,17 @@ const THUMBNAIL_WIDTH = 160
  */
 export const AssetCard: React.FC<AssetCardProps> = ({ asset, baseUrl, onSelect, onDelete }) => {
   const uploadedDate = new Date(asset.uploadedAt).toLocaleDateString()
+  const thumbnailSrc = assetUrl(asset, { width: THUMBNAIL_WIDTH, baseUrl })
+  const [thumbnailFailed, setThumbnailFailed] = useState(false)
+  // Reset the error state if the underlying asset/src changes, so a
+  // previously-broken thumbnail gets another chance to load. Adjusting state
+  // during render (rather than in a useEffect) avoids an extra render pass -
+  // see https://react.dev/learn/you-might-not-need-an-effect#adjusting-some-state-when-a-prop-changes
+  const [prevThumbnailSrc, setPrevThumbnailSrc] = useState(thumbnailSrc)
+  if (thumbnailSrc !== prevThumbnailSrc) {
+    setPrevThumbnailSrc(thumbnailSrc)
+    setThumbnailFailed(false)
+  }
 
   const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
     if (!onSelect) return
@@ -84,11 +95,31 @@ export const AssetCard: React.FC<AssetCardProps> = ({ asset, baseUrl, onSelect, 
           >
             <IconFileTypePdf size={40} stroke={1.5} />
           </div>
+        ) : thumbnailFailed ? (
+          <div
+            data-testid={`asset-card-thumbnail-fallback-${asset.hash32}`}
+            style={{
+              height: 100,
+              width: '100%',
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: 4,
+              background: 'var(--mantine-color-gray-1)',
+            }}
+          >
+            <IconPhotoOff size={28} stroke={1.5} color="var(--mantine-color-gray-5)" />
+            <Text size="xs" c="dimmed">
+              Preview unavailable
+            </Text>
+          </div>
         ) : (
           <img
-            src={assetUrl(asset, { width: THUMBNAIL_WIDTH, baseUrl })}
+            src={thumbnailSrc}
             alt={asset.filename}
             style={{ width: '100%', height: 100, objectFit: 'cover', display: 'block' }}
+            onError={() => setThumbnailFailed(true)}
           />
         )}
       </Card.Section>

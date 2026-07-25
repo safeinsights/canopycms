@@ -1554,6 +1554,8 @@ This flow applies to editing branches. The base branch itself can never be submi
 3. Reviewers can approve or request changes
 4. Requesting changes returns branch to "editing" status
 
+**Content is read-only while under review.** Once a branch leaves `editing` status (`submitted`, `approved`, `locked`, or `archived`), the server write boundary rejects content saves, entry creation, and schema mutations with the same kind of 403 used for the protected base branch — a branch mid-review shouldn't have its content shift under the reviewer. The editor mirrors this on the client: Save is disabled, entry-tree mutations are hidden, and a status banner explains why. Comments are exempt from this lock by design, since they're the review mechanism itself and must stay writable while a branch is submitted. Withdrawing the submission or requesting changes returns the branch to `editing` and immediately re-enables writes.
+
 ### Merging and Archiving
 
 Merge detection is automatic. Once a branch is `submitted` or `approved` and has a recorded PR, the worker's sync cycle polls GitHub for that PR's resolution on every pass (see [Branch Synchronization and Conflict Detection](#branch-synchronization-and-conflict-detection)):
