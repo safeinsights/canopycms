@@ -17,6 +17,7 @@ import type {
   SelectFieldConfig,
 } from '../config'
 import { MarkdownField } from './fields/MarkdownField'
+import { StringListField } from './fields/StringListField'
 import { TextField } from './fields/TextField'
 import { ToggleField } from './fields/ToggleField'
 import { BlockField, type BlockInstance } from './fields/BlockField'
@@ -226,6 +227,18 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
 
     switch (field.type) {
       case 'string':
+        if (field.list) {
+          return wrapWithComments(
+            <StringListField
+              key={fieldKey(path)}
+              id={fieldId}
+              label={label}
+              value={Array.isArray(currentValue) ? (currentValue as string[]) : []}
+              onChange={(v) => update(v)}
+              dataCanopyField={normalizeCanopyPath(path)}
+            />,
+          )
+        }
         return wrapWithComments(
           <TextField
             key={fieldKey(path)}

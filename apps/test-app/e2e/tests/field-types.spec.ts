@@ -1,7 +1,12 @@
 import { test, expect } from '@playwright/test'
 import { EditorPage } from '../fixtures/editor-page'
 import { switchUser } from '../fixtures/test-users'
-import { resetWorkspace, ensureMainBranch, readContentFile } from '../fixtures/test-workspace'
+import {
+  resetWorkspace,
+  ensureMainBranch,
+  readContentFile,
+  findContentFile,
+} from '../fixtures/test-workspace'
 import { SHORT_TIMEOUT, STANDARD_TIMEOUT, LONG_TIMEOUT } from '../fixtures/timeouts'
 
 const BASE_URL = 'http://localhost:5174'
@@ -15,7 +20,7 @@ test.describe('Multi-Field Content Editing', () => {
 
   test.beforeEach(async ({ page }) => {
     await page.addInitScript(() => {
-      ;(window as any).__E2E_TEST__ = true
+      ;(window as unknown as { __E2E_TEST__?: boolean }).__E2E_TEST__ = true
     })
     await test.step('reset workspace', () => resetWorkspace())
     await test.step('ensure main branch', () => ensureMainBranch(BASE_URL))
@@ -156,9 +161,44 @@ test.describe('Multi-Field Content Editing', () => {
     })
   })
 
-  test.skip('list field: add/remove items', async () => {
-    // TODO: List field items have no data-testid attributes in the current UI.
-    // Can't programmatically add/remove items; save button stays disabled with no changes.
+  test('list field: add/remove items', async ({ page }) => {
+    const slug = `list-test-${Date.now()}`
+
+    await test.step('create a post (posts have the tags string-list field)', async () => {
+      await editorPage.goto()
+      await editorPage.waitForReady()
+      await editorPage.createPost(slug, 'List Field Post')
+    })
+
+    await test.step('add two tags', async () => {
+      // StringListField renders a Mantine TagsInput: type + Enter adds a pill.
+      const input = editorPage.getFieldInput('tags')
+      await input.click()
+      await input.fill('alpha')
+      await page.keyboard.press('Enter')
+      await input.fill('beta')
+      await page.keyboard.press('Enter')
+    })
+
+    await test.step('save and verify both items on disk', async () => {
+      await editorPage.saveAndVerify()
+      const relPath = await findContentFile(`posts.qrstuvwxyz12/post.${slug}.`)
+      expect(relPath).toBeTruthy()
+      const content = await readContentFile<{ tags?: string[] }>(relPath!)
+      expect(content.tags).toEqual(['alpha', 'beta'])
+    })
+
+    await test.step('remove the last item and verify on disk', async () => {
+      // Backspace with an empty input removes the last pill.
+      const input = editorPage.getFieldInput('tags')
+      await input.click()
+      await page.keyboard.press('Backspace')
+      await editorPage.saveAndVerify()
+
+      const relPath = await findContentFile(`posts.qrstuvwxyz12/post.${slug}.`)
+      const content = await readContentFile<{ tags?: string[] }>(relPath!)
+      expect(content.tags).toEqual(['alpha'])
+    })
   })
 
   test('multiple fields in single entry', async () => {
