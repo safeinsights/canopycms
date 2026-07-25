@@ -304,6 +304,28 @@ false` because all tests share one workspace + server). CI runners are slower
     costs 0 PR latency and surfaces regressions within ~11 min of merge. The
     job is currently enabled unconditionally on this branch — re-scope (or
     keep) before/at merge.
+- **FINAL MEASURED SHAPE (2026-07-25, run 30140156141) — after the speed
+  batch** (cheap in-place workspace reset; `next build && next start` on CI;
+  3-way CI sharding with merged blob reports):
+  - Local full suite: **3.3m** vs prod server (was 4.6m with cheap reset +
+    dev server, 7.5m originally).
+  - CI per shard: **~2m 45s** wall-clock each, all three in parallel
+    (includes setup, `next build`, and its slice of tests: 2.1m / 1.8m /
+    1.7m test phases; 20+19+12 = 51 passed, 1 skipped, 0 failed/flaky
+    first-try). Merge-report job: ~30s, non-blocking.
+  - With `needs: validate` removed (landed right after this run), e2e no
+    longer waits for validate: **total PR CI latency ≈ max(validate ~4m,
+    shards ~2m45s + merge 30s) ≈ ~4m** — down from 14m16s at first
+    measurement.
+  - The prod-server path immediately caught a real client-bundle regression
+    (node:fs in the editor bundle via protected-branch imports — would have
+    broken adopters' `next build`), partially covering the dual-build-ci.md
+    (P1) gap.
+  - Two CI-only harness gotchas fixed en route: pnpm forwards a literal
+    `--` to scripts (Playwright read `--shard` as a file filter → "No tests
+    found"), and CI's detached-HEAD checkout makes the git base branch fall
+    back to 'main', so branch protection rejects the harness's explicit
+    "create main" (now treated as the auto-provisioned base workspace).
 
 ## 8. Related harness notes (lower priority)
 

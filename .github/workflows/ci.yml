@@ -73,8 +73,10 @@ jobs:
     # level: each shard gets its own runner, server, and workspace, so the
     # shards can't contend (in-process Playwright workers CAN'T work here —
     # all tests share one workspace + server; see playwright.config.ts).
+    # No `needs: validate` — running in parallel with it cuts total PR
+    # latency by the whole validate duration and lets e2e-only iteration
+    # skip the wait.
     runs-on: ubuntu-latest
-    needs: validate
     strategy:
       fail-fast: false
       matrix:
@@ -111,6 +113,18 @@ jobs:
         with:
           path: ~/.cache/ms-playwright
           key: playwright-chromium-${{ hashFiles('pnpm-lock.yaml') }}
+
+      # Next.js incremental build cache — makes each shard's `next build`
+      # (playwright.config webServer, CI path) largely incremental instead of
+      # cold. Keyed to restore the nearest previous cache; Next invalidates
+      # stale entries itself.
+      - name: Cache Next.js build cache
+        uses: actions/cache@v4
+        with:
+          path: apps/test-app/.next/cache
+          key: nextjs-test-app-${{ hashFiles('pnpm-lock.yaml') }}-${{ github.sha }}
+          restore-keys: |
+            nextjs-test-app-${{ hashFiles('pnpm-lock.yaml') }}-
 
       - name: Install Playwright browsers
         if: steps.playwright-cache.outputs.cache-hit != 'true'
