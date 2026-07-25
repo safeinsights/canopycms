@@ -242,6 +242,15 @@ export const Editor: React.FC<EditorProps> = ({
     comments: commentsForBranchSummaries,
   })
 
+  // Content mutations (add/delete/rename/reorder entries) are locked whenever the
+  // branch itself is read-only (the protected base branch) OR its workflow status
+  // has moved past 'editing' (submitted for review, approved, locked, archived) --
+  // mirrors the server's writableBranch guard. Undefined currentBranch (initial
+  // load) is treated as unlocked so the UI doesn't flash a locked state.
+  const branchContentLocked =
+    (currentBranch?.readOnly ?? false) ||
+    (currentBranch !== undefined && currentBranch.status !== 'editing')
+
   // 2. Entry manager (depends on branchNameState, owns selectedPath)
   const {
     selectedPath,
@@ -1048,7 +1057,7 @@ export const Editor: React.FC<EditorProps> = ({
                 <Group gap="xs">
                   {navCollections &&
                     navCollections.length > 0 &&
-                    !currentBranch?.readOnly &&
+                    !branchContentLocked &&
                     (navCollections[0].onAdd || navCollections[0].onAddSubCollection) && (
                       <Menu shadow="md" width={200} withinPortal position="bottom-end">
                         <Menu.Target>
@@ -1130,7 +1139,7 @@ export const Editor: React.FC<EditorProps> = ({
                     onReorderEntry={handleReorderEntry}
                     hiddenRootPath={hiddenRootPath}
                     loading={entriesInitializing}
-                    readOnly={currentBranch?.readOnly ?? false}
+                    readOnly={branchContentLocked}
                   />
                 </Box>
               </Drawer.Body>

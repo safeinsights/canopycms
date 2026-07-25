@@ -376,6 +376,67 @@ describe('executeGuards', () => {
         expect(result.response.status).toBe(404)
       }
     })
+
+    // ------------------------------------------------------------------
+    // Branch status — content writes are only allowed while 'editing'
+    // ------------------------------------------------------------------
+
+    it('allows a non-base branch with status "editing"', async () => {
+      const bc = createMockBranchContext({ branchName: 'feature/x', status: 'editing' })
+      const ctx = createMockApiContext({
+        branchContext: bc,
+        services: { config: { ...baseConfig, mode: 'prod', defaultBaseBranch: 'main' } },
+      })
+
+      const result = await executeGuards(['writableBranch'] as const, ctx, makeReq(), {
+        branch: 'feature/x',
+      })
+
+      expect(result.ok).toBe(true)
+    })
+
+    it('blocks a branch with status "submitted" with a withdraw-focused message', async () => {
+      const bc = createMockBranchContext({ branchName: 'feature/x', status: 'submitted' })
+      const ctx = createMockApiContext({
+        branchContext: bc,
+        services: { config: { ...baseConfig, mode: 'prod', defaultBaseBranch: 'main' } },
+      })
+
+      const result = await executeGuards(['writableBranch'] as const, ctx, makeReq(), {
+        branch: 'feature/x',
+      })
+
+      expect(result.ok).toBe(false)
+      if (!result.ok) {
+        expect(result.response.status).toBe(403)
+        expect(result.response.error).toBe(
+          'Branch "feature/x" is submitted for review and cannot be edited. Withdraw it or request changes to resume editing.',
+        )
+      }
+    })
+
+    it.each(['approved', 'locked', 'archived'] as const)(
+      'blocks a branch with status "%s"',
+      async (status) => {
+        const bc = createMockBranchContext({ branchName: 'feature/x', status })
+        const ctx = createMockApiContext({
+          branchContext: bc,
+          services: { config: { ...baseConfig, mode: 'prod', defaultBaseBranch: 'main' } },
+        })
+
+        const result = await executeGuards(['writableBranch'] as const, ctx, makeReq(), {
+          branch: 'feature/x',
+        })
+
+        expect(result.ok).toBe(false)
+        if (!result.ok) {
+          expect(result.response.status).toBe(403)
+          expect(result.response.error).toBe(
+            `Branch "feature/x" is ${status} and cannot be edited.`,
+          )
+        }
+      },
+    )
   })
 
   // ========================================================================
