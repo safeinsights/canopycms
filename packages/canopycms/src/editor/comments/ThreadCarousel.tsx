@@ -112,6 +112,8 @@ export interface ThreadCarouselProps {
   highlightThreadId?: string
   /** Optional function to fetch user metadata for displaying user badges */
   onGetUserMetadata?: (userId: string) => Promise<UserSearchResult | null>
+  /** Called when the user cancels the new-thread box (e.g. so a wrapper can collapse an empty carousel) */
+  onCancelNewThread?: () => void
 }
 export const ThreadCarousel: React.FC<ThreadCarouselProps> = ({
   threads,
@@ -125,6 +127,7 @@ export const ThreadCarousel: React.FC<ThreadCarouselProps> = ({
   autoOpenNewThread,
   highlightThreadId,
   onGetUserMetadata,
+  onCancelNewThread,
 }) => {
   const [currentIndex, setCurrentIndex] = useState(0)
   const [showNewThreadBox, setShowNewThreadBox] = useState(false)
@@ -384,7 +387,14 @@ export const ThreadCarousel: React.FC<ThreadCarouselProps> = ({
                 >
                   Create Thread
                 </Button>
-                <Button size="xs" variant="subtle" onClick={() => setShowNewThreadBox(false)}>
+                <Button
+                  size="xs"
+                  variant="subtle"
+                  onClick={() => {
+                    setShowNewThreadBox(false)
+                    onCancelNewThread?.()
+                  }}
+                >
                   Cancel
                 </Button>
               </Group>
