@@ -81,7 +81,10 @@ export const ImageField: React.FC<ImageFieldProps> = ({
     justCommittedRef.current = true
     onChange({
       src: asset.src,
-      alt: '',
+      // Preserve the current alt text on replace - it often still describes
+      // the new image (e.g. "hero photo"), and the editor can always edit it.
+      // Selecting into an empty field has no prior alt, so it stays ''.
+      alt: value?.alt ?? '',
       ...(asset.width !== undefined ? { width: asset.width } : {}),
       ...(asset.height !== undefined ? { height: asset.height } : {}),
       ...(crop ? { crop } : {}),

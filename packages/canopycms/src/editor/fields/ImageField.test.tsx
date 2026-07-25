@@ -259,6 +259,26 @@ describe('ImageField', () => {
 
     await waitFor(() => {
       const state = JSON.parse(screen.getByTestId('field-value').textContent ?? 'null')
+      // Replacing preserves the existing alt text rather than wiping it -
+      // it often still describes the new image, and the editor can edit it.
+      expect(state).toEqual({ src: catAsset.src, alt: 'Old', width: 400, height: 300 })
+    })
+  })
+
+  it('picking into an empty field yields empty alt text (nothing to preserve)', async () => {
+    mockClient.assets.list.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      data: { assets: [catAsset] },
+    })
+
+    renderField()
+    fireEvent.click(screen.getByTestId('image-field-browse-library-hero'))
+    const card = await screen.findByTestId(`asset-card-${catAsset.hash32}`)
+    fireEvent.click(card)
+
+    await waitFor(() => {
+      const state = JSON.parse(screen.getByTestId('field-value').textContent ?? 'null')
       expect(state).toEqual({ src: catAsset.src, alt: '', width: 400, height: 300 })
     })
   })

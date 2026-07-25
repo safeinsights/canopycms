@@ -17,6 +17,7 @@ import {
 import type { CommentThread } from '../comment-store'
 import type { UserSearchResult } from '../auth/types'
 import { UserBadge } from './components/UserBadge'
+import { formatRelativeTime } from './relative-time'
 
 export interface CommentsPanelProps {
   branchName: string
@@ -97,15 +98,6 @@ export const CommentsPanel: React.FC<CommentsPanelProps> = ({
     }
   }
 
-  const formatTimestamp = (timestamp: string) => {
-    try {
-      const date = new Date(timestamp)
-      return date.toLocaleString()
-    } catch {
-      return timestamp
-    }
-  }
-
   return (
     <Drawer
       opened
@@ -134,6 +126,12 @@ export const CommentsPanel: React.FC<CommentsPanelProps> = ({
                   Cancel
                 </Button>
               </Group>
+            )}
+            {!replyTo && (
+              <Text size="xs" c="dimmed">
+                Posts a branch-level comment on &quot;{branchName}&quot;. Use a field&apos;s
+                &quot;New comment&quot; link for field-specific threads.
+              </Text>
             )}
             <Textarea
               placeholder={replyTo ? 'Write a reply...' : 'Write a comment...'}
@@ -269,7 +267,7 @@ export const CommentsPanel: React.FC<CommentsPanelProps> = ({
                             onClose()
                           }}
                         >
-                          Go to branch
+                          Open branch discussion
                         </Button>
                       )}
                     </Group>
@@ -302,8 +300,12 @@ export const CommentsPanel: React.FC<CommentsPanelProps> = ({
                                 {comment.userId}
                               </Text>
                             )}
-                            <Text size="xs" c="dimmed">
-                              {formatTimestamp(comment.timestamp)}
+                            <Text
+                              size="xs"
+                              c="dimmed"
+                              title={new Date(comment.timestamp).toLocaleString()}
+                            >
+                              {formatRelativeTime(comment.timestamp)}
                             </Text>
                           </Group>
                           <Text size="sm" style={{ whiteSpace: 'pre-wrap' }}>

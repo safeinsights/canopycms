@@ -242,6 +242,15 @@ export const Editor: React.FC<EditorProps> = ({
     comments: commentsForBranchSummaries,
   })
 
+  // Content mutations (add/delete/rename/reorder entries) are locked whenever the
+  // branch itself is read-only (the protected base branch) OR its workflow status
+  // has moved past 'editing' (submitted for review, approved, locked, archived) --
+  // mirrors the server's writableBranch guard. Undefined currentBranch (initial
+  // load) is treated as unlocked so the UI doesn't flash a locked state.
+  const branchContentLocked =
+    (currentBranch?.readOnly ?? false) ||
+    (currentBranch !== undefined && currentBranch.status !== 'editing')
+
   // 2. Entry manager (depends on branchNameState, owns selectedPath)
   const {
     selectedPath,
@@ -293,8 +302,8 @@ export const Editor: React.FC<EditorProps> = ({
 
   // 3. Draft manager (depends on branchNameState, selectedPath from useEntryManager)
   const {
-    drafts,
     setDrafts,
+    loadedValues,
     setLoadedValues,
     effectiveValue,
     modifiedCount,
@@ -315,6 +324,11 @@ export const Editor: React.FC<EditorProps> = ({
     loadEntry,
     saveEntry,
     setBusy: setEntriesLoading,
+    onSaved: () => {
+      void refreshEntries(branchNameState).catch((err) =>
+        console.error('Failed to refresh entries after save', err),
+      )
+    },
   })
 
   // 4. Branch actions (depends on isAnyDirty, setBranchName)
@@ -384,24 +398,39 @@ export const Editor: React.FC<EditorProps> = ({
   )
   const schema = currentEntry?.schema ?? []
 
-  // Effect to load entry data when selection changes
+  // Effect to load entry data when selection changes.
+  //
+  // Gated on `loadedValues[contentId]` (not `drafts[contentId]`) so a
+  // restored-from-localStorage draft never skips the load: skipping left
+  // `loadedValues[contentId]` permanently undefined, which made dirty-
+  // tracking meaningless (a draft with no loaded value counts as dirty
+  // everywhere in useDraftManager) and silently starved the entry of a
+  // fresh server read. The draft is still preserved as an overlay below —
+  // only the "did we ever fetch the server value" gate changed.
+  const loadingEntryIdsRef = useRef<Set<ContentId>>(new Set())
 
   useEffect(() => {
     const load = async () => {
       const contentId = currentEntry?.contentId
-      if (!currentEntry || !contentId || drafts[contentId]) return
+      if (!currentEntry || !contentId || loadedValues[contentId] !== undefined) return
+      // Guard against overlapping renders re-firing the same in-flight load
+      // (e.g. `currentEntry` getting a new object reference from an entries
+      // refresh while the fetch below is still pending).
+      if (loadingEntryIdsRef.current.has(contentId)) return
+      loadingEntryIdsRef.current.add(contentId)
       setEntriesLoading(true)
       try {
         const loaded = await loadEntry(currentEntry)
         setLoadedValues((prev) => ({ ...prev, [contentId]: loaded }))
         setDrafts((prev) => {
-          if (prev[contentId] !== undefined) return prev // preserve localStorage draft
+          if (prev[contentId] !== undefined) return prev // preserve existing (e.g. localStorage) draft
           return { ...prev, [contentId]: loaded }
         })
       } catch (err) {
         console.error(err)
         notifications.show({ message: 'Failed to load entry', color: 'red' })
       } finally {
+        loadingEntryIdsRef.current.delete(contentId)
         setEntriesLoading(false)
       }
     }
@@ -410,8 +439,8 @@ export const Editor: React.FC<EditorProps> = ({
       setEntriesLoading(false)
       notifications.show({ message: 'Failed to load entry', color: 'red' })
     })
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- stable setters, run only on entry/path change
-  }, [currentEntry, drafts, selectedPath])
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- stable setters, run only on entry/path/loadedValues change
+  }, [currentEntry, loadedValues, selectedPath])
 
   // Load available schemas when branch changes
   useEffect(() => {
@@ -1028,7 +1057,7 @@ export const Editor: React.FC<EditorProps> = ({
                 <Group gap="xs">
                   {navCollections &&
                     navCollections.length > 0 &&
-                    !currentBranch?.readOnly &&
+                    !branchContentLocked &&
                     (navCollections[0].onAdd || navCollections[0].onAddSubCollection) && (
                       <Menu shadow="md" width={200} withinPortal position="bottom-end">
                         <Menu.Target>
@@ -1110,7 +1139,7 @@ export const Editor: React.FC<EditorProps> = ({
                     onReorderEntry={handleReorderEntry}
                     hiddenRootPath={hiddenRootPath}
                     loading={entriesInitializing}
-                    readOnly={currentBranch?.readOnly ?? false}
+                    readOnly={branchContentLocked}
                   />
                 </Box>
               </Drawer.Body>

@@ -219,6 +219,152 @@ describe('Editor integration', () => {
     })
   })
 
+  it('still loads the entry from the server when a localStorage draft already exists for it, and the draft overlays the loaded value', async () => {
+    // Regression test for: entry load used to be skipped whenever
+    // `drafts[contentId]` was already set (e.g. restored from localStorage on
+    // a fresh page load). That left `loadedValues[contentId]` permanently
+    // undefined, which made dirty-tracking meaningless (a draft with no
+    // loaded value is conservatively treated as dirty everywhere) and meant
+    // the entry's real server content was never fetched this session.
+    const entry: EditorEntry = {
+      path: unsafeAsLogicalPath('content/posts/hello'),
+      contentId: unsafeAsContentId('def456ABC123'),
+      label: 'Hello',
+      status: 'entry',
+      schema: [{ name: 'title', type: 'string' }],
+      apiPath: '/api/canopycms/main/content/content/posts/hello',
+      collectionPath: unsafeAsLogicalPath('content/posts'),
+      collectionName: 'posts',
+      slug: 'hello',
+      format: 'json',
+      type: 'entry',
+    }
+
+    // Seed a pre-existing draft in localStorage, as if a previous session
+    // left unsaved edits behind.
+    window.localStorage.setItem(
+      'canopycms:drafts:main',
+      JSON.stringify({ def456ABC123: { title: 'Draft title from localStorage' } }),
+    )
+
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url =
+        typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
+      if (url.endsWith('/api/canopycms/branches'))
+        return Promise.resolve(okJson({ ok: false, status: 404 }, 404))
+      if (url.includes('/schema') && !url.includes('/schema/')) {
+        return Promise.resolve(
+          okJson({
+            ok: true,
+            status: 200,
+            data: {
+              schema: {},
+              flatSchema: [
+                {
+                  type: 'entry-type',
+                  logicalPath: 'content/posts/post',
+                  name: 'post',
+                  parentPath: 'content/posts',
+                  format: 'json',
+                  schemaRef: 'postSchema',
+                },
+              ],
+              entrySchemas: { postSchema: [{ name: 'title', type: 'string' }] },
+            },
+          }),
+        )
+      }
+      if (url.includes('/entries')) {
+        return Promise.resolve(
+          okJson({
+            ok: true,
+            status: 200,
+            data: {
+              collections: [
+                {
+                  logicalPath: 'content/posts',
+                  contentId: 'abc123XYZ789',
+                  name: 'posts',
+                  type: 'collection',
+                  format: 'json',
+                  schema: entry.schema,
+                  order: [],
+                },
+              ],
+              entries: [
+                {
+                  logicalPath: entry.path,
+                  contentId: 'def456ABC123',
+                  collectionPath: entry.collectionPath,
+                  collectionName: entry.collectionName,
+                  slug: entry.slug,
+                  format: entry.format,
+                  entryType: 'post',
+                  physicalPath: '/content/posts.abc123XYZ789/post.hello.def456ABC123.json',
+                  exists: true,
+                },
+              ],
+              pagination: { hasMore: false, limit: 50 },
+            },
+          }),
+        )
+      }
+      if (url === entry.apiPath && (!init || !init.method || init.method === 'GET')) {
+        return Promise.resolve(okJson({ ok: true, status: 200, data: { title: 'Loaded title' } }))
+      }
+      if (url.startsWith(entry.apiPath) && init?.method === 'PUT') {
+        const body = JSON.parse(init.body as string)
+        return Promise.resolve(okJson({ ok: true, status: 200, data: body.data }))
+      }
+      return Promise.resolve(okJson({ ok: true, status: 200, data: {} }))
+    })
+
+    vi.stubGlobal('fetch', fetchMock)
+
+    try {
+      render(
+        <ApiClientProvider>
+          <Editor
+            entries={[entry]}
+            title="Test Editor"
+            branchName="main"
+            operatingMode="dev"
+            themeOptions={{}}
+          />
+        </ApiClientProvider>,
+      )
+
+      // The GET for the entry must still fire despite the pre-existing draft.
+      await waitFor(() => {
+        expect(
+          fetchMock.mock.calls.some(
+            ([url, init]) =>
+              url === entry.apiPath &&
+              (!init || !(init as RequestInit).method || (init as RequestInit).method === 'GET'),
+          ),
+        ).toBe(true)
+      })
+
+      // The form shows the draft's value, not the loaded value: the draft
+      // survives as an overlay on top of the now-populated loaded value.
+      await waitFor(() => {
+        const el = screen.queryByRole('textbox', { name: /title/i }) as HTMLInputElement | null
+        expect(el).not.toBeNull()
+        expect(el?.value).toBe('Draft title from localStorage')
+      })
+
+      // Save is enabled: the draft genuinely differs from the (now loaded)
+      // server value, so dirty-tracking is truthful rather than a permanent
+      // false positive.
+      await waitFor(() => {
+        const saveButton = screen.getByRole('button', { name: /save file/i })
+        expect(saveButton.hasAttribute('disabled')).toBe(false)
+      })
+    } finally {
+      window.localStorage.removeItem('canopycms:drafts:main')
+    }
+  })
+
   it('shows the read-only banner, keeps Save disabled despite unsaved changes, and hides Submit on the protected base branch', async () => {
     const entry: EditorEntry = {
       path: unsafeAsLogicalPath('content/posts/hello'),
