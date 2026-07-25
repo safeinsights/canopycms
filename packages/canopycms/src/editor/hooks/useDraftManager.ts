@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { notifications } from '@mantine/notifications'
+import { modals } from '@mantine/modals'
 import type { EditorEntry } from '../Editor'
 import type { ContentId, LogicalPath } from '../../paths/types'
 import type { FormValue } from '../FormRenderer'
@@ -44,6 +45,13 @@ export interface UseDraftManagerOptions {
   loadEntry: (entry: EditorEntry) => Promise<FormValue>
   saveEntry: (entry: EditorEntry, value: FormValue) => Promise<FormValue>
   setBusy: (busy: boolean) => void
+  /**
+   * Fired (fire-and-forget) after a successful save. Lets callers refresh
+   * data that depends on saved content — e.g. the entries list, so a header/
+   * entry-picker label built from a Title field reflects the new value
+   * instead of the stale label from the last entries fetch.
+   */
+  onSaved?: () => void
 }
 
 export interface UseDraftManagerReturn {
@@ -295,7 +303,21 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
     options.setBusy(true)
     try {
       const saved = await options.saveEntry(options.currentEntry, effectiveValue)
-      setDrafts((prev) => ({ ...prev, [currentId]: saved }))
+      // Drop the draft now that it has been persisted, rather than
+      // overwriting it with `saved`. `effectiveValue` is `drafts[currentId]
+      // ?? loadedValues[currentId]`, and `loadedValues[currentId]` is about
+      // to become `saved` below, so removing the draft key is a no-op for
+      // the rendered value while fixing the "phantom dirty" bug: a draft
+      // that lingers forever is what made every fresh page load show Save
+      // enabled with zero real edits (see modifiedCount's doc comment above
+      // — a draft without a matching loadedValues entry is conservatively
+      // treated as dirty).
+      setDrafts((prev) => {
+        if (!(currentId in prev)) return prev
+        const next = { ...prev }
+        delete next[currentId]
+        return next
+      })
       setLoadedValues((prev) => ({ ...prev, [currentId]: saved }))
       notifications.show({
         message: 'Saved',
@@ -303,6 +325,7 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
         autoClose: getNotificationDuration(4000),
         withCloseButton: true,
       })
+      options.onSaved?.()
     } catch (err) {
       console.error(err)
       const isConflict = err instanceof SaveApiError && err.status === 409
@@ -334,7 +357,7 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
     }
   }
 
-  const handleDiscardDrafts = () => {
+  const performDiscardDrafts = () => {
     setDrafts({})
     setErrorState(null)
     try {
@@ -352,7 +375,25 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
     })
   }
 
-  const handleDiscardFileDraft = () => {
+  // Discarding drafts is destructive, so confirm first — but only when there
+  // is actually something to lose (modifiedCount > 0, same definition used
+  // everywhere else in this hook). An all-clean discard (e.g. drafts that
+  // exactly mirror loaded values) clears silently.
+  const handleDiscardDrafts = () => {
+    if (modifiedCount === 0) {
+      performDiscardDrafts()
+      return
+    }
+    modals.openConfirmModal({
+      title: 'Discard drafts',
+      children: `Discard drafts for ${modifiedCount} file(s)? Unsaved changes will be lost.`,
+      labels: { confirm: 'Discard', cancel: 'Cancel' },
+      confirmProps: { color: 'red' },
+      onConfirm: performDiscardDrafts,
+    })
+  }
+
+  const performDiscardFileDraft = () => {
     if (!currentId) return
     setErrorState(null)
     setDrafts((prev) => {
@@ -377,6 +418,26 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
       color: 'blue',
       autoClose: getNotificationDuration(3000),
       withCloseButton: true,
+    })
+  }
+
+  // Only prompt when there is a real draft that actually differs from the
+  // loaded value (`isSelectedDirty()` below uses the exact same
+  // JSON.stringify comparison as `modifiedCount`). Discarding a draft that's
+  // identical to the loaded value, or discarding when there's no draft at
+  // all, has nothing to lose, so it clears silently.
+  const handleDiscardFileDraft = () => {
+    if (!currentId) return
+    if (!isSelectedDirty()) {
+      performDiscardFileDraft()
+      return
+    }
+    modals.openConfirmModal({
+      title: 'Discard draft',
+      children: 'Discard unsaved changes for this file?',
+      labels: { confirm: 'Discard', cancel: 'Cancel' },
+      confirmProps: { color: 'red' },
+      onConfirm: performDiscardFileDraft,
     })
   }
 
