@@ -1,8 +1,8 @@
-import { randomUUID } from 'node:crypto'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { simpleGit } from 'simple-git'
 import { testLogger as log } from '../../../../packages/canopycms/src/utils/debug'
+import { bumpResourceGeneration } from '../../../../packages/canopycms/src/resource-generation'
 
 /**
  * Base path for the test-app workspace.
@@ -100,17 +100,23 @@ export async function workspaceExists(): Promise<boolean> {
  * ref accumulates restore/conflict commits across runs.
  */
 const BASELINE_FILE = 'e2e-baseline-head'
+/** Pristine copy of branch.json, captured alongside the baseline sha, so the
+ * cheap reset can restore its mutable fields (conflictStatus, rebaseFailure,
+ * status, …) that the preserved .canopy-meta would otherwise leak. */
+const BASELINE_BRANCH_JSON = 'e2e-baseline-branch.json'
 
 const mainBaselinePath = () => path.join(getMainBranchPath(), '.canopy-meta', BASELINE_FILE)
+const mainBaselineBranchJsonPath = () =>
+  path.join(getMainBranchPath(), '.canopy-meta', BASELINE_BRANCH_JSON)
 
-/** Write a fresh random token to a generation marker (BUMP, never delete:
- * a missing marker reads as the valid "never bumped" null token, which can
- * false-match a cache snapshot taken before any bump — see
- * packages/canopycms/src/resource-generation.ts). */
+/** Bump a generation marker (BUMP, never delete: a missing marker reads as
+ * the valid "never bumped" null token, which can false-match a cache
+ * snapshot taken before any bump). Uses the package's own atomic
+ * bumpResourceGeneration (temp+rename) since the dev server may read the
+ * marker concurrently — see docs/concurrency.md. */
 async function bumpMarker(dir: string, resource: string): Promise<void> {
-  const markerDir = path.join(dir, '.canopy-meta')
-  await fs.mkdir(markerDir, { recursive: true })
-  await fs.writeFile(path.join(markerDir, `${resource}.generation`), randomUUID(), 'utf8')
+  await fs.mkdir(path.join(dir, '.canopy-meta'), { recursive: true })
+  await bumpResourceGeneration(dir, resource)
 }
 
 /**
@@ -150,7 +156,34 @@ export async function resetWorkspace(): Promise<void> {
     await git.raw(['reset', '--hard', baseline])
     await git.raw(['clean', '-fd', '-e', '.canopy-meta'])
 
-    // Remove feature-branch clones from previous tests.
+    // `-e .canopy-meta` preserves the whole dir, but it also holds MUTABLE
+    // per-branch state that must NOT leak across tests: comments.json
+    // (comment-store persistence — a leftover unresolved thread breaks
+    // comments.spec's toHaveCount(1) on the next run/retry),
+    // schema-cache.json, and branch.json's mutable fields (conflictStatus,
+    // rebaseFailure, status). Purge the first two; restore branch.json from
+    // the pristine copy captured by recordMainBaseline().
+    const metaDir = path.join(mainPath, '.canopy-meta')
+    await fs.rm(path.join(metaDir, 'comments.json'), { force: true })
+    await fs.rm(path.join(metaDir, 'schema-cache.json'), { force: true })
+    const pristineBranchJson = await fs
+      .readFile(mainBaselineBranchJsonPath(), 'utf8')
+      .catch(() => '')
+    if (pristineBranchJson) {
+      await fs.writeFile(path.join(metaDir, 'branch.json'), pristineBranchJson, 'utf8')
+    }
+
+    // Make the REMOTE deterministic too: conflict tests force-push conflict
+    // commits to remote main, and a later rebase cycle would ff-merge that
+    // stale content back into the freshly reset clone. Force-push the
+    // baseline back (remote.git is a local bare repo — this is cheap).
+    await git.push('origin', `${baseline}:refs/heads/main`, ['--force'])
+
+    // Remove feature-branch clones from previous tests. Safe to delete their
+    // generation markers wholesale (a deleted marker reads as the "never
+    // bumped" null token) ONLY because branch names are Date.now()-unique per
+    // test — no cached snapshot for the same branch path can exist. Keep that
+    // convention when writing new specs.
     const entries = await fs.readdir(BRANCHES_DIR, { withFileTypes: true }).catch(() => [])
     for (const entry of entries) {
       if (entry.isDirectory() && entry.name !== 'main' && entry.name !== '.canopy-meta') {
@@ -192,6 +225,14 @@ export async function recordMainBaseline(): Promise<void> {
   const head = (await git.revparse(['HEAD'])).trim()
   await fs.mkdir(path.dirname(mainBaselinePath()), { recursive: true })
   await fs.writeFile(mainBaselinePath(), head, 'utf8')
+  // Snapshot pristine branch.json so cheapReset can restore its mutable
+  // fields (conflictStatus, rebaseFailure, …) between tests.
+  const branchJson = await fs
+    .readFile(path.join(path.dirname(mainBaselinePath()), 'branch.json'), 'utf8')
+    .catch(() => '')
+  if (branchJson) {
+    await fs.writeFile(mainBaselineBranchJsonPath(), branchJson, 'utf8')
+  }
   log.debug('workspace', 'Recorded main baseline', { head })
 }
 

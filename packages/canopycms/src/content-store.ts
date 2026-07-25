@@ -1299,6 +1299,12 @@ export class ContentStore {
    * `collections: [...]` (see README). This is the single normalization
    * point shared by reference-option loading and reference validation so
    * the dropdown and the write boundary can never disagree.
+   *
+   * CAVEAT: the bare-name fallback matches on the LAST path segment and
+   * returns the first hit in schema order — with two collections sharing a
+   * leaf name (e.g. content/blog/posts and content/news/posts), a bare
+   * 'posts' is ambiguous. Use the full logical path in schemas that nest
+   * same-named collections.
    */
   resolveCollectionItem(collectionPath: string): FlatSchemaItem | undefined {
     // The schema index uses normalized logical paths like "content/authors"

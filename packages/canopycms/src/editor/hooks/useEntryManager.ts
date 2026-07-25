@@ -154,8 +154,15 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
   const [navigatorOpen, setNavigatorOpen] = useState(false)
   const isInitialMount = useRef(true)
   const hasSyncedFromUrl = useRef(false)
-  // OCC version tokens keyed by contentId — captured on load, sent on save
+  // OCC version tokens — captured on load, sent on save. Keyed by
+  // `${branch}:${contentId}`, NOT contentId alone: the token is a file mtime,
+  // which is inherently per-branch (each branch clone has its own file). With
+  // a branch-agnostic key, a late-resolving load response from the PREVIOUS
+  // branch can repopulate the map after the branch-change clear() below and
+  // poison the next save with the old branch's mtime — a deterministic 409
+  // ("modified by another editor") on save-after-switch, proven by e2e trace.
   const entryVersionsRef = useRef<Map<string, number>>(new Map())
+  const versionKey = (branch: string, contentId: string) => `${branch}:${contentId}`
   // Monotonic token so a stale refresh (e.g. superseded by a branch switch) doesn't commit state
   const refreshSeqRef = useRef(0)
   // Separate token for the branch-change load below: a superseded load's `.finally`
@@ -198,16 +205,20 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
     if (!entry.collectionPath) {
       throw new Error('Entry missing collectionPath')
     }
+    // Pin the branch this request targets: if the user switches branches
+    // while the read is in flight, the token must be recorded under the
+    // branch that actually served it, not the current one.
+    const requestBranch = options.branchName
     // Build path from collectionPath and slug (if it's a collection entry)
     const path = entry.slug ? `${entry.collectionPath}/${entry.slug}` : entry.collectionPath
     const result = await apiClient.content.read({
-      branch: options.branchName,
+      branch: requestBranch,
       path,
     })
     if (!result.ok) throw new Error(`Load failed: ${result.status}`)
     // Capture OCC version token for next save
     if (entry.contentId && typeof result.data?.version === 'number') {
-      entryVersionsRef.current.set(entry.contentId, result.data.version)
+      entryVersionsRef.current.set(versionKey(requestBranch, entry.contentId), result.data.version)
     }
     return normalizeContentPayload(result.data)
   }
@@ -217,15 +228,19 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
       throw new Error('Entry missing collectionPath')
     }
     const payload = buildWritePayload(entry, value)
+    // Pin the branch this save targets (same rationale as loadEntry): the
+    // token lookup and the write must agree on the branch even if a switch
+    // lands mid-flight.
+    const requestBranch = options.branchName
     // Build path from collectionPath and slug (if it's a collection entry)
     const path = entry.slug ? `${entry.collectionPath}/${entry.slug}` : entry.collectionPath
     const writeParams: { branch: string; path: string; entryType?: string } = {
-      branch: options.branchName,
+      branch: requestBranch,
       path,
     }
     if (entry.entryType) writeParams.entryType = entry.entryType
     const expectedVersion = entry.contentId
-      ? entryVersionsRef.current.get(entry.contentId)
+      ? entryVersionsRef.current.get(versionKey(requestBranch, entry.contentId))
       : undefined
     const writeBody: WriteContentBody = {
       ...(payload as unknown as WriteContentBody),
@@ -235,7 +250,7 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
     if (!result.ok) throw new SaveApiError(result.status, result.error, result.fieldErrors)
     // Update stored version token from write response
     if (entry.contentId && typeof result.data?.version === 'number') {
-      entryVersionsRef.current.set(entry.contentId, result.data.version)
+      entryVersionsRef.current.set(versionKey(requestBranch, entry.contentId), result.data.version)
     }
     // Warning-level issues from the adopter's validateEntry hook: saved, but surface them
     const validationWarnings = result.data?.validationWarnings
@@ -445,7 +460,10 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
         isInitialMount.current = false
       } else {
         setSelectedPath('')
-        // Clear stale OCC version tokens — mtimes differ per branch
+        // Bound version-map growth across switches. Correctness no longer
+        // depends on this clear: tokens are keyed by `${branch}:${contentId}`
+        // (see entryVersionsRef), so a late response from the previous branch
+        // can't poison the new branch's saves even if it lands after this.
         entryVersionsRef.current.clear()
       }
 

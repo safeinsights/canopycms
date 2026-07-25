@@ -145,6 +145,7 @@ jobs:
           name: blob-report-${{ matrix.shard }}
           path: blob-report/
           retention-days: 14
+          overwrite: true
 
       - name: Upload test results
         uses: actions/upload-artifact@v4
@@ -153,6 +154,7 @@ jobs:
           name: playwright-results-${{ matrix.shard }}
           path: test-results/
           retention-days: 14
+          overwrite: true
 
   e2e-report:
     name: Merge E2E report
@@ -191,3 +193,4 @@ jobs:
           name: playwright-report-merged
           path: playwright-report/
           retention-days: 14
+          overwrite: true

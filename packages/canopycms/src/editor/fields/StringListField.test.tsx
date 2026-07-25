@@ -52,4 +52,20 @@ describe('StringListField', () => {
     fireEvent.keyDown(input, { key: 'Backspace' })
     expect(changes.at(-1)).toEqual(['alpha'])
   })
+
+  it('round-trips comma-containing values and duplicates faithfully', () => {
+    // Generic string lists are data, not tags: "New York, NY" must stay one
+    // item (splitChars off) and duplicate entries must not be dropped.
+    const changes: string[][] = []
+    render(<Harness initial={['alpha']} onChange={(v) => changes.push(v)} />)
+
+    const input = document.querySelector('input[data-canopy-field="tags"]') as HTMLInputElement
+    fireEvent.change(input, { target: { value: 'New York, NY' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+    expect(changes.at(-1)).toEqual(['alpha', 'New York, NY'])
+
+    fireEvent.change(input, { target: { value: 'alpha' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+    expect(changes.at(-1)).toEqual(['alpha', 'New York, NY', 'alpha'])
+  })
 })
