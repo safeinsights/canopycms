@@ -42,11 +42,10 @@ at each step instead.
    project rules (pnpm, no `any`, extensionless imports) and known machine quirks.
    One implementation agent at a time — they share the working tree and each builds
    on the last.
-   Pick the tier by the work, not by habit: **Opus 5 for anything with real design
-   content** (concurrency, cross-module refactors, anything the adversarial review
-   flagged as subtle); `model: sonnet` for mechanical, tightly-specified changes.
-   When unsure, prefer the larger model with a good spec over the smaller model
-   with a great one — a wrong implementation costs more than the token difference.
+   Pick the tier by the work: `model: sonnet` when the change is clear and the spec
+   is detailed — that covers most PRs; Opus 5 when there is real design content
+   (concurrency, cross-module refactors, anything the adversarial review flagged as
+   subtle). The orchestrator decides per PR; neither tier is an automatic default.
 3. **Main-loop review of the diff** — this is the quality gate, do not skip or
    delegate it: read the substantive diff, check the spec's subtle points landed,
    hunt for layering/ordering bugs (e.g. error-translation placed inside a retry
@@ -85,9 +84,11 @@ at each step instead.
 - Success criteria from the epic file are hard gates (e.g. "flaky tests pass with
   retries REMOVED"), not aspirations — demonstrate them (repeat-run loops, regression
   tests verified against pre-fix code).
-- Execution tiering: Opus 5 orchestrates and does the heavy implementation; the main
-  loop designs, reviews, and integrates. Dispatch Fable for adversarial design review
-  (Phase 1.3) and the final full-diff review (Phase 5.1), where an independent
-  perspective is worth more than continuity. Use Sonnet for mechanical or tightly
-  bounded pieces. At most one heavy agent at a time — that constraint is unchanged.
+- Execution tiering is the orchestrator's call, made per unit of work. Opus 5
+  orchestrates, and implements anything with real design content. Sonnet is the right
+  tool whenever the work is clear and the spec is detailed — that covers most
+  implementation PRs. Fable is one option for the adversarial design review and the
+  final full-diff review, when a genuinely independent perspective is worth the cost;
+  it is not the automatic answer for hard work, and costs more than Opus 5 without
+  always being better. At most one heavy agent at a time — unchanged.
 - Never let a subagent commit; the main loop owns git state.
