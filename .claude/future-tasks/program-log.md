@@ -107,6 +107,74 @@ configured locally and its SSO token is expired, so the current status of
 destroying. `canopy-deploy-test`'s working tree is also dirty with uncommitted
 split-page (`page.server` / `page.static`) work that needs resolving first.
 
+## 2026-07-30 — [A] Prerelease channel shipped; npm and Actions behaviours that shaped it
+
+Established by building the channel and publishing `0.0.61-int.74` for real
+([run 30586482757](https://github.com/safeinsights/canopycms/actions/runs/30586482757)).
+Every claim below was executed, not read.
+
+**npm allows exactly one trusted publisher per package, bound to a *workflow
+filename* — and this dictated the design.** All five packages are bound to
+`publish.yml`; there is no `NPM_TOKEN` in the repo (`gh secret list` shows only
+`RELEASE_BOT_PRIVATE_KEY`), so publishing is pure OIDC. A standalone
+`publish-prerelease.yml` therefore could not have authenticated, and re-pointing
+npm at it would have broken stable releases. The escape hatch is in npm's own
+docs: for `workflow_call`, **validation checks the calling workflow's name**, not
+the workflow containing `npm publish`. So `publish-prerelease.yml` is a reusable
+workflow invoked by `publish.yml`, and every publish enters through `publish.yml`.
+Verified working end-to-end. Consequence for anyone adding a third channel: it
+must also route through `publish.yml`, or the npm settings for all five packages
+must change together. `id-token: write` is required on both caller and callee.
+
+**`workflow_dispatch` does *not* require the trigger to exist on the default
+branch — only the workflow *file* does.** Expected this to be a blocker
+(main's `publish.yml` has no `workflow_dispatch`) and planned to merge the CI
+change to `main` first. Unnecessary: `gh workflow run publish.yml --ref
+feat/prerelease-publish-channel` succeeded, because `publish.yml` exists on
+`main` and the trigger is read from the *target* ref. `--ref main` correctly
+fails 422 today, since main's copy has no dispatch trigger. **So no merge to
+`main` was needed to ship or verify this.** The in-workflow "refuse to publish
+from main" guard is what matters once this does reach `main`.
+
+**A caret in front of a prerelease drifts — this bit, and was caught only by an
+end-to-end test.** `npm install <pkg>@<exact-prerelease>` rewrites `package.json`
+with npm's default `^` prefix, silently converting an exact pin into a range.
+`^0.0.61-int.74` matches any later prerelease of `0.0.61` **and** stable
+`0.0.61`. Adopter pins need `--save-exact`. This is the one sharp edge in the
+whole prerelease story.
+
+**The "prereleases are invisible to normal installs" claim is stronger than
+recorded.** Confirmed with the `semver` library and against the live registry:
+`^0.0.60`, `0.0.x`, `*`, `~0.0.60` **and `^0.0.61`** all fail to match
+`0.0.61-int.42`. The last one matters — even after `main` releases `0.0.61`,
+adopters on ranges still cannot resolve a `0.0.61-int.*` build. Only an exact
+pin or the `int` dist-tag reaches one.
+
+**`workspace:*` makes `@int` a coherent set for free.** `pnpm pack` resolves it
+to the exact local version, so `canopycms-next@int` declares
+`peerDependencies.canopycms: "0.0.61-int.74"` rather than pointing at the stable
+channel. No extra wiring needed.
+
+**`github.run_number` is per-workflow-file, and that is the right counter here.**
+Because both channels enter through `publish.yml`, the counter is shared and
+monotonic across stable and prerelease runs — hence the first prerelease being
+`int.74`, not `int.1`. The gaps are harmless; monotonicity is what matters, and
+npm compares numeric prerelease identifiers numerically (`int.42` > `int.5`).
+
+**`npm view <pkg>@<tag>` exits non-zero (E404) when the tag doesn't exist**, so
+any script resolving a dist-tag must catch rather than parse empty output.
+
+**Multi-package publishes and `cancel-in-progress: true` are a bad combination.**
+`publish.yml`'s concurrency would have let a superseding run cancel a prerelease
+part-way through five sequential publishes, moving the `int` tag for some
+packages and not others. Now scoped by event, cancelling only on `push`. The
+same latent hazard exists for stable releases on rapid merges to `main`; left
+alone as out of scope, but it is real.
+
+**Not done deliberately:** no `push` trigger on `integration-*`. Publishing on
+demand keeps the prerelease version list short, which is the only real cost of
+this scheme.
+
 ## 2026-07-30 — [C] E2E coverage sweep: 52 → 97 tests, and what the gap was hiding
 
 **The measurement reproduced exactly.** Last spec file added: `field-groups.spec.ts`
@@ -184,3 +252,4 @@ Playwright's `webServer` now builds `canopycms-next` first (~5s) because
 **One pre-existing unit flake is not ours**: `MarkdownField.test.tsx`'s MDXEditor
 mount fails intermittently under full-suite load and passes in isolation —
 already filed as `markdownfield-mdxeditor-mount-flake.md` (P3).
+

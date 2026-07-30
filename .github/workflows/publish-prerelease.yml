@@ -1,0 +1,153 @@
+name: Publish prerelease to npm
+
+# Publishes the current branch to npm under the `int` dist-tag, so adopters can
+# consume integration work that has not yet been through human review and merged
+# to main. Two independent mechanisms keep these releases away from normal
+# installs:
+#
+#   1. `npm install <pkg>` resolves the `latest` dist-tag. `--tag int` never
+#      moves `latest`; only publish.yml on main does.
+#   2. npm semver excludes prerelease versions from range matching unless the
+#      range itself names a prerelease at the same major.minor.patch, so
+#      `^0.0.60` / `0.0.x` / `*` can never resolve `0.0.61-int.3`.
+#
+# This is a REUSABLE workflow, called by publish.yml, and that is load-bearing:
+# npm allows exactly one trusted publisher per package, bound to a workflow
+# filename, and all five packages are bound to `publish.yml`. For `workflow_call`
+# npm validates the *calling* workflow's name, so routing through publish.yml is
+# what lets this file publish at all. Triggering it as a standalone workflow
+# would fail OIDC authentication.
+on:
+  workflow_call:
+
+jobs:
+  prerelease:
+    name: Build & Publish prerelease
+    runs-on: ubuntu-latest
+    permissions:
+      # Deliberately `contents: read`: this workflow must never write to the
+      # branch. publish.yml's bump-and-commit stays the only writer of
+      # package.json version fields, or the two workflows fight over them.
+      # A read-only token makes that structural rather than a convention.
+      contents: read
+      # Required for OIDC trusted publishing. npm's docs require this on both
+      # the calling and the called workflow.
+      id-token: write
+
+    steps:
+      # Hard guard. main is the stable channel and belongs exclusively to
+      # publish.yml; this workflow must not be able to touch it even by
+      # accident. publish.yml also gates the call, so this is defence in depth.
+      - name: Refuse to publish a prerelease from main
+        run: |
+          if [ "$GITHUB_REF" = "refs/heads/main" ]; then
+            echo "::error::Prereleases must not be published from main. \
+          The stable channel is published by publish.yml on push to main."
+            exit 1
+          fi
+          echo "Publishing a prerelease from $GITHUB_REF"
+
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: '.nvmrc'
+          cache: 'pnpm'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Update npm (trusted publishers require recent npm)
+        run: |
+          # The pre-installed npm on Node 22.22.x has a broken module tree
+          # (missing promise-retry), so bootstrap npm@11 without using npm.
+          curl -sL https://registry.npmjs.org/npm/-/npm-11.4.1.tgz -o /tmp/npm.tgz
+          mkdir -p /tmp/npm-bootstrap && tar xzf /tmp/npm.tgz -C /tmp/npm-bootstrap
+          node /tmp/npm-bootstrap/package/bin/npm-cli.js install -g npm@11
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Generate API clients
+        run: pnpm run generate:client
+        working-directory: packages/canopycms
+
+      # The base is main's version, not this branch's, so a prerelease always
+      # sorts above the last stable release regardless of how far the branch has
+      # diverged. checkout fetches only the current ref, so fetch main's tip.
+      - name: Compute prerelease version
+        id: version
+        run: |
+          git fetch --depth=1 origin main:refs/remotes/origin/main
+          BASE=$(git show origin/main:packages/canopycms/package.json |
+            node -pe "JSON.parse(require('fs').readFileSync(0, 'utf8')).version")
+          VERSION=$(node scripts/prerelease-version.mjs "$BASE" "$GITHUB_RUN_NUMBER")
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "main is at $BASE; publishing $VERSION under dist-tag 'int'"
+
+      # Written to the working tree only. Never committed, never pushed — see
+      # the `contents: read` note above.
+      - name: Apply prerelease version
+        run: node scripts/bump-version.mjs "${{ steps.version.outputs.version }}"
+
+      - name: Build publishable packages
+        run: |
+          pnpm --filter canopycms run build
+          pnpm --filter canopycms-next run build
+          pnpm --filter canopycms-auth-clerk run build
+          pnpm --filter canopycms-auth-dev run build
+          pnpm --filter canopycms-cdk run build
+          pnpm --filter canopycms-cdk run build:worker
+          pnpm --filter canopycms-cdk run build:lambda
+
+      # pnpm pack resolves workspace: protocol refs to real versions, so the
+      # published prereleases depend on each other's prerelease versions rather
+      # than on whatever is on the stable channel. Each package's `prepack`
+      # rebuilds as well, so a prerelease can never ship a stale dist/.
+      # npm publish handles OIDC trusted publishing auth + provenance.
+      - name: Publish canopycms
+        run: |
+          pnpm pack
+          npm publish canopycms-*.tgz --access public --provenance --tag int
+        working-directory: packages/canopycms
+
+      - name: Publish canopycms-next
+        run: |
+          pnpm pack
+          npm publish canopycms-next-*.tgz --access public --provenance --tag int
+        working-directory: packages/canopycms-next
+
+      - name: Publish canopycms-auth-clerk
+        run: |
+          pnpm pack
+          npm publish canopycms-auth-clerk-*.tgz --access public --provenance --tag int
+        working-directory: packages/canopycms-auth-clerk
+
+      - name: Publish canopycms-auth-dev
+        run: |
+          pnpm pack
+          npm publish canopycms-auth-dev-*.tgz --access public --provenance --tag int
+        working-directory: packages/canopycms-auth-dev
+
+      - name: Publish canopycms-cdk
+        run: |
+          pnpm pack
+          npm publish canopycms-cdk-*.tgz --access public --provenance --tag int
+        working-directory: packages/canopycms-cdk
+
+      - name: Summary
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          {
+            echo "### Prerelease published"
+            echo
+            echo "\`$VERSION\` from \`$GITHUB_REF_NAME\`, under dist-tag \`int\`."
+            echo
+            echo "The \`latest\` dist-tag is untouched; normal installs are unaffected."
+            echo
+            echo "Consume it in an adopter repo with:"
+            echo
+            echo "\`\`\`"
+            echo "node scripts/canopy-deps.mjs int $VERSION"
+            echo "\`\`\`"
+          } >> "$GITHUB_STEP_SUMMARY"
