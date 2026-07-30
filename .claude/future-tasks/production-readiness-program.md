@@ -32,7 +32,7 @@ Closing that gap is what this program covers.
 | -- | ---------- | ---- | ------ | ---- |
 | A | Release path (prerelease channel + standing draft PR) | S | **done** 2026-07-30 | [resolved/program-a-release-path.md](resolved/program-a-release-path.md) |
 | B | Canopy hardening (multi-deployment safety, ops gaps, editor correctness, build shapes) | L | not started | [program-b-canopy-hardening.md](program-b-canopy-hardening.md) |
-| C | E2E coverage sweep (3.5-month gap) | L | not started | [program-c-e2e-coverage.md](program-c-e2e-coverage.md) |
+| C | E2E coverage sweep (3.5-month gap) | L | **done** 2026-07-30 — 52→97 tests; matrix in [COVERAGE-MATRIX.md](../../apps/test-app/e2e/COVERAGE-MATRIX.md) | [resolved/program-c-e2e-coverage.md](resolved/program-c-e2e-coverage.md) |
 | D | Rebuild + exercise the deploy-test stack | M | not started | [program-d-stack-rebuild.md](program-d-stack-rebuild.md) |
 | E | Docs-site CMS deployment | L | not started | [program-e-docs-site-cms.md](program-e-docs-site-cms.md) |
 | F | Production + shared site-CDK for the second site | L | not started | [program-f-production.md](program-f-production.md) |

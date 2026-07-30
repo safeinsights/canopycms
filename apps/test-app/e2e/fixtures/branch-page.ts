@@ -1,5 +1,52 @@
 import { type Page, type Locator, expect } from '@playwright/test'
 import { SHORT_TIMEOUT, STANDARD_TIMEOUT, LONG_TIMEOUT } from './timeouts'
+// Isomorphic/dependency-free module (see its own doc comment) -- safe to
+// import directly in test code, same convention test-workspace.ts already
+// uses for other package internals (e.g. resource-generation.ts).
+import { sanitizeBranchName } from '../../../../packages/canopycms/src/paths/branch-name'
+
+export { sanitizeBranchName }
+
+/**
+ * A branch list entry as returned by GET /api/canopycms/branches.
+ * Loosely typed -- only the fields callers below actually read.
+ */
+export interface BranchListEntry {
+  name: string
+  status: string
+  isProtected?: boolean
+  [key: string]: unknown
+}
+
+/**
+ * Discover the server's protected/base branch by calling GET /branches and
+ * finding the entry the server itself flagged `isProtected`.
+ *
+ * NEVER hardcode which branch is protected: dev mode derives the base
+ * branch from the git HEAD of the checkout running the server. On a
+ * checkout whose git branch isn't literally `main` (true for many worktrees)
+ * the server auto-provisions a separate, sanitized-git-branch-named
+ * directory and flags THAT one protected, while the fixtures' own `main`
+ * content branch stays a normal, non-protected branch. On CI (detached
+ * HEAD) the fallback is literally `main`. Always discover at runtime.
+ */
+export async function findProtectedBranch(
+  baseUrl: string,
+  userId: string,
+): Promise<BranchListEntry> {
+  const response = await fetch(`${baseUrl}/api/canopycms/branches`, {
+    headers: { 'X-Test-User': userId },
+  })
+  if (!response.ok) {
+    throw new Error(`Failed to list branches: ${response.status}`)
+  }
+  const body = (await response.json()) as { data: { branches: BranchListEntry[] } }
+  const protectedBranch = body.data.branches.find((b) => b.isProtected)
+  if (!protectedBranch) {
+    throw new Error('No protected branch found in branch list')
+  }
+  return protectedBranch
+}
 
 /**
  * Page object for interacting with the Branch Manager in CanopyCMS.
@@ -104,6 +151,36 @@ export class BranchPage {
    */
   getBranchStatusBadge(branchName: string): Locator {
     return this.branchManager.locator(`[data-testid="branch-status-badge-${branchName}"]`)
+  }
+
+  /** Badge shown while a GitHub sync (submit/withdraw/etc.) is in flight. */
+  getPendingSyncBadge(branchName: string): Locator {
+    return this.branchManager.locator(`[data-testid="pending-sync-badge-${branchName}"]`)
+  }
+
+  /** Badge shown when the last GitHub sync attempt failed. */
+  getSyncFailedBadge(branchName: string): Locator {
+    return this.branchManager.locator(`[data-testid="sync-failed-badge-${branchName}"]`)
+  }
+
+  /** Badge shown when a rebase kept this branch's version for conflicting entries. */
+  getConflictsBadge(branchName: string): Locator {
+    return this.branchManager.locator(`[data-testid="conflicts-badge-${branchName}"]`)
+  }
+
+  /** Badge shown on the protected base branch's row. */
+  getProtectedBadge(branchName: string): Locator {
+    return this.branchManager.locator(`[data-testid="branch-protected-badge-${branchName}"]`)
+  }
+
+  /** Badge shown once an approved/archived branch has been merged. */
+  getMergedBadge(branchName: string): Locator {
+    return this.branchManager.locator(`[data-testid="branch-merged-badge-${branchName}"]`)
+  }
+
+  /** The "Updated <relative time>" text rendered inside a branch row. */
+  getBranchUpdatedText(branchName: string): Locator {
+    return this.getBranchListItem(branchName).getByText(/^Updated /)
   }
 
   /**

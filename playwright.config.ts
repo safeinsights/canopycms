@@ -63,11 +63,16 @@ export default defineConfig({
   // CANOPY_E2E=1 marks the server process for the test-only
   // /api/e2e-test/rebase route, which a production-mode server would
   // otherwise refuse (see apps/test-app/app/api/e2e-test/rebase/route.ts).
+  // The test app's next.config.mjs imports `canopycms-next/config` (withCanopy),
+  // exactly as a real adopter does — that wrapper is what registers the
+  // `/assets/:path*` rewrite every public asset URL depends on. That export
+  // ships from dist/, so canopycms-next must be built before the server starts
+  // on BOTH branches below (~5s; it is only tsc + two esbuild calls).
   webServer: {
     command:
       process.env.CI || process.env.E2E_PROD_SERVER
-        ? 'pnpm --filter canopycms-test-app build && pnpm --filter canopycms-test-app start'
-        : 'pnpm --filter canopycms-test-app dev',
+        ? 'pnpm --filter canopycms-next build && pnpm --filter canopycms-test-app build && pnpm --filter canopycms-test-app start'
+        : 'pnpm --filter canopycms-next build && pnpm --filter canopycms-test-app dev',
     url: 'http://localhost:5174',
     reuseExistingServer: !process.env.CI,
     // Generous: the CI path pays a full `next build` before the server binds.
