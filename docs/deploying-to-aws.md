@@ -255,46 +255,66 @@ cdk deploy CmsStack
 
 ## Step 5: CI/CD
 
-The generated `.github/workflows/deploy-cms.yml` is a template. Customize it for your setup:
+The generated `.github/workflows/deploy-cms.yml` runs `cdk deploy`, and that is
+deliberately the **only** thing that ships code.
 
-```yaml
-name: Deploy CMS
-on:
-  push:
-    paths: ['app/**', 'content/**', 'canopycms.config.ts']
-  workflow_dispatch:
+The stack passes the CMS image as `lambda.DockerImageCode.fromImageAsset('.', {
+file: 'Dockerfile.cms' })` — a CDK-built asset. `cdk deploy` builds it,
+publishes it to the CDK bootstrap assets repository, and points the Lambda at
+it as part of the change set. It also rolls the EC2 worker, because
+`CanopyCmsService` gives the worker Auto Scaling Group a rolling
+`UpdatePolicy`; without that, a changed worker bundle would sit unused in a
+launch template until the next spot interruption.
 
-jobs:
-  deploy:
-    runs-on: ubuntu-latest
-    permissions:
-      id-token: write
-      contents: read
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with: { node-version: 20 }
+> **Do not add an ECR push plus `aws lambda update-function-code` alongside
+> it.** That builds the image twice and leaves the function's image URI out of
+> sync with CloudFormation's view of it — the next `cdk deploy` that touches
+> the function silently reverts your code to the CDK asset. If you want to
+> control the image tag yourself, switch the stack to
+> `DockerImageCode.fromEcr(repo, { tagOrDigest })` and keep `cdk deploy` as the
+> single deployer. Pick one mechanism.
 
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: arn:aws:iam::ACCOUNT:role/deploy-role
-          aws-region: us-east-1
+Prerequisites that an update-function-code pipeline did not need:
 
-      - name: Login to ECR
-        uses: aws-actions/amazon-ecr-login@v2
+1. **CDK bootstrap** in the target account and region (`cdk bootstrap`).
+2. **A broader OIDC role.** It must be able to assume the CDK bootstrap roles
+   (`cdk-hnb659fds-*-deploy-role`, `-file-publishing-role`,
+   `-image-publishing-role`, `-lookup-role`). `cdk deploy` mutates
+   infrastructure, so this is a wider grant than updating a function's code.
+3. **A Docker daemon on the runner** (`ubuntu-latest` has one).
 
-      - name: Build and push CMS image
-        run: |
-          docker build -f Dockerfile.cms -t $ECR_REPO:latest .
-          docker push $ECR_REPO:latest
+### Build-time client keys
 
-      - name: Update Lambda
-        run: |
-          aws lambda update-function-code \
-            --function-name CmsFunction \
-            --image-uri $ECR_REPO:latest
+`NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` is inlined into the **client** bundle by
+Next.js at image-build time, so it has to reach the image _build_ — a Lambda
+environment variable is far too late. Because CDK builds the image, it must be
+passed through `buildArgs` in the stack, not through a `docker build
+--build-arg` step in CI:
+
+```ts
+cmsDockerImage: lambda.DockerImageCode.fromImageAsset('.', {
+  file: 'Dockerfile.cms',
+  buildArgs: {
+    NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY ?? '',
+  },
+}),
 ```
+
+The workflow sets that variable on the `cdk deploy` step from a repository
+variable. If it is missing, the deploy still succeeds and the editor ships with
+an empty publishable key.
+
+### Worker outage during deploy
+
+The worker ASG has `minCapacity` and `maxCapacity` of 1, so the rolling update
+is terminate-then-relaunch with a short gap while the replacement boots
+(package installs and the EFS mount — roughly 2–4 minutes). This is safe: the
+task queue and branch workspaces live on EFS and are picked up on boot, and the
+Lambda's Save/Publish enqueue paths are unaffected. Tasks interrupted mid-flight
+are recovered by the worker's orphaned-task sweep, which runs every task-queue
+cycle.
+
+See `examples/aws-deployment/deploy-cms.yml` for the full workflow.
 
 ## Step 6: Create Secrets
 
