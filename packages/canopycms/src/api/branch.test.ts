@@ -343,6 +343,84 @@ describe('branch api', () => {
     expect(res.error).toBe('A branch with this name already exists')
   })
 
+  describe('branch-name collision guards (settings-branch + reserved namespace)', () => {
+    // baseCtx's mock config defaults to mode: 'dev' (see createMockServices),
+    // so DevStrategy.getSettingsBranchName(config) resolves to
+    // 'canopycms-settings-local' (no deploymentName override -- mode default
+    // is 'local', see operating-mode/client-unsafe-strategy.ts).
+
+    it('rejects a raw name that only SANITIZES into colliding with the settings branch (the bypass fix) -- would slip through a raw-string comparison', async () => {
+      // parseBranchName permits '/', and sanitizeBranchName() collapses
+      // 'canopycms/settings-local' into 'canopycms-settings-local' -- this
+      // deployment's actual settings branch name. A raw `branchName ===
+      // settingsBranchName` comparison (the pre-fix code) compares
+      // 'canopycms/settings-local' to 'canopycms-settings-local' -- NOT
+      // equal -- so the request would sail through and end up creating a
+      // content branch whose real git ref (post-sanitization, in
+      // openOrCreateBranch) IS the settings branch.
+      const res = await createBranch(
+        baseCtx,
+        { user: { type: 'authenticated', userId: 'u1', groups: [] } },
+        { branch: unsafeAsBranchName('canopycms/settings-local') },
+      )
+      expect(res.ok).toBe(false)
+      expect(res.status).toBe(400)
+      expect(res.error).toBe(
+        'Cannot create content branch with settings branch name (git branch name collision)',
+      )
+    })
+
+    it('still rejects the exact settings branch name', async () => {
+      const res = await createBranch(
+        baseCtx,
+        { user: { type: 'authenticated', userId: 'u1', groups: [] } },
+        { branch: unsafeAsBranchName('canopycms-settings-local') },
+      )
+      expect(res.ok).toBe(false)
+      expect(res.status).toBe(400)
+      expect(res.error).toBe(
+        'Cannot create content branch with settings branch name (git branch name collision)',
+      )
+    })
+
+    it("rejects another deployment's settings branch name as a reserved-namespace collision", async () => {
+      // NOT this deployment's own settings branch ('canopycms-settings-local')
+      // -- but still inside the reserved canopycms-settings- namespace that
+      // ANY CanopyCMS deployment sharing this GitHub repo might own.
+      const res = await createBranch(
+        baseCtx,
+        { user: { type: 'authenticated', userId: 'u1', groups: [] } },
+        { branch: unsafeAsBranchName('canopycms-settings-anything') },
+      )
+      expect(res.ok).toBe(false)
+      expect(res.status).toBe(400)
+      expect(res.error).toContain('reserved')
+    })
+
+    it('rejects a raw name whose SANITIZED form (not its raw form) falls inside the reserved prefix', async () => {
+      // Raw name does not literally start with "canopycms-settings-", but
+      // sanitizeBranchName's slash-to-hyphen replacement makes the sanitized
+      // form start with it.
+      const res = await createBranch(
+        baseCtx,
+        { user: { type: 'authenticated', userId: 'u1', groups: [] } },
+        { branch: unsafeAsBranchName('canopycms/settings/prod') },
+      )
+      expect(res.ok).toBe(false)
+      expect(res.status).toBe(400)
+      expect(res.error).toContain('reserved')
+    })
+
+    it('still accepts a normal branch name', async () => {
+      const res = await createBranch(
+        baseCtx,
+        { user: { type: 'authenticated', userId: 'u1', groups: [] } },
+        { branch: unsafeAsBranchName('feature/totally-normal') },
+      )
+      expect(res.ok).toBe(true)
+    })
+  })
+
   it('lists all branches for admins', async () => {
     const res = await listBranches(baseCtx, {
       user: {

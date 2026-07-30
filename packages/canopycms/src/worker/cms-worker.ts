@@ -23,7 +23,8 @@ import {
 import { extractIdFromFilename } from '../content-id-index'
 import { invalidateBranchContentCaches } from '../content-index-generation'
 import { type ContentId, type SanitizedBranchName, ROOT_COLLECTION_ID } from '../paths/types'
-import { sanitizeBranchName } from '../paths/branch-name'
+import { sanitizeBranchName, RESERVED_SETTINGS_BRANCH_PREFIX } from '../paths/branch-name'
+import { GITHUB_TRACKING_REF_PREFIX } from '../git-manager'
 import type { PullRequestState, WorkerStatusReport } from '../types'
 import { getErrorMessage, isNodeError, redactCredentials } from '../utils/error'
 import { writeWorkerStatus } from './worker-status'
@@ -97,33 +98,6 @@ export interface CmsWorkerConfig {
 const DEFAULT_TASK_TIMEOUT = 60_000
 const DEFAULT_MAX_RETRIES = 3
 const DEFAULT_LOCK_STALE_MS = 60_000
-
-/**
- * Remote-tracking namespace that `syncGit()`'s GitHub fetch lands refs in
- * (`+refs/heads/*:${GITHUB_TRACKING_REF_PREFIX}*`), instead of writing
- * directly into `refs/heads/*`.
- *
- * `remote.git`'s `refs/heads/*` is NOT a throwaway mirror: it's the
- * deployment's local origin. `GitManager.push()` writes editor work into it
- * (`target:target`), branch-workspace clones are cloned FROM it, and this
- * worker itself pushes it on to GitHub (`pushBranchToGitHub`,
- * `pushSettingsBranches`). A fetch that force-writes GitHub's refs straight
- * into `refs/heads/*` (the old `+refs/heads/*:refs/heads/*` refspec) can
- * therefore destroy work that reached `remote.git` but not GitHub yet: with
- * `--prune`, a branch pushed into `remote.git` and not yet on GitHub gets
- * deleted outright; without needing `--prune`, a branch where `remote.git`
- * is ahead of GitHub gets force-rewound to GitHub's older tip, and the
- * worker's next push then no-ops ("Everything up-to-date") -- the editor's
- * commit silently never reaches GitHub even though the branch reports
- * `synced`.
- *
- * Fetching into this remote-tracking namespace instead makes `--prune`/`+`
- * safe again -- they now only ever affect GitHub's-view-of-the-world refs,
- * never the local heads other code depends on. `reconcileTrackedBranches()`
- * is what subsequently, and non-destructively, brings `refs/heads/*` toward
- * what's tracked here.
- */
-export const GITHUB_TRACKING_REF_PREFIX = 'refs/remotes/github/'
 
 /**
  * [C1] Retention window for `.trash-*` branch directories left behind by the
@@ -344,7 +318,8 @@ export class CmsWorker {
     this.baseBranch = config.baseBranch ?? 'main'
     this.sanitizedBaseBranch = sanitizeBranchName(this.baseBranch)
     this.settingsBranch =
-      config.settingsBranch ?? `canopycms-settings-${config.deploymentName ?? 'prod'}`
+      config.settingsBranch ??
+      `${RESERVED_SETTINGS_BRANCH_PREFIX}${config.deploymentName ?? 'prod'}`
     this.maxTasksPerCycle = config.maxTasksPerCycle ?? 10
     this.taskTimeoutMs = config.taskTimeoutMs ?? DEFAULT_TASK_TIMEOUT
     this.maxRetries = config.maxRetries ?? DEFAULT_MAX_RETRIES
@@ -969,7 +944,9 @@ export class CmsWorker {
   private async pushSettingsBranches(git: ReturnType<typeof simpleGit>): Promise<void> {
     try {
       const branches = await git.branch()
-      const settingsBranches = branches.all.filter((b) => b.startsWith('canopycms-settings-'))
+      const settingsBranches = branches.all.filter((b) =>
+        b.startsWith(RESERVED_SETTINGS_BRANCH_PREFIX),
+      )
       const foreign = settingsBranches.filter((b) => b !== this.settingsBranch)
       if (foreign.length > 0) {
         // Signal, not an error: this is exactly the "two deployments, one repo"
