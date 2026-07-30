@@ -339,9 +339,15 @@ false` because all tests share one workspace + server). CI runners are slower
     the remaining ~115s is actual test execution.
   - Model that fits the observed data: `wall ≈ 118s + 1.09 × local_test_time`
     (predicts 3.9m for the slowest shard vs 3.92m measured).
-  - Consequence: **validate's 4.1m is the floor.** 4 shards ≈ 4.17m total; 5–6
-    shards, or pinning specs to shards by duration, all land at ~4.1m and buy
-    nothing further. Don't shard past 4 without first speeding up validate.
+  - Consequence: **validate is the floor.** 5–6 shards, or pinning specs to
+    shards by duration, all land on it and buy nothing further. Don't shard
+    past 4 without first speeding up validate.
+  - **CONFIRMED at 4 shards (run 30590565843):** shards 2.43 / 2.55 / 2.77 /
+    2.97m, merge 0.45m, validate 3.9m. E2E path 3.42m — now comfortably _under_
+    validate with ~28s of headroom, so validate is again the critical path.
+    Total PR latency **4.47m → 3.9m**, a 34s improvement (better than the ~16s
+    predicted; the split landed more evenly than the count-based model assumed).
+    Run-to-run variance on validate is ~5%, so treat these as ±10s.
   - Deliberately NOT done: pinning specs to shards via explicit per-shard file
     lists. It would save ~15s and introduce a silent-coverage-hole failure mode
     (a new spec file assigned to no shard never runs, and nothing fails).
