@@ -30,7 +30,7 @@ Closing that gap is what this program covers.
 
 | ID | Workstream | Size | Status | File |
 | -- | ---------- | ---- | ------ | ---- |
-| A | Release path (prerelease channel + standing draft PR) | S | not started | [program-a-release-path.md](program-a-release-path.md) |
+| A | Release path (prerelease channel + standing draft PR) | S | **done** 2026-07-30 | [resolved/program-a-release-path.md](resolved/program-a-release-path.md) |
 | B | Canopy hardening (multi-deployment safety, ops gaps, editor correctness, build shapes) | L | not started | [program-b-canopy-hardening.md](program-b-canopy-hardening.md) |
 | C | E2E coverage sweep (3.5-month gap) | L | not started | [program-c-e2e-coverage.md](program-c-e2e-coverage.md) |
 | D | Rebuild + exercise the deploy-test stack | M | not started | [program-d-stack-rebuild.md](program-d-stack-rebuild.md) |
@@ -71,6 +71,8 @@ gets editors working. F and G make it production and team-ownable.
 | Prereleases published under a non-`latest` dist-tag | Lets adopters consume unreleased integration work without a human review gate, and without adopters resolving prereleases by accident | 2026-07-30 |
 | GitHub Actions OIDC for site deploys, not Jenkins/CodeBuild | Both sites already use OIDC; deployment code stays in each site's repo so workflows can reach it. `iac` continues to own account baselines only | 2026-07-30 |
 | Work continues on integration branches with a standing draft PR to `main` | Human review is the scarce resource; batch it rather than gating every change | 2026-07-30 |
+| All npm publishing routes through `publish.yml`, prereleases via a reusable workflow | npm allows one trusted publisher per package, bound to a workflow filename, and validates the *calling* workflow for `workflow_call`. Any additional channel must enter through `publish.yml` or all five packages' npm settings change together | 2026-07-30 |
+| Adopters pin prereleases exactly (`--save-exact`), never with a range | `^0.0.61-int.74` matches later prereleases of `0.0.61` *and* stable `0.0.61`, so a caret silently drifts off the pinned build | 2026-07-30 |
 
 ---
 
