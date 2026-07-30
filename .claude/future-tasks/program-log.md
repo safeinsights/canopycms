@@ -106,3 +106,81 @@ configured locally and its SSO token is expired, so the current status of
 `docs-site-proto` stacks is unknown. Workstream D must inventory before
 destroying. `canopy-deploy-test`'s working tree is also dirty with uncommitted
 split-page (`page.server` / `page.static`) work that needs resolving first.
+
+## 2026-07-30 — [C] E2E coverage sweep: 52 → 97 tests, and what the gap was hiding
+
+**The measurement reproduced exactly.** Last spec file added: `field-groups.spec.ts`
+at `e223a73`, 2026-04-12. 51 test cases then, 52 at `c991216`. All 12 pre-existing
+spec files predate the baseline.
+
+**The gap was hiding three real defects.** None was findable by unit tests, because
+each lives at a seam no unit test crosses:
+
+1. **The test app never called `withCanopy()`** in its `next.config.mjs`, so the
+   `/assets/:path*` → `/api/canopycms/assets/raw/assets/:path*` rewrite was never
+   registered. Every public asset URL — MediaLibrary thumbnails, ImageField
+   previews, every `/assets/t/{directives}/...` transform output — 404'd in the
+   harness. `apps/example1` wraps correctly; the test app never did. The asset
+   epic shipped in July with no e2e exercising a single asset URL, so nothing
+   noticed. Note the shape of this: the *harness* was misconfigured in exactly the
+   way an adopter could be, and the product looked fine.
+2. **Internal groups are unreachable from the Permission Manager.** The "Add
+   Groups" picker reads `authPlugin.listGroups()` (external groups only), never
+   `groups.json` — so a group created in Manage Groups can never be assigned a
+   path permission, even though `authResultToCanopyUser` merges both kinds into
+   `user.groups` and authorization treats them identically.
+3. **`EntryCreateModal` can silently write the wrong filename.** Its slug-reset
+   effect is keyed on the `entryTypes` array identity; a stray parent re-render
+   between typing a slug and submitting reverts it to `untitled`. ~1 in 8 under
+   suite render pressure, never in isolation, and no error is surfaced.
+
+**Two state-leak sources existed that the PR #151 two-run proof would not have
+caught**, because nothing wrote to them yet: `resetWorkspace()` reset
+`content-branches/` but neither `.canopy-dev/.tasks` nor `.canopy-dev/assets`.
+Both are now reset. A third — the settings workspace holding permissions and
+groups — is still not reset; `permissions-groups.spec.ts` clears its own slice
+via the API. Any future spec that writes a new kind of workspace state must add
+its own reset, or the two-run gate silently stops proving anything.
+
+**Dev-mode has no worker, so admin observability had to be seeded on disk.** The
+task queue, `.worker-lock`, `worker-status.json`, and corrupt/orphan branch
+directories are all written directly by fixtures (`admin-workspace.ts`) rather
+than through new endpoints — deliberately, to keep the production request surface
+unchanged. The app still has exactly one test-only route (`/api/e2e-test/rebase`).
+
+**`branch.json` on disk is an OCC envelope**, `{schemaVersion, version, writeId,
+branch: {...}}` — not bare `BranchMetadata`. A fixture that patches the top level
+writes fields that the API and components never read, and the tests pass for the
+wrong reason. Cost half a debugging cycle; worth knowing before writing any
+metadata fixture.
+
+**The base branch is not `main` in a worktree.** With no `defaultBaseBranch` set,
+dev mode derives it from git HEAD, so the protected/base branch is a directory
+named after the sanitized git branch, while the fixtures' `main` is an ordinary
+content branch. On CI's detached HEAD it falls back to literal `main`. Any
+protected-branch assertion must discover the base branch at runtime from
+`GET /branches` (`isProtected`), never hardcode it. Both spec-writing sessions
+hit this independently.
+
+**Deferred with reasons, not silently.** 20 of 67 capabilities are deferred; every
+one is covered at the layer where its logic lives, is not browser-reachable (CLI,
+CDK, build shapes), or needs a fixture investment of its own. The grouped list is
+in `e2e-deferred-coverage.md`; the per-capability reasoning is in
+`apps/test-app/e2e/COVERAGE-MATRIX.md`. Nothing in the "no manual fallback in
+production" set is deferred.
+
+**Two invariants from the git-admin-observability epic are now pinned by
+assertions that fail if the invariant breaks**, not merely by tests that happen to
+pass: task requeue must mint a fresh UUID (a same-id copy is eaten by dequeue
+dedup, so "Retry" would silently do nothing), and trash retention must parse the
+NAME stamp rather than mtime (`rename()` preserves mtime, so an mtime-based sweep
+would delete a stale orphan's trash on the first pass).
+
+**Cost and shape.** Full suite is now 97 tests in ~5.5m locally against the prod
+server (was 3.0m for 52). CI's 3-way shard should stay near its ~2m45s/shard.
+Playwright's `webServer` now builds `canopycms-next` first (~5s) because
+`withCanopy` ships from `dist/`.
+
+**One pre-existing unit flake is not ours**: `MarkdownField.test.tsx`'s MDXEditor
+mount fails intermittently under full-suite load and passes in isolation —
+already filed as `markdownfield-mdxeditor-mount-flake.md` (P3).

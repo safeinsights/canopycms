@@ -22,7 +22,7 @@ program rather than by priority alone.
 | [program-log.md](program-log.md)                                                 | **Append-only log** — findings, disproven assumptions, deploy-proven facts, decisions and their reasoning         |
 | [program-a-release-path.md](program-a-release-path.md)                           | A (S) — prerelease dist-tag channel from integration branches + standing draft PR to main; unblocks adopters consuming unreleased work |
 | [program-b-canopy-hardening.md](program-b-canopy-hardening.md)                   | B (L) — multi-deployment safety, worker/log ops gaps, day-one editor correctness, dual-build CI. Gates D          |
-| [program-c-e2e-coverage.md](program-c-e2e-coverage.md)                           | C (L) — e2e coverage sweep from 2026-04-12 forward (51→52 test cases in 3.5 months while ~60 editor/api commits landed) |
+| ~~program-c-e2e-coverage.md~~                                                    | C (L) — **DONE 2026-07-30**, see [resolved/program-c-e2e-coverage.md](resolved/program-c-e2e-coverage.md) |
 | [program-d-stack-rebuild.md](program-d-stack-rebuild.md)                         | D (M) — tear down + rebuild the deploy-test stack from scratch; build the reusable deployed-stack verification suite |
 | [program-e-docs-site-cms.md](program-e-docs-site-cms.md)                         | E (L) — first real CMS deployment for docs-site-proto without disturbing the teams' live site                    |
 | [program-f-production.md](program-f-production.md)                               | F (L) — multi-account `official` mode + shared static-site CDK so website v2 doesn't fork a second copy           |
@@ -146,6 +146,7 @@ The tables above list OPEN work only.
 
 | File | Summary |
 | ---- | ------- |
+| [program-c-e2e-coverage.md](resolved/program-c-e2e-coverage.md) | RESOLVED — 2026-07-30 e2e coverage sweep (production-readiness workstream C): suite 52→97 tests; written coverage matrix over all 67 capabilities shipped since 2026-04-12 (43 newly covered, 20 deferred with reasons, none in the no-manual-fallback-in-prod set). Found and fixed the missing `withCanopy()` wrap that 404'd every public asset URL; found two P1 product defects, filed separately |
 | [ux-review-deploy-test-findings.md](resolved/ux-review-deploy-test-findings.md) | RESOLVED — 2026-07-24 deployed-editor UX review; all code findings fixed on claude/ux-review-fixes (branch-name unification, draft lifecycle, submitted-branch lock, menus/timestamps/media/alt/comments); fix map + deliberate non-fixes inside |
 | [stale-draft-prevents-content-load.md](resolved/stale-draft-prevents-content-load.md) | RESOLVED — entry load no longer skipped when a draft exists (always fetch + overlay), draft cleared on save, discards confirmed (claude/ux-review-fixes, e43b7a6); optional "viewing a draft" visual indicator not implemented |
 | [index-staleness-multiprocess.md](resolved/index-staleness-multiprocess.md) | RESOLVED — in-process invalidation (PR #91) + cross-process on-disk generation marker, suspicious-lookup backstop, and write existence guard (PR fix/content-index-cross-process). Residual NFS-caching windows documented in the file. |
