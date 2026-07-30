@@ -3,6 +3,8 @@ import path from 'node:path'
 import { simpleGit } from 'simple-git'
 import { testLogger as log } from '../../../../packages/canopycms/src/utils/debug'
 import { bumpResourceGeneration } from '../../../../packages/canopycms/src/resource-generation'
+import { resetTaskQueue } from './admin-workspace'
+import { resetAssetStore } from './media-workspace'
 
 /**
  * Base path for the test-app workspace.
@@ -142,6 +144,21 @@ async function bumpMarker(dir: string, resource: string): Promise<void> {
 export async function resetWorkspace(): Promise<void> {
   log.time('resetWorkspace')
   log.info('workspace', 'Starting workspace reset')
+
+  // Task-queue state lives beside content-branches/ (.canopy-dev/.tasks) and
+  // is not touched by either reset path below. The admin observability specs
+  // seed tasks, a worker lock and a status file; without this it would leak
+  // into every later test AND across whole suite runs (the state-leak proof
+  // runs the suite twice without wiping .canopy-dev).
+  await resetTaskQueue()
+
+  // The asset store lives beside content-branches/ too (.canopy-dev/assets)
+  // and is likewise untouched by either reset path below -- it's a separate,
+  // branch-agnostic global store (assets/factory.ts). The media specs upload
+  // real files through it; without this, uploaded originals/meta/transform
+  // outputs would leak into every later test AND across whole suite runs
+  // (same state-leak proof as the task queue above).
+  await resetAssetStore()
 
   const mainPath = getMainBranchPath()
   const cheapReset = async (): Promise<boolean> => {
