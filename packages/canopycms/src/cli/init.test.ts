@@ -486,7 +486,34 @@ describe('canopycms init-deploy aws', () => {
       'utf-8',
     )
     expect(workflow).toContain('Deploy CMS')
-    expect(workflow).toContain('docker build')
+    // `cdk deploy` is what actually ships code AND rolls the worker ASG.
+    // The previous template stopped at `docker build` and did nothing with
+    // the image, so infra changes never left the developer's laptop.
+    expect(workflow).toContain('cdk deploy')
+    // OIDC, not long-lived keys.
+    expect(workflow).toContain('id-token: write')
+    expect(workflow).toContain('configure-aws-credentials')
+  })
+
+  it('does not pair cdk deploy with a conflicting update-function-code step', async () => {
+    await initDeployAws({ cloud: 'aws', projectDir: tmpDir, force: false, nonInteractive: true })
+
+    const workflow = await fs.readFile(
+      path.join(tmpDir, '.github/workflows/deploy-cms.yml'),
+      'utf-8',
+    )
+    // Regression guard. The stack supplies the image as a CDK asset
+    // (DockerImageCode.fromImageAsset), so `cdk deploy` builds and publishes
+    // it. Adding an ECR push + `aws lambda update-function-code` builds the
+    // image twice and leaves the function's image URI out of sync with
+    // CloudFormation -- the next `cdk deploy` touching the function then
+    // silently reverts the code. Only the explanatory comment may mention it.
+    const uncommented = workflow
+      .split('\n')
+      .filter((line) => !line.trimStart().startsWith('#'))
+      .join('\n')
+    expect(uncommented).not.toContain('update-function-code')
+    expect(uncommented).not.toContain('amazon-ecr-login')
   })
 
   it('skips existing files in non-interactive mode', async () => {

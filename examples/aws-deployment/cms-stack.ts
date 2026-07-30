@@ -23,6 +23,14 @@ interface CmsStackProps extends StackProps {
   clerkJwtKey: string
   /** Bootstrap admin Clerk user IDs (comma-separated) */
   bootstrapAdminIds: string
+  /**
+   * Namespaces this deployment's settings branch
+   * (`canopycms-settings-{deploymentName}`). Two stacks pointed at the SAME
+   * GitHub repo MUST use different values, or both resolve
+   * `canopycms-settings-prod` and fight over it. Changing it later on a stack
+   * that already has a populated settings workspace is refused at boot.
+   */
+  deploymentName: string
 }
 
 export class CmsStack extends Stack {
@@ -43,14 +51,31 @@ export class CmsStack extends Stack {
 
     // Core CMS infrastructure: VPC + EFS + Lambda + EC2 Worker
     const cmsService = new CanopyCmsService(this, 'CmsService', {
-      // Docker image built from the adopter's app
+      // Docker image built from the adopter's app. `cdk deploy` builds this
+      // and publishes it to the CDK assets repository -- it is the ONLY thing
+      // that ships CMS code. Do not pair it with a separate ECR push +
+      // `aws lambda update-function-code`; that leaves the function's image
+      // URI out of sync with CloudFormation, and the next `cdk deploy`
+      // silently reverts the code. See .github/workflows/deploy-cms.yml.
       cmsDockerImage: lambda.DockerImageCode.fromImageAsset('.', {
         file: 'Dockerfile.cms',
+        // Dockerfile.cms declares this as an ARG and Next.js inlines it into
+        // the CLIENT bundle at build time, so it has to be supplied to the
+        // image BUILD -- a Lambda environment variable would be far too late.
+        // CDK builds the image, so it must come through buildArgs here, not
+        // through a `docker build --build-arg` step in CI.
+        buildArgs: {
+          NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY ?? '',
+        },
       }),
 
       // Worker configuration
       githubOwner: 'your-org',
       githubRepo: 'your-docs-site',
+
+      // See CmsStackProps.deploymentName -- distinct per stack when several
+      // share one GitHub repo.
+      deploymentName: props.deploymentName,
 
       // Secrets the EC2 worker needs to read
       secretsArns: [githubToken.secretArn, clerkSecretKey.secretArn],
@@ -95,6 +120,7 @@ export class CmsStack extends Stack {
 //   hostedZoneDomain: 'sandbox.example.org',
 //   clerkJwtKey: process.env.CLERK_JWT_KEY!,
 //   bootstrapAdminIds: 'user_abc123',
+//   deploymentName: 'testing',
 // })
 //
 // // Production CMS
@@ -104,4 +130,5 @@ export class CmsStack extends Stack {
 //   hostedZoneDomain: 'example.org',
 //   clerkJwtKey: process.env.CLERK_JWT_KEY!,
 //   bootstrapAdminIds: 'user_abc123,user_def456',
+//   deploymentName: 'prod',
 // })
