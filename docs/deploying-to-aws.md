@@ -353,16 +353,29 @@ The env var deliberately wins over config: it's the one guaranteed to differ bet
 
 The EC2 worker's stdout/stderr ships to CloudWatch Logs by default via the
 amazon-cloudwatch-agent — no SSM or shell access needed to see what it's doing.
+The CMS Lambda and the asset transform Lambda (if you use `AssetSupport`) each
+get their own dedicated log group too, on the same convention.
 
-- **Log group**: `/canopycms/<stackName>/worker`, created by `CanopyCmsService`
-  (90-day default retention, `RemovalPolicy.DESTROY`). Filter on the `/canopycms/`
-  prefix in the CloudWatch console to see every deployment's worker log group at
-  once. Override retention with `workerLogRetention` and the name with
-  `workerLogGroupName` (also useful if you instantiate `CanopyCmsService` twice in
-  one stack, since the default name would otherwise collide); the group itself is
-  available off the construct as `service.workerLogGroup`.
-- **Log streams**: one per instance id — a new stream appears every time the spot
-  worker is replaced.
+- **Log groups**: all created by CDK with a custom `/canopycms/...` name,
+  90-day default retention, and `RemovalPolicy.DESTROY` — never the
+  CloudFormation-implicit `/aws/lambda/<function-name>` group Lambda would
+  otherwise auto-create (which CDK can't manage: infinite retention, and it
+  survives `cdk destroy`). Filter on the `/canopycms/` prefix in the
+  CloudWatch console to see every deployment's log groups at once.
+  | Component | Default log group name | Retention override | Name override | Construct property |
+  | --- | --- | --- | --- | --- |
+  | EC2 worker | `/canopycms/<stackName>/worker` | `workerLogRetention` | `workerLogGroupName` | `service.workerLogGroup` |
+  | CMS Lambda | `/canopycms/<stackName>/cms` | `cmsLogRetention` | `cmsLogGroupName` | `service.cmsLogGroup` |
+  | Transform Lambda | `/canopycms/<stackName>/transform` | `transformLogRetention` | `transformLogGroupName` | `assetSupport.transformLogGroup` |
+
+  Name overrides are also useful if you instantiate `CanopyCmsService` or
+  `AssetSupport` twice in one stack, since the default names would otherwise
+  collide.
+
+- **Log streams**: one per instance id for the worker — a new stream appears
+  every time the spot worker is replaced (including by the rolling update
+  described in [Redeploying updates the worker too](#redeploying-updates-the-worker-too)
+  below). The Lambdas use their usual per-container-instance streams.
 - **Timestamps**: log events carry ingestion timestamps (the worker doesn't emit
   its own yet — see
   [`.claude/future-tasks/worker-log-timestamps.md`](../.claude/future-tasks/worker-log-timestamps.md)).
@@ -372,8 +385,50 @@ amazon-cloudwatch-agent — no SSM or shell access needed to see what it's doing
   output, though `systemctl status canopy-worker` still works for a basic
   running/not-running check.
 - **Org tagging**: tag aspects applied stack-wide (`Tags.of(stack).add(...)`)
-  cascade to the log group automatically like any other CDK resource, so org-wide
-  tagging policies need no Canopy-specific configuration.
+  cascade to every log group automatically like any other CDK resource, so
+  org-wide tagging policies need no Canopy-specific configuration.
+
+## Redeploying updates the worker too
+
+The worker's Auto Scaling Group has an `UpdatePolicy` (`rollingUpdate` with
+`minInstancesInService: 0`, since the ASG's `minCapacity`/`maxCapacity` are
+both 1), so `cdk deploy` actually terminates and relaunches the EC2 instance
+whenever anything in its launch template changes — most commonly a new
+worker code bundle, but also an AMI refresh, instance-role change, or
+user-data edit. Without this, CloudFormation's default behavior for an ASG
+behind a changed launch template is to update the template resource and stop
+there: the running instance keeps its old user-data (and therefore the old
+worker bundle) until a spot interruption or a manual terminate happens to
+replace it — so a plain `cdk deploy` would silently ship every other change
+except the one to the worker.
+
+Because `minInstancesInService` must be `0` here, every such deploy causes a
+short worker outage (replacement boot time — installing git/unzip/nodejs/
+efs-utils and mounting EFS — is typically 2-4 minutes). This is expected and
+safe:
+
+- The task queue and branch workspaces live on EFS, not on the instance, so
+  the replacement worker picks up exactly where the old one left off.
+- The Lambda's Save/Publish paths only enqueue task files onto EFS and never
+  talk to the worker directly, so they queue up normally during the outage
+  instead of failing.
+- A task that was actually being processed when the old instance was
+  terminated is automatically recovered: the worker re-checks
+  `.tasks/processing/` for stranded tasks on every task-queue poll cycle (not
+  only at its own boot), so a task orphaned by the old instance's termination
+  gets moved back to `pending/` and retried once it's old enough (5 minutes
+  by default) — no manual intervention needed.
+
+There is deliberately no `cfn-signal`/readiness gate on this update: the
+worker's systemd unit is `Type=simple` with `Restart=always`, so
+`systemctl start` reports success the instant the process execs, regardless
+of whether it then crash-loops — a real readiness signal would need to poll
+`worker-status.json` or `systemctl is-active` before signaling, which isn't
+implemented yet. If you need to confirm a redeploy actually took (e.g. after
+a worker code change), check the new instance's log stream (see
+[Worker observability](#worker-observability) above) or
+`npx canopycms worker run-once`-style diagnostics rather than relying on
+`cdk deploy` exiting cleanly as proof.
 
 ## Security Model
 

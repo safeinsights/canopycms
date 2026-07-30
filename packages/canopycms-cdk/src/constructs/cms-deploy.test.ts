@@ -482,6 +482,28 @@ describe('CanopyCmsService M4: worker ASG uses a LaunchTemplate, not LaunchConfi
   })
 })
 
+describe('CanopyCmsService: worker ASG rolling update policy', () => {
+  it('synthesizes a rolling UpdatePolicy with MinInstancesInService: 0, so a changed launch template actually replaces the running instance', () => {
+    // Without this, CloudFormation's default behavior for an ASG behind a
+    // changed launch template is to update the template resource and do
+    // NOTHING else - the running instance (and its stale worker bundle)
+    // survives until a spot interruption or manual terminate. Asserting on
+    // the raw synthesized UpdatePolicy (not just that the construct prop was
+    // passed) pins the actual CloudFormation behavior.
+    const template = synth()
+    template.hasResource(
+      'AWS::AutoScaling::AutoScalingGroup',
+      Match.objectLike({
+        UpdatePolicy: Match.objectLike({
+          AutoScalingRollingUpdate: Match.objectLike({
+            MinInstancesInService: 0,
+          }),
+        }),
+      }),
+    )
+  })
+})
+
 describe('CanopyCmsService: deploymentName validation', () => {
   const invalid = ['team/prod', 'my prod', '-prod', 'prod:1', 'a..b', '.prod', 'prod.', 'prod.lock']
 
@@ -637,6 +659,86 @@ describe('CanopyCmsService: worker CloudWatch log shipping', () => {
       expect(startIdx).toBeGreaterThanOrEqual(0)
       expect(mkdirIdx).toBeLessThan(startIdx)
     }
+  })
+})
+
+describe('CanopyCmsService: CMS Lambda CloudWatch log group', () => {
+  it('creates a dedicated CMS log group named /canopycms/<stackName>/cms with 90-day default retention and DESTROY removal', () => {
+    const template = synth()
+    template.hasResource(
+      'AWS::Logs::LogGroup',
+      Match.objectLike({
+        Properties: Match.objectLike({
+          LogGroupName: '/canopycms/TestStack/cms',
+          RetentionInDays: 90,
+        }),
+        DeletionPolicy: 'Delete',
+      }),
+    )
+  })
+
+  it('honors cmsLogRetention to override the default retention', () => {
+    const template = synth(false, { cmsLogRetention: RetentionDays.ONE_WEEK })
+    template.hasResourceProperties(
+      'AWS::Logs::LogGroup',
+      Match.objectLike({ LogGroupName: '/canopycms/TestStack/cms', RetentionInDays: 7 }),
+    )
+  })
+
+  it('honors cmsLogGroupName to override the default name', () => {
+    const template = synth(false, { cmsLogGroupName: '/custom/cms' })
+    template.hasResourceProperties(
+      'AWS::Logs::LogGroup',
+      Match.objectLike({ LogGroupName: '/custom/cms' }),
+    )
+  })
+
+  // Direct regression guard for the deploy-blocking trap: Lambda auto-creates
+  // `/aws/lambda/<function-name>` outside CloudFormation on first invoke, so
+  // a CDK LogGroup construct using that exact name fails CreateLogGroup with
+  // "already exists" the moment it's ever been deployed without one.
+  it('neither the CMS nor the worker log group name starts with /aws/lambda/', () => {
+    const template = synth()
+    const groups = template.findResources('AWS::Logs::LogGroup')
+    const names = Object.values(groups).map(
+      (group) => (group.Properties as { LogGroupName?: string }).LogGroupName ?? '',
+    )
+    expect(names.length).toBeGreaterThanOrEqual(2) // worker + cms
+    for (const name of names) {
+      expect(name.startsWith('/aws/lambda/')).toBe(false)
+    }
+  })
+
+  it('the CMS Lambda references its dedicated log group via LoggingConfig.LogGroup', () => {
+    const template = synth()
+    template.hasResourceProperties(
+      'AWS::Lambda::Function',
+      Match.objectLike({
+        LoggingConfig: Match.objectLike({
+          LogGroup: { Ref: Match.stringLikeRegexp('CmsFunctionLogs') },
+        }),
+      }),
+    )
+  })
+
+  it('grants the CMS Lambda role a log-group-scoped IAM statement (CreateLogStream + PutLogEvents only), not a broad grant', () => {
+    const template = synth()
+    template.hasResourceProperties(
+      'AWS::IAM::Policy',
+      Match.objectLike({
+        PolicyDocument: Match.objectLike({
+          Statement: Match.arrayWith([
+            Match.objectLike({
+              Effect: 'Allow',
+              Action: ['logs:CreateLogStream', 'logs:PutLogEvents'],
+              Resource: Match.objectLike({
+                'Fn::GetAtt': Match.arrayWith([Match.stringLikeRegexp('CmsFunctionLogs')]),
+              }),
+            }),
+          ]),
+        }),
+      }),
+    )
   })
 })
 

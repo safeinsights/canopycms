@@ -369,7 +369,13 @@ export class CmsWorker {
       // Ensure remote.git exists (init bare repo if first run)
       await this.ensureRemoteGit()
 
-      // Recover any orphaned tasks from a previous crash
+      // Recover any orphaned tasks from a previous crash, immediately rather
+      // than waiting for the first processTaskQueue() poll (taskPollInterval,
+      // default 5s) to run it. Not the only call site any more -
+      // processTaskQueue() below now repeats this on every cycle; see its
+      // doc comment for why a boot-only call is insufficient once the
+      // worker's ASG rolls on every `cdk deploy` (CanopyCmsService's
+      // UpdatePolicy).
       const recovered = await recoverOrphanedTasks(this.taskDir, undefined, this.log)
       if (recovered > 0) {
         console.log(`Recovered ${recovered} orphaned task(s)`)
@@ -627,6 +633,31 @@ export class CmsWorker {
    */
   async processTaskQueue(): Promise<void> {
     if (!this.running) return
+
+    // Recover tasks orphaned in processing/ on EVERY cycle, not only at boot
+    // (start()'s call above). Before this fix, recoverOrphanedTasks() ran
+    // exactly once, at start() - fine when an instance was replaced rarely
+    // (a spot interruption), but CanopyCmsService's worker ASG now rolls on
+    // every `cdk deploy` (see its UpdatePolicy), making replacement routine.
+    // A replacement instance's user-data (yum install git/unzip/nodejs/
+    // efs-utils, mount EFS) takes roughly 2-4 minutes, well under
+    // recoverOrphanedTasks()'s 5-minute default staleness threshold - so
+    // THAT ONE boot-time call would see the just-orphaned file as "too
+    // fresh" and skip it, and nothing rescanned afterward: the task (and its
+    // branch's syncStatus) would be wedged forever. Re-checking every poll
+    // means the file's age eventually crosses the threshold and it gets
+    // recovered without operator intervention.
+    //
+    // Safe to run this often: taskTimeoutMs defaults to 60s (DEFAULT_TASK_TIMEOUT
+    // above), and executeTaskWithTimeout() guarantees every task THIS process
+    // dequeues is completed, failed, or retried (all three remove the
+    // processing/ file) within that timeout - so no task legitimately still
+    // in-flight can accumulate anywhere near 5 minutes of age in processing/
+    // for this call to misclassify as orphaned and steal out from under it.
+    const recovered = await recoverOrphanedTasks(this.taskDir, undefined, this.log)
+    if (recovered > 0) {
+      console.log(`Recovered ${recovered} orphaned task(s)`)
+    }
 
     let processed = 0
     let task: Task | null
