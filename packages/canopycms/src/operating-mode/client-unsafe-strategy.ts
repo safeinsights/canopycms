@@ -9,6 +9,7 @@
 
 import path from 'node:path'
 import { ProdClientSafeStrategy, DevClientSafeStrategy } from './client-safe-strategy'
+import { resolveDeploymentName } from './deployment-name'
 import type { OperatingMode, ClientUnsafeStrategy } from './types'
 import type { CanopyConfig } from '../config'
 import { DEFAULT_PROD_WORKSPACE } from '../config'
@@ -74,8 +75,7 @@ class ProdStrategy extends ProdClientSafeStrategy implements ClientUnsafeStrateg
     defaultBaseBranch?: string
   }): string {
     if (config.settingsBranch) return config.settingsBranch
-    const deploymentName = config.deploymentName ?? 'prod'
-    return `canopycms-settings-${deploymentName}`
+    return `canopycms-settings-${resolveDeploymentName(config, 'prod')}`
   }
 
   getSettingsRoot(sourceRoot?: string): string {
@@ -150,8 +150,7 @@ class DevStrategy extends DevClientSafeStrategy implements ClientUnsafeStrategy 
     defaultBaseBranch?: string
   }): string {
     if (config.settingsBranch) return config.settingsBranch
-    const deploymentName = config.deploymentName ?? 'local'
-    return `canopycms-settings-${deploymentName}`
+    return `canopycms-settings-${resolveDeploymentName(config, 'local')}`
   }
 
   getSettingsRoot(sourceRoot?: string): string {

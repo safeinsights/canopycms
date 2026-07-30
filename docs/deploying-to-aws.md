@@ -317,7 +317,7 @@ The Lambda does NOT need these secrets — only the EC2 worker reads them.
 
 ## Settings Publishing Flow (Permissions & Groups)
 
-Settings changes (permissions and groups) follow the same Lambda→worker pattern as content, using a dedicated settings branch named `canopycms-settings-{deploymentName}` (e.g., `canopycms-settings-prod`):
+Settings changes (permissions and groups) follow the same Lambda→worker pattern as content, using a dedicated settings branch named `canopycms-settings-{deploymentName}` (e.g., `canopycms-settings-prod`). See [Two deployments, one repository](#two-deployments-one-repository) below for how `deploymentName` is resolved and why it matters as soon as more than one deployment touches the same repo.
 
 1. Admin changes permissions/groups in the CMS UI
 2. Lambda commits changes to the settings branch workspace on EFS
@@ -325,6 +325,29 @@ Settings changes (permissions and groups) follow the same Lambda→worker patter
 4. Lambda queues a `push-and-create-or-update-pr` task for the worker
 5. EC2 worker dequeues the task, pushes the settings branch from `remote.git` to GitHub, and creates/updates a PR
 6. Additionally, the worker's `syncGit()` pushes settings branches on every cycle as a safety net
+
+## Two deployments, one repository
+
+Two `CanopyCmsService` stacks can point at the same GitHub repo (e.g. a test stack and a prod stack, or two independently-deployed sites sharing one monorepo). If both are left at their defaults, **both resolve the same settings branch — `canopycms-settings-prod` — and fight over it**: whichever deployment's worker pushes last wins, permissions/groups PRs from one deployment get silently clobbered by the other's push, and reviewers see confusing, unattributable diffs on a single PR that's actually serving two unrelated CMS instances.
+
+The fix is to give each stack a distinct `deploymentName`:
+
+```typescript
+new CanopyCmsService(this, 'Cms', {
+  // ...
+  deploymentName: 'prod', // this stack's settings branch: canopycms-settings-prod
+})
+```
+
+`deploymentName` is stamped into the Lambda's `CANOPYCMS_DEPLOYMENT_NAME` environment variable and the worker's `.env`, and resolved with this precedence (see `resolveDeploymentName` in `packages/canopycms/src/operating-mode/deployment-name.ts`):
+
+1. `CANOPYCMS_DEPLOYMENT_NAME` (stamped per-stack by this CDK prop) — wins
+2. `deploymentName` in the shared repo's `canopycms.config.ts`
+3. the operating mode's default (`prod` / `local`)
+
+The env var deliberately wins over config: it's the one guaranteed to differ between two stacks sharing a repo, while `config.deploymentName` is checked out identically by both. If both are set and disagree, the Lambda logs a one-time warning naming both values and which one won.
+
+**Changing `deploymentName` (or `settingsBranch`) on a stack that already has a populated settings workspace is refused at boot, loudly** — it is not migrated automatically. Renaming the resolved settings branch would make CanopyCMS check out a _different_ orphan branch in the same on-disk workspace, which wipes `permissions.json`/`groups.json` with no history to recover them from (orphan branches share none). If you see this error, either restore the previous value or deliberately move the settings workspace aside first — see the error message for specifics.
 
 ## Worker observability
 
@@ -381,13 +404,17 @@ CanopyCMS handles one deployment. Instantiate the CDK stack multiple times for d
 // Testing CMS (sandbox account)
 new CmsStack(app, 'CmsTest', {
   env: { account: '111111111111', region: 'us-east-1' },
+  deploymentName: 'test',
 })
 
 // Production CMS (official account)
 new CmsStack(app, 'CmsProd', {
   env: { account: '222222222222', region: 'us-east-1' },
+  deploymentName: 'prod',
 })
 ```
+
+Separate AWS accounts mean these two stacks' settings branches would never collide even without `deploymentName` — but set distinct values anyway: it's the same repo's `canopycms-settings-*` branch namespace on GitHub, and a future stack sharing an account (or repo) with either of these should not have to guess that the convention exists. See [Two deployments, one repository](#two-deployments-one-repository).
 
 ## Troubleshooting
 

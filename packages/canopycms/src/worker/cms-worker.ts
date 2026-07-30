@@ -58,6 +58,25 @@ export interface CmsWorkerConfig {
   authCacheRefreshInterval?: number
   /** Base branch name (default: 'main') */
   baseBranch?: string
+  /**
+   * Deployment name, used to compute THIS worker's own settings branch
+   * (`canopycms-settings-{deploymentName}`, default: 'prod' — matches
+   * ProdStrategy's mode default in operating-mode/client-unsafe-strategy.ts,
+   * the only mode the worker runs in). Two deployments can share one GitHub
+   * repo with distinct settings branches; this tells the worker which one it
+   * owns, so it never pushes another deployment's settings branch (see
+   * `pushSettingsBranches`).
+   */
+  deploymentName?: string
+  /**
+   * Explicit settings branch name, taking precedence over `deploymentName`.
+   * Mirrors the strategy's own precedence (`config.settingsBranch` short-circuits
+   * `getSettingsBranchName` before `deploymentName` is consulted, see
+   * operating-mode/client-unsafe-strategy.ts): an adopter who overrides
+   * `settingsBranch` in canopycms.config.ts must set this too, or the worker
+   * would own a branch name the Lambda never writes to.
+   */
+  settingsBranch?: string
   /** Max tasks to process per cycle (default: 10) */
   maxTasksPerCycle?: number
   /** Per-task timeout in ms (default: 60000) */
@@ -297,6 +316,10 @@ export class CmsWorker {
   // path.join and rebaseActiveBranches' skip comparison) agree, instead of
   // re-deriving it (and risking drift) at each use.
   private sanitizedBaseBranch: SanitizedBranchName
+  // This deployment's own settings branch — see CmsWorkerConfig.deploymentName.
+  // `pushSettingsBranches` pushes ONLY this branch, never any other
+  // `canopycms-settings-*` branch it happens to find locally.
+  private settingsBranch: string
   private activeTimeouts = new Set<NodeJS.Timeout>()
   private running = false
   private activeOperations = new Set<Promise<void>>()
@@ -320,6 +343,8 @@ export class CmsWorker {
     this.contentBranchesPath = path.join(config.workspacePath, 'content-branches')
     this.baseBranch = config.baseBranch ?? 'main'
     this.sanitizedBaseBranch = sanitizeBranchName(this.baseBranch)
+    this.settingsBranch =
+      config.settingsBranch ?? `canopycms-settings-${config.deploymentName ?? 'prod'}`
     this.maxTasksPerCycle = config.maxTasksPerCycle ?? 10
     this.taskTimeoutMs = config.taskTimeoutMs ?? DEFAULT_TASK_TIMEOUT
     this.maxRetries = config.maxRetries ?? DEFAULT_MAX_RETRIES
@@ -929,21 +954,48 @@ export class CmsWorker {
   }
 
   /**
-   * Push any canopycms-settings-* branches from remote.git to GitHub.
-   * Non-fatal: a no-op push for up-to-date branches just succeeds quietly.
+   * Push THIS deployment's own settings branch (`this.settingsBranch`) from
+   * remote.git to GitHub. Non-fatal: a no-op push for an up-to-date branch
+   * just succeeds quietly.
+   *
+   * Deliberately narrowed to one branch — this used to push EVERY local
+   * branch matching `canopycms-settings-*`. With the tracking-namespace fetch
+   * fix (GITHUB_TRACKING_REF_PREFIX), `reconcileTrackedBranches` creates local
+   * heads for branches that exist on GitHub, so ANOTHER deployment's settings
+   * branch (sharing this same GitHub repo) can legitimately show up as a
+   * local head here too. Pushing it would be this deployment shipping
+   * settings state it doesn't own.
    */
   private async pushSettingsBranches(git: ReturnType<typeof simpleGit>): Promise<void> {
     try {
       const branches = await git.branch()
       const settingsBranches = branches.all.filter((b) => b.startsWith('canopycms-settings-'))
-      for (const branch of settingsBranches) {
-        try {
-          await git.push(this.buildGitHubUrl(), branch)
-          console.log(`Pushed settings branch ${branch} to GitHub`)
-        } catch (err) {
-          // Non-fatal: branch may already be up-to-date or not yet created
-          console.warn(`Settings push for ${branch}:`, err instanceof Error ? err.message : err)
-        }
+      const foreign = settingsBranches.filter((b) => b !== this.settingsBranch)
+      if (foreign.length > 0) {
+        // Signal, not an error: this is exactly the "two deployments, one repo"
+        // condition this workstream exists to make visible. Never push these.
+        console.warn(
+          `Found settings branch(es) not owned by this deployment (${this.settingsBranch}): ` +
+            `${foreign.join(', ')}. Another CanopyCMS deployment may share this GitHub repo. Not pushing them.`,
+        )
+      }
+
+      // Check the full branch list, not the `canopycms-settings-*` subset: an
+      // adopter-supplied `settingsBranch` override need not carry that prefix.
+      if (!branches.all.includes(this.settingsBranch)) {
+        // Not created locally yet — nothing to push.
+        return
+      }
+
+      try {
+        await git.push(this.buildGitHubUrl(), this.settingsBranch)
+        console.log(`Pushed settings branch ${this.settingsBranch} to GitHub`)
+      } catch (err) {
+        // Non-fatal: branch may already be up-to-date
+        console.warn(
+          `Settings push for ${this.settingsBranch}:`,
+          err instanceof Error ? err.message : err,
+        )
       }
     } catch (err) {
       console.warn(

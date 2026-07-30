@@ -482,6 +482,20 @@ describe('CanopyCmsService M4: worker ASG uses a LaunchTemplate, not LaunchConfi
   })
 })
 
+describe('CanopyCmsService: deploymentName validation', () => {
+  const invalid = ['team/prod', 'my prod', '-prod', 'prod:1', 'a..b', '.prod', 'prod.', 'prod.lock']
+
+  for (const value of invalid) {
+    it(`throws at synth for an invalid deploymentName: ${JSON.stringify(value)}`, () => {
+      expect(() => synth(false, { deploymentName: value })).toThrow(/invalid deploymentName/i)
+    })
+  }
+
+  it('accepts an ordinary deploymentName', () => {
+    expect(() => synth(false, { deploymentName: 'acme-prod_2.1' })).not.toThrow()
+  })
+})
+
 describe('CanopyCmsService: worker CloudWatch log shipping', () => {
   it('creates a dedicated worker log group named /canopycms/<stackName>/worker with 90-day default retention and DESTROY removal', () => {
     const template = synth()
@@ -623,5 +637,59 @@ describe('CanopyCmsService: worker CloudWatch log shipping', () => {
       expect(startIdx).toBeGreaterThanOrEqual(0)
       expect(mkdirIdx).toBeLessThan(startIdx)
     }
+  })
+})
+
+describe('CanopyCmsService: deploymentName -> CANOPYCMS_DEPLOYMENT_NAME (settings-branch namespacing)', () => {
+  it('defaults CANOPYCMS_DEPLOYMENT_NAME to "prod" in the Lambda environment', () => {
+    const template = synth()
+    template.hasResourceProperties(
+      'AWS::Lambda::Function',
+      Match.objectLike({
+        Environment: Match.objectLike({
+          Variables: Match.objectLike({ CANOPYCMS_DEPLOYMENT_NAME: 'prod' }),
+        }),
+      }),
+    )
+  })
+
+  it('honors deploymentName in the Lambda environment', () => {
+    const template = synth(false, { deploymentName: 'acme' })
+    template.hasResourceProperties(
+      'AWS::Lambda::Function',
+      Match.objectLike({
+        Environment: Match.objectLike({
+          Variables: Match.objectLike({ CANOPYCMS_DEPLOYMENT_NAME: 'acme' }),
+        }),
+      }),
+    )
+  })
+
+  it('lets an explicit environment.CANOPYCMS_DEPLOYMENT_NAME override deploymentName (placed after it in the object)', () => {
+    const template = synth(false, {
+      deploymentName: 'acme',
+      environment: { CANOPYCMS_DEPLOYMENT_NAME: 'explicit-override' },
+    })
+    template.hasResourceProperties(
+      'AWS::Lambda::Function',
+      Match.objectLike({
+        Environment: Match.objectLike({
+          Variables: Match.objectLike({ CANOPYCMS_DEPLOYMENT_NAME: 'explicit-override' }),
+        }),
+      }),
+    )
+  })
+
+  it('defaults to "prod" in the worker .env UserData when deploymentName is unset', () => {
+    const template = synth()
+    const all = workerUserDataBlobs(template)
+    expect(all).toContain('CANOPYCMS_DEPLOYMENT_NAME=prod')
+  })
+
+  it('honors deploymentName in the worker .env UserData', () => {
+    const template = synth(false, { deploymentName: 'acme' })
+    const all = workerUserDataBlobs(template)
+    expect(all).toContain('CANOPYCMS_DEPLOYMENT_NAME=acme')
+    expect(all).not.toContain('CANOPYCMS_DEPLOYMENT_NAME=prod')
   })
 })
