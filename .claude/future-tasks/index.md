@@ -9,6 +9,27 @@ Priority levels:
 
 ---
 
+## Active program
+
+Coordinated multi-workstream effort. The hub document carries status and
+decisions; the log carries learnings. Individual workstream files are listed here
+rather than in the priority tables, because their sequencing is driven by the
+program rather than by priority alone.
+
+| File                                                                             | Summary                                                                                                          |
+| -------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| [production-readiness-program.md](production-readiness-program.md)               | **Hub** — CanopyCMS to production for docs-site-proto (and website v2): workstreams, sequencing, decisions, protection rules for the teams' live docs site |
+| [program-log.md](program-log.md)                                                 | **Append-only log** — findings, disproven assumptions, deploy-proven facts, decisions and their reasoning         |
+| [program-a-release-path.md](program-a-release-path.md)                           | A (S) — prerelease dist-tag channel from integration branches + standing draft PR to main; unblocks adopters consuming unreleased work |
+| [program-b-canopy-hardening.md](program-b-canopy-hardening.md)                   | B (L) — multi-deployment safety, worker/log ops gaps, day-one editor correctness, dual-build CI. Gates D          |
+| [program-c-e2e-coverage.md](program-c-e2e-coverage.md)                           | C (L) — e2e coverage sweep from 2026-04-12 forward (51→52 test cases in 3.5 months while ~60 editor/api commits landed) |
+| [program-d-stack-rebuild.md](program-d-stack-rebuild.md)                         | D (M) — tear down + rebuild the deploy-test stack from scratch; build the reusable deployed-stack verification suite |
+| [program-e-docs-site-cms.md](program-e-docs-site-cms.md)                         | E (L) — first real CMS deployment for docs-site-proto without disturbing the teams' live site                    |
+| [program-f-production.md](program-f-production.md)                               | F (L) — multi-account `official` mode + shared static-site CDK so website v2 doesn't fork a second copy           |
+| [program-g-operational-readiness.md](program-g-operational-readiness.md)         | G (M) — runbooks, standing smoke test, ownership boundaries, release-channel wind-down                            |
+
+---
+
 ## P0 — Must fix before multi-editor prod launch
 
 None currently open.
