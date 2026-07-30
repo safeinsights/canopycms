@@ -77,6 +77,8 @@ export interface BranchSummary {
   mergedAt?: string
   /** Sync status for async GitHub operations (used when Lambda has no internet) */
   syncStatus?: SyncStatus
+  /** Short, sanitized reason the last GitHub sync task failed (set alongside syncStatus: 'sync-failed') */
+  syncFailureReason?: string
   /** Whether this branch has unresolved merge conflicts with the base branch */
   conflictStatus?: ConflictStatus
   /** ContentIds of entries where --theirs was applied during rebase; cleared on clean rebase */
@@ -191,6 +193,7 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
         pullRequestState: b.pullRequestState,
         mergedAt: b.mergedAt,
         syncStatus: b.syncStatus,
+        syncFailureReason: b.syncFailureReason,
         conflictStatus: b.conflictStatus,
         conflictFiles: b.conflictFiles,
         commentCount: unresolvedCount,

@@ -36,13 +36,70 @@ const log = createDebugLogger({ prefix: 'GitManager' })
  */
 const GIT_ENV_PASSTHROUGH =
   /^(PATH|HOME|USER|LANG|LC_[A-Z]+|TZ|TMPDIR|GIT_(AUTHOR|COMMITTER)_(NAME|EMAIL|DATE)|GIT_TERMINAL_PROMPT|GIT_TRACE[0-9A-Z_]*)$/
-/** @internal — exported for tests only. */
+/**
+ * Every caller of gitChildEnv gets forced to the "C" locale, regardless of
+ * what LANG/LC_ALL happen to be passed through above from process.env (or
+ * absent from it). Push-rejection classification
+ * (`utils/git.ts`'s `isNonFastForwardRejection`) matches git's literal
+ * English rejection strings (`[rejected]`, `non-fast-forward`, the "Updates
+ * were rejected because" hint) -- all gettext-translated. The worker's
+ * systemd unit sets no LANG/LC_ALL today, so English output is currently
+ * incidental, not guaranteed: a base-image change, a container runtime
+ * default, or a developer's shell profile could silently make git emit a
+ * translated message and turn the classifier into a permanent no-op. LC_ALL
+ * wins over LANG (and every other LC_* category) in gettext's resolution
+ * order, so forcing both here pins output to English no matter which one a
+ * host happens to set — applied AFTER the passthrough loop so it always
+ * wins over whatever LANG/LC_* value process.env carried through, and
+ * BEFORE `overrides` so an explicit override (none today) could still win.
+ */
+const FORCE_C_LOCALE = { LC_ALL: 'C', LANG: 'C' }
+/**
+ * Exported for GitManager's own use (see `this.git.env(...)` above),
+ * worker/cms-worker.ts's push-rejection-classified GitHub calls
+ * (`pushBranchToGitHub`, `syncGit`'s fetch/`pushSettingsBranches` instance),
+ * and tests.
+ */
 export function gitChildEnv(overrides: Record<string, string>): Record<string, string> {
   const env: Record<string, string> = {}
   for (const [key, value] of Object.entries(process.env)) {
     if (value !== undefined && GIT_ENV_PASSTHROUGH.test(key)) env[key] = value
   }
-  return { ...env, ...overrides }
+  return { ...env, ...FORCE_C_LOCALE, ...overrides }
+}
+
+/**
+ * Child env for git commands that talk to a NETWORK remote (the worker's
+ * GitHub fetch/push).
+ *
+ * Deliberately NOT `gitChildEnv`. That allowlist exists for LOCAL operations
+ * and drops `HTTPS_PROXY`/`HTTP_PROXY`/`NO_PROXY`/`GIT_SSL_*`/
+ * `GIT_SSH_COMMAND` on purpose (see GIT_ENV_PASSTHROUGH). Applying it to the
+ * GitHub calls would newly break every adopter who reaches GitHub through a
+ * corporate proxy or a custom CA bundle — trading real connectivity for
+ * message stability, which is a bad deal.
+ *
+ * So this inherits the ambient environment and forces only the locale, which
+ * is all the push-rejection classifier (isNonFastForwardRejection in
+ * utils/git.ts) actually needs: git's `[rejected] … (non-fast-forward)` text
+ * is gettext-translated, and a non-English host would silently turn that
+ * classifier into a no-op, reverting collisions to a 3-retry transient burn.
+ *
+ * `GIT_SSH_COMMAND` is deliberately NOT passed through even though it is a
+ * "network" variable: simple-git hard-blocks it (`allowUnsafeSshCommand`),
+ * and it is irrelevant here anyway — `buildGitHubUrl()` produces an `https://`
+ * URL, so the worker never reaches GitHub over SSH.
+ */
+const GIT_NETWORK_ENV_PASSTHROUGH =
+  /^((HTTPS?|ALL)_PROXY|(https?|all)_proxy|NO_PROXY|no_proxy|GIT_SSL_(CAINFO|CAPATH|NO_VERIFY|VERSION)|CURL_CA_BUNDLE|SSL_CERT_(FILE|DIR)|REQUESTS_CA_BUNDLE|NODE_EXTRA_CA_CERTS)$/
+
+export function gitNetworkChildEnv(): Record<string, string> {
+  const env: Record<string, string> = {}
+  for (const [key, value] of Object.entries(process.env)) {
+    if (value === undefined) continue
+    if (GIT_ENV_PASSTHROUGH.test(key) || GIT_NETWORK_ENV_PASSTHROUGH.test(key)) env[key] = value
+  }
+  return { ...env, ...FORCE_C_LOCALE }
 }
 
 // In-memory lock to prevent concurrent remote.git initialization
@@ -200,9 +257,15 @@ export class GitManager {
     // `this.git` is for LOCAL working-tree ops in the intended prod topology,
     // where `origin` resolves to a local path (an auto-detected/initialized
     // `remote.git`) - its env is the allowlist from gitChildEnv, which
-    // intentionally drops HTTPS_PROXY/GIT_SSL_*/GIT_SSH_COMMAND/etc. Do NOT
-    // route GitHub network I/O through it - the worker uses fresh full-env
-    // simpleGit() instances for push/fetch so proxy/TLS vars survive.
+    // intentionally drops HTTPS_PROXY/GIT_SSL_*/GIT_SSH_COMMAND/etc. Most of
+    // the worker's OWN GitHub network I/O still avoids gitChildEnv for the
+    // same reason (fresh full-env simpleGit() instances so proxy/TLS vars
+    // survive) -- EXCEPT CmsWorker.pushBranchToGitHub and syncGit()'s fetch/
+    // pushSettingsBranches instance, which now opt into gitChildEnv
+    // specifically so its forced C-locale (see FORCE_C_LOCALE below) keeps
+    // push-rejection classification (isNonFastForwardRejection) reliable --
+    // a deliberate, narrow trade-off of incidental proxy/TLS passthrough on
+    // just those two network call sites for classification correctness.
     //
     // Under the `allowNetworkRemoteInProd` escape hatch, `this.remote` CAN be
     // a network URL, and this.git.fetch(this.remote, ...)/this.git.raw(['push',

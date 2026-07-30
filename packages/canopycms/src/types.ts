@@ -52,6 +52,16 @@ export interface BranchMetadata {
    * failures with the same message so the panel can show "failing since".
    */
   rebaseFailure?: { message: string; firstAt: string; lastAt: string }
+  /**
+   * Short, sanitized reason the worker's last GitHub sync task failed
+   * permanently (set alongside `syncStatus: 'sync-failed'` by
+   * CmsWorker.updateBranchMetadataOnFailure) -- e.g. a non-fast-forward push
+   * rejection naming the branch. Absent until a task has failed permanently.
+   * Cleared on the next successful sync task (CmsWorker.updateBranchMetadata
+   * explicitly resets it to undefined) so a stale reason never survives a
+   * later successful push.
+   */
+  syncFailureReason?: string
 }
 
 export interface BranchPaths {
