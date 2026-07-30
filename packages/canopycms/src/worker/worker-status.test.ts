@@ -64,7 +64,13 @@ describe('writeWorkerStatus', () => {
       updatedAt: 'x',
       lastGitSyncError: { message: 'boom', at: '2026-01-01T00:00:00.000Z' },
       lastFatalError: { message: 'dead', at: '2026-01-01T00:00:00.000Z', phase: 'startup' },
-      lastGitSync: { durationMs: 10, rebased: ['a'], skippedDirty: [], failed: [] },
+      lastGitSync: {
+        durationMs: 10,
+        rebased: ['a'],
+        skippedDirty: [],
+        failed: [],
+        tracked: { created: [], fastForwarded: [], ahead: [], diverged: [] },
+      },
     }
     await writeWorkerStatus(tmpDir, first)
 
