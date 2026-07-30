@@ -11,7 +11,7 @@ import path from 'node:path'
 import { simpleGit } from 'simple-git'
 
 import { CmsWorker, PermanentTaskError, isPermanentTaskFailure } from './cms-worker'
-import { enqueueTask } from './task-queue'
+import { enqueueTask, dequeueTask } from './task-queue'
 import { WORKER_STATUS_FILE } from './worker-status'
 import { initTestRepo, mockConsole, type MockConsole } from '../test-utils'
 import type { WorkerStatusReport } from '../types'
@@ -1202,6 +1202,90 @@ describe('CmsWorker.processTaskQueue() worker-status.json bookkeeping', () => {
     await worker.processTaskQueue()
 
     await expect(fs.stat(statusPath())).rejects.toThrow()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Orphan recovery runs on every processTaskQueue() cycle, not only at boot.
+//
+// Before this fix, recoverOrphanedTasks() ran exactly once, from start().
+// That was fine when instance replacement was rare (a spot interruption),
+// but CanopyCmsService's worker ASG now rolls the instance on every
+// `cdk deploy` (see its UpdatePolicy in cms-service.ts), making replacement
+// routine: a task file left in processing/ by the terminated instance is
+// younger than the 5-minute default staleness threshold by the time the
+// replacement boots (2-4 minutes of yum install + EFS mount), so a
+// boot-only recovery call would skip it -- and with nothing re-scanning
+// afterward, the task (and its branch's syncStatus) would be stuck forever.
+// ---------------------------------------------------------------------------
+
+describe('CmsWorker.processTaskQueue() recovers orphaned tasks every cycle (not only at boot)', () => {
+  let tmpDir: string
+  let taskDir: string
+  let consoleSpy: MockConsole
+
+  beforeEach(async () => {
+    consoleSpy = mockConsole()
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'canopy-worker-orphan-cycle-test-'))
+    taskDir = path.join(tmpDir, '.tasks')
+  })
+
+  afterEach(async () => {
+    consoleSpy.restore()
+    await fs.rm(tmpDir, { recursive: true, force: true })
+  })
+
+  const makeOrphanWorker = () => {
+    const worker = new CmsWorker({
+      workspacePath: tmpDir,
+      githubOwner: 'test-owner',
+      githubRepo: 'test-repo',
+      githubToken: 'fake-token',
+      taskTimeoutMs: 500,
+    })
+    ;(worker as unknown as TaskInternals).running = true
+    return worker
+  }
+
+  it('recovers a task stranded in processing/ on a later processTaskQueue() cycle, without start() ever running', async () => {
+    const worker = makeOrphanWorker()
+    const internals = worker as unknown as TaskInternals
+    internals.executeTask = () => Promise.resolve({ pushed: true })
+
+    const id = await enqueueTask(taskDir, {
+      action: 'push-branch',
+      payload: { branch: 'feature-1' },
+    })
+
+    // Simulate a mid-task instance termination: move the task into
+    // processing/ directly (bypassing processTaskQueue, which would
+    // complete/fail/retry it) -- exactly the state a terminated instance
+    // leaves behind.
+    const dequeued = await dequeueTask(taskDir)
+    expect(dequeued!.id).toBe(id)
+
+    // Backdate the processing/ file's mtime past recoverOrphanedTasks()'s
+    // 5-minute default threshold, standing in for time actually elapsing
+    // (replacement instance boot + however long it sits before the next
+    // poll) rather than sleeping for real in a test.
+    const processingPath = path.join(taskDir, 'processing', `${id}.json`)
+    const past = new Date(Date.now() - 6 * 60_000)
+    await fs.utimes(processingPath, past, past)
+
+    // start() is deliberately never called here. A single processTaskQueue()
+    // call -- standing in for one taskPollInterval cycle on an
+    // already-running worker -- must recover it on its own; if recovery only
+    // happened in start(), this file would stay wedged in processing/
+    // forever, since nothing else re-scans it.
+    await worker.processTaskQueue()
+
+    await expect(fs.stat(processingPath)).rejects.toThrow()
+    const completed = JSON.parse(
+      await fs.readFile(path.join(taskDir, 'completed', `${id}.json`), 'utf-8'),
+    )
+    expect(completed.status).toBe('completed')
+    expect(completed.result.pushed).toBe(true)
+    expect(consoleSpy).toHaveLogged('Recovered 1 orphaned task(s)')
   })
 })
 
