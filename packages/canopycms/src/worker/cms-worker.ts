@@ -80,6 +80,33 @@ const DEFAULT_MAX_RETRIES = 3
 const DEFAULT_LOCK_STALE_MS = 60_000
 
 /**
+ * Remote-tracking namespace that `syncGit()`'s GitHub fetch lands refs in
+ * (`+refs/heads/*:${GITHUB_TRACKING_REF_PREFIX}*`), instead of writing
+ * directly into `refs/heads/*`.
+ *
+ * `remote.git`'s `refs/heads/*` is NOT a throwaway mirror: it's the
+ * deployment's local origin. `GitManager.push()` writes editor work into it
+ * (`target:target`), branch-workspace clones are cloned FROM it, and this
+ * worker itself pushes it on to GitHub (`pushBranchToGitHub`,
+ * `pushSettingsBranches`). A fetch that force-writes GitHub's refs straight
+ * into `refs/heads/*` (the old `+refs/heads/*:refs/heads/*` refspec) can
+ * therefore destroy work that reached `remote.git` but not GitHub yet: with
+ * `--prune`, a branch pushed into `remote.git` and not yet on GitHub gets
+ * deleted outright; without needing `--prune`, a branch where `remote.git`
+ * is ahead of GitHub gets force-rewound to GitHub's older tip, and the
+ * worker's next push then no-ops ("Everything up-to-date") -- the editor's
+ * commit silently never reaches GitHub even though the branch reports
+ * `synced`.
+ *
+ * Fetching into this remote-tracking namespace instead makes `--prune`/`+`
+ * safe again -- they now only ever affect GitHub's-view-of-the-world refs,
+ * never the local heads other code depends on. `reconcileTrackedBranches()`
+ * is what subsequently, and non-destructively, brings `refs/heads/*` toward
+ * what's tracked here.
+ */
+export const GITHUB_TRACKING_REF_PREFIX = 'refs/remotes/github/'
+
+/**
  * [C1] Retention window for `.trash-*` branch directories left behind by the
  * admin purge action (api/admin-branch-health.ts). Matches
  * cleanupOldTasks's default task retention for consistency.
@@ -217,6 +244,34 @@ interface RebaseSummary {
   skippedDirty: string[]
   /** Branches whose rebase attempt failed (fetch error, unexpected rebase error, or MAX_ROUNDS exceeded). */
   failed: { branch: string; error: string }[]
+}
+
+/**
+ * Per-cycle outcome of `reconcileTrackedBranches()` -- the non-destructive
+ * replacement for the old `+refs/heads/*:refs/heads/*` fetch refspec (see
+ * `GITHUB_TRACKING_REF_PREFIX`'s doc comment for the bug this fixes). Folded
+ * by `syncGit()` into the worker's self-reported status
+ * (`WorkerStatusReport.lastGitSync.tracked`, see worker-status.ts).
+ */
+interface TrackedBranchSummary {
+  /** GitHub branches with no corresponding local `refs/heads/<name>` yet -- created at GitHub's tip. */
+  created: string[]
+  /** Local heads that were strict ancestors of GitHub's tip -- fast-forwarded to it. */
+  fastForwarded: string[]
+  /**
+   * Local heads AHEAD of GitHub's tip -- unpushed editor/settings work.
+   * Deliberately left untouched; this is exactly what the old refspec used
+   * to force-rewind or (with --prune) delete outright.
+   */
+  ahead: string[]
+  /**
+   * Local heads that diverged from GitHub's tip (neither side is an
+   * ancestor of the other) -- left untouched and logged. A real collision
+   * (e.g. another deployment moved the same branch name); the next push
+   * attempt will be rejected non-fast-forward, which is the correct,
+   * visible outcome.
+   */
+  diverged: string[]
 }
 
 /**
@@ -898,6 +953,142 @@ export class CmsWorker {
     }
   }
 
+  /**
+   * Bring `refs/heads/*` in `remote.git` toward what was just fetched into
+   * `GITHUB_TRACKING_REF_PREFIX` -- WITHOUT ever force-rewinding or deleting
+   * a local head. This is the non-destructive replacement for what the old
+   * `+refs/heads/*:refs/heads/*` fetch refspec used to do implicitly (and
+   * destructively) as part of the fetch itself; see
+   * `GITHUB_TRACKING_REF_PREFIX`'s doc comment for the two failure modes
+   * that refspec caused.
+   *
+   * Per tracked branch:
+   * - no local `refs/heads/<name>` yet -> create it at the tracked commit
+   *   (a branch created on GitHub, or by another deployment sharing this
+   *   GitHub repo, becomes visible locally).
+   * - local is a strict ancestor of tracked (behind) -> fast-forward it.
+   * - local === tracked -> nothing to do.
+   * - tracked is a strict ancestor of local (ahead) -> LEAVE IT ALONE. This
+   *   is unpushed editor/settings work; the queued push task (or
+   *   pushSettingsBranches) ships it. This is exactly the branch state the
+   *   old refspec used to destroy.
+   * - neither is an ancestor of the other (diverged) -> LEAVE IT ALONE and
+   *   count/log it. A real collision (e.g. another deployment moved the
+   *   same branch name on GitHub); the next push attempt will be rejected
+   *   non-fast-forward, which is the correct, visible outcome -- this
+   *   method must never silently pick a winner.
+   *
+   * Never deletes a local head: a branch removed on GitHub simply stops
+   * being tracked here; the local ref persists until removed through its
+   * own explicit path (the sync loop must not be one of them).
+   *
+   * `remote.git` is bare, so there is no worktree to invalidate by moving
+   * these refs -- unlike a non-bare repo, updating the ref that happens to
+   * be "checked out" is a non-issue here.
+   *
+   * Concurrency: `remote.git` is bare and on EFS, and the Lambda pushes into
+   * it concurrently (`GitManager.push()`'s `target:target` refspec) while
+   * this runs. Every `update-ref` below passes the expected old value (the
+   * all-zeros OID for "must not exist yet" on creation, the previously-read
+   * SHA for the fast-forward case) so a concurrent Lambda write landing in
+   * the gap between the read and the write loses the ref update instead of
+   * being silently clobbered -- the branch is simply revisited next cycle.
+   */
+  private async reconcileTrackedBranches(
+    git: ReturnType<typeof simpleGit>,
+  ): Promise<TrackedBranchSummary> {
+    const GIT_ZERO_OID = '0000000000000000000000000000000000000000'
+    const created: string[] = []
+    const fastForwarded: string[] = []
+    const ahead: string[] = []
+    const diverged: string[] = []
+
+    // One invocation enumerates both namespaces: refs/heads/<name> (what the
+    // Lambda pushes into and branch clones read from) and
+    // GITHUB_TRACKING_REF_PREFIX<name> (GitHub's tip, just fetched above).
+    const raw = await git.raw([
+      'for-each-ref',
+      '--format=%(refname) %(objectname)',
+      'refs/heads/',
+      GITHUB_TRACKING_REF_PREFIX,
+    ])
+
+    const heads = new Map<string, string>()
+    const tracked = new Map<string, string>()
+    for (const line of raw.split('\n')) {
+      const trimmed = line.trim()
+      if (!trimmed) continue
+      const [refname, sha] = trimmed.split(' ')
+      if (refname.startsWith('refs/heads/')) {
+        heads.set(refname.slice('refs/heads/'.length), sha)
+      } else if (refname.startsWith(GITHUB_TRACKING_REF_PREFIX)) {
+        tracked.set(refname.slice(GITHUB_TRACKING_REF_PREFIX.length), sha)
+      }
+    }
+
+    for (const [name, trackedSha] of tracked) {
+      const localSha = heads.get(name)
+      const localRef = `refs/heads/${name}`
+
+      if (!localSha) {
+        try {
+          // Zero old-value asserts the ref does not already exist -- guards
+          // against a concurrent Lambda push creating this exact branch
+          // name between the for-each-ref read above and this update.
+          await git.raw(['update-ref', localRef, trackedSha, GIT_ZERO_OID])
+          created.push(name)
+        } catch (err) {
+          console.warn(
+            `  Tracked-branch reconcile: failed to create local ref for ${name} (concurrent update?): ${getErrorMessage(err)}`,
+          )
+        }
+        continue
+      }
+
+      if (localSha === trackedSha) continue // nothing to do
+
+      // Count commits unique to each side in one call: left = commits local
+      // has that tracked doesn't (ahead), right = commits tracked has that
+      // local doesn't (behind). Exits 0 regardless of ancestry direction,
+      // unlike `merge-base --is-ancestor` (which simple-git would throw on
+      // a non-zero exit for the common "not an ancestor" case).
+      const counts = (
+        await git.raw(['rev-list', '--left-right', '--count', `${localSha}...${trackedSha}`])
+      ).trim()
+      const [leftStr, rightStr] = counts.split(/\s+/)
+      const localAheadCount = parseInt(leftStr, 10)
+      const localBehindCount = parseInt(rightStr, 10)
+
+      if (localAheadCount === 0 && localBehindCount > 0) {
+        try {
+          await git.raw(['update-ref', localRef, trackedSha, localSha])
+          fastForwarded.push(name)
+        } catch (err) {
+          // Concurrent Lambda push moved the ref since the read above --
+          // the guard did its job; this branch is simply revisited next cycle.
+          console.warn(
+            `  Tracked-branch reconcile: failed to fast-forward ${name} (concurrent update?): ${getErrorMessage(err)}`,
+          )
+        }
+      } else if (localBehindCount === 0 && localAheadCount > 0) {
+        // Unpushed local work -- exactly what the old destructive refspec
+        // used to force-rewind or delete. Leave it.
+        ahead.push(name)
+      } else {
+        // Neither side is an ancestor of the other. Leave both alone.
+        diverged.push(name)
+      }
+    }
+
+    if (diverged.length > 0) {
+      console.warn(
+        `  Tracked-branch reconcile: ${diverged.length} branch(es) diverged from GitHub and were left untouched: ${diverged.join(', ')}`,
+      )
+    }
+
+    return { created, fastForwarded, ahead, diverged }
+  }
+
   async syncGit(): Promise<void> {
     if (!this.running) return
 
@@ -919,14 +1110,29 @@ export class CmsWorker {
     // on a failed one. On failure we rethrow so scheduleLoop's existing
     // per-cycle catch stays the loud path.
     try {
-      // Fetch all branches from GitHub using direct URL (no named remote)
-      // We use raw git commands since simple-git's fetch() with a URL
-      // doesn't support --prune directly
-      await git.raw(['fetch', this.buildGitHubUrl(), '--prune', '+refs/heads/*:refs/heads/*'])
+      // Fetch all branches from GitHub using direct URL (no named remote),
+      // into the GITHUB_TRACKING_REF_PREFIX remote-tracking namespace rather
+      // than refs/heads/* directly -- see that constant's doc comment for
+      // the destructive-fetch bug this avoids. We use raw git commands since
+      // simple-git's fetch() with a URL doesn't support --prune directly.
+      await git.raw([
+        'fetch',
+        this.buildGitHubUrl(),
+        '--prune',
+        `+refs/heads/*:${GITHUB_TRACKING_REF_PREFIX}*`,
+      ])
       console.log('Fetched from GitHub')
+
+      // Bring refs/heads/* toward what was just fetched, WITHOUT ever
+      // force-rewinding or deleting a local head -- see
+      // reconcileTrackedBranches()'s doc comment.
+      const trackedSummary = await this.reconcileTrackedBranches(git)
 
       // Push settings branches to GitHub (belt-and-suspenders for task queue).
       // Ensures settings reach GitHub even if a task queue entry is lost.
+      // Ordering relative to the fetch/reconcile above is no longer a
+      // correctness dependency now that the fetch can't clobber refs/heads/*
+      // -- this could run before or after them just as safely.
       await this.pushSettingsBranches(git)
 
       await this.refreshBaseBranchWorkspace()
@@ -953,6 +1159,7 @@ export class CmsWorker {
         rebased: rebaseSummary.rebased,
         skippedDirty: rebaseSummary.skippedDirty,
         failed: rebaseSummary.failed,
+        tracked: trackedSummary,
       }
       await writeWorkerStatus(this.taskDir, report).catch((writeErr) =>
         console.error('Failed to write worker status:', getErrorMessage(writeErr)),

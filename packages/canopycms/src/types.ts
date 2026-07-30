@@ -92,6 +92,18 @@ export interface WorkerStatusReport {
     rebased: string[]
     skippedDirty: string[]
     failed: { branch: string; error: string }[]
+    /**
+     * Outcome of reconciling remote.git's `refs/heads/*` against GitHub's
+     * fetched tips (worker/cms-worker.ts's `reconcileTrackedBranches`) --
+     * the non-destructive replacement for the old fetch refspec that used
+     * to write GitHub's refs directly into `refs/heads/*`.
+     */
+    tracked: {
+      created: string[]
+      fastForwarded: string[]
+      ahead: string[]
+      diverged: string[]
+    }
   }
   lastFatalError?: { message: string; at: string; phase: 'startup' | 'run' }
 }
