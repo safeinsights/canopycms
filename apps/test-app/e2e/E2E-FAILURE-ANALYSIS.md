@@ -326,6 +326,28 @@ false` because all tests share one workspace + server). CI runners are slower
     found"), and CI's detached-HEAD checkout makes the git base branch fall
     back to 'main', so branch protection rejects the harness's explicit
     "create main" (now treated as the auto-provisioned base workspace).
+- **RE-MEASURED (2026-07-30, run 30589885335) — after the coverage sweep took
+  the suite 52 → 97 tests.** Sharding was raised 3 → 4 on the strength of these
+  numbers:
+  - 3-shard wall-clock: 3.5m / 3.82m / 3.92m (spread only 25s — `--shard`'s
+    count-based split balances fine in practice; per-file durations vary a lot
+    but average out). Validate: 4.1m. Merge report: 0.55m, serialized after the
+    shards. Total PR latency **4.43m**, i.e. e2e had become the critical path.
+  - **Per-shard fixed overhead is ~2m, not ~40s.** Step breakdown of one shard:
+    ~48s of setup/post steps, and the "Run E2E tests" step's 184s _includes_
+    ~70s of `canopycms-next build` + `next build` before the server binds. Only
+    the remaining ~115s is actual test execution.
+  - Model that fits the observed data: `wall ≈ 118s + 1.09 × local_test_time`
+    (predicts 3.9m for the slowest shard vs 3.92m measured).
+  - Consequence: **validate's 4.1m is the floor.** 4 shards ≈ 4.17m total; 5–6
+    shards, or pinning specs to shards by duration, all land at ~4.1m and buy
+    nothing further. Don't shard past 4 without first speeding up validate.
+  - Deliberately NOT done: pinning specs to shards via explicit per-shard file
+    lists. It would save ~15s and introduce a silent-coverage-hole failure mode
+    (a new spec file assigned to no shard never runs, and nothing fails).
+  - The real lever is the ~70s `next build` paid once per shard — more shards
+    make that worse in aggregate. See
+    `.claude/future-tasks/e2e-build-once-share-artifact.md`.
 
 ## 8. Related harness notes (lower priority)
 

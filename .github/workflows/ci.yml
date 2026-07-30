@@ -72,7 +72,7 @@ jobs:
         run: pnpm test
 
   e2e:
-    name: E2E Tests (shard ${{ matrix.shard }}/3)
+    name: E2E Tests (shard ${{ matrix.shard }}/4)
     # Re-enabled 2026-07-24 after the stabilization fix batch (see
     # apps/test-app/e2e/E2E-FAILURE-ANALYSIS.md). Sharded 3-way at the CI
     # level: each shard gets its own runner, server, and workspace, so the
@@ -85,7 +85,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3]
+        shard: [1, 2, 3, 4]
     env:
       # Git identity via env (process-scoped) instead of `git config` — an
       # on-disk config once got replicated locally and misattributed commits.
@@ -141,7 +141,7 @@ jobs:
       - name: Run E2E tests
         # No `--` separator: pnpm forwards it literally, and Playwright then
         # reads everything after it as test-file filters ("No tests found").
-        run: pnpm test:e2e --shard=${{ matrix.shard }}/3
+        run: pnpm test:e2e --shard=${{ matrix.shard }}/4
 
       - name: Upload blob report
         uses: actions/upload-artifact@v4
