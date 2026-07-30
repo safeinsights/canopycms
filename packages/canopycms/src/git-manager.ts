@@ -50,6 +50,39 @@ export function gitChildEnv(overrides: Record<string, string>): Record<string, s
 const remoteInitLocks = new Map<string, Promise<void>>()
 
 /**
+ * Remote-tracking namespace that `syncGit()`'s GitHub fetch lands refs in
+ * (`+refs/heads/*:${GITHUB_TRACKING_REF_PREFIX}*`), instead of writing
+ * directly into `refs/heads/*`.
+ *
+ * `remote.git`'s `refs/heads/*` is NOT a throwaway mirror: it's the
+ * deployment's local origin. `GitManager.push()` writes editor work into it
+ * (`target:target`), branch-workspace clones are cloned FROM it, and the CMS
+ * worker itself pushes it on to GitHub (`pushBranchToGitHub`,
+ * `pushSettingsBranches` in worker/cms-worker.ts). A fetch that force-writes
+ * GitHub's refs straight into `refs/heads/*` (the old
+ * `+refs/heads/*:refs/heads/*` refspec) can therefore destroy work that
+ * reached `remote.git` but not GitHub yet: with `--prune`, a branch pushed
+ * into `remote.git` and not yet on GitHub gets deleted outright; without
+ * needing `--prune`, a branch where `remote.git` is ahead of GitHub gets
+ * force-rewound to GitHub's older tip, and the worker's next push then
+ * no-ops ("Everything up-to-date") -- the editor's commit silently never
+ * reaches GitHub even though the branch reports `synced`.
+ *
+ * Fetching into this remote-tracking namespace instead makes `--prune`/`+`
+ * safe again -- they now only ever affect GitHub's-view-of-the-world refs,
+ * never the local heads other code depends on. `reconcileTrackedBranches()`
+ * (worker/cms-worker.ts) is what subsequently, and non-destructively, brings
+ * `refs/heads/*` toward what's tracked here.
+ *
+ * Lives here (not worker/cms-worker.ts, where this constant originated) so
+ * `GitManager.bareRemoteHasBranch` -- which must recognize this namespace
+ * too, since it's what a branch pushed by another CanopyCMS deployment (or
+ * pushed directly to GitHub) shows up in before/without ever gaining a local
+ * head -- doesn't need a worker/ -> git-manager.ts back-reference.
+ */
+export const GITHUB_TRACKING_REF_PREFIX = 'refs/remotes/github/'
+
+/**
  * Add a pattern to a repo's .git/info/exclude (a per-repository gitignore that
  * never gets committed) so runtime metadata like .canopy-meta/ can't be staged
  * by broad `git add` calls. Idempotent. Standalone so workspace-creating code
@@ -368,29 +401,60 @@ export class GitManager {
   }
 
   /**
-   * Whether a bare repository already has a local branch of the given name.
+   * Whether a bare repository already has a branch of the given name, in
+   * EITHER the local-heads namespace (`refs/heads/<branch>`) or the GitHub
+   * tracking namespace (`GITHUB_TRACKING_REF_PREFIX<branch>`).
+   *
+   * Originally checked `refs/heads/*` only, for dev-mode's
+   * `ensureLocalSimulatedRemote` (a simulated remote never gets a tracking
+   * namespace, so that caller only ever needed the local-heads check).
+   * Generalized/promoted to public for api/branch.ts's create-time collision
+   * guard, which also needs the tracking namespace: `syncGit()` fetches
+   * GitHub into `GITHUB_TRACKING_REF_PREFIX*` rather than `refs/heads/*`
+   * directly (see that constant's doc comment above), and
+   * `reconcileTrackedBranches()` (worker/cms-worker.ts) only
+   * non-destructively brings `refs/heads/*` toward what's tracked there — so
+   * a branch that another CanopyCMS deployment sharing this repo (or a
+   * direct push to GitHub) just created can sit in the tracking namespace
+   * for a while before, or without ever, gaining a local head here. Checking
+   * `refs/heads/*` alone would miss exactly the two-deployments-one-repo
+   * collision that guard exists to catch.
    *
    * Runs git with an explicit `--git-dir` instead of a cwd inside the repo:
    * environments with `safe.bareRepository=explicit` (sandboxed/CI git setups)
    * refuse cwd-based discovery of bare repos but expressly allow `--git-dir`.
-   * `branch --list` exits 0 whether or not the branch exists (no
-   * exception-based control flow — also why `rev-parse --verify --quiet`
-   * can't be used: simple-git only fails a task on stderr output, and --quiet
-   * suppresses exactly that). A failure here therefore means the remote
-   * itself is unreadable and is surfaced, NOT treated as "branch absent" —
-   * that would route to the push path against a repo we couldn't even read.
+   * A single `for-each-ref` call checks both candidate refs at once (no
+   * exception-based control flow — `for-each-ref` exits 0 whether or not
+   * either ref exists, same reason the old implementation used `branch
+   * --list` instead of `rev-parse --verify --quiet`: simple-git only fails a
+   * task on stderr output, and `--quiet` suppresses exactly that).
+   * `--end-of-options` guards the ref-name positionals the same way
+   * `push`/`forcePush` below do, since `branch` here can be a sanitized but
+   * otherwise caller-influenced string.
+   *
+   * A failure here therefore means the remote itself is unreadable and is
+   * surfaced, NOT treated as "branch absent" — that would route
+   * `ensureLocalSimulatedRemote` to the push path against a repo it couldn't
+   * even read, and would silently skip api/branch.ts's collision check
+   * instead of letting that caller distinguish "unreadable" from "absent"
+   * and decide what to do.
    */
-  private static async bareRemoteHasBranch(remotePath: string, branch: string): Promise<boolean> {
+  static async bareRemoteHasBranch(remotePath: string, branch: string): Promise<boolean> {
     let output: string
     try {
-      output = await simpleGit().raw(['--git-dir', remotePath, 'branch', '--list', branch])
+      output = await simpleGit().raw([
+        '--git-dir',
+        remotePath,
+        'for-each-ref',
+        '--format=%(refname)',
+        '--end-of-options',
+        `refs/heads/${branch}`,
+        `${GITHUB_TRACKING_REF_PREFIX}${branch}`,
+      ])
     } catch (err) {
-      throw new Error(`Cannot inspect simulated remote at ${remotePath}: ${getErrorMessage(err)}`)
+      throw new Error(`Cannot inspect remote mirror at ${remotePath}: ${getErrorMessage(err)}`)
     }
-    return output
-      .split('\n')
-      .map((line) => line.replace(/^[*+]\s*/, '').trim())
-      .includes(branch)
+    return output.trim().length > 0
   }
 
   /**

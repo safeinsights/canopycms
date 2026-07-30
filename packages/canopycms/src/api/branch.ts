@@ -11,7 +11,10 @@ import { defineEndpoint } from './route-builder'
 import { createDebugLogger } from '../utils/debug'
 import { clientOperatingStrategy } from '../operating-mode'
 import { isNotFoundError, getErrorMessage } from '../utils/error'
-import { sanitizeBranchName } from '../paths'
+import { filePathExists } from '../utils/fs'
+import { isNetworkRemoteUrl } from '../utils/git'
+import { sanitizeBranchName, RESERVED_SETTINGS_BRANCH_PREFIX } from '../paths'
+import { GitManager } from '../git-manager'
 import { branchNameSchema, branchParamSchema } from './validators'
 
 const log = createDebugLogger({ prefix: 'BranchAPI' })
@@ -143,18 +146,50 @@ export const createBranchHandler = async (
       userId: req.user.userId,
     })
 
-    // Prevent git branch name collision with settings branch
-    // Settings live in separate directory but share same git remote
+    // Scope note: the collision guards below (settings-branch collision,
+    // reserved canopycms-settings- prefix, and the remote-mirror check
+    // further down) apply ONLY to this user-facing creation path.
+    // http/handler.ts's auto-create (base/active/settings branches) and
+    // branch-workspace.ts's loadOrCreateBranchContext (reached from content
+    // reads and the AI pipeline) provision system/known branch names, not
+    // user-chosen ones, and deliberately stay uncovered -- intentional, not
+    // an oversight.
+
+    // Prevent git branch name collision with the settings branch. Settings
+    // live in a separate directory but share the same git remote, and
+    // openOrCreateBranch (branch-workspace.ts) uses the SANITIZED name as the
+    // actual git branch name. parseBranchName (via branchNameSchema) permits
+    // '/', so a raw-string comparison here let a request for
+    // "canopycms/settings-prod" sail past this check while
+    // sanitizeBranchName() collapsed it to "canopycms-settings-prod" --
+    // creating a content branch whose real git ref WAS the settings branch.
+    // Comparing sanitized forms on both sides closes that bypass.
     const strategy = operatingStrategy(ctx.services.config.mode)
+    const sanitizedRequested = sanitizeBranchName(branchName)
     if (strategy.usesSeparateSettingsBranch()) {
       const settingsBranchName = strategy.getSettingsBranchName(ctx.services.config)
-      if (branchName === settingsBranchName) {
+      if (sanitizedRequested === sanitizeBranchName(settingsBranchName)) {
         return {
           ok: false,
           status: 400,
           error:
             'Cannot create content branch with settings branch name (git branch name collision)',
         }
+      }
+    }
+
+    // Reserve the WHOLE canopycms-settings- namespace, not just this
+    // deployment's own settings branch name. Two CanopyCMS deployments can
+    // share one GitHub repo, each with its own settings branch under this
+    // prefix; the worker (worker/cms-worker.ts) treats any
+    // `canopycms-settings-*` ref specially (orphan-branch reconcile/push
+    // logic), so another deployment's settings branch is a real name that
+    // must not be claimable as a content branch here either.
+    if (sanitizedRequested.startsWith(RESERVED_SETTINGS_BRANCH_PREFIX)) {
+      return {
+        ok: false,
+        status: 400,
+        error: `Branch names starting with "${RESERVED_SETTINGS_BRANCH_PREFIX}" are reserved for CanopyCMS settings branches`,
       }
     }
 
@@ -195,6 +230,93 @@ export const createBranchHandler = async (
         ok: false,
         status: 409,
         error: 'A branch with this name already exists',
+      }
+    }
+
+    // L2: create-time collision check against this deployment's local
+    // GitHub mirror (`remote.git`). The CMS Lambda has no internet access
+    // (PRIVATE_ISOLATED subnets, no NAT -- see AGENTS.md), so a synchronous
+    // GitHub API call at branch-create time is not possible. But remote.git
+    // is BOTH this deployment's local git origin AND a mirror of GitHub's
+    // view of the repo: cms-worker.ts's syncGit() fetches GitHub into it
+    // (see GITHUB_TRACKING_REF_PREFIX's doc comment in git-manager.ts) and
+    // then reconciles refs/heads/* non-destructively, so it carries both
+    // this deployment's local heads and GitHub's view -- readable offline by
+    // this same Lambda, since it resolves to the same EFS inode the worker
+    // uses. Reading it here catches a sanitized-name collision with a branch
+    // another CanopyCMS deployment sharing this repo (or a direct push to
+    // GitHub) already created -- something the local registry check above
+    // cannot see.
+    //
+    // Resolving remote.git's path must not have side effects:
+    // GitManager.resolveRemoteUrl is NOT safe to call here -- in dev mode its
+    // shouldAutoInitLocal branch CREATES a simulated remote as a side effect
+    // of merely asking where one would be. So this resolves read-only,
+    // mirroring resolveRemoteUrl's own precedence for its first three
+    // sources only (config.defaultRemoteUrl -> env var -> the strategy's
+    // auto-detect path); resolveRemoteUrl's fourth source (auto-init) is
+    // exactly the side effect being avoided, so it has no read-only
+    // equivalent here.
+    const remoteUrlConfig = strategy.getRemoteUrlConfig()
+    const resolvedMirrorPath: string | undefined =
+      ctx.services.config.defaultRemoteUrl ??
+      process.env[remoteUrlConfig.envVarName] ??
+      remoteUrlConfig.autoDetectRemotePath
+
+    if (!resolvedMirrorPath) {
+      // No mirror configured or auto-detected at all. This is the ORDINARY
+      // dev-mode case, not an anomaly: DevStrategy's getRemoteUrlConfig()
+      // has no autoDetectRemotePath (its simulated remote lives at the
+      // relative defaultRemotePath instead), so unless an adopter sets
+      // defaultRemoteUrl this resolves to undefined on every create. Logged
+      // at debug, not warn, so dev doesn't emit a warning per branch
+      // creation for the expected shape. Cross-deployment collisions are a
+      // prod concern; dev mode being uncovered here is deliberate.
+      //
+      // Purely additive guard either way: skip and let creation proceed
+      // rather than fail closed -- a genuinely missing remote.git fails
+      // loudly a moment later when the branch workspace is cloned from it.
+      log.debug('api', 'No remote.git mirror resolved -- skipping create-time collision check')
+    } else if (isNetworkRemoteUrl(resolvedMirrorPath)) {
+      // A network URL (http(s)/ssh/git) means the internet-less Lambda
+      // cannot reach it synchronously (see AGENTS.md's deployment
+      // architecture) -- skip quietly, this is expected shape rather than a
+      // misconfiguration worth warning about.
+      log.debug('api', 'Resolved remote is a network URL -- skipping create-time collision check')
+    } else if (!(await filePathExists(resolvedMirrorPath))) {
+      // Distinct from "mirror unreadable" below: nothing exists at the
+      // resolved path yet.
+      log.warn(
+        'api',
+        'remote.git not found at resolved path -- skipping create-time collision check',
+        { path: resolvedMirrorPath },
+      )
+    } else {
+      try {
+        const collision = await GitManager.bareRemoteHasBranch(
+          resolvedMirrorPath,
+          sanitizedRequested,
+        )
+        if (collision) {
+          return {
+            ok: false,
+            status: 409,
+            error:
+              `A branch named "${sanitizedRequested}" already exists on the remote ` +
+              `(it may have been created by another deployment sharing this repository, or ` +
+              `pushed directly to GitHub). Choose a different name.`,
+          }
+        }
+      } catch (err: unknown) {
+        // Mirror EXISTS but is unreadable (corrupt, permissions, wrong git
+        // version, ...) -- distinct from "not found" above. Same
+        // purely-additive rationale: skip rather than fail closed; a
+        // genuinely broken remote.git fails loudly a moment later when the
+        // branch workspace is cloned from it.
+        log.warn('api', 'remote.git mirror is unreadable -- skipping create-time collision check', {
+          path: resolvedMirrorPath,
+          error: getErrorMessage(err),
+        })
       }
     }
 
