@@ -1,6 +1,6 @@
 ---
 name: epic-workflow
-description: Run a multi-PR epic on an integration branch — design + adversarial review up front, stacked small PRs implemented by Sonnet agents and merged as they pass, one human-reviewable epic PR at the end
+description: Run a multi-PR epic on an integration branch — design + adversarial review up front, stacked small PRs implemented one at a time and merged as they pass, one human-reviewable epic PR at the end
 ---
 
 Run a multi-fix epic (several related findings that deserve one coordinated design,
@@ -36,12 +36,17 @@ at each step instead.
 ## Phase 3 — Small-PR loop (repeat per PR)
 
 1. `git checkout -b feat/<piece>` (stacked on the previous PR branch).
-2. **Implement via ONE Sonnet-tier agent** (`model: sonnet`, foreground) with a
-   detailed spec: background + the finding, files to READ FIRST, numbered change
-   list, named edge cases from the adversarial review, test list, verify commands,
-   and "report deviations". Include project rules (pnpm, no `any`, extensionless
-   imports) and known machine quirks. One implementation agent at a time — they share
-   the working tree and each builds on the last.
+2. **Implement via ONE foreground agent** with a detailed spec: background + the
+   finding, files to READ FIRST, numbered change list, named edge cases from the
+   adversarial review, test list, verify commands, and "report deviations". Include
+   project rules (pnpm, no `any`, extensionless imports) and known machine quirks.
+   One implementation agent at a time — they share the working tree and each builds
+   on the last.
+   Pick the tier by the work, not by habit: **Opus 5 for anything with real design
+   content** (concurrency, cross-module refactors, anything the adversarial review
+   flagged as subtle); `model: sonnet` for mechanical, tightly-specified changes.
+   When unsure, prefer the larger model with a good spec over the smaller model
+   with a great one — a wrong implementation costs more than the token difference.
 3. **Main-loop review of the diff** — this is the quality gate, do not skip or
    delegate it: read the substantive diff, check the spec's subtle points landed,
    hunt for layering/ordering bugs (e.g. error-translation placed inside a retry
@@ -80,6 +85,9 @@ at each step instead.
 - Success criteria from the epic file are hard gates (e.g. "flaky tests pass with
   retries REMOVED"), not aspirations — demonstrate them (repeat-run loops, regression
   tests verified against pre-fix code).
-- Execution tiering: Sonnet implements, main loop designs/reviews/integrates, at most
-  one heavy agent at a time (design review, final review).
+- Execution tiering: Opus 5 orchestrates and does the heavy implementation; the main
+  loop designs, reviews, and integrates. Dispatch Fable for adversarial design review
+  (Phase 1.3) and the final full-diff review (Phase 5.1), where an independent
+  perspective is worth more than continuity. Use Sonnet for mechanical or tightly
+  bounded pieces. At most one heavy agent at a time — that constraint is unchanged.
 - Never let a subagent commit; the main loop owns git state.
