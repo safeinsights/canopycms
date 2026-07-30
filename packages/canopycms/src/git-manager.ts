@@ -627,6 +627,31 @@ export class GitManager {
   }
 
   /**
+   * Check whether a git repository is already initialized at `workspacePath`.
+   *
+   * Uses `rev-parse --git-dir` with `GIT_CEILING_DIRECTORIES` pinned to the
+   * parent directory so a corrupt/missing `.git` can't make git silently
+   * traverse upward and report a false positive from an ancestor repo (the
+   * same protection `initializeWorkspace` relies on below).
+   *
+   * Shared by `initializeWorkspace` (clone-vs-reuse decision) and
+   * `SettingsWorkspaceManager`'s rename guard (settings-workspace.ts), which
+   * must know whether a settings workspace ALREADY exists before touching it —
+   * touching an existing orphan settings branch under a different name wipes
+   * permissions.json/groups.json (see that guard's doc comment).
+   */
+  static async repoExistsAt(workspacePath: string): Promise<boolean> {
+    try {
+      const checkGit = simpleGit({ baseDir: workspacePath })
+      checkGit.env(gitChildEnv({ GIT_CEILING_DIRECTORIES: path.dirname(workspacePath) }))
+      await checkGit.raw(['rev-parse', '--git-dir'])
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  /**
    * Ensures a git workspace is initialized and ready for use.
    * Handles cloning, remote configuration, and branch checkout/creation.
    *
@@ -650,14 +675,8 @@ export class GitManager {
     const remoteName = options.remoteName ?? 'origin'
 
     // 1. Check if git already initialized (with traversal protection)
-    let repoExists = false
-    try {
-      const checkGit = simpleGit({ baseDir: options.workspacePath })
-      // Ceiling prevents git from traversing to a parent repo if .git is corrupt
-      checkGit.env(gitChildEnv({ GIT_CEILING_DIRECTORIES: path.dirname(options.workspacePath) }))
-      await checkGit.raw(['rev-parse', '--git-dir'])
-      repoExists = true
-    } catch {
+    const repoExists = await GitManager.repoExistsAt(options.workspacePath)
+    if (!repoExists) {
       // Not a valid git repo — clean up corrupt .git if present so clone can proceed
       const gitPath = path.join(options.workspacePath, '.git')
       try {

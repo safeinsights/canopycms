@@ -1138,3 +1138,120 @@ describe('CmsWorker.cleanupTrashedBranchDirs() [C1]', () => {
     await expect(fs.stat(path.join(contentBranchesPath, 'main'))).resolves.toBeTruthy()
   })
 })
+
+// ---------------------------------------------------------------------------
+// pushSettingsBranches: pushes only this deployment's own settings branch
+// ---------------------------------------------------------------------------
+//
+// Since the tracking-namespace fetch fix (GITHUB_TRACKING_REF_PREFIX),
+// reconcileTrackedBranches() creates local heads in remote.git for any branch
+// that exists on GitHub - including another deployment's settings branch, if
+// it shares this GitHub repo. pushSettingsBranches must push ONLY the branch
+// this worker owns (CmsWorkerConfig.deploymentName) and warn about (never
+// push) any other canopycms-settings-* branch it finds locally.
+
+type PushSettingsBranchesInternals = {
+  pushSettingsBranches(git: ReturnType<typeof simpleGit>): Promise<void>
+}
+
+describe('CmsWorker.pushSettingsBranches() [deployment-namespaced settings branches]', () => {
+  let tmpDir: string
+  let workspacePath: string
+  let remoteGitPath: string
+  let githubFixture: string // simulated "GitHub" bare repo, what pushes land in
+  let consoleSpy: MockConsole
+
+  beforeEach(async () => {
+    consoleSpy = mockConsole()
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'canopy-worker-settings-push-'))
+    workspacePath = path.join(tmpDir, 'workspace')
+    remoteGitPath = path.join(workspacePath, 'remote.git')
+    githubFixture = path.join(tmpDir, 'fixture-github.git')
+    await fs.mkdir(workspacePath, { recursive: true })
+    await simpleGit().raw(['init', '--bare', remoteGitPath])
+    await simpleGit().raw(['init', '--bare', githubFixture])
+  })
+
+  afterEach(async () => {
+    consoleSpy.restore()
+    await fs.rm(tmpDir, { recursive: true, force: true })
+  })
+
+  /** Seed a branch (with one commit) directly into the bare remote.git, as a
+   * Lambda commit + GitManager.push would. */
+  const seedBranchInRemoteGit = async (branchName: string, fileContent: string) => {
+    const seedPath = path.join(tmpDir, `seed-${branchName}`)
+    await fs.mkdir(seedPath, { recursive: true })
+    const seedGit = await initTestRepo(seedPath)
+    await seedGit.raw(['checkout', '--orphan', branchName])
+    await fs.writeFile(path.join(seedPath, 'permissions.json'), fileContent)
+    await seedGit.add(['permissions.json'])
+    await seedGit.commit('seed settings')
+    await seedGit.addRemote('origin', remoteGitPath)
+    await seedGit.raw(['push', 'origin', `${branchName}:${branchName}`])
+  }
+
+  const makeSettingsWorker = (deploymentName?: string) => {
+    const worker = new CmsWorker({
+      workspacePath,
+      githubOwner: 'test-owner',
+      githubRepo: 'test-repo',
+      githubToken: 'fake-token',
+      deploymentName,
+    })
+    ;(worker as unknown as { buildGitHubUrl(): string }).buildGitHubUrl = () => githubFixture
+    return worker
+  }
+
+  const fixtureHasBranch = async (branchName: string): Promise<boolean> => {
+    const fixtureGit = simpleGit({ baseDir: githubFixture, config: ['safe.bareRepository=all'] })
+    const branches = await fixtureGit.raw(['branch', '--list', branchName])
+    return branches.trim().length > 0
+  }
+
+  it('pushes only its own settings branch (deploymentName default: prod)', async () => {
+    await seedBranchInRemoteGit('canopycms-settings-prod', '{"acls":[]}')
+
+    const worker = makeSettingsWorker() // no deploymentName -> defaults to 'prod'
+    const git = simpleGit({ baseDir: remoteGitPath })
+    await (worker as unknown as PushSettingsBranchesInternals).pushSettingsBranches(git)
+
+    expect(await fixtureHasBranch('canopycms-settings-prod')).toBe(true)
+    expect(consoleSpy).toHaveLogged('Pushed settings branch canopycms-settings-prod')
+  })
+
+  it('pushes the deployment-namespaced branch matching config.deploymentName, not a differently-named one', async () => {
+    await seedBranchInRemoteGit('canopycms-settings-acme', '{"acls":[]}')
+
+    const worker = makeSettingsWorker('acme')
+    const git = simpleGit({ baseDir: remoteGitPath })
+    await (worker as unknown as PushSettingsBranchesInternals).pushSettingsBranches(git)
+
+    expect(await fixtureHasBranch('canopycms-settings-acme')).toBe(true)
+  })
+
+  it('does NOT push a foreign canopycms-settings-* branch, and warns about it once, naming it', async () => {
+    await seedBranchInRemoteGit('canopycms-settings-acme', '{"acls":["mine"]}')
+    await seedBranchInRemoteGit('canopycms-settings-other-tenant', '{"acls":["not mine"]}')
+
+    const worker = makeSettingsWorker('acme')
+    const git = simpleGit({ baseDir: remoteGitPath })
+    await (worker as unknown as PushSettingsBranchesInternals).pushSettingsBranches(git)
+
+    expect(await fixtureHasBranch('canopycms-settings-acme')).toBe(true)
+    expect(await fixtureHasBranch('canopycms-settings-other-tenant')).toBe(false)
+    expect(consoleSpy).toHaveWarned('canopycms-settings-other-tenant')
+    expect(consoleSpy).toHaveWarned('canopycms-settings-acme') // names this deployment's own branch too
+  })
+
+  it('skips quietly (no error) when this deployment has no settings branch locally yet', async () => {
+    // Nothing seeded at all - remote.git has no canopycms-settings-* branches.
+    const worker = makeSettingsWorker('acme')
+    const git = simpleGit({ baseDir: remoteGitPath })
+
+    await expect(
+      (worker as unknown as PushSettingsBranchesInternals).pushSettingsBranches(git),
+    ).resolves.toBeUndefined()
+    expect(await fixtureHasBranch('canopycms-settings-acme')).toBe(false)
+  })
+})

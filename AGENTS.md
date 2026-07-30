@@ -50,7 +50,7 @@ The core package (`packages/canopycms/src/`) is organized into focused modules:
 - `schema/` - Schema loading and resolution
 - `paths/` - Path utilities with branded types (LogicalPath, PhysicalPath); `branch-name.ts` is the dependency-free home of `sanitizeBranchName` — client-reachable code must import it from there, never from `paths/branch.ts` or the `paths` barrel (both pull `node:fs` into the browser bundle; `pnpm lint:bundle` enforces this)
 - `editor/` - React editor components and hooks
-- `operating-mode/` - Operating mode strategies (prod, dev)
+- `operating-mode/` - Operating mode strategies (prod, dev); `deployment-name.ts`'s `resolveDeploymentName()` is the single resolution point for `deploymentName` (env `CANOPYCMS_DEPLOYMENT_NAME` > `config.deploymentName` > mode default), used by both strategies' `getSettingsBranchName()` so every settings-branch-name computation agrees
 - `api/` - API handlers (see [api/AGENTS.md](packages/canopycms/src/api/AGENTS.md) for API development guidelines)
 - `middleware/` - API middleware patterns (branch access guards); see also `api/guards.ts` for declarative guard system
 - `assets/` - Asset store v2 (S3/Local adapters, `factory.ts` consumes `media` config), finalize pipeline (sniff/hash/dims/SVG-sanitize), and the on-demand transform engine: `transform-directives.ts` (pure/isomorphic directive parser + canonical `formatDirectives`), `transform.ts` (server-only, sharp-based `applyTransform`), `asset-url.ts` (pure/isomorphic `assetUrl`/`assetSrcSet`, exported off the package's main entry), `asset-prefixes.ts` (dependency-free bucket-prefix constants so isomorphic modules avoid `keys.ts`'s `node:crypto` import). Dev-mode `/assets/t/*` lazy-transform emulation lives in `api/assets.ts`'s raw route.

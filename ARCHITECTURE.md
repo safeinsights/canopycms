@@ -1024,12 +1024,14 @@ For low-cost AWS deployments, CanopyCMS supports splitting into two components t
 - Tiny daemon (t4g.nano spot instance, ~$1.50/month)
 - Processes queued tasks: pushes branches to GitHub, creates/updates PRs
 - Syncs `remote.git` with GitHub (fetches upstream changes)
-- Pushes `canopycms-settings-*` branches to GitHub on each sync cycle (belt-and-suspenders for the task queue)
+- Pushes this deployment's own settings branch to GitHub on each sync cycle (belt-and-suspenders for the task queue) — never a blanket push of every local `canopycms-settings-*` branch. Once another deployment's settings branch can legitimately show up as a local head (see below), pushing all of them would mean one deployment's worker publishing another deployment's settings; it warns about any such foreign branch instead of touching it
 - Rebases active branch workspaces onto updated base branch (with conflict detection and resolution)
 - Refreshes auth metadata cache (Clerk users/orgs, or dev test users)
 - Ships its own stdout/stderr to a dedicated CloudWatch log group
 
 This architecture eliminates NAT Gateway ($32/month) and keeps all secrets on the worker (not Lambda). The worker's AWS permissions: EFS client access (managed policy), Secrets Manager reads for its specific secrets, SSM core (`AmazonSSMManagedInstanceCore`, the Session Manager observation channel for operators whose roles allow it), read access to the CDK asset bucket (its own code bundle), and write-only access to its one CloudWatch log group — no broader logging or monitoring policy (no `CloudWatchAgentServerPolicy`). Log shipping exists because production operators may not have SSM Session Manager access into the instance (an organization's SSO role can be provisioned without `ssm:StartSession`), leaving the shipped logs as the only window into worker behavior beyond the task queue's own success/failure records. Because the worker is otherwise silent — no HTTP endpoint, no health API — log delivery is treated as best-effort rather than a hard dependency: the worker daemon starts and keeps running even if the log agent fails to install or configure.
+
+**Sharing one repository across two deployments:** The CDK service construct accepts a `deploymentName` prop (default `prod`), stamped into both the Lambda's and the worker's environment as `CANOPYCMS_DEPLOYMENT_NAME`. This is what lets two independent CanopyCMS stacks — e.g. staging and production — point at the same GitHub repo without colliding on the same settings branch: each stack gets its own `canopycms-settings-{deploymentName}` branch, and the worker above pushes only the one belonging to its own stack. See [Deployment Name Resolution](#deployment-name-resolution) for how this value is resolved end-to-end and why the environment variable — not the adopter's config — is what actually distinguishes the two stacks.
 
 ### Key Deployment Components
 
@@ -1478,7 +1480,7 @@ The `SettingsWorkspaceManager` uses two layers of locking to safely initialize t
 - **In-memory Promise lock**: Prevents redundant async calls within the same process (Lambda request lifecycle)
 - **File-based lock**: Uses atomic file creation (`O_CREAT|O_EXCL` / `wx` flag) for cross-process synchronization. The lock file is placed as a sibling of the settings root directory. Stale locks older than 30 seconds are automatically cleaned up, handling cases where a process crashed during initialization.
 
-This dual-layer approach is necessary because Lambda instances share an EFS filesystem but each instance has its own process memory. The file lock ensures only one instance initializes the workspace at a time, while the in-memory lock avoids redundant concurrent calls within a single instance.
+This dual-layer approach is necessary because Lambda instances share an EFS filesystem but each instance has its own process memory. The file lock ensures only one instance initializes the workspace at a time, while the in-memory lock avoids redundant concurrent calls within a single instance. This same lock is also what makes the branch-identity guard below race-safe (see [Deployment Name Resolution](#deployment-name-resolution)).
 
 **Code reduction impact:**
 
@@ -1516,6 +1518,16 @@ await commitSettings(ctx, { context, branchRoot, fileName, message, mode })
 - **Extensibility**: Future settings (site config, workflow rules) can reuse the same helpers
 
 This pattern complements the general git service methods by addressing the unique branch routing requirements of settings files.
+
+### Deployment Name Resolution
+
+Every place that computes the settings branch name (`canopycms-settings-{deploymentName}`) needs to agree on `deploymentName`, and that value can come from three places: an environment variable, the adopter's config, or a mode-specific default. A single resolver settles this once and is used by both mode strategies' `getSettingsBranchName`, so the resolved name is the same everywhere it matters.
+
+**Precedence: environment variable, then config, then mode default (`prod` for prod, `local` for dev).** The environment variable deliberately outranks config, which inverts what might seem like the more intuitive order. The reasoning: the env var is stamped per-stack by infrastructure (the CDK service construct's `deploymentName` prop, surfaced as `CANOPYCMS_DEPLOYMENT_NAME`), so it's the value guaranteed to _differ_ between two deployments that share a repo. `config.deploymentName` lives inside the shared repo checkout itself, so it's guaranteed to be _identical_ across both deployments' running processes. If config took precedence, an adopter who had already set `deploymentName` in their (shared) config would find the infrastructure-level override silently doing nothing — exactly the two-stacks-one-repo scenario this feature exists to solve. When both are set and disagree, a one-time warning names both values so a genuine misconfiguration isn't silent.
+
+**One resolver, everywhere it matters:** settings-branch-name computation used to have three independent call sites that could disagree — the mode strategy, the settings API helper (which forwarded only a hand-picked subset of config to the strategy, silently dropping `deploymentName`), and the HTTP context builder (which used its own hardcoded literal with no deployment suffix at all). All three now route through the same resolver, so the branch CanopyCMS auto-provisions on first settings access is guaranteed to be the same branch every other settings operation reads and writes.
+
+**Refusing to boot on a changed settings branch:** Initializing an _existing_ settings workspace never re-clones — it goes straight to checking out the resolved orphan branch. If that resolved name isn't already a local branch there, git orphan-checks-out, wipes the working tree, and commits empty. Orphan branches share no history with what came before, so this permanently destroys `permissions.json`/`groups.json` with nothing left to recover. To turn a `deploymentName`, `settingsBranch`, or `CANOPYCMS_DEPLOYMENT_NAME` change — on a deployment whose settings workspace already holds real data — into a loud failure instead of silent data loss, workspace initialization now checks whether a settings workspace already exists on disk and, if so, whether it's already checked out on the newly-resolved branch. A mismatch throws before any git operation runs, naming both branches so the operator can restore the previous value (or deliberately move the workspace aside to start fresh). No migration is attempted, since there is nothing to migrate from once an orphan checkout has happened. This check runs inside the same cross-process lock described above, so two hosts racing to initialize the workspace can't each independently decide it's safe and both destroy it.
 
 ## Content Workflow
 
@@ -2224,7 +2236,7 @@ Unlike comments, groups and permissions are configuration that should be version
 
 ### Why do settings use a separate branch?
 
-In both prod and dev modes, permission and group changes are stored on a dedicated orphan settings branch (named `canopycms-settings-{deploymentName}`) rather than on content branches. The branch name is deployment-specific so that multiple deployments sharing the same git repository can maintain independent settings. In dev mode, this branch lives in the local bare remote (`.canopy-dev/remote.git`) and is never pushed to GitHub. This design provides several benefits:
+In both prod and dev modes, permission and group changes are stored on a dedicated orphan settings branch (named `canopycms-settings-{deploymentName}`) rather than on content branches. The branch name is deployment-specific so that multiple deployments sharing the same git repository can maintain independent settings — see [Deployment Name Resolution](#deployment-name-resolution) for how `deploymentName` itself is resolved. In dev mode, this branch lives in the local bare remote (`.canopy-dev/remote.git`) and is never pushed to GitHub. This design provides several benefits:
 
 **Isolation from content changes:**
 
@@ -2251,6 +2263,10 @@ In both prod and dev modes, permission and group changes are stored on a dedicat
 - Settings changes are immediate (no PR workflow needed)
 
 The `settings-helpers` pattern abstracts this branching logic so API handlers don't need mode-specific conditionals.
+
+### Why refuse to boot instead of migrating when the resolved settings branch changes?
+
+Because orphan branches share no history, there is no meaningful "migration" from one settings branch to another — the destination starts empty by construction. A deployment whose resolved settings branch changes (a new `deploymentName`, a hand-set `settingsBranch`, or a changed `CANOPYCMS_DEPLOYMENT_NAME`) while its settings workspace already holds real data has only two honest options: destroy the old data, or refuse. CanopyCMS refuses, at boot, before any git operation runs — a thrown error naming both the currently-checked-out and newly-resolved branch is recoverable (fix the config/env and redeploy); a silent orphan-checkout wiping `permissions.json` and `groups.json` is not. See [Deployment Name Resolution](#deployment-name-resolution).
 
 ### Why are rebase conflicts non-blocking for editors?
 

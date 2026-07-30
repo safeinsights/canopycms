@@ -24,6 +24,19 @@ import type { IBucket } from 'aws-cdk-lib/aws-s3'
 // ../../lambda/asset-transform/build.mjs and ./asset-support.ts.
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
+/**
+ * Synth-time mirror of `resolveDeploymentName`'s rule in the `canopycms`
+ * package (packages/canopycms/src/operating-mode/deployment-name.ts).
+ * Duplicated rather than imported: `canopycms-cdk` deliberately does not
+ * depend on the runtime package. Keep the two in step — see the constructor
+ * guard for why this is checked here as well as at runtime.
+ */
+const isValidDeploymentName = (name: string): boolean =>
+  /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(name) &&
+  !name.includes('..') &&
+  !name.endsWith('.') &&
+  !name.endsWith('.lock')
+
 export interface CanopyCmsServiceProps {
   /** Docker image for the CMS Lambda function */
   cmsDockerImage: lambda.DockerImageCode
@@ -75,6 +88,26 @@ export interface CanopyCmsServiceProps {
 
   /** Base branch name (default: 'main') */
   baseBranch?: string
+
+  /**
+   * Deployment name (default: 'prod'). Namespaces the settings branch
+   * (`canopycms-settings-{deploymentName}`) so this stack's CMS Lambda/worker
+   * don't fight another CanopyCMS deployment over the same orphan settings
+   * branch. Stamped into the Lambda's `CANOPYCMS_DEPLOYMENT_NAME` environment
+   * variable and the worker's `.env`; both resolve it through
+   * `resolveDeploymentName` (packages/canopycms/src/operating-mode/deployment-name.ts),
+   * which lets this env value win over any `deploymentName` baked into the
+   * shared repo's `canopycms.config.ts` — the point of this prop.
+   *
+   * Two `CanopyCmsService` stacks pointed at the SAME GitHub repo MUST set
+   * distinct values here, or both resolve to `canopycms-settings-prod` and
+   * fight over the same branch (permissions/groups changes reviewed on one PR
+   * clobber the other). Changing this value later, on a stack that already
+   * has a populated settings workspace, is refused at boot (see
+   * settings-workspace.ts's rename guard) rather than silently reset — plan
+   * the value up front for any stack that shares a repo.
+   */
+  deploymentName?: string
 
   /**
    * The asset bucket (from `AssetSupport`, or any bucket following its
@@ -137,6 +170,21 @@ export class CanopyCmsService extends Construct {
 
   constructor(scope: Construct, id: string, props: CanopyCmsServiceProps) {
     super(scope, id)
+
+    // Fail at synth, not at boot. deploymentName is interpolated BOTH into a
+    // git ref (`canopycms-settings-{deploymentName}`) and into a line of the
+    // worker's `.env`, which user-data writes with a shell heredoc — a value
+    // carrying a newline or quote would corrupt the worker's environment file
+    // before any runtime validation could run. Mirrors the package-side rule
+    // in operating-mode/deployment-name.ts (resolveDeploymentName); keep the
+    // two in step.
+    if (props.deploymentName !== undefined && !isValidDeploymentName(props.deploymentName)) {
+      throw new Error(
+        `CanopyCmsService: invalid deploymentName ${JSON.stringify(props.deploymentName)}. ` +
+          `It must start with a letter or digit, contain only letters, digits, '.', '_' or '-', ` +
+          `and must not contain '..' or end with '.' or '.lock'.`,
+      )
+    }
 
     // ========================================================================
     // VPC — 2 AZs, public + private subnets, NO NAT
@@ -261,6 +309,9 @@ export class CanopyCmsService extends Construct {
         // or the Lambda and worker silently operate on different directories.
         CANOPYCMS_WORKSPACE_ROOT: '/mnt/efs',
         CANOPY_AUTH_CACHE_PATH: '/mnt/efs/.cache',
+        // Placed before ...props.environment below so an adopter can still
+        // override it explicitly via that escape hatch.
+        CANOPYCMS_DEPLOYMENT_NAME: props.deploymentName ?? 'prod',
         // B7 note: git >= 2.35.2 refuses repos owned by another uid (the
         // access point forces uid 1000; Lambda containers run as a different
         // user). Env-based GIT_CONFIG_* CANNOT fix this - simple-git
@@ -380,6 +431,7 @@ export class CanopyCmsService extends Construct {
       `CANOPYCMS_GITHUB_OWNER=${props.githubOwner}`,
       `CANOPYCMS_GITHUB_REPO=${props.githubRepo}`,
       `CANOPYCMS_BASE_BRANCH=${props.baseBranch ?? 'main'}`,
+      `CANOPYCMS_DEPLOYMENT_NAME=${props.deploymentName ?? 'prod'}`,
       // B8: the AWS SDK JS v3 cannot resolve a region from IMDS on its own -
       // without this the worker's bare `SecretsManagerClient({})` crash-loops
       // with "Region is missing".
