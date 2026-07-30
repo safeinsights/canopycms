@@ -331,6 +331,7 @@ describe('useBranchManager', () => {
       {
         ...mockBranches[0],
         syncStatus: 'sync-failed',
+        syncFailureReason: 'Push rejected for branch "main": it has moved on GitHub',
         conflictStatus: 'conflicts-detected',
         conflictFiles: [unsafeAsContentId('content/a.md'), unsafeAsContentId('content/b.md')],
       },
@@ -356,6 +357,7 @@ describe('useBranchManager', () => {
     expect(result.current.branchSummaries[0]).toMatchObject({
       name: 'main',
       syncStatus: 'sync-failed',
+      syncFailureReason: 'Push rejected for branch "main": it has moved on GitHub',
       conflictStatus: 'conflicts-detected',
       conflictFiles: ['content/a.md', 'content/b.md'],
     })

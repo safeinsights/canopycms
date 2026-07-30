@@ -11,6 +11,7 @@ import {
   GitManager,
   GitConflictError,
   gitChildEnv,
+  gitNetworkChildEnv,
   GITHUB_TRACKING_REF_PREFIX,
 } from './git-manager'
 import { generateId } from './id'
@@ -1861,11 +1862,76 @@ describe('gitChildEnv', () => {
     expect(env.GIT_EDITOR).toBeUndefined()
   })
 
+  it('gitNetworkChildEnv keeps proxy/TLS vars that the local-ops allowlist drops', () => {
+    // Regression guard: routing the worker's GitHub fetch/push through
+    // gitChildEnv would have silently broken every adopter reaching GitHub
+    // through a corporate proxy or custom CA bundle.
+    vi.stubEnv('HTTPS_PROXY', 'http://proxy.example:8080')
+    vi.stubEnv('NO_PROXY', 'internal.example')
+    vi.stubEnv('GIT_SSL_CAINFO', '/etc/ssl/corp.pem')
+    vi.stubEnv('NODE_EXTRA_CA_CERTS', '/etc/ssl/extra.pem')
+
+    const env = gitNetworkChildEnv()
+
+    expect(env.HTTPS_PROXY).toBe('http://proxy.example:8080')
+    expect(env.NO_PROXY).toBe('internal.example')
+    expect(env.GIT_SSL_CAINFO).toBe('/etc/ssl/corp.pem')
+    expect(env.NODE_EXTRA_CA_CERTS).toBe('/etc/ssl/extra.pem')
+  })
+
+  it('gitNetworkChildEnv still drops GIT_SSH_COMMAND (simple-git blocks it; GitHub is reached over https)', () => {
+    vi.stubEnv('GIT_SSH_COMMAND', 'ssh -i /keys/id')
+
+    expect(gitNetworkChildEnv().GIT_SSH_COMMAND).toBeUndefined()
+  })
+
+  it('gitNetworkChildEnv still forces the C locale so rejection text stays matchable', () => {
+    vi.stubEnv('LANG', 'fr_FR.UTF-8')
+    vi.stubEnv('LC_ALL', 'fr_FR.UTF-8')
+
+    const env = gitNetworkChildEnv()
+
+    expect(env.LC_ALL).toBe('C')
+    expect(env.LANG).toBe('C')
+  })
+
+  it('gitNetworkChildEnv drops editor and GIT_CONFIG_* vars simple-git refuses to spawn with', () => {
+    vi.stubEnv('GIT_EDITOR', 'vim')
+    vi.stubEnv('EDITOR', 'vim')
+    vi.stubEnv('GIT_CONFIG_COUNT', '1')
+
+    const env = gitNetworkChildEnv()
+
+    expect(env.GIT_EDITOR).toBeUndefined()
+    expect(env.EDITOR).toBeUndefined()
+    expect(env.GIT_CONFIG_COUNT).toBeUndefined()
+  })
+
   it('overrides win over process.env values', () => {
     vi.stubEnv('PATH', '/usr/bin:/bin')
 
     const env = gitChildEnv({ PATH: '/overridden/path' })
 
     expect(env.PATH).toBe('/overridden/path')
+  })
+
+  it('forces LC_ALL/LANG to C regardless of ambient locale (push-rejection classification depends on stable English git output)', () => {
+    vi.stubEnv('LC_ALL', 'de_DE.UTF-8')
+    vi.stubEnv('LANG', 'de_DE.UTF-8')
+
+    const env = gitChildEnv({})
+
+    expect(env.LC_ALL).toBe('C')
+    expect(env.LANG).toBe('C')
+  })
+
+  it('forces LC_ALL/LANG to C even when no ambient locale is set', () => {
+    vi.stubEnv('LC_ALL', undefined)
+    vi.stubEnv('LANG', undefined)
+
+    const env = gitChildEnv({})
+
+    expect(env.LC_ALL).toBe('C')
+    expect(env.LANG).toBe('C')
   })
 })

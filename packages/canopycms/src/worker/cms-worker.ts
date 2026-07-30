@@ -24,9 +24,10 @@ import { extractIdFromFilename } from '../content-id-index'
 import { invalidateBranchContentCaches } from '../content-index-generation'
 import { type ContentId, type SanitizedBranchName, ROOT_COLLECTION_ID } from '../paths/types'
 import { sanitizeBranchName, RESERVED_SETTINGS_BRANCH_PREFIX } from '../paths/branch-name'
-import { GITHUB_TRACKING_REF_PREFIX } from '../git-manager'
+import { GITHUB_TRACKING_REF_PREFIX, gitNetworkChildEnv } from '../git-manager'
 import type { PullRequestState, WorkerStatusReport } from '../types'
 import { getErrorMessage, isNodeError, redactCredentials } from '../utils/error'
+import { isNonFastForwardRejection } from '../utils/git'
 import { writeWorkerStatus } from './worker-status'
 
 /**
@@ -858,6 +859,12 @@ export class CmsWorker {
       const updates: Record<string, unknown> = {
         name: branch,
         syncStatus: 'synced',
+        // save()'s merge only overwrites keys present in this update (see
+        // BranchMetadataFileManager.save()'s spread order) -- a prior
+        // syncFailureReason from an earlier failed attempt would otherwise
+        // survive forever past this successful sync. Explicitly clear it,
+        // same pattern as rebaseFailure's PR-W2 M2 clearing elsewhere.
+        syncFailureReason: undefined,
       }
       if (result.prUrl) updates.pullRequestUrl = result.prUrl
       if (result.prNumber) {
@@ -887,9 +894,11 @@ export class CmsWorker {
 
   /**
    * Update branch metadata after permanent task failure.
-   * Sets syncStatus to 'sync-failed' with error details.
+   * Sets syncStatus to 'sync-failed' and records `error` (already redacted
+   * by the caller, processTaskQueue -- see [HIGH-1] there) as
+   * syncFailureReason, so the editor can show WHY, not just that it failed.
    */
-  private async updateBranchMetadataOnFailure(task: Task, _error: string): Promise<void> {
+  private async updateBranchMetadataOnFailure(task: Task, error: string): Promise<void> {
     const branch = typeof task.payload.branch === 'string' ? task.payload.branch : null
     if (!branch) return
 
@@ -902,7 +911,9 @@ export class CmsWorker {
 
     try {
       const meta = getBranchMetadataFileManager(branchPath, this.contentBranchesPath)
-      await meta.save({ branch: { name: branch, syncStatus: 'sync-failed' } })
+      await meta.save({
+        branch: { name: branch, syncStatus: 'sync-failed', syncFailureReason: error },
+      })
     } catch (err) {
       console.error(
         `Failed to update failure metadata for ${branch}:`,
@@ -923,8 +934,33 @@ export class CmsWorker {
       // it hang past the task timeout.
       timeout: { block: this.taskTimeoutMs },
     })
-    // Pass URL directly to avoid persisting the token in remote.git/config
-    await git.push(this.buildGitHubUrl(), branch)
+    // Force stable (English) git output so isNonFastForwardRejection below
+    // can reliably match it -- git's rejection text is gettext-translated, so
+    // a non-English host would silently turn that classifier into a no-op.
+    // gitNetworkChildEnv (NOT gitChildEnv) because this call talks to GitHub:
+    // it keeps ambient HTTPS_PROXY/GIT_SSL_*/GIT_SSH_COMMAND, which
+    // gitChildEnv's local-ops allowlist deliberately drops.
+    git.env(gitNetworkChildEnv())
+    try {
+      // Pass URL directly to avoid persisting the token in remote.git/config
+      await git.push(this.buildGitHubUrl(), branch)
+    } catch (err) {
+      const message = getErrorMessage(err)
+      // A non-fast-forward rejection means the branch already moved on
+      // GitHub -- most likely another CanopyCMS deployment sharing this repo
+      // picked the same content-branch name, or someone pushed directly to
+      // GitHub. Retrying the identical push can never succeed (DEP-L1's
+      // git-failure-is-transient carve-out does NOT apply here), so fail
+      // fast instead of burning the task's retry budget.
+      if (isNonFastForwardRejection(message)) {
+        throw new PermanentTaskError(
+          `Push rejected for branch "${branch}": it has moved on GitHub (likely another ` +
+            `CanopyCMS deployment sharing this repository, or a direct push). Rename this ` +
+            `branch or reconcile it with the remote before retrying.`,
+        )
+      }
+      throw err
+    }
     console.log(`Pushed ${branch} to GitHub`)
   }
 
@@ -968,11 +1004,27 @@ export class CmsWorker {
         await git.push(this.buildGitHubUrl(), this.settingsBranch)
         console.log(`Pushed settings branch ${this.settingsBranch} to GitHub`)
       } catch (err) {
-        // Non-fatal: branch may already be up-to-date
-        console.warn(
-          `Settings push for ${this.settingsBranch}:`,
-          err instanceof Error ? err.message : err,
-        )
+        // Non-fatal: branch may already be up-to-date. This call site has no
+        // task to throw a PermanentTaskError into (unlike pushBranchToGitHub)
+        // and is deliberately not restructured to add one -- but a
+        // non-fast-forward rejection here is the highest-signal instance of
+        // this whole failure class: it means another CanopyCMS deployment's
+        // worker already pushed ITS OWN state to `this.settingsBranch` on
+        // GitHub (an actual settings-branch name collision, not just the
+        // "foreign branch found locally" case warned about above), so make
+        // that explicit instead of a generic "push failed" line.
+        const message = getErrorMessage(err)
+        if (isNonFastForwardRejection(message)) {
+          console.warn(
+            `Settings push for ${this.settingsBranch} was rejected (non-fast-forward): another ` +
+              `CanopyCMS deployment appears to own this settings branch on GitHub. Settings from ` +
+              `that deployment will NOT be overwritten; this deployment's local settings changes ` +
+              `were not pushed. Rename this deployment's settings branch (config.settingsBranch or ` +
+              `deploymentName) to resolve the collision.`,
+          )
+        } else {
+          console.warn(`Settings push for ${this.settingsBranch}:`, message)
+        }
       }
     } catch (err) {
       console.warn(
@@ -1130,6 +1182,11 @@ export class CmsWorker {
       // is inactivity-based, so a slow-but-flowing transfer is unaffected.
       timeout: { block: this.taskTimeoutMs },
     })
+    // This instance also drives pushSettingsBranches(git) below, whose
+    // classification of a rejected settings-branch push (see that method)
+    // needs the same stable-English guarantee as pushBranchToGitHub. Network
+    // env for the same reason: the fetch and push here reach GitHub.
+    git.env(gitNetworkChildEnv())
 
     // PR-W1: the whole cycle is wrapped so both outcomes -- success and
     // hard failure (e.g. the fetch throwing against a poisoned remote.git)
