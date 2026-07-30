@@ -161,6 +161,42 @@ describe('MediaLibraryBody', () => {
     expect(screen.queryByTestId(`asset-card-delete-${catAsset.hash32}`)).toBeNull()
   })
 
+  it('shows the delete control to the editor who uploaded the asset', async () => {
+    mockClient.assets.list.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      data: { assets: [{ ...catAsset, uploadedBy: 'user-1' }] },
+    })
+    mockClient.user.whoami.mockResolvedValue({
+      ok: true,
+      status: 200,
+      data: { userId: 'user-1', groups: [] },
+    })
+
+    renderBody()
+
+    // Mirrors the server rule in api/assets.ts: uploader may delete their own.
+    expect(await screen.findByTestId(`asset-card-delete-${catAsset.hash32}`)).toBeTruthy()
+  })
+
+  it("hides the delete control on another editor's upload", async () => {
+    mockClient.assets.list.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      data: { assets: [{ ...catAsset, uploadedBy: 'someone-else' }] },
+    })
+    mockClient.user.whoami.mockResolvedValue({
+      ok: true,
+      status: 200,
+      data: { userId: 'user-1', groups: [] },
+    })
+
+    renderBody()
+
+    await waitFor(() => expect(screen.getByText('cat')).toBeTruthy())
+    expect(screen.queryByTestId(`asset-card-delete-${catAsset.hash32}`)).toBeNull()
+  })
+
   it('shows the delete control for admins and removes the asset on confirm', async () => {
     mockClient.assets.list.mockResolvedValueOnce({
       ok: true,

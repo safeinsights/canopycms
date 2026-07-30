@@ -75,6 +75,16 @@ fixed or documented:
 - Transform URL format: `/assets/t/f=webp,w=160/<hash>/<slug>.<ext>` — directives
   first, width a multiple of 160.
 
+**Ride-along:** land [efs-tls-in-transit.md](efs-tls-in-transit.md) as part of this
+rebuild. It adds the `tls` option (efs-utils stunnel) to the worker's EFS mount in
+both places — the `mount -t efs` bootstrap command and the `/etc/fstab` line in
+`canopycms-cdk/src/constructs/cms-service.ts`. It was deferred only because it
+changes the deploy-proven mount path and therefore needs its own verification
+deploy; this rebuild *is* that deploy, so doing it here costs nothing extra and
+avoids a dedicated deploy later. Confirm the mount survives an instance reboot
+(the existing `cms-deploy.test.ts` reboot assertion) and that the worker still
+reaches its clone after the change.
+
 ### 4. Build the deployed-stack verification suite
 
 **This is the main deliverable.** July's verification was a hand-driven 9-row
