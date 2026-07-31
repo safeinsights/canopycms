@@ -5,6 +5,7 @@ import type { OperatingMode } from './operating-mode'
 import { GitManager } from './git-manager'
 import { createDebugLogger } from './utils/debug'
 import { getErrorMessage, isFileExistsError } from './utils/error'
+import { RESERVED_SETTINGS_BRANCH_PREFIX } from './paths'
 
 const log = createDebugLogger({ prefix: 'SettingsWorkspace' })
 
@@ -93,6 +94,26 @@ async function releaseFileLock(lockPath: string): Promise<void> {
  * - In-memory Promise lock for within-process serialization (Lambda request lifecycle)
  * - File-based lock for cross-process synchronization (multiple Lambda instances on EFS)
  */
+/**
+ * Whether a settings workspace actually holds settings data yet. Used by the
+ * rename guard to tell an already-populated workspace (refuse) apart from a
+ * clone that was interrupted before its orphan branch was ever created
+ * (harmless — let init finish). File names come from the operating-mode
+ * strategy so this stays in step with whatever the mode calls them.
+ */
+async function settingsFilesPresent(settingsRoot: string): Promise<boolean> {
+  const names = ['permissions.json', 'groups.json']
+  for (const name of names) {
+    try {
+      await fs.access(path.join(settingsRoot, name))
+      return true
+    } catch {
+      // Not present — keep checking the rest.
+    }
+  }
+  return false
+}
+
 export class SettingsWorkspaceManager {
   private readonly config: CanopyConfig
 
@@ -124,49 +145,65 @@ export class SettingsWorkspaceManager {
           const acquired = await acquireFileLock(lockPath)
 
           try {
-            // Rename guard (settings-branch protection): if a settings workspace
-            // ALREADY exists on disk, it must already be checked out on the branch
-            // we're about to ensure — refuse to boot otherwise.
+            // Rename guard (settings-branch protection). Refuses to boot when
+            // an ALREADY-POPULATED settings workspace would be re-orphaned
+            // under a different branch name.
             //
-            // Trace of what happens if we don't: GitManager.initializeWorkspace sees
-            // an existing .git (no clone happens) and goes straight to
-            // createOrphanSettingsBranch(options.branchName). If that name isn't
-            // already in `git branch --all`, git runs `checkout --orphan <name>` +
-            // `rm -rf .` + an empty `--allow-empty` commit — orphan branches share no
-            // history, so this isn't a "migration", it PERMANENTLY WIPES
-            // permissions.json/groups.json with nothing left to recover them from.
+            // Trace of what happens without it: GitManager.initializeWorkspace
+            // sees an existing .git (no clone happens) and goes straight to
+            // createOrphanSettingsBranch(options.branchName). If that name
+            // isn't already known, git runs `checkout --orphan <name>` +
+            // `rm -rf .` + an empty `--allow-empty` commit — orphan branches
+            // share no history, so this isn't a "migration", it PERMANENTLY
+            // WIPES permissions.json/groups.json with nothing to recover from.
+            // That almost always means deploymentName / settingsBranch /
+            // CANOPYCMS_DEPLOYMENT_NAME changed on a live deployment (see
+            // resolveDeploymentName in operating-mode/deployment-name.ts).
             //
-            // This almost always means deploymentName / settingsBranch /
-            // CANOPYCMS_DEPLOYMENT_NAME changed on a deployment that already has a
-            // populated settings workspace (the exact failure mode this workstream
-            // exists to prevent — see resolveDeploymentName in
-            // operating-mode/deployment-name.ts). No migration is attempted here;
-            // this only refuses loudly.
+            // What this deliberately does NOT refuse, and why it matters:
+            // initializeWorkspace clones at the BASE branch and only creates
+            // the orphan branch several steps later (addConfig, resolveRemoteUrl,
+            // ensureRemote come in between). If that first init is interrupted
+            // — a Lambda timeout on a slow EFS clone, an OOM, a spot
+            // interruption — it leaves a perfectly valid repo sitting on the
+            // base branch with NO settings files in it. Refusing on "branch
+            // differs" alone would then brick the deployment permanently on
+            // every subsequent boot, to protect data that was never written.
+            // So the refusal additionally requires evidence that this really
+            // is a populated settings workspace: either it is checked out on
+            // some OTHER settings branch, or the settings files are actually
+            // on disk.
             const repoExists = await GitManager.repoExistsAt(options.settingsRoot)
-            if (repoExists) {
+            // If another process holds the init lock it is mid-initialization,
+            // and the half-built states above are expected rather than
+            // suspicious — skip the guard instead of racing it into a
+            // maximally alarming error on an ordinary concurrent cold start.
+            if (repoExists && acquired) {
               let currentBranch: string | undefined
               let readError: string | undefined
               try {
                 const existing = new GitManager({ repoPath: options.settingsRoot })
                 currentBranch = (await existing.status()).current ?? undefined
               } catch (err) {
-                // Repo exists but its branch couldn't be read (corrupt state,
-                // detached HEAD, etc.) — fail loudly below rather than proceeding
-                // as if it were safe to (re)create the orphan branch. Keep the
-                // underlying cause: without it the operator sees only "could not
-                // be read" and has nothing to act on.
                 currentBranch = undefined
                 readError = getErrorMessage(err)
               }
 
-              if (!currentBranch || currentBranch !== options.branchName) {
+              const onDifferentBranch = currentBranch !== options.branchName
+              const looksLikeSettingsBranch =
+                currentBranch !== undefined &&
+                currentBranch.startsWith(RESERVED_SETTINGS_BRANCH_PREFIX)
+              const hasSettingsData = await settingsFilesPresent(options.settingsRoot)
+
+              if (onDifferentBranch && (looksLikeSettingsBranch || hasSettingsData)) {
                 throw new Error(
                   `CanopyCMS: refusing to initialize settings workspace at ${options.settingsRoot}. ` +
                     (currentBranch
                       ? `It is currently on branch '${currentBranch}', but this deployment resolved ` +
                         `settings branch '${options.branchName}'.`
-                      : `Its current branch could not be read (${readError ?? 'unknown error'}), and ` +
-                        `this deployment resolved settings branch '${options.branchName}'.`) +
+                      : `Its current branch could not be read (${readError ?? 'unknown error'}), but it ` +
+                        `holds settings files, and this deployment resolved settings branch ` +
+                        `'${options.branchName}'.`) +
                     ` Proceeding would run \`git checkout --orphan\` + \`rm -rf .\` on this workspace, ` +
                     `which PERMANENTLY WIPES permissions.json/groups.json (orphan branches share no ` +
                     `history — there is nothing to migrate from). This almost always means ` +

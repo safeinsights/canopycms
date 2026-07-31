@@ -296,15 +296,23 @@ export const createBranchHandler = async (
         const collision = await GitManager.bareRemoteHasBranch(
           resolvedMirrorPath,
           sanitizedRequested,
+          // GitHub's view only -- see bareRemoteHasBranch. A local head in
+          // remote.git survives an editor-side branch delete forever, so
+          // including refs/heads/* here would make the ordinary create ->
+          // publish -> merge -> delete -> reuse cycle 409 permanently on a name
+          // the user just deleted. Locally-live branches are already rejected
+          // by the registry check above.
+          { namespaces: 'tracking' },
         )
         if (collision) {
           return {
             ok: false,
             status: 409,
             error:
-              `A branch named "${sanitizedRequested}" already exists on the remote ` +
-              `(it may have been created by another deployment sharing this repository, or ` +
-              `pushed directly to GitHub). Choose a different name.`,
+              `A branch named "${sanitizedRequested}" already exists on the remote. ` +
+              `It may have been created by another CanopyCMS deployment sharing this ` +
+              `repository, pushed directly to GitHub, or left behind by an earlier branch ` +
+              `of the same name. Choose a different name.`,
           }
         }
       } catch (err: unknown) {

@@ -40,20 +40,24 @@ describe('Branch creation: remote-mirror collision guard (L2)', () => {
       await workspace.cleanup()
     })
 
-    it("rejects (409) a name already present in the mirror's refs/heads/* namespace", async () => {
-      // Seed the bare remote directly, bypassing the API -- models a branch
-      // this deployment's own worker already pushed, or one that predates
-      // this API call (e.g. created on a previous deployment of the stack).
+    it("does NOT reject a name present only in the mirror's refs/heads/* namespace", async () => {
+      // refs/heads/* in remote.git is this deployment's own local origin, and
+      // nothing ever removes a ref from it: deleting a branch in the editor
+      // unlinks its metadata and rm -rf's the clone, and the worker's
+      // reconcile deliberately never deletes a local head. Treating a local
+      // head as a collision would therefore make the ordinary
+      // create -> publish -> merge -> delete -> reuse-the-name cycle fail
+      // permanently on a name the user had just deleted. Branches that are
+      // genuinely still live for THIS deployment are caught by the branch
+      // registry check that runs before this one.
       await simpleGit({ baseDir: workspace.seedPath }).raw([
         'push',
         'origin',
-        'main:refs/heads/existing-branch',
+        'main:refs/heads/local-leftover',
       ])
 
-      const res = await client.post('/api/canopycms/branches', { branch: 'existing-branch' })
-      expect(res.status).toBe(409)
-      const body = await res.json<BranchResponse>()
-      expect(body.error).toMatch(/already exists on the remote/)
+      const res = await client.post('/api/canopycms/branches', { branch: 'local-leftover' })
+      expect(res.status).toBe(200)
     })
 
     it('rejects (409) a name present ONLY under the GitHub tracking namespace (two-deployments-one-repo case)', async () => {

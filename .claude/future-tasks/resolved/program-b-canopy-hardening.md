@@ -1,7 +1,7 @@
 # Program B — Canopy hardening
 
 **Part of:** [production-readiness-program.md](production-readiness-program.md)
-**Size:** L (run as an epic via the `epic-workflow` skill) · **Status:** not started
+**Size:** L (run as an epic via the `epic-workflow` skill) · **Status:** RESOLVED 2026-07-30
 **Blocks:** D (B1 + B2 specifically), and therefore E
 
 The Canopy-side work that a real multi-editor deployment needs. Ordered by what
@@ -120,3 +120,72 @@ A second Canopy deployment can safely share a GitHub repo with another;
 `cdk deploy` reaches every component including the worker; log groups have
 retention; the day-one editor defects are fixed; and both build shapes are
 verified in CI.
+
+
+---
+
+# Resolution (2026-07-30, `epic/canopy-hardening`)
+
+Nine PRs. B1 and B2 clear Workstream D's Canopy-side gate.
+
+| PR | Scope |
+| -- | ----- |
+| #168 | Sync fetch no longer destroys unpushed refs (found by the design review; see below) |
+| #169 | `deploymentName` environment-injectable; settings-branch rename guard |
+| #170 | Content-branch collision guards (reserved prefix, sanitized comparison, create-time mirror check) |
+| #174 | Non-fast-forward push classification at both hops |
+| #176 | Worker ASG rolling update + Lambda log groups + per-cycle orphan recovery |
+| #177 | Deploy workflow that runs `cdk deploy` |
+| #178 | Finalize validates raster decodability; transform status pass-through |
+| #180 | Dual-build CI fixture; Next known-good versions |
+| #181 | Editor request dedup and stale-response cancellation |
+
+## Definition of done
+
+- **A second deployment can safely share a GitHub repo.** `deploymentName` is
+  env-injectable and stamped by CDK; all four previously-divergent readers
+  agree; content-branch collisions are caught at create time against the local
+  GitHub mirror and, when they slip through, surfaced as an actionable 409 or a
+  fail-fast permanent task error instead of a stuck retry loop.
+- **`cdk deploy` reaches every component.** The worker ASG has a rolling update
+  policy, and the deploy template runs `cdk deploy` rather than only updating
+  the Lambda image.
+- **Log groups have retention.** CMS and transform Lambdas both, with custom
+  names and explicit write grants.
+- **Day-one editor defects fixed.** Duplicate loads deduped, stale responses
+  discarded, undecodable uploads rejected at finalize instead of rendering
+  broken forever. (`stale-draft-prevents-content-load` was already fixed and
+  merged in July, before this epic.)
+- **Both build shapes verified in CI**, by a fixture demonstrated to fail when a
+  shape breaks.
+
+## Where this deviated from the plan above
+
+- **B1 gained a prerequisite.** The adversarial design review found that
+  `syncGit()`'s fetch refspec silently destroyed unpushed refs — including a
+  case that reported success while dropping the publish. B1's definition of
+  done was not truthfully reachable on top of it, so it was fixed first (#168).
+- **Open decision #1 resolved to detect-and-surface**, on the strength of an
+  architectural constraint rather than a preference; rationale is in the hub
+  doc's decisions table and in the program log.
+- **B2's `cdk deploy` template turned out to conflict with the stack**, not
+  merely to be missing. The old example paired an ECR push and
+  `update-function-code` with a `fromImageAsset` stack, which builds the image
+  twice and leaves the Lambda out of sync with CloudFormation.
+- **B3's scope was smaller than written in one place and larger in another.**
+  `stale-draft-prevents-content-load` was already fixed, and `refreshEntries`'s
+  overlap already had seq-token guards with tests. But the finalize/transform
+  item's central premise (sharp excluded from the CMS Lambda) was wrong, which
+  made the *cleanest* fix also the cheapest.
+- **cfn-signal was dropped** from B2 as a stretch goal, deliberately and with
+  the reasoning recorded in-code — the obvious placement would make a
+  CloudWatch-agent failure roll back the whole deploy, and it would pass for a
+  crash-looping worker regardless.
+
+## Still open
+
+- [next-16.2-postcss-fork-bomb.md](../next-16.2-postcss-fork-bomb.md) — the
+  package-level constraint and README documentation are done; the upstream
+  root-cause chase is not.
+- [reference-resolution-branch-switch-stale.md](../reference-resolution-branch-switch-stale.md)
+  — spun out while fixing the reference-resolution race.
