@@ -118,6 +118,16 @@ jobs:
         if: steps.filter.outputs.relevant == 'true'
         run: pnpm install --frozen-lockfile
 
+      # The fixture runs in CanopyCMS `mode: 'dev'`, whose request-time content
+      # read resolves the active branch from git HEAD. actions/checkout leaves
+      # a detached HEAD, so without a real local branch the cms build's `/`
+      # 500s at request time -- the same reason the e2e job below has this
+      # step. Not needed by the static build, which reads content at build
+      # time.
+      - name: Ensure local main branch exists
+        if: steps.filter.outputs.relevant == 'true'
+        run: git branch main origin/main 2>/dev/null || true
+
       # canopycms-next's "./config" export (what apps/dual-build-fixture's
       # next.config.mjs imports) resolves to a pre-bundled dist/config.{cjs,mjs}
       # -- esbuild-bundled because Next's own config loader can't process raw
