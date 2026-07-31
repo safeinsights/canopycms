@@ -1,8 +1,15 @@
 #!/usr/bin/env node
 
 /**
- * Bumps patch version across all publishable packages in lockstep.
- * Usage: node scripts/bump-version.mjs
+ * Sets the version across all publishable packages in lockstep.
+ *
+ * Usage: node scripts/bump-version.mjs            # patch-bump the current version
+ *        node scripts/bump-version.mjs <version>  # apply an explicit version
+ *
+ * The explicit form is used by the prerelease publish path, which computes its
+ * version from main rather than from the branch being published, and never
+ * commits the result. Only the stable publish workflow commits version fields.
+ *
  * Outputs the new version to stdout.
  */
 
@@ -22,8 +29,15 @@ const PACKAGES = [
 // Read current version from the core package
 const corePkgPath = join(ROOT, 'packages/canopycms/package.json')
 const corePkg = JSON.parse(readFileSync(corePkgPath, 'utf8'))
-const [major, minor, patch] = corePkg.version.split('.').map(Number)
-const newVersion = `${major}.${minor}.${patch + 1}`
+
+const explicitVersion = process.argv[2]
+let newVersion
+if (explicitVersion) {
+  newVersion = explicitVersion
+} else {
+  const [major, minor, patch] = corePkg.version.split('.').map(Number)
+  newVersion = `${major}.${minor}.${patch + 1}`
+}
 
 // Update all packages
 for (const pkg of PACKAGES) {

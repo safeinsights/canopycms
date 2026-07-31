@@ -108,7 +108,12 @@ export interface WorkerStatusReport {
      * the non-destructive replacement for the old fetch refspec that used
      * to write GitHub's refs directly into `refs/heads/*`.
      */
-    tracked: {
+    /**
+     * Optional: absent from a worker-status.json written by a worker that
+     * predates the tracked-branch reconcile (PR #168). Readers must tolerate
+     * its absence rather than assume every status file has it.
+     */
+    tracked?: {
       created: string[]
       fastForwarded: string[]
       ahead: string[]

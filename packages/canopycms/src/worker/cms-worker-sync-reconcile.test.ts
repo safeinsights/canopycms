@@ -133,6 +133,21 @@ async function commitOnto(
 // Tests
 // ---------------------------------------------------------------------------
 
+/**
+ * Narrow `lastGitSync.tracked`, which is optional on the wire (a
+ * worker-status.json written before the tracked-branch reconcile shipped has
+ * no such field). Every test here drives a real syncGit(), which always writes
+ * it, so its absence is a genuine failure worth naming rather than a case to
+ * tolerate.
+ */
+function trackedOf(
+  status: WorkerStatusReport,
+): NonNullable<NonNullable<WorkerStatusReport['lastGitSync']>['tracked']> {
+  const tracked = status.lastGitSync?.tracked
+  if (!tracked) throw new Error('expected syncGit() to record lastGitSync.tracked')
+  return tracked
+}
+
 describe('CmsWorker.syncGit() non-destructive GitHub reconcile', () => {
   let tmpDir: string
   let workspacePath: string
@@ -236,7 +251,7 @@ describe('CmsWorker.syncGit() non-destructive GitHub reconcile', () => {
     )
 
     const status = await readStatus()
-    expect(status.lastGitSync?.tracked.fastForwarded).toContain('feature-behind')
+    expect(trackedOf(status).fastForwarded).toContain('feature-behind')
   })
 
   it('creates a local head for a branch that exists only on GitHub', async () => {
@@ -253,7 +268,7 @@ describe('CmsWorker.syncGit() non-destructive GitHub reconcile', () => {
     await expect(bareRevParse(remoteGitPath, 'refs/heads/feature-new-on-github')).resolves.toBe(sha)
 
     const status = await readStatus()
-    expect(status.lastGitSync?.tracked.created).toContain('feature-new-on-github')
+    expect(trackedOf(status).created).toContain('feature-new-on-github')
   })
 
   it('leaves a diverged branch untouched, does not throw, and counts + warns about it', async () => {
@@ -277,7 +292,7 @@ describe('CmsWorker.syncGit() non-destructive GitHub reconcile', () => {
     consoleSpy.restore()
 
     const status = await readStatus()
-    expect(status.lastGitSync?.tracked.diverged).toContain('feature-diverged')
+    expect(trackedOf(status).diverged).toContain('feature-diverged')
     // A diverged branch must not fail the whole sync cycle.
     expect(status.lastGitSyncError).toBeUndefined()
   })

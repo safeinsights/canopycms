@@ -1688,9 +1688,17 @@ directive rather than a derived file. Declare an `aspect` on the field (e.g. `'1
 `'1:1'`) to enable the interactive crop step, and `altOptional: true` for decorative
 images.
 
-**Permissions** — any authenticated editor can upload and list assets; deleting an asset
-from the library is admin-only (and removes only the library record — existing content
-references keep resolving).
+**Permissions** — any authenticated editor can upload and list assets. Deleting an asset
+from the library requires being an admin **or** the person who uploaded it, and removes
+only the library record — existing content references keep resolving.
+
+> **The asset store is site-wide, not branch-scoped.** Because assets are content-addressed
+> and shared (which is what lets a branch merge avoid moving files), branch and path ACLs do
+> **not** apply to them. Any authenticated editor can list and fetch every asset in the site,
+> including images uploaded on branches they cannot otherwise access. Asset URLs are
+> unguessable, but the library listing is open to all signed-in users, so treat "uploaded to
+> CanopyCMS" as visible to your whole editorial team — confidential material does not belong
+> in the asset store.
 
 **Infrastructure** — the `canopycms-cdk` package ships an `AssetSupport` construct that
 provisions the bucket (or attaches to an existing one), the transform Lambda, and the

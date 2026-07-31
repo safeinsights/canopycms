@@ -32,6 +32,15 @@ happy path.
   [assets-media-system.md](resolved/assets-media-system.md); this is the concrete ticket for it.
   Decide the contract: synchronous public-object+original delete, or documented
   delist-only + async GC.
+
+  **COUPLED — read before implementing.** As of 2026-07-30, delete is no longer
+  admin-only: a non-admin may delete an asset whose `uploadedBy` is them
+  (`api/assets.ts`'s `deleteAssetHandler`). That permission is only safe *because*
+  delete is a de-list — nothing another branch references breaks. If this GC work
+  makes delete destroy the underlying blob, the uploader-owned permission must be
+  revisited at the same time: it would then need a reference check, or to revert
+  to admin-only. Do not land destructive GC without deciding that.
+  See [asset-listing-cross-branch-exposure.md](asset-listing-cross-branch-exposure.md).
 - **Multipart `filename` not shape-validated** (`api/assets.ts` uploadProxied override)
   — bypasses `filenameSchema`; stored unbounded in `meta.filename`. Not an injection
   risk (slug is capped, Content-Disposition uses the RFC 5987 lib), just inconsistent.

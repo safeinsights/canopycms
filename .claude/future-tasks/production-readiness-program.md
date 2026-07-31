@@ -30,9 +30,9 @@ Closing that gap is what this program covers.
 
 | ID | Workstream | Size | Status | File |
 | -- | ---------- | ---- | ------ | ---- |
-| A | Release path (prerelease channel + standing draft PR) | S | not started | [program-a-release-path.md](program-a-release-path.md) |
+| A | Release path (prerelease channel + standing draft PR) | S | **done** 2026-07-30 | [resolved/program-a-release-path.md](resolved/program-a-release-path.md) |
 | B | Canopy hardening (multi-deployment safety, ops gaps, editor correctness, build shapes) | L | **done** 2026-07-30 | [resolved/program-b-canopy-hardening.md](resolved/program-b-canopy-hardening.md) |
-| C | E2E coverage sweep (3.5-month gap) | L | not started | [program-c-e2e-coverage.md](program-c-e2e-coverage.md) |
+| C | E2E coverage sweep (3.5-month gap) | L | **done** 2026-07-30 — 52→97 tests; matrix in [COVERAGE-MATRIX.md](../../apps/test-app/e2e/COVERAGE-MATRIX.md) | [resolved/program-c-e2e-coverage.md](resolved/program-c-e2e-coverage.md) |
 | D | Rebuild + exercise the deploy-test stack | M | not started | [program-d-stack-rebuild.md](program-d-stack-rebuild.md) |
 | E | Docs-site CMS deployment | L | not started | [program-e-docs-site-cms.md](program-e-docs-site-cms.md) |
 | F | Production + shared site-CDK for the second site | L | not started | [program-f-production.md](program-f-production.md) |
@@ -72,6 +72,8 @@ gets editors working. F and G make it production and team-ownable.
 | Prereleases published under a non-`latest` dist-tag | Lets adopters consume unreleased integration work without a human review gate, and without adopters resolving prereleases by accident | 2026-07-30 |
 | GitHub Actions OIDC for site deploys, not Jenkins/CodeBuild | Both sites already use OIDC; deployment code stays in each site's repo so workflows can reach it. `iac` continues to own account baselines only | 2026-07-30 |
 | Work continues on integration branches with a standing draft PR to `main` | Human review is the scarce resource; batch it rather than gating every change | 2026-07-30 |
+| All npm publishing routes through `publish.yml`, prereleases via a reusable workflow | npm allows one trusted publisher per package, bound to a workflow filename, and validates the *calling* workflow for `workflow_call`. Any additional channel must enter through `publish.yml` or all five packages' npm settings change together | 2026-07-30 |
+| Adopters pin prereleases exactly (`--save-exact`), never with a range | `^0.0.61-int.74` matches later prereleases of `0.0.61` *and* stable `0.0.61`, so a caret silently drifts off the pinned build | 2026-07-30 |
 | Content-branch collisions: detect and surface, not prefix-per-deployment (open decision #1) | The CMS Lambda has no internet (`PRIVATE_ISOLATED`, no NAT), so a create-time GitHub call is impossible; detection is viable only because `remote.git` mirrors GitHub's refs and resolves to the same EFS inode from Lambda and worker. Prefixing was rejected because it is blind to the likelier collision (a human pushing that branch name, or a branch left by an earlier deployment), only works if the two deployments are configured differently — the very hazard being removed — and changes user-visible branch names for every single-deployment adopter | 2026-07-30 |
 | Refuse to boot, rather than migrate, when a deployment's resolved settings-branch name changes | The old path ran `checkout --orphan` + `rm -rf .` on the settings workspace; orphan branches share no history, so permissions.json and groups.json were destroyed with nothing to recover from. An operator resolving it deliberately beats an automatic migration of authorization data | 2026-07-30 |
 | `deploymentName` precedence is env > config > mode default | The env var is stamped per-stack by CDK and is the value guaranteed to DIFFER between two deployments; `config.deploymentName` lives in the shared repo and is guaranteed to be IDENTICAL. Config-winning would make the CDK knob silently do nothing in exactly the case it exists for | 2026-07-30 |
