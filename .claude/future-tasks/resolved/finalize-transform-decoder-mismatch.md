@@ -4,6 +4,25 @@ Found during the deployment-test epic (2026-07-24) on the live deploy: a malform
 PNG was accepted at upload but every rendered view of it (MediaLibrary thumbnail,
 `<img>`, preview) is a broken image.
 
+**RESOLVED (2026-07-30, fix/finalize-validates-decodability):** the write-up's
+premise that "sharp is intentionally kept out of the CMS Lambda" was **wrong** —
+`sharp` is a direct dependency of `packages/canopycms` and `Dockerfile.cms.template`
+runs a plain `npm ci`, so sharp already ships in the CMS image; `transform.ts`
+already statically imports it. That made direction 1 (validate through the real
+decoder at finalize) cheap rather than a bundle-size tradeoff. Implemented:
+`pipeline.ts`'s `rasterIsDecodable` forces a real sharp decode (decode-and-resize to
+an 8x8 throwaway, not a `metadata()` header read) for `kind === 'raster'` only, gated
+by the same `MAX_INPUT_PIXELS` cap `transform.ts` uses; fails OPEN (logs, lets the
+upload through) only if sharp itself cannot be loaded, fails CLOSED (422, generic
+user-facing message) if sharp loads and rejects the bytes. Direction 2 (round-trip via
+the transform Lambda) was correctly ruled out as impossible in prod — the CMS Lambda
+has no NAT/route to the transform Lambda's Function URL. Direction 3 (surface the
+failure in the editor) was also done: `ImageField.tsx`'s preview now has an
+`onError` fallback matching `AssetCard.tsx`'s "Preview unavailable" state, covering
+both new decode rejections and pre-existing broken assets. See
+`packages/canopycms/src/assets/pipeline.ts`, `pipeline.test.ts`,
+`pipeline.sharp-unavailable.test.ts`, and `packages/canopycms/src/editor/fields/ImageField.tsx`.
+
 ## Root cause
 
 The two halves of the asset pipeline validate images with different libraries:

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { notifications } from '@mantine/notifications'
 import { modals } from '@mantine/modals'
+import equal from 'fast-deep-equal'
 import type { EditorEntry } from '../Editor'
 import type { ContentId, LogicalPath } from '../../paths/types'
 import type { FormValue } from '../FormRenderer'
@@ -146,17 +147,15 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
   //    as unsaved work — this is what keeps the branch-switch guard from silently
   //    discarding restored drafts.
   //
-  // 2. The comparison uses `JSON.stringify`, which is property-order sensitive. A
-  //    rehydrated draft whose keys were serialized in a different order than the
-  //    server-loaded object will show as dirty even when the values are semantically
-  //    identical. This is a known limitation; replacing with `fast-deep-equal` is
-  //    tracked in `.claude/future-tasks/editor-async-patterns.md`.
+  // 2. The comparison uses `fast-deep-equal`, a value-based deep equality
+  //    check -- not property-order sensitive the way `JSON.stringify`
+  //    comparison was. A rehydrated draft whose keys were serialized in a
+  //    different order than the server-loaded object no longer shows as
+  //    dirty when the values are semantically identical.
   const modifiedCount = useMemo(
     () =>
-      Object.keys(drafts).filter(
-        (id) =>
-          !loadedValues[id] || JSON.stringify(drafts[id]) !== JSON.stringify(loadedValues[id]),
-      ).length,
+      Object.keys(drafts).filter((id) => !loadedValues[id] || !equal(drafts[id], loadedValues[id]))
+        .length,
     [drafts, loadedValues],
   )
 
@@ -422,10 +421,10 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
   }
 
   // Only prompt when there is a real draft that actually differs from the
-  // loaded value (`isSelectedDirty()` below uses the exact same
-  // JSON.stringify comparison as `modifiedCount`). Discarding a draft that's
-  // identical to the loaded value, or discarding when there's no draft at
-  // all, has nothing to lose, so it clears silently.
+  // loaded value (`isSelectedDirty()` below uses the exact same deep-equal
+  // comparison as `modifiedCount`). Discarding a draft that's identical to
+  // the loaded value, or discarding when there's no draft at all, has
+  // nothing to lose, so it clears silently.
   const handleDiscardFileDraft = () => {
     if (!currentId) return
     if (!isSelectedDirty()) {
@@ -475,25 +474,22 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
 
     const id = entry.contentId
     if (!drafts[id]) return false
-    return !loadedValues[id] || JSON.stringify(drafts[id]) !== JSON.stringify(loadedValues[id])
+    return !loadedValues[id] || !equal(drafts[id], loadedValues[id])
   }
 
   // Convenience helper for checking current selection
   const isSelectedDirty = (): boolean => {
     if (!currentId) return false
     if (!drafts[currentId]) return false
-    return (
-      !loadedValues[currentId] ||
-      JSON.stringify(drafts[currentId]) !== JSON.stringify(loadedValues[currentId])
-    )
+    return !loadedValues[currentId] || !equal(drafts[currentId], loadedValues[currentId])
   }
 
   // Returns true if ANY draft entry differs from its loaded value.
   //
   // Used for branch-switch guards so unsaved work in non-selected entries is not
-  // silently discarded. Derived from `modifiedCount`, so the two semantics notes
-  // above also apply: localStorage-restored drafts without a loaded value count as
-  // dirty, and the underlying comparison is `JSON.stringify`-based.
+  // silently discarded. Derived from `modifiedCount`, so its semantics note
+  // above also applies: localStorage-restored drafts without a loaded value
+  // count as dirty.
   const isAnyDirty = (): boolean => modifiedCount > 0
 
   return {

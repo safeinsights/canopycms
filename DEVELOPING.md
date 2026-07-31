@@ -1360,6 +1360,19 @@ The on-demand image transform pipeline (`/assets/t/{directives}/{hash32}/{slug}.
 
 Both the dev-mode `/assets/t/*` route (`serveLazyTransform` in `packages/canopycms/src/api/assets.ts`) and the prod CDK transform Lambda (`packages/canopycms-cdk/lambda/asset-transform/handler.ts`, which imports `parseTransformPath`/`formatDirectives`/`applyTransform` via the `canopycms/server` re-exports) call into these same two files for the actual parsing and pixel work. **Never reimplement directive parsing or the sharp pipeline in just one place** -- change behavior in `transform-directives.ts`/`transform.ts` and both dev and prod pick it up automatically.
 
+Both of these paths surface a `TransformRejection` with a real HTTP status (`400` unsupported input, `413` output too large, `422` decode failure) -- always forward `transformed.status` verbatim rather than flattening every rejection to one code (e.g. a blanket 422 or 502). A client-input error reported as a server error, or vice versa, is a bug: `handler.test.ts` and `assets.test.ts` both assert 400/413/422 pass-through for exactly this reason.
+
+### Finalize Decode Validation: Fail Open on No Decoder, Fail Closed on a Real Rejection
+
+`pipeline.ts`'s `runFinalizePipeline` forces a real pixel decode for `kind === 'raster'` uploads (`rasterIsDecodable`), not just the header-only sniff `file-type`/`image-size` already do. This closes the "accepted at upload, unrenderable forever" gap: a PNG with a valid IHDR but a corrupt IDAT used to sail through finalize (header-only checks can't see it) and only fail later at `applyTransform`/render time, by which point it already looked like a successful upload.
+
+Two things about this check are worth knowing before touching it:
+
+- **A `.resize()` to a tiny throwaway output, not `.metadata()`.** `metadata()` only reads header fields -- the exact class of check that misses a corrupt IDAT. Forcing a real (if tiny) decode is what actually exercises libvips's decoder.
+- **`sharp` is loaded with a dynamic `await import('sharp')`, not `transform.ts`'s static `import sharp from 'sharp'`.** This is deliberate: if the native binary can't load in some environment (wrong platform/arch), a static import would throw at module load and take down finalize entirely. The dynamic import lets `pipeline.ts` catch that specific failure and **fail open** (log a warning, skip validation, let the upload through -- same as pre-fix behavior) -- but only for "no decoder available." If sharp loads fine and its decoder rejects the bytes, that's a real fact about the file, and the pipeline **fails closed** (422, generic user-facing message, never the raw libvips string). Keep that split explicit if you touch this function -- don't let "sharp failed to import" and "sharp decoded and said no" collapse into the same branch.
+
+Test fixtures for this area must be genuinely sharp-decodable, not the hand-built header-only base64 constants that used to live in `pipeline.test.ts`. Build fixtures with `sharp({ create: {...} })` (see `transform.test.ts`'s `makePng` or `pipeline.test.ts`'s local copy) rather than hand-crafted bytes -- a header-only fixture will now be correctly rejected by `rasterIsDecodable`, so it can no longer stand in for "a valid raster." `pipeline.test.ts` keeps exactly one deliberately-corrupt fixture (`makeCorruptPng`, built by flipping bytes well past the fixed-offset header fields) for the rejection test itself; the fail-open path (sharp unavailable) is covered separately in `pipeline.sharp-unavailable.test.ts`, which mocks the `sharp` module -- kept out of `pipeline.test.ts` because that file's own fixtures need the real thing.
+
 ### Client-Bundle Safety for Assets
 
 Editor/client code may import **only** the dependency-free isomorphic modules -- `assets/transform-directives` and `assets/asset-url` -- or `import type` from `assets/types`. It must never import the stores (`store-local.ts`, `store-s3.ts`), the upload/finalize pipeline (`pipeline.ts`, `finalize.ts`), or `transform.ts` -- all of those pull in server-only dependencies (`sharp`, `node:crypto`, the S3 SDK) that must never ship to a browser bundle.
@@ -2122,6 +2135,32 @@ expect(mockContext.services.commitFiles).toHaveBeenCalledWith({
 
 See `/packages/canopycms/src/api/permissions.test.ts` (lines 169-185) and `/packages/canopycms/src/api/groups.test.ts` (lines 195-210) for complete examples.
 
+### Testing Editor Hooks (SWR Cache Isolation, Strict Mode, Direct-Import Mocks)
+
+`createApiClientWrapper(mockClient)` (from `src/editor/hooks/__test__/test-utils.tsx`) wraps the test tree in both `ApiClientProvider` and an `SWRConfig` with an isolated cache (`provider: () => new Map()`, `dedupingInterval: 2000` to match production). This is transparent to existing call sites -- no changes needed. It matters because hooks that read via SWR (`useBranchManager`, `useEntryManager`, `useCommentSystem`, and the `useBranchesData`/`useEntriesData`/`useCommentsData` hooks underneath them) key their cache entries by resource/branch (e.g. `"canopy:branches"`, `"canopy:entries:main"`). Without a fresh `Map` per wrapper instance, tests in the same file/worker would share SWR's real global cache and one test could see another's mocked response on those keys.
+
+**Testing dedup/Strict Mode regressions:** use `createStrictModeApiClientWrapper(mockClient)`, which additionally wraps the tree in `<React.StrictMode>` (mount -> cleanup -> remount, doubling effects in dev). Without SWR's request coalescing, each manager hook's fetch-on-load effect fired twice under Strict Mode -- this wrapper is how you write a regression test for that:
+
+```typescript
+const mockClient = await setupMockApiClient()
+const wrapper = createStrictModeApiClientWrapper(mockClient)
+renderHook(() => useEntryManager(/* ... */), { wrapper })
+
+await waitFor(() => expect(mockClient.entries.list).toHaveBeenCalledTimes(1))
+```
+
+See the "mounting under Strict Mode issues one X request, not two" tests in `useEntryManager.test.ts`, `useBranchManager.test.tsx`, and `useCommentSystem.test.ts`.
+
+**Mocking `createApiClient()` for direct-call code:** most editor hooks/components get their API client via `useApiClient()` context (DI), so mocking the `'../api'` barrel is enough. Code that calls `createApiClient()` directly instead -- bypassing context, e.g. `useReferenceResolution.ts`'s dependency chain through `client-reference-resolver.ts`, and `ReferenceField.tsx` -- must mock the exact module it imports from, not the barrel:
+
+```typescript
+vi.mock('../api/client', () => ({
+  createApiClient: vi.fn(),
+}))
+```
+
+Use the relative specifier from the test file's own location (e.g. `'../../api/client'` from a deeper file) -- mocking `'../api'` won't intercept a direct `createApiClient` call. See `useReferenceResolution.test.ts`, `ReferenceField.test.tsx`, and `client-reference-resolver.test.ts` for the pattern.
+
 ### Testing with Real Git Operations
 
 Some subsystems -- particularly the worker's rebase logic -- need to test against actual git repositories rather than mocks. The `initTestRepo()` utility and a "local remote" pattern make this practical.
@@ -2744,6 +2783,24 @@ it('caches context per request with React cache()', async () => {
   expect(getUserSpy).toHaveBeenCalledTimes(1) // Cached!
 })
 ```
+
+### Shelling Out to Real Builds (CI Fixture Pattern)
+
+`apps/dual-build-fixture/dual-build.test.ts` is a vitest suite that verifies CanopyCMS's two deploy shapes (README.md "Dual-Build Sites") by actually running `next build` twice -- once per `CANOPY_BUILD` flavor (`static`, `cms`) -- against a minimal fixture app, then asserting on the real build output rather than just exit codes. It runs as its own CI job (`dual-build` in `.github/workflows/ci.yml`), gated on a paths-filter so the two (expensive) builds only run when something able to break the split actually changed. Run it locally with:
+
+```bash
+pnpm --filter canopycms-dual-build-fixture run verify:dual-build
+```
+
+Read the file in full before extending it or writing a similar "shell out to a real build, inspect output" test elsewhere -- it packs several fixed bugs worth reusing rather than reintroducing:
+
+- **Run the expensive step once, assert many times.** Both `next build` invocations run once in `beforeAll` (each takes tens of seconds); every `it()` afterward only inspects the resulting file trees. Never re-run a build per-assertion.
+- **Relocate output when two flavors share one `.next/`.** Both flavors write to the same `.next/` directory, so `moveNextOutputAside()` relocates the static build's non-cache output to `.next-static/` before the cms build starts, leaving both inspectable afterward. `.next/cache` (the SWC/webpack compilation cache) is deliberately left in place across both builds and preserved by `cleanNextOutputKeepCache()` -- a "clean everything under `.next/` except `cache/`" helper run before each build. This matters because `next build` isn't guaranteed to prune stale output for routes/`pageExtensions` that no longer apply: without the clean step, a leftover `.next/server/app/edit` from an earlier build could make an assertion pass for the wrong reason, while nuking the cache too would defeat CI's build-cache restore step.
+- **Use a dynamically-allocated port for live-server checks, never a hardcoded one.** A live-server smoke test spawns `next start` and fetches routes to verify runtime behavior (not just build artifacts) -- e.g. that the cms build's home route renders the same content as the static build's prerendered HTML. `getFreePort()` binds to port 0 and reads back what the OS picked. A hardcoded port previously caused a real false pass here: a stale `next start` left over from a prior manual test run kept answering on that port, so the freshly-spawned (and, in that run, deliberately broken) server was never actually exercised. A fresh port per run makes that class of contamination impossible instead of relying on cleanup discipline.
+- **Fail fast on child-process exit instead of polling out the full timeout.** `waitForServer()` listens for the spawned child's `exit` event and throws immediately -- surfacing the captured server log -- if the process dies before the first successful response, rather than blindly polling for the full timeout against a server that's already gone.
+- **Exclude dev-mode workspace clones from test discovery.** `vitest.config.ts` excludes `.canopy-dev/**`. CanopyCMS's dev-mode branch-workspace machinery clones the whole app directory -- including the test file itself -- into `.canopy-dev/content-branches/<branch>/` the first time a request-time content read happens; without the exclude, Vitest picks up that clone as a second, broken test file (no `node_modules` of its own).
+
+**Local-run gotcha:** the live-server test's request-time content read resolves against the last git commit (dev-mode branch-workspace resolution), not uncommitted working-tree edits. Running this test locally against WIP changes (to the fixture app or to `withCanopy()`) can make the cms server's `/` return a non-200 until you commit (or run `canopycms sync push`) -- that's expected dev-mode behavior, not a build-shape regression, and the test's own assertion message explains this inline. Read the failure message before assuming a real regression.
 
 ## Deployment Infrastructure
 

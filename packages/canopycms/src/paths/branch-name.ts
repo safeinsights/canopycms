@@ -24,3 +24,24 @@ export function sanitizeBranchName(branchName: string): SanitizedBranchName {
   const trimmedDots = squashed.replace(/^\.+/, '').replace(/(?<!\.)\.+$/, '')
   return (trimmedDots || 'branch') as SanitizedBranchName
 }
+
+/**
+ * Prefix reserved for CanopyCMS settings branches (`canopycms-settings-{name}`,
+ * see operating-mode/client-unsafe-strategy.ts's `getSettingsBranchName` and
+ * operating-mode/deployment-name.ts's `resolveDeploymentName`). Exported from
+ * this dependency-free module -- not constructed ad hoc at each call site --
+ * so every consumer that needs to recognize the settings-branch namespace
+ * agrees on the exact string: worker/cms-worker.ts's `pushSettingsBranches`
+ * (never push a `canopycms-settings-*` branch this deployment doesn't own),
+ * and api/branch.ts's `createBranchHandler` (reject a user-requested branch
+ * whose SANITIZED name falls in this namespace).
+ *
+ * Two CanopyCMS deployments can share one GitHub repo, each with its own
+ * settings branch under this prefix (`canopycms-settings-prod` vs
+ * `canopycms-settings-staging`, say). A content-branch request that lands on
+ * ANOTHER deployment's settings branch name would silently corrupt that
+ * deployment's permissions/groups the next time its worker treats the ref as
+ * an orphan settings branch -- so the whole prefix is reserved for branch
+ * creation, not just this deployment's own settings branch name.
+ */
+export const RESERVED_SETTINGS_BRANCH_PREFIX = 'canopycms-settings-'

@@ -84,6 +84,14 @@ async function main() {
     githubToken,
     refreshAuthCache,
     baseBranch: process.env.CANOPYCMS_BASE_BRANCH ?? 'main',
+    // Namespaces which canopycms-settings-* branch this worker owns/pushes
+    // (see CmsWorker.pushSettingsBranches) — CanopyCmsService stamps this env
+    // var from CanopyCmsServiceProps.deploymentName.
+    deploymentName: process.env.CANOPYCMS_DEPLOYMENT_NAME ?? 'prod',
+    // Explicit override, matching the strategy's own precedence: an adopter who
+    // sets `settingsBranch` in canopycms.config.ts must set this too, or the
+    // worker would own a branch name the Lambda never writes to.
+    settingsBranch: process.env.CANOPYCMS_SETTINGS_BRANCH,
     taskPollInterval: parseInt(process.env.CANOPYCMS_TASK_POLL_INTERVAL ?? '5000'),
     gitSyncInterval: parseInt(process.env.CANOPYCMS_GIT_SYNC_INTERVAL ?? '300000'),
     authCacheRefreshInterval: parseInt(

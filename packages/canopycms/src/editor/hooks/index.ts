@@ -4,9 +4,17 @@
 
 export * from './useEditorLayout'
 export { useBranchManager, type UseBranchManagerOptions } from './useBranchManager'
-export { useEntryManager } from './useEntryManager'
+export { useEntryManager, listAllEntries } from './useEntryManager'
 export * from './useDraftManager'
 export { useCommentSystem } from './useCommentSystem'
+export { useBranchesData, fetchBranches, BRANCHES_KEY, type BranchesData } from './useBranchesData'
+export {
+  fetchEntriesAndSchema,
+  entriesKey,
+  type EntriesData,
+  type FetchEntriesParams,
+} from './useEntriesData'
+export { useCommentsData, fetchComments, commentsKey, type CommentsData } from './useCommentsData'
 export { useGroupManager } from './useGroupManager'
 export { usePermissionManager } from './usePermissionManager'
 export { useBranchActions } from './useBranchActions'

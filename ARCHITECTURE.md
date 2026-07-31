@@ -948,7 +948,7 @@ Enforcement is layered:
 
 - **API guards** (`api/guards.ts`): `writableBranch` (403 on content/entry/schema mutations when `readOnly`) and `submittableBranch` (403 on submit when `submitBlocked`). `deleteBranch` refuses the base branch with a handler-level check.
 - **Workflow authorization** (`authorization/branch.ts`): the system-branch grant in `canPerformWorkflowAction` (the base branch is auto-provisioned with `createdBy: 'canopycms-system'`) is disabled on protected branches, so only admins/reviewers/explicit-ACL users retain workflow rights there.
-- **Backstops** (defense in depth, all refusing sanitized head==base): `services.submitBranch` throws before any git operation; `syncSubmitPr` returns `sync-failed` without calling GitHub or enqueueing; the worker's `push-and-create-or-update-pr` task throws a `PermanentTaskError`.
+- **Backstops** (defense in depth, all refusing sanitized head==base): `services.submitBranch` throws before any git operation; `syncSubmitPr` returns `sync-failed` without calling GitHub or enqueueing; the worker's `push-and-create-or-update-pr` task throws a `PermanentTaskError` (the same task also throws `PermanentTaskError` for an unrelated reason — a genuine non-fast-forward push rejection between two deployments; see [Push Rejection Classification](#push-rejection-classification)).
 - **Editor UI**: renders purely from server-computed wire flags (`isProtected`/`readOnly` on the branches-list response) — Submit is hidden, Save is disabled, and a banner with a "Create a branch" action appears on a read-only branch. The editor still lands on the protected branch for browsing.
 
 **Withdraw is deliberately not blocked** on protected branches: it is the self-serve recovery path for a base branch wrongly stuck in `submitted` (the pre-protection failure mode), and the workflow-authorization change above restricts it to privileged users there.
@@ -1024,12 +1024,18 @@ For low-cost AWS deployments, CanopyCMS supports splitting into two components t
 - Tiny daemon (t4g.nano spot instance, ~$1.50/month)
 - Processes queued tasks: pushes branches to GitHub, creates/updates PRs
 - Syncs `remote.git` with GitHub (fetches upstream changes)
-- Pushes `canopycms-settings-*` branches to GitHub on each sync cycle (belt-and-suspenders for the task queue)
+- Pushes this deployment's own settings branch to GitHub on each sync cycle (belt-and-suspenders for the task queue) — never a blanket push of every local `canopycms-settings-*` branch. Once another deployment's settings branch can legitimately show up as a local head (see below), pushing all of them would mean one deployment's worker publishing another deployment's settings; it warns about any such foreign branch instead of touching it
 - Rebases active branch workspaces onto updated base branch (with conflict detection and resolution)
 - Refreshes auth metadata cache (Clerk users/orgs, or dev test users)
 - Ships its own stdout/stderr to a dedicated CloudWatch log group
 
 This architecture eliminates NAT Gateway ($32/month) and keeps all secrets on the worker (not Lambda). The worker's AWS permissions: EFS client access (managed policy), Secrets Manager reads for its specific secrets, SSM core (`AmazonSSMManagedInstanceCore`, the Session Manager observation channel for operators whose roles allow it), read access to the CDK asset bucket (its own code bundle), and write-only access to its one CloudWatch log group — no broader logging or monitoring policy (no `CloudWatchAgentServerPolicy`). Log shipping exists because production operators may not have SSM Session Manager access into the instance (an organization's SSO role can be provisioned without `ssm:StartSession`), leaving the shipped logs as the only window into worker behavior beyond the task queue's own success/failure records. Because the worker is otherwise silent — no HTTP endpoint, no health API — log delivery is treated as best-effort rather than a hard dependency: the worker daemon starts and keeps running even if the log agent fails to install or configure.
+
+The worker's Auto Scaling Group carries a rolling `UpdatePolicy` (`minInstancesInService: 0`, forced by `minCapacity`/`maxCapacity` both being 1), so `cdk deploy` actually terminates and relaunches the instance whenever its launch template changes — most notably a new worker code bundle, which is a CDK S3 asset baked into the launch template's user-data. Without this, CloudFormation updates the template resource and stops there: the running instance keeps its stale user-data (and stale worker bundle) until a spot interruption or manual terminate happens to replace it, so a plain `cdk deploy` would silently update everything except the worker. This makes instance replacement — previously a rare event (spot interruption) — routine (every deploy that touches the worker), which is why orphaned-task recovery now runs on every task-queue cycle rather than only at worker boot; see [Task Queue](#task-queue-async-github-operations) below. The CMS and transform Lambdas each get an analogous dedicated CloudWatch log group (`cmsLogGroup`/`transformLogGroup`), all following the same custom-name/90-day-retention/`RemovalPolicy.DESTROY` convention as the worker's, instead of the CloudFormation-implicit `/aws/lambda/<function-name>` group (which CDK can't manage and which survives `cdk destroy`).
+
+**Sharing one repository across two deployments:** The CDK service construct accepts a `deploymentName` prop (default `prod`), stamped into both the Lambda's and the worker's environment as `CANOPYCMS_DEPLOYMENT_NAME`. This is what lets two independent CanopyCMS stacks — e.g. staging and production — point at the same GitHub repo without colliding on the same settings branch: each stack gets its own `canopycms-settings-{deploymentName}` branch, and the worker above pushes only the one belonging to its own stack. See [Deployment Name Resolution](#deployment-name-resolution) for how this value is resolved end-to-end and why the environment variable — not the adopter's config — is what actually distinguishes the two stacks.
+
+Content branches have no equivalent namespacing — an editor on either stack can independently create a branch with the same name — so that scenario surfaces instead as a real git push rejection rather than silent data loss. See [Push Rejection Classification](#push-rejection-classification) below for how both hops of the push flow detect and report it.
 
 ### Key Deployment Components
 
@@ -1087,9 +1093,25 @@ The shared helper `github-sync.ts` provides `syncSubmitPr()` and `syncConvertToD
 - `close-pr` -- closes a PR
 - `delete-remote-branch` -- removes a branch from GitHub
 
-Branch metadata includes a `syncStatus` field (`synced`, `pending-sync`, `sync-failed`) so the editor UI can show sync progress. The settings branch commit operation (`commitToSettingsBranch`) returns the same `syncStatus` values, allowing the permissions and groups UI to surface sync state to admins.
+Branch metadata includes a `syncStatus` field (`synced`, `pending-sync`, `sync-failed`) so the editor UI can show sync progress. The settings branch commit operation (`commitToSettingsBranch`) returns the same `syncStatus` values, allowing the permissions and groups UI to surface sync state to admins. A `sync-failed` status is paired with a `syncFailureReason` field recording why (see [Push Rejection Classification](#push-rejection-classification) below), so the editor's sync-failed badge can show the actual cause instead of a generic message.
+
+**Orphaned-task recovery**: a task file left in `processing/` — because the worker process that dequeued it died before completing, failing, or retrying it — is recovered (moved back to `pending/`) once its file's age exceeds a threshold (5 minutes by default). `recoverOrphanedTasks` runs on every task-queue poll cycle (`CmsWorker.processTaskQueue`), not only at worker startup: a boot-only call is insufficient once instance replacement is routine rather than rare (see the ASG rolling-update policy above) — a replacement instance typically boots within the 5-minute threshold, so a single boot-time check would see the just-orphaned file as "too fresh" and skip it, and nothing would ever re-check afterward. Running the check every cycle is safe because the per-task execution timeout (60 seconds by default) is well under the recovery threshold, so no task genuinely still in flight can accumulate enough age in `processing/` to be misclassified as orphaned.
 
 **Rate-limit handling**: Every Octokit instance CanopyCMS creates -- the worker's and `GitHubService`'s -- goes through a shared factory that attaches the `@octokit/plugin-throttling` plugin, so both proactively honor GitHub's retry-after guidance on primary and secondary (abuse-detection) rate limits instead of failing immediately. The worker retains a manual classification of HTTP 403 responses as a safety net for what the throttling plugin doesn't cover -- retries the plugin has already exhausted, and errors it never sees at all (e.g. non-403 network failures) -- so a rate-limited task fails permanently only when it genuinely should.
+
+#### Push Rejection Classification
+
+Two CanopyCMS deployments sharing one GitHub repo (see [Sharing one repository across two deployments](#lambda--efs--ec2-worker-aws-cost-optimized) above) can independently create a content branch with the same name, since content branches — unlike the settings branch — are not namespaced by `deploymentName`. When that happens, a push genuinely collides with the other deployment's history for that branch name, and git reports it as a real non-fast-forward rejection: the remote has commits this side never fetched, so retrying the identical push can never succeed.
+
+A shared classifier recognizes this specific shape (`[rejected]` plus git's `non-fast-forward`/`fetch first` wording, or its "Updates were rejected" hint) and deliberately nothing broader — ordinary transient push failures (network, auth, lock contention) are left alone to keep retrying with backoff as before. Because the classifier depends on git's untranslated English wording, every git child process CanopyCMS spawns is now forced to the `C` locale, so a host's ambient language settings can never silently turn the classifier into a permanent no-op.
+
+This classification applies at both hops of a content branch's push to GitHub:
+
+- **Hop 1 — Lambda's synchronous push to the local `remote.git`** (on submit-for-review): a collision returns HTTP 409 with actionable, git-free guidance (rename the branch or reconcile it with the remote) instead of the generic 500 used for other push failures. As with all error responses, only the branch name and static guidance text reach the client; full detail (redacted of credentials) goes to server logs only.
+- **Hop 2 — the worker's async push from `remote.git` to real GitHub**: a collision is classified as a permanent failure — the task fails immediately instead of retrying with backoff, since a collision can never resolve itself. This is a different trigger of the same `PermanentTaskError` used for the head-equals-base backstop (see [Protected Base Branch](#protected-base-branch)); both come from the same task type but for unrelated reasons.
+- **The worker's own settings-branch push** (belt-and-suspenders alongside the task queue, described above) has no task to fail into, so it still just logs a warning on any push failure — but now names the collision explicitly when it is one, distinct from the existing warning for a differently-named foreign settings branch found locally.
+
+A permanent push failure is recorded on the branch's metadata as `syncFailureReason`, alongside the existing `syncStatus: 'sync-failed'`, so the editor's sync-failed badge and the admin System Health panel can show why a branch is stuck instead of a generic failure message. It is cleared automatically on the branch's next successful sync, the same pattern used for `rebaseFailure` (see [Rebase Failure Tracking](#rebase-failure-tracking)).
 
 #### Worker CLI
 
@@ -1478,7 +1500,7 @@ The `SettingsWorkspaceManager` uses two layers of locking to safely initialize t
 - **In-memory Promise lock**: Prevents redundant async calls within the same process (Lambda request lifecycle)
 - **File-based lock**: Uses atomic file creation (`O_CREAT|O_EXCL` / `wx` flag) for cross-process synchronization. The lock file is placed as a sibling of the settings root directory. Stale locks older than 30 seconds are automatically cleaned up, handling cases where a process crashed during initialization.
 
-This dual-layer approach is necessary because Lambda instances share an EFS filesystem but each instance has its own process memory. The file lock ensures only one instance initializes the workspace at a time, while the in-memory lock avoids redundant concurrent calls within a single instance.
+This dual-layer approach is necessary because Lambda instances share an EFS filesystem but each instance has its own process memory. The file lock ensures only one instance initializes the workspace at a time, while the in-memory lock avoids redundant concurrent calls within a single instance. This same lock is also what makes the branch-identity guard below race-safe (see [Deployment Name Resolution](#deployment-name-resolution)).
 
 **Code reduction impact:**
 
@@ -1516,6 +1538,16 @@ await commitSettings(ctx, { context, branchRoot, fileName, message, mode })
 - **Extensibility**: Future settings (site config, workflow rules) can reuse the same helpers
 
 This pattern complements the general git service methods by addressing the unique branch routing requirements of settings files.
+
+### Deployment Name Resolution
+
+Every place that computes the settings branch name (`canopycms-settings-{deploymentName}`) needs to agree on `deploymentName`, and that value can come from three places: an environment variable, the adopter's config, or a mode-specific default. A single resolver settles this once and is used by both mode strategies' `getSettingsBranchName`, so the resolved name is the same everywhere it matters.
+
+**Precedence: environment variable, then config, then mode default (`prod` for prod, `local` for dev).** The environment variable deliberately outranks config, which inverts what might seem like the more intuitive order. The reasoning: the env var is stamped per-stack by infrastructure (the CDK service construct's `deploymentName` prop, surfaced as `CANOPYCMS_DEPLOYMENT_NAME`), so it's the value guaranteed to _differ_ between two deployments that share a repo. `config.deploymentName` lives inside the shared repo checkout itself, so it's guaranteed to be _identical_ across both deployments' running processes. If config took precedence, an adopter who had already set `deploymentName` in their (shared) config would find the infrastructure-level override silently doing nothing — exactly the two-stacks-one-repo scenario this feature exists to solve. When both are set and disagree, a one-time warning names both values so a genuine misconfiguration isn't silent.
+
+**One resolver, everywhere it matters:** settings-branch-name computation used to have three independent call sites that could disagree — the mode strategy, the settings API helper (which forwarded only a hand-picked subset of config to the strategy, silently dropping `deploymentName`), and the HTTP context builder (which used its own hardcoded literal with no deployment suffix at all). All three now route through the same resolver, so the branch CanopyCMS auto-provisions on first settings access is guaranteed to be the same branch every other settings operation reads and writes.
+
+**Refusing to boot on a changed settings branch:** Initializing an _existing_ settings workspace never re-clones — it goes straight to checking out the resolved orphan branch. If that resolved name isn't already a local branch there, git orphan-checks-out, wipes the working tree, and commits empty. Orphan branches share no history with what came before, so this permanently destroys `permissions.json`/`groups.json` with nothing left to recover. To turn a `deploymentName`, `settingsBranch`, or `CANOPYCMS_DEPLOYMENT_NAME` change — on a deployment whose settings workspace already holds real data — into a loud failure instead of silent data loss, workspace initialization now checks whether a settings workspace already exists on disk and, if so, whether it's already checked out on the newly-resolved branch. A mismatch throws before any git operation runs, naming both branches so the operator can restore the previous value (or deliberately move the workspace aside to start fresh). No migration is attempted, since there is nothing to migrate from once an orphan checkout has happened. This check runs inside the same cross-process lock described above, so two hosts racing to initialize the workspace can't each independently decide it's safe and both destroy it.
 
 ## Content Workflow
 
@@ -1574,7 +1606,7 @@ When the base branch (typically `main`) receives new commits from merged PRs, ac
 
 ### Rebase Behavior
 
-The worker's synchronization cycle fetches the latest base branch from GitHub into the local bare repo, fast-forwards the base branch's own workspace clone to match it, then iterates over all other active branch workspaces and rebases them. Previously that base-branch clone was refreshed only incidentally, by the same generic rebase loop that handles other branches: for a clone in `editing` status, rebasing onto `origin/<baseBranch>` degenerates to a fast-forward when the clone IS the base branch. But that loop's skip paths — a dirty tree, a missing `.git` — were silent, the suspected live failure mode behind a wedged base view with no diagnosable signal. A dedicated step now fast-forwards it (`merge --ff-only`) explicitly every cycle and invalidates its content caches when it advances. This clone must stay a linear mirror of the remote: an unprovisioned workspace is a quiet skip, but a dirty working tree or a non-fast-forward (diverged local history) state is a loud error left untouched, since nothing else would surface a silently wedged base view.
+The worker's synchronization cycle fetches the latest base branch from GitHub into the local bare repo, fast-forwards the base branch's own workspace clone to match it, then iterates over all other active branch workspaces and rebases them. Previously that base-branch clone was refreshed only incidentally, by the same generic rebase loop that handles other branches: for a clone in `editing` status, rebasing onto `origin/<baseBranch>` degenerates to a fast-forward when the clone IS the base branch. But that loop's skip paths — a dirty tree, a missing `.git` — were silent, the suspected live failure mode behind a wedged base view with no diagnosable signal. A dedicated step now fast-forwards it (`merge --ff-only`) explicitly every cycle and invalidates its content caches when it advances. This clone must stay a linear mirror of the remote: an unprovisioned workspace is a quiet skip, but a dirty working tree or a non-fast-forward (diverged local history) state is a loud error left untouched, since nothing else would surface a silently wedged base view. (This is a different non-fast-forward condition from the cross-deployment push-rejection collision in [Push Rejection Classification](#push-rejection-classification): this one concerns the base-branch clone's own local history falling behind `origin/<baseBranch>` when fast-forwarding inward, not a push outward to GitHub.)
 
 **Branches that are skipped by the rebase loop:**
 
@@ -1632,7 +1664,7 @@ Conflicts are surfaced to editors at three levels in the UI:
 
 - **Entry-level notices**: When an editor opens an entry that has a content conflict, the editor form displays a non-blocking informational notice at the top of the form. The notice tells the editor that someone else recently changed the same content and that a reviewer will reconcile the changes during the review process.
 - **Collection-level badges**: When a collection's `.collection.json` conflicted during rebase, the sidebar navigation shows a conflict badge on that collection. This alerts editors that the collection structure (ordering, entry type configuration) may need review, even if individual entries within the collection are unaffected.
-- **Branch-list badges**: The branch picker itself shows a conflict-count badge alongside a sync-status badge (`pending-sync` / `sync-failed`, from the same metadata `syncStatus` field described in [Task Queue](#task-queue-async-github-operations)) next to each branch name. Unlike the admin-only System Health panel, these badges are visible to any user who can see the branch — they're informational summaries of state every editor on that branch already needs, not a recovery surface.
+- **Branch-list badges**: The branch picker itself shows a conflict-count badge alongside a sync-status badge (`pending-sync` / `sync-failed`, from the same metadata `syncStatus` field described in [Task Queue](#task-queue-async-github-operations)) next to each branch name. Unlike the admin-only System Health panel, these badges are visible to any user who can see the branch — they're informational summaries of state every editor on that branch already needs, not a recovery surface. A `sync-failed` badge's tooltip shows the recorded `syncFailureReason` when one is present (e.g. a push-rejection collision, see [Push Rejection Classification](#push-rejection-classification)), falling back to generic text otherwise.
 
 The entry- and collection-level notices use the same `conflictFiles` array from branch metadata, matching each item's ContentId against the recorded conflict IDs.
 
@@ -1816,6 +1848,14 @@ Complex state management logic is extracted into custom hooks:
 - **useEntryLinkResolution**: Client-side entry:ID link resolution for live preview
 
 This extraction keeps components focused on rendering while hooks encapsulate business logic and side effects.
+
+### Data Loading: SWR-Backed Fetch Hooks
+
+The editor's three fetch-on-load resources — the branches list, a branch's entries plus schema, and comment threads — each have a dedicated hook built on `swr`, a client-side data-fetching/caching library. Each hook exports a plain async fetcher, a cache-key function, and a thin wrapper around `useSWR(key, fetcher)`; the corresponding manager hook (`useBranchManager`, `useEntryManager`, `useCommentSystem`) mirrors the data hook's reactive `data`/`error`/`isValidating` onto its own state and busy flags.
+
+This replaced three independent `useEffect([branchName])` fetch effects, each of which fired twice under React Strict Mode's mount-cleanup-remount cycle — plus a fourth duplicate schema fetch that the editor shell ran separately on branch change, now eliminated by reading `availableSchemas` off `useEntryManager`'s return value instead of fetching it again. A shared SWR cache (configured with `revalidateOnFocus: false`, `shouldRetryOnError: false`, and a short deduping window) gives every automatic on-mount/on-branch-change fetch built-in request deduping, so concurrent requests to the same cache key collapse into one.
+
+**Automatic load vs. explicit reload**: only the automatic fetch goes through `useSWR`. Each manager hook's imperative reload function (branch reload, comment reload, entry refresh) intentionally does not use SWR's `mutate()` revalidate form — it issues an independent, un-deduped fetch instead, because a caller that just wrote content needs to see its own change reflected immediately rather than coalesced with a still-in-flight automatic load — and then writes the result into the SWR cache with `mutate(key, data, { revalidate: false })`, keeping the bound data hook's reactive state in sync without a second request. The entry-refresh path additionally guards every commit of fetched entries state with a PER-BRANCH "committed sequence" rule — commit anything at least as new as what that branch's view already shows, and never a tag for a branch other than the one currently displayed. Per-branch rather than a single global counter, deliberately: SWR replays a branch's cached (tagged) result when the user switches back to it, and under a global counter any intervening branch's load had already advanced the count, so the replayed cache hit was rejected — and inside the deduping window no revalidation followed, leaving the PREVIOUS branch's entries on screen under the new branch indefinitely. A response older than what its branch already displays is still rejected (and triggers a revalidation of that branch's now-stale cache slot), and a refresh settling after the user switched away commits nothing.
 
 ### Live Preview Reference Resolution
 
@@ -2183,6 +2223,8 @@ The `canopycms-next` package also provides a `withCanopy()` function that wraps 
 
 When installed from npm (not symlinked), the React aliases are harmless -- they resolve to the same React the project already uses. Note that Turbopack does not currently support the absolute-path aliases used for React deduplication, so consumers using `file:` symlinks for local development must use `next dev --webpack`; Turbopack works fine when packages are installed from npm.
 
+**Why the `./config` export ships pre-built:** `withCanopy()` itself is imported from a dedicated `canopycms-next/config` subpath (`import { withCanopy } from 'canopycms-next/config'` in `next.config.mjs`), and that subpath is the one exception to "Canopy packages export raw TypeScript" (see [Why a Next.js config wrapper for React deduplication?](#why-a-nextjs-config-wrapper-for-react-deduplication)): it resolves to an esbuild-bundled `dist/config.{cjs,mjs}`, built ahead of time rather than transpiled by the consumer's Next.js pipeline. This isn't optional — Next.js loads `next.config.mjs` directly in Node before webpack/Turbopack initializes, so `transpilePackages` (a bundler-level mechanism) never gets a chance to run against the config file's own imports; whatever `next.config.mjs` imports must already be plain, executable JavaScript. Any future subpath export that a consumer's config file needs to import — not just `withCanopy()` — will face the same constraint and need the same ahead-of-time build step.
+
 **Creating a new adapter**:
 
 - Implement user extraction (read auth headers/cookies, call auth plugin)
@@ -2224,7 +2266,7 @@ Unlike comments, groups and permissions are configuration that should be version
 
 ### Why do settings use a separate branch?
 
-In both prod and dev modes, permission and group changes are stored on a dedicated orphan settings branch (named `canopycms-settings-{deploymentName}`) rather than on content branches. The branch name is deployment-specific so that multiple deployments sharing the same git repository can maintain independent settings. In dev mode, this branch lives in the local bare remote (`.canopy-dev/remote.git`) and is never pushed to GitHub. This design provides several benefits:
+In both prod and dev modes, permission and group changes are stored on a dedicated orphan settings branch (named `canopycms-settings-{deploymentName}`) rather than on content branches. The branch name is deployment-specific so that multiple deployments sharing the same git repository can maintain independent settings — see [Deployment Name Resolution](#deployment-name-resolution) for how `deploymentName` itself is resolved. In dev mode, this branch lives in the local bare remote (`.canopy-dev/remote.git`) and is never pushed to GitHub. This design provides several benefits:
 
 **Isolation from content changes:**
 
@@ -2251,6 +2293,10 @@ In both prod and dev modes, permission and group changes are stored on a dedicat
 - Settings changes are immediate (no PR workflow needed)
 
 The `settings-helpers` pattern abstracts this branching logic so API handlers don't need mode-specific conditionals.
+
+### Why refuse to boot instead of migrating when the resolved settings branch changes?
+
+Because orphan branches share no history, there is no meaningful "migration" from one settings branch to another — the destination starts empty by construction. A deployment whose resolved settings branch changes (a new `deploymentName`, a hand-set `settingsBranch`, or a changed `CANOPYCMS_DEPLOYMENT_NAME`) while its settings workspace already holds real data has only two honest options: destroy the old data, or refuse. CanopyCMS refuses, at boot, before any git operation runs — a thrown error naming both the currently-checked-out and newly-resolved branch is recoverable (fix the config/env and redeploy); a silent orphan-checkout wiping `permissions.json` and `groups.json` is not. See [Deployment Name Resolution](#deployment-name-resolution).
 
 ### Why are rebase conflicts non-blocking for editors?
 
@@ -2526,7 +2572,7 @@ The `withCanopy()` wrapper in `canopycms-next` solves both problems in one call:
 
 **Why solve this in the adapter package?** The dual-React problem is specific to how Next.js resolves modules through symlinks. It is a build-tooling concern, not business logic. Placing it in the adapter keeps the core package clean and makes the fix discoverable for Next.js adopters in the package they already import. Other framework adapters would handle their bundler's equivalent quirks in their own way.
 
-**Why not require pre-compilation?** Pre-compiling Canopy packages would eliminate the `transpilePackages` requirement but would add a build step to the development workflow, slow down iteration, and make debugging harder (source maps through compiled output). Exporting raw TypeScript keeps the development loop fast and debuggable.
+**Why not require pre-compilation?** Pre-compiling Canopy packages would eliminate the `transpilePackages` requirement but would add a build step to the development workflow, slow down iteration, and make debugging harder (source maps through compiled output). Exporting raw TypeScript keeps the development loop fast and debuggable. The one exception is the `canopycms-next/config` subpath that `withCanopy()` itself is imported from — see [Framework Adapters](#framework-adapters) for why that specific export has no choice but to ship pre-built.
 
 ### Why split a dual-build content route into static and server page variants?
 

@@ -53,6 +53,7 @@ Lambda (VPC, no internet)               EC2 Worker (t4g.nano spot)
 - GitHub repo with your site content
 - Clerk account (or plan to use dev auth for testing)
 - Node.js 20+
+- A `next` version within `canopycms-next`'s peer dependency range (see [README Requirements](../README.md#requirements)) — in particular, avoid `16.2.x`: it fork-bombs `next dev --turbopack` on any app that imports CSS (including the CanopyCMS editor's Mantine styles), which you'll hit locally before you ever get to Step 3
 
 ## Step 1: Add CanopyCMS to Your App
 
@@ -255,46 +256,66 @@ cdk deploy CmsStack
 
 ## Step 5: CI/CD
 
-The generated `.github/workflows/deploy-cms.yml` is a template. Customize it for your setup:
+The generated `.github/workflows/deploy-cms.yml` runs `cdk deploy`, and that is
+deliberately the **only** thing that ships code.
 
-```yaml
-name: Deploy CMS
-on:
-  push:
-    paths: ['app/**', 'content/**', 'canopycms.config.ts']
-  workflow_dispatch:
+The stack passes the CMS image as `lambda.DockerImageCode.fromImageAsset('.', {
+file: 'Dockerfile.cms' })` — a CDK-built asset. `cdk deploy` builds it,
+publishes it to the CDK bootstrap assets repository, and points the Lambda at
+it as part of the change set. It also rolls the EC2 worker, because
+`CanopyCmsService` gives the worker Auto Scaling Group a rolling
+`UpdatePolicy`; without that, a changed worker bundle would sit unused in a
+launch template until the next spot interruption.
 
-jobs:
-  deploy:
-    runs-on: ubuntu-latest
-    permissions:
-      id-token: write
-      contents: read
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with: { node-version: 20 }
+> **Do not add an ECR push plus `aws lambda update-function-code` alongside
+> it.** That builds the image twice and leaves the function's image URI out of
+> sync with CloudFormation's view of it — the next `cdk deploy` that touches
+> the function silently reverts your code to the CDK asset. If you want to
+> control the image tag yourself, switch the stack to
+> `DockerImageCode.fromEcr(repo, { tagOrDigest })` and keep `cdk deploy` as the
+> single deployer. Pick one mechanism.
 
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: arn:aws:iam::ACCOUNT:role/deploy-role
-          aws-region: us-east-1
+Prerequisites that an update-function-code pipeline did not need:
 
-      - name: Login to ECR
-        uses: aws-actions/amazon-ecr-login@v2
+1. **CDK bootstrap** in the target account and region (`cdk bootstrap`).
+2. **A broader OIDC role.** It must be able to assume the CDK bootstrap roles
+   (`cdk-hnb659fds-*-deploy-role`, `-file-publishing-role`,
+   `-image-publishing-role`, `-lookup-role`). `cdk deploy` mutates
+   infrastructure, so this is a wider grant than updating a function's code.
+3. **A Docker daemon on the runner** (`ubuntu-latest` has one).
 
-      - name: Build and push CMS image
-        run: |
-          docker build -f Dockerfile.cms -t $ECR_REPO:latest .
-          docker push $ECR_REPO:latest
+### Build-time client keys
 
-      - name: Update Lambda
-        run: |
-          aws lambda update-function-code \
-            --function-name CmsFunction \
-            --image-uri $ECR_REPO:latest
+`NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` is inlined into the **client** bundle by
+Next.js at image-build time, so it has to reach the image _build_ — a Lambda
+environment variable is far too late. Because CDK builds the image, it must be
+passed through `buildArgs` in the stack, not through a `docker build
+--build-arg` step in CI:
+
+```ts
+cmsDockerImage: lambda.DockerImageCode.fromImageAsset('.', {
+  file: 'Dockerfile.cms',
+  buildArgs: {
+    NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY ?? '',
+  },
+}),
 ```
+
+The workflow sets that variable on the `cdk deploy` step from a repository
+variable. If it is missing, the deploy still succeeds and the editor ships with
+an empty publishable key.
+
+### Worker outage during deploy
+
+The worker ASG has `minCapacity` and `maxCapacity` of 1, so the rolling update
+is terminate-then-relaunch with a short gap while the replacement boots
+(package installs and the EFS mount — roughly 2–4 minutes). This is safe: the
+task queue and branch workspaces live on EFS and are picked up on boot, and the
+Lambda's Save/Publish enqueue paths are unaffected. Tasks interrupted mid-flight
+are recovered by the worker's orphaned-task sweep, which runs every task-queue
+cycle.
+
+See `examples/aws-deployment/deploy-cms.yml` for the full workflow.
 
 ## Step 6: Create Secrets
 
@@ -317,7 +338,7 @@ The Lambda does NOT need these secrets — only the EC2 worker reads them.
 
 ## Settings Publishing Flow (Permissions & Groups)
 
-Settings changes (permissions and groups) follow the same Lambda→worker pattern as content, using a dedicated settings branch named `canopycms-settings-{deploymentName}` (e.g., `canopycms-settings-prod`):
+Settings changes (permissions and groups) follow the same Lambda→worker pattern as content, using a dedicated settings branch named `canopycms-settings-{deploymentName}` (e.g., `canopycms-settings-prod`). See [Two deployments, one repository](#two-deployments-one-repository) below for how `deploymentName` is resolved and why it matters as soon as more than one deployment touches the same repo.
 
 1. Admin changes permissions/groups in the CMS UI
 2. Lambda commits changes to the settings branch workspace on EFS
@@ -326,20 +347,56 @@ Settings changes (permissions and groups) follow the same Lambda→worker patter
 5. EC2 worker dequeues the task, pushes the settings branch from `remote.git` to GitHub, and creates/updates a PR
 6. Additionally, the worker's `syncGit()` pushes settings branches on every cycle as a safety net
 
+## Two deployments, one repository
+
+Two `CanopyCmsService` stacks can point at the same GitHub repo (e.g. a test stack and a prod stack, or two independently-deployed sites sharing one monorepo). If both are left at their defaults, **both resolve the same settings branch — `canopycms-settings-prod` — and fight over it**: whichever deployment's worker pushes last wins, permissions/groups PRs from one deployment get silently clobbered by the other's push, and reviewers see confusing, unattributable diffs on a single PR that's actually serving two unrelated CMS instances.
+
+The fix is to give each stack a distinct `deploymentName`:
+
+```typescript
+new CanopyCmsService(this, 'Cms', {
+  // ...
+  deploymentName: 'prod', // this stack's settings branch: canopycms-settings-prod
+})
+```
+
+`deploymentName` is stamped into the Lambda's `CANOPYCMS_DEPLOYMENT_NAME` environment variable and the worker's `.env`, and resolved with this precedence (see `resolveDeploymentName` in `packages/canopycms/src/operating-mode/deployment-name.ts`):
+
+1. `CANOPYCMS_DEPLOYMENT_NAME` (stamped per-stack by this CDK prop) — wins
+2. `deploymentName` in the shared repo's `canopycms.config.ts`
+3. the operating mode's default (`prod` / `local`)
+
+The env var deliberately wins over config: it's the one guaranteed to differ between two stacks sharing a repo, while `config.deploymentName` is checked out identically by both. If both are set and disagree, the Lambda logs a one-time warning naming both values and which one won.
+
+**Changing `deploymentName` (or `settingsBranch`) on a stack that already has a populated settings workspace is refused at boot, loudly** — it is not migrated automatically. Renaming the resolved settings branch would make CanopyCMS check out a _different_ orphan branch in the same on-disk workspace, which wipes `permissions.json`/`groups.json` with no history to recover them from (orphan branches share none). If you see this error, either restore the previous value or deliberately move the settings workspace aside first — see the error message for specifics.
+
 ## Worker observability
 
 The EC2 worker's stdout/stderr ships to CloudWatch Logs by default via the
 amazon-cloudwatch-agent — no SSM or shell access needed to see what it's doing.
+The CMS Lambda and the asset transform Lambda (if you use `AssetSupport`) each
+get their own dedicated log group too, on the same convention.
 
-- **Log group**: `/canopycms/<stackName>/worker`, created by `CanopyCmsService`
-  (90-day default retention, `RemovalPolicy.DESTROY`). Filter on the `/canopycms/`
-  prefix in the CloudWatch console to see every deployment's worker log group at
-  once. Override retention with `workerLogRetention` and the name with
-  `workerLogGroupName` (also useful if you instantiate `CanopyCmsService` twice in
-  one stack, since the default name would otherwise collide); the group itself is
-  available off the construct as `service.workerLogGroup`.
-- **Log streams**: one per instance id — a new stream appears every time the spot
-  worker is replaced.
+- **Log groups**: all created by CDK with a custom `/canopycms/...` name,
+  90-day default retention, and `RemovalPolicy.DESTROY` — never the
+  CloudFormation-implicit `/aws/lambda/<function-name>` group Lambda would
+  otherwise auto-create (which CDK can't manage: infinite retention, and it
+  survives `cdk destroy`). Filter on the `/canopycms/` prefix in the
+  CloudWatch console to see every deployment's log groups at once.
+  | Component | Default log group name | Retention override | Name override | Construct property |
+  | --- | --- | --- | --- | --- |
+  | EC2 worker | `/canopycms/<stackName>/worker` | `workerLogRetention` | `workerLogGroupName` | `service.workerLogGroup` |
+  | CMS Lambda | `/canopycms/<stackName>/cms` | `cmsLogRetention` | `cmsLogGroupName` | `service.cmsLogGroup` |
+  | Transform Lambda | `/canopycms/<stackName>/transform` | `transformLogRetention` | `transformLogGroupName` | `assetSupport.transformLogGroup` |
+
+  Name overrides are also useful if you instantiate `CanopyCmsService` or
+  `AssetSupport` twice in one stack, since the default names would otherwise
+  collide.
+
+- **Log streams**: one per instance id for the worker — a new stream appears
+  every time the spot worker is replaced (including by the rolling update
+  described in [Redeploying updates the worker too](#redeploying-updates-the-worker-too)
+  below). The Lambdas use their usual per-container-instance streams.
 - **Timestamps**: log events carry ingestion timestamps (the worker doesn't emit
   its own yet — see
   [`.claude/future-tasks/worker-log-timestamps.md`](../.claude/future-tasks/worker-log-timestamps.md)).
@@ -349,8 +406,50 @@ amazon-cloudwatch-agent — no SSM or shell access needed to see what it's doing
   output, though `systemctl status canopy-worker` still works for a basic
   running/not-running check.
 - **Org tagging**: tag aspects applied stack-wide (`Tags.of(stack).add(...)`)
-  cascade to the log group automatically like any other CDK resource, so org-wide
-  tagging policies need no Canopy-specific configuration.
+  cascade to every log group automatically like any other CDK resource, so
+  org-wide tagging policies need no Canopy-specific configuration.
+
+## Redeploying updates the worker too
+
+The worker's Auto Scaling Group has an `UpdatePolicy` (`rollingUpdate` with
+`minInstancesInService: 0`, since the ASG's `minCapacity`/`maxCapacity` are
+both 1), so `cdk deploy` actually terminates and relaunches the EC2 instance
+whenever anything in its launch template changes — most commonly a new
+worker code bundle, but also an AMI refresh, instance-role change, or
+user-data edit. Without this, CloudFormation's default behavior for an ASG
+behind a changed launch template is to update the template resource and stop
+there: the running instance keeps its old user-data (and therefore the old
+worker bundle) until a spot interruption or a manual terminate happens to
+replace it — so a plain `cdk deploy` would silently ship every other change
+except the one to the worker.
+
+Because `minInstancesInService` must be `0` here, every such deploy causes a
+short worker outage (replacement boot time — installing git/unzip/nodejs/
+efs-utils and mounting EFS — is typically 2-4 minutes). This is expected and
+safe:
+
+- The task queue and branch workspaces live on EFS, not on the instance, so
+  the replacement worker picks up exactly where the old one left off.
+- The Lambda's Save/Publish paths only enqueue task files onto EFS and never
+  talk to the worker directly, so they queue up normally during the outage
+  instead of failing.
+- A task that was actually being processed when the old instance was
+  terminated is automatically recovered: the worker re-checks
+  `.tasks/processing/` for stranded tasks on every task-queue poll cycle (not
+  only at its own boot), so a task orphaned by the old instance's termination
+  gets moved back to `pending/` and retried once it's old enough (5 minutes
+  by default) — no manual intervention needed.
+
+There is deliberately no `cfn-signal`/readiness gate on this update: the
+worker's systemd unit is `Type=simple` with `Restart=always`, so
+`systemctl start` reports success the instant the process execs, regardless
+of whether it then crash-loops — a real readiness signal would need to poll
+`worker-status.json` or `systemctl is-active` before signaling, which isn't
+implemented yet. If you need to confirm a redeploy actually took (e.g. after
+a worker code change), check the new instance's log stream (see
+[Worker observability](#worker-observability) above) or
+`npx canopycms worker run-once`-style diagnostics rather than relying on
+`cdk deploy` exiting cleanly as proof.
 
 ## Security Model
 
@@ -381,13 +480,17 @@ CanopyCMS handles one deployment. Instantiate the CDK stack multiple times for d
 // Testing CMS (sandbox account)
 new CmsStack(app, 'CmsTest', {
   env: { account: '111111111111', region: 'us-east-1' },
+  deploymentName: 'test',
 })
 
 // Production CMS (official account)
 new CmsStack(app, 'CmsProd', {
   env: { account: '222222222222', region: 'us-east-1' },
+  deploymentName: 'prod',
 })
 ```
+
+Separate AWS accounts mean these two stacks' settings branches would never collide even without `deploymentName` — but set distinct values anyway: it's the same repo's `canopycms-settings-*` branch namespace on GitHub, and a future stack sharing an account (or repo) with either of these should not have to guess that the convention exists. See [Two deployments, one repository](#two-deployments-one-repository).
 
 ## Troubleshooting
 

@@ -36,21 +36,36 @@ vi.mock('../assets/transform', async (importOriginal) => {
   return { ...actual, applyTransform: vi.fn(actual.applyTransform) }
 })
 
-// 1x1-scale PNG fixture (IHDR-only, no pixel data) - same construction as
-// assets/pipeline.test.ts's PNG_3X5_BASE64; duplicated here to keep this file
-// self-contained. 3x5.
-const PNG_3X5_BASE64 = 'iVBORw0KGgoAAAANSUhEUgAAAAMAAAAFCAYAAAAAAAAA'
-
 /**
- * Decodes to a Uint8Array backed by a concrete `ArrayBuffer` (not the wider
- * `ArrayBufferLike`/`SharedArrayBuffer` a `Buffer` is generically typed as),
- * so the result is directly usable as a `BlobPart` for `new File([...])`.
+ * Real, sharp-decodable 3x5 PNG fixture - finalize now forces a real pixel
+ * decode for raster uploads (see assets/pipeline.ts's `rasterIsDecodable`),
+ * so the old hand-built, header-only (IHDR but no real IDAT) PNG_3X5_BASE64
+ * constant this replaced would be correctly rejected by every success-path
+ * test below. Memoized: every call site in this file wants the exact same
+ * trivial fixture, and re-encoding on every call would add up across the
+ * many upload-path tests here.
+ *
+ * Copies into a fresh, concrete `ArrayBuffer` (rather than returning
+ * `sharp`'s `Buffer` directly, or a `Uint8Array` view over it) because
+ * `Buffer`/`Uint8Array` are typed as backed by the wider `ArrayBufferLike`
+ * (which also covers `SharedArrayBuffer`), and several call sites below pass
+ * this straight into `new File([...])`, whose `BlobPart` type requires an
+ * `ArrayBufferView<ArrayBuffer>` specifically - same construction the old
+ * `bytesOf` helper this replaces used, for the same reason.
  */
-function bytesOf(base64: string): Uint8Array<ArrayBuffer> {
-  const buf = Buffer.from(base64, 'base64')
-  const arrayBuffer = new ArrayBuffer(buf.byteLength)
-  new Uint8Array(arrayBuffer).set(buf)
-  return new Uint8Array(arrayBuffer)
+let cachedRasterPng: Uint8Array<ArrayBuffer> | undefined
+async function rasterPngBytes(): Promise<Uint8Array<ArrayBuffer>> {
+  if (!cachedRasterPng) {
+    const buf = await sharp({
+      create: { width: 3, height: 5, channels: 3, background: { r: 10, g: 20, b: 30 } },
+    })
+      .png()
+      .toBuffer()
+    const arrayBuffer = new ArrayBuffer(buf.byteLength)
+    new Uint8Array(arrayBuffer).set(buf)
+    cachedRasterPng = new Uint8Array(arrayBuffer)
+  }
+  return cachedRasterPng
 }
 
 const sampleMeta: AssetMeta = {
@@ -174,7 +189,7 @@ describe('finalize + uploadProxied (real LocalAssetStore in a tmp dir)', () => {
 
   it('finalizes a staged raster upload end to end, returning an AssetRecord with src', async () => {
     const stagingKey = 'asset-staging/bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'
-    await store.writeStaging(stagingKey, bytesOf(PNG_3X5_BASE64), 'image/png')
+    await store.writeStaging(stagingKey, await rasterPngBytes(), 'image/png')
 
     const res = await ASSET_ROUTES.finalize.handler(ctxWith(store), authedReq(), {
       stagingKey,
@@ -222,8 +237,8 @@ describe('finalize + uploadProxied (real LocalAssetStore in a tmp dir)', () => {
   it('dedups identical bytes: second finalize returns the first upload winner meta, no rewrite', async () => {
     const stagingKey1 = 'asset-staging/eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee'
     const stagingKey2 = 'asset-staging/ffffffff-ffff-4fff-8fff-ffffffffffff'
-    await store.writeStaging(stagingKey1, bytesOf(PNG_3X5_BASE64), 'image/png')
-    await store.writeStaging(stagingKey2, bytesOf(PNG_3X5_BASE64), 'image/png')
+    await store.writeStaging(stagingKey1, await rasterPngBytes(), 'image/png')
+    await store.writeStaging(stagingKey2, await rasterPngBytes(), 'image/png')
 
     const first = await ASSET_ROUTES.finalize.handler(ctxWith(store), authedReq(), {
       stagingKey: stagingKey1,
@@ -258,7 +273,7 @@ describe('finalize + uploadProxied (real LocalAssetStore in a tmp dir)', () => {
   })
 
   it('uploadProxied: accepts a multipart file through a proxied-mode store', async () => {
-    const file = new File([bytesOf(PNG_3X5_BASE64)], 'upload.png', { type: 'image/png' })
+    const file = new File([await rasterPngBytes()], 'upload.png', { type: 'image/png' })
     const formData = new FormData()
     formData.append('file', file)
 
@@ -279,7 +294,7 @@ describe('finalize + uploadProxied (real LocalAssetStore in a tmp dir)', () => {
   })
 
   it('uploadProxied: an explicit filename field overrides file.name', async () => {
-    const file = new File([bytesOf(PNG_3X5_BASE64)], 'original.png', { type: 'image/png' })
+    const file = new File([await rasterPngBytes()], 'original.png', { type: 'image/png' })
     const formData = new FormData()
     formData.append('file', file)
     formData.append('filename', 'renamed.png')
@@ -342,7 +357,7 @@ describe('finalize + uploadProxied (real LocalAssetStore in a tmp dir)', () => {
     // No Content-Length header at all - the early guard is a no-op (header
     // returns null), and the request proceeds to the real (small) body,
     // which passes the post-read check normally.
-    const file = new File([bytesOf(PNG_3X5_BASE64)], 'a.png', { type: 'image/png' })
+    const file = new File([await rasterPngBytes()], 'a.png', { type: 'image/png' })
     const formData = new FormData()
     formData.append('file', file)
 
@@ -692,7 +707,7 @@ describe('assetRawRoute - lazy transform (GET /assets/t/{directives}/{hash32}/{s
     expect(res).toMatchObject({ ok: false, status: 404 })
   })
 
-  it('returns a 502-style error when the transform engine rejects the input', async () => {
+  it('passes the transform engine real rejection status through (422 for undecodable input), not a generic 502', async () => {
     const junkHash32 = 'f'.repeat(32)
     await store.putOriginal({
       hash32: junkHash32,
@@ -705,7 +720,39 @@ describe('assetRawRoute - lazy transform (GET /assets/t/{directives}/{hash32}/{s
     const res = await assetRawRoute.handler(ctxWith(store), authedReq(), {
       key: `assets/t/orig/${junkHash32}/photo.png`,
     })
-    expect(res).toMatchObject({ ok: false, status: 502 })
+    // Real applyTransform (spied, not stubbed) rejects undecodable bytes with
+    // 422 - the dev route must forward that real status, not flatten every
+    // rejection to 502 (which would mislabel a client-input problem as a
+    // server failure).
+    expect(res).toMatchObject({ ok: false, status: 422 })
+  })
+
+  it('passes a 400 transform rejection (unsupported input format) through unflattened', async () => {
+    const spy = vi.spyOn(transformModule, 'applyTransform').mockResolvedValueOnce({
+      ok: false,
+      status: 400,
+      error: "Unsupported input format for transform: 'bmp'",
+    })
+
+    const res = await assetRawRoute.handler(ctxWith(store), authedReq(), {
+      key: `assets/t/orig/${rasterHash32}/photo.png`,
+    })
+    expect(res).toMatchObject({ ok: false, status: 400 })
+    spy.mockRestore()
+  })
+
+  it('passes a 413 transform rejection (oversized output) through unflattened', async () => {
+    const spy = vi.spyOn(transformModule, 'applyTransform').mockResolvedValueOnce({
+      ok: false,
+      status: 413,
+      error: 'Transformed output exceeds the byte cap',
+    })
+
+    const res = await assetRawRoute.handler(ctxWith(store), authedReq(), {
+      key: `assets/t/orig/${rasterHash32}/photo.png`,
+    })
+    expect(res).toMatchObject({ ok: false, status: 413 })
+    spy.mockRestore()
   })
 })
 
@@ -769,7 +816,7 @@ describe('full request pipeline - bodyFormat: multipart bypass (regression for t
       getBranchContext: async () => null,
     })
 
-    const file = new File([bytesOf(PNG_3X5_BASE64)], 'a.png', { type: 'image/png' })
+    const file = new File([await rasterPngBytes()], 'a.png', { type: 'image/png' })
     const formData = new FormData()
     formData.append('file', file)
 

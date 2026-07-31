@@ -12,8 +12,23 @@ A schema-driven, branch-aware content management system for git-backed, statical
 - **Minimal integration**: Just config, one editor component, and one API route
 - **Framework-agnostic core**: Works with Next.js today, adaptable to other frameworks
 
+## Requirements
+
+- **Next.js**: `^13.5.7`, `^14.2.25`, `^15.2.3`, or `16.x` excluding `16.2.x` (see [Known-bad version: Next 16.2.x](#known-bad-version-next-162x) below). This is `canopycms-next`'s `next` peer dependency range -- installing a version outside it triggers your package manager's peer-dependency warning.
+- **React**: `^18.0.0` or `^19.0.0`
+- **Node.js**: `>=18` to consume the published packages; `>=22` to work in this monorepo (see `.nvmrc`).
+
+### Known-bad version: Next 16.2.x
+
+Next 16.2.x fork-bombs `next dev --turbopack`: the dev server boots, logs `○ Compiling /`, and the Node process tree self-replicates (255 → 511 → 1023 ...) until the machine saturates. Bisected to Turbopack's PostCSS plugin resolution triggering on any imported CSS file -- including `@mantine/core/styles.css`, which the CanopyCMS editor depends on, so any adopter using the default editor hits this on first `pnpm dev` after upgrading. Not reproducible on Next 16.1.7.
+
+`canopycms-next`'s `next` peer dependency excludes `16.2.x` specifically -- 16.0.x and 16.1.x are unaffected, and 16.3.x+ is allowed because the regression has only been observed and bisected in 16.2.x; it has not been verified as still broken (or fixed) in later releases, so blocking them preemptively would be a guess, not a documented constraint. If you hit this on a version outside 16.2.x, please file an issue so this range can be corrected.
+
+If you're currently on 16.2.x, downgrade to `~16.1.7` (known-good) until this is resolved upstream.
+
 ## Table of Contents
 
+- [Requirements](#requirements)
 - [Quick Start](#quick-start)
 - [Schema Registry and References](#schema-registry-and-references)
 - [Configuration Reference](#configuration-reference)

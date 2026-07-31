@@ -7,7 +7,13 @@ import { simpleGit } from 'simple-git'
 
 import { flattenSchema } from './config'
 import { ContentStore } from './content-store'
-import { GitManager, GitConflictError, gitChildEnv } from './git-manager'
+import {
+  GitManager,
+  GitConflictError,
+  gitChildEnv,
+  gitNetworkChildEnv,
+  GITHUB_TRACKING_REF_PREFIX,
+} from './git-manager'
 import { generateId } from './id'
 import { initTestRepo, openBareRepo } from './test-utils'
 
@@ -460,6 +466,84 @@ describe('GitManager.ensureLocalSimulatedRemote', () => {
     const cloneFiles = await fs.readdir(clonePath)
     expect(cloneFiles).toContain('main.txt')
     expect(cloneFiles).not.toContain('feature.txt')
+  })
+})
+
+describe('GitManager.bareRemoteHasBranch', () => {
+  let tmpDir: string
+  let remotePath: string
+
+  beforeEach(async () => {
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'canopy-git-hasbranch-test-'))
+    remotePath = path.join(tmpDir, 'remote.git')
+    await simpleGit().raw(['init', '--bare', '--initial-branch=main', remotePath])
+
+    // Seed a commit in a throwaway working repo, then push it into the bare
+    // remote under two DIFFERENT ref names/namespaces so each namespace can
+    // be tested independently.
+    const seedPath = path.join(tmpDir, 'seed')
+    await fs.mkdir(seedPath, { recursive: true })
+    const seedGit = await initTestRepo(seedPath)
+    await seedGit.raw(['branch', '-M', 'main'])
+    await fs.writeFile(path.join(seedPath, 'f.txt'), 'hello', 'utf8')
+    await seedGit.add(['.'])
+    await seedGit.commit('seed commit')
+
+    // Only a local head: refs/heads/local-only-branch
+    await seedGit.raw(['push', remotePath, 'main:refs/heads/local-only-branch'])
+    // Only in the GitHub tracking namespace -- models a branch another
+    // CanopyCMS deployment (or a direct push to GitHub) created, which
+    // reconcileTrackedBranches() (worker/cms-worker.ts) hasn't yet turned
+    // into a local head.
+    await seedGit.raw(['push', remotePath, `main:${GITHUB_TRACKING_REF_PREFIX}tracked-only-branch`])
+  })
+
+  afterEach(async () => {
+    await fs.rm(tmpDir, { recursive: true, force: true })
+  })
+
+  it('returns true for a branch present in refs/heads/*', async () => {
+    await expect(GitManager.bareRemoteHasBranch(remotePath, 'local-only-branch')).resolves.toBe(
+      true,
+    )
+  })
+
+  it('returns true for a branch present ONLY in the GitHub tracking namespace (two-deployments-one-repo case)', async () => {
+    await expect(GitManager.bareRemoteHasBranch(remotePath, 'tracked-only-branch')).resolves.toBe(
+      true,
+    )
+  })
+
+  it('returns false for a branch absent from both namespaces', async () => {
+    await expect(GitManager.bareRemoteHasBranch(remotePath, 'no-such-branch')).resolves.toBe(false)
+  })
+
+  it('does not treat a hierarchical sibling as a collision', async () => {
+    // `for-each-ref refs/heads/feature` matches `refs/heads/feature/foo` --
+    // patterns match "completely, or from the beginning up to a slash". Since
+    // syncGit mirrors EVERY GitHub branch into the tracking namespace, without
+    // an exact refname comparison this would report a collision for a branch
+    // named literally `feature` in any repo containing `feature/*`,
+    // `release/*`, `dependabot/*` and so on -- blocking legitimate names. The
+    // superseded `branch --list` implementation matched exactly, so this is a
+    // property that had to be restored deliberately.
+    const seedPath = path.join(tmpDir, 'seed')
+    const seedGit = simpleGit({ baseDir: seedPath })
+    await seedGit.raw(['push', remotePath, 'main:refs/heads/feature/foo'])
+    await seedGit.raw(['push', remotePath, `main:${GITHUB_TRACKING_REF_PREFIX}release/1.0`])
+
+    await expect(GitManager.bareRemoteHasBranch(remotePath, 'feature')).resolves.toBe(false)
+    await expect(GitManager.bareRemoteHasBranch(remotePath, 'release')).resolves.toBe(false)
+    // The full names themselves must still be found.
+    await expect(GitManager.bareRemoteHasBranch(remotePath, 'feature/foo')).resolves.toBe(true)
+    await expect(GitManager.bareRemoteHasBranch(remotePath, 'release/1.0')).resolves.toBe(true)
+  })
+
+  it('throws (does not silently report "absent") when the repo path is missing/unreadable', async () => {
+    const missingPath = path.join(tmpDir, 'does-not-exist.git')
+    await expect(GitManager.bareRemoteHasBranch(missingPath, 'anything')).rejects.toThrow(
+      /Cannot inspect remote mirror/,
+    )
   })
 })
 
@@ -1799,11 +1883,76 @@ describe('gitChildEnv', () => {
     expect(env.GIT_EDITOR).toBeUndefined()
   })
 
+  it('gitNetworkChildEnv keeps proxy/TLS vars that the local-ops allowlist drops', () => {
+    // Regression guard: routing the worker's GitHub fetch/push through
+    // gitChildEnv would have silently broken every adopter reaching GitHub
+    // through a corporate proxy or custom CA bundle.
+    vi.stubEnv('HTTPS_PROXY', 'http://proxy.example:8080')
+    vi.stubEnv('NO_PROXY', 'internal.example')
+    vi.stubEnv('GIT_SSL_CAINFO', '/etc/ssl/corp.pem')
+    vi.stubEnv('NODE_EXTRA_CA_CERTS', '/etc/ssl/extra.pem')
+
+    const env = gitNetworkChildEnv()
+
+    expect(env.HTTPS_PROXY).toBe('http://proxy.example:8080')
+    expect(env.NO_PROXY).toBe('internal.example')
+    expect(env.GIT_SSL_CAINFO).toBe('/etc/ssl/corp.pem')
+    expect(env.NODE_EXTRA_CA_CERTS).toBe('/etc/ssl/extra.pem')
+  })
+
+  it('gitNetworkChildEnv still drops GIT_SSH_COMMAND (simple-git blocks it; GitHub is reached over https)', () => {
+    vi.stubEnv('GIT_SSH_COMMAND', 'ssh -i /keys/id')
+
+    expect(gitNetworkChildEnv().GIT_SSH_COMMAND).toBeUndefined()
+  })
+
+  it('gitNetworkChildEnv still forces the C locale so rejection text stays matchable', () => {
+    vi.stubEnv('LANG', 'fr_FR.UTF-8')
+    vi.stubEnv('LC_ALL', 'fr_FR.UTF-8')
+
+    const env = gitNetworkChildEnv()
+
+    expect(env.LC_ALL).toBe('C')
+    expect(env.LANG).toBe('C')
+  })
+
+  it('gitNetworkChildEnv drops editor and GIT_CONFIG_* vars simple-git refuses to spawn with', () => {
+    vi.stubEnv('GIT_EDITOR', 'vim')
+    vi.stubEnv('EDITOR', 'vim')
+    vi.stubEnv('GIT_CONFIG_COUNT', '1')
+
+    const env = gitNetworkChildEnv()
+
+    expect(env.GIT_EDITOR).toBeUndefined()
+    expect(env.EDITOR).toBeUndefined()
+    expect(env.GIT_CONFIG_COUNT).toBeUndefined()
+  })
+
   it('overrides win over process.env values', () => {
     vi.stubEnv('PATH', '/usr/bin:/bin')
 
     const env = gitChildEnv({ PATH: '/overridden/path' })
 
     expect(env.PATH).toBe('/overridden/path')
+  })
+
+  it('forces LC_ALL/LANG to C regardless of ambient locale (push-rejection classification depends on stable English git output)', () => {
+    vi.stubEnv('LC_ALL', 'de_DE.UTF-8')
+    vi.stubEnv('LANG', 'de_DE.UTF-8')
+
+    const env = gitChildEnv({})
+
+    expect(env.LC_ALL).toBe('C')
+    expect(env.LANG).toBe('C')
+  })
+
+  it('forces LC_ALL/LANG to C even when no ambient locale is set', () => {
+    vi.stubEnv('LC_ALL', undefined)
+    vi.stubEnv('LANG', undefined)
+
+    const env = gitChildEnv({})
+
+    expect(env.LC_ALL).toBe('C')
+    expect(env.LANG).toBe('C')
   })
 })

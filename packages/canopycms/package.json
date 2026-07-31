@@ -131,6 +131,7 @@
     "chokidar": "^4.0.3",
     "chroma-js": "^3.2.0",
     "content-disposition": "^2.0.1",
+    "fast-deep-equal": "^3.1.3",
     "file-type": "^20.4.1",
     "gray-matter": "^4.0.3",
     "image-size": "^2.0.2",
@@ -145,6 +146,7 @@
     "sharp": "^0.35.3",
     "short-uuid": "^6.0.3",
     "simple-git": "^3.36.0",
+    "swr": "^2.4.2",
     "yaml": "^2.8.3",
     "zod": "^3.23.8"
   },

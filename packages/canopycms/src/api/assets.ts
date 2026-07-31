@@ -366,7 +366,12 @@ async function serveLazyTransform(
     parsed.directives,
   )
   if (!transformed.ok) {
-    return { ok: false, status: 502, error: transformed.error }
+    // Pass the real status through rather than flattening every rejection to
+    // 502 - `applyTransform` already distinguishes client-input errors (400
+    // unsupported format, 413 oversized output) from a genuine decode
+    // failure (422), none of which are "this server failed" (502). Mirrors
+    // the prod transform Lambda's own handler.ts, which makes the same fix.
+    return { ok: false, status: transformed.status, error: transformed.error }
   }
 
   const canonicalKey = `${ASSET_PREFIXES.transform}/${formatDirectives(parsed.directives)}/${parsed.hash32}/${parsed.slug}.${parsed.ext}`

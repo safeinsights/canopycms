@@ -91,6 +91,16 @@ export const CanopyConfigSchema = z
     allowNetworkRemoteInProd: z.boolean().optional(),
     settingsBranch: z.string().optional(),
     autoCreateSettingsPR: z.boolean().optional(),
+    // Deliberately `deploymentNameSchema.optional()`, NOT `deploymentNameSchema` alone.
+    // deploymentNameSchema.default('prod') would make `parse(undefined)` resolve to
+    // the literal 'prod' instead of staying `undefined` — collapsing the
+    // env > config > modeDefault precedence chain that resolveDeploymentName
+    // (operating-mode/deployment-name.ts) implements: config would then always
+    // "win" over modeDefault (masking dev's real default of 'local'), and the env
+    // var would just be racing config's baked-in 'prod' instead of a true absence.
+    // `.optional()` here is what keeps an omitted deploymentName reaching
+    // resolveDeploymentName as `undefined`, so it can fall through to modeDefault.
+    // Do not "fix" this by removing `.optional()`.
     deploymentName: deploymentNameSchema.optional(),
     contentRoot: contentRootSchema.default('content'),
     sourceRoot: sourceRootSchema.optional(),
@@ -120,6 +130,17 @@ export const DEFAULT_PROD_WORKSPACE = '/mnt/efs/workspace'
 
 // Note: `mode` has no default by design (SEC-C1) and is intentionally omitted here —
 // operatingModeSchema.parse(undefined) would throw.
+//
+// `deploymentName` is ALSO deliberately omitted here (checked every caller,
+// 2026-07-30: only packages/canopycms/src/services.ts reads from this return
+// value, and only `.remoteName`; nothing ever read `.deploymentName`). Unlike
+// the defaults below, deploymentName's real default is mode-dependent — 'prod'
+// for ProdStrategy, 'local' for DevStrategy (see
+// operating-mode/client-unsafe-strategy.ts's getSettingsBranchName, which
+// resolves it via resolveDeploymentName) — and this accessor has no mode to
+// select between them. Emitting `deploymentNameSchema.parse(undefined)`
+// ('prod') here would silently lie for dev mode; better to have no caller of
+// this than a mode-blind one.
 export const getConfigDefaults = () => ({
   baseBranch: defaultBaseBranchSchema.parse(undefined),
   remoteName: defaultRemoteNameSchema.parse(undefined),
@@ -127,6 +148,5 @@ export const getConfigDefaults = () => ({
   branchAccess: defaultBranchAccessSchema.parse(undefined),
   contentRoot: contentRootSchema.parse(undefined),
   githubTokenEnvVar: githubTokenEnvVarSchema.parse(undefined),
-  deploymentName: deploymentNameSchema.parse(undefined),
   prodWorkspace: DEFAULT_PROD_WORKSPACE,
 })

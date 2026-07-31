@@ -71,6 +71,125 @@ jobs:
           GIT_COMMITTER_EMAIL: ci@canopycms.test
         run: pnpm test
 
+  dual-build:
+    name: Dual-Build Fixture (static + cms)
+    # Verifies CanopyCMS's two deploy shapes (README.md "Dual-Build Sites")
+    # by actually running `next build` twice against apps/dual-build-fixture
+    # -- see dual-build.test.ts for what it asserts. Two Next builds are
+    # expensive, so this job only does the real work on PRs that touch
+    # something able to break the split (below). It is deliberately NOT
+    # gated with a `paths:` filter on the workflow trigger itself: if this
+    # job is ever marked "required" in branch protection, a `paths:`-skipped
+    # *workflow* run never posts a status for that job name at all, so the PR
+    # is stuck on "Expected — Waiting for status to be reported" forever --
+    # a well-known GitHub Actions trap. Instead the job always runs (so it
+    # always reports a conclusion) and the filter step below only skips the
+    # expensive steps inside it, via per-step `if:`, so an irrelevant PR gets
+    # a fast "success" rather than a permanently pending required check.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # paths-filter diffs against the PR base/previous push
+
+      - name: Check for dual-build-relevant changes
+        id: filter
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            # Deliberately NOT the whole of packages/canopycms/src/**: the
+            # split itself lives in canopycms-next (withCanopy,
+            # pageExtensions, route adapters) and the fixture; core-package
+            # source changes are covered by lint:bundle (client-entry node
+            # builtin reachability) and the unit suite, and gating two Next
+            # builds on every core change would make this job run on most
+            # PRs. Manifest/lockfile changes DO run it — a dependency
+            # resolution change can break a build shape on its own.
+            relevant:
+              - 'packages/canopycms-next/**'
+              - 'packages/canopycms/src/cli/template-files/**'
+              - 'packages/canopycms/src/build/**'
+              - 'packages/canopycms/src/static/**'
+              - 'packages/canopycms/package.json'
+              - 'apps/dual-build-fixture/**'
+              # The lockfile decides which Next/react/canopycms dep versions
+              # the fixture actually builds with -- a resolution change (e.g.
+              # a Next bump, the exact class the known-good-version pin in
+              # canopycms-next's peerDependencies exists for) can break a
+              # build shape without touching any of the paths above.
+              - 'pnpm-lock.yaml'
+              - '.github/workflows/ci.yml'
+
+      - uses: pnpm/action-setup@v4
+        if: steps.filter.outputs.relevant == 'true'
+
+      - uses: actions/setup-node@v4
+        if: steps.filter.outputs.relevant == 'true'
+        with:
+          node-version-file: '.nvmrc'
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        if: steps.filter.outputs.relevant == 'true'
+        run: pnpm install --frozen-lockfile
+
+      # The fixture runs in CanopyCMS `mode: 'dev'`, whose request-time content
+      # read resolves the active branch from git HEAD. actions/checkout leaves
+      # HEAD *detached*, which resolves to the literal name "HEAD" -- a name
+      # parseBranchName rejects outright -- so the cms build's `/` 500s at
+      # request time while passing locally, where HEAD is on a real branch.
+      # Merely creating `main` (as the e2e job does) is not enough: that gives
+      # the branch a name but leaves HEAD detached. Pointing `main` AT the
+      # checked-out commit and attaching HEAD to it is what makes dev mode
+      # resolve, and it also means the branch content is the PR's content --
+      # `main` at origin/main would not contain this PR's fixture files at all.
+      # Only the cms build needs this; the static build reads content at build
+      # time.
+      - name: Attach HEAD to a real branch for dev-mode content reads
+        if: steps.filter.outputs.relevant == 'true'
+        run: git checkout -B main
+
+      # canopycms-next's "./config" export (what apps/dual-build-fixture's
+      # next.config.mjs imports) resolves to a pre-bundled dist/config.{cjs,mjs}
+      # -- esbuild-bundled because Next's own config loader can't process raw
+      # TS -- unlike the rest of the package, which workspace consumers import
+      # straight from src/ via transpilePackages. Nothing else in CI builds
+      # this package (no app importing canopycms-next/config was `next
+      # build`-ed here before this job existed), so it has to happen explicitly.
+      - name: Build canopycms-next
+        if: steps.filter.outputs.relevant == 'true'
+        run: pnpm --filter canopycms-next run build
+
+      # Next.js incremental build cache, same pattern as the e2e job's
+      # apps/test-app cache below -- this job runs two full `next build`s
+      # per PR (the expensive part the path filter above exists to gate),
+      # so keeping them incremental matters more here, not less.
+      - name: Cache Next.js build cache
+        if: steps.filter.outputs.relevant == 'true'
+        uses: actions/cache@v4
+        with:
+          path: apps/dual-build-fixture/.next/cache
+          key: nextjs-dual-build-fixture-${{ hashFiles('pnpm-lock.yaml') }}-${{ github.sha }}
+          restore-keys: |
+            nextjs-dual-build-fixture-${{ hashFiles('pnpm-lock.yaml') }}-
+
+      - name: Build and verify both deploy shapes
+        if: steps.filter.outputs.relevant == 'true'
+        working-directory: apps/dual-build-fixture
+        env:
+          # Dev-mode content reads at request time (the cms build's `/`) do
+          # real git ops against a local workspace -- same identity pattern
+          # as the `validate` and `e2e` jobs above.
+          GIT_AUTHOR_NAME: CI Bot
+          GIT_AUTHOR_EMAIL: ci@canopycms.test
+          GIT_COMMITTER_NAME: CI Bot
+          GIT_COMMITTER_EMAIL: ci@canopycms.test
+        run: pnpm run verify:dual-build
+
+      - name: Skipped (no dual-build-relevant changes)
+        if: steps.filter.outputs.relevant != 'true'
+        run: echo "No changes under the dual-build-relevant paths -- skipping the two next builds."
+
   e2e:
     name: E2E Tests (shard ${{ matrix.shard }}/4)
     # Re-enabled 2026-07-24 after the stabilization fix batch (see

@@ -1,35 +1,91 @@
-# CanopyCMS deployment workflow
-# Customize this for your CI/CD setup
+# CanopyCMS deployment workflow.
+#
+# `cdk deploy` is the ONLY thing that ships code here, deliberately.
+#
+# The generated CDK stack passes the CMS image to CanopyCmsService as
+# `lambda.DockerImageCode.fromImageAsset('.', { file: 'Dockerfile.cms' })` -- a
+# CDK-built asset. `cdk deploy` builds that image, publishes it to the CDK
+# bootstrap assets repository, and points the Lambda at it as part of the
+# CloudFormation change set.
+#
+# So do NOT add a separate `docker build` + push to your own ECR repo followed
+# by `aws lambda update-function-code`. That builds the image twice and leaves
+# the function's image URI out of sync with CloudFormation's view of it -- the
+# next `cdk deploy` that touches the function silently reverts your code to the
+# CDK asset. If you want to control the image tag yourself, switch the stack to
+# `DockerImageCode.fromEcr(repo, { tagOrDigest })` and keep `cdk deploy` as the
+# single deployer; don't run both mechanisms.
+#
+# `cdk deploy` also rolls the EC2 worker (CanopyCmsService gives its Auto
+# Scaling Group a rolling UpdatePolicy), so a worker code change reaches the
+# running instance. Expect a short worker outage during the replacement; the
+# task queue and branch workspaces live on EFS and are picked up on boot.
+#
+# Before this workflow can run:
+#   1. Bootstrap CDK in the target account/region: `cdk bootstrap`.
+#      `cdk deploy` needs it; `aws lambda update-function-code` did not, so
+#      this is easy to miss when migrating from an update-only pipeline.
+#   2. Create an IAM role your repo can assume via GitHub OIDC, trusted for
+#      this repository, able to assume the CDK bootstrap roles
+#      (cdk-hnb659fds-*-deploy-role, -file-publishing-role,
+#      -image-publishing-role, -lookup-role). This is a broader grant than an
+#      update-function-code pipeline needed -- `cdk deploy` mutates
+#      infrastructure.
+#   3. Set AWS_DEPLOY_ROLE_ARN (secret) and AWS_REGION (variable).
+#
+# Dockerfile.cms declares ARG NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY, baked into the
+# client bundle at build time. Set a repository variable named
+# NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY (Settings -> Secrets and variables ->
+# Actions -> Variables), or the client ships with an empty publishable key.
 
 name: Deploy CMS
+
 on:
   push:
+    branches: [main]
     paths:
       - 'app/**'
       - 'src/**'
       - 'content/**'
       - 'canopycms.config.ts'
       - 'Dockerfile.cms'
+      - 'infrastructure/**'
   workflow_dispatch:
 
+concurrency:
+  # Two overlapping `cdk deploy` runs against one stack fail on
+  # UPDATE_IN_PROGRESS. Queue rather than cancel: cancelling mid-deploy leaves
+  # the stack in an in-progress state that needs manual recovery.
+  group: deploy-cms
+  cancel-in-progress: false
+
 jobs:
-  build-and-deploy:
+  deploy:
     runs-on: ubuntu-latest
+    permissions:
+      id-token: write # required for OIDC
+      contents: read
+
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-node@v4
         with:
           node-version: 20
 
-      # TODO: Configure your ECR login, Docker build, push, and Lambda update
-      # See https://canopycms.dev/deploy/aws for details
-      #
-      # Dockerfile.cms declares ARG NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY, baked into
-      # the client bundle at build time — set a repository variable named
-      # NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY (Settings -> Secrets and variables ->
-      # Actions -> Variables) or the client ships with an empty publishable key.
-      - name: Build CMS image
-        run: |
-          docker build \
-            --build-arg NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY="${{ vars.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY }}" \
-            -f Dockerfile.cms -t cms:latest .
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      # Builds the CMS image, publishes it to the CDK assets repository, and
+      # applies the change set -- Lambda, EFS, CloudFront and the worker ASG
+      # in one operation.
+      - name: Deploy
+        env:
+          NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${{ vars.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY }}
+        run: npx cdk deploy --all --require-approval never

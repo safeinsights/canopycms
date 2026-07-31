@@ -10,6 +10,7 @@ import {
   setupMockHistory,
   setupMockConsole,
   createApiClientWrapper,
+  createStrictModeApiClientWrapper,
 } from './__test__/test-utils'
 
 // Mock the API client module
@@ -120,6 +121,27 @@ describe('useBranchManager', () => {
     expect(mockClient.branches.list).toHaveBeenCalled()
     expect(mockSetBusy).toHaveBeenCalledWith(true)
     expect(mockSetBusy).toHaveBeenCalledWith(false)
+  })
+
+  it('mounting under Strict Mode issues one branches request, not two', async () => {
+    // Headline claim for the SWR migration: React Strict Mode double-invokes
+    // effects (mount -> cleanup -> remount) in dev, which used to fire this
+    // hook's fetch-on-load effect twice. SWR's request dedup must collapse
+    // that to a single actual network call.
+    mockClient.branches.list.mockResolvedValue({
+      ok: true,
+      status: 200,
+      data: { branches: mockBranches },
+    })
+
+    const strictWrapper = createStrictModeApiClientWrapper(mockClient)
+    const { result } = renderHook(() => useBranchManager(defaultOptions), {
+      wrapper: strictWrapper,
+    })
+
+    await waitFor(() => expect(result.current.branches).toEqual(mockBranches))
+
+    expect(mockClient.branches.list).toHaveBeenCalledTimes(1)
   })
 
   it('adopts the server default branch when no branch is pinned', async () => {
@@ -331,6 +353,7 @@ describe('useBranchManager', () => {
       {
         ...mockBranches[0],
         syncStatus: 'sync-failed',
+        syncFailureReason: 'Push rejected for branch "main": it has moved on GitHub',
         conflictStatus: 'conflicts-detected',
         conflictFiles: [unsafeAsContentId('content/a.md'), unsafeAsContentId('content/b.md')],
       },
@@ -356,6 +379,7 @@ describe('useBranchManager', () => {
     expect(result.current.branchSummaries[0]).toMatchObject({
       name: 'main',
       syncStatus: 'sync-failed',
+      syncFailureReason: 'Push rejected for branch "main": it has moved on GitHub',
       conflictStatus: 'conflicts-detected',
       conflictFiles: ['content/a.md', 'content/b.md'],
     })

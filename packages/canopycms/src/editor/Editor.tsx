@@ -182,7 +182,6 @@ export const Editor: React.FC<EditorProps> = ({
     LogicalPath | undefined
   >(undefined)
   const [collectionEditorError, setCollectionEditorError] = useState<string | null>(null)
-  const [availableSchemas, setAvailableSchemas] = useState<string[]>([])
 
   // Rename entry modal state
   const [renameModalOpen, setRenameModalOpen] = useState(false)
@@ -258,6 +257,7 @@ export const Editor: React.FC<EditorProps> = ({
     entries: entriesState,
     collections: collectionsFromApi,
     currentEntry,
+    availableSchemas,
     entriesInitializing,
     navigatorOpen,
     setNavigatorOpen,
@@ -408,10 +408,20 @@ export const Editor: React.FC<EditorProps> = ({
   // fresh server read. The draft is still preserved as an overlay below —
   // only the "did we ever fetch the server value" gate changed.
   const loadingEntryIdsRef = useRef<Set<ContentId>>(new Set())
+  // The contentId this effect is CURRENTLY targeting, kept in sync every
+  // render (not in an effect -- it must be current by the time an in-flight
+  // load's `finally`/`catch` runs, which can be after several re-renders).
+  // Lets a load whose entry the user has since navigated away from tell
+  // it's stale when it settles, so it doesn't clear the shared loading flag
+  // out from under a NEWER load that's still in flight, and doesn't surface
+  // a "Failed to load entry" notification for content nobody is looking at
+  // anymore.
+  const currentContentIdRef = useRef<ContentId | undefined>(currentEntry?.contentId)
+  currentContentIdRef.current = currentEntry?.contentId
 
   useEffect(() => {
+    const contentId = currentEntry?.contentId
     const load = async () => {
-      const contentId = currentEntry?.contentId
       if (!currentEntry || !contentId || loadedValues[contentId] !== undefined) return
       // Guard against overlapping renders re-firing the same in-flight load
       // (e.g. `currentEntry` getting a new object reference from an entries
@@ -426,37 +436,30 @@ export const Editor: React.FC<EditorProps> = ({
           if (prev[contentId] !== undefined) return prev // preserve existing (e.g. localStorage) draft
           return { ...prev, [contentId]: loaded }
         })
-      } catch (err) {
-        console.error(err)
-        notifications.show({ message: 'Failed to load entry', color: 'red' })
       } finally {
         loadingEntryIdsRef.current.delete(contentId)
-        setEntriesLoading(false)
+        // Clear the shared flag if this load's entry is still selected, OR if
+        // no other load remains in flight. The second arm matters when the
+        // user navigates from a slow-loading entry to one that's ALREADY
+        // loaded: no new load starts, so "a newer selection's own load owns
+        // the flag now" doesn't hold -- without it, this stale settle would
+        // leave `entriesLoading` (and therefore `busy`) stuck true with
+        // nothing left to clear it.
+        if (currentContentIdRef.current === contentId || loadingEntryIdsRef.current.size === 0) {
+          setEntriesLoading(false)
+        }
       }
     }
     load().catch((err) => {
       console.error(err)
-      setEntriesLoading(false)
-      notifications.show({ message: 'Failed to load entry', color: 'red' })
+      // Same staleness guard as above: don't tell the user an entry failed
+      // to load when they've already navigated to a different one.
+      if (currentContentIdRef.current === contentId) {
+        notifications.show({ message: 'Failed to load entry', color: 'red' })
+      }
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps -- stable setters, run only on entry/path/loadedValues change
   }, [currentEntry, loadedValues, selectedPath])
-
-  // Load available schemas when branch changes
-  useEffect(() => {
-    if (!branchNameState) return
-    const loadSchemas = async () => {
-      try {
-        const result = await apiClient.schema.get({ branch: branchNameState })
-        if (result.ok && result.data) {
-          setAvailableSchemas(Object.keys(result.data.entrySchemas ?? {}))
-        }
-      } catch (err) {
-        console.error('Failed to load available schemas:', err)
-      }
-    }
-    loadSchemas()
-  }, [branchNameState, apiClient])
 
   // Schema editor handlers
   const handleOpenCollectionEditor = async (

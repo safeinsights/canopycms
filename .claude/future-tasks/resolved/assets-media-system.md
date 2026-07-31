@@ -6,8 +6,8 @@ Kept as the durable design record, including the rejected alternative (§ Consid
 Spun-out remainders live in their own tasks: [asset-review-followups.md](../asset-review-followups.md)
 (deferred review items), [docs-site-assets-wiring.md](../docs-site-assets-wiring.md)
 (epic phase 8, deferred), [adopter-image-field-migration.md](../adopter-image-field-migration.md)
-(phase 9, ready), [finalize-transform-decoder-mismatch.md](../finalize-transform-decoder-mismatch.md)
-(live-deploy finding).
+(phase 9, ready), [finalize-transform-decoder-mismatch.md](finalize-transform-decoder-mismatch.md)
+(live-deploy finding — RESOLVED 2026-07-30).
 
 Original status: **Plan B approved 2026-07-21** (JP, after four review rounds). Implementation ran
 as the `epic/assets-media-system` epic (cut from `epic/efs-cross-process-concurrency`).

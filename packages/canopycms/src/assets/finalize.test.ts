@@ -1,11 +1,28 @@
+import sharp from 'sharp'
 import { describe, expect, it, vi } from 'vitest'
 
 import { finalizeAsset, finalizeStagedUpload } from './finalize'
 import type { AssetMeta, AssetStore } from './types'
 
-// Same PNG fixture as pipeline.test.ts (IHDR-only, 3x5, no pixel data).
-const PNG_3X5_BASE64 = 'iVBORw0KGgoAAAANSUhEUgAAAAMAAAAFCAYAAAAAAAAA'
-const pngBytes = (): Uint8Array => new Uint8Array(Buffer.from(PNG_3X5_BASE64, 'base64'))
+/**
+ * A real, sharp-decodable 3x5 PNG - finalize's pipeline now forces a real
+ * pixel decode for raster kinds (pipeline.ts's `rasterIsDecodable`), so the
+ * old hand-built, header-only (IHDR but no real IDAT) fixture this replaced
+ * would be correctly rejected here. Memoized: every call site in this file
+ * wants the same trivial fixture.
+ */
+let cachedPngBytes: Uint8Array | undefined
+async function pngBytes(): Promise<Uint8Array> {
+  if (!cachedPngBytes) {
+    const buf = await sharp({
+      create: { width: 3, height: 5, channels: 3, background: { r: 10, g: 20, b: 30 } },
+    })
+      .png()
+      .toBuffer()
+    cachedPngBytes = new Uint8Array(buf)
+  }
+  return cachedPngBytes
+}
 
 function makeStore(overrides: Partial<AssetStore> = {}): AssetStore {
   return {
@@ -40,7 +57,7 @@ describe('finalizeAsset', () => {
     }
     const store = makeStore({ getMeta: vi.fn().mockResolvedValue(existing) })
 
-    const result = await finalizeAsset(store, { data: pngBytes(), filename: 'second.png' })
+    const result = await finalizeAsset(store, { data: await pngBytes(), filename: 'second.png' })
 
     expect(result.ok).toBe(true)
     if (!result.ok) return
@@ -61,7 +78,7 @@ describe('finalizeAsset', () => {
       return 'created'
     })
 
-    const result = await finalizeAsset(store, { data: pngBytes(), filename: 'a.png' })
+    const result = await finalizeAsset(store, { data: await pngBytes(), filename: 'a.png' })
 
     expect(result.ok).toBe(true)
     expect(calls).toEqual(['putOriginal', 'putMetaIfAbsent'])
@@ -113,7 +130,7 @@ describe('finalizeAsset', () => {
       putMetaIfAbsent: vi.fn().mockResolvedValue('already-exists'),
     })
 
-    const result = await finalizeAsset(store, { data: pngBytes(), filename: 'loser.png' })
+    const result = await finalizeAsset(store, { data: await pngBytes(), filename: 'loser.png' })
 
     expect(result.ok).toBe(true)
     if (!result.ok) return
@@ -139,7 +156,7 @@ describe('finalizeStagedUpload', () => {
   })
 
   it('deletes the staging object after a successful finalize', async () => {
-    const store = makeStore({ readStaging: vi.fn().mockResolvedValue(pngBytes()) })
+    const store = makeStore({ readStaging: vi.fn().mockResolvedValue(await pngBytes()) })
 
     const result = await finalizeStagedUpload(
       store,
@@ -172,7 +189,7 @@ describe('finalizeStagedUpload', () => {
 
   it('best-effort: a deleteStaging failure does not fail the overall result', async () => {
     const store = makeStore({
-      readStaging: vi.fn().mockResolvedValue(pngBytes()),
+      readStaging: vi.fn().mockResolvedValue(await pngBytes()),
       deleteStaging: vi.fn().mockRejectedValue(new Error('boom')),
     })
 
