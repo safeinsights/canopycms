@@ -576,11 +576,15 @@ export class GitManager {
    * Same `--git-dir` invocation style as bareRemoteHasBranch above (works
    * under `safe.bareRepository=explicit`). The existence pre-check makes
    * "absent" deterministic instead of parsing update-ref's locale-dependent
-   * failure text; the race where the ref vanishes between the two calls just
-   * makes update-ref throw, which the caller treats as the best-effort
-   * failure it is. No `--end-of-options` on update-ref (older gits don't
-   * accept it there); the ref argument always begins with the literal
-   * `refs/heads/` prefix, so it can never parse as an option.
+   * failure text, and its captured SHA is passed to `update-ref -d` as the
+   * expected old value -- same pattern as reconcileTrackedBranches'
+   * guarded updates (worker/cms-worker.ts): a concurrent Lambda push
+   * re-creating/moving this branch between the read and the delete makes
+   * update-ref throw (surfaced as the caller's best-effort warning) instead
+   * of silently deleting a commit that was just pushed. No
+   * `--end-of-options` on update-ref (older gits don't accept it there);
+   * the ref argument always begins with the literal `refs/heads/` prefix,
+   * so it can never parse as an option.
    */
   static async deleteBareRemoteHead(remotePath: string, branch: string): Promise<void> {
     const ref = `refs/heads/${branch}`
@@ -588,16 +592,19 @@ export class GitManager {
       '--git-dir',
       remotePath,
       'for-each-ref',
-      '--format=%(refname)',
+      '--format=%(refname) %(objectname)',
       '--end-of-options',
       ref,
     ])
-    const exists = output
+    const match = output
       .split('\n')
       .map((line) => line.trim())
-      .includes(ref)
-    if (!exists) return
-    await simpleGit().raw(['--git-dir', remotePath, 'update-ref', '-d', ref])
+      .filter(Boolean)
+      .map((line) => line.split(' '))
+      .find(([refname]) => refname === ref)
+    if (!match) return
+    const [, sha] = match
+    await simpleGit().raw(['--git-dir', remotePath, 'update-ref', '-d', ref, sha])
   }
 
   /**
