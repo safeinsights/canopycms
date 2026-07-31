@@ -2215,6 +2215,8 @@ The `canopycms-next` package also provides a `withCanopy()` function that wraps 
 
 When installed from npm (not symlinked), the React aliases are harmless -- they resolve to the same React the project already uses. Note that Turbopack does not currently support the absolute-path aliases used for React deduplication, so consumers using `file:` symlinks for local development must use `next dev --webpack`; Turbopack works fine when packages are installed from npm.
 
+**Why the `./config` export ships pre-built:** `withCanopy()` itself is imported from a dedicated `canopycms-next/config` subpath (`import { withCanopy } from 'canopycms-next/config'` in `next.config.mjs`), and that subpath is the one exception to "Canopy packages export raw TypeScript" (see [Why a Next.js config wrapper for React deduplication?](#why-a-nextjs-config-wrapper-for-react-deduplication)): it resolves to an esbuild-bundled `dist/config.{cjs,mjs}`, built ahead of time rather than transpiled by the consumer's Next.js pipeline. This isn't optional — Next.js loads `next.config.mjs` directly in Node before webpack/Turbopack initializes, so `transpilePackages` (a bundler-level mechanism) never gets a chance to run against the config file's own imports; whatever `next.config.mjs` imports must already be plain, executable JavaScript. Any future subpath export that a consumer's config file needs to import — not just `withCanopy()` — will face the same constraint and need the same ahead-of-time build step.
+
 **Creating a new adapter**:
 
 - Implement user extraction (read auth headers/cookies, call auth plugin)
@@ -2562,7 +2564,7 @@ The `withCanopy()` wrapper in `canopycms-next` solves both problems in one call:
 
 **Why solve this in the adapter package?** The dual-React problem is specific to how Next.js resolves modules through symlinks. It is a build-tooling concern, not business logic. Placing it in the adapter keeps the core package clean and makes the fix discoverable for Next.js adopters in the package they already import. Other framework adapters would handle their bundler's equivalent quirks in their own way.
 
-**Why not require pre-compilation?** Pre-compiling Canopy packages would eliminate the `transpilePackages` requirement but would add a build step to the development workflow, slow down iteration, and make debugging harder (source maps through compiled output). Exporting raw TypeScript keeps the development loop fast and debuggable.
+**Why not require pre-compilation?** Pre-compiling Canopy packages would eliminate the `transpilePackages` requirement but would add a build step to the development workflow, slow down iteration, and make debugging harder (source maps through compiled output). Exporting raw TypeScript keeps the development loop fast and debuggable. The one exception is the `canopycms-next/config` subpath that `withCanopy()` itself is imported from — see [Framework Adapters](#framework-adapters) for why that specific export has no choice but to ship pre-built.
 
 ### Why split a dual-build content route into static and server page variants?
 

@@ -1,6 +1,25 @@
 # Next 16.2.x + PostCSS fork-bomb on adopter dev servers
 
-**Status**: observed, not yet root-caused upstream
+**Status**: PARTIALLY RESOLVED (2026-07-30, feat/dual-build-ci-safety-net) — the
+"document known-good versions" and "package-level constraint" action items below
+are done; the upstream root-cause chase is still open.
+
+- `packages/canopycms-next/package.json`'s `next` peer dependency is now
+  `^13.5.7 || ^14.2.25 || ^15.2.3 || >=16.0.0 <16.2.0 || >=16.3.0 <17.0.0` —
+  narrowed from a bare `^16` specifically to exclude the confirmed-broken
+  16.2.x line. `>=16.3.0` is deliberately still allowed: the regression is
+  observed and bisected in 16.2.x only, and hasn't been re-verified as
+  broken (or fixed) in later releases, so blocking it too would be a guess.
+- README.md gained a "Requirements" section (there wasn't one before) with a
+  "Known-bad version: Next 16.2.x" subsection stating the workaround and the
+  peer-dependency range's reasoning.
+- `docs/deploying-to-aws.md`'s Prerequisites list now points at the README
+  section, since the dual-build deploy flow is a first-hand way adopters hit
+  `next build`/`next dev` early.
+
+Still open: reproduce in a minimal repo and file/track the upstream Next.js
+issue (see "What to do upstream" below) — nobody has done this yet.
+
 **Priority**: P1 (blocks adopter upgrades to Next 16.2.x)
 **Observed**: 2026-04-17 in `safeinsights/website` (Node 24.12, pnpm 10.12, Mantine 8.3.18, Turbopack)
 **Workaround**: pin `next` to `~16.1.6` (16.1.7 works).
