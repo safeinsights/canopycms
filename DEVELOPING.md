@@ -2784,6 +2784,24 @@ it('caches context per request with React cache()', async () => {
 })
 ```
 
+### Shelling Out to Real Builds (CI Fixture Pattern)
+
+`apps/dual-build-fixture/dual-build.test.ts` is a vitest suite that verifies CanopyCMS's two deploy shapes (README.md "Dual-Build Sites") by actually running `next build` twice -- once per `CANOPY_BUILD` flavor (`static`, `cms`) -- against a minimal fixture app, then asserting on the real build output rather than just exit codes. It runs as its own CI job (`dual-build` in `.github/workflows/ci.yml`), gated on a paths-filter so the two (expensive) builds only run when something able to break the split actually changed. Run it locally with:
+
+```bash
+pnpm --filter canopycms-dual-build-fixture run verify:dual-build
+```
+
+Read the file in full before extending it or writing a similar "shell out to a real build, inspect output" test elsewhere -- it packs several fixed bugs worth reusing rather than reintroducing:
+
+- **Run the expensive step once, assert many times.** Both `next build` invocations run once in `beforeAll` (each takes tens of seconds); every `it()` afterward only inspects the resulting file trees. Never re-run a build per-assertion.
+- **Relocate output when two flavors share one `.next/`.** Both flavors write to the same `.next/` directory, so `moveNextOutputAside()` relocates the static build's non-cache output to `.next-static/` before the cms build starts, leaving both inspectable afterward. `.next/cache` (the SWC/webpack compilation cache) is deliberately left in place across both builds and preserved by `cleanNextOutputKeepCache()` -- a "clean everything under `.next/` except `cache/`" helper run before each build. This matters because `next build` isn't guaranteed to prune stale output for routes/`pageExtensions` that no longer apply: without the clean step, a leftover `.next/server/app/edit` from an earlier build could make an assertion pass for the wrong reason, while nuking the cache too would defeat CI's build-cache restore step.
+- **Use a dynamically-allocated port for live-server checks, never a hardcoded one.** A live-server smoke test spawns `next start` and fetches routes to verify runtime behavior (not just build artifacts) -- e.g. that the cms build's home route renders the same content as the static build's prerendered HTML. `getFreePort()` binds to port 0 and reads back what the OS picked. A hardcoded port previously caused a real false pass here: a stale `next start` left over from a prior manual test run kept answering on that port, so the freshly-spawned (and, in that run, deliberately broken) server was never actually exercised. A fresh port per run makes that class of contamination impossible instead of relying on cleanup discipline.
+- **Fail fast on child-process exit instead of polling out the full timeout.** `waitForServer()` listens for the spawned child's `exit` event and throws immediately -- surfacing the captured server log -- if the process dies before the first successful response, rather than blindly polling for the full timeout against a server that's already gone.
+- **Exclude dev-mode workspace clones from test discovery.** `vitest.config.ts` excludes `.canopy-dev/**`. CanopyCMS's dev-mode branch-workspace machinery clones the whole app directory -- including the test file itself -- into `.canopy-dev/content-branches/<branch>/` the first time a request-time content read happens; without the exclude, Vitest picks up that clone as a second, broken test file (no `node_modules` of its own).
+
+**Local-run gotcha:** the live-server test's request-time content read resolves against the last git commit (dev-mode branch-workspace resolution), not uncommitted working-tree edits. Running this test locally against WIP changes (to the fixture app or to `withCanopy()`) can make the cms server's `/` return a non-200 until you commit (or run `canopycms sync push`) -- that's expected dev-mode behavior, not a build-shape regression, and the test's own assertion message explains this inline. Read the failure message before assuming a real regression.
+
 ## Deployment Infrastructure
 
 ### CmsWorker (canopycms/worker/cms-worker)

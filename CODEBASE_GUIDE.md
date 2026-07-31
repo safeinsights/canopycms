@@ -13,10 +13,11 @@
 
 **Apps** (in apps/, not packages/):
 
-| App      | Location       | Purpose                                           |
-| -------- | -------------- | ------------------------------------------------- |
-| example1 | apps/example1/ | Example Next.js app showing CanopyCMS integration |
-| test-app | apps/test-app/ | E2E test application                              |
+| App                | Location                 | Purpose                                                                                                                                                                                                   |
+| ------------------ | ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| example1           | apps/example1/           | Example Next.js app showing CanopyCMS integration                                                                                                                                                         |
+| test-app           | apps/test-app/           | E2E test application                                                                                                                                                                                      |
+| dual-build-fixture | apps/dual-build-fixture/ | CI-only fixture (not an adopter example): minimal Next.js app whose `dual-build.test.ts` shells out to real `next build`s for both deploy shapes and asserts on the output — see Dual-Build Support below |
 
 ## Source Code Organization
 
@@ -473,6 +474,8 @@ export default withCanopy(
   { staticBuild: !isCmsBuild },
 )
 ```
+
+**CI verification**: apps/dual-build-fixture/ is a minimal Next.js app that exercises this convention for real — `dual-build.test.ts` (vitest) shells out to `next build` twice (`CANOPY_BUILD=static` and `=cms`) plus a `next start` smoke check, asserting the static export has zero Mantine/editor code and no `/edit` or catch-all API route, the cms build has both, and both builds read the same content entry. Not an adopter-facing example — see [Test Organization](#test-organization) below. CI job `dual-build` in `.github/workflows/ci.yml` runs it, gated by a `dorny/paths-filter` step (not a workflow-level `paths:` trigger, so the job always reports a status) on changes under `packages/canopycms-next/**`, `packages/canopycms/src/cli/template-files/**`, `packages/canopycms/src/build/**`, `packages/canopycms/src/static/**`, or `apps/dual-build-fixture/**`.
 
 ## Comment System
 
@@ -1316,6 +1319,7 @@ apps/example1/
 - **Unit tests**: Co-located in `__tests__/` subdirectories within each module
 - **Integration tests**: `packages/canopycms/src/__integration__/`
 - **Test utilities**: `packages/canopycms/src/test-utils/`
+- **Dual-build CI fixture**: `apps/dual-build-fixture/dual-build.test.ts` — real `next build` × 2 (static/cms deploy shapes) + a `next start` smoke check; see [Dual-Build Support](#dual-build-support-withcanopy-staticbuild-option)
 
 ## Key Directories to Monitor
 
@@ -1341,4 +1345,5 @@ packages/canopycms-cdk/              # AWS CDK constructs
 packages/canopycms-next/             # Next.js adapter package
 packages/canopycms-auth-dev/         # Dev auth plugin + cache
 apps/example1/                       # Example app
+apps/dual-build-fixture/             # CI fixture: real next build for both deploy shapes
 ```

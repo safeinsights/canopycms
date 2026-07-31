@@ -1,0 +1,28 @@
+{
+  "name": "canopycms-dual-build-fixture",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Minimal dual-build (static export + CMS server) fixture, built by CI to catch withCanopy()/deployedAs regressions before they reach an adopter's production build.",
+  "scripts": {
+    "build:static": "CANOPY_BUILD=static next build",
+    "build:cms": "CANOPY_BUILD=cms next build",
+    "typecheck": "tsc --noEmit",
+    "verify:dual-build": "vitest run --reporter=dot",
+    "reset-sim": "rm -rf .canopy-dev"
+  },
+  "dependencies": {
+    "canopycms": "workspace:*",
+    "canopycms-auth-dev": "workspace:*",
+    "canopycms-next": "workspace:*",
+    "next": "15.5.21",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.9.0",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "typescript": "^5.6.3",
+    "vitest": "^4.1.0"
+  }
+}
