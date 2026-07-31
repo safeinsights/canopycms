@@ -8,6 +8,7 @@ import {
   setupMockLocation,
   setupMockHistory,
   createApiClientWrapper,
+  createStrictModeApiClientWrapper,
 } from './__test__/test-utils'
 import {
   unsafeAsLogicalPath,
@@ -330,6 +331,30 @@ describe('useEntryManager', () => {
     expect(refreshed).toHaveLength(2)
     // selectedPath stays on the existing entry (auto-select is handleCreateModalSubmit's job)
     expect(result.current.selectedPath).toBe('entry1')
+  })
+
+  describe('dedup (React Strict Mode)', () => {
+    it('mounting under Strict Mode issues one schema request and one entries request, not two', async () => {
+      // Headline claim for the SWR migration: React Strict Mode double-invokes
+      // effects (mount -> cleanup -> remount) in dev, which used to fire this
+      // hook's fetch-on-load effect twice per endpoint. SWR's request dedup
+      // (see useEntriesData.ts / SWRProvider) must collapse that to one.
+      mockClient.entries.list.mockResolvedValue({
+        ok: true,
+        status: 200,
+        data: { entries: [], pagination: { hasMore: false, limit: 200 } },
+      })
+
+      const strictWrapper = createStrictModeApiClientWrapper(mockClient)
+      const { result } = renderHook(() => useEntryManager(defaultOptions), {
+        wrapper: strictWrapper,
+      })
+
+      await waitFor(() => expect(result.current.entriesInitializing).toBe(false))
+
+      expect(mockClient.schema.get).toHaveBeenCalledTimes(1)
+      expect(mockClient.entries.list).toHaveBeenCalledTimes(1)
+    })
   })
 
   describe('entriesInitializing', () => {

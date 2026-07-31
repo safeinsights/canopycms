@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
+import { useSWRConfig } from 'swr'
 import { Text } from '@mantine/core'
 import { modals } from '@mantine/modals'
 import { notifications } from '@mantine/notifications'
@@ -9,6 +10,7 @@ import type { OperatingMode } from '../../operating-mode'
 import type { CommentThread } from '../../comment-store'
 import type { BranchListItem } from '../../api/branch'
 import { useApiClient } from '../context'
+import { BRANCHES_KEY, fetchBranches, useBranchesData } from './useBranchesData'
 // branch-name, NOT branch or the '../../paths' barrel: both of those pull
 // node:fs/promises + node:path at the top level (path RESOLUTION helpers),
 // which breaks adopters' production `next build` of the editor bundle.
@@ -162,8 +164,52 @@ export interface UseBranchManagerReturn {
  */
 export function useBranchManager(options: UseBranchManagerOptions): UseBranchManagerReturn {
   const apiClient = useApiClient()
+  const { mutate: globalMutate } = useSWRConfig()
   const [branchName, setBranchName] = useState<string>(options.initialBranch)
-  const [branches, setBranches] = useState<BranchListItem[]>([])
+  // Automatic load, deduped by SWR (e.g. React Strict Mode's double effect
+  // invoke collapses to a single request). Not keyed by branchName -- the
+  // endpoint returns every branch regardless of which one is selected.
+  const {
+    data: branchesData,
+    error: branchesError,
+    isValidating: branchesIsValidating,
+  } = useBranchesData(apiClient)
+  const branches = useMemo(() => branchesData?.branches ?? [], [branchesData])
+
+  // Adopt the server's default branch once data arrives, if nothing pinned one.
+  useEffect(() => {
+    if (!branchName && branchesData?.defaultBranch) {
+      setBranchName(branchesData.defaultBranch)
+    }
+  }, [branchesData, branchName])
+
+  // Surface/clear the sticky error toast the same way loadBranches() used to.
+  useEffect(() => {
+    if (branchesError) {
+      console.error(branchesError)
+      const message =
+        branchesError instanceof Error ? branchesError.message : 'Failed to load branches'
+      // Fixed id: retries update the existing toast instead of stacking; sticky
+      // because the editor cannot function without the branch list.
+      notifications.show({
+        id: 'canopy-branches-load-failed',
+        message,
+        color: 'red',
+        autoClose: false,
+      })
+    } else if (branchesData) {
+      // A previous failure may have left the sticky error toast up; clear it
+      // now that loading succeeded (provisioning failures are often transient).
+      notifications.hide('canopy-branches-load-failed')
+    }
+  }, [branchesData, branchesError])
+
+  // Mirrors the automatic load's in-flight state onto the shared busy flag,
+  // matching loadBranches()'s own setBusy bracket below for explicit reloads.
+  useEffect(() => {
+    options.setBusy(branchesIsValidating)
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- options is a new object every Editor.tsx render; only setBusy (a stable setState) matters here
+  }, [branchesIsValidating, options.setBusy])
 
   // Exact match first; fall back to comparing sanitized forms so a legacy
   // deep-link carrying the raw, unsanitized name (e.g. "?branch=feature%2Fx"
@@ -203,32 +249,18 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
     })
   }, [branches, branchName, options.comments])
 
+  // Explicit reload: always issues a fresh, independent fetch (raw call, not
+  // SWR's `mutate()` revalidate path) so callers requesting a reload right
+  // after mount aren't coalesced against the still-in-flight automatic load
+  // -- then writes the result into the shared cache so useBranchesData's
+  // bound hook (and anything else reading BRANCHES_KEY) picks it up.
+  // Side effects (default-branch adoption, error/success notifications) are
+  // driven by the effects above, which react to that same cache write.
   const loadBranches = async () => {
     options.setBusy(true)
     try {
-      const result = await apiClient.branches.list()
-      if (result.status === 404) {
-        // No branch endpoint available; stay branchless. The branch dropdown
-        // stays clickable so the user can open Manage Branches (which also
-        // retries this load) and create or select a branch from there.
-        setBranches([])
-        return
-      }
-      if (!result.ok) {
-        // Surface the server's reason (e.g. workspace provisioning failures
-        // now arrive as 503s with the underlying git error)
-        throw new Error(result.error ?? `Failed to load branches: ${result.status}`)
-      }
-      const list = result.data?.branches ?? []
-      setBranches(list)
-      // A previous failure may have left the sticky error toast up; clear it
-      // now that loading succeeded (provisioning failures are often transient).
-      notifications.hide('canopy-branches-load-failed')
-      // No branch pinned via URL or client config — adopt the server's
-      // effective default (the detected active branch in dev mode).
-      if (!branchName && result.data?.defaultBranch) {
-        setBranchName(result.data.defaultBranch)
-      }
+      const fresh = await fetchBranches(apiClient)
+      await globalMutate(BRANCHES_KEY, fresh, { revalidate: false })
     } catch (err) {
       console.error(err)
       const message = err instanceof Error ? err.message : 'Failed to load branches'
@@ -345,13 +377,6 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
   const handleReloadBranchData = async () => {
     await loadBranches()
   }
-
-  // Load branches on mount and when branchName changes
-
-  useEffect(() => {
-    loadBranches().catch(console.error)
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- loadBranches would cause infinite loop
-  }, [branchName])
 
   // Sync branch to URL parameter
   useEffect(() => {

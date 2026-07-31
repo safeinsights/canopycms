@@ -4,7 +4,12 @@ import { useCommentSystem } from './useCommentSystem'
 import type { EditorEntry } from '../Editor'
 import type { CommentThread } from '../../comment-store'
 import type { MockApiClient } from '../../api/__test__/mock-client'
-import { setupMockApiClient, setupMockConsole, createApiClientWrapper } from './__test__/test-utils'
+import {
+  setupMockApiClient,
+  setupMockConsole,
+  createApiClientWrapper,
+  createStrictModeApiClientWrapper,
+} from './__test__/test-utils'
 import { unsafeAsLogicalPath, unsafeAsContentId } from '../../paths/test-utils'
 
 // Mock the API client module
@@ -181,6 +186,27 @@ describe('useCommentSystem', () => {
     expect(error).toHaveBeenCalledWith('Failed to load comments:', 500)
     expect(result.current.comments).toEqual([])
     restore()
+  })
+
+  it('mounting under Strict Mode issues one comments request, not two', async () => {
+    // Headline claim for the SWR migration: React Strict Mode double-invokes
+    // effects (mount -> cleanup -> remount) in dev, which used to fire this
+    // hook's fetch-on-load effect twice. SWR's request dedup must collapse
+    // that to a single actual network call.
+    mockClient.comments.list.mockResolvedValue({
+      ok: true,
+      status: 200,
+      data: { threads: mockComments },
+    })
+
+    const strictWrapper = createStrictModeApiClientWrapper(mockClient)
+    const { result } = renderHook(() => useCommentSystem(defaultOptions), {
+      wrapper: strictWrapper,
+    })
+
+    await waitFor(() => expect(result.current.comments).toEqual(mockComments))
+
+    expect(mockClient.comments.list).toHaveBeenCalledTimes(1)
   })
 
   it('loads comments when branchName changes', async () => {

@@ -1849,6 +1849,14 @@ Complex state management logic is extracted into custom hooks:
 
 This extraction keeps components focused on rendering while hooks encapsulate business logic and side effects.
 
+### Data Loading: SWR-Backed Fetch Hooks
+
+The editor's three fetch-on-load resources — the branches list, a branch's entries plus schema, and comment threads — each have a dedicated hook built on `swr`, a client-side data-fetching/caching library. Each hook exports a plain async fetcher, a cache-key function, and a thin wrapper around `useSWR(key, fetcher)`; the corresponding manager hook (`useBranchManager`, `useEntryManager`, `useCommentSystem`) mirrors the data hook's reactive `data`/`error`/`isValidating` onto its own state and busy flags.
+
+This replaced three independent `useEffect([branchName])` fetch effects, each of which fired twice under React Strict Mode's mount-cleanup-remount cycle — plus a fourth duplicate schema fetch that the editor shell ran separately on branch change, now eliminated by reading `availableSchemas` off `useEntryManager`'s return value instead of fetching it again. A shared SWR cache (configured with `revalidateOnFocus: false`, `shouldRetryOnError: false`, and a short deduping window) gives every automatic on-mount/on-branch-change fetch built-in request deduping, so concurrent requests to the same cache key collapse into one.
+
+**Automatic load vs. explicit reload**: only the automatic fetch goes through `useSWR`. Each manager hook's imperative reload function (branch reload, comment reload, entry refresh) intentionally does not use SWR's `mutate()` revalidate form — it issues an independent, un-deduped fetch instead, because a caller that just wrote content needs to see its own change reflected immediately rather than coalesced with a still-in-flight automatic load — and then writes the result into the SWR cache with `mutate(key, data, { revalidate: false })`, keeping the bound data hook's reactive state in sync without a second request. The entry-refresh path additionally guards every commit with a shared monotonic sequence counter, so overlapping automatic and explicit loads resolve "last caller wins" regardless of response order.
+
 ### Live Preview Reference Resolution
 
 The live preview needs to display full referenced content (e.g., author names/data) instead of just reference IDs. This is accomplished through a synchronous resolution system with background caching.
