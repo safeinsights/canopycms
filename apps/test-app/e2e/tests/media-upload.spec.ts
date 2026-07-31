@@ -9,6 +9,7 @@ import {
   listAssetHashes,
   assetOriginalExists,
   listTransformDirs,
+  removeAssetOriginals,
 } from '../fixtures/media-workspace'
 import { SHORT_TIMEOUT, STANDARD_TIMEOUT } from '../fixtures/timeouts'
 
@@ -407,7 +408,14 @@ test.describe('Assets / Media pipeline', () => {
       expect(dirs).toContain('w=320')
     })
 
-    await test.step('second request serves the cached output', async () => {
+    await test.step('second request is served FROM the cache: delete the original first, so a recompute is impossible', async () => {
+      // The raw-asset route checks the public object store before ever
+      // falling through to serveLazyTransform (which needs the original).
+      // With the original gone, a 200 here can only come from the cached
+      // output — a broken cache lookup would recompute, fail to read the
+      // original, and 404. Without this deletion the step could not fail:
+      // a recompute also returns 200.
+      await removeAssetOriginals(hash32)
       const response = await page.request.get(derivedUrl)
       expect(response.status()).toBe(200)
       expect(response.headers()['content-type']).toMatch(/^image\//)

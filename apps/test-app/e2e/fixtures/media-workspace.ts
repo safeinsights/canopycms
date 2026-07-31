@@ -73,6 +73,26 @@ export async function assetOriginalExists(hash32: string): Promise<boolean> {
 }
 
 /**
+ * Delete the finalized original blob(s) for `hash32` from `asset-originals/`.
+ *
+ * Used to prove a transform is served FROM THE DISK CACHE rather than
+ * recomputed: the raw-asset route checks the public object store first and
+ * only falls through to `serveLazyTransform` (which needs the original) on a
+ * miss — so once the original is gone, a 200 can only come from the cache,
+ * and a broken cache path turns into a 404. Deleting only the original keeps
+ * `asset-meta/` intact, so nothing else about the asset record changes.
+ */
+export async function removeAssetOriginals(hash32: string): Promise<void> {
+  const dir = path.join(ASSETS_ROOT, ASSET_PREFIXES.originals)
+  const entries = await fs.readdir(dir).catch(() => [] as string[])
+  await Promise.all(
+    entries
+      .filter((name) => name.startsWith(`${hash32}.`))
+      .map((name) => fs.rm(path.join(dir, name), { force: true })),
+  )
+}
+
+/**
  * Directive-string subdirectories materialized on disk for `hash32` under
  * `assets/t/{directives}/{hash32}/` (e.g. `['orig', 'w=320']`) -- one entry
  * per distinct transform variant that has actually been requested and

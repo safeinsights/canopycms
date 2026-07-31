@@ -222,3 +222,36 @@ export async function clearPermissionsViaApi(page: Page): Promise<void> {
     throw new Error(`Failed to clear permissions: ${putRes.status()}`)
   }
 }
+
+/**
+ * Remove every internal group whose name matches the `e2e-group-*` naming
+ * convention D1 uses, via the API. Same rationale as
+ * {@link clearPermissionsViaApi}: groups live in the settings workspace that
+ * `resetWorkspace()` never touches, so without this every run of D1 adds one
+ * more group to `groups.json`, forever. Called both BEFORE the test (heal
+ * accumulation from prior runs, including crashed ones) and after it in a
+ * `finally` (leave nothing behind on the happy path).
+ */
+export async function removeE2eGroupsViaApi(page: Page): Promise<void> {
+  const getRes = await page.request.get('/api/canopycms/groups/internal', {
+    headers: { 'X-Test-User': 'admin' },
+  })
+  if (!getRes.ok()) {
+    throw new Error(`Failed to read groups before cleanup: ${getRes.status()}`)
+  }
+  const body = (await getRes.json()) as {
+    data: {
+      groups: Array<{ id: string; name: string; description?: string; members: string[] }>
+      version: number
+    }
+  }
+  const kept = body.data.groups.filter((g) => !g.name.startsWith('e2e-group-'))
+  if (kept.length === body.data.groups.length) return
+  const putRes = await page.request.put('/api/canopycms/groups/internal', {
+    headers: { 'X-Test-User': 'admin' },
+    data: { groups: kept, expectedContentVersion: body.data.version },
+  })
+  if (!putRes.ok()) {
+    throw new Error(`Failed to remove e2e groups: ${putRes.status()}`)
+  }
+}

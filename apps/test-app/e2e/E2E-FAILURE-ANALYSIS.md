@@ -342,11 +342,12 @@ false` because all tests share one workspace + server). CI runners are slower
   - Consequence: **validate is the floor.** 5–6 shards, or pinning specs to
     shards by duration, all land on it and buy nothing further. Don't shard
     past 4 without first speeding up validate.
-  - **CONFIRMED at 4 shards (run 30590565843):** shards 2.43 / 2.55 / 2.77 /
-    2.97m, merge 0.45m, validate 3.9m. E2E path 3.42m — now comfortably _under_
-    validate with ~28s of headroom, so validate is again the critical path.
-    Total PR latency **4.47m → 3.9m**, a 34s improvement (better than the ~16s
-    predicted; the split landed more evenly than the count-based model assumed).
+  - **CONFIRMED at 4 shards (run 30590540192; re-verified via `gh` 2026-07-31
+    — the run id originally recorded here, 30590565843, resolves to nothing on
+    GitHub):** shards 2.57 / 2.58 / 2.62 / 3.05m, merge 0.57m, validate 3.88m.
+    E2E path 3.62m — _under_ validate, so validate is again the critical path.
+    Total PR latency **4.47m → ~3.9m** (better than the ~16s predicted; the
+    split landed more evenly than the count-based model assumed).
     Run-to-run variance on validate is ~5%, so treat these as ±10s.
   - Deliberately NOT done: pinning specs to shards via explicit per-shard file
     lists. It would save ~15s and introduce a silent-coverage-hole failure mode
