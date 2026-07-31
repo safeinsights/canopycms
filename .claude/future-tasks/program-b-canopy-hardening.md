@@ -88,17 +88,20 @@ found by inspection and neither yet hit.
 
 ## B4 — Build-shape safety net (M)
 
-- [dual-build-ci.md](dual-build-ci.md) — nothing verifies the two deploy shapes.
-  `init.test.ts` only asserts template string content and never runs `next build`.
-  Both adopter sites depend on the `page.static` / `page.server` split (see
-  [resolved/slug-route-nofallback-500.md](resolved/slug-route-nofallback-500.md)),
+- ~~[dual-build-ci.md](resolved/dual-build-ci.md) — nothing verifies the two deploy
+  shapes. `init.test.ts` only asserts template string content and never runs
+  `next build`. Both adopter sites depend on the `page.static` / `page.server`
+  split (see [resolved/slug-route-nofallback-500.md](resolved/slug-route-nofallback-500.md)),
   so a `withCanopy()` pageExtensions regression would ship unnoticed. Build a CI
-  fixture that runs both shapes, gated on relevant-path changes for cost.
+  fixture that runs both shapes, gated on relevant-path changes for cost.~~
+  RESOLVED 2026-07-30 — `apps/dual-build-fixture` + `dual-build.test.ts` +
+  the gated `dual-build` CI job.
 - [next-16.2-postcss-fork-bomb.md](next-16.2-postcss-fork-bomb.md) — Next 16.2.x +
   Turbopack + PostCSS fork-bombs adopter `pnpm dev`. Both adopter sites are
   already pinned to 16.1.x, recorded as prose in two separate CLAUDE.md files.
   Make it a documented package-level constraint (README known-good versions at
-  minimum) rather than tribal knowledge.
+  minimum) rather than tribal knowledge. PARTIALLY RESOLVED 2026-07-30 — README
+  + peer-dependency range done; upstream root-cause chase still open.
 
 ---
 

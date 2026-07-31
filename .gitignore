@@ -12,6 +12,9 @@ test-results/
 playwright-report/
 .playwright-mcp/
 
+# `next build` with `output: 'export'` (apps/dual-build-fixture's static shape)
+out/
+
 # CanopyCMS local workspaces
 .canopy*/
 

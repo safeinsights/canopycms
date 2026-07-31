@@ -1,0 +1,12 @@
+{
+  "entries": [
+    {
+      "name": "home",
+      "label": "Home",
+      "format": "json",
+      "schema": "homeSchema",
+      "maxItems": 1
+    }
+  ],
+  "order": ["Home1Fixture"]
+}

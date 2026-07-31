@@ -53,6 +53,7 @@ Lambda (VPC, no internet)               EC2 Worker (t4g.nano spot)
 - GitHub repo with your site content
 - Clerk account (or plan to use dev auth for testing)
 - Node.js 20+
+- A `next` version within `canopycms-next`'s peer dependency range (see [README Requirements](../README.md#requirements)) — in particular, avoid `16.2.x`: it fork-bombs `next dev --turbopack` on any app that imports CSS (including the CanopyCMS editor's Mantine styles), which you'll hit locally before you ever get to Step 3
 
 ## Step 1: Add CanopyCMS to Your App
 

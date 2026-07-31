@@ -64,6 +64,43 @@ importers:
         specifier: ^8.57.1
         version: 8.57.2(eslint@9.39.4(jiti@2.6.1))(typescript@5.9.3)
 
+  apps/dual-build-fixture:
+    dependencies:
+      canopycms:
+        specifier: workspace:*
+        version: link:../../packages/canopycms
+      canopycms-auth-dev:
+        specifier: workspace:*
+        version: link:../../packages/canopycms-auth-dev
+      canopycms-next:
+        specifier: workspace:*
+        version: link:../../packages/canopycms-next
+      next:
+        specifier: 15.5.21
+        version: 15.5.21(@babel/core@7.29.0)(@playwright/test@1.58.2)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
+      react:
+        specifier: ^18.3.1
+        version: 18.3.1
+      react-dom:
+        specifier: ^18.3.1
+        version: 18.3.1(react@18.3.1)
+    devDependencies:
+      '@types/node':
+        specifier: ^22.9.0
+        version: 22.19.15
+      '@types/react':
+        specifier: ^18.3.12
+        version: 18.3.28
+      '@types/react-dom':
+        specifier: ^18.3.1
+        version: 18.3.7(@types/react@18.3.28)
+      typescript:
+        specifier: ^5.6.3
+        version: 5.9.3
+      vitest:
+        specifier: ^4.1.0
+        version: 4.1.8(@types/node@22.19.15)(jsdom@24.1.3)(vite@6.4.3(@types/node@22.19.15)(jiti@2.6.1)(tsx@4.21.0)(yaml@2.8.3))
+
   apps/example1:
     dependencies:
       '@clerk/backend':
