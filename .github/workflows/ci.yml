@@ -97,11 +97,20 @@ jobs:
         uses: dorny/paths-filter@v3
         with:
           filters: |
+            # Deliberately NOT the whole of packages/canopycms/src/**: the
+            # split itself lives in canopycms-next (withCanopy,
+            # pageExtensions, route adapters) and the fixture; core-package
+            # source changes are covered by lint:bundle (client-entry node
+            # builtin reachability) and the unit suite, and gating two Next
+            # builds on every core change would make this job run on most
+            # PRs. Manifest/lockfile changes DO run it — a dependency
+            # resolution change can break a build shape on its own.
             relevant:
               - 'packages/canopycms-next/**'
               - 'packages/canopycms/src/cli/template-files/**'
               - 'packages/canopycms/src/build/**'
               - 'packages/canopycms/src/static/**'
+              - 'packages/canopycms/package.json'
               - 'apps/dual-build-fixture/**'
               # The lockfile decides which Next/react/canopycms dep versions
               # the fixture actually builds with -- a resolution change (e.g.

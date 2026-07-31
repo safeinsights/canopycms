@@ -85,6 +85,33 @@ describe('Branch creation: remote-mirror collision guard (L2)', () => {
       expect(body.data?.branch.name).toBe('brand-new-branch')
     })
 
+    it('creating a branch heals an ORPHANED stale head (present in refs/heads/* only, no tracking ref, no registry entry)', async () => {
+      // The ordering deleteBranchHandler's own cleanup cannot cover: branch
+      // deleted in the CMS while it still existed on GitHub -> the sync
+      // loop's reconcile re-created the local head from the tracking ref ->
+      // GitHub side later deleted -> --prune dropped the tracking ref ->
+      // the re-created head is orphaned with no registry entry left for the
+      // delete path to ever run against. Reuse-time healing in
+      // createBranchHandler is what closes this: once the registry and
+      // tracking checks both pass, a remaining local head is stale by
+      // definition and must not survive to reject the new branch's first
+      // publish.
+      await simpleGit({ baseDir: workspace.seedPath }).raw([
+        'push',
+        'origin',
+        'main:refs/heads/orphaned-head',
+      ])
+
+      const res = await client.post('/api/canopycms/branches', { branch: 'orphaned-head' })
+      expect(res.status).toBe(200)
+
+      const mirrorRefs = await simpleGit({
+        baseDir: workspace.remotePath,
+        config: ['safe.bareRepository=all'],
+      }).raw(['for-each-ref', '--format=%(refname)', 'refs/heads/'])
+      expect(mirrorRefs).not.toContain('refs/heads/orphaned-head')
+    })
+
     it('deleting a branch removes its stale head from the mirror but preserves the tracking ref, so the name is cleanly reusable', async () => {
       // The other half of the local-leftover story above: refs/heads/* in
       // remote.git is only safe to IGNORE at create time because the delete

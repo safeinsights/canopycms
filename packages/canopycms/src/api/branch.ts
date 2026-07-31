@@ -10,7 +10,7 @@ import type { ApiContext, ApiRequest, ApiResponse } from './types'
 import { defineEndpoint } from './route-builder'
 import { createDebugLogger } from '../utils/debug'
 import { clientOperatingStrategy } from '../operating-mode'
-import { isNotFoundError, getErrorMessage } from '../utils/error'
+import { isNotFoundError, getErrorMessage, sanitizeErrorMessage } from '../utils/error'
 import { filePathExists } from '../utils/fs'
 import { isNetworkRemoteUrl } from '../utils/git'
 import { sanitizeBranchName, RESERVED_SETTINGS_BRANCH_PREFIX } from '../paths'
@@ -333,6 +333,32 @@ export const createBranchHandler = async (
               `of the same name. Choose a different name.`,
           }
         }
+        // No collision: GitHub does not have this name. Clear any STALE local
+        // head the mirror still carries for it, so this new branch's first
+        // publish can't be rejected non-fast-forward against a leftover tip.
+        // deleteBranchHandler's cleanup (below) handles the common case, but
+        // cannot cover every ordering: when the branch still existed on
+        // GitHub at editor-delete time, the sync loop's reconcile re-creates
+        // the local head from the tracking ref within a cycle, and once the
+        // GitHub side is later deleted (pruning the tracking ref) that
+        // re-created head is orphaned with no registry entry left for the
+        // delete path to ever run against. Healing at REUSE time covers
+        // every ordering, however the head got orphaned: the registry check
+        // above already proved no live branch owns this name, and the
+        // tracking check just proved GitHub doesn't either, so a remaining
+        // local head is stale by definition. Best-effort (old-value-guarded
+        // against a concurrent push): on failure, creation still proceeds --
+        // that is today's status quo, and the publish-time 409 message names
+        // this cause.
+        try {
+          await GitManager.deleteBareRemoteHead(resolvedMirrorPath, sanitizedRequested)
+        } catch (err: unknown) {
+          log.warn('api', 'Failed to clear stale mirror head at branch reuse', {
+            branch: sanitizedRequested,
+            path: resolvedMirrorPath,
+            error: getErrorMessage(err),
+          })
+        }
       } catch (err: unknown) {
         // Mirror EXISTS but is unreadable (corrupt, permissions, wrong git
         // version, ...) -- distinct from "not found" above. Same
@@ -576,7 +602,10 @@ export const deleteBranchHandler = async (
             retryDelay: 100,
           })
         } catch (err: unknown) {
-          cleanupWarning = `Failed to fully remove branch directory: ${getErrorMessage(err)}`
+          // sanitizeErrorMessage: this string goes back to the browser in the
+          // delete response (API-H2 — no absolute EFS paths to clients);
+          // the console line below keeps the raw detail for server logs.
+          cleanupWarning = `Failed to fully remove branch directory: ${sanitizeErrorMessage(getErrorMessage(err))}`
           console.error(
             `CanopyCMS: Failed to delete branch directory for ${branchName}:`,
             getErrorMessage(err),
@@ -630,9 +659,13 @@ export const deleteBranchHandler = async (
     try {
       await GitManager.deleteBareRemoteHead(mirrorPath, sanitizedDeleted)
     } catch (err: unknown) {
-      const warning = `Failed to remove the deleted branch's head from the local mirror: ${getErrorMessage(err)}`
+      // Client-facing copy is sanitized (API-H2 — no absolute EFS paths);
+      // the console line keeps the raw detail for server logs.
+      const warning = `Failed to remove the deleted branch's head from the local mirror: ${sanitizeErrorMessage(getErrorMessage(err))}`
       cleanupWarning = cleanupWarning ? `${cleanupWarning}; ${warning}` : warning
-      console.warn(`CanopyCMS: ${warning} (branch ${sanitizedDeleted}, mirror ${mirrorPath})`)
+      console.warn(
+        `CanopyCMS: failed to remove deleted branch's mirror head (branch ${sanitizedDeleted}, mirror ${mirrorPath}): ${getErrorMessage(err)}`,
+      )
     }
   }
 

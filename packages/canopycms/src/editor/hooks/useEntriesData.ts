@@ -1,8 +1,12 @@
 'use client'
 
 /**
- * SWR-backed read of a branch's schema + entry list (GET /:branch/schema,
- * GET /:branch/entries, paginated).
+ * Fetch/key/type pieces for a branch's schema + entry list (GET
+ * /:branch/schema, GET /:branch/entries, paginated) -- consumed by
+ * useEntryManager.ts, which owns BOTH the automatic useSWR call (with its
+ * tagged cache values, see the note at the bottom of this file) and the
+ * imperative reload path (`refreshEntries`) with its out-of-order-response
+ * guard.
  *
  * Combines schema and entries into one fetch because building EditorEntry/
  * EditorCollection objects requires the hydrated flatSchema either way (see
@@ -11,13 +15,8 @@
  * schema response) -- Editor.tsx used to fetch schema a second time on its
  * own just to compute this list; it now reads it off useEntryManager's
  * return value instead, eliminating that duplicate request.
- *
- * Keyed per branch. useEntryManager.ts owns the imperative reload path
- * (`refreshEntries`) and its own out-of-order-response guard (see the
- * comment there); this module only holds the shared fetch/key/type pieces.
  */
 
-import useSWR, { type SWRResponse } from 'swr'
 import { notifications } from '@mantine/notifications'
 import { MAX_ENTRIES_PER_PAGE } from '../../api/entries-constants'
 import type { CollectionItem, ListEntriesResponse } from '../../api/entries'
@@ -130,16 +129,10 @@ export async function fetchEntriesAndSchema(
   return { collections, entries, availableSchemas: Object.keys(entrySchemas) }
 }
 
-/**
- * SWR-backed read of a branch's schema + entries. `branch` may be empty
- * (branchless start), in which case fetching is disabled entirely (null key).
- */
-export function useEntriesData(
-  apiClient: Pick<ApiClient, 'schema' | 'entries'>,
-  branch: string,
-  params: FetchEntriesParams,
-): SWRResponse<EntriesData, Error> {
-  return useSWR(branch ? entriesKey(branch) : null, () =>
-    fetchEntriesAndSchema(apiClient, branch, params),
-  )
-}
+// NOTE: there is deliberately NO generic `useEntriesData(apiClient, branch)`
+// wrapper hook here (there briefly was one, never mounted by anything).
+// useEntryManager owns the only useSWR call for `entriesKey` slots, and it
+// stores TAGGED values there — `{ fetched, seq, branch }`, not bare
+// EntriesData (see its refreshSeqRef doc comment). A second hook fetching
+// the same key with an untagged fetcher would overwrite the tagged slot
+// with a value the commit effect silently ignores.

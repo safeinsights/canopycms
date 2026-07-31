@@ -376,7 +376,11 @@ export class CmsWorker {
       // doc comment for why a boot-only call is insufficient once the
       // worker's ASG rolls on every `cdk deploy` (CanopyCmsService's
       // UpdatePolicy).
-      const recovered = await recoverOrphanedTasks(this.taskDir, undefined, this.log)
+      const recovered = await recoverOrphanedTasks(
+        this.taskDir,
+        this.orphanRecoveryMaxAgeMs(),
+        this.log,
+      )
       if (recovered > 0) {
         console.log(`Recovered ${recovered} orphaned task(s)`)
       }
@@ -626,6 +630,20 @@ export class CmsWorker {
   }
 
   /**
+   * Staleness threshold for recoverOrphanedTasks, derived from the
+   * configured task timeout rather than fixed: the safety argument for
+   * running recovery on every poll cycle is "no legitimately in-flight task
+   * can be this old, because executeTaskWithTimeout bounds every attempt by
+   * taskTimeoutMs" -- which is only true if this threshold scales with
+   * taskTimeoutMs. 2x leaves the same comfortable margin the defaults have
+   * (60s timeout vs 5min threshold); the 5-minute floor preserves the
+   * long-standing default for a replacement instance's boot window.
+   */
+  private orphanRecoveryMaxAgeMs(): number {
+    return Math.max(5 * 60_000, this.taskTimeoutMs * 2)
+  }
+
+  /**
    * Process queued tasks from Lambda.
    * Polls .tasks/pending/ directory and executes each task.
    * Processes up to maxTasksPerCycle tasks per invocation.
@@ -648,13 +666,19 @@ export class CmsWorker {
     // means the file's age eventually crosses the threshold and it gets
     // recovered without operator intervention.
     //
-    // Safe to run this often: taskTimeoutMs defaults to 60s (DEFAULT_TASK_TIMEOUT
-    // above), and executeTaskWithTimeout() guarantees every task THIS process
-    // dequeues is completed, failed, or retried (all three remove the
-    // processing/ file) within that timeout - so no task legitimately still
-    // in-flight can accumulate anywhere near 5 minutes of age in processing/
-    // for this call to misclassify as orphaned and steal out from under it.
-    const recovered = await recoverOrphanedTasks(this.taskDir, undefined, this.log)
+    // Safe to run this often: executeTaskWithTimeout() guarantees every task
+    // THIS process dequeues is completed, failed, or retried (all three
+    // remove the processing/ file) within taskTimeoutMs - and the staleness
+    // threshold is derived from taskTimeoutMs (orphanRecoveryMaxAgeMs below)
+    // precisely so that guarantee holds for ANY configured timeout, not just
+    // the 60s default: a fixed 5-minute threshold would have this call steal
+    // the worker's own still-in-flight task back to pending whenever an
+    // adopter configured taskTimeoutMs above ~5 minutes.
+    const recovered = await recoverOrphanedTasks(
+      this.taskDir,
+      this.orphanRecoveryMaxAgeMs(),
+      this.log,
+    )
     if (recovered > 0) {
       console.log(`Recovered ${recovered} orphaned task(s)`)
     }

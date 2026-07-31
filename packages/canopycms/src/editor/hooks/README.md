@@ -7,8 +7,11 @@ dedicated SWR-backed data hook that owns the automatic on-mount/on-branch-change
 fetch:
 
 - `useBranchesData` (`useBranchesData.ts`) -- GET /branches, key `canopy:branches`
-- `useEntriesData` (`useEntriesData.ts`) -- GET /:branch/schema + GET /:branch/entries
-  (paginated), key `canopy:entries:${branch}`
+- `useEntriesData.ts` -- GET /:branch/schema + GET /:branch/entries (paginated),
+  key `canopy:entries:${branch}`. Fetch/key pieces only, no wrapper hook:
+  `useEntryManager` owns the sole `useSWR` call for these keys, because its
+  cache slots hold TAGGED values (`{ fetched, seq, branch }`) for its
+  out-of-order commit guard -- see the note at the bottom of that file
 - `useCommentsData` (`useCommentsData.ts`) -- GET /:branch/comments, key
   `canopy:comments:${branch}`
 
@@ -66,4 +69,4 @@ never land in the new branch's state):
 
 - `useBranchesData` is NOT branch-keyed (the branches list isn't
   branch-scoped data), so a branch switch does not re-fetch it
-- `useEntriesData` / `useCommentsData` re-key and re-fetch
+- the entries and comments keys re-key and re-fetch per branch

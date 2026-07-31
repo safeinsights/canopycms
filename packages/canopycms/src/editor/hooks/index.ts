@@ -9,7 +9,6 @@ export * from './useDraftManager'
 export { useCommentSystem } from './useCommentSystem'
 export { useBranchesData, fetchBranches, BRANCHES_KEY, type BranchesData } from './useBranchesData'
 export {
-  useEntriesData,
   fetchEntriesAndSchema,
   entriesKey,
   type EntriesData,
