@@ -9,8 +9,12 @@
  * (imported transitively from `canopycms/server`, which resolves `sharp`
  * against packages/canopycms's own node_modules - this works precisely
  * because Node resolves bare imports relative to the file that makes them,
- * not the caller) - only the "oversized output" test spies on `applyTransform`
- * to avoid needing a multi-megabyte fixture image.
+ * not the caller) - the "oversized output" tests and the status-pass-through
+ * tests spy on `applyTransform` instead: the former to avoid needing a
+ * multi-megabyte fixture image, the latter because provoking each of
+ * `applyTransform`'s real 400/413/422 outcomes from raw bytes would need a
+ * different bespoke fixture per status when the thing actually under test
+ * here is only "does the handler forward `transformed.status` verbatim".
  */
 
 import { Readable } from 'node:stream'
@@ -193,6 +197,57 @@ describe('asset-transform handler', () => {
     const res = await handler(makeEvent(`/assets/t/orig/${HASH32}/photo.svg`))
 
     expect(res.statusCode).toBe(400)
+  })
+
+  it('passes a transform rejection status through unflattened - 400 (unsupported input format)', async () => {
+    const spy = vi.spyOn(canopyServer, 'applyTransform').mockResolvedValue({
+      ok: false,
+      status: 400,
+      error: "Unsupported input format for transform: 'bmp'",
+    })
+
+    const res = await handler(makeEvent(`/assets/t/orig/${HASH32}/photo.png`))
+
+    expect(res.statusCode).toBe(400)
+    expect(JSON.parse(res.body ?? '{}')).toEqual({
+      error: "Unsupported input format for transform: 'bmp'",
+    })
+
+    spy.mockRestore()
+  })
+
+  it('passes a transform rejection status through unflattened - 413 (output too large)', async () => {
+    const spy = vi.spyOn(canopyServer, 'applyTransform').mockResolvedValue({
+      ok: false,
+      status: 413,
+      error: 'Transformed output exceeds the byte cap',
+    })
+
+    const res = await handler(makeEvent(`/assets/t/orig/${HASH32}/photo.png`))
+
+    expect(res.statusCode).toBe(413)
+    expect(JSON.parse(res.body ?? '{}')).toEqual({
+      error: 'Transformed output exceeds the byte cap',
+    })
+
+    spy.mockRestore()
+  })
+
+  it('passes a transform rejection status through unflattened - 422 (undecodable input)', async () => {
+    const spy = vi.spyOn(canopyServer, 'applyTransform').mockResolvedValue({
+      ok: false,
+      status: 422,
+      error: 'Transform failed: vipspng: libpng read error',
+    })
+
+    const res = await handler(makeEvent(`/assets/t/orig/${HASH32}/photo.png`))
+
+    expect(res.statusCode).toBe(422)
+    expect(JSON.parse(res.body ?? '{}')).toEqual({
+      error: 'Transform failed: vipspng: libpng read error',
+    })
+
+    spy.mockRestore()
   })
 
   it('returns a 302 redirect with Cache-Control: no-store when the transform output exceeds the inline size cap, after writing it to S3 first', async () => {

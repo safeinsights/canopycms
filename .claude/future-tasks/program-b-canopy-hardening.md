@@ -78,11 +78,11 @@ found by inspection and neither yet hit.
   `useReferenceResolution` and `loadEntry` have no cancellation for stale
   responses. SWR provides the dedup/cancel layer; generation counters cover the
   rest.
-- [finalize-transform-decoder-mismatch.md](finalize-transform-decoder-mismatch.md)
+- ~~[finalize-transform-decoder-mismatch.md](resolved/finalize-transform-decoder-mismatch.md)
   — upload `finalize` (header-sniffing, no sharp) accepts rasters the transform
   Lambda's libvips later rejects with a 422, so the asset "uploads fine" and
   renders broken everywhere with no user feedback. Confirmed on the live
-  deploy-test. Real editors upload imperfect exports.
+  deploy-test. Real editors upload imperfect exports.~~ RESOLVED 2026-07-30.
 
 ---
 

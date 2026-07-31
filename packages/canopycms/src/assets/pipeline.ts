@@ -6,13 +6,16 @@
  *
  * Server-only - never import this module from client/editor code. It pulls
  * in `file-type`, `image-size`, and the SVG sanitizer, none of which belong
- * in a browser bundle.
+ * in a browser bundle. `sharp` is loaded dynamically (see
+ * `rasterIsDecodable` below) rather than statically imported, but is just as
+ * server-only - it is never reachable from a browser bundle either way.
  */
 
 import { fileTypeFromBuffer } from 'file-type'
 import { imageSize } from 'image-size'
 import { create as createContentDisposition } from 'content-disposition'
 
+import { getErrorMessage } from '../utils/error'
 import { hashBytes, publicKey, slugifyFilename } from './keys'
 import { sanitizeSvg } from './svg-sanitizer'
 import { MAX_INPUT_PIXELS } from './transform-directives'
@@ -69,7 +72,14 @@ export interface FinalizeSuccess {
 
 export interface FinalizeRejection {
   ok: false
-  status: 413 | 415
+  /**
+   * 413: over a size/pixel cap. 415: unrecognized/unsupported file type.
+   * 422: recognized, in-limits raster whose bytes do not actually decode -
+   * the same status `applyTransform` (transform.ts) uses for a decode
+   * failure, so a client sees one consistent status for "this file's bytes
+   * don't decode" regardless of which half of the pipeline caught it.
+   */
+  status: 413 | 415 | 422
   error: string
 }
 
@@ -141,6 +151,87 @@ function computeDimensions(data: Uint8Array): { width?: number; height?: number 
   }
 }
 
+/** Output dims for the throwaway decode-validation resize below - tiny enough that the encode side costs nothing; what has to be bounded is the mandatory decode, not this. */
+const DECODE_CHECK_SIZE = 8
+
+/**
+ * User-facing rejection message for an undecodable raster - deliberately
+ * generic (never the raw libvips string, e.g. "vipspng: libpng read error"),
+ * matching how the sniff/size rejections above also speak in terms an editor
+ * can act on rather than surfacing library internals.
+ */
+const UNDECODABLE_RASTER_ERROR =
+  'This image could not be decoded - it may be corrupt or truncated. Try re-exporting it and uploading again.'
+
+/**
+ * Force a REAL pixel decode of a raster upload, catching the defect
+ * `computeDimensions` above (header-only, explicitly non-fatal) cannot: a
+ * corrupt PNG IDAT / truncated JPEG scan / etc. still carries a perfectly
+ * valid IHDR/SOF, so `file-type`/`image-size` both accept bytes that the
+ * transform engine's real sharp/libvips decoder (transform.ts's
+ * `applyTransform`) later refuses - with a raw "vipspng: libpng read error"
+ * - by which point the asset has already "uploaded successfully" and renders
+ * broken everywhere it's shown. This makes finalize use the same decoder
+ * transform.ts does, before the bytes are ever persisted, instead of only
+ * discovering the mismatch at render time.
+ *
+ * `.resize()` to a tiny output - NOT `.metadata()` - is what makes this a
+ * real test: `metadata()` only reads header fields, exactly what
+ * `computeDimensions` above already does and exactly what fails to catch
+ * this class of bug. libvips cannot compute a resized pixel buffer without
+ * fully decoding the source, so a corrupt IDAT/scan still throws here even
+ * though it would not throw from a header-only read. The output itself is
+ * immediately discarded - decode is the expensive, unavoidable part of this
+ * check; encoding an 8x8 buffer is not.
+ *
+ * `limitInputPixels: MAX_INPUT_PIXELS` reuses transform.ts's own
+ * decompression-bomb cap (imported above, not redefined) so this validation
+ * step cannot itself become a bomb vector on a header that lied about its
+ * dimensions - in practice the pixel-count check in the caller below already
+ * rejects those before this function is ever reached, but the cap is cheap
+ * insurance against relying on that ordering.
+ *
+ * Fails OPEN vs. fails CLOSED, deliberately different failure modes:
+ * - sharp itself cannot be loaded (native binary missing for this
+ *   platform/architecture, e.g. a cross-arch build) - there is no decoder
+ *   available in this environment at all, which is an environment problem,
+ *   not a fact about the uploaded file. Log it and let the upload through
+ *   unvalidated (the pre-fix behavior) rather than failing every raster
+ *   upload because of a deployment issue.
+ * - sharp loads fine but its decoder REJECTS the bytes - that IS a fact
+ *   about this specific file, and an actionable one. Return false so the
+ *   caller rejects the upload.
+ */
+async function rasterIsDecodable(data: Uint8Array): Promise<boolean> {
+  // Typed as the whole module (not just its callable default export) and
+  // dereferenced via `.default` below - sharp's own types ship an
+  // `export const sharp: SharpConstructor; export default sharp;` pair for
+  // the ESM entry point resolved by `import()`, so `typeof import('sharp')`
+  // is the two-property namespace object, not the callable itself.
+  let sharpModule: typeof import('sharp')
+  try {
+    sharpModule = await import('sharp')
+  } catch (err: unknown) {
+    console.warn(
+      `[canopycms] sharp could not be loaded - skipping raster decode validation at finalize: ${getErrorMessage(err)}`,
+    )
+    return true
+  }
+
+  try {
+    await sharpModule
+      .default(data, { limitInputPixels: MAX_INPUT_PIXELS })
+      .resize({ width: DECODE_CHECK_SIZE, height: DECODE_CHECK_SIZE, fit: 'fill' })
+      .toBuffer()
+    return true
+  } catch (err: unknown) {
+    console.warn(
+      `[canopycms] raster upload failed real pixel decode at finalize: ${getErrorMessage(err)}`,
+    )
+    return false
+  }
+}
+
 /**
  * Run the finalize pipeline over freshly-uploaded bytes: sniff the real file
  * type (never trust the client-declared contentType beyond presign-time UX),
@@ -209,6 +300,14 @@ export async function runFinalizePipeline(input: FinalizeInput): Promise<Finaliz
         error: `Image dimensions ${dims.width}x${dims.height} (${pixelCount} pixels) exceed the ${MAX_INPUT_PIXELS}-pixel limit`,
       }
     }
+  }
+
+  // Only rasters ever reach sharp downstream (svg/pdf are served statically,
+  // never transformed) - checked AFTER the cheap header-based pixel cap
+  // above, so an oversized/bomb-shaped input is rejected without ever
+  // spending a real decode on it.
+  if (kind === 'raster' && !(await rasterIsDecodable(canonicalData))) {
+    return { ok: false, status: 422, error: UNDECODABLE_RASTER_ERROR }
   }
 
   const meta: AssetMeta = {
