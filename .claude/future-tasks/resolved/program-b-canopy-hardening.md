@@ -182,6 +182,16 @@ Nine PRs. B1 and B2 clear Workstream D's Canopy-side gate.
   CloudWatch-agent failure roll back the whole deploy, and it would pass for a
   crash-looping worker regardless.
 
+## Post-resolution: independent review (2026-07-30)
+
+An independent session re-reviewed the merged epic (PR #183) and fixed four
+defects on the branch (settings-guard lock-race bypass; stale mirror heads
+breaking branch-name reuse — fixed at both delete AND reuse time; a
+cross-branch entries bleed in the SWR refactor; a stranded editor busy
+flag), plus a final Fable sweep whose findings were resolved or filed. Full
+narrative in [program-log.md](../program-log.md) ("Independent review of the
+hardening epic") and in PR #183's body.
+
 ## Still open
 
 - [next-16.2-postcss-fork-bomb.md](../next-16.2-postcss-fork-bomb.md) — the

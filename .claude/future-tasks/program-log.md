@@ -344,3 +344,113 @@ never posts a status at all, which hangs any required check forever.
 sandbox artifact on this machine (tsx cannot open its IPC pipe) and pass with
 the sandbox disabled; `MarkdownField`'s "mounts the real MDXEditor" is a
 documented pre-existing flake under full-suite load. Neither is a real failure.
+
+## 2026-07-30 — [B] Independent review of the hardening epic: four real defects, two proofs, one disproof
+
+An independent session (not the one that wrote the epic) merged the base,
+re-reviewed PR #183's full diff adversarially, and fixed what it found on
+`epic/canopy-hardening` (commits 4d464592, a694e0d8, TBD). Verified claims by
+reproduction where possible.
+
+**The settings rename guard could be bypassed by losing a lock race.** The
+guard (refuse to re-orphan a populated settings workspace under a new branch
+name) ran only when this process ACQUIRED the init file-lock — but the
+un-acquired process still proceeded to initializeWorkspace (pre-existing
+concurrent-init design), so two Lambdas cold-starting together with a changed
+deploymentName had one refuse and the other wipe. Concurrent cold starts
+right after a deploy are exactly when a changed env value arrives. The guard
+now runs lock-or-not; enumerating mid-init states shows a same-name
+concurrent init cannot false-positive it (first init sits on base with no
+settings files; same-name re-init has current==resolved). Regression test
+seeds a fresh foreign lock and asserts the refusal plus intact files.
+
+**#168's non-destructive fetch created a new lifecycle hole: nothing ever
+removed a deleted branch's head from remote.git.** Pre-#168, the destructive
+`--prune` into refs/heads/* cleaned it up (that WAS the data-loss bug — the
+cure was right). But after: create → publish → squash-merge (GitHub
+auto-deletes) → delete in editor → reuse the name, and the reused branch's
+first publish is rejected non-fast-forward against the stale old tip — a
+permanent 409 blaming "another CanopyCMS deployment". Worse: retrying the
+submit skips the local push (clean tree) and enqueues the worker push of the
+STALE head, resurrecting the deleted branch's content on GitHub as an
+apparent success. Fixed where the epic's own comments said the "explicit
+path" should live: deleteBranchHandler now deletes refs/heads/<name> from the
+mirror (GitManager.deleteBareRemoteHead, expected-old-value-guarded like
+reconcileTrackedBranches' updates), deliberately keeping the tracking ref so
+a name still live on GitHub keeps 409ing at create time — the honest outcome.
+The retry-skips-push half is pre-existing and filed separately
+(submit-retry-skips-push-after-failed-push.md).
+
+**#181's stale-response guard broke SWR's cache replay: A→B→A within the 2s
+dedupe window left branch B's entries rendered under branch A indefinitely.**
+The commit guard compared the cached tag's seq against a GLOBAL claim counter
+that B's load had advanced; the replayed (valid) A cache hit was rejected,
+and inside dedupingInterval no revalidation followed — with
+revalidateOnFocus:false, nothing ever corrected it. Proven by a hook test
+that fails on the pre-fix code and passes after. Replaced with a per-branch
+committed-seq rule ("never move a branch's view backwards; never commit
+another branch's tag"), which also required reading the current branch
+through a ref — the settle-time check in refreshEntries closes over a stale
+options object, which the first fix attempt got wrong and its own test
+caught.
+
+**A stale entry-load settle could strand the editor's busy flag.** Editor.tsx
+only cleared entriesLoading when the settling load's entry was still
+selected; navigating from a slow-loading entry to an ALREADY-loaded one
+starts no new load, so nothing ever cleared it. Now also cleared when no
+loads remain in flight.
+
+**Proof the dual-build net fires:** sabotaged withCanopy (static build no
+longer excludes .server.* extensions), rebuilt, ran the fixture: 3 assertions
+fail, exit 1. Reverted. Also: the job's path filter omitted pnpm-lock.yaml —
+a Next resolution bump (the exact class the known-good pin exists for) would
+have skipped the job; added.
+
+**Verified holding, not just asserted:** worker-persisted error redaction
+(every path to task JSON/branch metadata passes redactCredentials before any
+HTTP surface; classifier messages are fixed strings), classifier tested
+against real captured git output at both hops including --porcelain,
+C-locale forced at every classified call site, ASG
+rolling-update-cannot-overlap reasoning (min-in-service 0, max 1 →
+terminate-then-launch), CDK stamps CANOPYCMS_DEPLOYMENT_NAME unconditionally
+for Lambda AND worker, `${branch}:${contentId}` OCC keying with
+request-branch pinning survived the #181 refactor intact, log-group custom
+names dodge the auto-created /aws/lambda group on existing stacks.
+
+**Env-divergence residue filed, not fixed:** config.settingsBranch overrides
+diverge Lambda vs worker (no CANOPYCMS_SETTINGS_BRANCH CDK prop) — bounded
+because the primary settings-push path carries the Lambda-resolved name in
+the task payload; extends worker-base-branch-env-divergence.md.
+
+**Local-environment note:** packages/canopycms-cdk tests fail in a fresh
+worktree until `pnpm run build:worker && pnpm run build:lambda` produce the
+asset dirs the construct synths against — environment artifact, not a
+failure.
+
+**A second, fully independent reviewer over the accumulated diff confirmed
+all five hard invariants and found the first fix's blind spot.** The
+delete-time mirror-head cleanup only wins the auto-delete-first ordering:
+when the branch still exists on GitHub at editor-delete time, the sync
+loop's reconcile re-creates the local head from the tracking ref within a
+cycle, and once GitHub's side is later deleted (pruning the tracking ref)
+that head is orphaned forever — no registry entry remains for the delete
+path to ever run against. Resolved with the reviewer's suggested reuse-time
+heal: createBranchHandler clears any remaining local head once the registry
+and tracking checks both pass (at that point it is stale by definition),
+covering every ordering; delete-time cleanup stays as belt-and-suspenders.
+Its smaller findings were also applied (orphan-recovery staleness now
+derived from taskTimeoutMs so the every-cycle-recovery safety argument holds
+for any configured timeout; the never-mounted useEntriesData wrapper hook
+deleted — its untagged fetcher would have silently poisoned useEntryManager's
+tagged cache slots; delete-response cleanupWarning strings sanitized) or
+filed (foreign-settings-branch signal into worker-status.json; the
+two-writer entriesLoading flag, now patched twice ad hoc, folded into the
+editor-state-context migration task).
+
+**Sibling-session gotcha worth recording:** two concurrent sessions running
+the e2e suite collide invisibly on the hardcoded port 5174 —
+`reuseExistingServer: true` makes one session's playwright attach to the
+OTHER session's server (different worktree, different code), producing a
+97/97 wipeout that looks like a catastrophic regression and is actually
+pure cross-contamination. Check `lsof -iTCP:5174` before believing a local
+e2e wipeout.
