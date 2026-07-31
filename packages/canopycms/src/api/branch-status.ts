@@ -83,8 +83,10 @@ const submitBranchForMergeHandler = async (
         status: 409,
         error:
           `Could not submit "${branchContext.branch.name}": the branch has moved on the remote ` +
-          `(likely another CanopyCMS deployment sharing this repository, or a direct push to ` +
-          `GitHub). Rename this branch or reconcile it with the remote before submitting again.`,
+          `(likely another CanopyCMS deployment sharing this repository, a direct push to ` +
+          `GitHub, or a leftover from an earlier deleted branch of the same name). Create a ` +
+          `branch under a different name, or reconcile this one with the remote before ` +
+          `submitting again.`,
       }
     }
 

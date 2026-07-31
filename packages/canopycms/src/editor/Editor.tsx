@@ -438,11 +438,14 @@ export const Editor: React.FC<EditorProps> = ({
         })
       } finally {
         loadingEntryIdsRef.current.delete(contentId)
-        // Only clear the shared flag if this load's entry is still selected --
-        // otherwise a newer selection's own load owns the flag now, and this
-        // stale settle must not flip it back to false while that one is
-        // still in flight.
-        if (currentContentIdRef.current === contentId) {
+        // Clear the shared flag if this load's entry is still selected, OR if
+        // no other load remains in flight. The second arm matters when the
+        // user navigates from a slow-loading entry to one that's ALREADY
+        // loaded: no new load starts, so "a newer selection's own load owns
+        // the flag now" doesn't hold -- without it, this stale settle would
+        // leave `entriesLoading` (and therefore `busy`) stuck true with
+        // nothing left to clear it.
+        if (currentContentIdRef.current === contentId || loadingEntryIdsRef.current.size === 0) {
           setEntriesLoading(false)
         }
       }

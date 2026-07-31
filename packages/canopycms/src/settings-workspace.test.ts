@@ -85,6 +85,44 @@ describe('SettingsWorkspaceManager rename guard', () => {
     expect(status.current).toBe('canopycms-settings-old')
   })
 
+  it('still refuses when another process holds the init lock (guard must not be bypassable by losing the lock race)', async () => {
+    tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'canopy-settings-guard-'))
+    const settingsRoot = path.join(tmpRoot, 'settings')
+    await fs.mkdir(settingsRoot, { recursive: true })
+
+    const git = await initTestRepo(settingsRoot)
+    await git.raw(['checkout', '--orphan', 'canopycms-settings-old'])
+    await fs.writeFile(
+      path.join(settingsRoot, 'permissions.json'),
+      JSON.stringify({ acls: ['do-not-lose-me'] }),
+    )
+    await git.add(['permissions.json'])
+    await git.commit('seed settings')
+
+    // Another process is "mid-init": a FRESH lock file exists, so this
+    // process's acquireFileLock loses the race. The un-locked process still
+    // proceeds to initializeWorkspace (pre-existing concurrent-init design),
+    // so the guard must fire on this path too — concurrent Lambda cold
+    // starts right after a deploy are exactly when a changed deploymentName
+    // shows up.
+    const lockPath = path.join(path.dirname(settingsRoot), '.settings-init.lock')
+    await fs.writeFile(lockPath, JSON.stringify({ pid: 99999, timestamp: new Date() }))
+
+    const manager = new SettingsWorkspaceManager(baseConfig as CanopyConfig)
+    await expect(
+      manager.ensureGitWorkspace({
+        settingsRoot,
+        branchName: 'canopycms-settings-new',
+        mode: 'dev',
+      }),
+    ).rejects.toThrow(/PERMANENTLY WIPES/)
+
+    // Settings survived, and the foreign process's lock was not released by us.
+    const stillThere = await fs.readFile(path.join(settingsRoot, 'permissions.json'), 'utf-8')
+    expect(JSON.parse(stillThere)).toEqual({ acls: ['do-not-lose-me'] })
+    await expect(fs.stat(lockPath)).resolves.toBeDefined()
+  })
+
   it('proceeds (no throw) when the resolved branch name matches the workspace’s current branch', async () => {
     tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'canopy-settings-guard-'))
     const settingsRoot = path.join(tmpRoot, 'settings')

@@ -134,6 +134,37 @@ export interface CreateBranchBody {
   access?: BranchMetadata['access']
 }
 
+/**
+ * Read-only resolution of the local `remote.git` mirror's path, or undefined
+ * when none is configured/auto-detectable (ordinary dev mode) -- callers must
+ * still check `isNetworkRemoteUrl`/`filePathExists` before touching it.
+ *
+ * Resolving remote.git's path must not have side effects:
+ * GitManager.resolveRemoteUrl is NOT safe to call for this -- in dev mode its
+ * shouldAutoInitLocal branch CREATES a simulated remote as a side effect of
+ * merely asking where one would be. So this resolves read-only, mirroring
+ * resolveRemoteUrl's own precedence for its first three sources only
+ * (config.defaultRemoteUrl -> env var -> the strategy's auto-detect path);
+ * resolveRemoteUrl's fourth source (auto-init) is exactly the side effect
+ * being avoided, so it has no read-only equivalent here.
+ *
+ * Shared by createBranchHandler (create-time collision check against the
+ * mirror) and deleteBranchHandler (removing the deleted branch's stale local
+ * head from the mirror) -- the two halves of the same lifecycle: what create
+ * checks, delete must clean up.
+ */
+const resolveReadOnlyMirrorPath = (
+  ctx: ApiContext,
+  strategy: ReturnType<typeof operatingStrategy>,
+): string | undefined => {
+  const remoteUrlConfig = strategy.getRemoteUrlConfig()
+  return (
+    ctx.services.config.defaultRemoteUrl ??
+    process.env[remoteUrlConfig.envVarName] ??
+    remoteUrlConfig.autoDetectRemotePath
+  )
+}
+
 export const createBranchHandler = async (
   ctx: ApiContext,
   req: ApiRequest,
@@ -248,20 +279,7 @@ export const createBranchHandler = async (
     // GitHub) already created -- something the local registry check above
     // cannot see.
     //
-    // Resolving remote.git's path must not have side effects:
-    // GitManager.resolveRemoteUrl is NOT safe to call here -- in dev mode its
-    // shouldAutoInitLocal branch CREATES a simulated remote as a side effect
-    // of merely asking where one would be. So this resolves read-only,
-    // mirroring resolveRemoteUrl's own precedence for its first three
-    // sources only (config.defaultRemoteUrl -> env var -> the strategy's
-    // auto-detect path); resolveRemoteUrl's fourth source (auto-init) is
-    // exactly the side effect being avoided, so it has no read-only
-    // equivalent here.
-    const remoteUrlConfig = strategy.getRemoteUrlConfig()
-    const resolvedMirrorPath: string | undefined =
-      ctx.services.config.defaultRemoteUrl ??
-      process.env[remoteUrlConfig.envVarName] ??
-      remoteUrlConfig.autoDetectRemotePath
+    const resolvedMirrorPath = resolveReadOnlyMirrorPath(ctx, strategy)
 
     if (!resolvedMirrorPath) {
       // No mirror configured or auto-detected at all. This is the ORDINARY
@@ -573,6 +591,48 @@ export const deleteBranchHandler = async (
       ok: false,
       status: 409,
       error: `Branch is busy, try again: ${getErrorMessage(err)}`,
+    }
+  }
+
+  // Also delete the branch's local head from the remote.git mirror (the
+  // deployment's local origin). The sync loop deliberately never deletes a
+  // local head (see reconcileTrackedBranches), so THIS is the one explicit
+  // path that removes it -- without this, the head outlives the branch
+  // forever, and reusing the name after the GitHub side is gone (e.g. a
+  // squash-merged PR with auto-delete) has the reused branch's first publish
+  // rejected non-fast-forward against the stale old tip: a permanent,
+  // misleading 409 -- and a retried submit would then ship the STALE head to
+  // GitHub as an apparent success (see GitManager.deleteBareRemoteHead's doc
+  // comment for the full trace). The tracking ref is deliberately left
+  // alone: while the branch still exists on GitHub, the create-time
+  // collision check SHOULD keep matching it.
+  //
+  // Best-effort, same as the directory removal above: the branch is already
+  // logically deleted; a mirror we can't reach/write just leaves today's
+  // status quo behind (with a warning), it must not fail the delete.
+  const strategy = operatingStrategy(operatingMode)
+  const mirrorPath = resolveReadOnlyMirrorPath(ctx, strategy)
+  const sanitizedDeleted = sanitizeBranchName(branchContext.branch.name)
+  // Defense-in-depth only -- isProtected above already rejects the base
+  // branch, and settings branches never resolve through getBranchContext.
+  const sanitizedBase = sanitizeBranchName(
+    branchContext.branch.baseBranch ?? ctx.services.config.defaultBaseBranch ?? 'main',
+  )
+  const deletableHead =
+    sanitizedDeleted !== sanitizedBase &&
+    !sanitizedDeleted.startsWith(RESERVED_SETTINGS_BRANCH_PREFIX)
+  if (
+    deletableHead &&
+    mirrorPath &&
+    !isNetworkRemoteUrl(mirrorPath) &&
+    (await filePathExists(mirrorPath))
+  ) {
+    try {
+      await GitManager.deleteBareRemoteHead(mirrorPath, sanitizedDeleted)
+    } catch (err: unknown) {
+      const warning = `Failed to remove the deleted branch's head from the local mirror: ${getErrorMessage(err)}`
+      cleanupWarning = cleanupWarning ? `${cleanupWarning}; ${warning}` : warning
+      console.warn(`CanopyCMS: ${warning} (branch ${sanitizedDeleted}, mirror ${mirrorPath})`)
     }
   }
 

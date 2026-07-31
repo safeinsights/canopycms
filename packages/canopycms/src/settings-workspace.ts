@@ -174,11 +174,20 @@ export class SettingsWorkspaceManager {
             // some OTHER settings branch, or the settings files are actually
             // on disk.
             const repoExists = await GitManager.repoExistsAt(options.settingsRoot)
-            // If another process holds the init lock it is mid-initialization,
-            // and the half-built states above are expected rather than
-            // suspicious — skip the guard instead of racing it into a
-            // maximally alarming error on an ordinary concurrent cold start.
-            if (repoExists && acquired) {
+            // Deliberately NOT gated on `acquired`: when another process holds
+            // the init lock, THIS process still proceeds to initializeWorkspace
+            // below (pre-existing concurrent-init design), so skipping the
+            // guard here would let the un-locked process wipe a populated
+            // workspace — concurrent cold starts are routine right after a
+            // deploy, which is exactly when a changed deploymentName arrives.
+            // Running the guard lock-free cannot false-positive on a
+            // legitimate concurrent init: a first-ever init sits on the base
+            // branch with no settings files (fires neither arm of the
+            // condition below), and a same-name re-init has
+            // currentBranch === options.branchName. The only mid-init state
+            // that fires is another process initializing a DIFFERENT settings
+            // branch name — the rename hazard itself, where firing is correct.
+            if (repoExists) {
               let currentBranch: string | undefined
               let readError: string | undefined
               try {

@@ -858,32 +858,152 @@ describe('useEntryManager', () => {
       () => new Promise<ListResult>((resolve) => resolvers.push(resolve)),
     )
 
-    // Empty branch suppresses the mount-effect refresh, isolating the two manual ones.
-    const { result } = renderHook(() => useEntryManager({ ...defaultOptions, branchName: '' }), {
+    const { result } = renderHook(() => useEntryManager(defaultOptions), {
       wrapper,
     })
+
+    // Settle the automatic mount load first, so the two manual refreshes
+    // below race only against each other.
+    await waitFor(() => expect(resolvers).toHaveLength(1))
+    await act(async () => {
+      resolvers[0](page('initial'))
+    })
+    await waitFor(() => expect(result.current.entries.map((e) => e.path)).toEqual(['initial']))
 
     let firstRefresh: Promise<unknown> = Promise.resolve()
     let secondRefresh: Promise<unknown> = Promise.resolve()
     await act(async () => {
-      firstRefresh = result.current.refreshEntries('main') // seq 1
-      secondRefresh = result.current.refreshEntries('main') // seq 2 (the winner)
-      await waitFor(() => expect(resolvers).toHaveLength(2))
+      firstRefresh = result.current.refreshEntries() // the stale one
+      secondRefresh = result.current.refreshEntries() // the winner
+      await waitFor(() => expect(resolvers).toHaveLength(3))
     })
 
     // Settle the SECOND (newest) refresh first — it should commit.
     await act(async () => {
-      resolvers[1](page('newest'))
+      resolvers[2](page('newest'))
       await secondRefresh
     })
     expect(result.current.entries.map((e) => e.path)).toEqual(['newest'])
 
     // Now settle the FIRST (stale) refresh — its commit must be skipped.
     await act(async () => {
-      resolvers[0](page('stale'))
+      resolvers[1](page('stale'))
       await firstRefresh
     })
     expect(result.current.entries.map((e) => e.path)).toEqual(['newest'])
+  })
+
+  it('switching A→B→A inside the SWR dedupe window re-commits branch A’s cached entries instead of leaving branch B’s on screen', async () => {
+    // Regression test for a cross-branch data bleed: SWR serves branch A's
+    // CACHED tagged result on the switch back and, inside dedupingInterval,
+    // does NOT revalidate. The original commit guard compared the cached
+    // tag's seq against a GLOBAL claim counter that branch B's load had
+    // already advanced, so the replayed tag was never committed — and with
+    // no revalidation coming, the editor kept showing branch B's entries
+    // under branch A indefinitely. The per-branch committed-seq rule (see
+    // refreshSeqRef in useEntryManager.ts) accepts the replay.
+    const itemForBranch = (branch: string) => ({
+      ...mockCollectionItem,
+      slug: unsafeAsSlug(`${branch}-entry`),
+      logicalPath: unsafeAsLogicalPath(`${branch}-entry`),
+    })
+    mockClient.entries.list.mockImplementation((params: Record<string, string>) =>
+      Promise.resolve({
+        ok: true as const,
+        status: 200,
+        data: {
+          entries: [itemForBranch(params.branch)],
+          pagination: { hasMore: false, limit: 200 },
+        },
+      }),
+    )
+
+    const optionsFor = (branch: string) => ({
+      ...defaultOptions,
+      initialEntries: [],
+      branchName: branch,
+    })
+    const { result, rerender } = renderHook((props) => useEntryManager(props), {
+      wrapper,
+      initialProps: optionsFor('branch-a'),
+    })
+
+    await waitFor(() =>
+      expect(result.current.entries.map((e) => e.path)).toEqual(['branch-a-entry']),
+    )
+
+    rerender(optionsFor('branch-b'))
+    await waitFor(() =>
+      expect(result.current.entries.map((e) => e.path)).toEqual(['branch-b-entry']),
+    )
+
+    // Immediately back to A — well inside dedupingInterval (2000ms in the
+    // wrapper, matching production SWRProvider), so SWR replays A's cache
+    // without a new request. A's entries must come back regardless.
+    rerender(optionsFor('branch-a'))
+    await waitFor(() =>
+      expect(result.current.entries.map((e) => e.path)).toEqual(['branch-a-entry']),
+    )
+  })
+
+  it('a refresh of a branch the user has switched away from does not overwrite the new branch’s entries', async () => {
+    const itemForSlug = (slug: string) => ({
+      ...mockCollectionItem,
+      slug: unsafeAsSlug(slug),
+      logicalPath: unsafeAsLogicalPath(slug),
+    })
+    const page = (slug: string) => ({
+      ok: true as const,
+      status: 200,
+      data: { entries: [itemForSlug(slug)], pagination: { hasMore: false, limit: 200 } },
+    })
+
+    type ListResult = Awaited<ReturnType<typeof mockClient.entries.list>>
+    const parked: Array<{ branch: string; resolve: (v: ListResult) => void }> = []
+    mockClient.entries.list.mockImplementation(
+      (params: Record<string, string>) =>
+        new Promise<ListResult>((resolve) => parked.push({ branch: params.branch, resolve })),
+    )
+
+    const optionsFor = (branch: string) => ({
+      ...defaultOptions,
+      initialEntries: [],
+      branchName: branch,
+    })
+    const { result, rerender } = renderHook((props) => useEntryManager(props), {
+      wrapper,
+      initialProps: optionsFor('branch-a'),
+    })
+
+    // Settle A's automatic load.
+    await waitFor(() => expect(parked).toHaveLength(1))
+    await act(async () => {
+      parked[0].resolve(page('a-initial'))
+    })
+    await waitFor(() => expect(result.current.entries.map((e) => e.path)).toEqual(['a-initial']))
+
+    // Start an explicit refresh of A, then switch to B while it's in flight.
+    let lateRefresh: Promise<unknown> = Promise.resolve()
+    await act(async () => {
+      lateRefresh = result.current.refreshEntries()
+      await waitFor(() => expect(parked).toHaveLength(2))
+    })
+    rerender(optionsFor('branch-b'))
+
+    // Settle B's automatic load, then the late A refresh.
+    await waitFor(() => expect(parked).toHaveLength(3))
+    const bLoad = parked.find((p) => p.branch === 'branch-b')!
+    await act(async () => {
+      bLoad.resolve(page('b-entries'))
+    })
+    await waitFor(() => expect(result.current.entries.map((e) => e.path)).toEqual(['b-entries']))
+
+    await act(async () => {
+      parked[1].resolve(page('a-late'))
+      await lateRefresh
+    })
+    // The late A response must not bleed into B's view.
+    expect(result.current.entries.map((e) => e.path)).toEqual(['b-entries'])
   })
 })
 

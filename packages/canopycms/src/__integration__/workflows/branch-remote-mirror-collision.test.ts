@@ -84,6 +84,62 @@ describe('Branch creation: remote-mirror collision guard (L2)', () => {
       const body = await res.json<BranchResponse>()
       expect(body.data?.branch.name).toBe('brand-new-branch')
     })
+
+    it('deleting a branch removes its stale head from the mirror but preserves the tracking ref, so the name is cleanly reusable', async () => {
+      // The other half of the local-leftover story above: refs/heads/* in
+      // remote.git is only safe to IGNORE at create time because the delete
+      // path now REMOVES it. If it didn't, the reused name's first publish
+      // would be rejected non-fast-forward against the stale old tip (a
+      // squash-merged branch's tip is not an ancestor of a fresh branch off
+      // base) -- a permanent, misleading 409 on a name the user just deleted.
+      // safe.bareRepository=all: sandboxed/CI git setups can set
+      // safe.bareRepository=explicit, which refuses cwd-based discovery of
+      // bare repos (same reason bareRemoteHasBranch uses --git-dir).
+      const mirrorGit = simpleGit({
+        baseDir: workspace.remotePath,
+        config: ['safe.bareRepository=all'],
+      })
+
+      const created = await client.post('/api/canopycms/branches', { branch: 'reused-name' })
+      expect(created.status).toBe(200)
+
+      // Simulate the branch having been published (its head exists in the
+      // mirror at a tip that is NOT an ancestor of base, like a squash-merged
+      // branch) and still present in GitHub's view (tracking ref).
+      const seedGit = simpleGit({ baseDir: workspace.seedPath })
+      await seedGit.raw(['checkout', '-b', 'reused-name'])
+      await fs.writeFile(path.join(workspace.seedPath, 'divergent.md'), 'old branch tip\n', 'utf8')
+      await seedGit.add(['divergent.md'])
+      await seedGit.commit('old branch tip')
+      await seedGit.raw(['push', 'origin', 'reused-name:refs/heads/reused-name'])
+      await seedGit.raw(['push', 'origin', `reused-name:${GITHUB_TRACKING_REF_PREFIX}reused-name`])
+      await seedGit.raw(['checkout', 'main'])
+
+      const deleted = await client.delete('/api/canopycms/reused-name')
+      expect(deleted.status).toBe(200)
+
+      const refs = (await mirrorGit.raw(['for-each-ref', '--format=%(refname)', 'refs/'])).split(
+        '\n',
+      )
+      expect(refs).not.toContain('refs/heads/reused-name')
+      // GitHub's view is NOT ours to erase: while the branch still exists on
+      // GitHub, the create-time check below must keep matching it.
+      expect(refs).toContain(`${GITHUB_TRACKING_REF_PREFIX}reused-name`)
+
+      // And with the tracking ref still present, an immediate recreate is
+      // correctly refused as a remote collision (the honest, actionable
+      // outcome) rather than accepted and later failing at publish time.
+      const recreate = await client.post('/api/canopycms/branches', { branch: 'reused-name' })
+      expect(recreate.status).toBe(409)
+
+      // Once GitHub's side is gone too (branch deleted there; syncGit's
+      // --prune drops the tracking ref), the name is fully reusable.
+      await mirrorGit.raw(['update-ref', '-d', `${GITHUB_TRACKING_REF_PREFIX}reused-name`])
+      const recreateAfterPrune = await client.post('/api/canopycms/branches', {
+        branch: 'reused-name',
+      })
+      expect(recreateAfterPrune.status).toBe(200)
+    })
   })
 
   describe('with no remote.git resolvable (dev mode, no defaultRemoteUrl/env configured)', () => {

@@ -552,6 +552,55 @@ export class GitManager {
   }
 
   /**
+   * Delete `refs/heads/<branch>` from a bare local mirror, if present. A
+   * no-op (not an error) when the ref doesn't exist.
+   *
+   * This is the "explicit path" for removing a deleted branch's local head
+   * that the sync loop deliberately is not (see GITHUB_TRACKING_REF_PREFIX's
+   * doc comment: reconcileTrackedBranches never deletes a head). Called by
+   * api/branch.ts's deleteBranchHandler: without it, a deleted branch's head
+   * lives in `remote.git` forever, and the ordinary create -> publish ->
+   * squash-merge -> delete -> reuse-the-name cycle then has the REUSED
+   * branch's first publish rejected non-fast-forward against the stale head
+   * (`GitManager.push()` pushes `branch:branch`, and a squash-merged old tip
+   * is not an ancestor of the new branch) -- a permanent, misleading 409.
+   * Worse, a retried submit skips the local push (clean tree) and enqueues
+   * the worker push of the STALE head, resurrecting the deleted branch's
+   * content on GitHub as an apparent success.
+   *
+   * Deliberately leaves the tracking ref (`GITHUB_TRACKING_REF_PREFIX<branch>`)
+   * alone: that namespace mirrors GitHub's view, and if the branch still
+   * exists on GitHub, the create-time collision check SHOULD keep reporting
+   * it until the remote side is actually gone.
+   *
+   * Same `--git-dir` invocation style as bareRemoteHasBranch above (works
+   * under `safe.bareRepository=explicit`). The existence pre-check makes
+   * "absent" deterministic instead of parsing update-ref's locale-dependent
+   * failure text; the race where the ref vanishes between the two calls just
+   * makes update-ref throw, which the caller treats as the best-effort
+   * failure it is. No `--end-of-options` on update-ref (older gits don't
+   * accept it there); the ref argument always begins with the literal
+   * `refs/heads/` prefix, so it can never parse as an option.
+   */
+  static async deleteBareRemoteHead(remotePath: string, branch: string): Promise<void> {
+    const ref = `refs/heads/${branch}`
+    const output = await simpleGit().raw([
+      '--git-dir',
+      remotePath,
+      'for-each-ref',
+      '--format=%(refname)',
+      '--end-of-options',
+      ref,
+    ])
+    const exists = output
+      .split('\n')
+      .map((line) => line.trim())
+      .includes(ref)
+    if (!exists) return
+    await simpleGit().raw(['--git-dir', remotePath, 'update-ref', '-d', ref])
+  }
+
+  /**
    * Push baseBranch from the source repo into the local bare remote via a
    * temporary remote. With `subdirectory`, pushes a single snapshot commit of
    * that subdirectory's tree at baseBranch instead of the full history:

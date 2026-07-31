@@ -103,6 +103,12 @@ jobs:
               - 'packages/canopycms/src/build/**'
               - 'packages/canopycms/src/static/**'
               - 'apps/dual-build-fixture/**'
+              # The lockfile decides which Next/react/canopycms dep versions
+              # the fixture actually builds with -- a resolution change (e.g.
+              # a Next bump, the exact class the known-good-version pin in
+              # canopycms-next's peerDependencies exists for) can break a
+              # build shape without touching any of the paths above.
+              - 'pnpm-lock.yaml'
               - '.github/workflows/ci.yml'
 
       - uses: pnpm/action-setup@v4

@@ -129,18 +129,68 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
   // ("modified by another editor") on save-after-switch, proven by e2e trace.
   const entryVersionsRef = useRef<Map<string, number>>(new Map())
   const versionKey = (branch: string, contentId: string) => `${branch}:${contentId}`
-  // Monotonic token guarding every commit of fetched entries/collections state,
-  // shared by BOTH the automatic SWR-backed load (below) and explicit
-  // `refreshEntries()` calls. Each attempt claims the next value before
-  // fetching and only commits if it's still the latest when the fetch
-  // settles -- so two overlapping `refreshEntries()` calls resolve
-  // "last caller wins" regardless of response order, and a slow automatic
-  // load can't clobber a faster explicit refresh that started after it (or
-  // vice versa). Per-branch staleness (a switched-away branch's load
-  // resolving late) no longer needs a second ref the way it used to:
-  // useSWR keys entries/schema by branch, so each branch has its own cache
-  // slot and a stale branch's response can only ever land in ITS OWN slot.
-  const refreshSeqRef = useRef(0)
+  // PER-BRANCH monotonic tokens guarding every commit of fetched entries/
+  // collections state, shared by BOTH the automatic SWR-backed load (below)
+  // and explicit `refreshEntries()` calls. Two maps, keyed by branch:
+  //
+  // - `claimed`: bumped the moment an attempt's request starts; the value is
+  //   baked into that attempt's result tag.
+  // - `committed`: the tag seq currently REFLECTED IN STATE for that branch.
+  //
+  // The commit rule is `tag.seq >= committed(tag.branch)` -- "never move a
+  // branch's view backwards" -- NOT `tag.seq === claimed(tag.branch)`
+  // ("newest attempt wins"). The difference matters twice:
+  //
+  // 1. SWR replays a branch's CACHED tagged result when the user switches
+  //    back to it, and the cached tag necessarily carries the seq claimed
+  //    when that data was originally fetched. Under a newest-attempt rule
+  //    (or a single GLOBAL counter, as originally shipped), any newer claim
+  //    -- another branch's load with a global counter, or the switch-back's
+  //    own revalidation with a per-branch one -- made the replayed,
+  //    perfectly valid cache hit fail the check and never commit; when the
+  //    switch back also landed inside SWR's dedupingInterval, no
+  //    revalidation followed either, so the editor kept showing the
+  //    PREVIOUS branch's entries under the new branch indefinitely. A
+  //    replayed tag always passes the committed-seq rule (it was committed
+  //    before, or is newer than what was).
+  // 2. On remount these refs reset to empty maps while SWR's cache (owned by
+  //    the provider above this component) survives, so a replayed tag can
+  //    carry a seq higher than anything this instance ever claimed -- still
+  //    the newest data known for that branch, and still committable.
+  //
+  // What the committed-seq rule gives up: when two same-branch attempts race
+  // and the OLDER response arrives second while the newer is still in
+  // flight, the older commits transiently and the newer overwrites it on
+  // settle (a sub-second flash of slightly-stale data, converging to the
+  // newest). A response older than what's already displayed is still
+  // rejected outright. Cross-branch bleed is prevented separately: every
+  // commit site checks the tag's branch against options.branchName at
+  // settle time.
+  const refreshSeqRef = useRef<{ claimed: Map<string, number>; committed: Map<string, number> }>({
+    claimed: new Map(),
+    committed: new Map(),
+  })
+  const claimRefreshSeq = (branch: string): number => {
+    const next = (refreshSeqRef.current.claimed.get(branch) ?? 0) + 1
+    refreshSeqRef.current.claimed.set(branch, next)
+    return next
+  }
+  const committedRefreshSeq = (branch: string): number =>
+    refreshSeqRef.current.committed.get(branch) ?? 0
+  // The branch currently shown, readable at SETTLE time from async closures
+  // that captured an older render's `options` (refreshEntries below runs
+  // across renders; its captured options.branchName goes stale the moment
+  // the user switches mid-flight, which is exactly when the check matters).
+  const currentBranchRef = useRef(options.branchName)
+  currentBranchRef.current = options.branchName
+  const recordCommittedRefreshSeq = (branch: string, seq: number): void => {
+    refreshSeqRef.current.committed.set(branch, seq)
+    // A commit also implies any future claim must outrank this tag, so a
+    // replayed high-seq tag (remount case above) keeps ordering coherent.
+    if ((refreshSeqRef.current.claimed.get(branch) ?? 0) < seq) {
+      refreshSeqRef.current.claimed.set(branch, seq)
+    }
+  }
 
   // Entry create modal state
   const [createModalOpen, setCreateModalOpen] = useState(false)
@@ -254,16 +304,25 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
   // back) can reuse it instead of refetching.
   const refreshEntries = async (branch: string = options.branchName): Promise<EditorEntry[]> => {
     if (!branch) return []
-    const seq = ++refreshSeqRef.current
+    const seq = claimRefreshSeq(branch)
     const fetched = await fetchEntriesAndSchema(apiClient, branch, {
       resolvePreviewSrc: options.resolvePreviewSrc,
       contentRoot: options.contentRoot,
     })
-    if (seq === refreshSeqRef.current) {
-      setCollectionsState(fetched.collections)
-      setEntriesState(fetched.entries)
-      setAvailableSchemas(fetched.availableSchemas)
-      void globalMutate(entriesKey(branch), { fetched, seq }, { revalidate: false })
+    if (seq >= committedRefreshSeq(branch)) {
+      // Warm the SWR cache for this branch (it's this branch's own slot, so
+      // a later switch back can replay it), but only commit component state
+      // when the user is still ON this branch at settle time -- with
+      // per-branch seqs, a branch switch no longer advances the old
+      // branch's counter, so this check is what stops a late refresh of the
+      // switched-away branch from overwriting the new branch's view.
+      void globalMutate(entriesKey(branch), { fetched, seq, branch }, { revalidate: false })
+      if (branch === currentBranchRef.current) {
+        recordCommittedRefreshSeq(branch, seq)
+        setCollectionsState(fetched.collections)
+        setEntriesState(fetched.entries)
+        setAvailableSchemas(fetched.availableSchemas)
+      }
     }
     return fetched.entries
   }
@@ -434,20 +493,44 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
     // ordered by when each attempt STARTED, not by unrelated differences in
     // how many microtask hops SWR's own dispatch machinery adds before the
     // fetcher body runs.
-    const seq = ++refreshSeqRef.current
-    return fetchEntriesAndSchema(apiClient, options.branchName, {
+    const branch = options.branchName
+    const seq = claimRefreshSeq(branch)
+    return fetchEntriesAndSchema(apiClient, branch, {
       resolvePreviewSrc: options.resolvePreviewSrc,
       contentRoot: options.contentRoot,
-    }).then((fetched) => ({ fetched, seq }))
+    }).then((fetched) => ({ fetched, seq, branch }))
   })
 
+  // Commit the current branch's tagged data -- both fresh settles AND SWR
+  // cache replays on a switch back to a previously visited branch (the
+  // effect re-runs on options.branchName so the replayed tag, whose object
+  // identity didn't change, still gets (re)committed). The seq comparison is
+  // the per-branch committed-seq rule -- see refreshSeqRef's doc comment for
+  // why it is not "newest claim wins" and why a global counter broke cached
+  // replays. The branch check keeps a tag from ever committing under a
+  // different branch's view.
   useEffect(() => {
-    if (taggedEntries && taggedEntries.seq === refreshSeqRef.current) {
-      setCollectionsState(taggedEntries.fetched.collections)
-      setEntriesState(taggedEntries.fetched.entries)
-      setAvailableSchemas(taggedEntries.fetched.availableSchemas)
+    if (!taggedEntries) return
+    if (taggedEntries.branch !== options.branchName) return
+    if (taggedEntries.seq < committedRefreshSeq(taggedEntries.branch)) {
+      // The cached tag for the CURRENT branch is older than what this
+      // instance already displayed for it (e.g. a slow automatic load's
+      // settle overwrote the SWR slot after a newer explicit refresh
+      // committed). State already shows newer data, so don't regress it --
+      // but the SWR slot is stale now, so ask for a revalidation; inside
+      // the dedupingInterval nothing else would refresh this key.
+      void globalMutate(entriesKey(taggedEntries.branch))
+      return
     }
-  }, [taggedEntries])
+    recordCommittedRefreshSeq(taggedEntries.branch, taggedEntries.seq)
+    setCollectionsState(taggedEntries.fetched.collections)
+    setEntriesState(taggedEntries.fetched.entries)
+    setAvailableSchemas(taggedEntries.fetched.availableSchemas)
+    // Deps: only the tag and the current branch matter; the seq helpers and
+    // globalMutate are stable. (This file is plain .ts, so the
+    // react-hooks/exhaustive-deps rule isn't active here anyway -- same note
+    // as useCommentSystem.ts.)
+  }, [taggedEntries, options.branchName])
 
   // Mirrors the automatic load's in-flight state onto the shared busy flag.
   // Explicit refreshEntries() calls intentionally do NOT toggle this (they
