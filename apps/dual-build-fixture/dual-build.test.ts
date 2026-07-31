@@ -312,7 +312,7 @@ describe('cms build (CANOPY_BUILD=cms)', () => {
       // content" failure, which is always a 200 with the wrong body.
       expect(
         homeRes.status,
-        `cms server's "/" returned ${homeRes.status}, not 200 -- if this is a local run with uncommitted changes, dev-mode's request-time read resolves against the last commit, not the working tree; commit first and re-run. Body:\n${homeBody}`,
+        `cms server's "/" returned ${homeRes.status}, not 200 -- if this is a local run with uncommitted changes, dev-mode's request-time read resolves against the last commit, not the working tree; commit first and re-run.\nServer log:\n${serverLog}\nBody:\n${homeBody}`,
       ).toBe(200)
       expect(
         homeBody.includes(CONTENT_MARKER),

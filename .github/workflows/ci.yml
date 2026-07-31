@@ -120,13 +120,19 @@ jobs:
 
       # The fixture runs in CanopyCMS `mode: 'dev'`, whose request-time content
       # read resolves the active branch from git HEAD. actions/checkout leaves
-      # a detached HEAD, so without a real local branch the cms build's `/`
-      # 500s at request time -- the same reason the e2e job below has this
-      # step. Not needed by the static build, which reads content at build
+      # HEAD *detached*, which resolves to the literal name "HEAD" -- a name
+      # parseBranchName rejects outright -- so the cms build's `/` 500s at
+      # request time while passing locally, where HEAD is on a real branch.
+      # Merely creating `main` (as the e2e job does) is not enough: that gives
+      # the branch a name but leaves HEAD detached. Pointing `main` AT the
+      # checked-out commit and attaching HEAD to it is what makes dev mode
+      # resolve, and it also means the branch content is the PR's content --
+      # `main` at origin/main would not contain this PR's fixture files at all.
+      # Only the cms build needs this; the static build reads content at build
       # time.
-      - name: Ensure local main branch exists
+      - name: Attach HEAD to a real branch for dev-mode content reads
         if: steps.filter.outputs.relevant == 'true'
-        run: git branch main origin/main 2>/dev/null || true
+        run: git checkout -B main
 
       # canopycms-next's "./config" export (what apps/dual-build-fixture's
       # next.config.mjs imports) resolves to a pre-bundled dist/config.{cjs,mjs}
