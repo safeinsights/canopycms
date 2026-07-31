@@ -54,3 +54,35 @@ Considerations:
 
 [[worker-cloudwatch-logs]] — the deploy-verification friction that surfaced
 this.
+
+## Resolution (2026-07-30, `fix/cdk-deploy-reaches-worker`, PR #176)
+
+`CanopyCmsService`'s worker ASG now sets
+`autoscaling.UpdatePolicy.rollingUpdate({ minInstancesInService: 0 })`. The `0`
+is required rather than merely chosen: min and max capacity are both 1, so
+there is no way to hold an instance in service out of a maximum of one. Deploys
+are terminate-then-relaunch with a short worker outage while the replacement
+boots.
+
+**cfn-signal was deliberately not added**, contrary to this file's "worth
+considering" note, and the reasoning is recorded in a comment next to the
+update policy so it is not re-litigated:
+
+- User-data runs under `set -euo pipefail`, and the CloudWatch-agent block is
+  last *on purpose* so an agent failure cannot kill the boot. A `cfn-signal`
+  placed after it would never run when that block fails, so CloudFormation
+  would wait out its timeout and **fail and roll back the whole deploy** — the
+  opposite of the intent.
+- Placed earlier it proves almost nothing: the systemd unit is `Type=simple`
+  with `Restart=always`, so `systemctl start` returns 0 the instant exec
+  succeeds. A worker that immediately crash-loops would still signal SUCCESS.
+  A real readiness gate would have to poll `worker-status.json`.
+
+**A prerequisite this exposed and fixed in the same PR:** rolling the ASG turns
+instance replacement from rare into routine, and orphaned-task recovery ran
+exactly once, at `start()`. A replacement boots in 2–4 minutes, *under*
+`recoverOrphanedTasks`'s 5-minute staleness threshold, so that single call saw a
+just-orphaned task as too fresh and skipped it — and nothing rescanned
+`processing/` afterwards. The task, and its branch's `syncStatus`, would have
+wedged forever. Recovery now runs every task-queue cycle, which is safe because
+`taskTimeoutMs` is 60s.
