@@ -183,22 +183,35 @@ describe('runFinalizePipeline - raster formats', () => {
   })
 
   it('rejects a header-valid but undecodable raster (422), the "accepted at upload, unrenderable forever" defect', async () => {
-    const corrupt = await makeCorruptPng(16, 16)
-    const result = await runFinalizePipeline({ data: corrupt, filename: 'corrupt.png' })
-    expect(result.ok).toBe(false)
-    if (result.ok) return
-    expect(result.status).toBe(422)
-    // User-facing message, not a raw libvips string like "vipspng: libpng read error".
-    expect(result.error).toMatch(/could not be decoded/i)
-    expect(result.error).not.toMatch(/vips|libpng/i)
+    // mockConsole even though this test doesn't assert on the log: rejecting
+    // the upload deliberately warns with the real libvips reason, and the
+    // suite fails any test that writes to stderr (test-output-noise guard).
+    const consoleSpy = mockConsole()
+    try {
+      const corrupt = await makeCorruptPng(16, 16)
+      const result = await runFinalizePipeline({ data: corrupt, filename: 'corrupt.png' })
+      expect(result.ok).toBe(false)
+      if (result.ok) return
+      expect(result.status).toBe(422)
+      // User-facing message, not a raw libvips string like "vipspng: libpng read error".
+      expect(result.error).toMatch(/could not be decoded/i)
+      expect(result.error).not.toMatch(/vips|libpng/i)
+    } finally {
+      consoleSpy.restore()
+    }
   })
 
   it('logs (does not throw) the real decode failure reason for the undecodable raster', async () => {
     const consoleSpy = mockConsole()
-    const corrupt = await makeCorruptPng(16, 16)
-    await runFinalizePipeline({ data: corrupt, filename: 'corrupt.png' })
-    expect(consoleSpy).toHaveWarned(/decode/i)
-    consoleSpy.restore()
+    try {
+      const corrupt = await makeCorruptPng(16, 16)
+      await runFinalizePipeline({ data: corrupt, filename: 'corrupt.png' })
+      expect(consoleSpy).toHaveWarned(/decode/i)
+    } finally {
+      // restore in a finally so a failed assertion doesn't leak the spy into
+      // sibling tests (and take the stderr guard down with it).
+      consoleSpy.restore()
+    }
   })
 
   it('rejects a raster whose declared dimensions exceed the pixel-count cap (413), a decompression-bomb defense', async () => {
