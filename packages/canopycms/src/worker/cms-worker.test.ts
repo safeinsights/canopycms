@@ -11,7 +11,7 @@ import path from 'node:path'
 import { simpleGit } from 'simple-git'
 
 import { CmsWorker, PermanentTaskError, isPermanentTaskFailure } from './cms-worker'
-import { enqueueTask } from './task-queue'
+import { enqueueTask, dequeueTask } from './task-queue'
 import { WORKER_STATUS_FILE } from './worker-status'
 import { initTestRepo, mockConsole, type MockConsole } from '../test-utils'
 import type { WorkerStatusReport } from '../types'
@@ -665,6 +665,190 @@ describe('CmsWorker push-and-create-or-update-pr (GIT-H1)', () => {
 })
 
 // ---------------------------------------------------------------------------
+// pushBranchToGitHub(): push-rejection classification
+//
+// Two CanopyCMS deployments can share one GitHub repo; picking the same
+// content-branch name surfaces as a real non-fast-forward push rejection.
+// These tests exercise pushBranchToGitHub against REAL git repos (a bare
+// "remote.git" plus a bare "githubFixture" standing in for GitHub -- same
+// pattern as the pushSettingsBranches suite below) rather than mocking the
+// error shape, so the classification is proven against git's actual output.
+// ---------------------------------------------------------------------------
+
+type PushBranchInternals = {
+  pushBranchToGitHub(branch: string): Promise<void>
+  buildGitHubUrl(): string
+}
+
+describe('CmsWorker.pushBranchToGitHub() [push-rejection classification]', () => {
+  let tmpDir: string
+  let workspacePath: string
+  let remoteGitPath: string
+  let githubFixture: string
+  let contentBranchesPath: string
+  let taskDir: string
+  let consoleSpy: MockConsole
+
+  beforeEach(async () => {
+    consoleSpy = mockConsole()
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'canopy-worker-push-rejection-'))
+    workspacePath = path.join(tmpDir, 'workspace')
+    remoteGitPath = path.join(workspacePath, 'remote.git')
+    githubFixture = path.join(tmpDir, 'fixture-github.git')
+    contentBranchesPath = path.join(workspacePath, 'content-branches')
+    taskDir = path.join(workspacePath, '.tasks')
+    await fs.mkdir(workspacePath, { recursive: true })
+    await simpleGit().raw(['init', '--bare', remoteGitPath])
+    await simpleGit().raw(['init', '--bare', githubFixture])
+  })
+
+  afterEach(async () => {
+    consoleSpy.restore()
+    await fs.rm(tmpDir, { recursive: true, force: true })
+  })
+
+  const makePushWorker = (taskTimeoutMs = 5000) => {
+    const worker = new CmsWorker({
+      workspacePath,
+      githubOwner: 'test-owner',
+      githubRepo: 'test-repo',
+      githubToken: 'fake-token',
+      taskTimeoutMs,
+    })
+    ;(worker as unknown as PushBranchInternals).buildGitHubUrl = () => githubFixture
+    return worker
+  }
+
+  /** Seed branchName into remote.git with one commit, as a Lambda commit + GitManager.push would. */
+  const seedBranchInRemoteGit = async (branchName: string, fileContent: string) => {
+    const seedPath = path.join(tmpDir, `seed-${branchName}-${fileContent.length}`)
+    await fs.mkdir(seedPath, { recursive: true })
+    const seedGit = await initTestRepo(seedPath)
+    await fs.writeFile(path.join(seedPath, 'file.txt'), fileContent)
+    await seedGit.add(['file.txt'])
+    await seedGit.commit('seed commit')
+    await seedGit.raw(['branch', '-M', branchName])
+    await seedGit.addRemote('origin', remoteGitPath)
+    await seedGit.raw(['push', 'origin', `${branchName}:${branchName}`])
+  }
+
+  /** Seed branchName directly into githubFixture, simulating another deployment's push. */
+  const seedBranchInGitHubFixture = async (branchName: string, fileContent: string) => {
+    const seedPath = path.join(tmpDir, `seed-fixture-${branchName}`)
+    await fs.mkdir(seedPath, { recursive: true })
+    const seedGit = await initTestRepo(seedPath)
+    await fs.writeFile(path.join(seedPath, 'other.txt'), fileContent)
+    await seedGit.add(['other.txt'])
+    await seedGit.commit('another deployment commit')
+    await seedGit.raw(['branch', '-M', branchName])
+    await seedGit.addRemote('origin', githubFixture)
+    await seedGit.raw(['push', 'origin', `${branchName}:${branchName}`])
+  }
+
+  const fixtureHasBranch = async (branchName: string): Promise<boolean> => {
+    const fixtureGit = simpleGit({ baseDir: githubFixture, config: ['safe.bareRepository=all'] })
+    const branches = await fixtureGit.raw(['branch', '--list', branchName])
+    return branches.trim().length > 0
+  }
+
+  it('pushes cleanly to GitHub when there is no collision', async () => {
+    await seedBranchInRemoteGit('feature-clean', 'hello')
+    const worker = makePushWorker()
+
+    await (worker as unknown as PushBranchInternals).pushBranchToGitHub('feature-clean')
+
+    expect(await fixtureHasBranch('feature-clean')).toBe(true)
+    expect(consoleSpy).toHaveLogged('Pushed feature-clean to GitHub')
+  })
+
+  it('throws PermanentTaskError naming the branch on a real non-fast-forward rejection', async () => {
+    // The two-deployments-one-repo collision: 'feature-x' exists in BOTH this
+    // deployment's remote.git AND (with different content) directly in
+    // githubFixture, as if another deployment already pushed it.
+    await seedBranchInRemoteGit('feature-x', 'this deployment')
+    await seedBranchInGitHubFixture('feature-x', 'another deployment')
+
+    const worker = makePushWorker()
+    let caught: unknown
+    try {
+      await (worker as unknown as PushBranchInternals).pushBranchToGitHub('feature-x')
+    } catch (err) {
+      caught = err
+    }
+
+    expect(caught).toBeInstanceOf(PermanentTaskError)
+    expect((caught as Error).message).toContain('feature-x')
+    expect((caught as Error).message).toContain('moved on GitHub')
+    // The rejection must not have force-overwritten the other deployment's push.
+    expect(await fixtureHasBranch('feature-x')).toBe(true)
+  })
+
+  it('rethrows a plain (non-PermanentTaskError) error for a real non-rejection push failure', async () => {
+    // A real permission-denied failure (not a rejection): git's canonical
+    // "Could not read from remote repository" message, captured the same way
+    // as utils/git.test.ts's AUTH_FAILURE fixture (a locked-down bare repo),
+    // not invented. Must stay transient -- isPermanentTaskFailure's git
+    // carve-out already retries these; pushBranchToGitHub must not reclassify
+    // them as permanent.
+    await seedBranchInRemoteGit('feature-locked', 'hello')
+    await fs.chmod(githubFixture, 0o000)
+
+    const worker = makePushWorker()
+    let caught: unknown
+    try {
+      await (worker as unknown as PushBranchInternals).pushBranchToGitHub('feature-locked')
+    } catch (err) {
+      caught = err
+    } finally {
+      await fs.chmod(githubFixture, 0o755)
+    }
+
+    expect(caught).not.toBeInstanceOf(PermanentTaskError)
+    expect(caught).toBeInstanceOf(Error)
+  })
+
+  it('fails a push-branch task immediately (not after maxRetries) on a real rejection, and records the reason on branch metadata', async () => {
+    await seedBranchInRemoteGit('feature-collision', 'this deployment')
+    await seedBranchInGitHubFixture('feature-collision', 'another deployment')
+    await fs.mkdir(path.join(contentBranchesPath, 'feature-collision'), { recursive: true })
+
+    const worker = makePushWorker()
+    ;(worker as unknown as { running: boolean }).running = true
+
+    const id = await enqueueTask(taskDir, {
+      action: 'push-branch',
+      payload: { branch: 'feature-collision' },
+    })
+
+    await worker.processTaskQueue()
+
+    // Fails fast: lands in failed/ with retryCount 0 (the retry budget was
+    // never touched), not pending/ with retries burned toward maxRetries.
+    const failed = JSON.parse(
+      await fs.readFile(path.join(taskDir, 'failed', `${id}.json`), 'utf-8'),
+    )
+    expect(failed.retryCount).toBe(0)
+    expect(failed.error).toContain('feature-collision')
+    expect(
+      await fs
+        .stat(path.join(taskDir, 'pending', `${id}.json`))
+        .then(() => true)
+        .catch(() => false),
+    ).toBe(false)
+
+    const meta = JSON.parse(
+      await fs.readFile(
+        path.join(contentBranchesPath, 'feature-collision', '.canopy-meta', 'branch.json'),
+        'utf-8',
+      ),
+    )
+    expect(meta.branch.syncStatus).toBe('sync-failed')
+    expect(meta.branch.syncFailureReason).toContain('feature-collision')
+    expect(meta.branch.syncFailureReason).toContain('moved on GitHub')
+  })
+})
+
+// ---------------------------------------------------------------------------
 // ensureRemoteGit(): empty-remote guard (adopter protection)
 //
 // simple-git's bare clone of an EMPTY GitHub repo (no commits, or a base
@@ -1022,6 +1206,90 @@ describe('CmsWorker.processTaskQueue() worker-status.json bookkeeping', () => {
 })
 
 // ---------------------------------------------------------------------------
+// Orphan recovery runs on every processTaskQueue() cycle, not only at boot.
+//
+// Before this fix, recoverOrphanedTasks() ran exactly once, from start().
+// That was fine when instance replacement was rare (a spot interruption),
+// but CanopyCmsService's worker ASG now rolls the instance on every
+// `cdk deploy` (see its UpdatePolicy in cms-service.ts), making replacement
+// routine: a task file left in processing/ by the terminated instance is
+// younger than the 5-minute default staleness threshold by the time the
+// replacement boots (2-4 minutes of yum install + EFS mount), so a
+// boot-only recovery call would skip it -- and with nothing re-scanning
+// afterward, the task (and its branch's syncStatus) would be stuck forever.
+// ---------------------------------------------------------------------------
+
+describe('CmsWorker.processTaskQueue() recovers orphaned tasks every cycle (not only at boot)', () => {
+  let tmpDir: string
+  let taskDir: string
+  let consoleSpy: MockConsole
+
+  beforeEach(async () => {
+    consoleSpy = mockConsole()
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'canopy-worker-orphan-cycle-test-'))
+    taskDir = path.join(tmpDir, '.tasks')
+  })
+
+  afterEach(async () => {
+    consoleSpy.restore()
+    await fs.rm(tmpDir, { recursive: true, force: true })
+  })
+
+  const makeOrphanWorker = () => {
+    const worker = new CmsWorker({
+      workspacePath: tmpDir,
+      githubOwner: 'test-owner',
+      githubRepo: 'test-repo',
+      githubToken: 'fake-token',
+      taskTimeoutMs: 500,
+    })
+    ;(worker as unknown as TaskInternals).running = true
+    return worker
+  }
+
+  it('recovers a task stranded in processing/ on a later processTaskQueue() cycle, without start() ever running', async () => {
+    const worker = makeOrphanWorker()
+    const internals = worker as unknown as TaskInternals
+    internals.executeTask = () => Promise.resolve({ pushed: true })
+
+    const id = await enqueueTask(taskDir, {
+      action: 'push-branch',
+      payload: { branch: 'feature-1' },
+    })
+
+    // Simulate a mid-task instance termination: move the task into
+    // processing/ directly (bypassing processTaskQueue, which would
+    // complete/fail/retry it) -- exactly the state a terminated instance
+    // leaves behind.
+    const dequeued = await dequeueTask(taskDir)
+    expect(dequeued!.id).toBe(id)
+
+    // Backdate the processing/ file's mtime past recoverOrphanedTasks()'s
+    // 5-minute default threshold, standing in for time actually elapsing
+    // (replacement instance boot + however long it sits before the next
+    // poll) rather than sleeping for real in a test.
+    const processingPath = path.join(taskDir, 'processing', `${id}.json`)
+    const past = new Date(Date.now() - 6 * 60_000)
+    await fs.utimes(processingPath, past, past)
+
+    // start() is deliberately never called here. A single processTaskQueue()
+    // call -- standing in for one taskPollInterval cycle on an
+    // already-running worker -- must recover it on its own; if recovery only
+    // happened in start(), this file would stay wedged in processing/
+    // forever, since nothing else re-scans it.
+    await worker.processTaskQueue()
+
+    await expect(fs.stat(processingPath)).rejects.toThrow()
+    const completed = JSON.parse(
+      await fs.readFile(path.join(taskDir, 'completed', `${id}.json`), 'utf-8'),
+    )
+    expect(completed.status).toBe('completed')
+    expect(completed.result.pushed).toBe(true)
+    expect(consoleSpy).toHaveLogged('Recovered 1 orphaned task(s)')
+  })
+})
+
+// ---------------------------------------------------------------------------
 // cleanupTrashedBranchDirs() [C1] -- worker-only retention sweep for the
 // admin purge action's `.trash-{dirName}-{STAMP}` directories
 // (api/admin-branch-health.ts). Age comes ONLY from the name-embedded stamp
@@ -1136,5 +1404,156 @@ describe('CmsWorker.cleanupTrashedBranchDirs() [C1]', () => {
 
     expect(removed).toBe(0)
     await expect(fs.stat(path.join(contentBranchesPath, 'main'))).resolves.toBeTruthy()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// pushSettingsBranches: pushes only this deployment's own settings branch
+// ---------------------------------------------------------------------------
+//
+// Since the tracking-namespace fetch fix (GITHUB_TRACKING_REF_PREFIX),
+// reconcileTrackedBranches() creates local heads in remote.git for any branch
+// that exists on GitHub - including another deployment's settings branch, if
+// it shares this GitHub repo. pushSettingsBranches must push ONLY the branch
+// this worker owns (CmsWorkerConfig.deploymentName) and warn about (never
+// push) any other canopycms-settings-* branch it finds locally.
+
+type PushSettingsBranchesInternals = {
+  pushSettingsBranches(git: ReturnType<typeof simpleGit>): Promise<void>
+}
+
+describe('CmsWorker.pushSettingsBranches() [deployment-namespaced settings branches]', () => {
+  let tmpDir: string
+  let workspacePath: string
+  let remoteGitPath: string
+  let githubFixture: string // simulated "GitHub" bare repo, what pushes land in
+  let consoleSpy: MockConsole
+
+  beforeEach(async () => {
+    consoleSpy = mockConsole()
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'canopy-worker-settings-push-'))
+    workspacePath = path.join(tmpDir, 'workspace')
+    remoteGitPath = path.join(workspacePath, 'remote.git')
+    githubFixture = path.join(tmpDir, 'fixture-github.git')
+    await fs.mkdir(workspacePath, { recursive: true })
+    await simpleGit().raw(['init', '--bare', remoteGitPath])
+    await simpleGit().raw(['init', '--bare', githubFixture])
+  })
+
+  afterEach(async () => {
+    consoleSpy.restore()
+    await fs.rm(tmpDir, { recursive: true, force: true })
+  })
+
+  /** Seed a branch (with one commit) directly into the bare remote.git, as a
+   * Lambda commit + GitManager.push would. */
+  const seedBranchInRemoteGit = async (branchName: string, fileContent: string) => {
+    const seedPath = path.join(tmpDir, `seed-${branchName}`)
+    await fs.mkdir(seedPath, { recursive: true })
+    const seedGit = await initTestRepo(seedPath)
+    await seedGit.raw(['checkout', '--orphan', branchName])
+    await fs.writeFile(path.join(seedPath, 'permissions.json'), fileContent)
+    await seedGit.add(['permissions.json'])
+    await seedGit.commit('seed settings')
+    await seedGit.addRemote('origin', remoteGitPath)
+    await seedGit.raw(['push', 'origin', `${branchName}:${branchName}`])
+  }
+
+  const makeSettingsWorker = (deploymentName?: string) => {
+    const worker = new CmsWorker({
+      workspacePath,
+      githubOwner: 'test-owner',
+      githubRepo: 'test-repo',
+      githubToken: 'fake-token',
+      deploymentName,
+    })
+    ;(worker as unknown as { buildGitHubUrl(): string }).buildGitHubUrl = () => githubFixture
+    return worker
+  }
+
+  const fixtureHasBranch = async (branchName: string): Promise<boolean> => {
+    const fixtureGit = simpleGit({ baseDir: githubFixture, config: ['safe.bareRepository=all'] })
+    const branches = await fixtureGit.raw(['branch', '--list', branchName])
+    return branches.trim().length > 0
+  }
+
+  it('pushes only its own settings branch (deploymentName default: prod)', async () => {
+    await seedBranchInRemoteGit('canopycms-settings-prod', '{"acls":[]}')
+
+    const worker = makeSettingsWorker() // no deploymentName -> defaults to 'prod'
+    const git = simpleGit({ baseDir: remoteGitPath })
+    await (worker as unknown as PushSettingsBranchesInternals).pushSettingsBranches(git)
+
+    expect(await fixtureHasBranch('canopycms-settings-prod')).toBe(true)
+    expect(consoleSpy).toHaveLogged('Pushed settings branch canopycms-settings-prod')
+  })
+
+  it('pushes the deployment-namespaced branch matching config.deploymentName, not a differently-named one', async () => {
+    await seedBranchInRemoteGit('canopycms-settings-acme', '{"acls":[]}')
+
+    const worker = makeSettingsWorker('acme')
+    const git = simpleGit({ baseDir: remoteGitPath })
+    await (worker as unknown as PushSettingsBranchesInternals).pushSettingsBranches(git)
+
+    expect(await fixtureHasBranch('canopycms-settings-acme')).toBe(true)
+  })
+
+  it('does NOT push a foreign canopycms-settings-* branch, and warns about it once, naming it', async () => {
+    await seedBranchInRemoteGit('canopycms-settings-acme', '{"acls":["mine"]}')
+    await seedBranchInRemoteGit('canopycms-settings-other-tenant', '{"acls":["not mine"]}')
+
+    const worker = makeSettingsWorker('acme')
+    const git = simpleGit({ baseDir: remoteGitPath })
+    await (worker as unknown as PushSettingsBranchesInternals).pushSettingsBranches(git)
+
+    expect(await fixtureHasBranch('canopycms-settings-acme')).toBe(true)
+    expect(await fixtureHasBranch('canopycms-settings-other-tenant')).toBe(false)
+    expect(consoleSpy).toHaveWarned('canopycms-settings-other-tenant')
+    expect(consoleSpy).toHaveWarned('canopycms-settings-acme') // names this deployment's own branch too
+  })
+
+  it('skips quietly (no error) when this deployment has no settings branch locally yet', async () => {
+    // Nothing seeded at all - remote.git has no canopycms-settings-* branches.
+    const worker = makeSettingsWorker('acme')
+    const git = simpleGit({ baseDir: remoteGitPath })
+
+    await expect(
+      (worker as unknown as PushSettingsBranchesInternals).pushSettingsBranches(git),
+    ).resolves.toBeUndefined()
+    expect(await fixtureHasBranch('canopycms-settings-acme')).toBe(false)
+  })
+
+  it('warns explicitly that another deployment owns this settings branch on a real non-fast-forward rejection', async () => {
+    // This deployment has its OWN local canopycms-settings-acme...
+    await seedBranchInRemoteGit('canopycms-settings-acme', '{"acls":["mine"]}')
+
+    // ...but another deployment already pushed a DIFFERENT settings branch of
+    // the SAME name directly to GitHub -- an actual settings-branch name
+    // collision, not just the "foreign branch found locally" case covered by
+    // the test above.
+    const foreignPath = path.join(tmpDir, 'seed-foreign-settings')
+    await fs.mkdir(foreignPath, { recursive: true })
+    const foreignGit = await initTestRepo(foreignPath)
+    await foreignGit.raw(['checkout', '--orphan', 'canopycms-settings-acme'])
+    await fs.writeFile(path.join(foreignPath, 'permissions.json'), '{"acls":["foreign"]}')
+    await foreignGit.add(['permissions.json'])
+    await foreignGit.commit('foreign deployment settings')
+    await foreignGit.addRemote('origin', githubFixture)
+    await foreignGit.raw(['push', 'origin', 'canopycms-settings-acme:canopycms-settings-acme'])
+
+    const worker = makeSettingsWorker('acme')
+    const git = simpleGit({ baseDir: remoteGitPath })
+    await (worker as unknown as PushSettingsBranchesInternals).pushSettingsBranches(git)
+
+    expect(consoleSpy).toHaveWarned(
+      'another CanopyCMS deployment appears to own this settings branch',
+    )
+    expect(consoleSpy).toHaveWarned('canopycms-settings-acme')
+    // The foreign deployment's push must survive untouched -- this
+    // deployment's rejected push must not have force-overwritten it.
+    const fixtureGit = simpleGit({ baseDir: githubFixture, config: ['safe.bareRepository=all'] })
+    const remoteLog = await fixtureGit.raw(['log', 'canopycms-settings-acme', '--format=%s'])
+    expect(remoteLog).toContain('foreign deployment settings')
+    expect(remoteLog).not.toContain('seed settings')
   })
 })

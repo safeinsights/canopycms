@@ -241,3 +241,19 @@ app-level `contentVersion` scheme into the OCC `version`), and `.collection.json
 mutations were serialized behind the coarse `.canopy-meta/schema` surrogate lock —
 see `.claude/future-tasks/resolved/settings-file-occ-cross-host.md` and
 `.claude/future-tasks/resolved/schema-store-rmw-protection.md`.
+
+Also in July 2026: `deploymentName` (which namespaces the settings orphan branch,
+`canopycms-settings-{deploymentName}`) became resolvable from an environment variable
+in addition to config, via `operating-mode/deployment-name.ts`'s `resolveDeploymentName`.
+This introduced a new boot-time invariant worth naming here even though it added no new
+locking primitive: `SettingsWorkspaceManager.ensureGitWorkspace` (settings-workspace.ts)
+now checks, via `GitManager.repoExistsAt()`, whether a settings workspace already
+exists on disk and — if so — whether its checked-out branch matches the newly-resolved
+name; a mismatch throws instead of letting `GitManager.initializeWorkspace` proceed to
+`checkout --orphan` + `rm -rf .` on a populated workspace (orphan branches share no
+history, so that sequence is not recoverable). This check runs entirely inside
+`ensureGitWorkspace`'s own pre-existing in-memory + file-based (`O_CREAT|O_EXCL`) init
+lock — a bespoke pair local to settings-workspace.ts, not one of the four numbered
+layers above (it predates this change and is not yet cataloged in the table below) —
+so two hosts racing to initialize the same settings workspace still can't both decide
+it's safe and both destroy it.

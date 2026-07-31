@@ -46,6 +46,55 @@ export function isNetworkRemoteUrl(url: string): boolean {
   return COLON_BEFORE_SLASH_PATTERN.test(url)
 }
 
+// Matches git's per-ref push-status summary line marking a ref as rejected.
+// Present verbatim in BOTH output shapes CanopyCMS's push call sites produce:
+// the plain CLI form (`GitManager.push()`'s `.raw(['push', ...])`, e.g.
+// ` ! [rejected]        branch -> branch (non-fast-forward)`) and the
+// machine-readable `--porcelain` form simple-git's `.push()` wrapper requests
+// (`CmsWorker.pushBranchToGitHub`/`pushSettingsBranches`, e.g.
+// `!\trefs/heads/branch:refs/heads/branch\t[rejected] (non-fast-forward)`) --
+// `--porcelain` only changes the per-ref summary's leading fields, not this
+// trailing human-readable bracket text.
+const REJECTED_MARKER = '[rejected]'
+// git's two names for the SAME underlying condition: `non-fast-forward` fires
+// when the pusher's own remote-tracking ref is present but stale;
+// `fetch first` fires when no local knowledge of the remote ref exists at all
+// (e.g. it was never fetched). Both mean the remote has commits this side
+// doesn't have -- retrying the identical push can never succeed until the
+// caller fetches and integrates (or picks a different branch name).
+const NON_FAST_FORWARD_REASONS = ['non-fast-forward', 'fetch first']
+// git always prints this stderr hint immediately after a rejected push,
+// regardless of --porcelain (porcelain only affects the machine-readable
+// summary line, not the human hint text that follows it) -- a second,
+// independent signal for the same condition.
+const REJECTION_HINT = 'Updates were rejected because'
+
+/**
+ * Whether a git push failure message is git's non-fast-forward rejection --
+ * the remote has diverged (moved ahead with commits this side never fetched),
+ * so retrying the IDENTICAL push can never succeed. In CanopyCMS this is the
+ * signature of two CanopyCMS deployments sharing one GitHub repo and picking
+ * the same content-branch name, or someone pushing directly to GitHub.
+ *
+ * Deliberately narrow: ordinary transient push failures -- network drops,
+ * auth/permission denial, lock contention -- must keep retrying with backoff
+ * (see worker/cms-worker.ts's `isPermanentTaskFailure`, which treats git
+ * failures as transient precisely so those cases still get retried). Only
+ * this specific, structurally-unretryable shape should fail fast (worker) or
+ * return 409 (API) instead.
+ *
+ * Matches git's literal (English) rejection text, which is gettext-
+ * translated -- callers MUST run the underlying git command with a
+ * locale-pinning env (see `gitChildEnv` in `../git-manager.ts`) or an ambient
+ * LANG/LC_ALL could silently turn this into a permanent no-op.
+ */
+export function isNonFastForwardRejection(message: string): boolean {
+  const hasNonFastForwardRejection =
+    message.includes(REJECTED_MARKER) &&
+    NON_FAST_FORWARD_REASONS.some((reason) => message.includes(reason))
+  return hasNonFastForwardRejection || message.includes(REJECTION_HINT)
+}
+
 /**
  * Detect the current HEAD branch name for a given repository root.
  * Returns the branch name, or the provided fallback (default 'main')

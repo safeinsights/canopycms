@@ -1,9 +1,11 @@
-# Worker base-branch backstop can drift from config.defaultBaseBranch
+# Worker env-derived config can drift from the app's CanopyConfig (baseBranch, settingsBranch)
 
 ## Priority: P3
 
 Surfaced by the protected-base-branch code review (2026-07-24), finding #8.
-Defense-in-depth only; deferred.
+Defense-in-depth only; deferred. Extended 2026-07-30 by the canopy-hardening
+epic review (PR #183) with a second instance of the same divergence class —
+see "Same class: settingsBranch" below.
 
 ## Problem
 
@@ -31,6 +33,41 @@ source as `defaultBaseBranch` in the CDK construct so they can't drift, or
 (b) have the worker read the base branch from the task payload / app config
 rather than a construction-time env var, or (c) at minimum add a CDK synth-time
 check or doc note. Lowest-effort: doc note + CDK wiring.
+
+## Same class: settingsBranch (added 2026-07-30)
+
+The hardening epic gave the worker `CmsWorkerConfig.deploymentName` /
+`settingsBranch` (read from `CANOPYCMS_DEPLOYMENT_NAME` /
+`CANOPYCMS_SETTINGS_BRANCH` in `packages/canopycms-cdk/worker/index.ts`) so
+`pushSettingsBranches` pushes only the branch this deployment owns. CDK stamps
+`CANOPYCMS_DEPLOYMENT_NAME` unconditionally for BOTH Lambda and worker, so
+those two agree in any CDK deployment. But:
+
+- An adopter who sets `settingsBranch` in `canopycms.config.ts` diverges: the
+  Lambda's `getSettingsBranchName` short-circuits on `config.settingsBranch`
+  (beating even the env-resolved deploymentName), while the worker only sees
+  `CANOPYCMS_SETTINGS_BRANCH`, which no CDK prop stamps — the adopter must set
+  it by hand or the worker's belt-and-suspenders settings push covers the
+  wrong branch name forever. Bounded impact: the PRIMARY settings-push path
+  (the `push-and-create-or-update-pr` task enqueued by
+  `commitToSettingsBranch`) carries the Lambda-resolved branch name in its
+  payload, so settings still reach GitHub; only the sync-cycle backstop is
+  misaimed, plus its "foreign settings branch" warning would misfire on the
+  deployment's own branch.
+- Non-CDK deployments that set `config.deploymentName` without the env var
+  have the same shape for `deploymentName` itself (worker defaults to 'prod').
+
+Fix sketch: add a `settingsBranch` prop to `CanopyCmsService` that stamps
+`CANOPYCMS_SETTINGS_BRANCH` for the worker (or teach the worker to read the
+resolved name off a file the Lambda writes to EFS), and fold this into
+whatever resolution (a)/(b)/(c) above lands for baseBranch.
+
+Observability half (from the PR #183 independent review): when divergence
+DOES happen, the only signal today is a per-cycle worker-log warning
+("settings branch not owned by this deployment") that shell-less operators
+never see. Surface "a local settings branch exists that this worker does not
+own" into `worker-status.json` (`WorkerStatusReport`), so the admin System
+Health panel can show it.
 
 ## Related
 

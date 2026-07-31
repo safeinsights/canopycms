@@ -83,12 +83,17 @@ export class ReferenceResolver {
    * @param displayField - Field to use for option labels (default: 'title')
    * @param search - Optional search string to filter options
    * @param entryTypes - Optional entry type names to filter by (e.g., ['partner'])
+   * @param canAccess - Optional permission predicate, called with each candidate's
+   *   relative path before it is read. Returning false skips the entry entirely --
+   *   no file I/O, no label, no option -- so a caller who can't read a path never
+   *   triggers a read for content they won't be allowed to see anyway.
    */
   async loadReferenceOptions(
     collections?: LogicalPath[],
     displayField = 'title',
     search?: string,
     entryTypes?: string[],
+    canAccess?: (relativePath: PhysicalPath) => boolean,
   ): Promise<ReferenceOption[]> {
     const options: ReferenceOption[] = []
 
@@ -124,6 +129,8 @@ export class ReferenceResolver {
 
     for (const location of candidates) {
       if (!location.collection || !location.slug) continue
+      // Skip denied paths before any file I/O.
+      if (canAccess && !canAccess(location.relativePath)) continue
 
       const id = this.idIndex.findByPath(location.relativePath)
       if (!id) continue

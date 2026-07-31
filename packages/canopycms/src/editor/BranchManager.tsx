@@ -41,6 +41,8 @@ export interface BranchSummary {
   mergedAt?: string
   /** Sync status for async GitHub operations (used when Lambda has no internet) */
   syncStatus?: SyncStatus
+  /** Short, sanitized reason the last GitHub sync task failed (set alongside syncStatus: 'sync-failed') */
+  syncFailureReason?: string
   /** Whether this branch has unresolved merge conflicts with the base branch */
   conflictStatus?: ConflictStatus
   /** ContentIds of entries where --theirs was applied during rebase; cleared on clean rebase */
@@ -347,7 +349,15 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
                           </Badge>
                         )}
                         {b.syncStatus === 'sync-failed' && (
-                          <Tooltip label="GitHub sync failed — an admin can retry it from System health.">
+                          <Tooltip
+                            label={
+                              b.syncFailureReason
+                                ? `GitHub sync failed: ${b.syncFailureReason}`
+                                : 'GitHub sync failed — an admin can retry it from System health.'
+                            }
+                            multiline
+                            maw={320}
+                          >
                             <Badge
                               color="red"
                               variant="light"

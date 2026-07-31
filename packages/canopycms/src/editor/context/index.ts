@@ -5,6 +5,8 @@
  *
  * - ApiClientContext: Dependency injection for API client (context-based pattern)
  * - EditorStateContext: Loading states, modal states, preview data
+ * - SWRProvider: SWR cache config for the fetch-on-load data hooks (see
+ *   hooks/useBranchesData.ts, useEntriesData.ts, useCommentsData.ts)
  *
  * Usage:
  * ```tsx
@@ -30,6 +32,8 @@ export {
   type AssetContextValue,
   type AssetContextProviderProps,
 } from './AssetContext'
+
+export { SWRProvider, type SWRProviderProps } from './SWRProvider'
 
 export {
   EditorStateProvider,

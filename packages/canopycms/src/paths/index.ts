@@ -72,4 +72,4 @@ export {
 } from './branch'
 // From the dependency-free module (NOT ./branch, which imports node:fs) so
 // client-reachable importers of 'canopycms/src/paths' stay browser-safe.
-export { sanitizeBranchName } from './branch-name'
+export { sanitizeBranchName, RESERVED_SETTINGS_BRANCH_PREFIX } from './branch-name'

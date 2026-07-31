@@ -13,6 +13,17 @@ Editor.tsx is 1,221 lines with ~30 `useState` calls for loading, modal, and prev
 3. Editor.tsx has additional state beyond what EditorStateContext covers (schema editor, rename modal, delete confirmation) — either extend EditorStateContext or leave those as local state
 4. Consider splitting Editor.tsx into sub-components (EditorShell, EditorContent, EditorModals) as part of this migration
 
+## Also fold in: `entriesLoading` has two independent writers (2026-07-30, PR #183 review)
+
+`entriesLoading` is written both by useEntryManager's SWR `isValidating`
+mirror effect AND by Editor.tsx's per-entry content-load effect (via the
+shared `setBusy`). A revalidation completing mid-entry-load can clear the
+busy flag under a still-running load, and the stale-settle clear arm
+(`loadingEntryIdsRef.size === 0`) slightly widens the reverse window. Purely
+cosmetic spinner raciness — but it has now been patched twice ad hoc; the
+real fix is two separate flags OR'd at render, which this migration is the
+natural home for.
+
 ## Files
 
 - `src/editor/Editor.tsx` — main component, lines 142-176 have the duplicate state

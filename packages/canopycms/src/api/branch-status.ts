@@ -11,6 +11,7 @@ import { defineEndpoint } from './route-builder'
 import { canPerformWorkflowAction, getBranchProtection } from '../authorization'
 import { syncSubmitPr } from './github-sync'
 import { getErrorMessage, redactCredentials, sanitizeErrorMessage } from '../utils/error'
+import { isNonFastForwardRejection } from '../utils/git'
 
 // Re-export for client generation
 export type { BranchMergeResponse } from './branch-merge'
@@ -67,6 +68,28 @@ const submitBranchForMergeHandler = async (
       `CanopyCMS: Failed to push branch changes (${branchContext.branchRoot}):`,
       redactCredentials(message),
     )
+
+    // A non-fast-forward rejection means the branch moved on the remote out
+    // from under this push -- most likely another CanopyCMS deployment
+    // sharing this GitHub repo picked the same content-branch name, or
+    // someone pushed directly to GitHub. That's a user-actionable naming
+    // collision, not a server error: retrying the identical push can never
+    // succeed (see isNonFastForwardRejection), so surface 409 with guidance
+    // instead of the generic 500 below. Everything else (network, auth, lock
+    // contention) keeps the existing 500 path unchanged.
+    if (isNonFastForwardRejection(message)) {
+      return {
+        ok: false,
+        status: 409,
+        error:
+          `Could not submit "${branchContext.branch.name}": the branch has moved on the remote ` +
+          `(likely another CanopyCMS deployment sharing this repository, a direct push to ` +
+          `GitHub, or a leftover from an earlier deleted branch of the same name). Create a ` +
+          `branch under a different name, or reconcile this one with the remote before ` +
+          `submitting again.`,
+      }
+    }
+
     return {
       ok: false,
       status: 500,

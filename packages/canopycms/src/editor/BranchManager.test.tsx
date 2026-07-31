@@ -361,6 +361,22 @@ describe('BranchManager', () => {
     expect(await screen.findByText(/System health/)).toBeDefined()
   })
 
+  it('shows the specific failure reason in the Sync failed tooltip when the worker recorded one', async () => {
+    const branches: BranchSummary[] = [
+      {
+        ...baseBranches[0],
+        syncStatus: 'sync-failed',
+        syncFailureReason:
+          'Push rejected for branch "main": it has moved on GitHub (likely another CanopyCMS deployment sharing this repository, or a direct push).',
+      },
+    ]
+    renderBranchManager({ branches, user: creatorUser, mode: 'prod' })
+    const badge = screen.getByTestId('sync-failed-badge-main')
+
+    await userEvent.hover(badge)
+    expect(await screen.findByText(/moved on GitHub/)).toBeDefined()
+  })
+
   it('shows a gray Syncing badge with a tooltip when sync is pending', async () => {
     const branches: BranchSummary[] = [
       {

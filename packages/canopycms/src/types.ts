@@ -52,6 +52,16 @@ export interface BranchMetadata {
    * failures with the same message so the panel can show "failing since".
    */
   rebaseFailure?: { message: string; firstAt: string; lastAt: string }
+  /**
+   * Short, sanitized reason the worker's last GitHub sync task failed
+   * permanently (set alongside `syncStatus: 'sync-failed'` by
+   * CmsWorker.updateBranchMetadataOnFailure) -- e.g. a non-fast-forward push
+   * rejection naming the branch. Absent until a task has failed permanently.
+   * Cleared on the next successful sync task (CmsWorker.updateBranchMetadata
+   * explicitly resets it to undefined) so a stale reason never survives a
+   * later successful push.
+   */
+  syncFailureReason?: string
 }
 
 export interface BranchPaths {
@@ -92,6 +102,23 @@ export interface WorkerStatusReport {
     rebased: string[]
     skippedDirty: string[]
     failed: { branch: string; error: string }[]
+    /**
+     * Outcome of reconciling remote.git's `refs/heads/*` against GitHub's
+     * fetched tips (worker/cms-worker.ts's `reconcileTrackedBranches`) --
+     * the non-destructive replacement for the old fetch refspec that used
+     * to write GitHub's refs directly into `refs/heads/*`.
+     */
+    /**
+     * Optional: absent from a worker-status.json written by a worker that
+     * predates the tracked-branch reconcile (PR #168). Readers must tolerate
+     * its absence rather than assume every status file has it.
+     */
+    tracked?: {
+      created: string[]
+      fastForwarded: string[]
+      ahead: string[]
+      diverged: string[]
+    }
   }
   lastFatalError?: { message: string; at: string; phase: 'startup' | 'run' }
 }

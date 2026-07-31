@@ -23,9 +23,11 @@ import {
 import { extractIdFromFilename } from '../content-id-index'
 import { invalidateBranchContentCaches } from '../content-index-generation'
 import { type ContentId, type SanitizedBranchName, ROOT_COLLECTION_ID } from '../paths/types'
-import { sanitizeBranchName } from '../paths/branch-name'
+import { sanitizeBranchName, RESERVED_SETTINGS_BRANCH_PREFIX } from '../paths/branch-name'
+import { GITHUB_TRACKING_REF_PREFIX, gitNetworkChildEnv } from '../git-manager'
 import type { PullRequestState, WorkerStatusReport } from '../types'
 import { getErrorMessage, isNodeError, redactCredentials } from '../utils/error'
+import { isNonFastForwardRejection } from '../utils/git'
 import { writeWorkerStatus } from './worker-status'
 
 /**
@@ -58,6 +60,25 @@ export interface CmsWorkerConfig {
   authCacheRefreshInterval?: number
   /** Base branch name (default: 'main') */
   baseBranch?: string
+  /**
+   * Deployment name, used to compute THIS worker's own settings branch
+   * (`canopycms-settings-{deploymentName}`, default: 'prod' — matches
+   * ProdStrategy's mode default in operating-mode/client-unsafe-strategy.ts,
+   * the only mode the worker runs in). Two deployments can share one GitHub
+   * repo with distinct settings branches; this tells the worker which one it
+   * owns, so it never pushes another deployment's settings branch (see
+   * `pushSettingsBranches`).
+   */
+  deploymentName?: string
+  /**
+   * Explicit settings branch name, taking precedence over `deploymentName`.
+   * Mirrors the strategy's own precedence (`config.settingsBranch` short-circuits
+   * `getSettingsBranchName` before `deploymentName` is consulted, see
+   * operating-mode/client-unsafe-strategy.ts): an adopter who overrides
+   * `settingsBranch` in canopycms.config.ts must set this too, or the worker
+   * would own a branch name the Lambda never writes to.
+   */
+  settingsBranch?: string
   /** Max tasks to process per cycle (default: 10) */
   maxTasksPerCycle?: number
   /** Per-task timeout in ms (default: 60000) */
@@ -220,6 +241,34 @@ interface RebaseSummary {
 }
 
 /**
+ * Per-cycle outcome of `reconcileTrackedBranches()` -- the non-destructive
+ * replacement for the old `+refs/heads/*:refs/heads/*` fetch refspec (see
+ * `GITHUB_TRACKING_REF_PREFIX`'s doc comment for the bug this fixes). Folded
+ * by `syncGit()` into the worker's self-reported status
+ * (`WorkerStatusReport.lastGitSync.tracked`, see worker-status.ts).
+ */
+interface TrackedBranchSummary {
+  /** GitHub branches with no corresponding local `refs/heads/<name>` yet -- created at GitHub's tip. */
+  created: string[]
+  /** Local heads that were strict ancestors of GitHub's tip -- fast-forwarded to it. */
+  fastForwarded: string[]
+  /**
+   * Local heads AHEAD of GitHub's tip -- unpushed editor/settings work.
+   * Deliberately left untouched; this is exactly what the old refspec used
+   * to force-rewind or (with --prune) delete outright.
+   */
+  ahead: string[]
+  /**
+   * Local heads that diverged from GitHub's tip (neither side is an
+   * ancestor of the other) -- left untouched and logged. A real collision
+   * (e.g. another deployment moved the same branch name); the next push
+   * attempt will be rejected non-fast-forward, which is the correct,
+   * visible outcome.
+   */
+  diverged: string[]
+}
+
+/**
  * CMS Worker daemon.
  * Handles operations that Lambda (with no internet) cannot perform:
  * - Processing queued tasks (push branches, create PRs)
@@ -242,6 +291,10 @@ export class CmsWorker {
   // path.join and rebaseActiveBranches' skip comparison) agree, instead of
   // re-deriving it (and risking drift) at each use.
   private sanitizedBaseBranch: SanitizedBranchName
+  // This deployment's own settings branch — see CmsWorkerConfig.deploymentName.
+  // `pushSettingsBranches` pushes ONLY this branch, never any other
+  // `canopycms-settings-*` branch it happens to find locally.
+  private settingsBranch: string
   private activeTimeouts = new Set<NodeJS.Timeout>()
   private running = false
   private activeOperations = new Set<Promise<void>>()
@@ -265,6 +318,9 @@ export class CmsWorker {
     this.contentBranchesPath = path.join(config.workspacePath, 'content-branches')
     this.baseBranch = config.baseBranch ?? 'main'
     this.sanitizedBaseBranch = sanitizeBranchName(this.baseBranch)
+    this.settingsBranch =
+      config.settingsBranch ??
+      `${RESERVED_SETTINGS_BRANCH_PREFIX}${config.deploymentName ?? 'prod'}`
     this.maxTasksPerCycle = config.maxTasksPerCycle ?? 10
     this.taskTimeoutMs = config.taskTimeoutMs ?? DEFAULT_TASK_TIMEOUT
     this.maxRetries = config.maxRetries ?? DEFAULT_MAX_RETRIES
@@ -313,8 +369,18 @@ export class CmsWorker {
       // Ensure remote.git exists (init bare repo if first run)
       await this.ensureRemoteGit()
 
-      // Recover any orphaned tasks from a previous crash
-      const recovered = await recoverOrphanedTasks(this.taskDir, undefined, this.log)
+      // Recover any orphaned tasks from a previous crash, immediately rather
+      // than waiting for the first processTaskQueue() poll (taskPollInterval,
+      // default 5s) to run it. Not the only call site any more -
+      // processTaskQueue() below now repeats this on every cycle; see its
+      // doc comment for why a boot-only call is insufficient once the
+      // worker's ASG rolls on every `cdk deploy` (CanopyCmsService's
+      // UpdatePolicy).
+      const recovered = await recoverOrphanedTasks(
+        this.taskDir,
+        this.orphanRecoveryMaxAgeMs(),
+        this.log,
+      )
       if (recovered > 0) {
         console.log(`Recovered ${recovered} orphaned task(s)`)
       }
@@ -564,6 +630,20 @@ export class CmsWorker {
   }
 
   /**
+   * Staleness threshold for recoverOrphanedTasks, derived from the
+   * configured task timeout rather than fixed: the safety argument for
+   * running recovery on every poll cycle is "no legitimately in-flight task
+   * can be this old, because executeTaskWithTimeout bounds every attempt by
+   * taskTimeoutMs" -- which is only true if this threshold scales with
+   * taskTimeoutMs. 2x leaves the same comfortable margin the defaults have
+   * (60s timeout vs 5min threshold); the 5-minute floor preserves the
+   * long-standing default for a replacement instance's boot window.
+   */
+  private orphanRecoveryMaxAgeMs(): number {
+    return Math.max(5 * 60_000, this.taskTimeoutMs * 2)
+  }
+
+  /**
    * Process queued tasks from Lambda.
    * Polls .tasks/pending/ directory and executes each task.
    * Processes up to maxTasksPerCycle tasks per invocation.
@@ -571,6 +651,37 @@ export class CmsWorker {
    */
   async processTaskQueue(): Promise<void> {
     if (!this.running) return
+
+    // Recover tasks orphaned in processing/ on EVERY cycle, not only at boot
+    // (start()'s call above). Before this fix, recoverOrphanedTasks() ran
+    // exactly once, at start() - fine when an instance was replaced rarely
+    // (a spot interruption), but CanopyCmsService's worker ASG now rolls on
+    // every `cdk deploy` (see its UpdatePolicy), making replacement routine.
+    // A replacement instance's user-data (yum install git/unzip/nodejs/
+    // efs-utils, mount EFS) takes roughly 2-4 minutes, well under
+    // recoverOrphanedTasks()'s 5-minute default staleness threshold - so
+    // THAT ONE boot-time call would see the just-orphaned file as "too
+    // fresh" and skip it, and nothing rescanned afterward: the task (and its
+    // branch's syncStatus) would be wedged forever. Re-checking every poll
+    // means the file's age eventually crosses the threshold and it gets
+    // recovered without operator intervention.
+    //
+    // Safe to run this often: executeTaskWithTimeout() guarantees every task
+    // THIS process dequeues is completed, failed, or retried (all three
+    // remove the processing/ file) within taskTimeoutMs - and the staleness
+    // threshold is derived from taskTimeoutMs (orphanRecoveryMaxAgeMs below)
+    // precisely so that guarantee holds for ANY configured timeout, not just
+    // the 60s default: a fixed 5-minute threshold would have this call steal
+    // the worker's own still-in-flight task back to pending whenever an
+    // adopter configured taskTimeoutMs above ~5 minutes.
+    const recovered = await recoverOrphanedTasks(
+      this.taskDir,
+      this.orphanRecoveryMaxAgeMs(),
+      this.log,
+    )
+    if (recovered > 0) {
+      console.log(`Recovered ${recovered} orphaned task(s)`)
+    }
 
     let processed = 0
     let task: Task | null
@@ -803,6 +914,12 @@ export class CmsWorker {
       const updates: Record<string, unknown> = {
         name: branch,
         syncStatus: 'synced',
+        // save()'s merge only overwrites keys present in this update (see
+        // BranchMetadataFileManager.save()'s spread order) -- a prior
+        // syncFailureReason from an earlier failed attempt would otherwise
+        // survive forever past this successful sync. Explicitly clear it,
+        // same pattern as rebaseFailure's PR-W2 M2 clearing elsewhere.
+        syncFailureReason: undefined,
       }
       if (result.prUrl) updates.pullRequestUrl = result.prUrl
       if (result.prNumber) {
@@ -832,9 +949,11 @@ export class CmsWorker {
 
   /**
    * Update branch metadata after permanent task failure.
-   * Sets syncStatus to 'sync-failed' with error details.
+   * Sets syncStatus to 'sync-failed' and records `error` (already redacted
+   * by the caller, processTaskQueue -- see [HIGH-1] there) as
+   * syncFailureReason, so the editor can show WHY, not just that it failed.
    */
-  private async updateBranchMetadataOnFailure(task: Task, _error: string): Promise<void> {
+  private async updateBranchMetadataOnFailure(task: Task, error: string): Promise<void> {
     const branch = typeof task.payload.branch === 'string' ? task.payload.branch : null
     if (!branch) return
 
@@ -847,7 +966,9 @@ export class CmsWorker {
 
     try {
       const meta = getBranchMetadataFileManager(branchPath, this.contentBranchesPath)
-      await meta.save({ branch: { name: branch, syncStatus: 'sync-failed' } })
+      await meta.save({
+        branch: { name: branch, syncStatus: 'sync-failed', syncFailureReason: error },
+      })
     } catch (err) {
       console.error(
         `Failed to update failure metadata for ${branch}:`,
@@ -868,26 +989,96 @@ export class CmsWorker {
       // it hang past the task timeout.
       timeout: { block: this.taskTimeoutMs },
     })
-    // Pass URL directly to avoid persisting the token in remote.git/config
-    await git.push(this.buildGitHubUrl(), branch)
+    // Force stable (English) git output so isNonFastForwardRejection below
+    // can reliably match it -- git's rejection text is gettext-translated, so
+    // a non-English host would silently turn that classifier into a no-op.
+    // gitNetworkChildEnv (NOT gitChildEnv) because this call talks to GitHub:
+    // it keeps ambient HTTPS_PROXY/GIT_SSL_*/GIT_SSH_COMMAND, which
+    // gitChildEnv's local-ops allowlist deliberately drops.
+    git.env(gitNetworkChildEnv())
+    try {
+      // Pass URL directly to avoid persisting the token in remote.git/config
+      await git.push(this.buildGitHubUrl(), branch)
+    } catch (err) {
+      const message = getErrorMessage(err)
+      // A non-fast-forward rejection means the branch already moved on
+      // GitHub -- most likely another CanopyCMS deployment sharing this repo
+      // picked the same content-branch name, or someone pushed directly to
+      // GitHub. Retrying the identical push can never succeed (DEP-L1's
+      // git-failure-is-transient carve-out does NOT apply here), so fail
+      // fast instead of burning the task's retry budget.
+      if (isNonFastForwardRejection(message)) {
+        throw new PermanentTaskError(
+          `Push rejected for branch "${branch}": it has moved on GitHub (likely another ` +
+            `CanopyCMS deployment sharing this repository, or a direct push). Rename this ` +
+            `branch or reconcile it with the remote before retrying.`,
+        )
+      }
+      throw err
+    }
     console.log(`Pushed ${branch} to GitHub`)
   }
 
   /**
-   * Push any canopycms-settings-* branches from remote.git to GitHub.
-   * Non-fatal: a no-op push for up-to-date branches just succeeds quietly.
+   * Push THIS deployment's own settings branch (`this.settingsBranch`) from
+   * remote.git to GitHub. Non-fatal: a no-op push for an up-to-date branch
+   * just succeeds quietly.
+   *
+   * Deliberately narrowed to one branch — this used to push EVERY local
+   * branch matching `canopycms-settings-*`. With the tracking-namespace fetch
+   * fix (GITHUB_TRACKING_REF_PREFIX), `reconcileTrackedBranches` creates local
+   * heads for branches that exist on GitHub, so ANOTHER deployment's settings
+   * branch (sharing this same GitHub repo) can legitimately show up as a
+   * local head here too. Pushing it would be this deployment shipping
+   * settings state it doesn't own.
    */
   private async pushSettingsBranches(git: ReturnType<typeof simpleGit>): Promise<void> {
     try {
       const branches = await git.branch()
-      const settingsBranches = branches.all.filter((b) => b.startsWith('canopycms-settings-'))
-      for (const branch of settingsBranches) {
-        try {
-          await git.push(this.buildGitHubUrl(), branch)
-          console.log(`Pushed settings branch ${branch} to GitHub`)
-        } catch (err) {
-          // Non-fatal: branch may already be up-to-date or not yet created
-          console.warn(`Settings push for ${branch}:`, err instanceof Error ? err.message : err)
+      const settingsBranches = branches.all.filter((b) =>
+        b.startsWith(RESERVED_SETTINGS_BRANCH_PREFIX),
+      )
+      const foreign = settingsBranches.filter((b) => b !== this.settingsBranch)
+      if (foreign.length > 0) {
+        // Signal, not an error: this is exactly the "two deployments, one repo"
+        // condition this workstream exists to make visible. Never push these.
+        console.warn(
+          `Found settings branch(es) not owned by this deployment (${this.settingsBranch}): ` +
+            `${foreign.join(', ')}. Another CanopyCMS deployment may share this GitHub repo. Not pushing them.`,
+        )
+      }
+
+      // Check the full branch list, not the `canopycms-settings-*` subset: an
+      // adopter-supplied `settingsBranch` override need not carry that prefix.
+      if (!branches.all.includes(this.settingsBranch)) {
+        // Not created locally yet — nothing to push.
+        return
+      }
+
+      try {
+        await git.push(this.buildGitHubUrl(), this.settingsBranch)
+        console.log(`Pushed settings branch ${this.settingsBranch} to GitHub`)
+      } catch (err) {
+        // Non-fatal: branch may already be up-to-date. This call site has no
+        // task to throw a PermanentTaskError into (unlike pushBranchToGitHub)
+        // and is deliberately not restructured to add one -- but a
+        // non-fast-forward rejection here is the highest-signal instance of
+        // this whole failure class: it means another CanopyCMS deployment's
+        // worker already pushed ITS OWN state to `this.settingsBranch` on
+        // GitHub (an actual settings-branch name collision, not just the
+        // "foreign branch found locally" case warned about above), so make
+        // that explicit instead of a generic "push failed" line.
+        const message = getErrorMessage(err)
+        if (isNonFastForwardRejection(message)) {
+          console.warn(
+            `Settings push for ${this.settingsBranch} was rejected (non-fast-forward): another ` +
+              `CanopyCMS deployment appears to own this settings branch on GitHub. Settings from ` +
+              `that deployment will NOT be overwritten; this deployment's local settings changes ` +
+              `were not pushed. Rename this deployment's settings branch (config.settingsBranch or ` +
+              `deploymentName) to resolve the collision.`,
+          )
+        } else {
+          console.warn(`Settings push for ${this.settingsBranch}:`, message)
         }
       }
     } catch (err) {
@@ -896,6 +1087,142 @@ export class CmsWorker {
         err instanceof Error ? err.message : err,
       )
     }
+  }
+
+  /**
+   * Bring `refs/heads/*` in `remote.git` toward what was just fetched into
+   * `GITHUB_TRACKING_REF_PREFIX` -- WITHOUT ever force-rewinding or deleting
+   * a local head. This is the non-destructive replacement for what the old
+   * `+refs/heads/*:refs/heads/*` fetch refspec used to do implicitly (and
+   * destructively) as part of the fetch itself; see
+   * `GITHUB_TRACKING_REF_PREFIX`'s doc comment for the two failure modes
+   * that refspec caused.
+   *
+   * Per tracked branch:
+   * - no local `refs/heads/<name>` yet -> create it at the tracked commit
+   *   (a branch created on GitHub, or by another deployment sharing this
+   *   GitHub repo, becomes visible locally).
+   * - local is a strict ancestor of tracked (behind) -> fast-forward it.
+   * - local === tracked -> nothing to do.
+   * - tracked is a strict ancestor of local (ahead) -> LEAVE IT ALONE. This
+   *   is unpushed editor/settings work; the queued push task (or
+   *   pushSettingsBranches) ships it. This is exactly the branch state the
+   *   old refspec used to destroy.
+   * - neither is an ancestor of the other (diverged) -> LEAVE IT ALONE and
+   *   count/log it. A real collision (e.g. another deployment moved the
+   *   same branch name on GitHub); the next push attempt will be rejected
+   *   non-fast-forward, which is the correct, visible outcome -- this
+   *   method must never silently pick a winner.
+   *
+   * Never deletes a local head: a branch removed on GitHub simply stops
+   * being tracked here; the local ref persists until removed through its
+   * own explicit path (the sync loop must not be one of them).
+   *
+   * `remote.git` is bare, so there is no worktree to invalidate by moving
+   * these refs -- unlike a non-bare repo, updating the ref that happens to
+   * be "checked out" is a non-issue here.
+   *
+   * Concurrency: `remote.git` is bare and on EFS, and the Lambda pushes into
+   * it concurrently (`GitManager.push()`'s `target:target` refspec) while
+   * this runs. Every `update-ref` below passes the expected old value (the
+   * all-zeros OID for "must not exist yet" on creation, the previously-read
+   * SHA for the fast-forward case) so a concurrent Lambda write landing in
+   * the gap between the read and the write loses the ref update instead of
+   * being silently clobbered -- the branch is simply revisited next cycle.
+   */
+  private async reconcileTrackedBranches(
+    git: ReturnType<typeof simpleGit>,
+  ): Promise<TrackedBranchSummary> {
+    const GIT_ZERO_OID = '0000000000000000000000000000000000000000'
+    const created: string[] = []
+    const fastForwarded: string[] = []
+    const ahead: string[] = []
+    const diverged: string[] = []
+
+    // One invocation enumerates both namespaces: refs/heads/<name> (what the
+    // Lambda pushes into and branch clones read from) and
+    // GITHUB_TRACKING_REF_PREFIX<name> (GitHub's tip, just fetched above).
+    const raw = await git.raw([
+      'for-each-ref',
+      '--format=%(refname) %(objectname)',
+      'refs/heads/',
+      GITHUB_TRACKING_REF_PREFIX,
+    ])
+
+    const heads = new Map<string, string>()
+    const tracked = new Map<string, string>()
+    for (const line of raw.split('\n')) {
+      const trimmed = line.trim()
+      if (!trimmed) continue
+      const [refname, sha] = trimmed.split(' ')
+      if (refname.startsWith('refs/heads/')) {
+        heads.set(refname.slice('refs/heads/'.length), sha)
+      } else if (refname.startsWith(GITHUB_TRACKING_REF_PREFIX)) {
+        tracked.set(refname.slice(GITHUB_TRACKING_REF_PREFIX.length), sha)
+      }
+    }
+
+    for (const [name, trackedSha] of tracked) {
+      const localSha = heads.get(name)
+      const localRef = `refs/heads/${name}`
+
+      if (!localSha) {
+        try {
+          // Zero old-value asserts the ref does not already exist -- guards
+          // against a concurrent Lambda push creating this exact branch
+          // name between the for-each-ref read above and this update.
+          await git.raw(['update-ref', localRef, trackedSha, GIT_ZERO_OID])
+          created.push(name)
+        } catch (err) {
+          console.warn(
+            `  Tracked-branch reconcile: failed to create local ref for ${name} (concurrent update?): ${getErrorMessage(err)}`,
+          )
+        }
+        continue
+      }
+
+      if (localSha === trackedSha) continue // nothing to do
+
+      // Count commits unique to each side in one call: left = commits local
+      // has that tracked doesn't (ahead), right = commits tracked has that
+      // local doesn't (behind). Exits 0 regardless of ancestry direction,
+      // unlike `merge-base --is-ancestor` (which simple-git would throw on
+      // a non-zero exit for the common "not an ancestor" case).
+      const counts = (
+        await git.raw(['rev-list', '--left-right', '--count', `${localSha}...${trackedSha}`])
+      ).trim()
+      const [leftStr, rightStr] = counts.split(/\s+/)
+      const localAheadCount = parseInt(leftStr, 10)
+      const localBehindCount = parseInt(rightStr, 10)
+
+      if (localAheadCount === 0 && localBehindCount > 0) {
+        try {
+          await git.raw(['update-ref', localRef, trackedSha, localSha])
+          fastForwarded.push(name)
+        } catch (err) {
+          // Concurrent Lambda push moved the ref since the read above --
+          // the guard did its job; this branch is simply revisited next cycle.
+          console.warn(
+            `  Tracked-branch reconcile: failed to fast-forward ${name} (concurrent update?): ${getErrorMessage(err)}`,
+          )
+        }
+      } else if (localBehindCount === 0 && localAheadCount > 0) {
+        // Unpushed local work -- exactly what the old destructive refspec
+        // used to force-rewind or delete. Leave it.
+        ahead.push(name)
+      } else {
+        // Neither side is an ancestor of the other. Leave both alone.
+        diverged.push(name)
+      }
+    }
+
+    if (diverged.length > 0) {
+      console.warn(
+        `  Tracked-branch reconcile: ${diverged.length} branch(es) diverged from GitHub and were left untouched: ${diverged.join(', ')}`,
+      )
+    }
+
+    return { created, fastForwarded, ahead, diverged }
   }
 
   async syncGit(): Promise<void> {
@@ -910,6 +1237,11 @@ export class CmsWorker {
       // is inactivity-based, so a slow-but-flowing transfer is unaffected.
       timeout: { block: this.taskTimeoutMs },
     })
+    // This instance also drives pushSettingsBranches(git) below, whose
+    // classification of a rejected settings-branch push (see that method)
+    // needs the same stable-English guarantee as pushBranchToGitHub. Network
+    // env for the same reason: the fetch and push here reach GitHub.
+    git.env(gitNetworkChildEnv())
 
     // PR-W1: the whole cycle is wrapped so both outcomes -- success and
     // hard failure (e.g. the fetch throwing against a poisoned remote.git)
@@ -919,14 +1251,29 @@ export class CmsWorker {
     // on a failed one. On failure we rethrow so scheduleLoop's existing
     // per-cycle catch stays the loud path.
     try {
-      // Fetch all branches from GitHub using direct URL (no named remote)
-      // We use raw git commands since simple-git's fetch() with a URL
-      // doesn't support --prune directly
-      await git.raw(['fetch', this.buildGitHubUrl(), '--prune', '+refs/heads/*:refs/heads/*'])
+      // Fetch all branches from GitHub using direct URL (no named remote),
+      // into the GITHUB_TRACKING_REF_PREFIX remote-tracking namespace rather
+      // than refs/heads/* directly -- see that constant's doc comment for
+      // the destructive-fetch bug this avoids. We use raw git commands since
+      // simple-git's fetch() with a URL doesn't support --prune directly.
+      await git.raw([
+        'fetch',
+        this.buildGitHubUrl(),
+        '--prune',
+        `+refs/heads/*:${GITHUB_TRACKING_REF_PREFIX}*`,
+      ])
       console.log('Fetched from GitHub')
+
+      // Bring refs/heads/* toward what was just fetched, WITHOUT ever
+      // force-rewinding or deleting a local head -- see
+      // reconcileTrackedBranches()'s doc comment.
+      const trackedSummary = await this.reconcileTrackedBranches(git)
 
       // Push settings branches to GitHub (belt-and-suspenders for task queue).
       // Ensures settings reach GitHub even if a task queue entry is lost.
+      // Ordering relative to the fetch/reconcile above is no longer a
+      // correctness dependency now that the fetch can't clobber refs/heads/*
+      // -- this could run before or after them just as safely.
       await this.pushSettingsBranches(git)
 
       await this.refreshBaseBranchWorkspace()
@@ -953,6 +1300,7 @@ export class CmsWorker {
         rebased: rebaseSummary.rebased,
         skippedDirty: rebaseSummary.skippedDirty,
         failed: rebaseSummary.failed,
+        tracked: trackedSummary,
       }
       await writeWorkerStatus(this.taskDir, report).catch((writeErr) =>
         console.error('Failed to write worker status:', getErrorMessage(writeErr)),

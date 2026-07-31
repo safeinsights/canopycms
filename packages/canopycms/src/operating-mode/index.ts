@@ -28,6 +28,10 @@ export { clientOperatingStrategy, clearClientStrategyCache } from './client-safe
 // Client-unsafe factory and strategy (server-side only)
 export { operatingStrategy, clearStrategyCache } from './client-unsafe-strategy'
 
+// Single resolution point for deploymentName (env > config > mode default) —
+// server-only (reads process.env), used by the strategies' getSettingsBranchName.
+export { resolveDeploymentName } from './deployment-name'
+
 export type OperatingMode = 'prod' | 'dev'
 
 // Type exports

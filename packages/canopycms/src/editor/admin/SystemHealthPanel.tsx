@@ -656,7 +656,15 @@ function BranchHealthRow({
         </Table.Td>
         <Table.Td>
           {b.syncStatus === 'sync-failed' ? (
-            <Tooltip label="GitHub sync failed — retry from the Tasks tab">
+            <Tooltip
+              label={
+                b.syncFailureReason
+                  ? `${b.syncFailureReason} — retry from the Tasks tab`
+                  : 'GitHub sync failed — retry from the Tasks tab'
+              }
+              multiline
+              maw={320}
+            >
               <Badge color="red" variant="light">
                 sync-failed
               </Badge>

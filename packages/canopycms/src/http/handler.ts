@@ -10,7 +10,7 @@ import { loadBranchContext, BranchWorkspaceManager } from '../branch-workspace'
 import { BranchMetadataCorruptError } from '../branch-metadata'
 import { authResultToCanopyUser } from '../user'
 import { loadInternalGroups, RESERVED_GROUPS } from '../authorization'
-import { clientOperatingStrategy } from '../operating-mode'
+import { clientOperatingStrategy, operatingStrategy } from '../operating-mode'
 import { getErrorMessage, redactCredentials, sanitizeErrorMessage } from '../utils/error'
 
 let warnedNoAdmins = false
@@ -38,7 +38,13 @@ const buildContext = async (options: CanopyHandlerOptions): Promise<ApiContext> 
     throw new Error('CanopyCMS: config or services is required')
   }
   const operatingMode = services.config.mode
-  const settingsBranch = services.config.settingsBranch ?? 'canopycms-settings'
+  // Derive from the strategy (which resolves deploymentName via
+  // resolveDeploymentName), not a hardcoded literal — a third, independent
+  // default here that never accounted for deploymentName meant a
+  // deployment-namespaced settings branch (e.g. canopycms-settings-acme)
+  // never matched this check, so `getBranchContext(settingsBranch)` could
+  // never auto-create it.
+  const settingsBranch = operatingStrategy(operatingMode).getSettingsBranchName(services.config)
 
   const getBranchContext =
     options.getBranchContext ??

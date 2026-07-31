@@ -4,10 +4,12 @@ import { Construct } from 'constructs'
 import {
   Duration,
   RemovalPolicy,
+  Stack,
   aws_cloudfront as cloudfront,
   aws_cloudfront_origins as origins,
   aws_iam as iam,
   aws_lambda as lambda,
+  aws_logs as logs,
   aws_s3 as s3,
 } from 'aws-cdk-lib'
 
@@ -122,6 +124,23 @@ export interface AssetSupportProps {
    * @default false
    */
   readonly autoDeleteObjects?: boolean
+
+  /**
+   * Retention for the transform Lambda's CloudWatch log group (default:
+   * three months / 90 days).
+   */
+  readonly transformLogRetention?: logs.RetentionDays
+
+  /**
+   * Name for the transform Lambda's CloudWatch log group (default:
+   * `/canopycms/<stackName>/transform`). Deliberately NOT
+   * `/aws/lambda/<function-name>` - see `transformLogGroup`'s comment in the
+   * constructor for why a CDK-managed group must avoid that exact name once
+   * the function has ever been deployed without one. Override to follow an
+   * org naming convention, or when instantiating this construct twice in one
+   * stack (the default name would collide).
+   */
+  readonly transformLogGroupName?: string
 }
 
 /**
@@ -180,7 +199,10 @@ export interface AssetCloudFrontBehaviors {
  * - The bucket's asset-prefix lifecycle rule + CORS (standalone mode only).
  * - The transform Lambda (`../../lambda/asset-transform/handler.ts`, built
  *   via `pnpm run build:lambda` - see that script's doc comment for the
- *   no-Docker sharp bundling approach) and its OAC-locked Function URL.
+ *   no-Docker sharp bundling approach), its dedicated CloudWatch log group
+ *   (custom name/retention/removal policy instead of the
+ *   CloudFormation-implicit `/aws/lambda/<function-name>` group), and its
+ *   OAC-locked Function URL.
  * - `assetBehaviors()`, the two CloudFront behavior configs a consuming
  *   distribution attaches (see `AssetCloudFrontBehaviors`'s doc comment for
  *   both attachment shapes).
@@ -193,6 +215,9 @@ export class AssetSupport extends Construct {
 
   /** The transform Lambda function. */
   public readonly transformFunction: lambda.Function
+
+  /** The transform Lambda's CloudWatch log group (Lambda stdout/stderr). */
+  public readonly transformLogGroup: logs.LogGroup
 
   /** The transform Lambda's Function URL - use as a CloudFront origin (see `assetBehaviors()`). */
   public readonly transformFunctionUrl: lambda.FunctionUrl
@@ -239,6 +264,25 @@ export class AssetSupport extends Construct {
       })
     }
 
+    // Dedicated CloudWatch log group for the transform Lambda's stdout/
+    // stderr. Custom name (NOT the CloudFormation-implicit
+    // `/aws/lambda/<function name>`), for two reasons: (1) CDK does not
+    // manage that implicit group at all - infinite retention, and
+    // `cdk destroy` leaves it behind; (2) Lambda auto-creates
+    // `/aws/lambda/<function name>` on first invoke, OUTSIDE CloudFormation -
+    // once that has happened (e.g. this construct was already deployed
+    // before this log group existed), a CDK `LogGroup` construct using that
+    // exact name would fail its `CreateLogGroup` call with "already exists"
+    // and block every future `cdk deploy`. Mirrors `CanopyCmsService`'s
+    // `workerLogGroup`/`cmsLogGroup` (cms-service.ts), which established this
+    // convention.
+    this.transformLogGroup = new logs.LogGroup(this, 'TransformFunctionLogs', {
+      logGroupName:
+        props.transformLogGroupName ?? `/canopycms/${Stack.of(this).stackName}/transform`,
+      retention: props.transformLogRetention ?? logs.RetentionDays.THREE_MONTHS,
+      removalPolicy: RemovalPolicy.DESTROY,
+    })
+
     this.transformFunction = new lambda.Function(this, 'TransformFunction', {
       // Built by `pnpm run build:lambda` (lambda/asset-transform/build.mjs) -
       // esbuild bundle + a real linux/arm64 `npm install sharp` alongside it,
@@ -256,10 +300,28 @@ export class AssetSupport extends Construct {
       architecture: lambda.Architecture.ARM_64,
       memorySize: TRANSFORM_LAMBDA_MEMORY_MB,
       timeout: TRANSFORM_LAMBDA_TIMEOUT,
+      // Pass the pre-created group via `logGroup`, NOT `logRetention` (CDK
+      // throws LogRetentionLogGroupConflict/ConflictingLogPolicyOptions if
+      // both are set on the same function) - the removal policy lives on the
+      // LogGroup construct above instead.
+      logGroup: this.transformLogGroup,
       environment: {
         ASSET_BUCKET: this.bucket.bucketName,
       },
     })
+
+    // Explicit, scoped grant - NOT a reliance on the auto-created execution
+    // role's AWSLambdaBasicExecutionRole managed policy (attached by CDK's
+    // lambda.Function regardless of `logGroup`, and never adjusted for it -
+    // passing `logGroup` only points the function's LoggingConfig at this
+    // group, it grants no IAM permissions). That managed policy's
+    // logs:CreateLogStream/logs:PutLogEvents statement is scoped to
+    // `arn:aws:logs:*:*:log-group:/aws/lambda/*:*` only (its
+    // logs:CreateLogGroup statement is the sole one that's unrestricted) -
+    // it grants nothing for a custom-named group like this one. Without this
+    // grantWrite, log delivery to this group would fail permission checks
+    // with no error surfaced anywhere - logs would simply vanish.
+    this.transformLogGroup.grantWrite(this.transformFunction)
 
     // Read access to originals (what it transforms) - deviation from the PR
     // spec's literal "read asset-originals/, write assets/" grant list: the

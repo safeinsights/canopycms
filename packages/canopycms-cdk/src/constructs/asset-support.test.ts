@@ -1,6 +1,7 @@
 import { App, Duration, Stack } from 'aws-cdk-lib'
 import { Match, Template } from 'aws-cdk-lib/assertions'
 import { aws_cloudfront as cloudfront, aws_iam as iam, aws_s3 as s3 } from 'aws-cdk-lib'
+import { RetentionDays } from 'aws-cdk-lib/aws-logs'
 import { describe, expect, it } from 'vitest'
 
 import { AssetSupport } from './asset-support'
@@ -222,6 +223,110 @@ describe('AssetSupport - standalone mode (creates its own bucket)', () => {
     for (const prefix of ['asset-staging/*', 'asset-originals/*', 'asset-meta/*', 'assets/*']) {
       expect(resourcePatterns).toContain(prefix)
     }
+  })
+})
+
+describe('AssetSupport - transform Lambda CloudWatch log group', () => {
+  it('creates a dedicated transform log group named /canopycms/<stackName>/transform with 90-day default retention and DESTROY removal', () => {
+    const stack = makeStack()
+    new AssetSupport(stack, 'Assets', { editorOrigins: EDITOR_ORIGINS })
+    const template = Template.fromStack(stack)
+
+    template.hasResource(
+      'AWS::Logs::LogGroup',
+      Match.objectLike({
+        Properties: Match.objectLike({
+          LogGroupName: '/canopycms/TestStack/transform',
+          RetentionInDays: 90,
+        }),
+        DeletionPolicy: 'Delete',
+      }),
+    )
+  })
+
+  it('honors transformLogRetention to override the default retention', () => {
+    const stack = makeStack()
+    new AssetSupport(stack, 'Assets', {
+      editorOrigins: EDITOR_ORIGINS,
+      transformLogRetention: RetentionDays.ONE_WEEK,
+    })
+    const template = Template.fromStack(stack)
+
+    template.hasResourceProperties(
+      'AWS::Logs::LogGroup',
+      Match.objectLike({ LogGroupName: '/canopycms/TestStack/transform', RetentionInDays: 7 }),
+    )
+  })
+
+  it('honors transformLogGroupName to override the default name', () => {
+    const stack = makeStack()
+    new AssetSupport(stack, 'Assets', {
+      editorOrigins: EDITOR_ORIGINS,
+      transformLogGroupName: '/custom/transform',
+    })
+    const template = Template.fromStack(stack)
+
+    template.hasResourceProperties(
+      'AWS::Logs::LogGroup',
+      Match.objectLike({ LogGroupName: '/custom/transform' }),
+    )
+  })
+
+  // Direct regression guard for the deploy-blocking trap: Lambda auto-creates
+  // `/aws/lambda/<function-name>` outside CloudFormation on first invoke, so
+  // a CDK LogGroup construct using that exact name fails CreateLogGroup with
+  // "already exists" the moment it's ever been deployed without one.
+  it('the transform log group name does not start with /aws/lambda/', () => {
+    const stack = makeStack()
+    new AssetSupport(stack, 'Assets', { editorOrigins: EDITOR_ORIGINS })
+    const template = Template.fromStack(stack)
+
+    const groups = template.findResources('AWS::Logs::LogGroup')
+    const names = Object.values(groups).map(
+      (group) => (group.Properties as { LogGroupName?: string }).LogGroupName ?? '',
+    )
+    expect(names.length).toBeGreaterThanOrEqual(1)
+    for (const name of names) {
+      expect(name.startsWith('/aws/lambda/')).toBe(false)
+    }
+  })
+
+  it('the transform Lambda references its dedicated log group via LoggingConfig.LogGroup', () => {
+    const stack = makeStack()
+    new AssetSupport(stack, 'Assets', { editorOrigins: EDITOR_ORIGINS })
+    const template = Template.fromStack(stack)
+
+    template.hasResourceProperties(
+      'AWS::Lambda::Function',
+      Match.objectLike({
+        LoggingConfig: Match.objectLike({
+          LogGroup: { Ref: Match.stringLikeRegexp('TransformFunctionLogs') },
+        }),
+      }),
+    )
+  })
+
+  it('grants the transform Lambda role a log-group-scoped IAM statement (CreateLogStream + PutLogEvents only), not a broad grant', () => {
+    const stack = makeStack()
+    new AssetSupport(stack, 'Assets', { editorOrigins: EDITOR_ORIGINS })
+    const template = Template.fromStack(stack)
+
+    template.hasResourceProperties(
+      'AWS::IAM::Policy',
+      Match.objectLike({
+        PolicyDocument: Match.objectLike({
+          Statement: Match.arrayWith([
+            Match.objectLike({
+              Effect: 'Allow',
+              Action: ['logs:CreateLogStream', 'logs:PutLogEvents'],
+              Resource: Match.objectLike({
+                'Fn::GetAtt': Match.arrayWith([Match.stringLikeRegexp('TransformFunctionLogs')]),
+              }),
+            }),
+          ]),
+        }),
+      }),
+    )
   })
 })
 

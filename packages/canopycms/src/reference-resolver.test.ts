@@ -2,7 +2,7 @@ import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { CanopyConfig } from './config'
 import { flattenSchema } from './config'
@@ -103,6 +103,39 @@ describe('ReferenceResolver', () => {
       )
 
       expect(options).toHaveLength(0)
+    })
+
+    it('skips store.read() entirely for a path the canAccess predicate denies', async () => {
+      // Regression test: loadReferenceOptions used to read() every candidate to
+      // get its label, and only the API route filtered by access afterward --
+      // meaning a denied path still triggered a file read for content the
+      // caller would never see. The canAccess predicate must be consulted
+      // BEFORE any read, so a denied candidate never reaches store.read() at all.
+      const readSpy = vi.spyOn(store, 'read')
+
+      const options = await resolver.loadReferenceOptions(
+        [unsafeAsLogicalPath('authors')],
+        'name',
+        undefined,
+        undefined,
+        (relativePath) => !relativePath.includes('bob'),
+      )
+
+      // Only the allowed candidate (alice) comes back...
+      expect(options).toHaveLength(1)
+      expect(options[0].label).toBe('Alice')
+      // ...and bob's path was never read.
+      expect(readSpy).toHaveBeenCalledTimes(1)
+      expect(readSpy).toHaveBeenCalledWith(expect.anything(), 'alice')
+    })
+
+    it('reads every candidate when no canAccess predicate is given (back-compat)', async () => {
+      const readSpy = vi.spyOn(store, 'read')
+
+      const options = await resolver.loadReferenceOptions([unsafeAsLogicalPath('authors')], 'name')
+
+      expect(options).toHaveLength(2)
+      expect(readSpy).toHaveBeenCalledTimes(2)
     })
   })
 })

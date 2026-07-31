@@ -217,4 +217,59 @@ describe('branch status api', () => {
     expect(consoleSpy).toHaveErrored('Failed to push branch changes')
     consoleSpy.restore()
   })
+
+  it('returns 409 with actionable guidance on a non-fast-forward push rejection', async () => {
+    const consoleSpy = mockConsole()
+    const ctx = makeCtx(true)
+    // Real git push-rejection text (--porcelain form, captured from an actual
+    // diverging push between two clones of a shared bare repo -- see
+    // utils/git.test.ts for how it was generated), not an invented string.
+    ctx.services.submitBranch = vi
+      .fn()
+      .mockRejectedValue(
+        new Error(
+          'To /tmp/canopy-test/github.git\n' +
+            '!\trefs/heads/feature/x:refs/heads/feature/x\t[rejected] (fetch first)\n' +
+            'Done\n' +
+            'Pushing to /tmp/canopy-test/github.git\n' +
+            "error: failed to push some refs to '/tmp/canopy-test/github.git'\n" +
+            'hint: Updates were rejected because the remote contains work that you do not\n' +
+            'hint: have locally. This is usually caused by another repository pushing to\n' +
+            'hint: the same ref. If you want to integrate the remote changes, use\n' +
+            "hint: 'git pull' before pushing again.\n",
+        ),
+      )
+
+    const res = await submitBranchForMerge(
+      ctx,
+      { user: { type: 'authenticated', userId: 'u1', groups: [] } },
+      { branch: 'feature/x' as BranchName },
+    )
+
+    expect(res.ok).toBe(false)
+    expect(res.status).toBe(409)
+    expect(res.error).toContain('feature/x')
+    expect(res.error).toContain('another CanopyCMS deployment')
+    // No raw git output (branch/ref internals, hint text) leaks to the client.
+    expect(res.error).not.toContain('rejected')
+    expect(res.error).not.toContain('/tmp/canopy-test')
+    consoleSpy.restore()
+  })
+
+  it('keeps the existing 500 path for an unrelated (non-rejection) push failure', async () => {
+    const consoleSpy = mockConsole()
+    const ctx = makeCtx(true)
+    ctx.services.submitBranch = vi.fn().mockRejectedValue(new Error('socket hang up'))
+
+    const res = await submitBranchForMerge(
+      ctx,
+      { user: { type: 'authenticated', userId: 'u1', groups: [] } },
+      { branch: 'feature/x' as BranchName },
+    )
+
+    expect(res.ok).toBe(false)
+    expect(res.status).toBe(500)
+    expect(res.error).toContain('Failed to push branch changes')
+    consoleSpy.restore()
+  })
 })
