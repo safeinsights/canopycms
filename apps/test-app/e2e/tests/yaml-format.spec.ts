@@ -1,3 +1,4 @@
+import { BASE_URL } from '../fixtures/base-url'
 import { test, expect } from '@playwright/test'
 import { EditorPage } from '../fixtures/editor-page'
 import { switchUser, installE2EFlag } from '../fixtures/test-users'
@@ -8,8 +9,6 @@ import {
   findContentFile,
 } from '../fixtures/test-workspace'
 import { SHORT_TIMEOUT, STANDARD_TIMEOUT } from '../fixtures/timeouts'
-
-const BASE_URL = 'http://localhost:5174'
 
 // The settings YAML file is seeded from content/ into the main branch workspace.
 const SETTINGS_CONTENT_PATH = 'settings.settings.sEtTiNgS5678.yaml'

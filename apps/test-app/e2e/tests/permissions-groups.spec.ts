@@ -1,3 +1,4 @@
+import { BASE_URL } from '../fixtures/base-url'
 import { test, expect } from '@playwright/test'
 import { EditorPage } from '../fixtures/editor-page'
 import { switchUser, installE2EFlag } from '../fixtures/test-users'
@@ -9,8 +10,6 @@ import {
   clearPermissionsViaApi,
   removeE2eGroupsViaApi,
 } from '../fixtures/settings-managers-page'
-
-const BASE_URL = 'http://localhost:5174'
 
 /**
  * E2E tests for the Group Manager and Permission Manager (Settings gear ->
@@ -156,8 +155,14 @@ test.describe('Permissions and Groups', () => {
         expect(body.data.groups.map((g) => g.name)).toContain(groupName)
       })
     } finally {
+      // Best-effort: if the test failed because the page/server died, this
+      // page.request-based cleanup fails too -- swallowing it keeps the
+      // PRIMARY assertion error as the reported failure (a finally that
+      // throws replaces it). The start-of-test self-heal covers the state.
       await test.step('cleanup: remove the created group (settings workspace is never reset)', () =>
-        removeE2eGroupsViaApi(page))
+        removeE2eGroupsViaApi(page).catch((err) =>
+          console.warn('e2e group cleanup failed (state self-heals next run):', err),
+        ))
     }
   })
 
@@ -227,9 +232,12 @@ test.describe('Permissions and Groups', () => {
       // The assigned rule would otherwise persist in the settings workspace
       // forever (resetWorkspace never touches it) — a latent deny for any
       // future non-admin spec that edits Posts. The start-of-test clear
-      // handles crashed prior runs; this handles the happy path.
+      // handles crashed prior runs; this handles the happy path. Best-effort
+      // (.catch) so a dead page/server doesn't replace the primary failure.
       await test.step('cleanup: clear permissions again (settings workspace is never reset)', () =>
-        clearPermissionsViaApi(page))
+        clearPermissionsViaApi(page).catch((err) =>
+          console.warn('permissions cleanup failed (state self-heals next run):', err),
+        ))
     }
   })
 })

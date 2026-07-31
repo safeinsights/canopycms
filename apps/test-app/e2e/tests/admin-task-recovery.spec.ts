@@ -1,3 +1,4 @@
+import { BASE_URL } from '../fixtures/base-url'
 import { test, expect, type Page } from '@playwright/test'
 import { randomUUID } from 'node:crypto'
 import { EditorPage } from '../fixtures/editor-page'
@@ -10,8 +11,6 @@ import {
   listTaskIds,
   taskFileExists,
 } from '../fixtures/admin-workspace'
-
-const BASE_URL = 'http://localhost:5174'
 
 /** Navigate to the editor, open System health, and land on the Tasks tab. */
 async function openTasksTab(page: Page): Promise<AdminPage> {

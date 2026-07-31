@@ -1,3 +1,4 @@
+import { BASE_URL } from '../fixtures/base-url'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { test, expect, type Page } from '@playwright/test'
@@ -24,8 +25,6 @@ import {
   TRASH_NAME_RE,
   CORRUPT_ARCHIVE_RE,
 } from '../fixtures/admin-workspace'
-
-const BASE_URL = 'http://localhost:5174'
 
 /** Navigate to the editor, open System health, and land on the loaded Branches tab. */
 async function openBranchesTab(page: Page): Promise<AdminPage> {
@@ -136,13 +135,24 @@ test.describe('Admin Branch Health', () => {
       )
       .toBe(true)
 
-    const meta = await readBranchMetadata(dirName)
-    expect(meta.status).toBe('editing')
-    // NOT the fixture's 'test-admin' label from test-users.ts (TEST_USERS is
-    // decorative there) -- the dev auth plugin actually maps the 'admin' test
-    // key to DEV_ADMIN_USER_ID ('dev_admin_3xY6zW1qR5'), and that's the id
-    // repairBranchDirHandler stamps as createdBy (req.user.userId).
-    expect(meta.createdBy).toBe(DEV_ADMIN_USER_ID)
+    // Poll rather than read once: the server archives the corrupt file
+    // (fs.rename) under one lock hold, RELEASES the lock, resolves the
+    // repaired branch name (a git spawn), and only then re-acquires the lock
+    // to write the fresh branch.json (repairBranchDirHandler). Between the
+    // rename and that write, branch.json does not exist -- a single
+    // readBranchMetadata here can land in the window and throw ENOENT.
+    //
+    // Expected createdBy is NOT the fixture's 'test-admin' label from
+    // test-users.ts (TEST_USERS is decorative there) -- the dev auth plugin
+    // actually maps the 'admin' test key to DEV_ADMIN_USER_ID
+    // ('dev_admin_3xY6zW1qR5'), and that's the id repairBranchDirHandler
+    // stamps as createdBy (req.user.userId).
+    await expect
+      .poll(async () => {
+        const meta = await readBranchMetadata(dirName).catch(() => null)
+        return meta ? { status: meta.status, createdBy: meta.createdBy } : null
+      })
+      .toEqual({ status: 'editing', createdBy: DEV_ADMIN_USER_ID })
   })
 
   test('orphan directory purges to trash; retention is keyed off the NAME stamp, not mtime', async ({
@@ -192,7 +202,8 @@ test.describe('Admin Branch Health', () => {
   test('the base branch can never be purged: healthy row has no control; corrupt row disables it; API 400s', async ({
     page,
   }) => {
-    test.setTimeout(60000)
+    // No test.setTimeout here: the config's 90s budget is LARGER than the
+    // 60s such calls set -- a local setTimeout would shrink headroom.
     const adminPage = await openBranchesTab(page)
     const baseDirName = await getBaseBranchDirName(page)
     await expect(adminPage.branchRow(baseDirName)).toContainText('base')

@@ -1,3 +1,4 @@
+import { BASE_URL } from '../fixtures/base-url'
 import { test, expect } from '@playwright/test'
 import { EditorPage } from '../fixtures/editor-page'
 import { switchUser, installE2EFlag } from '../fixtures/test-users'
@@ -8,8 +9,6 @@ import {
   findContentFile,
 } from '../fixtures/test-workspace'
 import { SHORT_TIMEOUT, STANDARD_TIMEOUT, LONG_TIMEOUT } from '../fixtures/timeouts'
-
-const BASE_URL = 'http://localhost:5174'
 
 /**
  * Multi-Field Content Editing E2E Tests.

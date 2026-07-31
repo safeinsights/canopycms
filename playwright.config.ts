@@ -4,6 +4,16 @@ import { defineConfig, devices } from '@playwright/test'
  * Playwright configuration for CanopyCMS E2E tests.
  * Tests UI-only features like preview bridge, draft persistence, modals, and drag-drop.
  */
+
+// Keep in sync with apps/test-app/e2e/fixtures/base-url.ts (specs can't
+// import from a config outside their dir, so the env var is the contract).
+// Override CANOPY_E2E_PORT to run concurrent e2e sessions from different
+// checkouts on one machine: with the fixed default plus reuseExistingServer,
+// a second session silently attaches to the FIRST session's server — rooted
+// in a different checkout's workspace — and every seeded-filesystem
+// assertion reads the wrong .canopy-dev.
+const E2E_PORT = Number(process.env.CANOPY_E2E_PORT ?? 5174)
+
 export default defineConfig({
   testDir: './apps/test-app/e2e',
 
@@ -33,7 +43,7 @@ export default defineConfig({
   // Shared settings for all the projects below
   use: {
     // Base URL to use in actions like `await page.goto('/')`
-    baseURL: 'http://localhost:5174',
+    baseURL: `http://localhost:${E2E_PORT}`,
 
     // Collect trace when retrying the failed test
     trace: 'on-first-retry',
@@ -69,11 +79,18 @@ export default defineConfig({
   // ships from dist/, so canopycms-next must be built before the server starts
   // on BOTH branches below (~5s; it is only tsc + two esbuild calls).
   webServer: {
+    // `exec next … --port` (not the package's dev/start scripts, which pin
+    // --port 5174) so CANOPY_E2E_PORT reaches the server. `pnpm --filter X
+    // exec` runs with the package as cwd, same as the scripts did.
     command:
       process.env.CI || process.env.E2E_PROD_SERVER
-        ? 'pnpm --filter canopycms-next build && pnpm --filter canopycms-test-app build && pnpm --filter canopycms-test-app start'
-        : 'pnpm --filter canopycms-next build && pnpm --filter canopycms-test-app dev',
-    url: 'http://localhost:5174',
+        ? `pnpm --filter canopycms-next build && pnpm --filter canopycms-test-app build && pnpm --filter canopycms-test-app exec next start --port ${E2E_PORT}`
+        : `pnpm --filter canopycms-next build && pnpm --filter canopycms-test-app exec next dev --port ${E2E_PORT}`,
+    url: `http://localhost:${E2E_PORT}`,
+    // NOTE: when a server is already listening locally, the whole command --
+    // including the canopycms-next build above -- is skipped, so a
+    // long-lived dev server can be serving a stale canopycms-next dist/.
+    // Restart the server after touching packages/canopycms-next/src.
     reuseExistingServer: !process.env.CI,
     // Generous: the CI path pays a full `next build` before the server binds.
     timeout: 300 * 1000,

@@ -1,3 +1,4 @@
+import { BASE_URL } from '../fixtures/base-url'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { test, expect } from '@playwright/test'
@@ -12,8 +13,6 @@ import {
   removeAssetOriginals,
 } from '../fixtures/media-workspace'
 import { SHORT_TIMEOUT, STANDARD_TIMEOUT } from '../fixtures/timeouts'
-
-const BASE_URL = 'http://localhost:5174'
 
 /** The `posts` collection's fixed directory suffix - stable across resets, shared with field-types.spec.ts/entry-links.spec.ts/reference-fields.spec.ts. */
 const POSTS_DIR = 'posts.qrstuvwxyz12'

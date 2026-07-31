@@ -213,7 +213,13 @@ export async function clearPermissionsViaApi(page: Page): Promise<void> {
   if (!getRes.ok()) {
     throw new Error(`Failed to read permissions before clearing: ${getRes.status()}`)
   }
-  const body = (await getRes.json()) as { data: { version: number } }
+  const body = (await getRes.json()) as {
+    data: { permissions: unknown[]; version: number }
+  }
+  // No-op short-circuit: every settings PUT rewrites updatedAt and commits +
+  // pushes through the settings lock, so a clear-when-already-empty write
+  // would grow remote.git by one commit per call, forever.
+  if (body.data.permissions.length === 0) return
   const putRes = await page.request.put('/api/canopycms/permissions', {
     headers: { 'X-Test-User': 'admin' },
     data: { permissions: [], expectedContentVersion: body.data.version },
