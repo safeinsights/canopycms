@@ -518,6 +518,27 @@ describe('GitManager.bareRemoteHasBranch', () => {
     await expect(GitManager.bareRemoteHasBranch(remotePath, 'no-such-branch')).resolves.toBe(false)
   })
 
+  it('does not treat a hierarchical sibling as a collision', async () => {
+    // `for-each-ref refs/heads/feature` matches `refs/heads/feature/foo` --
+    // patterns match "completely, or from the beginning up to a slash". Since
+    // syncGit mirrors EVERY GitHub branch into the tracking namespace, without
+    // an exact refname comparison this would report a collision for a branch
+    // named literally `feature` in any repo containing `feature/*`,
+    // `release/*`, `dependabot/*` and so on -- blocking legitimate names. The
+    // superseded `branch --list` implementation matched exactly, so this is a
+    // property that had to be restored deliberately.
+    const seedPath = path.join(tmpDir, 'seed')
+    const seedGit = simpleGit({ baseDir: seedPath })
+    await seedGit.raw(['push', remotePath, 'main:refs/heads/feature/foo'])
+    await seedGit.raw(['push', remotePath, `main:${GITHUB_TRACKING_REF_PREFIX}release/1.0`])
+
+    await expect(GitManager.bareRemoteHasBranch(remotePath, 'feature')).resolves.toBe(false)
+    await expect(GitManager.bareRemoteHasBranch(remotePath, 'release')).resolves.toBe(false)
+    // The full names themselves must still be found.
+    await expect(GitManager.bareRemoteHasBranch(remotePath, 'feature/foo')).resolves.toBe(true)
+    await expect(GitManager.bareRemoteHasBranch(remotePath, 'release/1.0')).resolves.toBe(true)
+  })
+
   it('throws (does not silently report "absent") when the repo path is missing/unreadable', async () => {
     const missingPath = path.join(tmpDir, 'does-not-exist.git')
     await expect(GitManager.bareRemoteHasBranch(missingPath, 'anything')).rejects.toThrow(

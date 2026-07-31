@@ -39,6 +39,7 @@ None currently open.
 
 | File                                                                         | Summary                                                                                                                       |
 | ---------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| [program-b-final-review-followups.md](program-b-final-review-followups.md) | Adversarial-review findings from the Workstream B epic that were NOT fixed in it: the non-fast-forward diagnosis names the wrong cause and its "rename the branch" advice would orphan an open PR (the worker's own rebase is the likeliest cause, and nothing pushes the rebased history back); finalize's decode check only validates frame 0 of animated GIF/WebP; a branch switch back to a previously-visited branch renders the other branch's entries and silently skips OCC conflict detection on save; the deploy template has no cdk.json to deploy against; the worker bypasses resolveDeploymentName; one bad ref halts every sync cycle |
 | [next-16.2-postcss-fork-bomb.md](next-16.2-postcss-fork-bomb.md)             | PARTIALLY RESOLVED 2026-07-30: (adopter-side) Next 16.2.x + Turbopack + PostCSS = fork bomb on adopter `pnpm dev`. Workaround: pin `next` to `~16.1.6`. `canopycms-next`'s peer dependency now excludes 16.2.x and README documents known-good versions; the upstream root-cause chase is still open |
 
 ---

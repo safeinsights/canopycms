@@ -502,7 +502,11 @@ export class GitManager {
    * instead of letting that caller distinguish "unreadable" from "absent"
    * and decide what to do.
    */
-  static async bareRemoteHasBranch(remotePath: string, branch: string): Promise<boolean> {
+  static async bareRemoteHasBranch(
+    remotePath: string,
+    branch: string,
+    options: { namespaces?: 'both' | 'tracking' } = {},
+  ): Promise<boolean> {
     let output: string
     try {
       output = await simpleGit().raw([
@@ -517,7 +521,34 @@ export class GitManager {
     } catch (err) {
       throw new Error(`Cannot inspect remote mirror at ${remotePath}: ${getErrorMessage(err)}`)
     }
-    return output.trim().length > 0
+    // Compare full refnames rather than trusting the pattern to have matched
+    // exactly. `for-each-ref <pattern>` matches "completely, or from the
+    // beginning up to a slash" -- so `refs/heads/feature` also matches
+    // `refs/heads/feature/foo`. Since syncGit mirrors EVERY GitHub branch into
+    // the tracking namespace, a repo containing `feature/*`, `release/*`,
+    // `dependabot/*` etc. would otherwise make this report a collision for a
+    // branch named literally `feature`, blocking a legitimate name. The
+    // superseded `branch --list` implementation matched exactly, so this is a
+    // property that has to be restored explicitly, not assumed.
+    const refs = output
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean)
+    if (options.namespaces === 'tracking') {
+      // GitHub's view only. Local heads in `remote.git` are NOT evidence of a
+      // collision for branch CREATION: nothing ever removes them (deleting a
+      // branch in the editor unlinks its metadata and rm -rf's the clone, and
+      // reconcileTrackedBranches deliberately never deletes a local head), so
+      // an ordinary create -> publish -> merge -> delete -> reuse-the-name
+      // cycle would otherwise report a permanent, untrue collision on a name
+      // the user just deleted. This deployment's own live branches are already
+      // covered by the branch registry check that runs before this one.
+      return refs.includes(`${GITHUB_TRACKING_REF_PREFIX}${branch}`)
+    }
+    return (
+      refs.includes(`refs/heads/${branch}`) ||
+      refs.includes(`${GITHUB_TRACKING_REF_PREFIX}${branch}`)
+    )
   }
 
   /**
