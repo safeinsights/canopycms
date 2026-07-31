@@ -161,7 +161,16 @@ accepted.
   only reserved groups, and branch/path ACLs can't apply to branch-agnostic assets),
   list = any authenticated user (key enumeration accepted: unlisted ≠ private), delete
   = admin via `isAdmin` capability flags; delete removes the meta sidecar only (blobs
-  immortal until a future GC worker task). Modal open-state follows the live
+  immortal until a future GC worker task).
+  **Superseded 2026-07-30 on two points** — see
+  [asset-listing-cross-branch-exposure.md](../asset-listing-cross-branch-exposure.md):
+  (1) delete is now admin **or** the recorded `uploadedBy`, still de-list-only;
+  (2) the "unlisted ≠ private" tradeoff was accepted on the basis of unguessable keys,
+  but the open list endpoint hands out the whole site-wide catalog, so nothing has to
+  be guessed — the mitigation doesn't hold while `GET /assets` is unguarded. Still
+  accepted for now (no real uploads yet), but stated explicitly in the README rather
+  than left implied.
+  Modal open-state follows the live
   `Editor.tsx` local-`useState` pattern (`EditorStateContext.ModalState` exists but is
   mounted nowhere — dead code; don't wire it).
 - Scope: images + PDFs. No video.

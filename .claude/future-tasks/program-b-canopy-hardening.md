@@ -67,11 +67,14 @@ found by inspection and neither yet hit.
 
 ## B3 — Editor correctness the teams hit on day one (M)
 
-- [stale-draft-prevents-content-load.md](stale-draft-prevents-content-load.md) — a
-  stale localStorage draft silently shadows fresh server content, with no error.
-  Found during docs-site content migration; with several editors it becomes a
-  support burden. Fix via staleness detection against `updatedAt`, or
-  always-load-and-merge.
+- ~~stale-draft-prevents-content-load~~ — **already done, do not redo.** Fixed
+  2026-07-24 by PR #164 via always-load-and-merge: the `Editor.tsx` load effect
+  gates on `loadedValues[contentId]` instead of `drafts[contentId]`, `handleSave`
+  clears the draft key, and both discard actions confirm. The resolution note
+  records that the visual draft indicator was *deliberately* not built, because
+  the truthful Save-button state covers the need — so that is a closed decision,
+  not a remaining gap. See
+  [resolved/stale-draft-prevents-content-load.md](resolved/stale-draft-prevents-content-load.md).
 - [swr.md](swr.md) + [editor-async-patterns.md](editor-async-patterns.md) — one
   combined work item. 15+ duplicate API calls on editor load from independent
   `useEffect`s; `ReferenceField` refetches on every render;

@@ -19,6 +19,14 @@ Add `tls` to the mount options in both places:
 - The `/etc/fstab` line that re-mounts on instance reboot (see the "EFS mount survives
   instance reboots" test in `cms-deploy.test.ts`).
 
+## Scheduled
+
+Folded into Workstream D's rebuild (2026-07-30) — see
+[program-d-stack-rebuild.md](program-d-stack-rebuild.md), step 3. D tears the
+deploy-test stack down and rebuilds it from scratch, which is exactly the
+verification deploy this task was waiting for, so it rides along rather than
+needing its own.
+
 ## Why deferred
 
 This changes the deploy-proven mount path (the live prod-mode deploy in

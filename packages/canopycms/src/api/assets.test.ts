@@ -413,13 +413,68 @@ describe('delete', () => {
     expect(res.status).toBe(403)
   })
 
-  it('returns 403 for reviewers (only admins may delete)', async () => {
+  it('returns 403 for reviewers who did not upload the asset', async () => {
     const req = authedReq({
       user: { type: 'authenticated', userId: 'u', groups: [RESERVED_GROUPS.REVIEWERS] },
     })
     const res = await ASSET_ROUTES.delete.handler(ctxWith(makeAssetStore()), req, { key })
     expect(res.ok).toBe(false)
     expect(res.status).toBe(403)
+  })
+
+  /** Store whose getMeta returns sampleMeta with the given uploader. */
+  const storeOwnedBy = (uploadedBy: string | undefined, onDelete?: (h: string) => void) => ({
+    ...makeAssetStore(),
+    getMeta: async () => ({ ...sampleMeta, ...(uploadedBy && { uploadedBy }) }),
+    deleteMeta: async (hash32: string) => {
+      onDelete?.(hash32)
+    },
+  })
+
+  it('allows a non-admin to delete an asset they uploaded', async () => {
+    let deletedHash32: string | undefined
+    const store = storeOwnedBy('u1', (h) => {
+      deletedHash32 = h
+    })
+    // authedReq()'s default user is u1, matching the asset's uploadedBy.
+    const res = await ASSET_ROUTES.delete.handler(ctxWith(store), authedReq(), { key })
+    expect(res.ok).toBe(true)
+    expect(deletedHash32).toBe(key)
+  })
+
+  it("returns 403 when a non-admin targets another user's asset, and does not delete", async () => {
+    let deleteCalled = false
+    const store = storeOwnedBy('someone-else', () => {
+      deleteCalled = true
+    })
+    const res = await ASSET_ROUTES.delete.handler(ctxWith(store), authedReq(), { key })
+    expect(res.ok).toBe(false)
+    expect(res.status).toBe(403)
+    expect(deleteCalled).toBe(false)
+  })
+
+  it('falls back to admin-only when the asset records no uploadedBy (must not default open)', async () => {
+    let deleteCalled = false
+    const store = storeOwnedBy(undefined, () => {
+      deleteCalled = true
+    })
+    const res = await ASSET_ROUTES.delete.handler(ctxWith(store), authedReq(), { key })
+    expect(res.ok).toBe(false)
+    expect(res.status).toBe(403)
+    expect(deleteCalled).toBe(false)
+  })
+
+  it('lets an admin delete an asset uploaded by someone else', async () => {
+    let deletedHash32: string | undefined
+    const store = storeOwnedBy('someone-else', (h) => {
+      deletedHash32 = h
+    })
+    const req = authedReq({
+      user: { type: 'authenticated', userId: 'u1', groups: [RESERVED_GROUPS.ADMINS] },
+    })
+    const res = await ASSET_ROUTES.delete.handler(ctxWith(store), req, { key })
+    expect(res.ok).toBe(true)
+    expect(deletedHash32).toBe(key)
   })
 
   it('allows admins to delete, forwarding the key as the hash32 to deleteMeta', async () => {

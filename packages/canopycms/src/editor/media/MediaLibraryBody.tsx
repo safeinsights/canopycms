@@ -52,7 +52,15 @@ export const MediaLibraryBody: React.FC<MediaLibraryBodyProps> = ({ opened, mode
   const client = useApiClient()
   const { baseUrl } = useAssetContext()
   const { userContext } = useUserContext()
-  const canDelete = mode === 'manage' && isAdmin(userContext?.groups)
+  // Mirrors the server's rule in api/assets.ts's deleteAssetHandler: an admin
+  // may delete anything, anyone else only what they uploaded. Kept per-asset
+  // (not a single boolean) because ownership varies row by row. The server is
+  // still the authority - this only decides whether to render the control.
+  const canDeleteAsset = (asset: AssetRecord): boolean => {
+    if (mode !== 'manage') return false
+    if (isAdmin(userContext?.groups)) return true
+    return !!asset.uploadedBy && asset.uploadedBy === userContext?.userId
+  }
   const upload = useAssetUpload()
   // `picker` mode is used exclusively by ImageField and the MDX image dialog
   // (see MediaLibraryProps.mode's doc comment) - both image-only contexts.
@@ -229,7 +237,7 @@ export const MediaLibraryBody: React.FC<MediaLibraryBodyProps> = ({ opened, mode
                 asset={asset}
                 baseUrl={baseUrl}
                 onSelect={mode === 'picker' ? onSelect : undefined}
-                onDelete={canDelete ? () => handleDeleteClick(asset) : undefined}
+                onDelete={canDeleteAsset(asset) ? () => handleDeleteClick(asset) : undefined}
               />
             ))}
           </SimpleGrid>
