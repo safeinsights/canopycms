@@ -1,3 +1,4 @@
+import { BASE_URL } from '../fixtures/base-url'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { test, expect } from '@playwright/test'
@@ -10,8 +11,6 @@ import {
   getBranchesDir,
   bumpBranchRegistry,
 } from '../fixtures/admin-workspace'
-
-const BASE_URL = 'http://localhost:5174'
 
 interface BranchListBody {
   data: { branches: { name: string; isProtected?: boolean }[] }
@@ -79,8 +78,6 @@ test.describe('Branch Degradation', () => {
   test('corrupt BASE branch metadata degrades instead of 503ing; other branches keep working (B10)', async ({
     page,
   }) => {
-    test.setTimeout(60000)
-
     const protectedBranch = await findProtectedBranch(BASE_URL, 'admin')
 
     // A branch guaranteed healthy and DISTINCT from whatever this

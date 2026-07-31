@@ -1,3 +1,4 @@
+import { BASE_URL } from '../fixtures/base-url'
 import { test, expect } from '@playwright/test'
 import { EditorPage } from '../fixtures/editor-page'
 import { switchUser, installE2EFlag } from '../fixtures/test-users'
@@ -8,8 +9,6 @@ import {
   readRawContentFile,
 } from '../fixtures/test-workspace'
 import { STANDARD_TIMEOUT, LONG_TIMEOUT } from '../fixtures/timeouts'
-
-const BASE_URL = 'http://localhost:5174'
 
 /**
  * E2E tests for the entry link feature in the MDX editor.

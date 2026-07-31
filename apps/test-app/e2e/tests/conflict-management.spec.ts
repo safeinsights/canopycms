@@ -1,3 +1,4 @@
+import { BASE_URL } from '../fixtures/base-url'
 import { test, expect } from '@playwright/test'
 import { EditorPage } from '../fixtures/editor-page'
 import { BranchPage } from '../fixtures/branch-page'
@@ -11,8 +12,6 @@ import {
   pushConflictingChangeToMain,
   triggerRebase,
 } from '../fixtures/test-workspace'
-
-const BASE_URL = 'http://localhost:5174'
 
 const HOME_ENTRY_FILE = 'home.home.bo7QdSwn9Tod.json'
 const ORIGINAL_HOME_CONTENT =

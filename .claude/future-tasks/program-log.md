@@ -454,3 +454,69 @@ OTHER session's server (different worktree, different code), producing a
 97/97 wipeout that looks like a catastrophic regression and is actually
 pure cross-contamination. Check `lsof -iTCP:5174` before believing a local
 e2e wipeout.
+
+## 2026-07-31 — [C] Independent review of the coverage sweep: the tests survive mutation; the harness did not survive a sibling session
+
+Adversarial review-and-fix of PR #175 (52 → 97), run as its own session with
+fixes on `fix/e2e-coverage-review-findings`.
+
+**The headline claim held up under mutation testing.** 12 deliberate
+production-code breaks across the four highest-value specs plus the
+status-lock guard (corrupt-metadata misclassification, backdated trash stamp,
+young-orphan rail removal, mark-merged submitted-only regression, same-id
+requeue, task-filter default flip, alt-rule removal, dropped image dims,
+transform cache written to a wrong key, groups/permissions no-persist,
+status-lock bypass) — every one turned exactly the intended tests red and left
+unrelated tests green. Zero surviving mutants. Two back-to-back full runs
+without wiping `.canopy-dev`: 97/97 both times. Five runs of the 8 new specs:
+225/225, timing spread ±0.2m.
+
+**Three assertions were strengthened because they could not fail.** C8's
+"served again from cache" also passed under a recompute (fixed: delete the
+original blob first, so only the cache path can 200 — verified red under a
+cache-lookup-bypass mutation); the base-branch purge test only proved healthy
+rows render no Purge control (fixed: corrupt the live base metadata with a
+mandatory restore, assert disabled control + tooltip + the server's reasoned
+400 — verified red under a UI-rail-removal mutation); the repair test read
+`branch.json` once inside the server's rename→git-spawn→rewrite ENOENT window
+(fixed: poll until parseable — the flake would have been buried by CI
+`retries: 2`).
+
+**The settings workspace leak is real and now self-heals.** Each run left one
+`e2e-group-*` group and a `team-a → content/posts/** edit` rule in the
+never-reset settings workspace (benign today only because every later spec
+runs as admin, which bypasses path permissions). The specs now clear their own
+slice at start (healing crashed runs) and in `finally`. The durable
+resetWorkspace() fix stays filed in `e2e-harness-followups.md`.
+
+**Concurrent sessions on one machine WILL corrupt each other's e2e runs —
+proven live, now fixed.** With the fixed port 5174 plus
+`reuseExistingServer: true`, this session's post-fix verification silently
+attached to a sibling review session's dev server (fingerprinted via
+`GET /branches` → `defaultBranch: claude-canopy-hardening-review-fb61d9`) —
+rooted in the OTHER checkout's workspace, so a freshly seeded task queue read
+"pending 0" and three specs failed with no product cause. Fix:
+`CANOPY_E2E_PORT` threads one port through playwright.config (baseURL +
+`exec next --port`) and a shared `fixtures/base-url.ts` all 20 specs import.
+Sibling sessions must export distinct ports until this merges everywhere.
+Corollary: any inexplicable seeded-state e2e failure on a shared machine
+should be fingerprinted against `GET /api/canopycms/branches` before
+debugging the product.
+
+**Timing-doc correction.** The 4-shard run id recorded in
+E2E-FAILURE-ANALYSIS.md (30590565843) resolves to nothing on GitHub; the
+verifiable run is 30590540192 (shards 2.57/2.58/2.62/3.05m, merge 0.57m,
+validate 3.88m). Conclusion unchanged — e2e path sits under validate; 4-way
+sharding is a confirmed win.
+
+**Found by the final Fable pass, filed not fixed** (production, out of the
+review's scope): the admin purge rail re-derives "is base branch" from
+`defaultBaseBranch` alone, skipping `getBranchProtection`'s drift clause — a
+drifted base workspace with corrupt metadata scans as purgeable
+(`purge-rail-config-clause-only.md`, softened by trash retention). Also filed:
+`e2e-remote-git-ref-accumulation.md` (remote.git accrues submit-test refs and
+settings commits forever; only `refs/heads/main` is ever reset).
+
+**One inherited footgun removed:** `test.setTimeout(60000)` in three new tests
+*lowered* the budget below the config's 90s — the calls read as "extend" but
+shrink. The pattern came from older specs; those are left alone.

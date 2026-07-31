@@ -1,3 +1,4 @@
+import { BASE_URL } from '../fixtures/base-url'
 import { test, expect } from '@playwright/test'
 import { EditorPage } from '../fixtures/editor-page'
 import { BranchPage } from '../fixtures/branch-page'
@@ -8,8 +9,6 @@ import {
   createBranchViaAPI,
   submitBranchViaAPI,
 } from '../fixtures/test-workspace'
-
-const BASE_URL = 'http://localhost:5174'
 
 /**
  * Branch Lifecycle & Workflow E2E Tests.

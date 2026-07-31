@@ -75,8 +75,11 @@ export class AdminPage {
   }
 
   /**
-   * The worker liveness badge. Text is one of "Worker: alive",
-   * "Worker: stale (possible crash)", "Worker: absent".
+   * The worker liveness badge. In dev mode (which is what this e2e app
+   * runs) the component renders the plain `Worker: ${state}` — "Worker:
+   * alive" / "Worker: stale" / "Worker: absent". The decorated prod labels
+   * ("Worker: stale (possible crash)") never appear here; they stay
+   * unit-tested (see workerLivenessBadge in SystemHealthPanel.tsx).
    */
   workerBadge(): Locator {
     return this.panel.getByText(/^Worker: /)
@@ -145,9 +148,18 @@ export class AdminPage {
     await expect(dialog).toBeHidden({ timeout: STANDARD_TIMEOUT })
   }
 
-  /** A branch-health row, located by the directory name in its first cell. */
+  /**
+   * A branch-health row, located by the directory name in its first cell.
+   * `has` + exact text (not `hasText`, which substring-matches the whole
+   * row): with substring matching, `branchRow('main')` also matches any
+   * environment's git-derived base-branch row whose sanitized name merely
+   * CONTAINS "main" (e.g. a `fix/main-nav` checkout) — a strict-mode
+   * violation that has nothing to do with the product.
+   */
   branchRow(dirName: string): Locator {
-    return this.panel.getByRole('row').filter({ hasText: dirName })
+    return this.panel
+      .getByRole('row')
+      .filter({ has: this.page.getByText(dirName, { exact: true }) })
   }
 
   /** Wait for the Branches tab's table to finish loading. */

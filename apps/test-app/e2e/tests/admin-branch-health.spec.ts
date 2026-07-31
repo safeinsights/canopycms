@@ -1,3 +1,6 @@
+import { BASE_URL } from '../fixtures/base-url'
+import fs from 'node:fs/promises'
+import path from 'node:path'
 import { test, expect, type Page } from '@playwright/test'
 import { DEV_ADMIN_USER_ID } from 'canopycms-auth-dev'
 import { EditorPage } from '../fixtures/editor-page'
@@ -17,11 +20,11 @@ import {
   readBranchMetadata,
   findTrashDirFor,
   listBranchMetaFiles,
+  getBranchesDir,
+  bumpBranchRegistry,
   TRASH_NAME_RE,
   CORRUPT_ARCHIVE_RE,
 } from '../fixtures/admin-workspace'
-
-const BASE_URL = 'http://localhost:5174'
 
 /** Navigate to the editor, open System health, and land on the loaded Branches tab. */
 async function openBranchesTab(page: Page): Promise<AdminPage> {
@@ -132,13 +135,24 @@ test.describe('Admin Branch Health', () => {
       )
       .toBe(true)
 
-    const meta = await readBranchMetadata(dirName)
-    expect(meta.status).toBe('editing')
-    // NOT the fixture's 'test-admin' label from test-users.ts (TEST_USERS is
-    // decorative there) -- the dev auth plugin actually maps the 'admin' test
-    // key to DEV_ADMIN_USER_ID ('dev_admin_3xY6zW1qR5'), and that's the id
-    // repairBranchDirHandler stamps as createdBy (req.user.userId).
-    expect(meta.createdBy).toBe(DEV_ADMIN_USER_ID)
+    // Poll rather than read once: the server archives the corrupt file
+    // (fs.rename) under one lock hold, RELEASES the lock, resolves the
+    // repaired branch name (a git spawn), and only then re-acquires the lock
+    // to write the fresh branch.json (repairBranchDirHandler). Between the
+    // rename and that write, branch.json does not exist -- a single
+    // readBranchMetadata here can land in the window and throw ENOENT.
+    //
+    // Expected createdBy is NOT the fixture's 'test-admin' label from
+    // test-users.ts (TEST_USERS is decorative there) -- the dev auth plugin
+    // actually maps the 'admin' test key to DEV_ADMIN_USER_ID
+    // ('dev_admin_3xY6zW1qR5'), and that's the id repairBranchDirHandler
+    // stamps as createdBy (req.user.userId).
+    await expect
+      .poll(async () => {
+        const meta = await readBranchMetadata(dirName).catch(() => null)
+        return meta ? { status: meta.status, createdBy: meta.createdBy } : null
+      })
+      .toEqual({ status: 'editing', createdBy: DEV_ADMIN_USER_ID })
   })
 
   test('orphan directory purges to trash; retention is keyed off the NAME stamp, not mtime', async ({
@@ -185,16 +199,59 @@ test.describe('Admin Branch Health', () => {
     await expect(page.getByText('May be a clone in progress')).toBeVisible()
   })
 
-  test('the base branch row never offers an enabled Purge control', async ({ page }) => {
+  test('the base branch can never be purged: healthy row has no control; corrupt row disables it; API 400s', async ({
+    page,
+  }) => {
+    // No test.setTimeout here: the config's 90s budget is LARGER than the
+    // 60s such calls set -- a local setTimeout would shrink headroom.
     const adminPage = await openBranchesTab(page)
     const baseDirName = await getBaseBranchDirName(page)
     await expect(adminPage.branchRow(baseDirName)).toContainText('base')
-    // A healthy row (which the base branch is, absent injected corruption)
-    // renders no Purge control at all -- purgeGateFor's isBaseBranch rail
-    // only fires for corrupt-metadata/orphan rows. Either way, the base
-    // branch can never be purged from this UI, which is what this asserts
-    // without corrupting a shared workspace other specs depend on.
+    // A healthy row renders no Purge control at all -- purgeGateFor only
+    // offers Purge for corrupt-metadata/orphan rows.
     await expect(adminPage.purgeDirButton(baseDirName)).toHaveCount(0)
+
+    // The rails that actually protect the base branch (purgeGateFor's
+    // isBaseBranch check, and the server's own refusal) only become
+    // observable once the base row IS purgeable-shaped -- so corrupt the
+    // live base branch's metadata, with a mandatory restore (the same
+    // pattern branch-degradation's B10 established).
+    const metaPath = path.join(getBranchesDir(), baseDirName, '.canopy-meta', 'branch.json')
+    const originalBytes = await fs.readFile(metaPath, 'utf8')
+    try {
+      await test.step('corrupt the base branch metadata', async () => {
+        await fs.writeFile(metaPath, '{ this is not valid json', 'utf8')
+        await bumpBranchRegistry()
+        await refreshBranchesTab(adminPage)
+        await expect(adminPage.branchRow(baseDirName)).toContainText('corrupt metadata')
+      })
+
+      await test.step('UI rail: Purge renders but is disabled, with the base-branch tooltip', async () => {
+        const purgeButton = adminPage.purgeDirButton(baseDirName)
+        await expect(purgeButton).toBeDisabled()
+        await purgeButton.hover()
+        await expect(page.getByText('The base branch can never be purged')).toBeVisible()
+      })
+
+      await test.step('API rail: POST purge is refused with the base-branch 400', async () => {
+        const res = await page.request.post(
+          `/api/canopycms/admin/branch-dirs/${baseDirName}/purge`,
+          { headers: { 'X-Test-User': 'admin' } },
+        )
+        expect(res.status()).toBe(400)
+        const body = (await res.json()) as { error?: string }
+        // Pin the REASON: a 400 for e.g. a malformed request would otherwise
+        // green-light this step without the rail existing at all.
+        expect(body.error).toContain('base branch')
+      })
+    } finally {
+      // MANDATORY: restores a shared workspace directory other specs (and
+      // the next run of this one) depend on -- pass or fail.
+      await test.step('restore original base branch metadata', async () => {
+        await fs.writeFile(metaPath, originalBytes, 'utf8')
+        await bumpBranchRegistry()
+      })
+    }
   })
 
   test('rebase-failure indicator shows while editing, suppressed once submitted (A13)', async ({

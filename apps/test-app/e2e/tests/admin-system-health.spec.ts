@@ -1,3 +1,4 @@
+import { BASE_URL } from '../fixtures/base-url'
 import { test, expect, type Page } from '@playwright/test'
 import { randomUUID } from 'node:crypto'
 import { EditorPage } from '../fixtures/editor-page'
@@ -11,8 +12,6 @@ import {
   seedWorkerStatus,
   seedUnparseableWorkerStatus,
 } from '../fixtures/admin-workspace'
-
-const BASE_URL = 'http://localhost:5174'
 
 /**
  * Navigate to the editor and open the System health panel (Settings ->
@@ -96,9 +95,12 @@ test.describe('Admin System Health Panel', () => {
 
     const adminPage = await openAdminPanel(page)
 
-    await expect(adminPage.queueStat('Pending')).toContainText('2')
-    await expect(adminPage.queueStat('Failed')).toContainText('1')
-    await expect(adminPage.queueStat('Corrupt')).toContainText('1')
+    // Anchored (not toContainText): "contains 2" would also pass for a tile
+    // showing 12. The tile's text is the label immediately followed by the
+    // count (capitalization is CSS-only, hence the /i).
+    await expect(adminPage.queueStat('Pending')).toHaveText(/^Pending2$/i)
+    await expect(adminPage.queueStat('Failed')).toHaveText(/^Failed1$/i)
+    await expect(adminPage.queueStat('Corrupt')).toHaveText(/^Corrupt1$/i)
   })
 
   test('crash-loop alert respects the 30 minute window', async ({ page }) => {

@@ -1,3 +1,4 @@
+import { BASE_URL } from '../fixtures/base-url'
 import { test, expect } from '@playwright/test'
 import { EditorPage } from '../fixtures/editor-page'
 import { BranchPage, findProtectedBranch, sanitizeBranchName } from '../fixtures/branch-page'
@@ -14,8 +15,6 @@ import {
 } from '../fixtures/test-workspace'
 import { patchBranchMetadata } from '../fixtures/admin-workspace'
 import type { ContentId } from '../../../../packages/canopycms/src/paths/types'
-
-const BASE_URL = 'http://localhost:5174'
 
 /** The content id every branch cloned from the fixture repo carries (see conflict-management.spec.ts). */
 const HOME_ENTRY_FILE = 'home.home.bo7QdSwn9Tod.json'
@@ -176,7 +175,6 @@ test.describe('Branch State Badges', () => {
   test('status lock: submitted branch shows locked banner + disabled save; server 403s writes; withdraw restores editing (B6/B7)', async ({
     page,
   }) => {
-    test.setTimeout(60000)
     const branchName = `status-lock-${Date.now()}`
 
     await test.step('create branch and switch to it', async () => {
