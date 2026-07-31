@@ -185,6 +185,28 @@ describe('useDraftManager', () => {
     expect(result.current.modifiedCount).toBe(0)
   })
 
+  it('does not count a draft as dirty when it differs from loaded only by key insertion order', () => {
+    // Regression test: the dirty check used to compare via JSON.stringify,
+    // which is property-order sensitive. A localStorage-hydrated draft (or
+    // one built by spreading fields in a different order) can serialize its
+    // keys in a different order than the server-loaded object even though
+    // the values are identical -- that must NOT read as dirty.
+    const { result } = renderHook(() => useDraftManager(defaultOptions))
+
+    const loadedVal = { title: 'Same Title', body: 'Same Body', tags: ['a', 'b'] }
+    // Same values, different key insertion order.
+    const rehydratedDraft = { tags: ['a', 'b'], body: 'Same Body', title: 'Same Title' }
+
+    act(() => {
+      result.current.setLoadedValues({ abc123def456: loadedVal })
+      result.current.setDrafts({ abc123def456: rehydratedDraft })
+    })
+
+    expect(result.current.modifiedCount).toBe(0)
+    expect(result.current.isSelectedDirty()).toBe(false)
+    expect(result.current.isAnyDirty()).toBe(false)
+  })
+
   it('modifiedCount counts only entries where draft differs from loaded', () => {
     const { result } = renderHook(() => useDraftManager(defaultOptions))
 

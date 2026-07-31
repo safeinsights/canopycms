@@ -72,12 +72,15 @@ found by inspection and neither yet hit.
   Found during docs-site content migration; with several editors it becomes a
   support burden. Fix via staleness detection against `updatedAt`, or
   always-load-and-merge.
-- [swr.md](swr.md) + [editor-async-patterns.md](editor-async-patterns.md) — one
-  combined work item. 15+ duplicate API calls on editor load from independent
-  `useEffect`s; `ReferenceField` refetches on every render;
-  `useReferenceResolution` and `loadEntry` have no cancellation for stale
-  responses. SWR provides the dedup/cancel layer; generation counters cover the
-  rest.
+- ~~[swr.md](resolved/swr.md) + [editor-async-patterns.md](resolved/editor-async-patterns.md)~~
+  — RESOLVED 2026-07-30 on `feat/editor-request-dedup-and-cancellation`: SWR
+  adopted for the branches/entries+schema/comments fetch-on-load hooks
+  (dedup verified via React Strict Mode regression tests), `ReferenceField`
+  keyed on a derived fetchKey with an `active`-flag guard,
+  `useReferenceResolution` gets a generation-counter guard, and the
+  Editor.tsx entry-load race is fixed via a contentId ref check. One
+  pre-existing quirk spun out separately: see
+  [reference-resolution-branch-switch-stale.md](reference-resolution-branch-switch-stale.md).
 - ~~[finalize-transform-decoder-mismatch.md](resolved/finalize-transform-decoder-mismatch.md)
   — upload `finalize` (header-sniffing, no sharp) accepts rasters the transform
   Lambda's libvips later rejects with a 422, so the asset "uploads fine" and

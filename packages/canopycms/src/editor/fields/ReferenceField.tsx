@@ -76,39 +76,55 @@ export const ReferenceField: React.FC<ReferenceFieldProps> = ({
     }
   }
 
-  // Load options from API if collections or entryTypes are provided and no static options
+  // Load options from API if collections or entryTypes are provided and no static options.
+  //
+  // Keyed on the derived `fetchKey` (not the raw `collections`/`entryTypes`
+  // arrays): the parent rebuilds those arrays on every render -- including
+  // every `refreshEntries()` after a save -- so depending on them directly
+  // fired this fetch far more often than the inputs actually changed.
+  //
+  // `active` guards against a stale response: if the key changes again (or
+  // the field unmounts) before this request settles, the loser's `.then`/
+  // `.catch`/`.finally` must not overwrite state a newer request already
+  // owns.
   useEffect(() => {
-    if (needsFetch) {
-      const apiClient = createApiClient()
+    if (!needsFetch) return
+    let active = true
+    const apiClient = createApiClient()
 
-      const params: Record<string, string> = { branch, displayField }
-      if (collections && collections.length > 0) params.collections = collections.join(',')
-      if (entryTypes && entryTypes.length > 0) params.entryTypes = entryTypes.join(',')
+    const params: Record<string, string> = { branch, displayField }
+    if (collections && collections.length > 0) params.collections = collections.join(',')
+    if (entryTypes && entryTypes.length > 0) params.entryTypes = entryTypes.join(',')
 
-      apiClient.content
-        .getReferenceOptions(params)
-        .then((response) => {
-          if (response.ok && response.data?.options) {
-            const mappedOptions = response.data.options.map(
-              (opt: { id: string; label: string }) => ({
-                value: opt.id,
-                label: opt.label,
-              }),
-            )
-            setOptions(mappedOptions)
-          } else {
-            setError(response.error || 'Failed to load reference options')
-          }
-        })
-        .catch((err) => {
-          console.error('Failed to load reference options:', err)
-          setError(getErrorMessage(err))
-        })
-        .finally(() => {
-          setLoading(false)
-        })
+    apiClient.content
+      .getReferenceOptions(params)
+      .then((response) => {
+        if (!active) return
+        if (response.ok && response.data?.options) {
+          const mappedOptions = response.data.options.map((opt: { id: string; label: string }) => ({
+            value: opt.id,
+            label: opt.label,
+          }))
+          setOptions(mappedOptions)
+        } else {
+          setError(response.error || 'Failed to load reference options')
+        }
+      })
+      .catch((err) => {
+        if (!active) return
+        console.error('Failed to load reference options:', err)
+        setError(getErrorMessage(err))
+      })
+      .finally(() => {
+        if (!active) return
+        setLoading(false)
+      })
+
+    return () => {
+      active = false
     }
-  }, [needsFetch, collections, entryTypes, displayField, branch, retryCount])
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- collections/entryTypes/displayField/branch are captured via fetchKey; re-listing them here would defeat the point of keying on the derived string
+  }, [needsFetch, fetchKey, retryCount])
 
   const handleRetry = () => {
     setLoading(true)

@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useState } from 'react'
+import { useSWRConfig } from 'swr'
 import { notifications } from '@mantine/notifications'
 import type { CommentThread } from '../../comment-store'
 import type { EditorEntry } from '../Editor'
 import { normalizeCanopyPath } from '../canopy-path'
 import { useApiClient } from '../context'
 import { resolveMessageOrigin } from '../preview-bridge'
+import { commentsKey, fetchComments, useCommentsData } from './useCommentsData'
 
 export interface UseCommentSystemOptions {
   /**
@@ -111,7 +113,7 @@ export interface UseCommentSystemReturn {
  */
 export function useCommentSystem(options: UseCommentSystemOptions): UseCommentSystemReturn {
   const apiClient = useApiClient()
-  const [comments, setComments] = useState<CommentThread[]>([])
+  const { mutate: globalMutate } = useSWRConfig()
   const [focusedFieldPath, setFocusedFieldPath] = useState<string | undefined>(undefined)
   const [highlightThreadId, setHighlightThreadId] = useState<string | undefined>(undefined)
   const [commentsPanelOpen, setCommentsPanelOpen] = useState(false)
@@ -121,20 +123,30 @@ export function useCommentSystem(options: UseCommentSystemOptions): UseCommentSy
     canopyPath?: string
   } | null>(null)
 
+  // Automatic load, keyed per branch and deduped by SWR (e.g. React Strict
+  // Mode's double effect invoke collapses to a single request). Switching
+  // branches re-keys automatically, so no manual branch-change effect is
+  // needed the way there used to be.
+  const { data: commentsData } = useCommentsData(apiClient, options.branchName)
+  const comments = commentsData?.threads ?? []
+
+  // Deliberately omits `options.onCommentsChange` from the deps: it's a
+  // stable setState passthrough, and this file is plain .ts (not .tsx), so
+  // the react-hooks/exhaustive-deps rule isn't active here anyway --
+  // including it would refire this on every Editor.tsx render regardless.
+  useEffect(() => {
+    if (commentsData) options.onCommentsChange?.(commentsData.threads)
+  }, [commentsData])
+
+  // Explicit reload: always issues a fresh, independent fetch (raw call, not
+  // SWR's `mutate()` revalidate path) so a caller requesting a reload right
+  // after mount isn't coalesced against the still-in-flight automatic load
+  // -- then writes the result into the shared cache so useCommentsData's
+  // bound hook (and the effect above) pick it up.
   const loadComments = async (branch: string) => {
     if (!branch) return
-    try {
-      const result = await apiClient.comments.list({ branch })
-      if (!result.ok) {
-        console.error('Failed to load comments:', result.status)
-        return
-      }
-      const threads = result.data?.threads ?? []
-      setComments(threads)
-      options.onCommentsChange?.(threads)
-    } catch (err) {
-      console.error('Failed to load comments:', err)
-    }
+    const fresh = await fetchComments(apiClient, branch)
+    await globalMutate(commentsKey(branch), fresh, { revalidate: false })
   }
 
   const handleAddComment = async (
@@ -214,15 +226,6 @@ export function useCommentSystem(options: UseCommentSystemOptions): UseCommentSy
 
     return ''
   }, [activeCommentContext, options.selectedPath, options.branchName])
-
-  // Load comments when branch changes
-  useEffect(() => {
-    if (options.branchName) {
-      loadComments(options.branchName).catch((err) => {
-        console.error(err)
-      })
-    }
-  }, [options.branchName])
 
   // Listen for field focus messages from preview frame
   useEffect(() => {

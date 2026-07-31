@@ -2135,6 +2135,32 @@ expect(mockContext.services.commitFiles).toHaveBeenCalledWith({
 
 See `/packages/canopycms/src/api/permissions.test.ts` (lines 169-185) and `/packages/canopycms/src/api/groups.test.ts` (lines 195-210) for complete examples.
 
+### Testing Editor Hooks (SWR Cache Isolation, Strict Mode, Direct-Import Mocks)
+
+`createApiClientWrapper(mockClient)` (from `src/editor/hooks/__test__/test-utils.tsx`) wraps the test tree in both `ApiClientProvider` and an `SWRConfig` with an isolated cache (`provider: () => new Map()`, `dedupingInterval: 2000` to match production). This is transparent to existing call sites -- no changes needed. It matters because hooks that read via SWR (`useBranchManager`, `useEntryManager`, `useCommentSystem`, and the `useBranchesData`/`useEntriesData`/`useCommentsData` hooks underneath them) key their cache entries by resource/branch (e.g. `"canopy:branches"`, `"canopy:entries:main"`). Without a fresh `Map` per wrapper instance, tests in the same file/worker would share SWR's real global cache and one test could see another's mocked response on those keys.
+
+**Testing dedup/Strict Mode regressions:** use `createStrictModeApiClientWrapper(mockClient)`, which additionally wraps the tree in `<React.StrictMode>` (mount -> cleanup -> remount, doubling effects in dev). Without SWR's request coalescing, each manager hook's fetch-on-load effect fired twice under Strict Mode -- this wrapper is how you write a regression test for that:
+
+```typescript
+const mockClient = await setupMockApiClient()
+const wrapper = createStrictModeApiClientWrapper(mockClient)
+renderHook(() => useEntryManager(/* ... */), { wrapper })
+
+await waitFor(() => expect(mockClient.entries.list).toHaveBeenCalledTimes(1))
+```
+
+See the "mounting under Strict Mode issues one X request, not two" tests in `useEntryManager.test.ts`, `useBranchManager.test.tsx`, and `useCommentSystem.test.ts`.
+
+**Mocking `createApiClient()` for direct-call code:** most editor hooks/components get their API client via `useApiClient()` context (DI), so mocking the `'../api'` barrel is enough. Code that calls `createApiClient()` directly instead -- bypassing context, e.g. `useReferenceResolution.ts`'s dependency chain through `client-reference-resolver.ts`, and `ReferenceField.tsx` -- must mock the exact module it imports from, not the barrel:
+
+```typescript
+vi.mock('../api/client', () => ({
+  createApiClient: vi.fn(),
+}))
+```
+
+Use the relative specifier from the test file's own location (e.g. `'../../api/client'` from a deeper file) -- mocking `'../api'` won't intercept a direct `createApiClient` call. See `useReferenceResolution.test.ts`, `ReferenceField.test.tsx`, and `client-reference-resolver.test.ts` for the pattern.
+
 ### Testing with Real Git Operations
 
 Some subsystems -- particularly the worker's rebase logic -- need to test against actual git repositories rather than mocks. The `initTestRepo()` utility and a "local remote" pattern make this practical.

@@ -62,6 +62,14 @@ export function useReferenceResolution({
   const prevValueRef = useRef<FormValue>({}) // Track previous value for change detection
   const lastNotifiedValueRef = useRef<string>('') // Track last notified value to prevent infinite loops
   const [resolutionTrigger, setResolutionTrigger] = useState(0) // Trigger to force useMemo re-computation
+  // Monotonic token identifying the current debounced-resolve attempt.
+  // Clearing the setTimeout in the effect cleanup only cancels a resolve
+  // that HASN'T fired yet; once the 300ms elapses and the async callback
+  // below starts awaiting `resolveChangedReferences`, clearTimeout can no
+  // longer stop it. The generation check after that await catches the case
+  // clearTimeout can't: a newer value/branch superseding this attempt, or
+  // the component unmounting, while the network call was in flight.
+  const resolveGenerationRef = useRef(0)
 
   // Map field names to their types for fast lookup
   const referenceFieldNames = useMemo(() => {
@@ -174,6 +182,12 @@ export function useReferenceResolution({
       return
     }
 
+    // Claim a generation for this attempt before scheduling the debounce, so
+    // the check below always compares against the token captured at the
+    // moment THIS attempt was scheduled -- not whatever the ref happens to
+    // hold when the callback resumes after its await.
+    const generation = ++resolveGenerationRef.current
+
     // Debounce API calls to batch multiple rapid changes
     const timeout = setTimeout(async () => {
       try {
@@ -185,6 +199,10 @@ export function useReferenceResolution({
           branch,
           resolvedCache.current,
         )
+
+        // A newer value/branch superseded this attempt, or the component
+        // unmounted, while the request above was in flight -- discard.
+        if (generation !== resolveGenerationRef.current) return
 
         // Update cache with resolved values
         for (const [fieldName, resolvedFieldValue] of Object.entries(updates)) {
@@ -214,7 +232,13 @@ export function useReferenceResolution({
       }
     }, 300) // 300ms debounce
 
-    return () => clearTimeout(timeout)
+    return () => {
+      clearTimeout(timeout)
+      // Invalidate this attempt's generation on cleanup too, not just when a
+      // newer effect run claims the next one: cleanup is what fires on
+      // unmount, where there IS no next run to bump the counter otherwise.
+      ++resolveGenerationRef.current
+    }
   }, [value, fields, branch, referenceFieldNames])
 
   // Clear cache when branch changes
