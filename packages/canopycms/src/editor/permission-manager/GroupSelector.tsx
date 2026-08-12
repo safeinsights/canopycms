@@ -6,7 +6,13 @@
 
 import React from 'react'
 import { Group, Paper, Stack, Text } from '@mantine/core'
-import type { GroupSelectItem } from './types'
+import type { GroupSelectItem, GroupSource } from './types'
+
+const GROUP_SOURCE_LABELS: Record<GroupSource, string> = {
+  internal: 'Internal',
+  external: 'External',
+  both: 'Internal + External',
+}
 
 export interface GroupSelectorProps {
   searchQuery: string
@@ -59,11 +65,13 @@ export const GroupSelector: React.FC<GroupSelectorProps> = ({
               >
                 {/* Internal (groups.json) and external (auth provider) IDs are
                     not namespaced against each other, so the source is shown
-                    rather than left for the admin to infer from the name. */}
+                    rather than left for the admin to infer from the name.
+                    'Internal + External' means the ID exists in both universes
+                    and a grant reaches BOTH memberships. */}
                 <Group gap="xs" justify="space-between" wrap="nowrap">
                   <span>{group.label}</span>
                   <Text size="10px" c="dimmed" style={{ flexShrink: 0 }}>
-                    {group.source === 'internal' ? 'Internal' : 'External'}
+                    {GROUP_SOURCE_LABELS[group.source]}
                   </Text>
                 </Group>
               </div>

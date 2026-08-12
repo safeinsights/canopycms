@@ -96,15 +96,19 @@ export function usePermissionManager(
     }
   }
 
+  // Propagates failures instead of returning [] (matching loadPermissions and
+  // handleSavePermissions above). The generated client RESOLVES with the error
+  // envelope rather than throwing, so swallowing `!result.ok` into an empty
+  // array left useGroupsAndUsers' .catch unfired and groupLoadError null --
+  // an unreadable groups.json rendered as a silently empty picker with no
+  // warning, which is the same failure class listGroupsHandler's deliberate
+  // 500 exists to prevent.
   const handleListGroups = async () => {
-    try {
-      const result = await apiClient.permissions.listGroups()
-      if (!result.ok) return []
-      return result.data?.groups ?? []
-    } catch (err) {
-      console.error('Group list failed:', err)
-      return []
+    const result = await apiClient.permissions.listGroups()
+    if (!result.ok) {
+      throw new Error(result.error || 'Failed to load groups')
     }
+    return result.data?.groups ?? []
   }
 
   // Load permissions when permission manager opens

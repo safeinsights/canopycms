@@ -258,9 +258,16 @@ const listGroupsHandler = async (
     }
 
     for (const group of externalGroups) {
-      if (!byId.has(group.id)) {
-        byId.set(group.id, { ...group, source: 'external' })
+      const collision = byId.get(group.id)
+      if (collision) {
+        // Keep the internal entry, but record that granting this ID ALSO
+        // reaches the provider group's membership -- the picker surfaces that
+        // so an admin isn't shown a name-and-members set narrower than the
+        // grant's real reach.
+        collision.source = 'both'
+        continue
       }
+      byId.set(group.id, { ...group, source: 'external' })
     }
 
     return { ok: true, status: 200, data: { groups: Array.from(byId.values()) } }

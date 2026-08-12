@@ -7,6 +7,18 @@ import type { UserSearchResult, PermissionGroupOption } from '../auth/types'
 import type { EditorCollection } from './Editor'
 import { unsafeAsPermissionPath } from '../authorization/test-utils'
 import { unsafeAsLogicalPath } from '../paths/test-utils'
+import { usePermissionManager } from './hooks/usePermissionManager'
+import { setupMockApiClient, createApiClientWrapper } from './hooks/__test__/test-utils'
+
+// Needed by setupMockApiClient, which injects the mock into the factory.
+vi.mock('../api', async () => {
+  const actual = await vi.importActual('../api')
+  return { ...actual, createApiClient: vi.fn() }
+})
+
+vi.mock('@mantine/notifications', () => ({
+  notifications: { show: vi.fn() },
+}))
 
 afterEach(() => {
   cleanup()
@@ -562,11 +574,16 @@ describe('PermissionManager', () => {
       expect(screen.getAllByText('Internal').length).toBeGreaterThan(0)
       expect(screen.getAllByText('External').length).toBeGreaterThan(0)
 
-      // And it is selectable as a permission target.
+      // And it is selectable as a permission target. Selecting closes the
+      // picker (handleAddGroup), so a surviving "Docs Team" afterwards can
+      // only be the assigned badge -- re-asserting the text while the option
+      // list is still open would pass even if the click were a no-op.
       fireEvent.click(screen.getAllByText('Docs Team')[0])
+
       await waitFor(() => {
-        expect(screen.getAllByText('Docs Team').length).toBeGreaterThan(0)
+        expect(screen.queryByPlaceholderText('Search groups...')).toBeNull()
       })
+      expect(screen.getAllByText('Docs Team').length).toBeGreaterThan(0)
     })
 
     it('filters groups as user types', async () => {
@@ -917,4 +934,57 @@ describe('PermissionManager', () => {
 
   // Note: onClose prop is accepted but not used to render a close button
   // The close button is provided by parent component (Drawer/Modal)
+})
+
+/**
+ * Integration cover for the seam between the API client and the picker.
+ *
+ * listGroupsHandler deliberately returns 500 rather than degrading to an
+ * external-only list, but the generated client RESOLVES with the error
+ * envelope instead of throwing. An earlier version of handleListGroups mapped
+ * that to `[]`, so an unreadable groups.json reached the admin as an empty
+ * dropdown with no warning at all -- the same silent-omission failure the 500
+ * exists to prevent, one layer up. Wiring the real hook to the real component
+ * is what pins that seam; testing either side alone missed it.
+ */
+describe('PermissionManager + usePermissionManager (group loading failures)', () => {
+  it('shows the warning when listGroups returns an error envelope', async () => {
+    const mockClient = await setupMockApiClient()
+    const ApiWrapper = createApiClientWrapper(mockClient)
+
+    mockClient.permissions.get.mockResolvedValue({
+      ok: true,
+      status: 200,
+      data: { permissions: [], version: 0 },
+    })
+    // Not a rejection -- the envelope shape the client actually returns.
+    mockClient.permissions.listGroups.mockResolvedValue({
+      ok: false,
+      status: 500,
+      error: 'Failed to read groups.json',
+    })
+
+    const Harness = () => {
+      const { handleListGroups } = usePermissionManager({ isOpen: true })
+      return (
+        <PermissionManager
+          collections={[]}
+          permissions={[]}
+          canEdit={true}
+          onListGroups={handleListGroups}
+        />
+      )
+    }
+
+    render(
+      <ApiWrapper>
+        <Harness />
+      </ApiWrapper>,
+      { wrapper: ({ children }) => <MantineProvider>{children}</MantineProvider> },
+    )
+
+    await waitFor(() => {
+      expect(screen.getByText(/Failed to load groups/i)).toBeTruthy()
+    })
+  })
 })

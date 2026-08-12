@@ -506,10 +506,13 @@ describe('permissions API', () => {
       }
     })
 
-    it('collapses an internal/external ID collision into one option, internal winning', async () => {
+    it('collapses an internal/external ID collision into one option marked as both', async () => {
       // The two ID spaces are not namespaced against each other, and
       // checkPathPermission matches a single flattened user.groups list by ID
-      // string -- so a shared ID is ONE permission target, not two.
+      // string -- so a shared ID is ONE permission target, not two. But the
+      // grant reaches BOTH memberships, so the option must not be labelled
+      // merely 'internal': that would understate its blast radius to the admin
+      // making the grant.
       vi.mocked(mockAuthPlugin.listGroups).mockResolvedValue([
         { id: 'docs-team', name: 'Provider Docs Team', memberCount: 99 },
       ])
@@ -524,7 +527,25 @@ describe('permissions API', () => {
         (g) => g.id === 'docs-team',
       )
 
-      expect(matching).toEqual([{ id: 'docs-team', name: 'Docs Team', source: 'internal' }])
+      expect(matching).toEqual([{ id: 'docs-team', name: 'Docs Team', source: 'both' }])
+    })
+
+    it('leaves a non-colliding internal group tagged internal', async () => {
+      // Guards the collision marking above from over-firing.
+      vi.mocked(mockAuthPlugin.listGroups).mockResolvedValue([
+        { id: 'group-1', name: 'Engineering' },
+      ])
+      vi.mocked(authorization.loadGroupsFile).mockResolvedValue({
+        version: 1,
+        updatedAt: '2024-01-01T00:00:00.000Z',
+        updatedBy: 'admin-1',
+        groups: [{ id: 'docs-team', name: 'Docs Team', members: ['u1'] }],
+      } as never)
+
+      const options = optionsOf(await listGroups(mockContext, adminReq))
+
+      expect(options.find((g) => g.id === 'docs-team')?.source).toBe('internal')
+      expect(options.find((g) => g.id === 'group-1')?.source).toBe('external')
     })
 
     it('fails loudly when groups.json cannot be read rather than serving a partial list', async () => {

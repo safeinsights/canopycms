@@ -22,9 +22,17 @@ export interface GroupMetadata {
 
 /**
  * Where a group offered as a permission target came from: the auth provider
- * ('external') or Canopy's own groups.json ('internal').
+ * ('external'), Canopy's own groups.json ('internal'), or BOTH -- the same ID
+ * exists in each universe.
+ *
+ * 'both' matters for what a grant actually does. The two ID spaces are not
+ * namespaced against each other, and `checkPathPermission` matches one
+ * flattened `user.groups` list by ID, so granting a colliding ID reaches the
+ * internal group's members AND every provider user whose external groups
+ * include that ID. Labeling such an option merely 'internal' would understate
+ * its blast radius to the admin making the grant.
  */
-export type GroupSource = 'internal' | 'external'
+export type GroupSource = 'internal' | 'external' | 'both'
 
 /**
  * A group offered as a permission target by `permissions.listGroups`.
