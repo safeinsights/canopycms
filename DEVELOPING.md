@@ -1696,6 +1696,17 @@ headroom isn't needed there, but CI remains the source of truth for any timing-s
 test behavior -- don't tune assertions to make a slow local run pass if CI already
 passes.
 
+The `editor` project loads `src/editor/test-setup.ts` first, which shims the browser
+APIs jsdom lacks but Mantine expects: `matchMedia`, `ResizeObserver`, and
+`Element.prototype.scrollIntoView`. Add a shim there when a Mantine component reaches
+for another one. The `scrollIntoView` case is worth knowing about because of how it
+fails: Mantine's Combobox (`Select`, `Autocomplete`, ...) calls it from a timer that
+fires _after_ the test which opened the dropdown has finished, so a missing shim
+surfaces as a Vitest "Unhandled Error" attributed to whichever test happened to run
+next -- and Vitest warns that such errors can cause false positives elsewhere in the
+run. If you see an unhandled error blamed on a test that plainly can't have caused it,
+suspect a missing jsdom shim in the test that ran before it.
+
 ### Integration Test Structure
 
 Integration tests are in `src/__integration__/` with shared fixtures and utilities:
@@ -2813,6 +2824,20 @@ The `CmsWorker` class handles internet-requiring operations that Lambda cannot p
 - **Auth cache refresh**: Calls a pluggable `refreshAuthCache` callback
 
 The worker lives in the core `canopycms` package, not in `canopycms-cdk`, because it has no cloud dependencies.
+
+### Worker Logging: Never Call `console.*` Directly
+
+Code under `packages/canopycms/src/worker/**` and `packages/canopycms-cdk/worker/**` must log via `workerLog` / `workerLogWarn` / `workerLogError` from `src/worker/log.ts` (re-exported from `canopycms/worker/cms-worker`, so no new package entrypoint is needed) -- never call `console.log`/`console.warn`/`console.error` directly. Elsewhere in the codebase, normal console/`mockConsole()` conventions apply unchanged; see [Expecting Console Messages](#expecting-console-messages).
+
+```typescript
+import { workerLog, workerLogWarn, workerLogError } from './log'
+
+workerLog('CMS Worker started') // -> 2026-08-12T21:39:45.214Z INFO CMS Worker started
+```
+
+**Why it's not optional:** in production, the worker's stdout _and_ stderr both append to one file (`/var/log/canopy-worker/worker.log` on the EC2 instance), tailed by the amazon-cloudwatch-agent. The agent config (written by user-data in `packages/canopycms-cdk/src/constructs/cms-service.ts`) sets `multi_line_start_pattern` keyed on the helpers' ISO-8601 timestamp prefix, so a line missing that prefix doesn't start a new CloudWatch event -- it silently gets appended to the previous one, corrupting event boundaries rather than just looking inconsistent. The level tag (`INFO`/`WARN`/`ERROR`) is also load-bearing: it's the only way to tell the two interleaved streams apart downstream. A stray `console.log` in worker code breaks log shipping without erroring locally.
+
+The helpers pass the timestamp and level as separate `console` arguments rather than concatenating them into the message, so passing an `Error` still prints its stack normally.
 
 ### Task Queue (canopycms/worker/task-queue)
 
