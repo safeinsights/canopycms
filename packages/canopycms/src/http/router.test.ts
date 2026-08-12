@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { createCanopyRouter, matchRoute, type RouteDefinition } from './router'
+import { RESERVED_ROUTE_BRANCH_NAMES } from '../paths'
 import type { CanopyBinaryResponse } from './types'
 
 /** Build a minimal RouteDefinition for synthetic precedence tests. */
@@ -217,5 +218,23 @@ describe('matchRoute - CanopyHandler may return a CanopyBinaryResponse (M2 plumb
 
     const result = await match?.handler()
     expect(result).toEqual(binaryResult)
+  })
+
+  // Keeps paths/branch-name.ts's RESERVED_ROUTE_BRANCH_NAMES honest. That
+  // constant cannot be computed from the router at runtime -- api/validators.ts
+  // is imported BY the route modules, so importing the router from the
+  // validation side would be a cycle -- so it is maintained by hand and pinned
+  // here instead. Adding a new static top-level namespace fails this test until
+  // the constant is updated, which is exactly the reminder we want.
+  describe('reserved branch names', () => {
+    it('matches the static top-level namespaces of the live route table', () => {
+      const staticFirstSegments = new Set(
+        createCanopyRouter()
+          .routes.map((route) => route.pattern[0])
+          .filter((segment) => segment && !segment.startsWith(':') && !segment.startsWith('...')),
+      )
+
+      expect([...staticFirstSegments].sort()).toEqual([...RESERVED_ROUTE_BRANCH_NAMES].sort())
+    })
   })
 })

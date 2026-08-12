@@ -88,6 +88,12 @@ export interface BranchSummary {
   commentCount: number
   isProtected: boolean
   readOnly: boolean
+  /**
+   * Server-computed: content writes are rejected, because the branch is the
+   * read-only base branch OR its status is past 'editing'. `readOnly` still
+   * says WHICH, for banner copy.
+   */
+  writeBlocked: boolean
 }
 
 export interface UseBranchManagerOptions {
@@ -245,6 +251,7 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
         commentCount: unresolvedCount,
         isProtected: b.isProtected ?? false,
         readOnly: b.readOnly ?? false,
+        writeBlocked: b.writeBlocked ?? false,
       }
     })
   }, [branches, branchName, options.comments])

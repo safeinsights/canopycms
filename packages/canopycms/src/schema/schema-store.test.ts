@@ -1325,4 +1325,64 @@ describe('SchemaOps', () => {
       expect(Date.now() - failStart).toBeLessThan(5000)
     }, 15_000)
   })
+
+  // A multi-segment `config.contentRoot` (e.g. "cms/content") is documented as
+  // valid in config/helpers.ts. SchemaOps used to derive branchRoot as
+  // dirname(contentRoot) and the root-collection's logical path as
+  // basename(contentRoot); both are wrong once the content root is more than
+  // one segment deep.
+  describe('multi-segment contentRoot', () => {
+    let branchRoot: string
+    let nestedContentRoot: string
+
+    beforeEach(async () => {
+      branchRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'canopy-nested-root-'))
+      nestedContentRoot = path.join(branchRoot, 'cms', 'content')
+      await fs.mkdir(nestedContentRoot, { recursive: true })
+    })
+
+    afterEach(async () => {
+      await fs.rm(branchRoot, { recursive: true, force: true })
+    })
+
+    it('puts the schema lock under the supplied branchRoot, not dirname(contentRoot)', async () => {
+      const nested = new SchemaOps(nestedContentRoot, entrySchemaRegistry, undefined, branchRoot)
+
+      await nested.createCollection({
+        name: 'posts',
+        entries: [{ name: 'post', format: 'json', schema: 'postSchema' }],
+      })
+
+      await expect(fs.stat(path.join(branchRoot, '.canopy-meta'))).resolves.toBeTruthy()
+      // dirname(contentRoot) would have put it here instead
+      await expect(fs.stat(path.join(branchRoot, 'cms', '.canopy-meta'))).rejects.toThrow()
+    })
+
+    it('recognizes the multi-segment content root as the root collection', async () => {
+      const nested = new SchemaOps(nestedContentRoot, entrySchemaRegistry, undefined, branchRoot)
+
+      // basename(contentRoot) yields "content", which never equals the root
+      // collection's logical path "cms/content" -- so this used to fall through
+      // to the regular-collection branch and fail to resolve.
+      await nested.updateCollection(unsafeAsLogicalPath('cms/content'), { label: 'Docs' })
+
+      const meta = JSON.parse(
+        await fs.readFile(path.join(nestedContentRoot, '.collection.json'), 'utf8'),
+      ) as { label?: string }
+      expect(meta.label).toBe('Docs')
+    })
+
+    it('still derives branchRoot from dirname(contentRoot) when none is supplied', async () => {
+      const single = path.join(branchRoot, 'content')
+      await fs.mkdir(single, { recursive: true })
+      const store2 = new SchemaOps(single, entrySchemaRegistry)
+
+      await store2.createCollection({
+        name: 'posts',
+        entries: [{ name: 'post', format: 'json', schema: 'postSchema' }],
+      })
+
+      await expect(fs.stat(path.join(branchRoot, '.canopy-meta'))).resolves.toBeTruthy()
+    })
+  })
 })

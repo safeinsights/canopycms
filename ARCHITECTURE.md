@@ -936,7 +936,7 @@ CanopyCMS distinguishes between two branch concepts that serve different purpose
 
 The resolved base branch is **protected**: it can never be submitted for review (submitting it would commit and push directly to itself — a review bypass — and then ask GitHub for a head==base PR, which 422s), and in prod mode it is **read-only in the editor** (content on the base branch only changes via merged PRs, matching the branch-first workflow). In dev mode the base branch stays editable — the developer always lands on it by definition (it follows git HEAD when unset), and editing it is the normal local flow, reconciled via `canopycms sync`.
 
-The single source of truth is `getBranchProtection(config, branchName)` in `authorization/protected-branch.ts`, keyed off the resolved `config.defaultBaseBranch` (never a hard-coded `'main'` — `master`/`develop` bases work) with sanitization-aware comparison (metadata names are sanitized; config holds the raw git name). It returns three flags:
+The single source of truth is `getBranchProtection(config, branchName, recordedBaseBranch?)` in `authorization/protected-branch.ts`, keyed off the resolved `config.defaultBaseBranch` (never a hard-coded `'main'` — `master`/`develop` bases work) with sanitization-aware comparison (metadata names are sanitized; config holds the raw git name). It returns three flags:
 
 |                 | dev | prod |
 | --------------- | --- | ---- |
@@ -944,14 +944,24 @@ The single source of truth is `getBranchProtection(config, branchName)` in `auth
 | `submitBlocked` | ✓   | ✓    |
 | `readOnly`      | —   | ✓    |
 
+To authorize a content write, or to render a lock in the editor, use the sibling `getBranchWriteProtection(config, branchName, recordedBaseBranch, status)` instead. It delegates to `getBranchProtection` and adds a fourth flag, `writeBlocked` = `readOnly || status !== 'editing'` — the single expression of the "which statuses lock editing" rule, so the API guard, the branches-list wire flag, and the editor all agree by construction rather than by three parallel derivations. `readOnly` keeps its narrow meaning: it distinguishes _which_ lock applies, and therefore which banner the editor shows.
+
+`status` is a **required** parameter there, deliberately typed to admit `undefined`, so that a missing status fails closed. `branch.json` is parsed with a bare cast and no schema validation, so a hand-repaired or partially-written file can yield no status at runtime despite the required type — and malformed branch metadata is a handled condition here (see the corrupt-metadata quarantine). Making the parameter required is what keeps "the caller didn't ask about status" distinguishable from "the file had no status": those two cases want opposite answers, and only the second should block. Callers that genuinely don't care — the submit, delete, and ACL rails — call `getBranchProtection` and get no `writeBlocked` at all.
+
 Enforcement is layered:
 
-- **API guards** (`api/guards.ts`): `writableBranch` (403 on content/entry/schema mutations when `readOnly`) and `submittableBranch` (403 on submit when `submitBlocked`). `deleteBranch` refuses the base branch with a handler-level check.
+- **API guards** (`api/guards.ts`): `writableBranch` (403 on content/entry/schema mutations when `writeBlocked` — base-branch `readOnly` and status locks share the guard but produce different messages) and `submittableBranch` (403 on submit when `submitBlocked`). `deleteBranch` and `updateBranchAccess` refuse the base branch with handler-level checks.
 - **Workflow authorization** (`authorization/branch.ts`): the system-branch grant in `canPerformWorkflowAction` (the base branch is auto-provisioned with `createdBy: 'canopycms-system'`) is disabled on protected branches, so only admins/reviewers/explicit-ACL users retain workflow rights there.
 - **Backstops** (defense in depth, all refusing sanitized head==base): `services.submitBranch` throws before any git operation; `syncSubmitPr` returns `sync-failed` without calling GitHub or enqueueing; the worker's `push-and-create-or-update-pr` task throws a `PermanentTaskError` (the same task also throws `PermanentTaskError` for an unrelated reason — a genuine non-fast-forward push rejection between two deployments; see [Push Rejection Classification](#push-rejection-classification)).
-- **Editor UI**: renders purely from server-computed wire flags (`isProtected`/`readOnly` on the branches-list response) — Submit is hidden, Save is disabled, and a banner with a "Create a branch" action appears on a read-only branch. The editor still lands on the protected branch for browsing.
+- **Editor UI**: renders purely from server-computed wire flags (`isProtected`/`readOnly`/`writeBlocked` on the branches-list response) — Submit is hidden, Save is disabled, and a banner with a "Create a branch" action appears on a read-only branch. Because `writeBlocked` comes from the same predicate the guard uses, the UI cannot enable a write the API would reject. The editor still lands on the protected branch for browsing.
 
 **Withdraw is deliberately not blocked** on protected branches: it is the self-serve recovery path for a base branch wrongly stuck in `submitted` (the pre-protection failure mode), and the workflow-authorization change above restricts it to privileged users there.
+
+### Reserved Branch Names
+
+The API serves branch-specific routes (`/:branch/...`) and a handful of static top-level routes (admin, assets, branches, groups, permissions, users, whoami) from the same route table, and a static segment always wins over the dynamic `:branch` parameter. A branch literally named e.g. `admin` would therefore have its own routes shadowed by the static `/admin` namespace — not cleanly rejected, just confusingly half-alive: the branch's bare top-level route still resolves, while every nested route on it 404s or 403s unpredictably.
+
+Branch creation rejects any name that collides with a static top-level route namespace (checked against both the requested name and its sanitized, git-ref-safe form; matching is exact and case-sensitive, so `Admin` and `admin-docs` stay creatable). This is enforced only on the creation path, deliberately not as a general branch-name validation rule: a blanket rule would also reject an already-existing branch with a colliding name on every one of its own routes, including its delete route, making it permanently un-removable. This is a separate reservation from the settings-branch namespace (`canopycms-settings-{deploymentName}`, see [Sharing one repository across two deployments](#lambda--efs--ec2-worker-aws-cost-optimized)) — one protects the route table, the other protects a specific deployment's settings from collision.
 
 ## Operating Modes
 
@@ -1588,7 +1598,7 @@ This flow applies to editing branches. The base branch itself can never be submi
 3. Reviewers can approve or request changes
 4. Requesting changes returns branch to "editing" status
 
-**Content is read-only while under review.** Once a branch leaves `editing` status (`submitted`, `approved`, `locked`, or `archived`), the server write boundary rejects content saves, entry creation, and schema mutations with the same kind of 403 used for the protected base branch — a branch mid-review shouldn't have its content shift under the reviewer. The editor mirrors this on the client: Save is disabled, entry-tree mutations are hidden, and a status banner explains why. Comments are exempt from this lock by design, since they're the review mechanism itself and must stay writable while a branch is submitted. Withdrawing the submission or requesting changes returns the branch to `editing` and immediately re-enables writes.
+**Content is read-only while under review.** Once a branch leaves `editing` status (`submitted`, `approved`, or `archived`), the server write boundary rejects content saves, entry creation, and schema mutations with the same kind of 403 used for the protected base branch — a branch mid-review shouldn't have its content shift under the reviewer. The editor mirrors this on the client: Save is disabled, entry-tree mutations are hidden, and a status banner explains why. Comments are exempt from this lock by design, since they're the review mechanism itself and must stay writable while a branch is submitted. From `submitted`, withdrawing or requesting changes returns the branch to `editing` and immediately re-enables writes — both actions require `submitted` and reject any other status, so an `approved` branch has no such unlock (see [approved-status-dead-end.md](.claude/future-tasks/approved-status-dead-end.md)). A branch whose `status` cannot be read at all is also treated as locked: `branch.json` is parsed without schema validation, so the write guard fails closed rather than guessing.
 
 ### Merging and Archiving
 
@@ -1690,6 +1700,8 @@ Reference fields are schema fields that can reference other entries by their con
 - **Entry type scope** (`entryTypes`): Limits references to entries of specific entry types by name (e.g., only "partner" entries), regardless of which collection they live in. This is useful when the same entry type appears in multiple collections or subcollections and you want to reference all instances.
 
 These two scoping mechanisms can be combined. When both are specified, collection scope narrows the search space first, then entry type filtering is applied within those results. When only `entryTypes` is specified (no collection scope), the system searches all entries across the entire content store via the ID index.
+
+**Entry-type scope validation**: The entry type names listed in a reference field's `entryTypes` scope are checked against the entry types actually declared in the branch's schema — a misspelled or nonexistent name fails schema resolution outright, with a "did you mean" suggestion, rather than silently resolving to an empty reference picker. This check cannot happen when field schemas are first registered: entry types are declared per-branch, in on-disk collection metadata, so the valid set doesn't exist until a branch's schema has actually been resolved. It runs as part of that resolution step, before the resolved schema is cached, so a bad scope fails consistently on every load of that branch rather than only when the cache happens to be cold.
 
 References can:
 

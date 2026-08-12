@@ -112,7 +112,7 @@ export const createContentReader = (options: ContentReaderOptions): ContentReade
     return {
       context,
       branchRoot,
-      store: new ContentStore(branchRoot, branchFlatSchema),
+      store: new ContentStore(branchRoot, branchFlatSchema, { contentRootName }),
     }
   }
 

@@ -147,6 +147,15 @@ export interface ContentStoreOptions {
    * debounce. Tests pass 0 for deterministic cross-process scenarios.
    */
   indexFreshnessIntervalMs?: number
+  /**
+   * Directory name (relative to `root`) holding the content tree — i.e.
+   * `config.contentRoot`. The ID index scans from here, so an adopter with a
+   * non-default content root would otherwise get an index built from a
+   * directory that does not exist: empty, so every ID-based lookup (reference
+   * resolution, entry links, order cleanup, rename) silently misses while
+   * path-based reads keep working. Defaults to 'content'.
+   */
+  contentRootName?: string
 }
 
 const DEFAULT_INDEX_FRESHNESS_INTERVAL_MS = 1000
@@ -161,6 +170,8 @@ const STALE_LOOKUP = Symbol('stale-index-lookup')
 
 export class ContentStore {
   private readonly root: string
+  /** See ContentStoreOptions.contentRootName — the ID index scan root. */
+  private readonly contentRootName: string
   private readonly schemaIndex: Map<string, FlatSchemaItem>
   /** Swapped wholesale on rebuild — in-flight callers keep their (older) snapshot. */
   private _idIndex: ContentIdIndex
@@ -182,6 +193,7 @@ export class ContentStore {
 
   constructor(root: string, flatSchema: FlatSchemaItem[], options: ContentStoreOptions = {}) {
     this.root = path.resolve(root)
+    this.contentRootName = options.contentRootName || 'content'
     this.indexFreshnessIntervalMs =
       options.indexFreshnessIntervalMs ?? DEFAULT_INDEX_FRESHNESS_INTERVAL_MS
     this.schemaIndex = new Map(flatSchema.map((item) => [item.logicalPath, item]))
@@ -238,7 +250,7 @@ export class ContentStore {
         // in-flight callers hold the previous reference across awaits and must
         // keep seeing a consistent (if outdated) snapshot, never a half-built one.
         const fresh = new ContentIdIndex(this.root)
-        await fresh.buildFromFilenames('content')
+        await fresh.buildFromFilenames(this.contentRootName)
         return { diskToken, fresh }
       })()
       this.indexBuild = build

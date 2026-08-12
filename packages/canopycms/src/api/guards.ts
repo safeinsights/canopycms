@@ -19,7 +19,7 @@
 import type { BranchContext, BranchContextWithSchema } from '../types'
 import type { ApiContext, ApiRequest, ApiResponse } from './types'
 import { isAdmin, isReviewer, isPrivileged } from '../authorization/helpers'
-import { getBranchProtection } from '../authorization/protected-branch'
+import { getBranchProtection, getBranchWriteProtection } from '../authorization/protected-branch'
 
 // ============================================================================
 // Guard IDs and Context Map
@@ -206,11 +206,14 @@ const runWritableBranchGuard: GuardRunner = async (ctx, _req, params, accumulate
     return { ok: false, response: { ok: false, status: 404, error: 'Branch not found' } }
   }
 
-  const protection = getBranchProtection(
+  const protection = getBranchWriteProtection(
     ctx.services.config,
     context.branch.name,
     context.branch.baseBranch,
+    context.branch.status,
   )
+  // readOnly first: the base branch is protected for a different reason than a
+  // status lock, and its message points at branch creation rather than withdraw.
   if (protection.readOnly) {
     return {
       ok: false,
@@ -222,11 +225,16 @@ const runWritableBranchGuard: GuardRunner = async (ctx, _req, params, accumulate
     }
   }
 
-  if (context.branch.status !== 'editing') {
+  if (protection.writeBlocked) {
+    const branchStatus = context.branch.status
     const error =
-      context.branch.status === 'submitted'
+      branchStatus === 'submitted'
         ? `Branch "${context.branch.name}" is submitted for review and cannot be edited. Withdraw it or request changes to resume editing.`
-        : `Branch "${context.branch.name}" is ${context.branch.status} and cannot be edited.`
+        : // Unreadable status: branch.json parses without schema validation, so a
+          // damaged file reaches here with no status. Refuse rather than guess.
+          branchStatus === undefined
+          ? `Branch "${context.branch.name}" has no readable workflow status and cannot be edited until its metadata is repaired.`
+          : `Branch "${context.branch.name}" is ${branchStatus} and cannot be edited.`
     return {
       ok: false,
       response: { ok: false, status: 403, error },

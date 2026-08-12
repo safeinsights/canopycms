@@ -604,6 +604,7 @@ describe('Editor integration', () => {
                   // Server-computed protected-base-branch flags (prod).
                   isProtected: true,
                   readOnly: true,
+                  writeBlocked: true,
                 },
               ],
               defaultBranch: 'main',
@@ -765,6 +766,7 @@ describe('Editor integration', () => {
                   updatedAt: '2024-01-01',
                   isProtected: true,
                   readOnly: true,
+                  writeBlocked: true,
                 },
               ],
               defaultBranch: 'main',

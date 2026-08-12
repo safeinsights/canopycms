@@ -1124,6 +1124,8 @@ Reference fields accept `collections`, `entryTypes`, or both to scope which entr
 - **`entryTypes`** — Scope by entry type name(s), regardless of which collection the entries live in
 - **Both** — Combine for precise scoping (e.g., only `partner` entries within the `data-catalog` tree)
 
+> Every `entryTypes` value is validated against the entry type names actually defined in your `.collection.json` files. A name that doesn't match any of them is a hard error at schema resolution — naming the field, its location, a "did you mean" suggestion when there's a close match, and the full list of known entry types — rather than a picker that silently returns zero options. **Upgrade note:** if you have an existing `entryTypes` typo, it previously failed silently; it will now fail loudly until corrected.
+
 ```typescript
 const schema = defineEntrySchema([
   { name: 'title', type: 'string', label: 'Title' },
@@ -2310,6 +2312,8 @@ This section describes how to use the CanopyCMS editor interface from a content 
 4. Your branch is created and you can start editing
 
 > Branch names are sanitized for use as git branch names and filesystem paths: any character other than letters, numbers, `.`, `_`, and `-` (e.g. `/`) is replaced with `-`. A name like `feature/hero-update` is created as `feature-hero-update`, and the editor consistently displays and uses that sanitized name everywhere (branch selector, Branches panel, URLs).
+>
+> A few names are reserved because they collide with a static top-level API route and can't be used for a branch: `admin`, `assets`, `branches`, `groups`, `permissions`, `users`, `whoami`. Creating one of these is rejected with a 400 error explaining the collision. Matching is exact and case-sensitive, so `Admin` or `admin-docs` are unaffected.
 
 **Switching branches:**
 

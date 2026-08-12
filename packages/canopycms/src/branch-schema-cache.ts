@@ -7,6 +7,7 @@ import type { OperatingMode } from './operating-mode'
 import type { EntrySchemaRegistry, SchemaResolutionResult } from './schema/types'
 import { resolveSchema, isValidSchema } from './schema/resolver'
 import { flattenSchema } from './config/flatten'
+import { validateReferenceEntryTypes } from './validation/entry-type-reference-validator'
 import { isBuildMode } from './build-mode'
 import {
   bumpResourceGeneration,
@@ -293,6 +294,17 @@ export class BranchSchemaCache {
       throw new Error(
         `No schema found in ${contentRoot}. Create .collection.json files ` +
           'with references to field schemas defined in your entry schema registry.',
+      )
+    }
+
+    // Reference fields may only scope themselves to entry types that exist.
+    // Checked here, before anything is cached, so a typo fails loudly and
+    // consistently instead of silently resolving to zero reference options.
+    const entryTypeIssues = validateReferenceEntryTypes(result.schema)
+    if (entryTypeIssues.length > 0) {
+      throw new Error(
+        `Invalid reference field entryTypes in ${contentRoot}:\n` +
+          entryTypeIssues.map((issue) => `  - ${issue}`).join('\n'),
       )
     }
 

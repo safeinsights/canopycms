@@ -376,7 +376,9 @@ const deleteEntryHandler = async (
     return { ok: false, status: 404, error: 'Collection not found' }
   }
 
-  const contentStore = new ContentStore(branchContext.branchRoot, flatSchema)
+  const contentStore = new ContentStore(branchContext.branchRoot, flatSchema, {
+    contentRootName: ctx.services.config.contentRoot || 'content',
+  })
   const collectionLogicalPath = collectionPath as LogicalPath
   // Validate slug extracted from the path
   const slugResult = parseSlug(slug)
@@ -425,18 +427,19 @@ const deleteEntryHandler = async (
     await contentStore.delete(collectionLogicalPath, entrySlug)
 
     // Update the collection's order array to remove the deleted item.
-    // Construct exactly like api/schema.ts's getSchemaOps: contentRoot (NOT
-    // branchRoot — SchemaOps derives branchRoot as dirname(contentRoot), so
-    // passing branchRoot would invalidate the wrong root) and with services,
-    // so updateOrder's .collection.json write bumps the schema generation
-    // marker. Without the bump, every host durably serves the stale cached
-    // order (still containing the deleted entry) until the next unrelated
-    // schema mutation — prod has no mtime backstop.
+    // Construct exactly like api/schema.ts's getSchemaOps: the configured
+    // content root as the first argument, the branch root passed explicitly as
+    // the fourth, and with services, so updateOrder's .collection.json write
+    // bumps the schema generation marker. Without the bump, every host durably
+    // serves the stale cached order (still containing the deleted entry) until
+    // the next unrelated schema mutation — prod has no mtime backstop.
     if (contentId && collection.type === 'collection' && collection.order) {
+      const contentRootName = ctx.services.config.contentRoot || 'content'
       const schemaStore = new SchemaOps(
-        path.join(branchContext.branchRoot, 'content'),
+        path.join(branchContext.branchRoot, contentRootName),
         ctx.services.entrySchemaRegistry,
         ctx.services,
+        branchContext.branchRoot,
       )
       const newOrder = collection.order.filter((id) => id !== contentId)
       if (newOrder.length !== collection.order.length) {
