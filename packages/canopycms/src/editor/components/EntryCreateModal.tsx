@@ -9,9 +9,12 @@
  * - Validation and error handling
  */
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { Modal, Stack, TextInput, Group, Button, Alert, Text, Select } from '@mantine/core'
 import { IconAlertCircle } from '@tabler/icons-react'
+
+/** Slug the form is seeded with each time the modal opens. */
+const DEFAULT_SLUG = 'untitled'
 
 export interface EntryType {
   name: string
@@ -59,19 +62,32 @@ export function EntryCreateModal({
     return defaultType?.name || entryTypes[0]?.name || ''
   }
 
-  const [slug, setSlug] = useState('untitled')
+  const [slug, setSlug] = useState(DEFAULT_SLUG)
   const [entryTypeName, setEntryTypeName] = useState(getDefaultEntryTypeName())
   const [validationError, setValidationError] = useState<string | null>(null)
 
-  // Reset state when modal opens
+  // Seed the form once per open, on the closed -> open transition.
+  //
+  // This deliberately keys on `isOpen` alone. It used to key on the prop
+  // *values* (`[isOpen, selectedEntryTypeName, entryTypes]`), but `entryTypes`
+  // is an array that callers build inline - a fresh identity on every parent
+  // render - so any re-render while the modal was open re-ran this block and
+  // silently discarded what the user had typed or selected. The entry was then
+  // written to disk under the default slug with no error surfaced.
+  //
+  // Seeding is a lifecycle event, not a derivation of the current props, so the
+  // narrow dep array is the point. Do not "fix" it by adding the props read
+  // below (`entryTypes`, `selectedEntryTypeName`) back in.
+  const wasOpenRef = useRef(false)
   useEffect(() => {
-    if (isOpen) {
-      setSlug('untitled')
+    if (isOpen && !wasOpenRef.current) {
+      setSlug(DEFAULT_SLUG)
       setEntryTypeName(getDefaultEntryTypeName())
       setValidationError(null)
     }
+    wasOpenRef.current = isOpen
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isOpen, selectedEntryTypeName, entryTypes])
+  }, [isOpen])
 
   // Validate slug format
   const validateSlug = (value: string): string | null => {

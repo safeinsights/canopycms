@@ -35,44 +35,31 @@ interface PostContent {
 }
 
 /**
- * Find and read a post's content file by TITLE rather than by the slug
- * passed to `createPost()`.
+ * Find and read a post's content file by the slug passed to `createPost()`.
  *
- * This works around a real race in `EntryCreateModal.tsx`: its slug
- * `<TextInput>` state is reset to the literal default `'untitled'` by a
- * `useEffect` keyed (in part) on the `entryTypes` array prop. If that prop
- * isn't referentially stable across the parent's renders, a stray parent
- * re-render landing between this fixture's `.fill(slug)` and its
- * `.click(submit)` silently reverts the field to `'untitled'` before create
- * fires. Confirmed directly during development: a run produced
- * `post.untitled.k1D7Z5pUE7FG.json` on disk after `createPost()` was called
- * with a custom slug, and repeating the same test in isolation never
- * reproduced it (undetectable without the surrounding suite's render
- * pressure) - see the task summary for the full write-up. It is not fixed
- * here (out of this spec's scope - `EntryCreateModal.tsx`/`editor-page.ts`
- * aren't ours to edit), only routed around: the entry's TITLE is filled and
- * saved in a separate step *after* the modal has already closed, so it is
- * never exposed to this race, making it a reliable lookup key regardless of
- * which slug the entry actually landed under.
+ * Entry files are named `{type}.{slug}.{id}.{ext}` (see content-listing.ts), so
+ * the `post.<slug>.` prefix pins the slug segment exactly - a longer slug
+ * sharing this one's opening characters cannot match, because the next
+ * character has to be the separator before the content ID.
  */
-async function readPostContentByTitle(title: string): Promise<PostContent> {
+async function readPostContentBySlug(slug: string): Promise<PostContent> {
   const deadline = Date.now() + SHORT_TIMEOUT
   while (Date.now() < deadline) {
     const files = await fs.readdir(POSTS_CONTENT_DIR).catch(() => [] as string[])
-    for (const file of files) {
-      if (!file.startsWith('post.') || !file.endsWith('.json')) continue
-      const raw = await fs.readFile(path.join(POSTS_CONTENT_DIR, file), 'utf8').catch(() => null)
-      if (raw === null) continue
-      try {
-        const parsed = JSON.parse(raw) as PostContent
-        if (parsed.title === title) return parsed
-      } catch {
-        // A file mid-write can briefly fail to parse; the retry loop below picks it up.
+    const match = files.find((file) => file.startsWith(`post.${slug}.`) && file.endsWith('.json'))
+    if (match !== undefined) {
+      const raw = await fs.readFile(path.join(POSTS_CONTENT_DIR, match), 'utf8').catch(() => null)
+      if (raw !== null) {
+        try {
+          return JSON.parse(raw) as PostContent
+        } catch {
+          // A file mid-write can briefly fail to parse; the retry loop below picks it up.
+        }
       }
     }
     await new Promise((resolve) => setTimeout(resolve, 100))
   }
-  throw new Error(`content file with title "${title}" not found under ${POSTS_CONTENT_DIR}`)
+  throw new Error(`content file for slug "${slug}" not found under ${POSTS_CONTENT_DIR}`)
 }
 
 /**
@@ -159,7 +146,7 @@ test.describe('Assets / Media pipeline', () => {
     })
 
     await test.step('persisted heroImage is an object with real dimensions', async () => {
-      const content = await readPostContentByTitle(title)
+      const content = await readPostContentBySlug(slug)
       expect(typeof content.heroImage).toBe('object')
       expect(content.heroImage?.src).toMatch(/\/assets\//)
       expect(content.heroImage?.alt).toBe(altText)
@@ -206,7 +193,7 @@ test.describe('Assets / Media pipeline', () => {
 
     await test.step('no request was sent and disk is unchanged', async () => {
       expect(putRequestCount).toBe(0)
-      const content = await readPostContentByTitle(title)
+      const content = await readPostContentBySlug(slug)
       expect(content.heroImage).toBeUndefined()
     })
   })
@@ -254,7 +241,7 @@ test.describe('Assets / Media pipeline', () => {
 
     await test.step('save and verify persisted', async () => {
       await editorPage.saveAndVerify()
-      const content = await readPostContentByTitle(title)
+      const content = await readPostContentBySlug(slug)
       expect(content.heroImage?.alt).toBe(altText)
       expect(content.heroImage?.src).toContain(secondHash)
       expect(content.heroImage?.src).not.toContain(firstHash)
@@ -285,7 +272,7 @@ test.describe('Assets / Media pipeline', () => {
     })
 
     await test.step('heroImage is gone from disk', async () => {
-      const content = await readPostContentByTitle(title)
+      const content = await readPostContentBySlug(slug)
       expect(content.heroImage).toBeUndefined()
     })
   })
