@@ -1696,6 +1696,17 @@ headroom isn't needed there, but CI remains the source of truth for any timing-s
 test behavior -- don't tune assertions to make a slow local run pass if CI already
 passes.
 
+The `editor` project loads `src/editor/test-setup.ts` first, which shims the browser
+APIs jsdom lacks but Mantine expects: `matchMedia`, `ResizeObserver`, and
+`Element.prototype.scrollIntoView`. Add a shim there when a Mantine component reaches
+for another one. The `scrollIntoView` case is worth knowing about because of how it
+fails: Mantine's Combobox (`Select`, `Autocomplete`, ...) calls it from a timer that
+fires _after_ the test which opened the dropdown has finished, so a missing shim
+surfaces as a Vitest "Unhandled Error" attributed to whichever test happened to run
+next -- and Vitest warns that such errors can cause false positives elsewhere in the
+run. If you see an unhandled error blamed on a test that plainly can't have caused it,
+suspect a missing jsdom shim in the test that ran before it.
+
 ### Integration Test Structure
 
 Integration tests are in `src/__integration__/` with shared fixtures and utilities:
