@@ -9,6 +9,7 @@ import { unsafeAsPermissionPath } from '../authorization/test-utils'
 import { unsafeAsLogicalPath } from '../paths/test-utils'
 import { usePermissionManager } from './hooks/usePermissionManager'
 import { setupMockApiClient, createApiClientWrapper } from './hooks/__test__/test-utils'
+import { mockConsole } from '../test-utils/console-spy'
 
 // Needed by setupMockApiClient, which injects the mock into the factory.
 vi.mock('../api', async () => {
@@ -949,6 +950,9 @@ describe('PermissionManager', () => {
  */
 describe('PermissionManager + usePermissionManager (group loading failures)', () => {
   it('shows the warning when listGroups returns an error envelope', async () => {
+    // useGroupsAndUsers' catch logs the failure; swallow it so the expected
+    // stderr doesn't clutter (and fail) the reporter.
+    const consoleSpy = mockConsole()
     const mockClient = await setupMockApiClient()
     const ApiWrapper = createApiClientWrapper(mockClient)
 
@@ -986,5 +990,9 @@ describe('PermissionManager + usePermissionManager (group loading failures)', ()
     await waitFor(() => {
       expect(screen.getByText(/Failed to load groups/i)).toBeTruthy()
     })
+
+    // The underlying cause is still reported to the console for diagnosis.
+    expect(consoleSpy.all().error.join('\n')).toContain('Failed to read groups.json')
+    consoleSpy.restore()
   })
 })
