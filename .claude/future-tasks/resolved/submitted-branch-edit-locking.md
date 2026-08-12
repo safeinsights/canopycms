@@ -23,9 +23,13 @@ optional `status` to `getBranchProtection()`, which introduced a fail-OPEN
 regression caught by adversarial review: the pre-existing guard read
 `status !== 'editing'`, so a runtime-missing status *blocked* the write, whereas
 `status !== undefined && status !== 'editing'` *allowed* it. That state is
-reachable — `branch.json` is parsed with a bare cast and no schema (see
-[[branch-metadata-no-schema-validation]]), and corrupt branch metadata is a
-condition this codebase already handles. The fix makes `status` a **required**
+reachable — `branch.json` is parsed with a bare
+`JSON.parse(...) as BranchMetadataFile` and there is no schema for branch
+metadata anywhere, so a hand-repaired or partially-written file yields no status
+at runtime; corrupt branch metadata is a condition this codebase already handles
+(the quarantine covers unparseable JSON, not JSON that parses but is
+structurally wrong). That underlying validation gap is tracked separately by the
+program's consolidation pass. The fix makes `status` a **required**
 parameter of a separate write-oriented predicate, so "the caller didn't ask
 about status" and "the file had no status" stay distinguishable — they want
 opposite answers, and only the second should block.
