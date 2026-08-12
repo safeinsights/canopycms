@@ -561,4 +561,52 @@ describe('BranchSchemaCache', () => {
       expect(result.schema.label).toBe('Root')
     })
   })
+
+  // A reference field scoped to an entry type that does not exist used to
+  // resolve silently and then return zero options at runtime, with nothing
+  // pointing at the misspelling. Validated here, at the same point the schema
+  // is already rejected for having no content, and before anything is cached.
+  describe('reference entryTypes validation', () => {
+    const registryWithReference: Record<string, readonly FieldConfig[]> = {
+      pageSchema: [
+        { name: 'title', type: 'string', label: 'Title' },
+        { name: 'related', type: 'reference', entryTypes: ['pge'] } as FieldConfig,
+      ],
+    }
+
+    it('rejects a schema whose reference field names an unknown entry type', async () => {
+      const registry = new BranchSchemaCache()
+
+      await expect(registry.getSchema(branchRoot, registryWithReference)).rejects.toThrow(
+        /entryType.*"pge"/s,
+      )
+    })
+
+    it('names the field and suggests the closest real entry type', async () => {
+      const registry = new BranchSchemaCache()
+
+      await expect(registry.getSchema(branchRoot, registryWithReference)).rejects.toThrow(
+        /Did you mean "page"\?/,
+      )
+    })
+
+    it('does not persist a cache entry for an invalid schema', async () => {
+      const registry = new BranchSchemaCache()
+
+      await expect(registry.getSchema(branchRoot, registryWithReference)).rejects.toThrow()
+      await expect(fs.stat(cachePath)).rejects.toThrow()
+    })
+
+    it('still resolves when the entryType exists', async () => {
+      const registry = new BranchSchemaCache()
+
+      const result = await registry.getSchema(branchRoot, {
+        pageSchema: [
+          { name: 'title', type: 'string', label: 'Title' },
+          { name: 'related', type: 'reference', entryTypes: ['page'] } as FieldConfig,
+        ],
+      })
+      expect(result.schema.label).toBe('Root')
+    })
+  })
 })

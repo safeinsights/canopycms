@@ -13,7 +13,11 @@ import { clientOperatingStrategy } from '../operating-mode'
 import { isNotFoundError, getErrorMessage, sanitizeErrorMessage } from '../utils/error'
 import { filePathExists } from '../utils/fs'
 import { isNetworkRemoteUrl } from '../utils/git'
-import { sanitizeBranchName, RESERVED_SETTINGS_BRANCH_PREFIX } from '../paths'
+import {
+  sanitizeBranchName,
+  RESERVED_SETTINGS_BRANCH_PREFIX,
+  RESERVED_ROUTE_BRANCH_NAMES,
+} from '../paths'
 import { GitManager } from '../git-manager'
 import { branchNameSchema, branchParamSchema } from './validators'
 
@@ -234,6 +238,24 @@ export const createBranchHandler = async (
         ok: false,
         status: 400,
         error: `Branch names starting with "${RESERVED_SETTINGS_BRANCH_PREFIX}" are reserved for CanopyCMS settings branches`,
+      }
+    }
+
+    // Reject names that collide with a static top-level API route namespace --
+    // the router prefers a literal segment over `:branch`, so such a branch
+    // would be unreachable through its own routes (see
+    // RESERVED_ROUTE_BRANCH_NAMES). Checked on both the raw and sanitized form
+    // for the same reason as the settings-branch guard above: the raw name is
+    // what lands in the `/:branch` URL segment, the sanitized name is what
+    // becomes the actual git ref.
+    if (
+      RESERVED_ROUTE_BRANCH_NAMES.includes(branchName) ||
+      RESERVED_ROUTE_BRANCH_NAMES.includes(sanitizedRequested)
+    ) {
+      return {
+        ok: false,
+        status: 400,
+        error: `Branch name "${branchName}" is reserved: it collides with the /${branchName} API route namespace`,
       }
     }
 

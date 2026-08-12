@@ -48,7 +48,9 @@ const resolveReferencesHandler = async (
   const { ids } = body
 
   const flatSchema = branchContext.flatSchema
-  const store = new ContentStore(branchContext.branchRoot, flatSchema)
+  const store = new ContentStore(branchContext.branchRoot, flatSchema, {
+    contentRootName: ctx.services.config.contentRoot || 'content',
+  })
 
   // Get ID index (automatically loads if needed)
   const idIndex = await store.idIndex()

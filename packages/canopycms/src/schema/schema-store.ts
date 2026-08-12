@@ -200,8 +200,17 @@ export class SchemaStoreBusyError extends Error {
 }
 
 export class SchemaOps {
-  /** Branch root — the parent of contentRoot. Resolved once so the lock path is stable. */
+  /** Branch root. Resolved once so the lock path is stable. */
   private readonly branchRoot: string
+  /**
+   * The content root's path relative to `branchRoot` — "content" normally, but
+   * "cms/content" for a multi-segment `config.contentRoot`. `flattenSchema` uses
+   * the configured contentRoot as the base of every logical path, so
+   * root-collection detection must compare against this, NOT
+   * `path.basename(contentRoot)` (which would yield "content" for "cms/content"
+   * and never match the root collection's logical path).
+   */
+  private readonly contentRootName: string
   /** Coarse per-branch surrogate lock path — see the module doc comment. */
   private readonly schemaLockPath: string
 
@@ -209,8 +218,21 @@ export class SchemaOps {
     private readonly contentRoot: string,
     private readonly entrySchemaRegistry: EntrySchemaRegistry,
     private readonly services?: CanopyServices,
+    branchRoot?: string,
   ) {
-    this.branchRoot = path.dirname(path.resolve(contentRoot))
+    // Prefer an explicitly supplied branchRoot. Deriving it as dirname(contentRoot)
+    // is only correct when config.contentRoot is a single segment, and
+    // `contentRoot: 'content/posts'` is documented as valid (config/helpers.ts) —
+    // for that, dirname() lands one level too deep and would put the schema lock
+    // and .canopy-meta in the wrong directory. Callers that know the branch root
+    // (api/schema.ts, api/entries.ts) pass it; the fallback keeps the derivation
+    // identical to before for callers that don't.
+    const resolvedContentRoot = path.resolve(contentRoot)
+    this.branchRoot = branchRoot ? path.resolve(branchRoot) : path.dirname(resolvedContentRoot)
+    this.contentRootName = path
+      .relative(this.branchRoot, resolvedContentRoot)
+      .split(path.sep)
+      .join('/')
     this.schemaLockPath = path.join(this.branchRoot, '.canopy-meta', 'schema')
   }
 
@@ -308,7 +330,7 @@ export class SchemaOps {
       await this.services.branchSchemaCache.resolveAndPersist(
         this.branchRoot,
         this.entrySchemaRegistry,
-        path.basename(this.contentRoot),
+        this.contentRootName,
       )
     } catch (err) {
       log.warn('schema-cache', `Eager schema re-resolve after invalidation failed`, {
@@ -616,9 +638,9 @@ export class SchemaOps {
     collectionPath: LogicalPath,
     updates: UpdateCollectionInput,
   ): Promise<void> {
-    // Check if this is the root collection (path equals contentRoot basename, e.g., "content")
-    const contentRootName = path.basename(this.contentRoot)
-    if (collectionPath === contentRootName) {
+    // Check if this is the root collection (path equals the configured content
+    // root, e.g. "content" or "cms/content")
+    if (collectionPath === this.contentRootName) {
       // Update root collection meta
       let meta = await this.readRootCollectionMeta()
       if (!meta) {
@@ -637,8 +659,8 @@ export class SchemaOps {
 
     // Strip contentRoot prefix to get relative path for regular collection
     // E.g., "content/posts" -> "posts"
-    const relativePath = collectionPath.startsWith(`${contentRootName}/`)
-      ? collectionPath.slice(contentRootName.length + 1)
+    const relativePath = collectionPath.startsWith(`${this.contentRootName}/`)
+      ? collectionPath.slice(this.contentRootName.length + 1)
       : collectionPath
 
     // Resolve path for regular collection
@@ -1042,9 +1064,9 @@ export class SchemaOps {
   }
 
   private async updateOrderInner(collectionPath: LogicalPath, order: string[]): Promise<void> {
-    // Check if this is the root collection (path equals contentRoot basename, e.g., "content")
-    const contentRootName = path.basename(this.contentRoot)
-    if (collectionPath === contentRootName) {
+    // Check if this is the root collection (path equals the configured content
+    // root, e.g. "content" or "cms/content")
+    if (collectionPath === this.contentRootName) {
       // Update root collection meta
       let meta = await this.readRootCollectionMeta()
       if (!meta) {
