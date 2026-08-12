@@ -119,11 +119,44 @@ into the typecheck script, and added `'worker/**/*.ts'` to the lint glob. Both
 pass clean today with no source changes — the code was fine, it simply had
 nothing checking it.
 
-One caveat worth knowing: `pnpm -r run test` bails on first failure, so a flake
-in `canopycms` (see [[markdownfield-mdxeditor-mount-flake]], which reproduced
-twice during this work) now prevents the later packages' tests from running at
-all. Not a regression — they ran zero times before — but it does mean that flake
-is now worth fixing on its own merits, since it can mask the CDK gate.
+**Failures are reported per package (`--no-bail`).** `pnpm -r run test` stops at
+the first failing package, and pnpm runs topologically with `canopycms` first —
+so a flake there (see [[markdownfield-mdxeditor-mount-flake]], which reproduced
+twice during this work) would have masked the very deploy-template assertions
+this change exists to enforce. The root `test` script now passes `--no-bail`.
+Verified by planting a deliberately failing test in `canopycms`: without the
+flag only `packages/canopycms` ran; with it every package ran, the CDK suite
+still reported 82/82, and the overall exit code was still 1. So it does not
+weaken the gate — it stops one package's failure from hiding another's.
+
+**Deploy guard: `pnpm test` leaves a non-deployable Lambda bundle on disk.**
+Caught in review, and it is a footgun this work introduced rather than found.
+`canopycms-cdk`'s `test` runs `build:test-fixtures`, which `rmSync`s
+`lambda/asset-transform/dist` and rebuilds it WITHOUT sharp. `canary/bin/canary.ts`
+imports `AssetSupport` from `../../src/index`, so an in-repo `cdk synth`/`deploy`
+resolves `Code.fromAsset()` against that same directory: run the tests, then
+deploy, and the transform Lambda ships with no sharp binary and throws at cold
+start on the first image request. Before this change the on-disk artifact was
+always deployable, because running the CDK suite required the full `build:lambda`.
+
+The `.skip-native` marker was the right primitive but nothing consumed it.
+`canary/bin/canary.ts` now throws if the marker is present, naming the likely
+cause (`pnpm test`) and the fix (`build:lambda` with no flags). The guard is at
+the DEPLOY ENTRYPOINT and deliberately not inside `AssetSupport` — the CDK tests
+synth that construct against precisely this skip-native `dist/`, so a
+construct-level check would break the suite this whole change exists to gate.
+Verified all three states: marker present → synth refuses with the actionable
+message; real `build:lambda` → marker gone → synth exits 0; CDK suite → still
+82/82 with the guard in place.
+
+Note the original doc comment warned "never pass `--skip-native` on a path that
+leads to a deploy", which addressed the wrong actor: the risk is not someone
+passing the flag, it is that `pnpm test` passes it for them and leaves the
+artifact behind.
+
+Minor accepted tradeoff: `pnpm --filter canopycms-cdk test` now always rebuilds
+fixtures (~3s) even when `dist/` is current. Worth it to kill the
+`CannotFindAsset` papercut on a fresh clone.
 
 ## Related
 
