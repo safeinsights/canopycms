@@ -953,6 +953,12 @@ Enforcement is layered:
 
 **Withdraw is deliberately not blocked** on protected branches: it is the self-serve recovery path for a base branch wrongly stuck in `submitted` (the pre-protection failure mode), and the workflow-authorization change above restricts it to privileged users there.
 
+### Reserved Branch Names
+
+The API serves branch-specific routes (`/:branch/...`) and a handful of static top-level routes (admin, assets, branches, groups, permissions, users, whoami) from the same route table, and a static segment always wins over the dynamic `:branch` parameter. A branch literally named e.g. `admin` would therefore have its own routes shadowed by the static `/admin` namespace — not cleanly rejected, just confusingly half-alive: the branch's bare top-level route still resolves, while every nested route on it 404s or 403s unpredictably.
+
+Branch creation rejects any name that collides with a static top-level route namespace (checked against both the requested name and its sanitized, git-ref-safe form; matching is exact and case-sensitive, so `Admin` and `admin-docs` stay creatable). This is enforced only on the creation path, deliberately not as a general branch-name validation rule: a blanket rule would also reject an already-existing branch with a colliding name on every one of its own routes, including its delete route, making it permanently un-removable. This is a separate reservation from the settings-branch namespace (`canopycms-settings-{deploymentName}`, see [Sharing one repository across two deployments](#lambda--efs--ec2-worker-aws-cost-optimized)) — one protects the route table, the other protects a specific deployment's settings from collision.
+
 ## Operating Modes
 
 CanopyCMS supports two operating modes to fit different environments. The mode is configured in `canopycms.config.ts` via a required `mode` field with no default. Omitting it fails Zod validation loudly at startup, rather than silently falling back to a mode — a prod deployment that forgot to set `mode` would otherwise run with dev's header-trusting auth semantics, trusting whatever identity a caller claims in a request header. After validation, `config.mode` is always defined and can be used throughout the codebase without fallback checks.
@@ -1690,6 +1696,8 @@ Reference fields are schema fields that can reference other entries by their con
 - **Entry type scope** (`entryTypes`): Limits references to entries of specific entry types by name (e.g., only "partner" entries), regardless of which collection they live in. This is useful when the same entry type appears in multiple collections or subcollections and you want to reference all instances.
 
 These two scoping mechanisms can be combined. When both are specified, collection scope narrows the search space first, then entry type filtering is applied within those results. When only `entryTypes` is specified (no collection scope), the system searches all entries across the entire content store via the ID index.
+
+**Entry-type scope validation**: The entry type names listed in a reference field's `entryTypes` scope are checked against the entry types actually declared in the branch's schema — a misspelled or nonexistent name fails schema resolution outright, with a "did you mean" suggestion, rather than silently resolving to an empty reference picker. This check cannot happen when field schemas are first registered: entry types are declared per-branch, in on-disk collection metadata, so the valid set doesn't exist until a branch's schema has actually been resolved. It runs as part of that resolution step, before the resolved schema is cached, so a bad scope fails consistently on every load of that branch rather than only when the cache happens to be cold.
 
 References can:
 
