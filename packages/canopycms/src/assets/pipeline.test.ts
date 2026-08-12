@@ -19,7 +19,11 @@ import { describe, expect, it } from 'vitest'
 
 import { mockConsole } from '../test-utils/console-spy'
 import { runFinalizePipeline, ALLOWED_UPLOAD_CONTENT_TYPES } from './pipeline'
-import { MAX_INPUT_PIXELS } from './transform-directives'
+import { applyTransform } from './transform'
+import { MAX_INPUT_PIXELS, type TransformDirectives } from './transform-directives'
+
+/** Cheapest transform that still forces a full decode - used to prove a fixture really is undecodable. */
+const IDENTITY_TRANSFORM: TransformDirectives = { identity: true }
 
 async function makePng(
   width: number,
@@ -83,6 +87,68 @@ async function makeCorruptPng(width: number, height: number): Promise<Uint8Array
   const end = Math.min(64, corrupted.length)
   for (let i = start; i < end; i++) {
     corrupted[i] = 0
+  }
+  return new Uint8Array(corrupted)
+}
+
+const ANIMATED_SIZE = 32
+
+/**
+ * Frames for a real animated GIF. Deliberately NOISY (a per-pixel gradient
+ * that differs per frame) rather than solid-color: a solid frame compresses
+ * to almost nothing, and consecutive identical frames risk being merged by
+ * the GIF encoder, which would leave no later-frame LZW payload to corrupt -
+ * the exact thing the animated tests below need to damage.
+ */
+async function animatedFrames(count: number): Promise<Buffer[]> {
+  const frames: Buffer[] = []
+  for (let i = 0; i < count; i++) {
+    const px = Buffer.alloc(ANIMATED_SIZE * ANIMATED_SIZE * 3)
+    for (let p = 0; p < ANIMATED_SIZE * ANIMATED_SIZE; p++) {
+      px[p * 3] = (p * 7 + i * 53) % 256
+      px[p * 3 + 1] = (p * 13 + i * 91) % 256
+      px[p * 3 + 2] = (p * 29 + i * 17) % 256
+    }
+    frames.push(
+      await sharp(px, { raw: { width: ANIMATED_SIZE, height: ANIMATED_SIZE, channels: 3 } })
+        .png()
+        .toBuffer(),
+    )
+  }
+  return frames
+}
+
+/** A genuinely decodable multi-frame animated GIF, built the same way transform.test.ts builds its animated fixtures. */
+async function makeAnimatedGif(frameCount: number): Promise<Uint8Array> {
+  const buf = await sharp(await animatedFrames(frameCount), { join: { animated: true } })
+    .gif()
+    .toBuffer()
+  return new Uint8Array(buf)
+}
+
+/**
+ * An animated GIF whose FRAME 0 decodes cleanly but whose later frames do
+ * not - the animated analogue of `makeCorruptPng` above, and the fixture for
+ * the decoder-parity defect: finalize used to decode only frame 0 (sharp's
+ * `pages` default of 1) while the transform engine decodes
+ * `min(totalPages, MAX_ANIMATED_FRAMES)`, so this file passed upload and then
+ * threw `gifload_buffer: Invalid frame data` at render time.
+ *
+ * The damaged run starts 60% into the file, past frame 0's LZW data (swept
+ * empirically across offsets/lengths - this one sits in the middle of a wide
+ * band that reproduces). Nothing here is load-bearing on that exact number,
+ * though: the test using this fixture ALSO asserts `applyTransform` rejects
+ * it, so if a future sharp/cgif encoder ever shifted the layout enough that
+ * these bytes stopped mattering, the test would fail loudly rather than
+ * silently passing against a fixture that is no longer corrupt.
+ */
+async function makeCorruptAnimatedGif(frameCount: number): Promise<Uint8Array> {
+  const valid = Buffer.from(await makeAnimatedGif(frameCount))
+  const corrupted = Buffer.from(valid)
+  const start = Math.floor(corrupted.length * 0.6)
+  const end = Math.min(start + 64, corrupted.length - 1)
+  for (let i = start; i < end; i++) {
+    corrupted[i] ^= 0xff
   }
   return new Uint8Array(corrupted)
 }
@@ -212,6 +278,56 @@ describe('runFinalizePipeline - raster formats', () => {
       // sibling tests (and take the stderr guard down with it).
       consoleSpy.restore()
     }
+  })
+
+  it('rejects an animated GIF whose LATER frames are corrupt (422), even though frame 0 decodes cleanly', async () => {
+    const consoleSpy = mockConsole()
+    try {
+      const corrupt = await makeCorruptAnimatedGif(5)
+
+      // Self-validating fixture: prove the bytes really are undecodable to the
+      // engine that ultimately renders them, so this test can never pass
+      // vacuously against a fixture that stopped being corrupt. This assertion
+      // IS the defect - the transform engine rejecting what finalize accepted
+      // is precisely the "uploads fine, renders broken" state - so pinning both
+      // halves in one test is what keeps the two decoders in agreement.
+      const transformed = await applyTransform({ data: corrupt, ext: 'gif' }, IDENTITY_TRANSFORM)
+      expect(transformed.ok).toBe(false)
+      if (!transformed.ok) expect(transformed.status).toBe(422)
+
+      const result = await runFinalizePipeline({ data: corrupt, filename: 'animated.gif' })
+      expect(result.ok).toBe(false)
+      if (result.ok) return
+      expect(result.status).toBe(422)
+      expect(result.error).toMatch(/could not be decoded/i)
+      expect(result.error).not.toMatch(/vips|gifload/i)
+    } finally {
+      consoleSpy.restore()
+    }
+  })
+
+  it('still accepts a VALID animated GIF - decoding every frame must not over-reject', async () => {
+    const gif = await makeAnimatedGif(5)
+    const result = await runFinalizePipeline({ data: gif, filename: 'valid-animated.gif' })
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.meta.kind).toBe('raster')
+    expect(result.meta.mime).toBe('image/gif')
+    // image-size reports a single frame's dimensions, not the stacked strip.
+    expect(result.meta.width).toBe(ANIMATED_SIZE)
+    expect(result.meta.height).toBe(ANIMATED_SIZE)
+  })
+
+  it('accepts a valid animation with MORE frames than the cap - it is capped, not rejected', async () => {
+    // 65 > MAX_ANIMATED_FRAMES (60). sharp's `pages` is a fixed request rather
+    // than an upper bound, so a naive "read every frame" or an uncapped
+    // passthrough would either blow the decompression-bomb budget or throw
+    // "bad page number"; the Math.min in rasterIsDecodable is what makes this
+    // land as a normal acceptance.
+    const gif = await makeAnimatedGif(65)
+    expect((await sharp(gif).metadata()).pages).toBe(65) // sanity: really 65 pages
+    const result = await runFinalizePipeline({ data: gif, filename: 'long-animated.gif' })
+    expect(result.ok).toBe(true)
   })
 
   it('rejects a raster whose declared dimensions exceed the pixel-count cap (413), a decompression-bomb defense', async () => {

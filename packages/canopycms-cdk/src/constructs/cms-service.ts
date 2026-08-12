@@ -636,7 +636,22 @@ export class CanopyCmsService extends Construct {
       '          {',
       '            "file_path": "/var/log/canopy-worker/worker.log",',
       `            "log_group_name": "${this.workerLogGroup.logGroupName}",`,
-      '            "log_stream_name": "{instance_id}"',
+      '            "log_stream_name": "{instance_id}",',
+      // The worker prefixes every line with an ISO-8601 timestamp
+      // (packages/canopycms/src/worker/log.ts). Parsing it here is what makes
+      // CloudWatch show the time the WORKER emitted a line rather than the
+      // time the agent shipped it - those diverge exactly when it matters
+      // (agent hiccup, buffered burst, post-restart backlog).
+      '            "timestamp_format": "%Y-%m-%dT%H:%M:%S.%f",',
+      // The prefix ends in `Z`, so the parsed time is UTC. Without this the
+      // agent would interpret it in the instance's local zone.
+      '            "timezone": "UTC",',
+      // "{timestamp_format}" reuses the pattern above as the multi-line start
+      // marker: a line WITHOUT the timestamp prefix continues the previous
+      // event instead of becoming its own. That is what keeps a stack trace as
+      // one CloudWatch event, and why every writer to this file must go
+      // through the worker log helpers.
+      '            "multi_line_start_pattern": "{timestamp_format}"',
       '          }',
       '        ]',
       '      }',

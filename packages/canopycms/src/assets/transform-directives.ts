@@ -79,6 +79,26 @@ const WIDTH_STEP = 160
  * source (e.g. a 30000x30000 solid-color PNG).
  */
 export const MAX_INPUT_PIXELS = 4096 * 4096
+
+/**
+ * Cap on decoded animated frames (GIF/WebP) - without this, `{ animated: true }`
+ * (sharp's `pages: -1`) decodes every frame of a maliciously-crafted
+ * many-thousand-frame animation into memory at once, a decompression-bomb
+ * vector distinct from (and not covered by) `limitInputPixels`, which only
+ * bounds a single frame's width x height. 60 frames covers any reasonable
+ * animated asset (2s at 30fps) with headroom.
+ *
+ * Shared here for the same reasons as `MAX_INPUT_PIXELS` above, plus one that
+ * is load-bearing rather than tidy: upload finalize (pipeline.ts's
+ * `rasterIsDecodable`) and the transform engine (transform.ts's
+ * `applyTransform`) must decode the SAME frames, or finalize accepts a file
+ * the transform engine will later refuse - the "uploads fine, renders broken"
+ * defect. Reading one number from one dependency-free module is what makes the
+ * two agree by construction (including on which frames past the cap they both
+ * ignore) rather than by two constants that happen to match today.
+ */
+export const MAX_ANIMATED_FRAMES = 60
+
 // Quality is allowlisted (multiples of 5 in [30, 95] - 14 values) for the
 // same cache-stuffing reason as width: every accepted directive combination
 // becomes a stored cache object in prod, so unbounded q would multiply the

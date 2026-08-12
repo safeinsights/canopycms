@@ -18,7 +18,7 @@ import { create as createContentDisposition } from 'content-disposition'
 import { getErrorMessage } from '../utils/error'
 import { hashBytes, publicKey, slugifyFilename } from './keys'
 import { sanitizeSvg } from './svg-sanitizer'
-import { MAX_INPUT_PIXELS } from './transform-directives'
+import { MAX_ANIMATED_FRAMES, MAX_INPUT_PIXELS } from './transform-directives'
 import type { AssetMeta } from './types'
 
 const RASTER_MIME_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif'])
@@ -184,12 +184,33 @@ const UNDECODABLE_RASTER_ERROR =
  * immediately discarded - decode is the expensive, unavoidable part of this
  * check; encoding an 8x8 buffer is not.
  *
+ * ANIMATION: sharp defaults to `pages: 1`, i.e. frame 0 only. That is not
+ * enough to mirror `applyTransform`, which reads
+ * `min(totalPages, MAX_ANIMATED_FRAMES)` frames - a GIF/WebP whose frame 0 is
+ * clean but whose frame 3 is corrupt passed this check and then threw
+ * `gifload_buffer: Invalid frame data` at transform time, which is the very
+ * "accepted at upload, unrenderable at render" state this function exists to
+ * prevent, just moved from single-frame to animated sources. So the page
+ * count is probed and passed through, with the SAME cap constant transform.ts
+ * uses (both import it from transform-directives.ts) - which also means the
+ * two sides ignore the same frames past the cap, so a many-hundred-frame
+ * source cannot produce a disagreement either.
+ *
+ * The probe is a separate, deliberate step rather than a guess: sharp's
+ * `pages` is a fixed request, not an upper bound, so a value EXCEEDING the
+ * source's real page count makes it throw "bad page number" (transform.ts
+ * documents the same constraint at its own call site). A metadata-only probe
+ * costs effectively nothing - it is a header read, not a decode.
+ *
  * `limitInputPixels: MAX_INPUT_PIXELS` reuses transform.ts's own
  * decompression-bomb cap (imported above, not redefined) so this validation
  * step cannot itself become a bomb vector on a header that lied about its
  * dimensions - in practice the pixel-count check in the caller below already
  * rejects those before this function is ever reached, but the cap is cheap
- * insurance against relying on that ordering.
+ * insurance against relying on that ordering. Note the caller's check reads
+ * single-frame dimensions from `image-size`, so for animated sources it is
+ * `limitInputPixels` here (which sees the full multi-page strip) that bounds
+ * total decoded pixels - exactly as it does in transform.ts.
  *
  * Fails OPEN vs. fails CLOSED, deliberately different failure modes:
  * - sharp itself cannot be loaded (native binary missing for this
@@ -200,7 +221,10 @@ const UNDECODABLE_RASTER_ERROR =
  *   upload because of a deployment issue.
  * - sharp loads fine but its decoder REJECTS the bytes - that IS a fact
  *   about this specific file, and an actionable one. Return false so the
- *   caller rejects the upload.
+ *   caller rejects the upload. A throw from the page-count probe counts as
+ *   this case, not the one above: the module loaded, so an unreadable header
+ *   is again a fact about the file, and `applyTransform` would reject the
+ *   same bytes from its own probe with the same 422.
  */
 async function rasterIsDecodable(data: Uint8Array): Promise<boolean> {
   // Typed as the whole module (not just its callable default export) and
@@ -219,8 +243,13 @@ async function rasterIsDecodable(data: Uint8Array): Promise<boolean> {
   }
 
   try {
-    await sharpModule
+    const probeMeta = await sharpModule
       .default(data, { limitInputPixels: MAX_INPUT_PIXELS })
+      .metadata()
+    const pagesToRead = Math.min(probeMeta.pages ?? 1, MAX_ANIMATED_FRAMES)
+
+    await sharpModule
+      .default(data, { pages: pagesToRead, limitInputPixels: MAX_INPUT_PIXELS })
       .resize({ width: DECODE_CHECK_SIZE, height: DECODE_CHECK_SIZE, fit: 'fill' })
       .toBuffer()
     return true

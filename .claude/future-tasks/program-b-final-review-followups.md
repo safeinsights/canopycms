@@ -41,7 +41,7 @@ push the rebased branch into `remote.git` so the divergence never arises.
 
 ---
 
-## HIGH — finalize's decode validation only checks frame 0 of animated GIF/WebP
+## ~~HIGH — finalize's decode validation only checks frame 0 of animated GIF/WebP~~ (RESOLVED 2026-08-12)
 
 `assets/pipeline.ts` calls sharp without `animated`/`pages`, so it decodes page
 0 only, while `assets/transform.ts` — the decoder its own comment says it
@@ -54,6 +54,38 @@ on first transform — precisely the state the feature exists to prevent.
 **Fix direction:** probe the page count and pass
 `{ pages: Math.min(totalPages, MAX_ANIMATED_FRAMES) }`; export the frame cap so
 both call sites stay in step.
+
+**RESOLVED** (2026-08-12, `fix/asset-decoder-mismatch`) — fixed as directed, and
+the finding reproduced first: a 5-frame GIF corrupted at 8 offsets inside the
+later frames showed 3/8 accepted by finalize but rejected by transform with
+`gifload_buffer: Invalid frame data`; after the fix, 0/8 (the two halves now
+return the same verdict at every offset).
+
+`MAX_ANIMATED_FRAMES` moved from module-private in `transform.ts` to an export
+in `transform-directives.ts`, which is where `MAX_INPUT_PIXELS` already lives
+for the same reason — and it had to be that module, not `transform.ts`:
+`transform.ts` imports sharp *statically*, while `pipeline.ts` imports it
+*dynamically inside a try/catch* so finalize still works when the native binary
+is missing. Importing the constant from `transform.ts` would have dragged a
+static sharp import into `pipeline.ts` and defeated that fail-open path.
+`transform-directives.ts` is dependency-free by design, so both sides now read
+one number and agree by construction — including on which frames past the cap
+they both ignore.
+
+`rasterIsDecodable` now probes metadata for the page count, then decodes
+`min(totalPages, MAX_ANIMATED_FRAMES)`. The probe is required rather than
+incidental: sharp's `pages` is a fixed request, not an upper bound, so
+overshooting throws "bad page number". Fail-open/fail-closed semantics are
+unchanged (load failure = open, byte rejection = closed 422); a probe throw
+counts as a byte rejection, matching what `applyTransform` does with the same
+bytes.
+
+Regression tests in `pipeline.test.ts` use a **self-validating** fixture: the
+corrupt-animated-GIF test also asserts `applyTransform` rejects the same bytes,
+so it can never pass vacuously if a future encoder change makes the fixture
+decodable again. Verified the test fails without the fix. Two over-rejection
+guards accompany it (a valid animated GIF, and a valid 65-frame animation that
+must be capped rather than rejected).
 
 ---
 

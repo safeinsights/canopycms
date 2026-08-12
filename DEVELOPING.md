@@ -2825,6 +2825,20 @@ The `CmsWorker` class handles internet-requiring operations that Lambda cannot p
 
 The worker lives in the core `canopycms` package, not in `canopycms-cdk`, because it has no cloud dependencies.
 
+### Worker Logging: Never Call `console.*` Directly
+
+Code under `packages/canopycms/src/worker/**` and `packages/canopycms-cdk/worker/**` must log via `workerLog` / `workerLogWarn` / `workerLogError` from `src/worker/log.ts` (re-exported from `canopycms/worker/cms-worker`, so no new package entrypoint is needed) -- never call `console.log`/`console.warn`/`console.error` directly. Elsewhere in the codebase, normal console/`mockConsole()` conventions apply unchanged; see [Expecting Console Messages](#expecting-console-messages).
+
+```typescript
+import { workerLog, workerLogWarn, workerLogError } from './log'
+
+workerLog('CMS Worker started') // -> 2026-08-12T21:39:45.214Z INFO CMS Worker started
+```
+
+**Why it's not optional:** in production, the worker's stdout _and_ stderr both append to one file (`/var/log/canopy-worker/worker.log` on the EC2 instance), tailed by the amazon-cloudwatch-agent. The agent config (written by user-data in `packages/canopycms-cdk/src/constructs/cms-service.ts`) sets `multi_line_start_pattern` keyed on the helpers' ISO-8601 timestamp prefix, so a line missing that prefix doesn't start a new CloudWatch event -- it silently gets appended to the previous one, corrupting event boundaries rather than just looking inconsistent. The level tag (`INFO`/`WARN`/`ERROR`) is also load-bearing: it's the only way to tell the two interleaved streams apart downstream. A stray `console.log` in worker code breaks log shipping without erroring locally.
+
+The helpers pass the timestamp and level as separate `console` arguments rather than concatenating them into the message, so passing an `Error` still prints its stack normally.
+
 ### Task Queue (canopycms/worker/task-queue)
 
 File-based task queue for async GitHub operations:
