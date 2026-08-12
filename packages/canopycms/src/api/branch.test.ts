@@ -578,6 +578,28 @@ describe('branch api', () => {
     expect(byName('feature/submitted')?.isProtected).toBe(false)
   })
 
+  it('emits writeBlocked for a branch whose status is missing (UI locks with the server)', async () => {
+    // Same fail-closed contract the writableBranch guard has: if the wire flag
+    // said "writable" here while the guard refused, the editor would offer a
+    // Save that 403s.
+    const damaged = createMockBranchContext({ branchName: 'feature/damaged', createdBy: 'u1' })
+    delete (damaged.branch as { status?: unknown }).status
+
+    const ctx = createMockApiContext({
+      branchContext: createMockBranchContext({ branchName: 'main', createdBy: 'system' }),
+      services: {
+        registry: createMockRegistry([damaged]) as any,
+        config: { defaultBaseBranch: 'main', mode: 'prod' } as any,
+      },
+    })
+
+    const res = await listBranches(ctx, {
+      user: { type: 'authenticated', userId: 'admin', groups: [RESERVED_GROUPS.ADMINS] },
+    })
+
+    expect(res.data?.branches.find((b) => b.name === 'feature/damaged')?.writeBlocked).toBe(true)
+  })
+
   it('emits flags on the filtered (non-privileged) listing path too', async () => {
     const registry = createMockRegistry([
       createMockBranchContext({

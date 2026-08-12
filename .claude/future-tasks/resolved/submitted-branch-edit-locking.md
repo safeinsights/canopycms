@@ -10,13 +10,25 @@ rejects any status other than `'editing'`, covering `content.write`,
 editor gained a status-locked banner with Save disabled; e2e `B6/B7` in
 `branch-state-badges.spec.ts` covers banner + 403 + withdraw-restores-editing.
 
-This PR finished the remaining wire-flag half. `getBranchProtection()` took an
-optional `status` argument and now returns `writeBlocked`
+This PR finished the remaining wire-flag half. A sibling predicate
+`getBranchWriteProtection()` returns `writeBlocked`
 (`readOnly || status !== 'editing'`), so the "which statuses lock editing" rule
 lives in one place instead of three. `BranchListItem` ships `writeBlocked`, and
 `Editor.tsx` / `EditorHeader.tsx` consume it rather than re-deriving the rule.
 `readOnly` deliberately keeps its narrow base-branch meaning — it is what picks
 which of the two lock banners to show.
+
+**Why two functions rather than one optional argument.** The first cut added an
+optional `status` to `getBranchProtection()`, which introduced a fail-OPEN
+regression caught by adversarial review: the pre-existing guard read
+`status !== 'editing'`, so a runtime-missing status *blocked* the write, whereas
+`status !== undefined && status !== 'editing'` *allowed* it. That state is
+reachable — `branch.json` is parsed with a bare cast and no schema (see
+[[branch-metadata-no-schema-validation]]), and corrupt branch metadata is a
+condition this codebase already handles. The fix makes `status` a **required**
+parameter of a separate write-oriented predicate, so "the caller didn't ask
+about status" and "the file had no status" stay distinguishable — they want
+opposite answers, and only the second should block.
 
 Two things this task listed as gaps turned out not to be: asset endpoints are
 branch-agnostic by design (documented at `api/assets.ts`), and the draft manager

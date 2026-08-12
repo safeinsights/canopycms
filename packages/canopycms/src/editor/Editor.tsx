@@ -59,7 +59,7 @@ import { useBranchActions } from './hooks/useBranchActions'
 import { useEntryLinkResolution } from './hooks/useEntryLinkResolution'
 import { EditorFooter, EditorHeader, EditorSidebar } from './components'
 import { RenameEntryModal } from './components/RenameEntryModal'
-import { EntryCreateModal } from './components/EntryCreateModal'
+import { EntryCreateModal, type EntryType } from './components/EntryCreateModal'
 import { ConfirmDeleteModal } from './components/ConfirmDeleteModal'
 import { CollectionEditor, type ExistingCollection, type ExistingEntryType } from './schema-editor'
 import type { LogicalPath, ContentId } from '../paths/types'
@@ -287,6 +287,24 @@ export const Editor: React.FC<EditorProps> = ({
     setBusy: setEntriesLoading,
     contentRoot,
   })
+
+  // Keep the entry-type list referentially stable for as long as the create
+  // modal is showing the same collection. Building it inline in the JSX handed
+  // EntryCreateModal a new array on every render of this component, which its
+  // form-seeding effect used to treat as a reason to reset the user's input.
+  // That effect no longer keys on the array, but a stable prop is still the
+  // right thing to pass: it also keeps Mantine's Select `data` identity steady.
+  const createModalEntryTypes = useMemo<EntryType[]>(
+    () =>
+      createModalCollection?.entryTypes?.map((et) => ({
+        name: et.name,
+        label: et.label,
+        format: et.format,
+        default: et.default,
+        maxItems: et.maxItems,
+      })) ?? [],
+    [createModalCollection],
+  )
 
   // Use collections from API (falls back to props if not loaded yet)
   const activeCollections = collectionsFromApi.length > 0 ? collectionsFromApi : collections
@@ -1338,15 +1356,7 @@ export const Editor: React.FC<EditorProps> = ({
             <EntryCreateModal
               isOpen={createModalOpen}
               collectionLabel={createModalCollection.label || createModalCollection.name}
-              entryTypes={
-                createModalCollection.entryTypes?.map((et) => ({
-                  name: et.name,
-                  label: et.label,
-                  format: et.format,
-                  default: et.default,
-                  maxItems: et.maxItems,
-                })) || []
-              }
+              entryTypes={createModalEntryTypes}
               onCreate={handleCreateModalSubmit}
               onClose={closeCreateModal}
               isCreating={createModalCreating}
