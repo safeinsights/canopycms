@@ -415,7 +415,7 @@ describe('executeGuards', () => {
       }
     })
 
-    it.each(['approved', 'locked', 'archived'] as const)(
+    it.each(['approved', 'archived'] as const)(
       'blocks a branch with status "%s"',
       async (status) => {
         const bc = createMockBranchContext({ branchName: 'feature/x', status })

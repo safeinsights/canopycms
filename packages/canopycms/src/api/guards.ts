@@ -210,7 +210,10 @@ const runWritableBranchGuard: GuardRunner = async (ctx, _req, params, accumulate
     ctx.services.config,
     context.branch.name,
     context.branch.baseBranch,
+    context.branch.status,
   )
+  // readOnly first: the base branch is protected for a different reason than a
+  // status lock, and its message points at branch creation rather than withdraw.
   if (protection.readOnly) {
     return {
       ok: false,
@@ -222,7 +225,7 @@ const runWritableBranchGuard: GuardRunner = async (ctx, _req, params, accumulate
     }
   }
 
-  if (context.branch.status !== 'editing') {
+  if (protection.writeBlocked) {
     const error =
       context.branch.status === 'submitted'
         ? `Branch "${context.branch.name}" is submitted for review and cannot be edited. Withdraw it or request changes to resume editing.`

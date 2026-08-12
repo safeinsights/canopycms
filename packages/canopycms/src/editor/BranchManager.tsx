@@ -133,7 +133,6 @@ export const getBranchPermissions = (
 const statusColorMap: Record<string, { color: string; variant?: 'light' | 'filled' }> = {
   editing: { color: 'brand', variant: 'light' },
   submitted: { color: 'green', variant: 'light' },
-  locked: { color: 'yellow', variant: 'light' },
 }
 
 export interface BranchManagerProps {

@@ -123,7 +123,6 @@ const branchStatusColorMap: Record<string, string> = {
   editing: 'brand',
   submitted: 'green',
   approved: 'teal',
-  locked: 'yellow',
 }
 
 const TASK_STATUS_OPTIONS: { label: string; value: AdminTaskStatus }[] = [
@@ -606,12 +605,12 @@ function BranchHealthRow({
 }) {
   if (entry.kind === 'healthy' && entry.branch) {
     const b = entry.branch
-    // [LOW-3] The worker rebases every non-terminal branch, including
-    // 'locked' ones (only 'submitted'/'approved' -- under an active PR --
-    // and 'archived' -- already merged -- are excluded, see
-    // rebaseActiveBranches' skip logic in worker/cms-worker.ts). Gating on
-    // `status === 'editing'` hid rebase failures on locked branches even
-    // though the worker was still failing to rebase them every cycle.
+    // [LOW-3] Mirror rebaseActiveBranches' skip logic (worker/cms-worker.ts):
+    // the worker rebases every branch except 'submitted'/'approved' (under an
+    // active PR) and 'archived' (already merged). Stated as an exclusion list
+    // rather than `status === 'editing'` so that a status added later shows its
+    // rebase failures by default instead of silently hiding them -- the bug
+    // this replaced.
     const showRebaseFailure =
       !['submitted', 'approved', 'archived'].includes(b.status) && !!b.rebaseFailure
     const canMarkMerged =

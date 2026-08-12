@@ -1,5 +1,27 @@
 # Submitted branches remain fully editable — 'locked' status is never enforced
 
+## RESOLVED (2026-08-12)
+
+Landed in two parts.
+
+The enforcement half landed first, in `3f74e7fc`: the `writableBranch` guard
+rejects any status other than `'editing'`, covering `content.write`,
+`content.renameEntry`, `entries.delete` and all seven `schema.*` mutations; the
+editor gained a status-locked banner with Save disabled; e2e `B6/B7` in
+`branch-state-badges.spec.ts` covers banner + 403 + withdraw-restores-editing.
+
+This PR finished the remaining wire-flag half. `getBranchProtection()` took an
+optional `status` argument and now returns `writeBlocked`
+(`readOnly || status !== 'editing'`), so the "which statuses lock editing" rule
+lives in one place instead of three. `BranchListItem` ships `writeBlocked`, and
+`Editor.tsx` / `EditorHeader.tsx` consume it rather than re-deriving the rule.
+`readOnly` deliberately keeps its narrow base-branch meaning — it is what picks
+which of the two lock banners to show.
+
+Two things this task listed as gaps turned out not to be: asset endpoints are
+branch-agnostic by design (documented at `api/assets.ts`), and the draft manager
+is `localStorage`-only with no server write path.
+
 ## Priority: P2
 
 Surfaced during exploration for the protected-base-branch work (2026-07-24). The

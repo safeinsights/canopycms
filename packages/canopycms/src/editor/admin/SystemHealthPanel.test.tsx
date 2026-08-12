@@ -232,18 +232,19 @@ describe('SystemHealthPanel', () => {
         },
       },
     }
-    const lockedWithRebaseFailure: BranchHealthEntry = {
+    const archivedWithStaleRebaseFailure: BranchHealthEntry = {
       dirName: 'feature-c',
       kind: 'healthy',
       branch: {
         name: 'feature-c',
-        status: 'locked',
+        status: 'archived',
         access: {},
         createdBy: 'user-1',
         createdAt: '2026-01-01T00:00:00.000Z',
         updatedAt: '2026-01-02T00:00:00.000Z',
-        // [LOW-3] The worker still rebases locked branches, so a locked
-        // branch failing to rebase must surface the icon just like editing.
+        // [LOW-3] 'archived' is in rebaseActiveBranches' skip list alongside
+        // 'submitted'/'approved', so the worker never rebases it and a leftover
+        // failure record must stay suppressed.
         rebaseFailure: {
           message: 'merge conflict',
           firstAt: '2026-01-01T00:00:00.000Z',
@@ -294,7 +295,7 @@ describe('SystemHealthPanel', () => {
           entries: [
             editingWithRebaseFailure,
             submittedWithStaleRebaseFailure,
-            lockedWithRebaseFailure,
+            archivedWithStaleRebaseFailure,
             corruptEntry,
             corruptWithFreshLock,
             baseBranchCorrupt,
@@ -337,14 +338,14 @@ describe('SystemHealthPanel', () => {
       )
     })
 
-    it('shows the rebaseFailure icon for editing and locked branches, suppresses it for submitted (LOW-3)', async () => {
+    it('shows the rebaseFailure icon for rebased branches, suppresses it for skip-listed ones (LOW-3)', async () => {
       renderPanel()
       await userEvent.click(screen.getByText('Branches'))
       await waitFor(() => expect(screen.getByText('feature-a')).toBeTruthy())
 
-      expect(screen.getByTestId('rebase-failure-feature-a')).toBeTruthy() // editing
-      expect(screen.getByTestId('rebase-failure-feature-c')).toBeTruthy() // locked
-      expect(screen.queryByTestId('rebase-failure-feature-b')).toBeNull() // submitted
+      expect(screen.getByTestId('rebase-failure-feature-a')).toBeTruthy() // editing: rebased
+      expect(screen.queryByTestId('rebase-failure-feature-b')).toBeNull() // submitted: skipped
+      expect(screen.queryByTestId('rebase-failure-feature-c')).toBeNull() // archived: skipped
     })
 
     it('shows the recorded syncFailureReason in the sync-failed tooltip', async () => {

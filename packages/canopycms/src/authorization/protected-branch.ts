@@ -10,6 +10,7 @@
  */
 
 import type { CanopyConfig } from '../config'
+import type { BranchStatus } from '../types'
 // branch-name, NOT branch: this module is client-reachable (editor bundle →
 // api/guards.ts → here), and paths/branch.ts drags node:fs into the graph,
 // which breaks adopters' production `next build`.
@@ -22,6 +23,16 @@ export interface BranchProtection {
   submitBlocked: boolean
   /** True when the branch is read-only in the editor (prod only). */
   readOnly: boolean
+  /**
+   * True when content writes must be rejected, for EITHER reason: the branch is
+   * the read-only protected base branch, OR its workflow status has moved past
+   * `'editing'` (submitted for review, approved, archived) and it is locked
+   * while a reviewer looks at its PR.
+   *
+   * Only meaningful when `status` was passed to {@link getBranchProtection};
+   * callers that omit it get `writeBlocked === readOnly`.
+   */
+  writeBlocked: boolean
 }
 
 /**
@@ -41,20 +52,30 @@ export interface BranchProtection {
  * base workspace was actually forked from. The clause is purely additive: it
  * only ever adds protection the config clause didn't already grant, so a
  * normal editing branch (`baseBranch !== name`) is never falsely protected.
+ *
+ * `status` (the branch's own workflow status) drives the `writeBlocked` clause
+ * only. Pass it wherever a content write is being authorized or a lock is being
+ * rendered, so the "which statuses lock editing" rule lives here and nowhere
+ * else. Omitting it is safe -- `writeBlocked` then just mirrors `readOnly` --
+ * and is correct for callers that only care about base-branch protection
+ * (submit/delete/ACL rails).
  */
 export function getBranchProtection(
   config: Pick<CanopyConfig, 'mode' | 'defaultBaseBranch'>,
   branchName: string,
   recordedBaseBranch?: string,
+  status?: BranchStatus,
 ): BranchProtection {
   const sanitizedName = sanitizeBranchName(branchName)
   const isProtected =
     sanitizedName === sanitizeBranchName(config.defaultBaseBranch ?? 'main') ||
     (recordedBaseBranch !== undefined && sanitizedName === sanitizeBranchName(recordedBaseBranch))
+  const readOnly = isProtected && config.mode === 'prod'
 
   return {
     isProtected,
     submitBlocked: isProtected,
-    readOnly: isProtected && config.mode === 'prod',
+    readOnly,
+    writeBlocked: readOnly || (status !== undefined && status !== 'editing'),
   }
 }

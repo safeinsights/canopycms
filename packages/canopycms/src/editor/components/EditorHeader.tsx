@@ -176,6 +176,13 @@ export interface EditorHeaderProps {
    * Disables Save and shows the "create a branch" banner below. Default false.
    */
   branchReadOnly?: boolean
+
+  /**
+   * Server-computed: content writes are rejected on this branch, for either
+   * reason (base-branch read-only, or a status past 'editing'). Combined with
+   * `branchReadOnly` to pick which of the two banners to show. Default false.
+   */
+  branchWriteBlocked?: boolean
 }
 
 /**
@@ -187,7 +194,6 @@ const getStatusColor = (status: BranchStatus): string => {
     editing: 'brand',
     submitted: 'green',
     approved: 'teal',
-    locked: 'yellow',
     archived: 'gray',
   }
   return statusColorMap[status] ?? 'gray'
@@ -257,14 +263,16 @@ export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(functi
     branchAccess,
     branchIsProtected = false,
     branchReadOnly = false,
+    branchWriteBlocked = false,
   }: EditorHeaderProps,
   ref,
 ) {
-  // The base branch's readOnly flag takes precedence (it's a structural
-  // property, not a workflow state). Otherwise, any non-'editing' status
-  // means content is locked for review — save/add actions must be blocked
-  // client-side too, not just rejected server-side by the writableBranch guard.
-  const statusLocked = !branchReadOnly && branchStatus !== undefined && branchStatus !== 'editing'
+  // `branchWriteBlocked` is the server's own answer (getBranchProtection, the
+  // same call the writableBranch guard makes), so Save can never be enabled for
+  // a write the API would reject. `branchReadOnly` only picks WHICH banner: the
+  // base branch's is a structural property and takes precedence over a workflow
+  // status lock.
+  const statusLocked = branchWriteBlocked && !branchReadOnly
 
   return (
     <Paper

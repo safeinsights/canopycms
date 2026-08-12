@@ -242,13 +242,13 @@ export const Editor: React.FC<EditorProps> = ({
   })
 
   // Content mutations (add/delete/rename/reorder entries) are locked whenever the
-  // branch itself is read-only (the protected base branch) OR its workflow status
-  // has moved past 'editing' (submitted for review, approved, locked, archived) --
-  // mirrors the server's writableBranch guard. Undefined currentBranch (initial
-  // load) is treated as unlocked so the UI doesn't flash a locked state.
-  const branchContentLocked =
-    (currentBranch?.readOnly ?? false) ||
-    (currentBranch !== undefined && currentBranch.status !== 'editing')
+  // server says writes are blocked -- the protected base branch, or a workflow
+  // status past 'editing' (submitted for review, approved, archived). The flag is
+  // computed server-side by the same getBranchProtection() call the writableBranch
+  // guard uses, so the UI can never drift from what the API will accept. Undefined
+  // currentBranch (initial load) reads as unlocked so the UI doesn't flash a
+  // locked state.
+  const branchContentLocked = currentBranch?.writeBlocked ?? false
 
   // 2. Entry manager (depends on branchNameState, owns selectedPath)
   const {
@@ -932,6 +932,7 @@ export const Editor: React.FC<EditorProps> = ({
             branchAccess={currentBranch?.access}
             branchIsProtected={currentBranch?.isProtected}
             branchReadOnly={currentBranch?.readOnly}
+            branchWriteBlocked={currentBranch?.writeBlocked}
             onNavigatorOpen={() => setNavigatorOpen(true)}
             onFileReload={handleReload}
             onFileDiscardDraft={handleDiscardFileDraft}

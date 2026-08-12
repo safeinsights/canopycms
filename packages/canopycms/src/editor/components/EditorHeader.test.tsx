@@ -53,9 +53,13 @@ describe('EditorHeader - review lock', () => {
     cleanup()
   })
 
+  // branchWriteBlocked is the server's own getBranchProtection() answer; the
+  // Editor always passes it alongside branchStatus off the same BranchListItem,
+  // so the two cannot diverge in practice.
   it('disables Save, shows the status-locked banner, and offers Withdraw when submitted', () => {
     renderHeader({
       branchStatus: 'submitted',
+      branchWriteBlocked: true,
       userContext: { userId: 'u1' },
       branchCreatedBy: 'u1',
     })
@@ -67,7 +71,7 @@ describe('EditorHeader - review lock', () => {
   })
 
   it('enables Save and shows no lock banner when editing with unsaved changes', () => {
-    renderHeader({ branchStatus: 'editing', hasUnsavedChanges: true })
+    renderHeader({ branchStatus: 'editing', branchWriteBlocked: false, hasUnsavedChanges: true })
 
     expect(screen.getByTestId('save-button').hasAttribute('disabled')).toBe(false)
     expect(screen.queryByTestId('status-locked-banner')).toBeNull()
@@ -75,11 +79,30 @@ describe('EditorHeader - review lock', () => {
   })
 
   it('shows the protected-branch banner (not the status banner) when branchReadOnly is set', () => {
-    renderHeader({ branchStatus: 'editing', branchReadOnly: true, branchIsProtected: true })
+    // The server sets writeBlocked on a read-only base branch too; readOnly is
+    // what decides which of the two banners wins.
+    renderHeader({
+      branchStatus: 'editing',
+      branchReadOnly: true,
+      branchWriteBlocked: true,
+      branchIsProtected: true,
+    })
 
     expect(screen.getByTestId('protected-branch-banner')).toBeTruthy()
     expect(screen.queryByTestId('status-locked-banner')).toBeNull()
     expect(screen.getByTestId('save-button').hasAttribute('disabled')).toBe(true)
+  })
+
+  it('shows only the protected-branch banner for a submitted base branch', () => {
+    renderHeader({
+      branchStatus: 'submitted',
+      branchReadOnly: true,
+      branchWriteBlocked: true,
+      branchIsProtected: true,
+    })
+
+    expect(screen.getByTestId('protected-branch-banner')).toBeTruthy()
+    expect(screen.queryByTestId('status-locked-banner')).toBeNull()
   })
 })
 
