@@ -3,7 +3,17 @@ import type { ContentId } from './paths/types'
 export type CanopyUserId = string
 export type CanopyGroupId = string
 
-export type BranchStatus = 'editing' | 'submitted' | 'approved' | 'locked' | 'archived'
+/**
+ * Branch workflow state. Anything other than 'editing' locks content writes --
+ * see authorization/protected-branch.ts `writeBlocked`, the single place that
+ * rule is expressed.
+ *
+ * There is deliberately no separate 'locked' state: 'submitted' already means
+ * "locked while a reviewer looks at the PR", and request-changes/withdraw are
+ * the unlocks. A future admin-freeze feature should reintroduce a status only
+ * alongside real semantics (worker rebase skip list, a set/unset endpoint, UI).
+ */
+export type BranchStatus = 'editing' | 'submitted' | 'approved' | 'archived'
 export type SyncStatus = 'synced' | 'pending-sync' | 'sync-failed'
 export type ConflictStatus = 'clean' | 'conflicts-detected'
 export type PullRequestState = 'open' | 'closed' | 'merged'
@@ -12,7 +22,6 @@ export interface BranchAccessControl {
   allowedUsers?: CanopyUserId[]
   allowedGroups?: CanopyGroupId[]
   managerOrAdminAllowed?: boolean
-  adminOnly?: boolean
 }
 
 export interface BranchMetadata {

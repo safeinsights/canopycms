@@ -26,11 +26,18 @@ export type BranchResponse = ApiResponse<{ branch: BranchMetadata }>
  * A listed branch plus server-computed protected-base-branch flags (see
  * authorization/protected-branch.ts). Optional on the wire, matching the
  * `defaultBranch` precedent, so older clients/servers stay compatible; this
- * server always emits both.
+ * server always emits all three.
  */
 export interface BranchListItem extends BranchMetadata {
   isProtected?: boolean
   readOnly?: boolean
+  /**
+   * True when content writes are rejected -- base-branch read-only OR a status
+   * lock (submitted/approved/archived). The editor renders its locked state off
+   * this instead of re-deriving the status rule client-side; `readOnly` still
+   * distinguishes WHICH lock applies, for banner copy.
+   */
+  writeBlocked?: boolean
 }
 
 /** Response type for listing branches */
@@ -76,7 +83,13 @@ const updateBranchAccessBodySchema = z.object({
   allowedGroups: z.array(z.string()).optional(),
 })
 
-import { isPrivileged, isAdmin, loadPathPermissions, getBranchProtection } from '../authorization'
+import {
+  isPrivileged,
+  isAdmin,
+  loadPathPermissions,
+  getBranchProtection,
+  getBranchWriteProtection,
+} from '../authorization'
 import type { PathPermission } from '../config'
 import type { CanopyUser } from '../user'
 import { operatingStrategy } from '../operating-mode'
@@ -438,12 +451,18 @@ export const listBranchesHandler = async (
   // Attach server-computed protected-base-branch flags; read config per-request
   // so dev-mode refreshActiveBranch() updates are reflected here too.
   const toListItem = (context: BranchContext): BranchListItem => {
-    const protection = getBranchProtection(
+    const protection = getBranchWriteProtection(
       ctx.services.config,
       context.branch.name,
       context.branch.baseBranch,
+      context.branch.status,
     )
-    return { ...context.branch, isProtected: protection.isProtected, readOnly: protection.readOnly }
+    return {
+      ...context.branch,
+      isProtected: protection.isProtected,
+      readOnly: protection.readOnly,
+      writeBlocked: protection.writeBlocked,
+    }
   }
 
   // Admins and Reviewers see all branches
@@ -726,6 +745,24 @@ export const updateBranchAccessHandler = async (
     return { ok: false, status: 404, error: 'Branch not found' }
   }
 
+  // The protected base branch takes no ACL. Its content is read-only in prod and
+  // submit/delete are already blocked, but a base-branch ACL entry still feeds
+  // canPerformWorkflowAction's `allowed_by_acl` grant -- so writing one here
+  // would hand arbitrary users Withdraw rights on the base branch. Reject
+  // outright, consistent with the delete and submit rails.
+  const { isProtected } = getBranchProtection(
+    ctx.services.config,
+    branchContext.branch.name,
+    branchContext.branch.baseBranch,
+  )
+  if (isProtected) {
+    return {
+      ok: false,
+      status: 403,
+      error: 'The base branch does not take an access list. Create a branch to manage access.',
+    }
+  }
+
   // Check permission
   const canModify = canModifyBranchAccess(req.user, branchContext)
   if (!canModify.allowed) {
@@ -828,10 +865,12 @@ const deleteBranch = defineEndpoint({
  * Update branch access control
  * PATCH /:branch/access
  *
- * No 'writableBranch' guard: this only rewrites branch.json's ACL, not branch
- * content, so it's out of scope for this pass. Noted as a future tightening
- * candidate -- letting non-admins edit the base branch's ACL is questionable
- * but pre-existing behavior this plan doesn't change.
+ * No 'writableBranch' guard: this rewrites branch.json's ACL, not branch
+ * content, so a submitted branch's ACL stays editable during review. The base
+ * branch is a different matter and IS refused -- the handler rejects protected
+ * branches up front, because a base-branch ACL entry feeds
+ * canPerformWorkflowAction's `allowed_by_acl` grant and would confer Withdraw
+ * rights there.
  */
 const updateBranchAccess = defineEndpoint({
   namespace: 'branches',

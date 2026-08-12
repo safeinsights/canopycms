@@ -35,6 +35,7 @@ fresh (the original FIXES.md note suspected this was partially designed before).
 
 - [[post-merge-sync-gaps]] (resolved) — solved the mechanical sync half; this
   task owns the workflow/UX half.
-- [[locked-branch-status-dead]] — post-submit editing semantics, one concrete
-  slice of this space.
+- [[locked-branch-status-dead]] (resolved) — post-submit editing semantics, one
+  concrete slice of this space; settled as "submitted implies locked" (the
+  `'locked'` literal was deleted).
 - [[dev-settings-per-branch]] — settings-vs-branch isolation, another slice.
