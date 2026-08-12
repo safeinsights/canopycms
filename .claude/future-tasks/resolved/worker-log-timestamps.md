@@ -1,5 +1,28 @@
 # Worker log lines carry no real timestamps in CloudWatch
 
+> **RESOLVED 2026-08-12** — `packages/canopycms/src/worker/log.ts` exports
+> `workerLog`/`workerLogWarn`/`workerLogError`, which prefix each line with an
+> ISO-8601 UTC timestamp and a level tag. All 64 `cms-worker.ts` call sites and
+> the 5 in `packages/canopycms-cdk/worker/index.ts` were converted; the latter
+> reaches them through a re-export off the existing
+> `canopycms/worker/cms-worker` entrypoint, so no new package entrypoint was
+> added. The CloudWatch agent config in `cms-service.ts` gained
+> `timestamp_format`, `timezone: UTC`, and
+> `multi_line_start_pattern: "{timestamp_format}"`.
+>
+> Two things worth carrying forward:
+>
+> - **INVARIANT: every writer to `/var/log/canopy-worker/worker.log` must use
+>   the helpers.** `multi_line_start_pattern` means an unprefixed line
+>   *continues the previous event* rather than starting its own. New worker
+>   code calling bare `console.*` will silently corrupt event boundaries.
+> - **A level tag was added beyond this file's original spec**, because the
+>   systemd unit sends stdout AND stderr to the same file — without the tag,
+>   `console.log` and `console.error` are indistinguishable in CloudWatch.
+> - Not covered: output Node prints itself on the way down (an uncaught
+>   exception dump). It has no prefix and attaches to the preceding event —
+>   still better than the per-line fragmentation it replaces.
+
 Found while implementing worker CloudWatch log shipping
 ([[worker-cloudwatch-logs]], 2026-07-24).
 

@@ -29,6 +29,14 @@ import type { PullRequestState, WorkerStatusReport } from '../types'
 import { getErrorMessage, isNodeError, redactCredentials } from '../utils/error'
 import { isNonFastForwardRejection } from '../utils/git'
 import { writeWorkerStatus } from './worker-status'
+import { workerLog, workerLogWarn, workerLogError } from './log'
+
+// Re-exported so the AWS entrypoint (packages/canopycms-cdk/worker/index.ts)
+// can prefix its own startup lines through the same helpers without adding a
+// new package entrypoint - `canopycms/worker/cms-worker` already exists. Every
+// line in worker.log must carry the timestamp prefix or it gets folded into
+// the previous CloudWatch event; see ./log.ts.
+export { workerLog, workerLogWarn, workerLogError } from './log'
 
 /**
  * Auth cache refresh function type.
@@ -347,7 +355,7 @@ export class CmsWorker {
 
   async start(): Promise<void> {
     this.running = true
-    console.log('CMS Worker starting...')
+    workerLog('CMS Worker starting...')
     this.ensureStatusReport()
 
     // Acquire lock to prevent concurrent workers
@@ -382,7 +390,7 @@ export class CmsWorker {
         this.log,
       )
       if (recovered > 0) {
-        console.log(`Recovered ${recovered} orphaned task(s)`)
+        workerLog(`Recovered ${recovered} orphaned task(s)`)
       }
 
       // Run initial sync + cache refresh immediately
@@ -408,7 +416,7 @@ export class CmsWorker {
       try {
         await writeWorkerStatus(this.taskDir, report)
       } catch (writeErr) {
-        console.error(
+        workerLogError(
           'Failed to write worker status on startup failure:',
           getErrorMessage(writeErr),
         )
@@ -428,12 +436,12 @@ export class CmsWorker {
     if (this.config.refreshAuthCache) {
       const cacheInterval = this.config.authCacheRefreshInterval ?? 15 * 60_000
       this.scheduleLoop(() => this.refreshAuthCache(), cacheInterval)
-      console.log(`  Auth cache refresh: every ${cacheInterval / 1000}s`)
+      workerLog(`  Auth cache refresh: every ${cacheInterval / 1000}s`)
     }
 
-    console.log('CMS Worker started')
-    console.log(`  Task queue poll: every ${taskInterval / 1000}s`)
-    console.log(`  Git sync: every ${gitInterval / 1000}s`)
+    workerLog('CMS Worker started')
+    workerLog(`  Task queue poll: every ${taskInterval / 1000}s`)
+    workerLog(`  Git sync: every ${gitInterval / 1000}s`)
   }
 
   async stop(): Promise<void> {
@@ -452,7 +460,7 @@ export class CmsWorker {
     ])
     clearTimeout(drainTimer)
     await this.releaseLock()
-    console.log('CMS Worker stopped')
+    workerLog('CMS Worker stopped')
   }
 
   /**
@@ -490,7 +498,7 @@ export class CmsWorker {
           // Our heartbeat could not be maintained (lock deleted or taken
           // over). Another worker may now be consuming the queue — stop
           // processing to preserve the single-consumer invariant.
-          console.error('Worker lock compromised, shutting down:', getErrorMessage(err))
+          workerLogError('Worker lock compromised, shutting down:', getErrorMessage(err))
           this.releaseLockFn = null // the lock is already lost; nothing to release
           void this.stop()
         },
@@ -527,7 +535,7 @@ export class CmsWorker {
       const timeout = setTimeout(async () => {
         this.activeTimeouts.delete(timeout)
         const operation = fn().catch((err) => {
-          console.error('Worker loop error:', err instanceof Error ? err.message : err)
+          workerLogError('Worker loop error:', err instanceof Error ? err.message : err)
         })
         this.activeOperations.add(operation)
         operation.finally(() => this.activeOperations.delete(operation))
@@ -593,7 +601,7 @@ export class CmsWorker {
       try {
         await this.verifyBaseBranchExists(this.remoteGitPath)
       } catch (err) {
-        console.error(`remote.git base branch verification failed: ${getErrorMessage(err)}`)
+        workerLogError(`remote.git base branch verification failed: ${getErrorMessage(err)}`)
         // Do NOT auto-delete: an existing remote.git could hold unpushed
         // canopycms-settings-* branches or other state worth preserving.
         // Deletion here is the operator's call, not ours.
@@ -604,14 +612,14 @@ export class CmsWorker {
       return // Already exists and has the base branch
     }
 
-    console.log('Initializing remote.git from GitHub...')
+    workerLog('Initializing remote.git from GitHub...')
     const git = simpleGit()
     await git.clone(this.buildGitHubUrl(), this.remoteGitPath, ['--bare'])
 
     try {
       await this.verifyBaseBranchExists(this.remoteGitPath)
     } catch (err) {
-      console.error(
+      workerLogError(
         `remote.git base branch verification failed after clone: ${getErrorMessage(err)}`,
       )
       // Deleting before throwing is what makes this recoverable: the next
@@ -626,7 +634,7 @@ export class CmsWorker {
     // Remove the origin remote so the token doesn't persist in config
     const bareGit = simpleGit({ baseDir: this.remoteGitPath })
     await bareGit.removeRemote('origin').catch(() => {})
-    console.log('remote.git initialized')
+    workerLog('remote.git initialized')
   }
 
   /**
@@ -680,7 +688,7 @@ export class CmsWorker {
       this.log,
     )
     if (recovered > 0) {
-      console.log(`Recovered ${recovered} orphaned task(s)`)
+      workerLog(`Recovered ${recovered} orphaned task(s)`)
     }
 
     let processed = 0
@@ -695,7 +703,7 @@ export class CmsWorker {
         await this.updateBranchMetadata(task, result)
       } catch (err) {
         const message = getErrorMessage(err)
-        console.error(`Task ${task.id} (${task.action}) failed:`, message)
+        workerLogError(`Task ${task.id} (${task.action}) failed:`, message)
 
         // [HIGH-1] task.error is persisted (pending/failed task JSON) and
         // served to the browser by the admin panel's Tasks tab -- a push
@@ -711,11 +719,11 @@ export class CmsWorker {
         const maxRetries = task.maxRetries ?? this.maxRetries
         if (!permanent && retryCount < maxRetries) {
           await retryTask(this.taskDir, task.id, persistedMessage, this.log)
-          console.log(`  Will retry (attempt ${retryCount + 1}/${maxRetries})`)
+          workerLog(`  Will retry (attempt ${retryCount + 1}/${maxRetries})`)
         } else {
           await failTask(this.taskDir, task.id, persistedMessage, this.log)
           await this.updateBranchMetadataOnFailure(task, persistedMessage)
-          console.error(
+          workerLogError(
             permanent
               ? '  Permanently failed (non-retryable error)'
               : `  Permanently failed after ${maxRetries} retries`,
@@ -733,7 +741,7 @@ export class CmsWorker {
       const report = this.ensureStatusReport()
       report.lastTaskCycleAt = new Date().toISOString()
       await writeWorkerStatus(this.taskDir, report).catch((writeErr) =>
-        console.error('Failed to write worker status:', getErrorMessage(writeErr)),
+        workerLogError('Failed to write worker status:', getErrorMessage(writeErr)),
       )
     }
   }
@@ -789,7 +797,7 @@ export class CmsWorker {
           body: optionalString(payload, 'body', ''),
           request: { signal },
         })
-        console.log(`Created PR #${pr.data.number} for ${branch}`)
+        workerLog(`Created PR #${pr.data.number} for ${branch}`)
         return { prUrl: pr.data.html_url, prNumber: pr.data.number }
       }
       case 'push-and-update-pr': {
@@ -804,7 +812,7 @@ export class CmsWorker {
           body: optionalString(payload, 'body', ''),
           request: { signal },
         })
-        console.log(`Updated PR #${prNumber} for ${branch}`)
+        workerLog(`Updated PR #${prNumber} for ${branch}`)
         return { prNumber }
       }
       case 'push-and-create-or-update-pr': {
@@ -844,7 +852,7 @@ export class CmsWorker {
           markReadyIfDraft: payload.markReadyIfDraft === true,
           signal,
         })
-        console.log(
+        workerLog(
           result.created
             ? `Created PR #${result.number} for ${branch}`
             : `Updated existing PR #${result.number} for ${branch}`,
@@ -865,7 +873,7 @@ export class CmsWorker {
           `mutation($id: ID!) { convertPullRequestToDraft(input: { pullRequestId: $id }) { pullRequest { isDraft } } }`,
           { id: pr.node_id, request: { signal } },
         )
-        console.log(`Converted PR #${draftPrNumber} to draft`)
+        workerLog(`Converted PR #${draftPrNumber} to draft`)
         return { prNumber: draftPrNumber, draft: true }
       }
       case 'close-pr': {
@@ -940,7 +948,7 @@ export class CmsWorker {
       }
       await meta.save({ branch: updates })
     } catch (err) {
-      console.error(
+      workerLogError(
         `Failed to update metadata for ${branch}:`,
         err instanceof Error ? err.message : err,
       )
@@ -970,7 +978,7 @@ export class CmsWorker {
         branch: { name: branch, syncStatus: 'sync-failed', syncFailureReason: error },
       })
     } catch (err) {
-      console.error(
+      workerLogError(
         `Failed to update failure metadata for ${branch}:`,
         err instanceof Error ? err.message : err,
       )
@@ -1016,7 +1024,7 @@ export class CmsWorker {
       }
       throw err
     }
-    console.log(`Pushed ${branch} to GitHub`)
+    workerLog(`Pushed ${branch} to GitHub`)
   }
 
   /**
@@ -1042,7 +1050,7 @@ export class CmsWorker {
       if (foreign.length > 0) {
         // Signal, not an error: this is exactly the "two deployments, one repo"
         // condition this workstream exists to make visible. Never push these.
-        console.warn(
+        workerLogWarn(
           `Found settings branch(es) not owned by this deployment (${this.settingsBranch}): ` +
             `${foreign.join(', ')}. Another CanopyCMS deployment may share this GitHub repo. Not pushing them.`,
         )
@@ -1057,7 +1065,7 @@ export class CmsWorker {
 
       try {
         await git.push(this.buildGitHubUrl(), this.settingsBranch)
-        console.log(`Pushed settings branch ${this.settingsBranch} to GitHub`)
+        workerLog(`Pushed settings branch ${this.settingsBranch} to GitHub`)
       } catch (err) {
         // Non-fatal: branch may already be up-to-date. This call site has no
         // task to throw a PermanentTaskError into (unlike pushBranchToGitHub)
@@ -1070,7 +1078,7 @@ export class CmsWorker {
         // that explicit instead of a generic "push failed" line.
         const message = getErrorMessage(err)
         if (isNonFastForwardRejection(message)) {
-          console.warn(
+          workerLogWarn(
             `Settings push for ${this.settingsBranch} was rejected (non-fast-forward): another ` +
               `CanopyCMS deployment appears to own this settings branch on GitHub. Settings from ` +
               `that deployment will NOT be overwritten; this deployment's local settings changes ` +
@@ -1078,11 +1086,11 @@ export class CmsWorker {
               `deploymentName) to resolve the collision.`,
           )
         } else {
-          console.warn(`Settings push for ${this.settingsBranch}:`, message)
+          workerLogWarn(`Settings push for ${this.settingsBranch}:`, message)
         }
       }
     } catch (err) {
-      console.warn(
+      workerLogWarn(
         'Failed to list branches for settings push:',
         err instanceof Error ? err.message : err,
       )
@@ -1174,7 +1182,7 @@ export class CmsWorker {
           await git.raw(['update-ref', localRef, trackedSha, GIT_ZERO_OID])
           created.push(name)
         } catch (err) {
-          console.warn(
+          workerLogWarn(
             `  Tracked-branch reconcile: failed to create local ref for ${name} (concurrent update?): ${getErrorMessage(err)}`,
           )
         }
@@ -1202,7 +1210,7 @@ export class CmsWorker {
         } catch (err) {
           // Concurrent Lambda push moved the ref since the read above --
           // the guard did its job; this branch is simply revisited next cycle.
-          console.warn(
+          workerLogWarn(
             `  Tracked-branch reconcile: failed to fast-forward ${name} (concurrent update?): ${getErrorMessage(err)}`,
           )
         }
@@ -1217,7 +1225,7 @@ export class CmsWorker {
     }
 
     if (diverged.length > 0) {
-      console.warn(
+      workerLogWarn(
         `  Tracked-branch reconcile: ${diverged.length} branch(es) diverged from GitHub and were left untouched: ${diverged.join(', ')}`,
       )
     }
@@ -1228,7 +1236,7 @@ export class CmsWorker {
   async syncGit(): Promise<void> {
     if (!this.running) return
 
-    console.log('Syncing git...')
+    workerLog('Syncing git...')
     const cycleStartedAt = Date.now()
     const git = simpleGit({
       baseDir: this.remoteGitPath,
@@ -1262,7 +1270,7 @@ export class CmsWorker {
         '--prune',
         `+refs/heads/*:${GITHUB_TRACKING_REF_PREFIX}*`,
       ])
-      console.log('Fetched from GitHub')
+      workerLog('Fetched from GitHub')
 
       // Bring refs/heads/* toward what was just fetched, WITHOUT ever
       // force-rewinding or deleting a local head -- see
@@ -1289,7 +1297,7 @@ export class CmsWorker {
       // place actual removal happens.
       const trashRemoved = await this.cleanupTrashedBranchDirs()
       if (trashRemoved > 0) {
-        console.log(`Removed ${trashRemoved} expired trashed branch dir(s)`)
+        workerLog(`Removed ${trashRemoved} expired trashed branch dir(s)`)
       }
 
       const report = this.ensureStatusReport()
@@ -1303,7 +1311,7 @@ export class CmsWorker {
         tracked: trackedSummary,
       }
       await writeWorkerStatus(this.taskDir, report).catch((writeErr) =>
-        console.error('Failed to write worker status:', getErrorMessage(writeErr)),
+        workerLogError('Failed to write worker status:', getErrorMessage(writeErr)),
       )
     } catch (err) {
       const report = this.ensureStatusReport()
@@ -1315,7 +1323,7 @@ export class CmsWorker {
         at: new Date().toISOString(),
       }
       await writeWorkerStatus(this.taskDir, report).catch((writeErr) =>
-        console.error('Failed to write worker status:', getErrorMessage(writeErr)),
+        workerLogError('Failed to write worker status:', getErrorMessage(writeErr)),
       )
       throw err
     }
@@ -1351,7 +1359,7 @@ export class CmsWorker {
       const stampDate = stampMatch ? parseTrashStamp(stampMatch[1]) : null
       if (!stampDate) {
         if (!loggedUnparseable) {
-          console.log(`CanopyCMS: Skipping trash dir with unparseable stamp: ${name}`)
+          workerLog(`CanopyCMS: Skipping trash dir with unparseable stamp: ${name}`)
           loggedUnparseable = true
         }
         continue
@@ -1368,7 +1376,7 @@ export class CmsWorker {
         })
         removed++
       } catch (err: unknown) {
-        console.error(
+        workerLogError(
           `CanopyCMS: Failed to remove trashed branch dir ${name}:`,
           getErrorMessage(err),
         )
@@ -1413,7 +1421,7 @@ export class CmsWorker {
         gitDirStat = null
       }
       if (!gitDirStat || !gitDirStat.isDirectory()) {
-        console.log(
+        workerLog(
           `Base branch workspace (${this.baseBranch}): not yet provisioned, skipping refresh`,
         )
         return
@@ -1448,7 +1456,7 @@ export class CmsWorker {
       const status = await baseGit.status()
       const trackedDirty = status.files.filter((f) => f.index !== '?' || f.working_dir !== '?')
       if (trackedDirty.length > 0) {
-        console.error(
+        workerLogError(
           `Base branch workspace (${this.baseBranch}) has uncommitted changes -- skipping refresh. Dirty files: ${trackedDirty.map((f) => f.path).join(', ')}`,
         )
         return
@@ -1479,7 +1487,7 @@ export class CmsWorker {
         try {
           await baseGit.merge(['--ff-only', fetchedTip])
         } catch (err) {
-          console.error(
+          workerLogError(
             `Base branch workspace (${this.baseBranch}) failed to fast-forward (diverged local history?): ${getErrorMessage(err)}`,
           )
           return
@@ -1507,13 +1515,13 @@ export class CmsWorker {
       }
 
       // One concise per-cycle line -- the diagnostic for the next live deploy.
-      console.log(
+      workerLog(
         behindCount > 0
           ? `Base branch workspace (${this.baseBranch}): fast-forwarded ${behindCount} commit(s)`
           : `Base branch workspace (${this.baseBranch}): up to date`,
       )
     } catch (err) {
-      console.error(
+      workerLogError(
         `Base branch workspace (${this.baseBranch}) refresh failed: ${getErrorMessage(err)}`,
       )
     }
@@ -1559,7 +1567,7 @@ export class CmsWorker {
             data.merged_at ? new Date(data.merged_at) : undefined,
           ),
         })
-        console.log(`  PR #${prNumber} for ${branchDir} is merged -> archived`)
+        workerLog(`  PR #${prNumber} for ${branchDir} is merged -> archived`)
         return
       }
 
@@ -1572,10 +1580,10 @@ export class CmsWorker {
 
       const meta = getBranchMetadataFileManager(branchPath, this.contentBranchesPath)
       await meta.save({ branch: { name: branchDir, pullRequestState: newState } })
-      console.log(`  PR #${prNumber} for ${branchDir}: pullRequestState -> ${newState}`)
+      workerLog(`  PR #${prNumber} for ${branchDir}: pullRequestState -> ${newState}`)
     } catch (err) {
       // Non-fatal: transient GitHub/network errors are retried next cycle.
-      console.warn(`  Failed to poll PR #${prNumber} for ${branchDir}: ${getErrorMessage(err)}`)
+      workerLogWarn(`  Failed to poll PR #${prNumber} for ${branchDir}: ${getErrorMessage(err)}`)
     } finally {
       clearTimeout(timer)
     }
@@ -1641,7 +1649,7 @@ export class CmsWorker {
       // against the same corrupt file would just throw again) as well as
       // any other load/save failure -- recording is best-effort
       // observability, never allowed to abort the branch loop.
-      console.warn(`  Failed to record rebase failure for ${branchDir}: ${getErrorMessage(err)}`)
+      workerLogWarn(`  Failed to record rebase failure for ${branchDir}: ${getErrorMessage(err)}`)
     }
   }
 
@@ -1676,11 +1684,11 @@ export class CmsWorker {
       try {
         const stat = await fs.stat(gitDir)
         if (!stat.isDirectory()) {
-          console.log(`  Skipping ${branchDir}: .git is not a directory`)
+          workerLog(`  Skipping ${branchDir}: .git is not a directory`)
           continue
         }
       } catch {
-        console.log(`  Skipping ${branchDir}: no .git directory (not a branch workspace)`)
+        workerLog(`  Skipping ${branchDir}: no .git directory (not a branch workspace)`)
         continue
       }
 
@@ -1691,7 +1699,7 @@ export class CmsWorker {
       // metadata on it. Compare sanitized-vs-sanitized: branchDir is a
       // filesystem name (already sanitized), this.baseBranch is raw.
       if (branchDir === this.sanitizedBaseBranch) {
-        console.log(`  Skipping ${branchDir}: base branch (refreshed separately)`)
+        workerLog(`  Skipping ${branchDir}: base branch (refreshed separately)`)
         continue
       }
 
@@ -1707,12 +1715,12 @@ export class CmsWorker {
         // - archived: already merged, no reason to rebase and no PR left to
         //   poll (avoid the wasted API call).
         if (branchStatus === 'submitted' || branchStatus === 'approved') {
-          console.log(`  Skipping ${branchDir} (${branchStatus})`)
+          workerLog(`  Skipping ${branchDir} (${branchStatus})`)
           await this.pollMergeState(branchDir, branchPath, metaFile)
           continue
         }
         if (branchStatus === 'archived') {
-          console.log(`  Skipping ${branchDir} (${branchStatus})`)
+          workerLog(`  Skipping ${branchDir} (${branchStatus})`)
           continue
         }
 
@@ -1732,7 +1740,7 @@ export class CmsWorker {
         // the catch block will abort safely — the branch stays behind and retries next cycle.
         const dirtyCheck = await branchGit.status()
         if (dirtyCheck.files.length > 0) {
-          console.log(`  Skipping ${branchDir}: has uncommitted changes`)
+          workerLog(`  Skipping ${branchDir}: has uncommitted changes`)
           skippedDirty.push(branchDir)
           continue
         }
@@ -1792,7 +1800,7 @@ export class CmsWorker {
           continue
         }
 
-        console.log(`Rebasing ${branchDir} (${behindCount} commits behind)...`)
+        workerLog(`Rebasing ${branchDir} (${behindCount} commits behind)...`)
 
         // Resolve-and-continue loop: keep branch version for conflicting files, then continue
         // Non-conflicting files get main's changes; conflicting files keep branch version.
@@ -1843,7 +1851,9 @@ export class CmsWorker {
                 // the rebase didn't complete so we can't determine the true conflict
                 // state. Previous metadata (possibly stale) is preserved until the
                 // next successful rebase cycle corrects it.
-                console.warn(`  Unexpected rebase error in ${branchDir}: ${msg || 'Unknown error'}`)
+                workerLogWarn(
+                  `  Unexpected rebase error in ${branchDir}: ${msg || 'Unknown error'}`,
+                )
                 failureReason = msg || 'Unknown error'
                 await branchGit.rebase(['--abort']).catch(() => {})
                 break
@@ -1857,7 +1867,7 @@ export class CmsWorker {
           // error" break above -- MAX_ROUNDS exhaustion is a distinct exit
           // path with no error message of its own, so the warn text must
           // not conflate the two.
-          console.warn(
+          workerLogWarn(
             failureReason !== undefined
               ? `  Rebase of ${branchDir} aborted due to unexpected error: ${failureReason}`
               : `  Rebase of ${branchDir} did not complete within ${MAX_ROUNDS} rounds, aborting`,
@@ -1913,7 +1923,7 @@ export class CmsWorker {
         const conflictIdsDeduped = [...new Set(conflictIds)]
 
         const hadConflicts = conflictIdsDeduped.length > 0
-        console.log(
+        workerLog(
           hadConflicts
             ? `  Rebased ${branchDir} (kept branch version for ${conflictIdsDeduped.length} conflicting file(s))`
             : `  Rebased ${branchDir} successfully`,
@@ -1935,7 +1945,7 @@ export class CmsWorker {
         rebased.push(branchDir)
       } catch (err) {
         const message = err instanceof Error ? err.message : 'Unknown error'
-        console.warn(`  Failed to sync ${branchDir}: ${message}`)
+        workerLogWarn(`  Failed to sync ${branchDir}: ${message}`)
         // [HIGH-1] Same rationale as the `if (!completed)` push site above --
         // this catches fetch/rev-list/unexpected errors, whose message can
         // embed the bot token.
@@ -1954,13 +1964,13 @@ export class CmsWorker {
   async refreshAuthCache(): Promise<void> {
     if (!this.running || !this.config.refreshAuthCache) return
 
-    console.log('Refreshing auth cache...')
+    workerLog('Refreshing auth cache...')
     try {
       await this.config.refreshAuthCache()
-      console.log('Auth cache refreshed')
+      workerLog('Auth cache refreshed')
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Unknown error'
-      console.error('Failed to refresh auth cache:', message)
+      workerLogError('Failed to refresh auth cache:', message)
     }
   }
 }

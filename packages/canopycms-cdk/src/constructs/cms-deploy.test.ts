@@ -591,6 +591,20 @@ describe('CanopyCmsService: worker CloudWatch log shipping', () => {
     expect(all).toContain('amazon-cloudwatch-agent-ctl -a fetch-config -m ec2 -s')
   })
 
+  it('parses the worker-emitted timestamp instead of ingestion time, and groups multi-line output into one event', () => {
+    const template = synth()
+    const all = workerUserDataBlobs(template)
+    // The worker prefixes every line with ISO-8601 UTC
+    // (packages/canopycms/src/worker/log.ts). These three keys are what make
+    // CloudWatch use that timestamp rather than the moment the agent shipped
+    // the line, and keep a stack trace as ONE event instead of one event per
+    // line. Without timezone, the trailing `Z` is ignored and the timestamp is
+    // read in the instance's local zone.
+    expect(all).toContain('\\"timestamp_format\\": \\"%Y-%m-%dT%H:%M:%S.%f\\"')
+    expect(all).toContain('\\"timezone\\": \\"UTC\\"')
+    expect(all).toContain('\\"multi_line_start_pattern\\": \\"{timestamp_format}\\"')
+  })
+
   it('references the WorkerLogs log group logical id as a deploy-time token in UserData (pins the implicit CFN dependency)', () => {
     const template = synth()
     const blobs = JSON.stringify(template.findResources('AWS::AutoScaling::LaunchConfiguration'))
