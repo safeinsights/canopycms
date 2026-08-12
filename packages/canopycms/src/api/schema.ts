@@ -321,8 +321,14 @@ async function getSchemaOps(
     return { error: 'Branch not found', status: 404 }
   }
 
-  const contentRoot = path.join(context.branchRoot, 'content')
-  const store = new SchemaOps(contentRoot, ctx.services.entrySchemaRegistry, ctx.services)
+  const contentRootName = ctx.services.config.contentRoot || 'content'
+  const contentRoot = path.join(context.branchRoot, contentRootName)
+  const store = new SchemaOps(
+    contentRoot,
+    ctx.services.entrySchemaRegistry,
+    ctx.services,
+    context.branchRoot,
+  )
   return { store, branchRoot: context.branchRoot }
 }
 

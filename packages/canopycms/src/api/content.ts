@@ -164,7 +164,9 @@ const readContentHandler = async (
 ): Promise<ContentReadResponse> => {
   const { branchContext } = gc
   const flatSchema = branchContext.flatSchema
-  const store = new ContentStore(branchContext.branchRoot, flatSchema)
+  const store = new ContentStore(branchContext.branchRoot, flatSchema, {
+    contentRootName: ctx.services.config.contentRoot || 'content',
+  })
 
   // Parse path segments: params.path is like "content/posts/hello"
   const contentRoot = ctx.services.config.contentRoot || 'content'
@@ -216,7 +218,9 @@ const writeContentHandler = async (
 ): Promise<ContentWriteResponse> => {
   const { branchContext } = gc
   const flatSchema = branchContext.flatSchema
-  const store = new ContentStore(branchContext.branchRoot, flatSchema)
+  const store = new ContentStore(branchContext.branchRoot, flatSchema, {
+    contentRootName: ctx.services.config.contentRoot || 'content',
+  })
 
   // Parse path segments: params.path is like "content/posts/hello" or "posts/hello"
   const contentRoot = ctx.services.config.contentRoot || 'content'
@@ -472,7 +476,9 @@ const validateReferencesHandler = async (
 ): Promise<ReferenceValidationResponse> => {
   const { branchContext } = gc
   const flatSchema = branchContext.flatSchema
-  const store = new ContentStore(branchContext.branchRoot, flatSchema)
+  const store = new ContentStore(branchContext.branchRoot, flatSchema, {
+    contentRootName: ctx.services.config.contentRoot || 'content',
+  })
 
   // Parse path segments to get collection/schema info
   const contentRoot = ctx.services.config.contentRoot || 'content'
@@ -559,7 +565,9 @@ const renameEntryHandler = async (
 ): Promise<RenameEntryResponse> => {
   const { branchContext } = gc
   const flatSchema = branchContext.flatSchema
-  const store = new ContentStore(branchContext.branchRoot, flatSchema)
+  const store = new ContentStore(branchContext.branchRoot, flatSchema, {
+    contentRootName: ctx.services.config.contentRoot || 'content',
+  })
 
   // Parse path segments
   const contentRoot = ctx.services.config.contentRoot || 'content'

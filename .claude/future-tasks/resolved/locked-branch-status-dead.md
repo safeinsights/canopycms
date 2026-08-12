@@ -1,5 +1,25 @@
 # BranchStatus 'locked' is a dead state — implement or remove
 
+## RESOLVED (2026-08-12) — deleted the literal
+
+Decided delete rather than implement. `'submitted'` already means "locked while a
+reviewer looks at the PR", and that lock is now genuinely enforced (see
+[[submitted-branch-edit-locking]]), so a second status carrying the same meaning
+bought nothing. `'locked'` had zero writers, no endpoint and no UI affordance
+that could set it — the guard branch and three badge-colour maps were its only
+readers.
+
+Removing it also removes the worker incoherence this file flagged: there is no
+longer a status that `rebaseActiveBranches` would rebase but `pollMergeState`
+would never poll.
+
+The folded-in FIXES.md question ("lock editing after submit?") is answered yes,
+via status rather than via a distinct `'locked'` state.
+
+If an admin-freeze feature is wanted later, reintroduce a status *with* its
+semantics in the same change: worker skip list, a set/unset endpoint, write
+guard, and UI.
+
 Found by the Fable review of PR #144 (2026-07-24), verified against the code.
 
 ## Problem

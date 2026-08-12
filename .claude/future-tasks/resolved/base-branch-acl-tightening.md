@@ -1,5 +1,19 @@
 # branches.updateAccess allows editing the base branch's ACL
 
+## RESOLVED (2026-08-12)
+
+Took the first of the two options in the fix sketch: `updateBranchAccessHandler`
+now rejects outright when `getBranchProtection().isProtected`, returning 403
+before the `canModifyBranchAccess` check. That is consistent with the delete and
+submit rails, which already refuse on the base branch.
+
+Chosen over "exclude protected branches from the `allowed_by_acl` grant" because
+it keeps the fix at the write boundary — one guard on the way in, rather than a
+special case every reader of the ACL would have to remember.
+
+Resolved alongside [[submitted-branch-edit-locking]] as this file suggested, in
+the same authorization seam.
+
 ## Priority: P3
 
 Surfaced by the protected-base-branch work (2026-07-24). The endpoint got a

@@ -415,7 +415,7 @@ describe('executeGuards', () => {
       }
     })
 
-    it.each(['approved', 'locked', 'archived'] as const)(
+    it.each(['approved', 'archived'] as const)(
       'blocks a branch with status "%s"',
       async (status) => {
         const bc = createMockBranchContext({ branchName: 'feature/x', status })
@@ -437,6 +437,34 @@ describe('executeGuards', () => {
         }
       },
     )
+
+    // Fail-closed regression guard. branch.json is parsed with a bare cast and
+    // no schema (branch-metadata.ts), so a hand-repaired or partially-written
+    // file yields no status at runtime -- exactly the state the corrupt-metadata
+    // quarantine exists for. If this ever flips to allowing the write, a branch
+    // whose review state is unknown becomes editable.
+    it('blocks a branch whose status is missing at runtime (fails closed)', async () => {
+      const bc = createMockBranchContext({ branchName: 'feature/x' })
+      // Simulate damaged metadata: the type says status is required, the file disagrees.
+      delete (bc.branch as { status?: unknown }).status
+
+      const ctx = createMockApiContext({
+        branchContext: bc,
+        services: { config: { ...baseConfig, mode: 'prod', defaultBaseBranch: 'main' } },
+      })
+
+      const result = await executeGuards(['writableBranch'] as const, ctx, makeReq(), {
+        branch: 'feature/x',
+      })
+
+      expect(result.ok).toBe(false)
+      if (!result.ok) {
+        expect(result.response.status).toBe(403)
+        expect(result.response.error).toBe(
+          'Branch "feature/x" has no readable workflow status and cannot be edited until its metadata is repaired.',
+        )
+      }
+    })
   })
 
   // ========================================================================
