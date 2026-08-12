@@ -5,7 +5,7 @@
  */
 
 import React from 'react'
-import { Paper, Stack, Text } from '@mantine/core'
+import { Group, Paper, Stack, Text } from '@mantine/core'
 import type { GroupSelectItem } from './types'
 
 export interface GroupSelectorProps {
@@ -57,7 +57,15 @@ export const GroupSelector: React.FC<GroupSelectorProps> = ({
                 }}
                 onClick={() => onSelectGroup(group.value)}
               >
-                {group.label}
+                {/* Internal (groups.json) and external (auth provider) IDs are
+                    not namespaced against each other, so the source is shown
+                    rather than left for the admin to infer from the name. */}
+                <Group gap="xs" justify="space-between" wrap="nowrap">
+                  <span>{group.label}</span>
+                  <Text size="10px" c="dimmed" style={{ flexShrink: 0 }}>
+                    {group.source === 'internal' ? 'Internal' : 'External'}
+                  </Text>
+                </Group>
               </div>
             ))}
           </div>

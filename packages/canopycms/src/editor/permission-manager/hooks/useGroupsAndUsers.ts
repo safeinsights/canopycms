@@ -3,17 +3,17 @@
  */
 
 import { useState, useEffect, useMemo, useCallback } from 'react'
-import type { UserSearchResult, GroupMetadata, GroupSelectItem } from '../types'
+import type { UserSearchResult, PermissionGroupOption, GroupSelectItem } from '../types'
 
 export interface UseGroupsAndUsersOptions {
-  onListGroups?: () => Promise<GroupMetadata[]>
+  onListGroups?: () => Promise<PermissionGroupOption[]>
   onSearchUsers?: (query: string, limit?: number) => Promise<UserSearchResult[]>
   canEdit: boolean
 }
 
 export interface UseGroupsAndUsersResult {
   // Groups
-  groups: GroupMetadata[]
+  groups: PermissionGroupOption[]
   groupSelectData: GroupSelectItem[]
   filteredGroups: GroupSelectItem[]
   isLoadingGroups: boolean
@@ -40,7 +40,7 @@ export function useGroupsAndUsers({
   canEdit,
 }: UseGroupsAndUsersOptions): UseGroupsAndUsersResult {
   // Groups state
-  const [groups, setGroups] = useState<GroupMetadata[]>([])
+  const [groups, setGroups] = useState<PermissionGroupOption[]>([])
   const [isLoadingGroups, setIsLoadingGroups] = useState(false)
   const [groupLoadError, setGroupLoadError] = useState<string | null>(null)
   const [groupSearchQuery, setGroupSearchQuery] = useState('')
@@ -76,6 +76,7 @@ export function useGroupsAndUsers({
       groups.map((g) => ({
         value: g.id,
         label: g.name,
+        source: g.source,
       })),
     [groups],
   )

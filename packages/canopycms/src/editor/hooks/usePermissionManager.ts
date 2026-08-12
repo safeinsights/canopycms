@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { notifications } from '@mantine/notifications'
 import type { PathPermission } from '../../config'
-import type { GroupMetadata } from '../../auth/types'
+import type { PermissionGroupOption } from '../../auth/types'
 import { useApiClient } from '../context'
 
 export interface UsePermissionManagerOptions {
@@ -16,7 +16,7 @@ export interface UsePermissionManagerReturn {
   permissionsData: PathPermission[]
   permissionsLoading: boolean
   handleSavePermissions: (permissions: PathPermission[]) => Promise<void>
-  handleListGroups: () => Promise<GroupMetadata[]>
+  handleListGroups: () => Promise<PermissionGroupOption[]>
   loadPermissions: () => Promise<void>
 }
 

@@ -21,6 +21,29 @@ export interface GroupMetadata {
 }
 
 /**
+ * Where a group offered as a permission target came from: the auth provider
+ * ('external') or Canopy's own groups.json ('internal').
+ */
+export type GroupSource = 'internal' | 'external'
+
+/**
+ * A group offered as a permission target by `permissions.listGroups`.
+ *
+ * Both universes are valid `allowedGroups` values -- `authResultToCanopyUser`
+ * (user.ts) flattens external and internal groups into one `user.groups` list
+ * and `checkPathPermission` matches `allowedGroups` against it by ID -- so the
+ * picker has to offer both. The two ID spaces are not namespaced against each
+ * other, hence `source` to disambiguate them in the UI.
+ *
+ * Internal options deliberately carry no `memberCount`: member identities and
+ * counts stay behind the admin-only `groups.getInternal`, while this endpoint
+ * is `privileged` (admin or reviewer).
+ */
+export interface PermissionGroupOption extends GroupMetadata {
+  source: GroupSource
+}
+
+/**
  * Authentication result from auth plugins.
  * Returns user identity (without final groups) on success.
  */

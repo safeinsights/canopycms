@@ -3,7 +3,7 @@ import { render, screen, fireEvent, waitFor, cleanup } from '@testing-library/re
 import { MantineProvider } from '@mantine/core'
 import { PermissionManager } from './PermissionManager'
 import type { PathPermission } from '../config'
-import type { UserSearchResult, GroupMetadata } from '../auth/types'
+import type { UserSearchResult, PermissionGroupOption } from '../auth/types'
 import type { EditorCollection } from './Editor'
 import { unsafeAsPermissionPath } from '../authorization/test-utils'
 import { unsafeAsLogicalPath } from '../paths/test-utils'
@@ -75,9 +75,9 @@ describe('PermissionManager', () => {
     },
   ]
 
-  const mockGroups: GroupMetadata[] = [
-    { id: 'editors', name: 'Editors', memberCount: 12 },
-    { id: 'marketing', name: 'Marketing', memberCount: 8 },
+  const mockGroups: PermissionGroupOption[] = [
+    { id: 'editors', name: 'Editors', memberCount: 12, source: 'external' },
+    { id: 'marketing', name: 'Marketing', memberCount: 8, source: 'external' },
   ]
 
   const mockUsers: UserSearchResult[] = [
@@ -87,7 +87,7 @@ describe('PermissionManager', () => {
 
   let mockOnSave: (permissions: PathPermission[]) => Promise<void>
   let mockOnSearchUsers: (query: string, limit?: number) => Promise<UserSearchResult[]>
-  let mockOnListGroups: () => Promise<GroupMetadata[]>
+  let mockOnListGroups: () => Promise<PermissionGroupOption[]>
 
   beforeEach(() => {
     mockOnSave = vi.fn().mockResolvedValue(undefined)
@@ -510,6 +510,62 @@ describe('PermissionManager', () => {
 
       await waitFor(() => {
         expect(screen.getByPlaceholderText('Search groups...')).toBeTruthy()
+      })
+    })
+
+    it('offers internally-created groups as options, tagged Internal', async () => {
+      // Groups created in the Group Manager live in groups.json, not in the
+      // auth provider. They are valid allowedGroups targets, so the picker has
+      // to offer them -- it used to list only the auth provider's groups,
+      // leaving an internal group assignable solely by hand-editing
+      // permissions.json.
+      const onListGroups = vi.fn().mockResolvedValue([
+        { id: 'gen-abc123', name: 'Docs Team', source: 'internal' },
+        { id: 'marketing', name: 'Marketing', memberCount: 8, source: 'external' },
+      ] satisfies PermissionGroupOption[])
+
+      render(
+        <PermissionManager
+          collections={mockCollections}
+          permissions={mockPermissions}
+          canEdit={true}
+          onSave={mockOnSave}
+          onSearchUsers={mockOnSearchUsers}
+          onListGroups={onListGroups}
+        />,
+        { wrapper },
+      )
+
+      fireEvent.click(screen.getByText('Expand All'))
+      await waitFor(() => screen.getByText('Posts'))
+      fireEvent.click(screen.getByText('Posts'))
+
+      let addGroupsButton: HTMLElement
+      await waitFor(() => {
+        const buttons = screen.getAllByText('Add Groups')
+        expect(buttons.length).toBeGreaterThan(0)
+        addGroupsButton = buttons[0]
+      })
+      fireEvent.click(addGroupsButton!)
+
+      await waitFor(() => {
+        expect(screen.getByPlaceholderText('Search groups...')).toBeTruthy()
+      })
+
+      // The internal group is present in the option list...
+      await waitFor(() => {
+        expect(screen.getAllByText('Docs Team').length).toBeGreaterThan(0)
+      })
+
+      // ...and is distinguishable from the provider's groups, since the two ID
+      // spaces are not namespaced against each other.
+      expect(screen.getAllByText('Internal').length).toBeGreaterThan(0)
+      expect(screen.getAllByText('External').length).toBeGreaterThan(0)
+
+      // And it is selectable as a permission target.
+      fireEvent.click(screen.getAllByText('Docs Team')[0])
+      await waitFor(() => {
+        expect(screen.getAllByText('Docs Team').length).toBeGreaterThan(0)
       })
     })
 

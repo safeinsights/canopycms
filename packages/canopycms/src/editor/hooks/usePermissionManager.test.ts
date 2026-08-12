@@ -192,9 +192,10 @@ describe('usePermissionManager', () => {
   })
 
   it('lists groups successfully', async () => {
+    // listGroups merges both universes, tagging each option by source.
     const mockGroups = [
-      { id: 'group1', name: 'Editors' },
-      { id: 'group2', name: 'Writers' },
+      { id: 'group1', name: 'Editors', source: 'external' as const },
+      { id: 'docs-team', name: 'Docs Team', source: 'internal' as const },
     ]
 
     mockClient.permissions.listGroups.mockResolvedValueOnce({
