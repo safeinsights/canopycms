@@ -82,6 +82,7 @@ import { unsafeAsPermissionPath } from '../authorization/test-utils'
 import { createMockApiContext, createMockBranchContext, createMockRegistry } from '../test-utils'
 import * as authorization from '../authorization'
 import { unsafeAsBranchName } from '../paths/test-utils'
+import { RESERVED_ROUTE_BRANCH_NAMES } from '../paths'
 
 // Alias for convenience (tests reference permissionsLoader)
 const permissionsLoader = {
@@ -416,6 +417,47 @@ describe('branch api', () => {
         baseCtx,
         { user: { type: 'authenticated', userId: 'u1', groups: [] } },
         { branch: unsafeAsBranchName('feature/totally-normal') },
+      )
+      expect(res.ok).toBe(true)
+    })
+
+    // The router prefers a literal path segment over `:branch`, so a branch
+    // named after a static top-level namespace has its own routes shadowed --
+    // and only partially, since bare `GET /admin` still reaches the branch
+    // handler. http/router.test.ts pins the list itself against the live routes.
+    it.each([...RESERVED_ROUTE_BRANCH_NAMES])(
+      'rejects "%s" because it collides with a static API route namespace',
+      async (name) => {
+        const res = await createBranch(
+          baseCtx,
+          { user: { type: 'authenticated', userId: 'u1', groups: [] } },
+          { branch: unsafeAsBranchName(name) },
+        )
+        expect(res.ok).toBe(false)
+        expect(res.status).toBe(400)
+        expect(res.error).toContain('reserved')
+        expect(res.error).toContain(`/${name}`)
+      },
+    )
+
+    it('accepts names that merely contain or extend a reserved namespace', async () => {
+      for (const name of ['admin-docs', 'assets-2026', 'feature/admin']) {
+        const res = await createBranch(
+          baseCtx,
+          { user: { type: 'authenticated', userId: 'u1', groups: [] } },
+          { branch: unsafeAsBranchName(name) },
+        )
+        expect(res.ok).toBe(true)
+      }
+    })
+
+    it('is case-sensitive, mirroring how the router matches path segments', async () => {
+      // `/Admin` does not match the static `/admin/...` routes, so `Admin` is
+      // not shadowed and must stay creatable.
+      const res = await createBranch(
+        baseCtx,
+        { user: { type: 'authenticated', userId: 'u1', groups: [] } },
+        { branch: unsafeAsBranchName('Admin') },
       )
       expect(res.ok).toBe(true)
     })

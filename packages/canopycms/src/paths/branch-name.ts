@@ -45,3 +45,30 @@ export function sanitizeBranchName(branchName: string): SanitizedBranchName {
  * creation, not just this deployment's own settings branch name.
  */
 export const RESERVED_SETTINGS_BRANCH_PREFIX = 'canopycms-settings-'
+
+/**
+ * Branch names that collide with a static top-level API route namespace.
+ *
+ * http/router.ts's `compareSpecificity` ranks a literal pattern segment above a
+ * `:param`, so a branch named e.g. `admin` has its `/:branch/...` routes
+ * shadowed by the static `/admin/...` ones. The failure is a *partial* one,
+ * which is what makes it confusing: bare `GET /admin` still reaches the branch
+ * handler (there is no single-segment static `/admin` route), so the branch
+ * looks half-alive while every nested route 404s or 403s.
+ *
+ * Lives in this dependency-free module for the same reason as
+ * {@link RESERVED_SETTINGS_BRANCH_PREFIX}: api/validators.ts is imported *by*
+ * the route modules, so nothing on the validation side can import the router to
+ * derive this at runtime without a cycle. http/router.test.ts derives the same
+ * set from the live route table and asserts it equals this constant, so adding
+ * a new top-level namespace fails that test until this list is updated.
+ */
+export const RESERVED_ROUTE_BRANCH_NAMES: readonly string[] = [
+  'admin',
+  'assets',
+  'branches',
+  'groups',
+  'permissions',
+  'users',
+  'whoami',
+]

@@ -63,7 +63,7 @@ export function createAIContentHandler(
       (await schemaCache.getSchema(branchRoot, entrySchemaRegistry, contentRootName)).flatSchema
 
     // Create store and generate
-    const store = new ContentStore(branchRoot, flatSchema)
+    const store = new ContentStore(branchRoot, flatSchema, { contentRootName })
     const result = await generateAIContent({
       store,
       flatSchema,
