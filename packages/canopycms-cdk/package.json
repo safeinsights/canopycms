@@ -34,9 +34,10 @@
     "build": "tsc",
     "build:worker": "esbuild worker/index.ts --bundle --platform=node --target=node20 --format=esm --outfile=worker/dist/index.js --banner:js=\"import { createRequire } from 'module'; const require = createRequire(import.meta.url);\"",
     "build:lambda": "node lambda/asset-transform/build.mjs",
-    "lint": "eslint src/ 'lambda/**/*.ts' 'canary/**/*.ts'",
-    "test": "vitest run",
-    "typecheck": "tsc --noEmit && tsc --noEmit -p lambda/tsconfig.json && tsc --noEmit -p canary/tsconfig.json"
+    "build:test-fixtures": "pnpm run build:worker && node lambda/asset-transform/build.mjs --skip-native",
+    "lint": "eslint src/ 'lambda/**/*.ts' 'canary/**/*.ts' 'worker/**/*.ts'",
+    "test": "pnpm run build:test-fixtures && vitest run",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p lambda/tsconfig.json && tsc --noEmit -p canary/tsconfig.json && tsc --noEmit -p worker/tsconfig.json"
   },
   "engines": {
     "node": ">=18"

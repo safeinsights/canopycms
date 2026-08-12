@@ -59,8 +59,19 @@ jobs:
         run: pnpm run build
         working-directory: packages/canopycms
 
+      # Runs at the workspace ROOT (`pnpm -r run test`), deliberately: pinning
+      # this to packages/canopycms meant `pnpm test` resolved to that one
+      # package's script, so canopycms-cdk, canopycms-next, canopycms-auth-clerk
+      # and canopycms-auth-dev had never had their tests run in CI at all. The
+      # CDK suite matters most - it is the only automated check on the deploy
+      # template (Function-URL-is-AWS_IAM-only, Lambda->EFS egress, ASG update
+      # policy, log-group names), several of its cases are regression tests for
+      # bugs that already shipped once, and `pnpm typecheck` being recursive is
+      # probably why the gap went unnoticed. Root scope also means a newly added
+      # package is covered by default instead of needing someone to remember.
+      # Every workspace `test` script is vitest (apps/example1 is a no-op echo),
+      # so this adds no browser/e2e work - Playwright stays in its own job.
       - name: Run tests
-        working-directory: packages/canopycms
         env:
           BROWSERSLIST_IGNORE_OLD_DATA: true
           # Git identity via env (process-scoped) instead of `git config` — an

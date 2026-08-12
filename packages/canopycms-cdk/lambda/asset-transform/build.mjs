@@ -28,6 +28,22 @@
  * Run via `pnpm --filter canopycms-cdk run build:lambda`. Output lands in
  * `dist/` alongside this script (gitignored); `AssetSupport` points
  * `lambda.Code.fromAsset()` at it (see ../../src/constructs/asset-support.ts).
+ *
+ * `--skip-native` builds step 1 and SKIPS step 2, producing a directory that
+ * is deliberately NOT deployable. It exists for the CDK test suite: those
+ * tests synth real constructs, and `lambda.Code.fromAsset()` only requires
+ * the asset DIRECTORY to exist - it never executes the handler, so the
+ * linux/arm64 sharp binary inside it is irrelevant to every assertion they
+ * make. Step 2 is a genuine platform-targeted `npm install` (network, tens of
+ * seconds); paying it just to let `synth` hash a directory is what kept the
+ * 82-test CDK suite out of CI. Skipping it makes the suite cheap enough to
+ * gate every PR, which is the whole point.
+ *
+ * NEVER pass `--skip-native` on a path that leads to a deploy: the bundle
+ * left behind imports sharp and would throw at cold start. The publish
+ * workflows and `prepack` call this script with no flags and are unchanged.
+ * A `.skip-native` marker file is written into `dist/` so the omission is
+ * discoverable on disk rather than inferred from a build log.
  */
 
 import { execFileSync } from 'node:child_process'
@@ -44,6 +60,8 @@ const canopycmsPkgPath = path.resolve(__dirname, '..', '..', '..', 'canopycms', 
 function log(message) {
   console.log(`[build:lambda] ${message}`)
 }
+
+const skipNative = process.argv.includes('--skip-native')
 
 async function main() {
   const canopycmsPkg = JSON.parse(readFileSync(canopycmsPkgPath, 'utf-8'))
@@ -80,6 +98,22 @@ async function main() {
     ) + '\n',
   )
 
+  const handlerBytes = statSync(path.join(distDir, 'handler.js')).size
+
+  if (skipNative) {
+    // Marker file, not just a log line: `dist/` is gitignored and long-lived,
+    // so whoever finds one later (or a future script) can tell a test-only
+    // bundle from a deployable one by looking at the directory itself.
+    writeFileSync(
+      path.join(distDir, '.skip-native'),
+      'Built with --skip-native: sharp is NOT installed here. Test fixtures only - do not deploy.\n',
+    )
+    log(`Bundle ready (--skip-native, NOT DEPLOYABLE): ${distDir}`)
+    log(`  handler.js: ${(handlerBytes / 1024).toFixed(1)} KiB`)
+    log('  sharp platform binary: SKIPPED - synth only needs this directory to exist')
+    return
+  }
+
   const npmArgs = [
     'install',
     `sharp@${sharpRange}`,
@@ -100,7 +134,6 @@ async function main() {
     )
   }
 
-  const handlerBytes = statSync(path.join(distDir, 'handler.js')).size
   log(`Bundle ready: ${distDir}`)
   log(`  handler.js: ${(handlerBytes / 1024).toFixed(1)} KiB`)
   log(`  sharp platform binary: ${platformPkgDir}`)
