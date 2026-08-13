@@ -893,6 +893,27 @@ describe('CmsWorker.pushBranchToGitHub() [push-rejection classification]', () =>
     expect(await readMarker('feature-relanded')).toBeUndefined()
   })
 
+  it('finds the marker for a branch whose workspace directory name is sanitized', async () => {
+    // Branch workspace directories are named with sanitizeBranchName (see
+    // resolveBranchPaths), but task payloads carry the RAW git ref name --
+    // they differ for any name outside [A-Za-z0-9._-], '/' being the obvious
+    // one. Joining the raw name onto contentBranchesPath misses the directory
+    // entirely, so the marker reads as absent, the push goes out unleased,
+    // and the branch wedges exactly as it did before this fix.
+    await seedBranchInGitHubFixture('feature/slashed', 'pre-rebase')
+    const published = await shaOf(githubFixture, 'refs/heads/feature/slashed')
+    await seedBranchInRemoteGit('feature/slashed', 'rewritten by the rebase loop')
+    const rewrittenTip = await shaOf(remoteGitPath, 'refs/heads/feature/slashed')
+    // Marker lives in the SANITIZED directory, as the rebase loop writes it.
+    await writeRewriteMarker('feature-slashed', published)
+
+    const worker = makePushWorker()
+    await (worker as unknown as PushBranchInternals).pushBranchToGitHub('feature/slashed')
+
+    expect(await shaOf(githubFixture, 'refs/heads/feature/slashed')).toBe(rewrittenTip)
+    expect(await readMarker('feature-slashed')).toBeUndefined()
+  })
+
   it('still fast-forwards when the marker is stale and the branch has moved on since', async () => {
     // The wedge this guards against: git refuses a stale lease even when the
     // update is an ordinary fast-forward. GitHub holds the rewritten commit

@@ -79,6 +79,24 @@ The retry budget stays as-is (`PermanentTaskError`), deliberately: an identical
 push still cannot succeed, and the reconciliation is the leased push itself,
 attempted on the first try.
 
+**A boundary this fix depended on, found after the PR opened** (while answering
+"what are you least sure of"): branch workspace directories are provisioned
+under `sanitizeBranchName(...)` (`paths/branch.ts`), but task payloads carry the
+raw git ref name, and `cms-worker.ts` joined the RAW name onto
+`contentBranchesPath` in three places. They differ for any name outside
+`[A-Za-z0-9._-]` — `feature/x` lives in `feature-x`. Pre-existing, and until now
+merely cosmetic (`updateBranchMetadata`/`updateBranchMetadataOnFailure` quietly
+dropped their write after a failed `fs.stat`), but this change made correctness
+depend on it: the history-rewrite marker read as absent, the push went out
+unleased, and a slash-named branch wedged exactly as before the fix. All three
+sites now go through one `branchWorkspacePath()` helper. Reproduced with a
+red-first test before fixing.
+
+Related and NOT changed: the rebase loop writes the *sanitized* directory name
+into metadata's `name` field while the API writes the raw ref name. Harmless
+today (`name` is not used for path resolution) but a genuine inconsistency —
+worth a separate look rather than a drive-by in this PR.
+
 ---
 
 ## ~~HIGH — finalize's decode validation only checks frame 0 of animated GIF/WebP~~ (RESOLVED 2026-08-12)

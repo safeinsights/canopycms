@@ -930,7 +930,7 @@ export class CmsWorker {
     const branch = typeof task.payload.branch === 'string' ? task.payload.branch : null
     if (!branch) return
 
-    const branchPath = path.join(this.contentBranchesPath, branch)
+    const branchPath = this.branchWorkspacePath(branch)
     try {
       await fs.stat(branchPath)
     } catch {
@@ -985,7 +985,7 @@ export class CmsWorker {
     const branch = typeof task.payload.branch === 'string' ? task.payload.branch : null
     if (!branch) return
 
-    const branchPath = path.join(this.contentBranchesPath, branch)
+    const branchPath = this.branchWorkspacePath(branch)
     try {
       await fs.stat(branchPath)
     } catch {
@@ -1007,6 +1007,26 @@ export class CmsWorker {
 
   private buildGitHubUrl(): string {
     return `https://x-access-token:${this.config.githubToken}@github.com/${this.config.githubOwner}/${this.config.githubRepo}.git`
+  }
+
+  /**
+   * The workspace directory for a branch named by its GIT REF name -- the
+   * form task payloads carry (`context.branch.name`), not the directory form.
+   *
+   * These differ for any name outside `[A-Za-z0-9._-]`, `/` being the obvious
+   * one: workspaces are provisioned under `sanitizeBranchName(...)` (see
+   * paths/branch.ts's `resolveBranchPaths`), so `feature/x` lives in
+   * `feature-x`. Joining the raw name instead silently addresses a directory
+   * that does not exist -- which for the metadata writers below meant the
+   * update was quietly dropped, and for the leased push meant the
+   * history-rewrite marker read as absent and the push went out unleased,
+   * wedging exactly the branch this workstream exists to unwedge.
+   *
+   * `name` inside the metadata itself stays the raw ref name; only the path
+   * is sanitized.
+   */
+  private branchWorkspacePath(branchRefName: string): string {
+    return path.join(this.contentBranchesPath, sanitizeBranchName(branchRefName))
   }
 
   /**
@@ -1229,7 +1249,7 @@ export class CmsWorker {
     // push is non-fast-forward forever. Push under a lease keyed to exactly
     // that commit: it moves GitHub off the commit we rewrote away, and
     // refuses in every other case (including a commit someone else pushed).
-    const branchPath = path.join(this.contentBranchesPath, branch)
+    const branchPath = this.branchWorkspacePath(branch)
     const metaFile = await BranchMetadataFileManager.loadOnly(branchPath).catch(() => null)
     const marker = metaFile?.branch.historyRewrittenFrom
     // What this push will actually send: remote.git's tip for the branch.
