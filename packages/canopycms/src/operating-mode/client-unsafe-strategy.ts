@@ -30,10 +30,10 @@ class ProdStrategy extends ProdClientSafeStrategy implements ClientUnsafeStrateg
     return path.resolve(process.env.CANOPYCMS_WORKSPACE_ROOT ?? DEFAULT_PROD_WORKSPACE)
   }
 
-  getContentRoot(sourceRoot?: string): string {
+  getContentRoot(contentRoot: string, sourceRoot?: string): string {
     // In prod, content is at workspace root (not project root)
     // This is called with sourceRoot = workspace path
-    return path.resolve(sourceRoot ?? process.cwd(), 'content')
+    return path.resolve(sourceRoot ?? process.cwd(), contentRoot)
   }
 
   getContentBranchesRoot(sourceRoot?: string): string {
@@ -108,8 +108,8 @@ class DevStrategy extends DevClientSafeStrategy implements ClientUnsafeStrategy 
     return path.resolve(sourceRoot ?? process.cwd(), '.canopy-dev')
   }
 
-  getContentRoot(sourceRoot?: string): string {
-    return path.resolve(sourceRoot ?? process.cwd(), 'content')
+  getContentRoot(contentRoot: string, sourceRoot?: string): string {
+    return path.resolve(sourceRoot ?? process.cwd(), contentRoot)
   }
 
   getContentBranchesRoot(sourceRoot?: string): string {

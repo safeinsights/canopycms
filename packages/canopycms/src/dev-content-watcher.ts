@@ -80,7 +80,10 @@ export function startDevContentWatcher(
   const sourceRoot = options.sourceRoot ?? services.config.sourceRoot ?? process.cwd()
   const contentRoot = services.config.contentRoot || 'content'
   const strategy = operatingStrategy('dev')
-  const workingTreeContentDir = strategy.getContentRoot(sourceRoot)
+  // Must pass the resolved contentRoot local above -- getContentRoot has no
+  // default of its own (by design: a default here is what let this watcher
+  // silently no-op for a non-default contentRoot before this fix).
+  const workingTreeContentDir = strategy.getContentRoot(contentRoot, sourceRoot)
   const warn = options.warn ?? ((message: string) => console.warn(message))
 
   // Nothing to watch if the working tree has no content directory (e.g. unit-test configs).

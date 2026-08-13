@@ -27,13 +27,14 @@ import { CmsWorker } from './cms-worker'
 // ---------------------------------------------------------------------------
 
 /** Instantiate a CmsWorker with minimal config for testing rebase logic only. */
-const makeWorker = (workspacePath: string, baseBranch = 'main') =>
+const makeWorker = (workspacePath: string, baseBranch = 'main', contentRoot?: string) =>
   new CmsWorker({
     workspacePath,
     githubOwner: 'test-owner',
     githubRepo: 'test-repo',
     githubToken: 'fake-token',
     baseBranch,
+    contentRoot,
   })
 
 /** Invoke the private rebaseActiveBranches() method. */
@@ -504,6 +505,68 @@ describe('CmsWorker rebaseActiveBranches', () => {
       const meta = await readMeta(setup.branchPath)
       expect(meta?.conflictStatus).toBe('conflicts-detected')
       expect(meta?.conflictFiles).toContain(ROOT_COLLECTION_ID)
+    })
+
+    it('records ROOT_COLLECTION_ID when root .collection.json conflicts with a multi-segment contentRoot', async () => {
+      // contentRoot: 'cms/content' is documented as valid (config/helpers.ts). The
+      // root .collection.json's parent directory basename is "content", which must
+      // NOT be compared against the full configured value "cms/content" -- that
+      // comparison is always false and is exactly the bug this test guards against
+      // (see cms-worker.ts's normalizedContentRoot comment).
+      const META_FILE = 'cms/content/.collection.json'
+
+      const setup = await createBranchSetup(tmpDir, 'my-feature', {
+        initialFiles: { [META_FILE]: '{"entries":[]}' },
+      })
+
+      await setup.commitToBranch(
+        { [META_FILE]: '{"entries":[],"order":["branch"]}' },
+        'branch: update root schema',
+      )
+      await setup.pushToRemote(
+        { [META_FILE]: '{"entries":[],"order":["main"]}' },
+        'main: update root schema',
+      )
+
+      await writeMeta(setup.branchPath, setup.contentBranchesPath, {})
+
+      const worker = makeWorker(tmpDir, 'main', 'cms/content')
+      await runRebase(worker)
+
+      const meta = await readMeta(setup.branchPath)
+      expect(meta?.conflictStatus).toBe('conflicts-detected')
+      expect(meta?.conflictFiles).toContain(ROOT_COLLECTION_ID)
+    })
+
+    it('filters out .collection.json that is neither in the content root nor an ID-bearing collection dir', async () => {
+      // "docs" carries no embedded ContentId (extractIdFromFilename -> null) AND is
+      // not the configured content root ("content") -- the fix must not start
+      // misclassifying every unrecognized .collection.json as the root collection.
+      const META_FILE = 'content/docs/.collection.json'
+
+      const setup = await createBranchSetup(tmpDir, 'my-feature', {
+        initialFiles: { [META_FILE]: '{"name":"docs","order":[]}' },
+      })
+
+      await setup.commitToBranch(
+        { [META_FILE]: '{"name":"docs","order":["branch"]}' },
+        'branch: reorder docs',
+      )
+      await setup.pushToRemote(
+        { [META_FILE]: '{"name":"docs","order":["main"]}' },
+        'main: reorder docs',
+      )
+
+      await writeMeta(setup.branchPath, setup.contentBranchesPath, {})
+
+      const worker = makeWorker(tmpDir)
+      await runRebase(worker)
+
+      const meta = await readMeta(setup.branchPath)
+      // No entry ContentIds, no root-collection match -- conflict is invisible to
+      // the editor, same as the pre-existing "excludes non-entry files" case.
+      expect(meta?.conflictStatus).toBe('clean')
+      expect(meta?.conflictFiles).toEqual([])
     })
 
     it('records both entry and collection ContentIds for mixed conflicts', async () => {

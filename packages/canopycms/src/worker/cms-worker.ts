@@ -26,6 +26,7 @@ import { extractIdFromFilename } from '../content-id-index'
 import { invalidateBranchContentCaches } from '../content-index-generation'
 import { type ContentId, type SanitizedBranchName, ROOT_COLLECTION_ID } from '../paths/types'
 import { sanitizeBranchName, RESERVED_SETTINGS_BRANCH_PREFIX } from '../paths/branch-name'
+import { normalizeFilesystemPath } from '../paths/normalize'
 import { GITHUB_TRACKING_REF_PREFIX, gitChildEnv, gitNetworkChildEnv } from '../git-manager'
 import { resolveDeploymentName } from '../operating-mode/deployment-name'
 import type { PullRequestState, WorkerStatusReport } from '../types'
@@ -2360,8 +2361,26 @@ export class CmsWorker {
         // Entry files have IDs in their filename (e.g., "post.slug.a1b2c3d4e5f6.mdx").
         // .collection.json files have no ID themselves (extractIdFromFilename returns null
         // for dot-prefixed files), so we extract the ID from the parent directory instead.
-        // The root content directory (e.g., "content/") has no embedded ID, so we use
-        // ROOT_COLLECTION_ID as a sentinel — but only for the configured contentRoot.
+        // The root content directory (e.g., "content/", or "cms/content/" for a
+        // multi-segment contentRoot) has no embedded ID, so we use ROOT_COLLECTION_ID
+        // as a sentinel — but only for the configured contentRoot.
+        //
+        // Two different notions of "parent" are needed below, and conflating them
+        // reproduces the exact bug this comparison guards against (see
+        // schema-store.ts's contentRootName doc comment for the same shape elsewhere):
+        //  - `parentDir` (a basename) recovers a SUB-collection's own embedded ID
+        //    (e.g. "posts.cNbR5xFm2Kpd" -> "cNbR5xFm2Kpd") — correct as a basename,
+        //    since a collection directory carries its ID in its own name, one path
+        //    segment.
+        //  - `parentPath` (the full relative parent path, normalized) is what must be
+        //    compared against `this.contentRoot`, because `contentRoot` is documented
+        //    (config/helpers.ts) as allowed to span multiple segments (e.g.
+        //    "cms/content"). Comparing a basename ("content") against that full value
+        //    is always false, which silently drops the root collection's conflict.
+        //    Git reports POSIX-style paths and the configured value may be authored
+        //    with either separator, so both sides go through normalizeFilesystemPath
+        //    before comparing.
+        const normalizedContentRoot = normalizeFilesystemPath(this.contentRoot)
         const conflictIds = [...new Set(conflictedFiles)]
           .map((f) => {
             const fileId = extractIdFromFilename(path.basename(f))
@@ -2369,9 +2388,10 @@ export class CmsWorker {
             const parentDir = path.basename(path.dirname(f))
             const dirId = extractIdFromFilename(parentDir)
             if (dirId) return dirId
-            // Only assign ROOT_COLLECTION_ID when the parent matches the configured
-            // content root (e.g., "content"). Other unrecognized paths are filtered out.
-            if (path.basename(f) === '.collection.json' && parentDir === this.contentRoot) {
+            // Only assign ROOT_COLLECTION_ID when the file's parent directory IS the
+            // configured content root. Other unrecognized paths are filtered out.
+            const parentPath = normalizeFilesystemPath(path.dirname(f))
+            if (path.basename(f) === '.collection.json' && parentPath === normalizedContentRoot) {
               return ROOT_COLLECTION_ID
             }
             return null

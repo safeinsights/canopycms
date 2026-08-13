@@ -107,10 +107,20 @@ export interface ClientUnsafeStrategy extends ClientSafeStrategy {
 
   /**
    * Get the content directory path (at project/workspace root).
-   * - dev: {cwd}/content
-   * - prod (in workspaces): {workspaceRoot}/content
+   * - dev: {sourceRoot ?? cwd}/{contentRoot}
+   * - prod (in workspaces): {sourceRoot ?? cwd}/{contentRoot}
+   *
+   * `contentRoot` is REQUIRED and must be the caller's already-resolved
+   * `config.contentRoot` (falling back to 'content' at the call site, not here).
+   * A default here is deliberately not provided: this method used to hardcode
+   * the literal 'content', which silently disarmed callers configured with a
+   * non-default contentRoot (e.g. dev-content-watcher.ts's divergence watcher
+   * resolved a content directory that never existed, hit its existsSync guard,
+   * and permanently no-op'd — with no error, since a missing directory looks
+   * like "nothing to watch yet"). Making the parameter required means a future
+   * caller cannot silently reintroduce that bug by omitting it.
    */
-  getContentRoot(sourceRoot?: string): string
+  getContentRoot(contentRoot: string, sourceRoot?: string): string
 
   /**
    * Get the parent directory of all content branch workspaces (contains branches.json and branch directories).
