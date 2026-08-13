@@ -89,7 +89,7 @@ must be capped rather than rejected).
 
 ---
 
-## HIGH — branch switch back to a previously-visited branch renders the other branch's entries
+## ~~HIGH — branch switch back to a previously-visited branch renders the other branch's entries~~ (RESOLVED 2026-08-12)
 
 `editor/hooks/useEntryManager.ts`. Pre-SWR, `setEntriesInitializing(true)` fired
 unconditionally on every branch-change effect. It is now gated on SWR's
@@ -110,6 +110,55 @@ never exercises the cached path.
 **Fix direction:** derive entries/collections from SWR `data` directly, as
 `useCommentSystem` already does, or reset the mirrors in the same effect that
 clears `selectedPath`. Add a test that visits A, B, then A again.
+
+**RESOLVED** (2026-08-12, `fix/branch-switch-stale-entries`) — but the trigger
+above is **not** the one that was still live, and the correction matters for
+anyone reading this finding later.
+
+The A→B→A *cached-replay* half described here had already been fixed before this
+work started, by the per-branch committed-seq rule (see `refreshSeqRef`'s doc
+comment), and it *is* covered: `useEntryManager.test.ts`'s "switching A→B→A
+inside the SWR dedupe window…" test. The claim that no test exercises the cached
+path was stale.
+
+What remained open was the complement, and it was broader than a race: the commit
+effect's `if (!taggedEntries) return` fires whenever the new branch has **no
+cached data yet** — every first visit to a branch — so the previous branch's
+entries stayed committed for the entire duration of the new branch's fetch.
+Reproduced: on `branch-b`, the rendered entry's `apiPath` still read
+`/api/canopycms/branch-a/...`, and the selection-fallback effect **auto-selected**
+it with no click from the user. `entriesInitializing` was true but bought
+nothing — `Editor.tsx` only consults it when `!currentEntry`, and
+`EntryNavigator`'s loader only replaces an *empty* tree. The OCC consequence
+reproduced exactly as described (`expectedVersion: undefined`, so
+`content-store.ts` skips the mtime check and the save blind-overwrites).
+
+Fixed by neither listed direction but by a third: the three mirrors
+(`entries`/`collections`/`availableSchemas`) collapsed into one `BranchView`
+record **stamped with the branch that produced it**, with the rendered values
+derived from it and falling back to empty when the stamp doesn't match. That
+makes cross-branch bleed unrenderable by construction rather than dependent on
+an effect having run, and covers both early returns plus the render-before-effect
+window. A full derive-from-SWR was rejected as disproportionate: `refreshEntries`
+commits synchronously and the per-branch claimed/committed machinery orders those
+commits, so reworking it risked reintroducing the races that machinery just fixed.
+
+Consuming SWR's `error` was **required**, not incidental: `shouldRetryOnError` is
+false, so without it a single failed load would leave the stamp permanently
+unmatched and the pane stuck at "Loading content…" forever. That path now settles
+to the empty state and reports (notification + `console.error`), restoring
+surfacing the SWR migration had dropped.
+
+Three regression tests, each verified red before green — the stale render, the
+OCC consequence, and the failed-load path. The OCC test had to reproduce the
+*interleaving* (open an entry → the new branch's data lands → save) because a
+load and save back-to-back give the contentId no chance to change in between and
+pass against the unfixed hook.
+
+One related hazard is deliberately **not** closed here: the version map is keyed
+by contentId, so any other path that swaps an entry object's contentId between
+load and save still yields a version-less write. Tracked in
+[occ-version-key-contentid-swap.md](occ-version-key-contentid-swap.md).
 
 ---
 
@@ -173,7 +222,7 @@ Nothing self-heals, so it recurs every cycle.
 
 ---
 
-## MEDIUM — `SWRProvider` omits the cache isolation the project's own test helper mandates
+## ~~MEDIUM — `SWRProvider` omits the cache isolation the project's own test helper mandates~~ (RESOLVED 2026-08-12)
 
 `editor/context/SWRProvider.tsx` sets no `provider`, so it uses SWR's
 module-global cache — while `editor/hooks/__test__/test-utils.tsx` passes
@@ -183,6 +232,15 @@ mounted editors on different backends but the same branch name would share
 entries. No live trigger today (single-editor model), and SSR does not leak.
 
 **Fix direction:** `provider: () => new Map()`.
+
+**RESOLVED** (2026-08-12, `fix/branch-switch-stale-entries`) — fixed as directed,
+folded in alongside the branch-switch fix above since it is the same subsystem.
+`SWRProvider` is mounted once (`CanopyEditor.tsx`), so the cache now spans the
+editor session while being isolated from any `SWRConfig` the host app runs for
+its own data. The one behavioral consequence is noted in `refreshSeqRef`'s doc
+comment: its remount reasoning ("SWR's cache … survives") now means remounts
+*below* `CanopyEditor` — remounting `CanopyEditor` itself starts a fresh cache,
+which is the same code path as a first load.
 
 ---
 
