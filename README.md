@@ -1561,7 +1561,7 @@ const { data } = await reader.read({
 
 ### Sanitizing URLs from CMS Content
 
-When rendering links from CMS-managed content, user-provided URLs may contain dangerous schemes like `javascript:` or `data:`. CanopyCMS exports a `sanitizeHref` utility that parses untrusted URLs and only allows `http:` and `https:` protocols, returning a safe fallback for anything else.
+When rendering links from CMS-managed content, user-provided URLs may contain dangerous schemes like `javascript:` or `data:`. CanopyCMS exports a `sanitizeHref` utility that parses untrusted URLs -- both absolute (`https://example.com`) and relative (`/about`, `#section`) -- and only allows `http:` and `https:` protocols, returning a safe fallback for anything else.
 
 ```typescript
 import { sanitizeHref } from 'canopycms'
@@ -1583,14 +1583,18 @@ import { sanitizeHref } from 'canopycms'
 
 **Behavior:**
 
-| Input                           | Output                       |
-| ------------------------------- | ---------------------------- |
-| `"https://example.com/page"`    | `"https://example.com/page"` |
-| `"http://example.com"`          | `"http://example.com"`       |
-| `"javascript:alert(1)"`         | `"#"` (blocked scheme)       |
-| `"data:text/html,<h1>bad</h1>"` | `"#"` (blocked scheme)       |
-| `"not a url"`                   | `"#"` (invalid URL)          |
-| `""`                            | `"#"` (invalid URL)          |
+| Input                           | Output                             |
+| ------------------------------- | ---------------------------------- |
+| `"https://example.com/page"`    | `"https://example.com/page"`       |
+| `"http://example.com"`          | `"http://example.com"`             |
+| `"/about"`                      | `"/about"` (root-relative)         |
+| `"docs/guide"`                  | `"/docs/guide"` (relative)         |
+| `"#section"`                    | `"#section"` (same-page)           |
+| `"//evil.com/x"`                | `"#"` (protocol-relative, blocked) |
+| `"javascript:alert(1)"`         | `"#"` (blocked scheme)             |
+| `"data:text/html,<h1>bad</h1>"` | `"#"` (blocked scheme)             |
+| `"http://"`                     | `"#"` (invalid URL)                |
+| `""`                            | `"#"` (invalid URL)                |
 
 Use `sanitizeHref` anywhere you render an `href` attribute with a value that comes from CMS content -- call-to-action links, navigation URLs, author website fields, etc. It constructs a fresh string from the parsed URL rather than passing the original input through, which also satisfies static analysis tools (e.g., CodeQL taint tracking).
 
