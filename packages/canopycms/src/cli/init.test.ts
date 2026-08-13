@@ -516,6 +516,236 @@ describe('canopycms init-deploy aws', () => {
     expect(uncommented).not.toContain('amazon-ecr-login')
   })
 
+  // ---------------------------------------------------------------------
+  // The CDK app. Without these the generated workflow's `cdk deploy` has
+  // nothing to deploy against: `cdk deploy` with no --app requires a cdk.json,
+  // and `cdk init` cannot supply one (it refuses to run in a non-empty
+  // directory). That is the gap these files close.
+  // ---------------------------------------------------------------------
+
+  it('scaffolds a CDK app: cdk.json, bin/app.ts and lib/cms-stack.ts', async () => {
+    await initDeployAws({ cloud: 'aws', projectDir: tmpDir, force: false, nonInteractive: true })
+
+    const cdkJson = JSON.parse(await fs.readFile(path.join(tmpDir, 'cdk.json'), 'utf-8'))
+    // `cdk deploy` resolves the app through this command; if it does not point
+    // at a file that exists, every deploy fails on its first step.
+    expect(cdkJson.app).toContain('infrastructure/bin/app.ts')
+
+    const appEntry = await fs.readFile(path.join(tmpDir, 'infrastructure/bin/app.ts'), 'utf-8')
+    expect(appEntry).toContain('CmsStack')
+
+    const stack = await fs.readFile(path.join(tmpDir, 'infrastructure/lib/cms-stack.ts'), 'utf-8')
+    expect(stack).toContain('CanopyCmsService')
+    expect(stack).toContain("from 'canopycms-cdk'")
+  })
+
+  it('ships no CDKv1 feature flags in cdk.json context', async () => {
+    await initDeployAws({ cloud: 'aws', projectDir: tmpDir, force: false, nonInteractive: true })
+
+    // CDKv2 hard-rejects flags that only existed in v1 (UnsupportedFeatureFlag
+    // at synth). The scaffold therefore ships an empty context deliberately --
+    // the canopycms-cdk constructs are tested under default flags.
+    const cdkJson = JSON.parse(await fs.readFile(path.join(tmpDir, 'cdk.json'), 'utf-8'))
+    expect(cdkJson.context).toEqual({})
+  })
+
+  it('deploys the scaffolded stack by name, never --all', async () => {
+    await initDeployAws({ cloud: 'aws', projectDir: tmpDir, force: false, nonInteractive: true })
+
+    const workflow = await fs.readFile(
+      path.join(tmpDir, '.github/workflows/deploy-cms.yml'),
+      'utf-8',
+    )
+    const appEntry = await fs.readFile(path.join(tmpDir, 'infrastructure/bin/app.ts'), 'utf-8')
+
+    // `--all` on an adopter who kept their own cdk.json would deploy THEIR
+    // unrelated stacks on every content merge, with the OIDC role they just
+    // created. Deploying by name fails loudly instead.
+    const deployLine = workflow
+      .split('\n')
+      .map((line) => line.trim())
+      .find((line) => line.startsWith('run: npx cdk deploy'))
+    expect(deployLine).toBeDefined()
+    expect(deployLine).not.toContain('--all')
+
+    const deployedStack = deployLine!.replace('run: npx cdk deploy', '').trim().split(/\s+/)[0]
+    expect(appEntry).toContain(`new CmsStack(app, '${deployedStack}'`)
+  })
+
+  it('passes every variable the scaffolded app requires through the Deploy step', async () => {
+    await initDeployAws({ cloud: 'aws', projectDir: tmpDir, force: false, nonInteractive: true })
+
+    const appEntry = await fs.readFile(path.join(tmpDir, 'infrastructure/bin/app.ts'), 'utf-8')
+    const workflow = await fs.readFile(
+      path.join(tmpDir, '.github/workflows/deploy-cms.yml'),
+      'utf-8',
+    )
+
+    // Each `required('X')` throws at synth when X is unset, so a variable
+    // present in app.ts but absent from the workflow's env block is a
+    // guaranteed red first deploy. Derived from the file rather than
+    // hardcoded, so the two cannot drift apart silently.
+    const requiredVars = [...appEntry.matchAll(/required\('([A-Z0-9_]+)'\)/g)].map((m) => m[1])
+    expect(requiredVars.length).toBeGreaterThan(0)
+
+    const deployStep = workflow.slice(workflow.indexOf('- name: Deploy'))
+    for (const name of requiredVars) {
+      expect(deployStep).toContain(`${name}: \${{`)
+    }
+  })
+
+  it('triggers on dependency and CDK-config changes, not only content', async () => {
+    await initDeployAws({ cloud: 'aws', projectDir: tmpDir, force: false, nonInteractive: true })
+
+    const workflow = await fs.readFile(
+      path.join(tmpDir, '.github/workflows/deploy-cms.yml'),
+      'utf-8',
+    )
+    // A dependency bump changes what the image contains; without these the
+    // Lambda keeps running the old tree until an unrelated content change
+    // happens to ship it.
+    expect(workflow).toContain("- 'cdk.json'")
+    expect(workflow).toContain("- 'package.json'")
+    expect(workflow).toContain("- 'package-lock.json'")
+  })
+
+  it('defaults the trigger branch to main outside a git repository', async () => {
+    // tmpDir has no git remote, so detection must fall back rather than throw.
+    await initDeployAws({ cloud: 'aws', projectDir: tmpDir, force: false, nonInteractive: true })
+
+    const workflow = await fs.readFile(
+      path.join(tmpDir, '.github/workflows/deploy-cms.yml'),
+      'utf-8',
+    )
+    expect(workflow).toContain('branches: [main]')
+  })
+
+  it('defaults to npm commands in both the workflow and the Dockerfile', async () => {
+    await initDeployAws({ cloud: 'aws', projectDir: tmpDir, force: false, nonInteractive: true })
+
+    const workflow = await fs.readFile(
+      path.join(tmpDir, '.github/workflows/deploy-cms.yml'),
+      'utf-8',
+    )
+    const dockerfile = await fs.readFile(path.join(tmpDir, 'Dockerfile.cms'), 'utf-8')
+
+    expect(workflow).toContain('run: npm ci')
+    expect(dockerfile).toContain('RUN npm ci')
+    expect(dockerfile).toContain('RUN npm run build')
+  })
+
+  it('uses pnpm commands in BOTH files when the project uses pnpm', async () => {
+    await fs.writeFile(path.join(tmpDir, 'pnpm-lock.yaml'), 'lockfileVersion: 9.0\n', 'utf-8')
+
+    await initDeployAws({ cloud: 'aws', projectDir: tmpDir, force: false, nonInteractive: true })
+
+    const workflow = await fs.readFile(
+      path.join(tmpDir, '.github/workflows/deploy-cms.yml'),
+      'utf-8',
+    )
+    const dockerfile = await fs.readFile(path.join(tmpDir, 'Dockerfile.cms'), 'utf-8')
+
+    // Both, deliberately. Fixing only the workflow moves the failure one step
+    // later, into the image build that `cdk deploy` runs -- `npm ci` there
+    // fails just as hard with no package-lock.json.
+    expect(workflow).toContain('pnpm install --frozen-lockfile')
+    expect(workflow).toContain("- 'pnpm-lock.yaml'")
+    expect(workflow).not.toContain('run: npm ci')
+    expect(dockerfile).toContain('COPY package.json pnpm-lock.yaml ./')
+    expect(dockerfile).toContain('RUN corepack enable && pnpm install --frozen-lockfile')
+    expect(dockerfile).toContain('RUN pnpm run build')
+    expect(dockerfile).not.toContain('npm ci')
+  })
+
+  it('distinguishes Yarn classic from Berry, which the lockfile name cannot', async () => {
+    // The two need different install flags and a different Docker build
+    // context, and `yarn.lock` is called the same thing in both. Only the
+    // contents tell them apart, so we read them.
+    await fs.writeFile(path.join(tmpDir, 'yarn.lock'), '# yarn lockfile v1\n', 'utf-8')
+    await initDeployAws({ cloud: 'aws', projectDir: tmpDir, force: false, nonInteractive: true })
+    expect(await fs.readFile(path.join(tmpDir, 'Dockerfile.cms'), 'utf-8')).toContain(
+      'yarn install --frozen-lockfile',
+    )
+
+    await fs.writeFile(path.join(tmpDir, 'yarn.lock'), '__metadata:\n  version: 8\n', 'utf-8')
+    await initDeployAws({ cloud: 'aws', projectDir: tmpDir, force: true, nonInteractive: true })
+    const berry = await fs.readFile(path.join(tmpDir, 'Dockerfile.cms'), 'utf-8')
+    expect(berry).toContain('yarn install --immutable')
+    // Berry reads its linker config at install time, so .yarnrc.yml has to be
+    // in the build context before the install layer runs.
+    expect(berry).toContain('COPY package.json yarn.lock .yarnrc.yml ./')
+  })
+
+  it('honours an explicit packageManager field over the lockfile', async () => {
+    await fs.writeFile(
+      path.join(tmpDir, 'package.json'),
+      JSON.stringify({ name: 'adopter', packageManager: 'pnpm@10.12.1' }),
+      'utf-8',
+    )
+
+    await initDeployAws({ cloud: 'aws', projectDir: tmpDir, force: false, nonInteractive: true })
+
+    const dockerfile = await fs.readFile(path.join(tmpDir, 'Dockerfile.cms'), 'utf-8')
+    expect(dockerfile).toContain('pnpm install --frozen-lockfile')
+  })
+
+  it('skips an existing cdk.json and keeps the adopter CDK app intact', async () => {
+    const existing = '{ "app": "npx ts-node bin/their-app.ts" }'
+    await fs.writeFile(path.join(tmpDir, 'cdk.json'), existing, 'utf-8')
+
+    await initDeployAws({ cloud: 'aws', projectDir: tmpDir, force: false, nonInteractive: true })
+
+    expect(await fs.readFile(path.join(tmpDir, 'cdk.json'), 'utf-8')).toBe(existing)
+    // Assert the skip is SELECTIVE, not a command that writes no cdk.json at
+    // all -- otherwise this test passes just as happily against a build with
+    // no CDK scaffolding whatsoever, which is what it is meant to rule out.
+    const stack = await fs.readFile(path.join(tmpDir, 'infrastructure/lib/cms-stack.ts'), 'utf-8')
+    expect(stack).toContain('CanopyCmsService')
+  })
+
+  it('reads the package manager from the workspace root when run in a subpackage', async () => {
+    // A monorepo keeps its lockfile and `packageManager` at the repo root
+    // while the Next app -- where `canopycms init` tells you to run -- is
+    // apps/site. Looking only at the app directory returns npm for a pnpm
+    // repo and writes `npm ci` into both generated files: silently wrong, in
+    // exactly the way this detection exists to prevent.
+    await fs.writeFile(path.join(tmpDir, '.git'), 'fake repo root marker', 'utf-8')
+    await fs.writeFile(path.join(tmpDir, 'pnpm-lock.yaml'), 'lockfileVersion: 9.0\n', 'utf-8')
+    await fs.writeFile(path.join(tmpDir, 'package.json'), '{"name":"root"}', 'utf-8')
+
+    const appDir = path.join(tmpDir, 'apps/site')
+    await fs.mkdir(appDir, { recursive: true })
+    await fs.writeFile(path.join(appDir, 'package.json'), '{"name":"site"}', 'utf-8')
+
+    await initDeployAws({ cloud: 'aws', projectDir: appDir, force: false, nonInteractive: true })
+
+    const dockerfile = await fs.readFile(path.join(appDir, 'Dockerfile.cms'), 'utf-8')
+    expect(dockerfile).toContain('pnpm install --frozen-lockfile')
+  })
+
+  it('does not inherit a package manager from outside the repository', async () => {
+    // The upward walk must stop at the repo root. A project with no evidence
+    // of its own must fall back to npm rather than adopt whatever an
+    // unrelated ancestor directory happens to use.
+    await fs.writeFile(path.join(tmpDir, '.git'), 'fake repo root marker', 'utf-8')
+    await fs.writeFile(path.join(tmpDir, 'package.json'), '{"name":"root"}', 'utf-8')
+
+    await initDeployAws({ cloud: 'aws', projectDir: tmpDir, force: false, nonInteractive: true })
+
+    const dockerfile = await fs.readFile(path.join(tmpDir, 'Dockerfile.cms'), 'utf-8')
+    expect(dockerfile).toContain('RUN npm ci')
+  })
+
+  it('overwrites the scaffolded CDK files with --force', async () => {
+    await fs.mkdir(path.join(tmpDir, 'infrastructure/lib'), { recursive: true })
+    await fs.writeFile(path.join(tmpDir, 'infrastructure/lib/cms-stack.ts'), 'existing', 'utf-8')
+
+    await initDeployAws({ cloud: 'aws', projectDir: tmpDir, force: true, nonInteractive: false })
+
+    const content = await fs.readFile(path.join(tmpDir, 'infrastructure/lib/cms-stack.ts'), 'utf-8')
+    expect(content).toContain('CanopyCmsService')
+  })
+
   it('skips existing files in non-interactive mode', async () => {
     const dockerfilePath = path.join(tmpDir, 'Dockerfile.cms')
     await fs.writeFile(dockerfilePath, 'existing', 'utf-8')

@@ -109,14 +109,62 @@ export async function nextConfig(options: { staticBuild: boolean }): Promise<str
   return readTemplate(templateName)
 }
 
-export async function dockerfileCms(): Promise<string> {
-  return readTemplate('Dockerfile.cms.template')
+/**
+ * CloudFormation stack id used by the scaffolded CDK app.
+ *
+ * Shared rather than written twice: `infrastructure/bin/app.ts` names the
+ * stack, and the deploy workflow deploys it BY NAME (not `--all`, which would
+ * also deploy any unrelated stacks an adopter keeps in the same repo). Those
+ * two must agree, so they read the same constant.
+ */
+export const SCAFFOLD_STACK_NAME = 'CanopyCms'
+
+export async function dockerfileCms(options: {
+  copy: string
+  install: string
+  build: string
+}): Promise<string> {
+  const template = await readTemplate('Dockerfile.cms.template')
+  return template
+    .replace('{{DOCKER_COPY}}', options.copy)
+    .replace('{{DOCKER_INSTALL}}', options.install)
+    .replace('{{DOCKER_BUILD}}', options.build)
 }
 
 export async function dockerignore(): Promise<string> {
   return readTemplate('dockerignore.template')
 }
 
-export async function githubWorkflowCms(): Promise<string> {
-  return readTemplate('deploy-cms.yml.template')
+export async function githubWorkflowCms(options: {
+  defaultBranch: string
+  lockfile: string
+  ciInstall: string
+  addDev: string
+}): Promise<string> {
+  const template = await readTemplate('deploy-cms.yml.template')
+  return template
+    .replace('{{DEFAULT_BRANCH}}', options.defaultBranch)
+    .replace('{{LOCKFILE}}', options.lockfile)
+    .replace('{{CI_INSTALL}}', options.ciInstall)
+    .replaceAll('{{ADD_DEV}}', options.addDev)
+    .replace('{{STACK_NAME}}', SCAFFOLD_STACK_NAME)
+}
+
+export async function cdkJson(): Promise<string> {
+  return readTemplate('cdk.json.template')
+}
+
+export async function cdkApp(options: {
+  githubOwner: string
+  githubRepo: string
+}): Promise<string> {
+  const template = await readTemplate('cdk-app.ts.template')
+  return template
+    .replace('{{STACK_NAME}}', SCAFFOLD_STACK_NAME)
+    .replace('{{GITHUB_OWNER}}', options.githubOwner)
+    .replace('{{GITHUB_REPO}}', options.githubRepo)
+}
+
+export async function cmsStack(): Promise<string> {
+  return readTemplate('cms-stack.ts.template')
 }

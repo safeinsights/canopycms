@@ -1,9 +1,14 @@
 FROM public.ecr.aws/docker/library/node:20-slim AS builder
 WORKDIR /app
-COPY package*.json ./
+{{DOCKER_COPY}}
 # If your app uses `file:` dependencies (e.g. vendored tarballs under vendor/),
-# COPY that directory here, before `npm ci` -- otherwise the install fails.
-RUN npm ci
+# COPY that directory here, before the install step -- otherwise it fails.
+#
+# This assumes a single-package repository. In a workspace monorepo
+# (pnpm-workspace.yaml, npm/yarn `workspaces`) the manifest and lockfile above
+# are not enough on their own -- copy the workspace manifests and install with
+# the workspace filtered to this app.
+{{DOCKER_INSTALL}}
 COPY . .
 # Guard against adopter apps with no public/ directory: Next's standalone
 # output still expects one, and the runner stage below copies it.
@@ -14,8 +19,8 @@ RUN mkdir -p public
 # the image builder. Dev-mode reads require the project to be a git
 # repository, and .git is excluded from the build context by .dockerignore --
 # so synthesize a single-commit repo from the copied files. node_modules
-# (created by npm ci above) is excluded via .git/info/exclude - an adopter
-# repo without its own .gitignore would otherwise commit it into the
+# (created by the install step above) is excluded via .git/info/exclude - an
+# adopter repo without its own .gitignore would otherwise commit it into the
 # snapshot (slow build, bloated builder layer).
 RUN apt-get update && apt-get install -y --no-install-recommends git && rm -rf /var/lib/apt/lists/* \
     && git init -q -b main \
@@ -28,7 +33,7 @@ ENV CANOPY_BUILD=cms
 # publishable key is public material, so it's safe to bake into image layers.
 ARG NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY
 ENV NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=$NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY
-RUN npm run build
+RUN {{DOCKER_BUILD}}
 
 FROM public.ecr.aws/docker/library/node:20-slim AS runner
 # Git is required by CanopyCMS for branch operations
