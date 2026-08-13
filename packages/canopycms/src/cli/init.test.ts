@@ -3,6 +3,7 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 import os from 'node:os'
 import { init, initDeployAws, workerRunOnce } from './init'
+import { CDK_DEPENDENCIES } from './project-detect'
 import { mockConsole } from '../test-utils/console-spy'
 
 // Mock @clack/prompts to avoid interactive prompts in tests
@@ -607,6 +608,25 @@ describe('canopycms init-deploy aws', () => {
     expect(workflow).toContain("- 'cdk.json'")
     expect(workflow).toContain("- 'package.json'")
     expect(workflow).toContain("- 'package-lock.json'")
+  })
+
+  it('checks every CDK dependency init-deploy tells adopters to install', async () => {
+    await initDeployAws({ cloud: 'aws', projectDir: tmpDir, force: false, nonInteractive: true })
+
+    const workflow = await fs.readFile(
+      path.join(tmpDir, '.github/workflows/deploy-cms.yml'),
+      'utf-8',
+    )
+    // The two lists drifted once already: the loop covered four packages while
+    // the error message it prints named all five, so a missing `aws-cdk` let
+    // `npx cdk deploy` float on whatever CLI version it fetched that day.
+    // Tokenized, not a substring check: `aws-cdk-lib` contains `aws-cdk`, so
+    // `toContain('aws-cdk')` would have passed against the very list this
+    // test exists to reject.
+    const loop = /for pkg in (.+?); do/.exec(workflow)
+    if (!loop) throw new Error('generated workflow has no CDK dependency check loop')
+    const checked = loop[1].trim().split(/\s+/)
+    expect([...checked].sort()).toEqual([...CDK_DEPENDENCIES].sort())
   })
 
   it('defaults the trigger branch to main outside a git repository', async () => {

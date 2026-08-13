@@ -252,9 +252,23 @@ now checks, via `GitManager.repoExistsAt()`, whether a settings workspace alread
 exists on disk and — if so — whether its checked-out branch matches the newly-resolved
 name; a mismatch throws instead of letting `GitManager.initializeWorkspace` proceed to
 `checkout --orphan` + `rm -rf .` on a populated workspace (orphan branches share no
-history, so that sequence is not recoverable). This check runs entirely inside
-`ensureGitWorkspace`'s own pre-existing in-memory + file-based (`O_CREAT|O_EXCL`) init
-lock — a bespoke pair local to settings-workspace.ts, not one of the four numbered
-layers above (it predates this change and is not yet cataloged in the table below) —
-so two hosts racing to initialize the same settings workspace still can't both decide
-it's safe and both destroy it.
+history, so that sequence is not recoverable).
+
+**The safety here comes from the guard, not from a lock — and that is deliberate.**
+`ensureGitWorkspace` does hold a bespoke pair of locks (in-memory plus a file-based
+`O_CREAT|O_EXCL` one), local to settings-workspace.ts and not one of the four numbered
+layers above; it predates this change and is not yet cataloged in the table below. But
+that pair does **not** gate the destructive path: `acquireFileLock`'s return value is
+read only to decide whether to _release_ in the `finally`, and
+`GitManager.initializeWorkspace` is called unconditionally. A process that loses the
+lock proceeds into init anyway — the pre-existing concurrent-init design, which the code
+comment defends. The identity check is therefore run **lock-free on purpose**, precisely
+_because_ the un-locked process continues: gating the check on `acquired` would let that
+process wipe a populated workspace.
+
+> ⚠️ `acquired` looks unused at a glance, and "align the code with the docs by gating the
+> guard on it" reads as an obvious tidy-up in review. It would remove the only real
+> protection against an unrecoverable wipe. See
+> [`.claude/future-tasks/settings-workspace-init-lock-uncatalogued.md`](../.claude/future-tasks/settings-workspace-init-lock-uncatalogued.md),
+> which also tracks cataloguing the bespoke pair and the open question of whether the
+> lock-free guard is sufficient on its own.
