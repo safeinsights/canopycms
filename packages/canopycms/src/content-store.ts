@@ -83,10 +83,19 @@ export type ContentDocument = (MarkdownDocument | JsonDocument | YamlDocument) &
   version?: number
 }
 
+// expectedVersion: undefined = no opinion (blind write, back-compat default);
+// a number = OCC — must match the file's current mtime; null = create-only —
+// the file must NOT exist yet. Mirrors the same three-way convention already
+// used by writeOccJsonFile's WriteOccJsonFileOptions.expectedVersion.
 export type WriteInput =
-  | { format: 'md' | 'mdx'; data?: Record<string, unknown>; body: string; expectedVersion?: number }
-  | { format: 'json'; data: Record<string, unknown>; expectedVersion?: number }
-  | { format: 'yaml'; data: Record<string, unknown>; expectedVersion?: number }
+  | {
+      format: 'md' | 'mdx'
+      data?: Record<string, unknown>
+      body: string
+      expectedVersion?: number | null
+    }
+  | { format: 'json'; data: Record<string, unknown>; expectedVersion?: number | null }
+  | { format: 'yaml'; data: Record<string, unknown>; expectedVersion?: number | null }
 
 export type ContentStoreErrorCode = 'NOT_FOUND' | 'NO_SCHEMA_ITEM' | 'FORBIDDEN' | 'VALIDATION'
 
@@ -103,8 +112,8 @@ export class ContentStoreError extends Error {
  * Indicates a cross-process concurrent write — the caller should reload and retry.
  */
 export class ContentConflictError extends Error {
-  constructor() {
-    super('Content was modified by another editor')
+  constructor(message = 'Content was modified by another editor') {
+    super(message)
     this.name = 'ContentConflictError'
   }
 }
@@ -816,17 +825,32 @@ export class ContentStore {
 
         await fs.mkdir(path.dirname(absolutePath), { recursive: true })
 
-        // OCC: if caller supplied a version token, reject stale writes
+        // OCC: undefined means no opinion (skip entirely, back-compat blind
+        // write). A number means "must match this mtime" (stale-write
+        // rejection). `null` means "must NOT exist yet" — the create-intent
+        // guard: without this, a create request against a slug that already
+        // has content falls through to an ordinary blind overwrite (August
+        // 2026 baseline review, Critical finding). This is the authoritative
+        // check — it runs inside the per-entry lock against a fresh stat, so
+        // it holds even if a caller's own pre-write existence check (e.g. the
+        // API layer's `documentExists`) went stale under concurrency.
         if (input.expectedVersion !== undefined) {
           try {
             const existing = await fs.stat(absolutePath)
+            if (input.expectedVersion === null) {
+              throw new ContentConflictError('An entry with this slug already exists')
+            }
             if (existing.mtimeMs !== input.expectedVersion) {
               throw new ContentConflictError()
             }
           } catch (err) {
             if (err instanceof ContentConflictError) throw err
             if (isNodeError(err) && err.code === 'ENOENT') {
-              // File doesn't exist yet — first write, skip version check
+              // File doesn't exist yet: for a numeric expectedVersion this is
+              // the existing "first write, skip version check" back-compat
+              // behavior; for expectedVersion === null this is the success
+              // case (create-only correctly finds no collision) — either way,
+              // proceed with the write.
             } else {
               throw err
             }

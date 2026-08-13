@@ -181,6 +181,161 @@ describe('content api', () => {
     expect(res.status).toBe(409)
   })
 
+  // Create-intent guard (August 2026 baseline review, Critical finding): a
+  // create (expectedVersion: null) against a slug that already has content
+  // must never silently overwrite it.
+  describe('create-intent guard (expectedVersion: null)', () => {
+    it('returns 409 before validation or store.write when the slug already exists, even with no required fields', async () => {
+      const ctx = allowedCtx()
+      const { ContentStore } = await import('../content-store')
+
+      const writeSpy = vi.fn()
+      const mockStore = {
+        resolvePath: vi.fn().mockReturnValue({
+          // The destructive arm: an entry type with an EMPTY schema, so a
+          // stale required-fields validation would never have caught this.
+          schemaItem: {
+            logicalPath: 'content/posts',
+            type: 'collection',
+            entries: [{ name: 'post', format: 'json', schema: [] }],
+          },
+          slug: 'existing-post',
+        }),
+        resolveDocumentPath: vi
+          .fn()
+          .mockReturnValue({ relativePath: 'content/posts/existing-post' }),
+        write: writeSpy,
+        idIndex: vi.fn().mockResolvedValue({ findById: vi.fn().mockReturnValue(null) }),
+        documentExists: vi.fn().mockResolvedValue(true),
+        getExistingEntryType: vi.fn().mockResolvedValue(undefined),
+        countEntriesOfType: vi.fn().mockResolvedValue(0),
+      }
+      vi.mocked(ContentStore).mockImplementationOnce(function () {
+        return mockStore as any
+      })
+
+      const res = await writeContent(
+        ctx,
+        { user: { type: 'authenticated', userId: 'u1', groups: [] } },
+        {
+          branch: unsafeAsBranchName('feature/x'),
+          path: unsafeAsLogicalPath('posts/existing-post'),
+        },
+        { format: 'json', data: {}, expectedVersion: null },
+      )
+      expect(res.ok).toBe(false)
+      expect(res.status).toBe(409)
+      if (!res.ok) {
+        expect(res.error).toContain('already exists')
+      }
+      // The whole point of the fix: the destructive write must never be attempted.
+      expect(writeSpy).not.toHaveBeenCalled()
+    })
+
+    it('returns 409 (not the generic conflict message) when the slug already exists and the entry type HAS required fields', async () => {
+      // Guards the previous failure mode: with required fields, the old code
+      // returned a 422 ("title: This field is required") that never
+      // mentioned the real problem. The create-intent guard must short
+      // circuit before validation, regardless of the entry type's fields.
+      const ctx = allowedCtx()
+      const { ContentStore } = await import('../content-store')
+
+      const writeSpy = vi.fn()
+      const mockStore = {
+        resolvePath: vi.fn().mockReturnValue({
+          schemaItem: {
+            logicalPath: 'content/posts',
+            type: 'collection',
+            entries: [
+              {
+                name: 'post',
+                format: 'json',
+                schema: [{ name: 'title', type: 'text', required: true }],
+              },
+            ],
+          },
+          slug: 'existing-post',
+        }),
+        resolveDocumentPath: vi
+          .fn()
+          .mockReturnValue({ relativePath: 'content/posts/existing-post' }),
+        write: writeSpy,
+        idIndex: vi.fn().mockResolvedValue({ findById: vi.fn().mockReturnValue(null) }),
+        documentExists: vi.fn().mockResolvedValue(true),
+        getExistingEntryType: vi.fn().mockResolvedValue(undefined),
+        countEntriesOfType: vi.fn().mockResolvedValue(0),
+      }
+      vi.mocked(ContentStore).mockImplementationOnce(function () {
+        return mockStore as any
+      })
+
+      const res = await writeContent(
+        ctx,
+        { user: { type: 'authenticated', userId: 'u1', groups: [] } },
+        {
+          branch: unsafeAsBranchName('feature/x'),
+          path: unsafeAsLogicalPath('posts/existing-post'),
+        },
+        { format: 'json', data: {}, expectedVersion: null },
+      )
+      expect(res.ok).toBe(false)
+      expect(res.status).toBe(409)
+      if (!res.ok) {
+        expect(res.error).toContain('already exists')
+        expect(res.error).not.toContain('required')
+      }
+      expect(writeSpy).not.toHaveBeenCalled()
+    })
+
+    it('allows a create-intent write when the slug does not exist yet', async () => {
+      const ctx = allowedCtx()
+      const res = await writeContent(
+        ctx,
+        { user: { type: 'authenticated', userId: 'u1', groups: [] } },
+        { branch: unsafeAsBranchName('feature/x'), path: unsafeAsLogicalPath('posts/hello') },
+        { format: 'json', data: {}, expectedVersion: null },
+      )
+      expect(res.ok).toBe(true)
+    })
+
+    it('returns a slug-collision message (not the generic conflict message) when store.write races into a create-intent conflict', async () => {
+      const ctx = allowedCtx()
+      const { ContentStore, ContentConflictError } = await import('../content-store')
+
+      const mockStore = {
+        resolvePath: vi.fn().mockReturnValue({
+          schemaItem: { logicalPath: 'content/posts', type: 'collection', entries: [] },
+          slug: 'hello',
+        }),
+        resolveDocumentPath: vi.fn().mockReturnValue({ relativePath: 'content/posts/hello' }),
+        write: vi.fn().mockRejectedValue(new ContentConflictError()),
+        idIndex: vi.fn().mockResolvedValue({ findById: vi.fn().mockReturnValue(null) }),
+        // Pre-write check sees no document (the race window), so the early
+        // short circuit doesn't fire; store.write's in-lock check is what
+        // catches it.
+        documentExists: vi.fn().mockResolvedValue(false),
+        getExistingEntryType: vi.fn().mockResolvedValue(undefined),
+        countEntriesOfType: vi.fn().mockResolvedValue(0),
+      }
+      vi.mocked(ContentStore).mockImplementationOnce(function () {
+        return mockStore as any
+      })
+
+      const res = await writeContent(
+        ctx,
+        { user: { type: 'authenticated', userId: 'u1', groups: [] } },
+        { branch: unsafeAsBranchName('feature/x'), path: unsafeAsLogicalPath('posts/hello') },
+        { format: 'json', data: {}, expectedVersion: null },
+      )
+      expect(res.ok).toBe(false)
+      expect(res.status).toBe(409)
+      if (!res.ok) {
+        expect(res.error).toContain('already exists')
+        expect(res.error).not.toContain('modified by another editor')
+      }
+    })
+  })
+
   describe('validateEntry hook', () => {
     const writeReq = { user: { type: 'authenticated' as const, userId: 'u1', groups: [] } }
     const writeParams = {

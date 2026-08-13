@@ -82,3 +82,67 @@ describe('EntryCreateModal - form state survives parent re-renders', () => {
     expect(entryTypeInput().value).toBe('Post')
   })
 })
+
+// Client-side pre-check (August 2026 baseline review, Critical finding): a
+// create against a slug that's already loaded client-side should surface a
+// clear message immediately, rather than a raw 409 or (for entry types with
+// no required fields) letting the request through at all.
+describe('EntryCreateModal - existing-slug pre-check', () => {
+  afterEach(() => {
+    cleanup()
+  })
+
+  const createButton = () => screen.getByTestId('create-entry-submit') as HTMLButtonElement
+
+  it('shows a clear message and disables Create when the typed slug already exists', async () => {
+    const user = userEvent.setup()
+    const onCreate = vi.fn()
+    render(
+      <MantineProvider>
+        <EntryCreateModal
+          isOpen
+          collectionLabel="Posts"
+          entryTypes={ENTRY_TYPES.map((et) => ({ ...et }))}
+          onCreate={onCreate}
+          onClose={vi.fn()}
+          existingSlugs={new Set(['taken-slug'])}
+        />
+      </MantineProvider>,
+    )
+
+    await user.clear(slugInput())
+    await user.type(slugInput(), 'taken-slug')
+
+    expect(await screen.findByText('An entry with this slug already exists')).toBeTruthy()
+    expect(createButton().disabled).toBe(true)
+
+    await user.click(createButton())
+    expect(onCreate).not.toHaveBeenCalled()
+  })
+
+  it('allows creating a slug that is not in the existing set', async () => {
+    const user = userEvent.setup()
+    const onCreate = vi.fn().mockResolvedValue(undefined)
+    render(
+      <MantineProvider>
+        <EntryCreateModal
+          isOpen
+          collectionLabel="Posts"
+          entryTypes={ENTRY_TYPES.map((et) => ({ ...et }))}
+          onCreate={onCreate}
+          onClose={vi.fn()}
+          existingSlugs={new Set(['taken-slug'])}
+        />
+      </MantineProvider>,
+    )
+
+    await user.clear(slugInput())
+    await user.type(slugInput(), 'free-slug')
+
+    expect(screen.queryByText('An entry with this slug already exists')).toBeNull()
+    expect(createButton().disabled).toBe(false)
+
+    await user.click(createButton())
+    expect(onCreate).toHaveBeenCalledWith('free-slug', 'post')
+  })
+})

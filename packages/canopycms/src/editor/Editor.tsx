@@ -284,6 +284,7 @@ export const Editor: React.FC<EditorProps> = ({
     createModalCollection,
     createModalError,
     createModalCreating,
+    createModalExistingSlugs,
     handleCreateModalSubmit,
     closeCreateModal,
   } = useEntryManager({
@@ -1416,6 +1417,7 @@ export const Editor: React.FC<EditorProps> = ({
               onClose={closeCreateModal}
               isCreating={createModalCreating}
               error={createModalError}
+              existingSlugs={createModalExistingSlugs}
             />
           )}
 

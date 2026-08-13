@@ -1952,6 +1952,85 @@ describe('ContentStore OCC', () => {
 })
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Create-intent guard (expectedVersion: null) — August 2026 baseline review,
+// Critical finding: a "create" write against a slug that already has content
+// used to be indistinguishable from a blind update, so it silently
+// overwrote the existing entry and reported success. `expectedVersion: null`
+// is the create-intent signal: "this slug must not already exist yet."
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('ContentStore create-intent guard (expectedVersion: null)', () => {
+  const schema = {
+    collections: [
+      {
+        name: 'posts',
+        path: 'posts',
+        // No required fields — the destructive arm. A schema with required
+        // fields would mask the bug: field validation would reject an empty
+        // create payload before the write boundary is ever reached.
+        entries: [{ name: 'post', format: 'json' as const, schema: [] }],
+      },
+    ],
+  } as const
+
+  const makeStore = async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'canopycms-create-guard-'))
+    const config = defineCanopyTestConfig({ schema })
+    return new ContentStore(root, flattenSchema(schema, config.contentRoot))
+  }
+
+  it('rejects a create-intent write against an existing slug, and leaves the file byte-identical', async () => {
+    const store = await makeStore()
+    const collectionPath = unsafeAsLogicalPath('content/posts')
+    const slug = unsafeAsSlug('important-post')
+
+    const original = await store.write(collectionPath, slug, {
+      format: 'json',
+      data: { title: 'Important Post', body: 'do not lose me' },
+    })
+    const rawBefore = await fs.readFile(original.absolutePath, 'utf-8')
+
+    // Mirrors the create path's payload: empty data, create-intent signal.
+    // Asserting the specific message (not just the error class) matters: a
+    // numeric-mismatch OCC check would ALSO throw ContentConflictError for
+    // `expectedVersion: null` (null !== any mtime), but with the generic
+    // "modified by another editor" message -- this must be the distinct
+    // create-collision message instead.
+    await expect(
+      store.write(collectionPath, slug, {
+        format: 'json',
+        data: {},
+        expectedVersion: null,
+      }),
+    ).rejects.toThrow('An entry with this slug already exists')
+
+    // The whole point: the file on disk must be untouched, not just the
+    // status code. A byte-for-byte comparison, not merely the parsed data.
+    const rawAfter = await fs.readFile(original.absolutePath, 'utf-8')
+    expect(rawAfter).toBe(rawBefore)
+
+    const doc = await store.read(collectionPath, slug)
+    expect(doc.data).toEqual({ title: 'Important Post', body: 'do not lose me' })
+  })
+
+  it('allows a create-intent write when the slug does not exist yet', async () => {
+    const store = await makeStore()
+    const collectionPath = unsafeAsLogicalPath('content/posts')
+    const slug = unsafeAsSlug('brand-new-post')
+
+    const doc = await store.write(collectionPath, slug, {
+      format: 'json',
+      data: { title: 'New' },
+      expectedVersion: null,
+    })
+    expect((doc.data as Record<string, unknown>).title).toBe('New')
+
+    const read = await store.read(collectionPath, slug)
+    expect(read.data).toEqual({ title: 'New' })
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
 // ID index invalidation (in-process staleness after checkout/pull/rebase/sync)
 // ─────────────────────────────────────────────────────────────────────────────
 
