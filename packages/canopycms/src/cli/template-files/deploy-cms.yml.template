@@ -102,10 +102,17 @@ jobs:
       # imports canopycms-cdk, aws-cdk-lib and constructs. Missing any of them
       # otherwise surfaces as an ERR_MODULE_NOT_FOUND buried in `cdk deploy`
       # output, several minutes in.
+      #
+      # aws-cdk is checked too even though nothing imports it: it is the CLI
+      # the Deploy step invokes as `npx cdk`. Absent from node_modules, npx
+      # silently fetches whatever version is current that day instead of
+      # failing -- so the deploy still runs, just not reproducibly. Keep this
+      # list in step with CDK_DEPENDENCIES in cli/project-detect.ts, which is
+      # what `canopycms init-deploy` tells adopters to install.
       - name: Check CDK dependencies are installed
         run: |
           missing=""
-          for pkg in tsx aws-cdk-lib constructs canopycms-cdk; do
+          for pkg in tsx aws-cdk-lib constructs canopycms-cdk aws-cdk; do
             [ -e "node_modules/$pkg" ] || missing="$missing $pkg"
           done
           if [ -n "$missing" ]; then

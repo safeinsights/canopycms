@@ -1726,7 +1726,7 @@ suspect a missing jsdom shim in the test that ran before it.
 ### Diagnosing a Test Failure
 
 **Attribute the failure to the base before blaming your diff.** Run the suite at the
-merge-base first. Several failures are expected-red locally and are not defects:
+merge-base first. One failure is expected-red locally and is not a defect:
 
 - `src/cli/init.integration.test.ts` — 7 tests fail with `listen EPERM … tsx-501/*.pipe`.
   The sandbox blocks tsx's IPC socket. Environmental, not a repo defect — and
@@ -1736,8 +1736,13 @@ merge-base first. Several failures are expected-red locally and are not defects:
   exits 1 on the EPERM, the loader form exits 0. **Any new test that spawns a TypeScript
   subprocess should use the loader form** rather than joining this expected-red set;
   converting the existing seven is a live option, not just an explanation to live with.
-- `canopycms-cdk` — a fresh worktree fails with `CannotFindAsset` until the lambda and
-  worker bundles are built. Those only build under `prepack`, not the root `build`.
+
+`canopycms-cdk` used to belong on that list and **no longer does** — treat a
+`CannotFindAsset` there as a real failure. Its `test` script chains
+`build:test-fixtures` (`build:worker` plus a `--skip-native` lambda build), so a fresh
+worktree synthesizes fine. If you see `CannotFindAsset` anyway, the fixture build itself
+broke, or `vitest` was invoked directly instead of through `pnpm test`, which skips that
+step. (The root `build` is `tsc` only; the full bundles still build under `prepack`.)
 
 **Two known intermittents**, both in `canopycms`, which pnpm runs first in dependency
 topology — so a flake there delays every other package's suite:
@@ -2559,9 +2564,14 @@ it('logs error when something fails', () => {
 Patterns can be strings (substring match) or RegExp.
 
 **`mockConsole()` is mandatory, and only CI enforces it.** `vitest.config.ts`'s
-`onConsoleLog` **throws** on any write to `console.error`/`console.warn` — but the
-throwing path only fires under `CI=true`. Locally the same test prints the output as
-harmless noise and the suite reports green.
+`onConsoleLog` **throws on _any_ console output Vitest intercepts** — `log` and `info`
+just as much as `warn` and `error`, with no method filter — but the throwing path only
+fires under `CI=true`. Locally the same test prints the output as harmless noise and the
+suite reports green. So a stray `console.log` left in from debugging fails CI exactly as
+hard as an unasserted error. (Vitest's `type` argument is the _stream_, `'stdout'` or
+`'stderr'`, not the console method, so the thrown message reads
+`A test wrote to console.stdout` — that is this hook firing, not a real `console.stdout`
+call.)
 
 The failure mode this produces is nasty: a test that deliberately exercises a logged
 error path passes locally, then in CI the throw surfaces as an _unhandled rejection_

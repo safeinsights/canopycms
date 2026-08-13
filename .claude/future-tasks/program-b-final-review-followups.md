@@ -97,6 +97,13 @@ into metadata's `name` field while the API writes the raw ref name. Harmless
 today (`name` is not used for path resolution) but a genuine inconsistency —
 worth a separate look rather than a drive-by in this PR.
 
+> **Now tracked on its own** (2026-08-13):
+> [branch-metadata-name-sanitized-vs-raw.md](branch-metadata-name-sanitized-vs-raw.md).
+> It sat here inside a struck finding, where open work is invisible. That file
+> also corrects this paragraph: the raw-ref writer is the admin metadata
+> **repair** path, not the API handlers (those write back whatever metadata
+> already held, which is the sanitized name).
+
 ---
 
 ## ~~HIGH — finalize's decode validation only checks frame 0 of animated GIF/WebP~~ (RESOLVED 2026-08-12)

@@ -39,6 +39,15 @@ would let that process wipe a populated workspace.
 > against an unrecoverable wipe, and it would look like a cleanup in review. If
 > the mis-attribution is fixed in the doc first, this trap closes.
 
+**Update 2026-08-13 (PR-4 of the 2026-08-12 adversarial review): step 1 below is
+done.** [docs/concurrency.md](../../docs/concurrency.md) no longer attributes the
+protection to the lock — it now states that the identity check is lock-free by
+design, that `acquired` is read only to decide whether to release, that
+`initializeWorkspace` runs unconditionally, and carries the warning above with a
+link back to this file. **The dangerous-tidy trap is closed.** Steps 2 and 3 are
+untouched and remain open; the control-flow analysis below was re-verified
+against tip while making that edit.
+
 ## What the lock does and does not buy
 
 The lock is real and does something — it keeps the common case from doing
@@ -80,9 +89,10 @@ needs someone to trace it properly rather than reason from the comment.
 
 ## Fix direction
 
-1. **Correct concurrency.md first.** It is the cheap step and it closes the
+1. ~~**Correct concurrency.md first.** It is the cheap step and it closes the
    dangerous-tidy trap: say the identity check is lock-free by design and that
-   the guard, not the lock, is what prevents the double-destroy.
+   the guard, not the lock, is what prevents the double-destroy.~~ **DONE
+   2026-08-13** — see the update note above.
 2. **Catalogue the bespoke pair** in the table, with its actual guarantee.
 3. **If the lock should genuinely gate init**, moving to
    `acquireProvisioningLock` (Layer 3, already built for "long build-time
