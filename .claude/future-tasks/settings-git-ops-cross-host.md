@@ -18,9 +18,11 @@ land between another's pull and push (push rejected, surfaced as `pushed: false`
 
 ## Options
 
-1. Extend a cross-host lock (e.g. `withOccFileLock` on a `.git-ops.lock` sibling of
-   the settings root, like `.settings-init.lock`) around the pull→commit→push
-   sequence. Cheap, bounded, matches the existing init-lock pattern.
+1. Extend a cross-host lock (e.g. `acquireProvisioningLock` on a `.git-ops` sibling
+   of the settings root, alongside the init lock's `.settings-init`) around the
+   pull→commit→push sequence. Cheap, bounded, matches the existing init-lock
+   pattern. Anchor it on its OWN target directory, never `path.dirname(settingsRoot)`
+   — see the aliasing note in docs/concurrency.md layer 3.
 2. Formally accept: document that a lost push race surfaces as `pushed: false` with
    retry-on-next-save semantics, and verify the editor surfaces that state.
 
@@ -29,5 +31,7 @@ land between another's pull and push (push rejected, surfaced as `pushed: false`
 - `packages/canopycms/src/authorization/settings-file-store.ts` — lock scope ends at file write
 - `packages/canopycms/src/api/settings-helpers.ts` — commit orchestration
 - `packages/canopycms/src/services.ts` — `commitToSettingsBranch` (scoped `git add <file>`)
-- `packages/canopycms/src/settings-workspace.ts` — `.settings-init.lock` precedent
+- `packages/canopycms/src/settings-workspace.ts` — `settingsInitLockTarget()` /
+  `.settings-init` provisioning-lock precedent (the old bespoke `.settings-init.lock`
+  was replaced in the 2026-08 baseline review's B2 fix)
 - `docs/concurrency.md` — settings row documents the current boundary

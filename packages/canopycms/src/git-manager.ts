@@ -197,6 +197,31 @@ export class GitConflictError extends Error {
   }
 }
 
+/**
+ * The branch has no ref on the remote yet, so there is nothing to pull.
+ *
+ * Distinguishing this from a real pull failure matters: it is the ONLY benign
+ * outcome of `pullCurrentBranch`, and callers that want to shrug it off (a
+ * settings branch's first-ever commit, see services.ts `commitToSettingsBranch`)
+ * must not shrug off merge failures with it. Everything else — a merge that
+ * cannot proceed, a corrupt workspace, an unreachable remote — is a genuine
+ * error the caller has to surface.
+ */
+export class GitRemoteRefMissingError extends Error {
+  constructor(
+    public readonly branch: string,
+    public readonly remote: string,
+    /**
+     * The underlying git failure. A separate field rather than `Error.cause`:
+     * the build targets ES2021, whose `Error` constructor takes no options bag.
+     */
+    public readonly gitError?: unknown,
+  ) {
+    super(`Remote '${remote}' has no ref for branch '${branch}' yet`)
+    this.name = 'GitRemoteRefMissingError'
+  }
+}
+
 export interface ResolveRemoteUrlOptions {
   mode: OperatingMode
   remoteUrl?: string
@@ -1138,9 +1163,28 @@ export class GitManager {
   private async pullCurrentBranchInner(): Promise<void> {
     const branches = await this.git.branch()
     const currentBranch = branches.current
-    await this.git.fetch(this.remote, currentBranch)
     try {
-      await this.git.merge([`${this.remote}/${currentBranch}`])
+      await this.git.fetch(this.remote, currentBranch)
+    } catch (err) {
+      // The only benign failure here: the branch has never been pushed, so the
+      // remote has no ref to fetch ("couldn't find remote ref"). Typed so
+      // callers can tell it apart from a genuine pull failure instead of
+      // catch-all-ing both (see services.ts commitToSettingsBranch).
+      throw new GitRemoteRefMissingError(currentBranch, this.remote, err)
+    }
+    // Merge the just-fetched tip (pinned to a SHA), not <remote>/<current>:
+    // this is the pullBaseInner constraint again, and it bites HARDER here.
+    // Workspaces are cloned --single-branch, and a settings workspace is
+    // cloned at the BASE branch and then checked out onto its orphan settings
+    // branch — so `<remote>/<current>` is a ref that can never exist, and
+    // merging it failed on every single call (making the settings pull a
+    // permanent no-op). FETCH_HEAD is pinned immediately after the fetch that
+    // populated it because it is a shared mutable file any other fetch in this
+    // clone can repoint. Third occurrence of this bug shape in this file — see
+    // pullBaseInner, rebaseOntoBaseInner, and the worker's rebase loop.
+    const fetchedTip = (await this.git.revparse(['FETCH_HEAD'])).trim()
+    try {
+      await this.git.merge([fetchedTip])
     } catch (err) {
       try {
         const status = await this.git.status()

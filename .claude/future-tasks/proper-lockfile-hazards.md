@@ -21,6 +21,11 @@ one — but it can strand or prematurely release a lock.
 
 `withOccFileLock` already documents and avoids this (it locks the FILE, not its directory),
 and the content-write lock anchors on `{branchRoot}/.canopy-meta` for the same reason.
+So does the settings-workspace init lock added 2026-08-13 (baseline review B2), which
+anchors on `{workspaceRoot}/.settings-init`: the obvious `path.dirname(settingsRoot)` is
+`{workspaceRoot}`, exactly the target `ensureLocalSimulatedRemote` passes for
+`.remote-init.lock` — and settings init calls into that while holding its own lock, so
+anchoring there would have produced two live aliasing locks in one process.
 
 **Fix direction:** give `acquireProvisioningLock` a per-branch target (e.g. the branch root
 itself, or a per-branch subdirectory) so the registry key is unique, and check the
@@ -34,8 +39,9 @@ refresh timer's callback — i.e. an uncaught exception, and there is no
 disappears or its mtime stops matching, which on EFS is not far-fetched (attribute cache,
 foreign takeover of a lock wrongly judged stale).
 
-Exposure grows with hold duration: `GitManager`'s clone-time provisioning lock and the rebase
-loop's content-write lock are both held for many seconds to minutes.
+Exposure grows with hold duration: `GitManager`'s clone-time provisioning lock, the rebase
+loop's content-write lock, and (since 2026-08-13) the settings-workspace init lock are all
+held for many seconds to minutes.
 
 **Fix direction:** pass an `onCompromised` that logs (`workerLogError` / `canopyLogError`) and
 lets the holder finish, rather than throwing from a timer; decide per call site whether the

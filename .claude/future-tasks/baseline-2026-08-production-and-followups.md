@@ -53,6 +53,14 @@ sanitizer, fully allowlisted transform directives); the parsers underneath are t
 
 ## A3. [P1] Settings-workspace git plumbing: the init lock does not synchronize, and the pull is a permanent no-op
 
+> **FIXED 2026-08-13.** Both defects reproduced as failing tests first, then fixed:
+> `pullCurrentBranchInner` now pins `FETCH_HEAD` to a SHA (and raises a typed
+> `GitRemoteRefMissingError` for the one benign case), `services.ts` narrowed its catch
+> to that type only, and the bespoke init lock was deleted in favour of
+> `acquireProvisioningLock` on a dedicated `{workspaceRoot}/.settings-init` target.
+> `docs/concurrency.md` updated and the lock catalogued; see
+> [resolved/settings-workspace-init-lock-uncatalogued.md](resolved/settings-workspace-init-lock-uncatalogued.md).
+
 Two defects in one subsystem; fix together.
 
 **The init lock is decorative** (`settings-workspace.ts:144-248`): `acquireFileLock` returns
@@ -61,7 +69,7 @@ wait or skip path, so concurrent cold starts genuinely race `git clone`/orphan-i
 can also both classify a lock stale and both `unlink` it (no inode identity check), and the lock
 mtime is never refreshed, so an init slower than 30s is stolen. `docs/concurrency.md:250-260`
 describes this as a concurrency control for initialization; it is not.
-(Overlaps [settings-workspace-init-lock-uncatalogued.md](settings-workspace-init-lock-uncatalogued.md),
+(Overlaps [settings-workspace-init-lock-uncatalogued.md](resolved/settings-workspace-init-lock-uncatalogued.md),
 which reached the same conclusion from the doc side. This review re-derived it independently.)
 
 **The settings pull has never worked** (`git-manager.ts:1138-1143`): `pullCurrentBranchInner`

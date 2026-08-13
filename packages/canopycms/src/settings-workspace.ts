@@ -4,7 +4,8 @@ import type { CanopyConfig } from './config'
 import type { OperatingMode } from './operating-mode'
 import { GitManager } from './git-manager'
 import { createDebugLogger } from './utils/debug'
-import { getErrorMessage, isFileExistsError } from './utils/error'
+import { getErrorMessage } from './utils/error'
+import { acquireProvisioningLock } from './utils/provisioning-lock'
 import { RESERVED_SETTINGS_BRANCH_PREFIX } from './paths'
 
 const log = createDebugLogger({ prefix: 'SettingsWorkspace' })
@@ -13,8 +14,35 @@ const log = createDebugLogger({ prefix: 'SettingsWorkspace' })
 // Settings only need one lock (not per-branch like content branches).
 let settingsInitLock: Promise<void> | null = null
 
-// Stale lock threshold — init should complete well within this window
-const LOCK_STALE_MS = 30_000
+const SETTINGS_INIT_LOCK_DIR = '.settings-init'
+const SETTINGS_INIT_LOCK_NAME = 'lock'
+
+/**
+ * Directory the cross-process init lock is anchored on — a dedicated sibling of
+ * the settings root, and NOT the settings root itself.
+ *
+ * Two properties this name has to satisfy:
+ *
+ * 1. **It must not pre-create the settings root.** `acquireProvisioningLock`
+ *    mkdir's its target, and `GitManager.initializeWorkspace` clones INTO the
+ *    settings root — `git clone` refuses a destination that already has content
+ *    in it. So the lock lives beside the settings root, never inside it.
+ * 2. **It must not alias any other proper-lockfile target.** proper-lockfile
+ *    keys its module-level bookkeeping (refresh timer + release function) by the
+ *    TARGET path passed to `lock()`, not by `lockfilePath`, so two live locks in
+ *    one process that share a target clobber each other's registry entry (see
+ *    `.claude/future-tasks/proper-lockfile-hazards.md`). This target is a
+ *    dedicated dot-directory, so it collides with none of the existing targets:
+ *    the content-branches root and the bare remote's parent (provisioning locks
+ *    — note the latter IS `path.dirname(settingsRoot)`, which is precisely why
+ *    this cannot be anchored there: settings init calls into
+ *    `ensureLocalSimulatedRemote` while holding this lock), `<branchRoot>/.canopy-meta`
+ *    (content-write lock), `<workspaceRoot>/.tasks` (worker task lock), and the
+ *    individual JSON file paths used by `withOccFileLock`.
+ */
+export function settingsInitLockTarget(settingsRoot: string): string {
+  return path.join(path.dirname(path.resolve(settingsRoot)), SETTINGS_INIT_LOCK_DIR)
+}
 
 export interface EnsureSettingsWorkspaceOptions {
   settingsRoot: string
@@ -23,77 +51,6 @@ export interface EnsureSettingsWorkspaceOptions {
   remoteUrl?: string
 }
 
-/**
- * Acquire a file-based lock for cross-process synchronization.
- * Uses O_CREAT|O_EXCL (wx flag) for atomic file creation.
- * Stale locks (older than LOCK_STALE_MS) are cleaned up automatically.
- *
- * Returns true if lock was acquired, false if another process holds it.
- */
-async function acquireFileLock(lockPath: string): Promise<boolean> {
-  const lockContent = JSON.stringify({
-    pid: process.pid,
-    timestamp: new Date().toISOString(),
-  })
-
-  await fs.mkdir(path.dirname(lockPath), { recursive: true })
-
-  try {
-    const handle = await fs.open(lockPath, 'wx')
-    await handle.writeFile(lockContent, 'utf-8')
-    await handle.close()
-    return true
-  } catch (err) {
-    if (!isFileExistsError(err)) throw err
-  }
-
-  // Lock file exists — check if stale
-  try {
-    const stat = await fs.stat(lockPath)
-    const ageMs = Date.now() - stat.mtimeMs
-    if (ageMs < LOCK_STALE_MS) {
-      // Lock is fresh — another process is initializing
-      return false
-    }
-
-    // Stale lock — another process likely crashed during init
-    log.debug('workspace', 'Removing stale settings init lock', { ageMs })
-    await fs.unlink(lockPath).catch(() => {})
-  } catch {
-    // Lock file vanished between check and stat — try again
-  }
-
-  // Retry lock acquisition after stale cleanup
-  try {
-    const handle = await fs.open(lockPath, 'wx')
-    await handle.writeFile(lockContent, 'utf-8')
-    await handle.close()
-    return true
-  } catch (retryErr) {
-    if (isFileExistsError(retryErr)) return false
-    throw retryErr
-  }
-}
-
-async function releaseFileLock(lockPath: string): Promise<void> {
-  await fs.unlink(lockPath).catch(() => {})
-}
-
-/**
- * Manages settings filesystem workspace and git operations.
- *
- * Settings are stored separately from content branches:
- * - prod/dev: Orphan git branches (no shared history with content)
- *
- * Unlike BranchWorkspaceManager, this does not:
- * - Create or manage metadata files
- * - Interact with the branch registry
- * - Check for special cases (settings are always settings)
- *
- * Uses two layers of locking:
- * - In-memory Promise lock for within-process serialization (Lambda request lifecycle)
- * - File-based lock for cross-process synchronization (multiple Lambda instances on EFS)
- */
 /**
  * Whether a settings workspace actually holds settings data yet. Used by the
  * rename guard to tell an already-populated workspace (refuse) apart from a
@@ -114,6 +71,94 @@ async function settingsFilesPresent(settingsRoot: string): Promise<boolean> {
   return false
 }
 
+/**
+ * Rename guard (settings-branch protection). Refuses to boot when an
+ * ALREADY-POPULATED settings workspace would be re-orphaned under a different
+ * branch name.
+ *
+ * Trace of what happens without it: GitManager.initializeWorkspace sees an
+ * existing .git (no clone happens) and goes straight to
+ * createOrphanSettingsBranch(branchName). If that name isn't already known, git
+ * runs `checkout --orphan <name>` + `rm -rf .` + an empty `--allow-empty`
+ * commit — orphan branches share no history, so this isn't a "migration", it
+ * PERMANENTLY WIPES permissions.json/groups.json with nothing to recover from.
+ * That almost always means deploymentName / settingsBranch /
+ * CANOPYCMS_DEPLOYMENT_NAME changed on a live deployment (see
+ * resolveDeploymentName in operating-mode/deployment-name.ts).
+ *
+ * What this deliberately does NOT refuse, and why it matters:
+ * initializeWorkspace clones at the BASE branch and only creates the orphan
+ * branch several steps later (addConfig, resolveRemoteUrl, ensureRemote come in
+ * between). If that first init is interrupted — a Lambda timeout on a slow EFS
+ * clone, an OOM, a spot interruption — it leaves a perfectly valid repo sitting
+ * on the base branch with NO settings files in it. Refusing on "branch differs"
+ * alone would then brick the deployment permanently on every subsequent boot, to
+ * protect data that was never written. So the refusal additionally requires
+ * evidence that this really is a populated settings workspace: either it is
+ * checked out on some OTHER settings branch, or the settings files are actually
+ * on disk.
+ *
+ * This function is NEVER gated on holding the init lock — see its two call
+ * sites in ensureGitWorkspace and the comment there.
+ */
+async function assertSettingsWorkspaceIdentity(
+  options: EnsureSettingsWorkspaceOptions,
+): Promise<void> {
+  const repoExists = await GitManager.repoExistsAt(options.settingsRoot)
+  if (!repoExists) return
+
+  let currentBranch: string | undefined
+  let readError: string | undefined
+  try {
+    const existing = new GitManager({ repoPath: options.settingsRoot })
+    currentBranch = (await existing.status()).current ?? undefined
+  } catch (err) {
+    currentBranch = undefined
+    readError = getErrorMessage(err)
+  }
+
+  const onDifferentBranch = currentBranch !== options.branchName
+  const looksLikeSettingsBranch =
+    currentBranch !== undefined && currentBranch.startsWith(RESERVED_SETTINGS_BRANCH_PREFIX)
+  const hasSettingsData = await settingsFilesPresent(options.settingsRoot)
+
+  if (onDifferentBranch && (looksLikeSettingsBranch || hasSettingsData)) {
+    throw new Error(
+      `CanopyCMS: refusing to initialize settings workspace at ${options.settingsRoot}. ` +
+        (currentBranch
+          ? `It is currently on branch '${currentBranch}', but this deployment resolved ` +
+            `settings branch '${options.branchName}'.`
+          : `Its current branch could not be read (${readError ?? 'unknown error'}), but it ` +
+            `holds settings files, and this deployment resolved settings branch ` +
+            `'${options.branchName}'.`) +
+        ` Proceeding would run \`git checkout --orphan\` + \`rm -rf .\` on this workspace, ` +
+        `which PERMANENTLY WIPES permissions.json/groups.json (orphan branches share no ` +
+        `history — there is nothing to migrate from). This almost always means ` +
+        `deploymentName, settingsBranch, or CANOPYCMS_DEPLOYMENT_NAME changed on a ` +
+        `deployment that already has a populated settings workspace. To resolve: restore ` +
+        `the previous value so this resolves back to ` +
+        `'${currentBranch ?? options.branchName}', or, if starting fresh is genuinely ` +
+        `intended, move ${options.settingsRoot} aside manually first.`,
+    )
+  }
+}
+
+/**
+ * Manages settings filesystem workspace and git operations.
+ *
+ * Settings are stored separately from content branches:
+ * - prod/dev: Orphan git branches (no shared history with content)
+ *
+ * Unlike BranchWorkspaceManager, this does not:
+ * - Create or manage metadata files
+ * - Interact with the branch registry
+ * - Check for special cases (settings are always settings)
+ *
+ * Uses two layers of locking, mirroring BranchWorkspaceManager:
+ * - In-memory Promise lock for within-process serialization (Lambda request lifecycle)
+ * - `acquireProvisioningLock` (proper-lockfile) for cross-process/cross-host
+ *   synchronization of the init itself (multiple Lambda containers on EFS)
+ */
 export class SettingsWorkspaceManager {
   private readonly config: CanopyConfig
 
@@ -137,93 +182,39 @@ export class SettingsWorkspaceManager {
             mode: options.mode,
           })
 
-          // Layer 2: File-based lock (prevents concurrent init across processes)
-          // Lock file is placed OUTSIDE the settings root (as a sibling) so that
-          // acquireFileLock's mkdir does not pre-create the settings directory,
-          // which would cause git clone to fail ("already exists and is not empty").
-          const lockPath = path.join(path.dirname(options.settingsRoot), '.settings-init.lock')
-          const acquired = await acquireFileLock(lockPath)
+          // Rename guard, run LOCK-FREE and unconditionally, before any waiting.
+          // A deployment whose settings-branch name no longer matches the
+          // workspace on disk is misconfigured, not contended: it must refuse
+          // immediately rather than queue behind a live provisioner for what can
+          // be minutes. Running it here also keeps the guarantee the guard has
+          // always had — no code path reaches initializeWorkspace without it
+          // having run in THIS process.
+          await assertSettingsWorkspaceIdentity(options)
+
+          // Layer 2: cross-process/cross-host lock around the init itself
+          // (proper-lockfile: heartbeat-refreshed while the holder lives, so a
+          // slow EFS clone is not mistaken for a crash, and patient retries so a
+          // loser WAITS instead of racing into a concurrent clone).
+          //
+          // This replaced a bespoke O_CREAT|O_EXCL + 30s-mtime scheme whose
+          // return value was only ever used to decide whether to release: the
+          // loser proceeded into initializeWorkspace anyway, concurrently with
+          // the holder, where it could see a half-written .git, classify it
+          // corrupt, and `rm -rf` it out from under the in-flight clone.
+          const releaseLock = await acquireProvisioningLock(
+            settingsInitLockTarget(options.settingsRoot),
+            SETTINGS_INIT_LOCK_NAME,
+          )
 
           try {
-            // Rename guard (settings-branch protection). Refuses to boot when
-            // an ALREADY-POPULATED settings workspace would be re-orphaned
-            // under a different branch name.
-            //
-            // Trace of what happens without it: GitManager.initializeWorkspace
-            // sees an existing .git (no clone happens) and goes straight to
-            // createOrphanSettingsBranch(options.branchName). If that name
-            // isn't already known, git runs `checkout --orphan <name>` +
-            // `rm -rf .` + an empty `--allow-empty` commit — orphan branches
-            // share no history, so this isn't a "migration", it PERMANENTLY
-            // WIPES permissions.json/groups.json with nothing to recover from.
-            // That almost always means deploymentName / settingsBranch /
-            // CANOPYCMS_DEPLOYMENT_NAME changed on a live deployment (see
-            // resolveDeploymentName in operating-mode/deployment-name.ts).
-            //
-            // What this deliberately does NOT refuse, and why it matters:
-            // initializeWorkspace clones at the BASE branch and only creates
-            // the orphan branch several steps later (addConfig, resolveRemoteUrl,
-            // ensureRemote come in between). If that first init is interrupted
-            // — a Lambda timeout on a slow EFS clone, an OOM, a spot
-            // interruption — it leaves a perfectly valid repo sitting on the
-            // base branch with NO settings files in it. Refusing on "branch
-            // differs" alone would then brick the deployment permanently on
-            // every subsequent boot, to protect data that was never written.
-            // So the refusal additionally requires evidence that this really
-            // is a populated settings workspace: either it is checked out on
-            // some OTHER settings branch, or the settings files are actually
-            // on disk.
-            const repoExists = await GitManager.repoExistsAt(options.settingsRoot)
-            // Deliberately NOT gated on `acquired`: when another process holds
-            // the init lock, THIS process still proceeds to initializeWorkspace
-            // below (pre-existing concurrent-init design), so skipping the
-            // guard here would let the un-locked process wipe a populated
-            // workspace — concurrent cold starts are routine right after a
-            // deploy, which is exactly when a changed deploymentName arrives.
-            // Running the guard lock-free cannot false-positive on a
-            // legitimate concurrent init: a first-ever init sits on the base
-            // branch with no settings files (fires neither arm of the
-            // condition below), and a same-name re-init has
-            // currentBranch === options.branchName. The only mid-init state
-            // that fires is another process initializing a DIFFERENT settings
-            // branch name — the rename hazard itself, where firing is correct.
-            if (repoExists) {
-              let currentBranch: string | undefined
-              let readError: string | undefined
-              try {
-                const existing = new GitManager({ repoPath: options.settingsRoot })
-                currentBranch = (await existing.status()).current ?? undefined
-              } catch (err) {
-                currentBranch = undefined
-                readError = getErrorMessage(err)
-              }
-
-              const onDifferentBranch = currentBranch !== options.branchName
-              const looksLikeSettingsBranch =
-                currentBranch !== undefined &&
-                currentBranch.startsWith(RESERVED_SETTINGS_BRANCH_PREFIX)
-              const hasSettingsData = await settingsFilesPresent(options.settingsRoot)
-
-              if (onDifferentBranch && (looksLikeSettingsBranch || hasSettingsData)) {
-                throw new Error(
-                  `CanopyCMS: refusing to initialize settings workspace at ${options.settingsRoot}. ` +
-                    (currentBranch
-                      ? `It is currently on branch '${currentBranch}', but this deployment resolved ` +
-                        `settings branch '${options.branchName}'.`
-                      : `Its current branch could not be read (${readError ?? 'unknown error'}), but it ` +
-                        `holds settings files, and this deployment resolved settings branch ` +
-                        `'${options.branchName}'.`) +
-                    ` Proceeding would run \`git checkout --orphan\` + \`rm -rf .\` on this workspace, ` +
-                    `which PERMANENTLY WIPES permissions.json/groups.json (orphan branches share no ` +
-                    `history — there is nothing to migrate from). This almost always means ` +
-                    `deploymentName, settingsBranch, or CANOPYCMS_DEPLOYMENT_NAME changed on a ` +
-                    `deployment that already has a populated settings workspace. To resolve: restore ` +
-                    `the previous value so this resolves back to ` +
-                    `'${currentBranch ?? options.branchName}', or, if starting fresh is genuinely ` +
-                    `intended, move ${options.settingsRoot} aside manually first.`,
-                )
-              }
-            }
+            // Re-run the guard on the now-stable state. If we waited above, the
+            // previous holder may have created the workspace (or moved it onto
+            // its own settings branch) after we sampled it, and acting on that
+            // stale sample is exactly the destructive path the guard exists to
+            // stop. Still not gated on any "did I win the race" flag — there is
+            // no such flag by design; every process either holds the lock here
+            // or has already thrown.
+            await assertSettingsWorkspaceIdentity(options)
 
             // GitManager.initializeWorkspace is idempotent (checks for .git),
             // so it's safe to call even if another process just finished init.
@@ -242,8 +233,10 @@ export class SettingsWorkspaceManager {
               gitBotAuthorEmail: this.config.gitBotAuthorEmail,
             })
           } finally {
-            if (acquired) {
-              await releaseFileLock(lockPath)
+            try {
+              await releaseLock()
+            } catch (err: unknown) {
+              log.debug('workspace', 'Failed to release settings-init lock', { err })
             }
           }
         } finally {

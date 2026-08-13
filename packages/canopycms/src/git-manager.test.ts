@@ -10,6 +10,7 @@ import { ContentStore } from './content-store'
 import {
   GitManager,
   GitConflictError,
+  GitRemoteRefMissingError,
   gitChildEnv,
   gitNetworkChildEnv,
   GITHUB_TRACKING_REF_PREFIX,
@@ -1750,6 +1751,155 @@ describe('GitManager conflict handling', () => {
     // failure that doesn't also involve conflicts.
   })
 }, 30_000)
+
+// ---------------------------------------------------------------------------
+// pullCurrentBranch in the PRODUCTION clone shape.
+//
+// The conflict tests above use a full clone whose current branch IS the cloned
+// branch, so `<remote>/<current>` happens to exist there. Real settings
+// workspaces are `--single-branch` clones of the BASE branch that are then
+// checked out onto an orphan settings branch — so no remote-tracking ref for
+// the current branch exists, and merging `<remote>/<current>` can only fail.
+// That gap is why the bug shipped; these tests close it.
+// ---------------------------------------------------------------------------
+
+describe('GitManager.pullCurrentBranch (single-branch clone on an orphan settings branch)', () => {
+  let tmpDir: string
+
+  beforeEach(async () => {
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'canopy-settings-pull-'))
+  })
+
+  afterEach(async () => {
+    await fs.rm(tmpDir, { recursive: true, force: true })
+  })
+
+  const SETTINGS_BRANCH = 'canopycms-settings-test'
+
+  /**
+   * Builds the exact on-disk shape production runs with:
+   * a bare remote holding `main`, and a settings workspace created by
+   * `initializeWorkspace({ branchType: 'orphan' })` — i.e. a
+   * `--single-branch --branch main` clone that is then moved onto an orphan
+   * settings branch and pushed.
+   */
+  async function setupSettingsWorkspace(): Promise<{
+    manager: GitManager
+    settingsRoot: string
+    remotePath: string
+  }> {
+    const remotePath = path.join(tmpDir, 'remote.git')
+    const seedPath = path.join(tmpDir, 'seed')
+    const settingsRoot = path.join(tmpDir, 'settings')
+
+    await fs.mkdir(seedPath, { recursive: true })
+    const seedGit = await initTestRepo(seedPath)
+    await seedGit.raw(['symbolic-ref', 'HEAD', 'refs/heads/main'])
+    await fs.writeFile(path.join(seedPath, 'readme.md'), '# seed', 'utf8')
+    await seedGit.add(['.'])
+    await seedGit.commit('initial commit')
+    await simpleGit().raw(['init', '--bare', remotePath])
+    await seedGit.addRemote('origin', remotePath)
+    await seedGit.push('origin', 'main')
+
+    const manager = await GitManager.initializeWorkspace({
+      workspacePath: settingsRoot,
+      branchName: SETTINGS_BRANCH,
+      mode: 'dev',
+      baseBranch: 'main',
+      remoteUrl: remotePath,
+      branchType: 'orphan',
+      gitBotAuthorName: 'Test Bot',
+      gitBotAuthorEmail: 'test@canopycms.test',
+    })
+
+    await fs.writeFile(path.join(settingsRoot, 'permissions.json'), '{"acls":[]}', 'utf8')
+    await manager.add('permissions.json')
+    await manager.commit('seed settings')
+    await manager.push()
+
+    return { manager, settingsRoot, remotePath }
+  }
+
+  /** Another host commits to the settings branch and pushes it. */
+  async function advanceRemoteSettingsBranch(remotePath: string): Promise<void> {
+    const otherPath = path.join(tmpDir, 'other')
+    await simpleGit().clone(remotePath, otherPath)
+    const otherGit = simpleGit({ baseDir: otherPath })
+    await otherGit.addConfig('user.name', 'Other Bot')
+    await otherGit.addConfig('user.email', 'other@canopycms.test')
+    await otherGit.checkout(SETTINGS_BRANCH)
+    await fs.writeFile(
+      path.join(otherPath, 'groups.json'),
+      '{"groups":["from-other-host"]}',
+      'utf8',
+    )
+    await otherGit.add(['groups.json'])
+    await otherGit.commit('another host saved groups')
+    await otherGit.push('origin', SETTINGS_BRANCH)
+  }
+
+  it('has no remote-tracking ref for the settings branch (the constraint being worked around)', async () => {
+    const { settingsRoot } = await setupSettingsWorkspace()
+
+    const refs = await simpleGit({ baseDir: settingsRoot }).raw([
+      'for-each-ref',
+      '--format=%(refname)',
+      'refs/remotes',
+    ])
+    expect(refs).toContain('refs/remotes/origin/main')
+    expect(refs).not.toContain(`refs/remotes/origin/${SETTINGS_BRANCH}`)
+  })
+
+  it('actually merges the remote settings-branch commit into the workspace', async () => {
+    const { manager, settingsRoot, remotePath } = await setupSettingsWorkspace()
+    await advanceRemoteSettingsBranch(remotePath)
+
+    await manager.pullCurrentBranch()
+
+    const groups = await fs.readFile(path.join(settingsRoot, 'groups.json'), 'utf8')
+    expect(JSON.parse(groups)).toEqual({ groups: ['from-other-host'] })
+  })
+
+  it('is a no-op (not an error) when the remote branch has nothing new', async () => {
+    const { manager, settingsRoot } = await setupSettingsWorkspace()
+
+    await expect(manager.pullCurrentBranch()).resolves.toBeUndefined()
+
+    const permissions = await fs.readFile(path.join(settingsRoot, 'permissions.json'), 'utf8')
+    expect(JSON.parse(permissions)).toEqual({ acls: [] })
+  })
+
+  it('rejects when the branch has never been pushed (no ref on the remote yet)', async () => {
+    const remotePath = path.join(tmpDir, 'remote.git')
+    const seedPath = path.join(tmpDir, 'seed')
+    const settingsRoot = path.join(tmpDir, 'settings')
+
+    await fs.mkdir(seedPath, { recursive: true })
+    const seedGit = await initTestRepo(seedPath)
+    await seedGit.raw(['symbolic-ref', 'HEAD', 'refs/heads/main'])
+    await fs.writeFile(path.join(seedPath, 'readme.md'), '# seed', 'utf8')
+    await seedGit.add(['.'])
+    await seedGit.commit('initial commit')
+    await simpleGit().raw(['init', '--bare', remotePath])
+    await seedGit.addRemote('origin', remotePath)
+    await seedGit.push('origin', 'main')
+
+    // Never pushed — this is the genuine "first commit" case services.ts logs about.
+    const manager = await GitManager.initializeWorkspace({
+      workspacePath: settingsRoot,
+      branchName: SETTINGS_BRANCH,
+      mode: 'dev',
+      baseBranch: 'main',
+      remoteUrl: remotePath,
+      branchType: 'orphan',
+      gitBotAuthorName: 'Test Bot',
+      gitBotAuthorEmail: 'test@canopycms.test',
+    })
+
+    await expect(manager.pullCurrentBranch()).rejects.toBeInstanceOf(GitRemoteRefMissingError)
+  })
+}, 60_000)
 
 describe('GitManager content-index invalidation', () => {
   let tmpDir: string
