@@ -2,15 +2,22 @@ node_modules
 dist
 .claude
 .next
+# apps/dual-build-fixture builds both deploy shapes, so the static one needs
+# its own distDir or the second build would clobber the first's output before
+# the assertions could inspect it.
+.next-static
+out
 .turbo
 coverage
 cdk.out
 test-results
 playwright-report
+packages/canopycms-cdk/.scaffold-synth
 package-lock.json
 pnpm-lock.yaml
 apps/example1/content
 apps/test-app/content
+apps/dual-build-fixture/content
 packages/canopycms/src/api/client.ts
 packages/canopycms/src/api/__test__/mock-client.ts
 

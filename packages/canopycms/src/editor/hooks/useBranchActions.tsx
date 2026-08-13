@@ -100,14 +100,22 @@ export function useBranchActions(options: UseBranchActionsOptions): UseBranchAct
       if (!result.ok) {
         throw new Error(result.error || 'Failed to create branch')
       }
+
+      // The server sanitizes the branch name (e.g. "feature/x" -> "feature-x")
+      // before persisting it. Adopt the canonical name from the response so
+      // the client doesn't end up stuck on a name the server never saved.
+      const createdName = result.data?.branch?.name ?? branch.name
       notifications.show({
-        message: `Branch "${branch.name}" created`,
+        message:
+          createdName === branch.name
+            ? `Branch "${createdName}" created`
+            : `Branch "${createdName}" created (renamed from "${branch.name}")`,
         color: 'green',
       })
       await options.onReloadBranches()
 
       // Switch to new branch (already confirmed dirty check)
-      performBranchSwitch(branch.name)
+      performBranchSwitch(createdName)
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to create branch'
       notifications.show({ message, color: 'red' })

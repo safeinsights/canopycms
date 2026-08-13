@@ -11,6 +11,7 @@ import { finalizeStagedUpload } from '../assets/finalize'
 import { assetSrc } from '../assets/asset-src'
 import { formatDirectives, parseTransformPath } from '../assets/transform-directives'
 import { applyTransform } from '../assets/transform'
+import { isAdmin } from '../authorization/helpers'
 
 /** An asset's persisted meta plus its computed, root-relative public URL. */
 export type AssetRecord = AssetMeta & { src: string }
@@ -269,18 +270,45 @@ const listAssetsHandler = async (
 }
 
 /**
- * Delete asset - requires Admin access. `key` is the asset's hash32 and is
+ * Delete asset - an Admin may delete any asset; anyone else may delete only an
+ * asset whose recorded `uploadedBy` is them. `key` is the asset's hash32 and is
  * validated (32 lowercase hex chars) by `deleteAssetParamsSchema` before this
  * handler ever runs. Deletes the meta sidecar only - blobs are immortal until
  * a future GC worker task (see assets-media-system.md).
+ *
+ * The ownership check lives here rather than in a declarative guard because it
+ * needs the asset itself: guards run before the handler and cannot read meta.
+ *
+ * Two deliberate choices, both fail-closed:
+ * - Meta with no `uploadedBy` (the field is optional) is admin-only. Falling
+ *   back to "anyone may delete" would open every legacy asset to everyone.
+ * - A missing asset returns the same 403 as an unowned one for non-admins, so
+ *   the endpoint isn't an existence oracle over a content-addressed keyspace.
+ *
+ * Note `uploadedBy` records the FIRST uploader only: finalizeAsset dedups on
+ * the content hash and returns the existing meta, so a second person uploading
+ * an identical file gains no delete rights over it. Benign (a 403 where they
+ * expected success, never the reverse) - see
+ * .claude/future-tasks/asset-listing-cross-branch-exposure.md.
+ *
+ * COUPLED to the blob-GC follow-up in asset-review-followups.md: this
+ * permission is safe because delete is a de-list, not a destroy - nothing that
+ * another branch references breaks. If GC ever makes delete destroy the
+ * underlying blob, revisit this (it would then need a reference check).
  */
 const deleteAssetHandler = async (
-  _gc: Record<string, never>,
   ctx: ApiContext,
-  _req: ApiRequest,
+  req: ApiRequest,
   params: DeleteAssetParams,
 ): Promise<AssetDeleteResponse> => {
   if (!ctx.assetStore) return { ok: false, status: 501, error: 'Asset store not configured' }
+
+  if (!isAdmin(req.user.groups)) {
+    const meta = await ctx.assetStore.getMeta(params.key)
+    if (!meta?.uploadedBy || meta.uploadedBy !== req.user.userId) {
+      return { ok: false, status: 403, error: 'You can only delete assets you uploaded' }
+    }
+  }
 
   await ctx.assetStore.deleteMeta(params.key)
   return { ok: true, status: 200, data: { deleted: true } }
@@ -338,7 +366,12 @@ async function serveLazyTransform(
     parsed.directives,
   )
   if (!transformed.ok) {
-    return { ok: false, status: 502, error: transformed.error }
+    // Pass the real status through rather than flattening every rejection to
+    // 502 - `applyTransform` already distinguishes client-input errors (400
+    // unsupported format, 413 oversized output) from a genuine decode
+    // failure (422), none of which are "this server failed" (502). Mirrors
+    // the prod transform Lambda's own handler.ts, which makes the same fix.
+    return { ok: false, status: transformed.status, error: transformed.error }
   }
 
   const canonicalKey = `${ASSET_PREFIXES.transform}/${formatDirectives(parsed.directives)}/${parsed.hash32}/${parsed.slug}.${parsed.ext}`
@@ -414,6 +447,10 @@ const rawAssetHandler = async (
 // ============================================================================
 // Route Definitions with defineEndpoint
 // ============================================================================
+//
+// Deliberately no 'writableBranch' guard on any endpoint below: none take a
+// :branch param -- the asset store is branch-agnostic (a single global store,
+// see assets/factory.ts), so the protected-base-branch predicate doesn't apply.
 
 /**
  * POST /assets/presign
@@ -491,7 +528,6 @@ const deleteAsset = defineEndpoint({
   responseType: 'AssetDeleteResponse',
   response: {} as AssetDeleteResponse,
   defaultMockData: { deleted: true },
-  guards: ['admin'] as const,
   handler: deleteAssetHandler,
 })
 

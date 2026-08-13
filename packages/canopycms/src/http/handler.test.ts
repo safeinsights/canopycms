@@ -5,6 +5,7 @@ import type { AuthPlugin } from '../auth/plugin'
 import type { CanopyConfig } from '../config'
 import type { CanopyServices } from '../services'
 import { mockConsole } from '../test-utils/console-spy'
+import { BranchMetadataCorruptError } from '../branch-metadata'
 
 // Mock the BranchWorkspaceManager to avoid git operations
 vi.mock('../branch-workspace', () => ({
@@ -227,6 +228,40 @@ describe('createCanopyRequestHandler', () => {
     expect((response.body as { error?: string }).error).toContain(
       'clone failed: remote branch not found',
     )
+  })
+
+  it('serves the request without internal groups when base-branch metadata is corrupt', async () => {
+    const consoleSpy = mockConsole()
+    try {
+      const services: any = createMockServices()
+      const authPlugin = createMockAuthPlugin()
+
+      const handler = createCanopyRequestHandler({
+        services,
+        authPlugin,
+        getBranchContext: async () => {
+          throw new BranchMetadataCorruptError(
+            '/tmp/branches/main',
+            'Unexpected token i in JSON at position 2',
+          )
+        },
+      })
+
+      const req = createMockRequest({
+        method: 'GET',
+        url: 'http://localhost:3000/api/canopycms/branches',
+      })
+
+      const response = await handler(req, ['branches'])
+
+      // Degrades (empty internal groups) instead of 503ing: the /admin
+      // recovery surface must stay reachable when the base branch is the
+      // corrupt one.
+      expect(response.status).toBe(200)
+      expect(consoleSpy).toHaveErrored(/corrupt metadata/)
+    } finally {
+      consoleSpy.restore()
+    }
   })
 
   it('returns 401 for unauthenticated requests', async () => {
@@ -468,5 +503,47 @@ describe('createCanopyRequestHandler', () => {
         createCanopyRequestHandler({ config: prodConfig, authPlugin: plainUnmarkedPlugin }),
       ).toThrow(/verifiesCredentials/)
     })
+  })
+})
+
+describe('buildContext auto-create: settingsBranch must match the resolved (deployment-namespaced) branch', () => {
+  // Regression test for a bug where buildContext computed `settingsBranch` as
+  // `services.config.settingsBranch ?? 'canopycms-settings'` — a THIRD,
+  // independent hardcoded default that never accounted for deploymentName. A
+  // request for a deployment-namespaced settings branch (e.g.
+  // 'canopycms-settings-acme') would then never match `branch === settingsBranch`
+  // in shouldAutoCreate, so getBranchContext() would return null for it (404)
+  // instead of auto-creating it, even though the SAME branch name is exactly
+  // what strategy.getSettingsBranchName() resolves elsewhere in the app.
+  //
+  // Deliberately does NOT override `getBranchContext` in CanopyHandlerOptions,
+  // so this exercises buildContext's own default closure (where the bug
+  // lived) rather than bypassing it like most other tests in this file do.
+  it('auto-creates a request for the deployment-namespaced settings branch, not just the hardcoded literal', async () => {
+    const { BranchWorkspaceManager } = await import('../branch-workspace')
+    const services: any = createMockServices()
+    services.config.deploymentName = 'acme' // dev mode -> resolved settings branch: canopycms-settings-acme
+    const authPlugin = createMockAuthPlugin()
+
+    const handler = createCanopyRequestHandler({ services, authPlugin })
+
+    const req = createMockRequest({
+      method: 'GET',
+      url: 'http://localhost:3000/api/canopycms/canopycms-settings-acme/status',
+    })
+    const response = await handler(req, ['canopycms-settings-acme', 'status'])
+
+    // With the old hardcoded 'canopycms-settings' default, this branch name
+    // would never match and the branchAccess guard would 404 ("Branch not found").
+    expect(response.status).toBe(200)
+    expect((response.body as { data?: { branch?: { name: string } } }).data?.branch?.name).toBe(
+      'new-branch',
+    )
+
+    const results = (BranchWorkspaceManager as unknown as ReturnType<typeof vi.fn>).mock.results
+    const lastInstance = results[results.length - 1]?.value
+    expect(lastInstance.openOrCreateBranch).toHaveBeenCalledWith(
+      expect.objectContaining({ branchName: 'canopycms-settings-acme' }),
+    )
   })
 })

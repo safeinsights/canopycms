@@ -8,9 +8,10 @@ import { withdrawBranch } from './branch-withdraw'
 import { requestChanges, approveBranch } from './branch-review'
 import { markAsMerged } from './branch-merge'
 import { defineEndpoint } from './route-builder'
-import { canPerformWorkflowAction } from '../authorization'
+import { canPerformWorkflowAction, getBranchProtection } from '../authorization'
 import { syncSubmitPr } from './github-sync'
 import { getErrorMessage, redactCredentials, sanitizeErrorMessage } from '../utils/error'
+import { isNonFastForwardRejection } from '../utils/git'
 
 // Re-export for client generation
 export type { BranchMergeResponse } from './branch-merge'
@@ -34,14 +35,55 @@ const submitBranchForMergeHandler = async (
 ): Promise<BranchResponse> => {
   const { branchContext } = gc
 
-  // Check if user can perform workflow actions (creator OR ACL access)
+  // Check if user can perform workflow actions (creator OR ACL access). isProtectedBranch
+  // is passed for defense-in-depth (disables the system-branch grant); the 'submittableBranch'
+  // guard above already refuses base-branch submits outright before the handler runs.
   const defaultAccess = ctx.services.config.defaultBranchAccess ?? 'deny'
-  const canSubmit = canPerformWorkflowAction(branchContext, req.user, defaultAccess)
+  const { isProtected } = getBranchProtection(
+    ctx.services.config,
+    branchContext.branch.name,
+    branchContext.branch.baseBranch,
+  )
+  const canSubmit = canPerformWorkflowAction(branchContext, req.user, defaultAccess, {
+    isProtectedBranch: isProtected,
+  })
   if (!canSubmit) {
     return {
       ok: false,
       status: 403,
       error: 'Only the branch creator or users with explicit branch access can submit this branch',
+    }
+  }
+
+  // Only an 'editing' branch may be submitted. This mirrors
+  // getBranchWriteProtection's rule exactly -- writes are blocked on any branch
+  // whose status has left 'editing' -- so "can I edit this?" and "can I submit
+  // this?" stay one question. Submitting a branch you are not allowed to edit
+  // is incoherent: its content cannot have changed since the last submit.
+  //
+  // The 'submittableBranch' guard above answers a different question (is this
+  // the protected base branch?) and reads no status at all, so without this the
+  // submit path had no status gate anywhere -- unlike withdraw, approve and
+  // request-changes, which have always had one. An archived (merged) branch
+  // could therefore be re-submitted by its creator: the working tree is clean so
+  // nothing is committed, but it re-stamped the branch 'submitted', overwrote
+  // the merged PR's title/body via syncSubmitPr's update path, and in prod (no
+  // direct githubService) enqueued a worker task that 422s on pulls.create,
+  // since createOrUpdatePullRequest finds no OPEN PR to update.
+  //
+  // Fails closed on a missing status: branch.json is read with a bare
+  // JSON.parse (branch-metadata.ts) with no schema validation, so a damaged or
+  // hand-repaired file can yield `undefined` at runtime. Same reasoning, and
+  // same wording, as runWritableBranchGuard's unreadable-status arm.
+  const status = branchContext.branch.status
+  if (status !== 'editing') {
+    return {
+      ok: false,
+      status: 400,
+      error:
+        status === undefined
+          ? `Branch "${branchContext.branch.name}" has no readable workflow status and cannot be submitted until its metadata is repaired.`
+          : `Cannot submit branch with status '${status}'. Only 'editing' branches can be submitted.`,
     }
   }
 
@@ -58,6 +100,34 @@ const submitBranchForMergeHandler = async (
       `CanopyCMS: Failed to push branch changes (${branchContext.branchRoot}):`,
       redactCredentials(message),
     )
+
+    // A non-fast-forward rejection means this branch and the deployment's
+    // local repository have diverged. Retrying the identical push can never
+    // succeed (see isNonFastForwardRejection), so surface 409 instead of the
+    // generic 500 below. Everything else (network, auth, lock contention)
+    // keeps the existing 500 path unchanged.
+    //
+    // This push targets the deployment's OWN local origin (remote.git), not
+    // GitHub, so the message deliberately states only the observable fact and
+    // names no cause: a foreign deployment cannot reach this repo, and the
+    // realistic explanations are all internal (the worker's rebase loop
+    // reconciling the branch, or a commit reaching remote.git that this
+    // workspace never had). It also never advises renaming the branch --
+    // a branch that reaches this point has usually been submitted before, so
+    // it may well have an open PR that a rename would orphan.
+    if (isNonFastForwardRejection(message)) {
+      return {
+        ok: false,
+        status: 409,
+        error:
+          `Could not submit "${branchContext.branch.name}": it has diverged from the copy in ` +
+          `this deployment's repository and needs to be reconciled before it can be submitted. ` +
+          `The background worker reconciles branches when the base branch moves, so this often ` +
+          `clears on its own within a few minutes -- try again shortly, and ask an administrator ` +
+          `to check the worker if it persists.`,
+      }
+    }
+
     return {
       ok: false,
       status: 500,
@@ -77,6 +147,10 @@ const submitBranchForMergeHandler = async (
       pullRequestUrl: prResult.prUrl ?? branchContext.branch.pullRequestUrl,
       pullRequestNumber: prResult.prNumber ?? branchContext.branch.pullRequestNumber,
       ...(prResult.syncStatus !== undefined ? { syncStatus: prResult.syncStatus } : {}),
+      // PR-W2 (M2): the rebase loop skips submitted/approved branches, so a
+      // pre-submit rebase-failure record would otherwise stick as a stale
+      // warning through review and archive.
+      rebaseFailure: undefined,
     },
   })
 
@@ -136,8 +210,9 @@ const submitBranchForMerge = defineEndpoint({
     },
   },
   // Branch-level access not checked here — handler uses canPerformWorkflowAction() for
-  // finer-grained authorization (creator OR ACL access).
-  guards: ['branch'] as const,
+  // finer-grained authorization (creator OR ACL access). 'submittableBranch' blocks the
+  // base branch outright (both modes — submitting it would push straight to itself).
+  guards: ['branch', 'submittableBranch'] as const,
   handler: submitBranchForMergeHandler,
 })
 

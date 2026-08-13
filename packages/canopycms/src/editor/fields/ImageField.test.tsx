@@ -259,6 +259,70 @@ describe('ImageField', () => {
 
     await waitFor(() => {
       const state = JSON.parse(screen.getByTestId('field-value').textContent ?? 'null')
+      // Replacing preserves the existing alt text rather than wiping it -
+      // it often still describes the new image, and the editor can edit it.
+      expect(state).toEqual({ src: catAsset.src, alt: 'Old', width: 400, height: 300 })
+    })
+  })
+
+  it('shows a "Preview unavailable" fallback when the image fails to load, matching AssetCard', () => {
+    renderField({ value: { src: catAsset.src, alt: 'A cat', width: 400, height: 300 } })
+
+    const img = screen.getByRole('img')
+    fireEvent.error(img)
+
+    expect(screen.queryByRole('img')).toBeNull()
+    expect(screen.getByTestId('image-field-preview-fallback-hero')).toBeTruthy()
+    expect(screen.getByText('Preview unavailable')).toBeTruthy()
+  })
+
+  it('still renders the alt input and Replace/Remove controls when the preview fails', () => {
+    renderField({ value: { src: catAsset.src, alt: 'A cat', width: 400, height: 300 } })
+
+    fireEvent.error(screen.getByRole('img'))
+
+    expect((screen.getByTestId('image-field-alt-hero') as HTMLInputElement).value).toBe('A cat')
+    expect(screen.getByTestId('image-field-replace-hero')).toBeTruthy()
+    expect(screen.getByTestId('image-field-remove-hero')).toBeTruthy()
+  })
+
+  it('resets the preview error state when the src changes (e.g. after Replace)', async () => {
+    mockClient.assets.list.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      data: { assets: [catAsset] },
+    })
+
+    renderField({
+      value: { src: '/assets/t/orig/existing/old.png', alt: 'Old', width: 1, height: 1 },
+    })
+    fireEvent.error(screen.getByRole('img'))
+    expect(screen.getByTestId('image-field-preview-fallback-hero')).toBeTruthy()
+
+    fireEvent.click(screen.getByTestId('image-field-replace-hero'))
+    const card = await screen.findByTestId(`asset-card-${catAsset.hash32}`)
+    fireEvent.click(card)
+
+    await waitFor(() => {
+      expect(screen.queryByTestId('image-field-preview-fallback-hero')).toBeNull()
+      expect(screen.getByRole('img')).toBeTruthy()
+    })
+  })
+
+  it('picking into an empty field yields empty alt text (nothing to preserve)', async () => {
+    mockClient.assets.list.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      data: { assets: [catAsset] },
+    })
+
+    renderField()
+    fireEvent.click(screen.getByTestId('image-field-browse-library-hero'))
+    const card = await screen.findByTestId(`asset-card-${catAsset.hash32}`)
+    fireEvent.click(card)
+
+    await waitFor(() => {
+      const state = JSON.parse(screen.getByTestId('field-value').textContent ?? 'null')
       expect(state).toEqual({ src: catAsset.src, alt: '', width: 400, height: 300 })
     })
   })

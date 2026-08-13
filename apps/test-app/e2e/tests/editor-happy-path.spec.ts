@@ -1,9 +1,8 @@
+import { BASE_URL } from '../fixtures/base-url'
 import { test, expect } from '@playwright/test'
 import { EditorPage } from '../fixtures/editor-page'
-import { switchUser } from '../fixtures/test-users'
+import { switchUser, installE2EFlag } from '../fixtures/test-users'
 import { readContentFile, resetWorkspace, ensureMainBranch } from '../fixtures/test-workspace'
-
-const BASE_URL = 'http://localhost:5174'
 
 /**
  * Happy path E2E tests for the CanopyCMS editor.
@@ -13,9 +12,7 @@ test.describe('Editor Happy Path', () => {
   let editorPage: EditorPage
 
   test.beforeEach(async ({ page }) => {
-    await page.addInitScript(() => {
-      ;(window as any).__E2E_TEST__ = true
-    })
+    await installE2EFlag(page)
     await test.step('reset workspace', () => resetWorkspace())
     await test.step('ensure main branch', () => ensureMainBranch(BASE_URL))
     editorPage = new EditorPage(page)

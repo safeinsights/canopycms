@@ -53,6 +53,14 @@ export {
   canPerformWorkflowAction,
 } from './branch'
 
+// Protected base branch (submit-block + read-only predicate)
+export {
+  getBranchProtection,
+  getBranchWriteProtection,
+  type BranchProtection,
+  type BranchWriteProtection,
+} from './protected-branch'
+
 // Path-level access
 export { checkPathAccess, createCheckPathAccess, resolveDefaultPathAccess } from './path'
 

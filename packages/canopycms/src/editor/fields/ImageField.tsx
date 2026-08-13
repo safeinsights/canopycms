@@ -4,7 +4,7 @@ import React, { useEffect, useId, useRef, useState } from 'react'
 
 import { Alert, Button, Group, Stack, Text, TextInput } from '@mantine/core'
 import { Dropzone, type FileRejection } from '@mantine/dropzone'
-import { IconAlertCircle, IconPhoto, IconUpload } from '@tabler/icons-react'
+import { IconAlertCircle, IconPhoto, IconPhotoOff, IconUpload } from '@tabler/icons-react'
 
 import type { AssetRecord } from '../../api'
 import { assetUrl } from '../../assets/asset-url'
@@ -67,6 +67,21 @@ export const ImageField: React.FC<ImageFieldProps> = ({
   const aspectRatio = parseAspectRatio(aspect)
   const hasValue = !!value?.src
 
+  const previewSrc = value
+    ? assetUrl({ src: value.src }, { width: PREVIEW_WIDTH, crop: value.crop, baseUrl })
+    : undefined
+  // Broken-preview fallback, consistent with AssetCard's thumbnail fallback
+  // (same icon/copy, same "adjust state during render" reset pattern rather
+  // than a useEffect - see AssetCard.tsx for the rationale). This covers
+  // both an asset that was broken at upload time (pre-existing content) and
+  // a transform that fails for some other reason at render time.
+  const [previewFailed, setPreviewFailed] = useState(false)
+  const [prevPreviewSrc, setPrevPreviewSrc] = useState(previewSrc)
+  if (previewSrc !== prevPreviewSrc) {
+    setPrevPreviewSrc(previewSrc)
+    setPreviewFailed(false)
+  }
+
   // Focus the alt input right after a new image commits (pick or upload),
   // so the editor's next keystroke goes straight into the field most likely
   // to need attention.
@@ -81,7 +96,10 @@ export const ImageField: React.FC<ImageFieldProps> = ({
     justCommittedRef.current = true
     onChange({
       src: asset.src,
-      alt: '',
+      // Preserve the current alt text on replace - it often still describes
+      // the new image (e.g. "hero photo"), and the editor can always edit it.
+      // Selecting into an empty field has no prior alt, so it stays ''.
+      alt: value?.alt ?? '',
       ...(asset.width !== undefined ? { width: asset.width } : {}),
       ...(asset.height !== undefined ? { height: asset.height } : {}),
       ...(crop ? { crop } : {}),
@@ -186,19 +204,39 @@ export const ImageField: React.FC<ImageFieldProps> = ({
         </Stack>
       ) : (
         <Stack gap="xs">
-          <img
-            src={assetUrl(
-              { src: value!.src },
-              { width: PREVIEW_WIDTH, crop: value!.crop, baseUrl },
-            )}
-            alt={value!.alt}
-            style={{
-              maxWidth: PREVIEW_WIDTH,
-              maxHeight: PREVIEW_WIDTH,
-              borderRadius: 'var(--mantine-radius-sm)',
-              display: 'block',
-            }}
-          />
+          {previewFailed ? (
+            <div
+              data-testid={`image-field-preview-fallback-${dataCanopyField}`}
+              style={{
+                width: PREVIEW_WIDTH,
+                height: 160,
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: 4,
+                borderRadius: 'var(--mantine-radius-sm)',
+                background: 'var(--mantine-color-gray-1)',
+              }}
+            >
+              <IconPhotoOff size={28} stroke={1.5} color="var(--mantine-color-gray-5)" />
+              <Text size="xs" c="dimmed">
+                Preview unavailable
+              </Text>
+            </div>
+          ) : (
+            <img
+              src={previewSrc}
+              alt={value!.alt}
+              style={{
+                maxWidth: PREVIEW_WIDTH,
+                maxHeight: PREVIEW_WIDTH,
+                borderRadius: 'var(--mantine-radius-sm)',
+                display: 'block',
+              }}
+              onError={() => setPreviewFailed(true)}
+            />
+          )}
           {errors?.src && (
             <Text size="xs" c="red">
               {errors.src}

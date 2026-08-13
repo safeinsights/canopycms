@@ -9,7 +9,6 @@ import path from 'node:path'
 
 import type { BranchContext } from '../types'
 import { OperatingMode, operatingStrategy } from '../operating-mode'
-import type { SanitizedBranchName } from './types'
 
 export interface BranchPathOptions {
   mode: OperatingMode
@@ -25,18 +24,12 @@ export interface BranchPathResult {
 
 export class BranchPathError extends Error {}
 
-/**
- * Sanitize a branch name for use in filesystem paths.
- * - Replaces invalid characters with hyphens
- * - Collapses multiple hyphens
- * - Trims leading/trailing dots
- */
-export function sanitizeBranchName(branchName: string): SanitizedBranchName {
-  const replaced = branchName.replace(/[^a-zA-Z0-9._-]/g, '-')
-  const squashed = replaced.replace(/-+/g, '-')
-  const trimmedDots = squashed.replace(/^\.+/, '').replace(/(?<!\.)\.+$/, '')
-  return (trimmedDots || 'branch') as SanitizedBranchName
-}
+// Moved to ./branch-name (dependency-free) so client-reachable modules can
+// use it without dragging this file's node:fs / operating-mode imports into
+// browser bundles. Imported for local use + re-exported for existing
+// server-side importers.
+import { sanitizeBranchName } from './branch-name'
+export { sanitizeBranchName }
 
 const resolveContentBranchesRoot = (mode: OperatingMode, override?: string): string => {
   return operatingStrategy(mode).getContentBranchesRoot(override)

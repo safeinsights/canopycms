@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { notifications } from '@mantine/notifications'
+import { modals } from '@mantine/modals'
+import equal from 'fast-deep-equal'
 import type { EditorEntry } from '../Editor'
 import type { ContentId, LogicalPath } from '../../paths/types'
 import type { FormValue } from '../FormRenderer'
@@ -44,6 +46,13 @@ export interface UseDraftManagerOptions {
   loadEntry: (entry: EditorEntry) => Promise<FormValue>
   saveEntry: (entry: EditorEntry, value: FormValue) => Promise<FormValue>
   setBusy: (busy: boolean) => void
+  /**
+   * Fired (fire-and-forget) after a successful save. Lets callers refresh
+   * data that depends on saved content — e.g. the entries list, so a header/
+   * entry-picker label built from a Title field reflects the new value
+   * instead of the stale label from the last entries fetch.
+   */
+  onSaved?: () => void
 }
 
 export interface UseDraftManagerReturn {
@@ -138,17 +147,15 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
   //    as unsaved work — this is what keeps the branch-switch guard from silently
   //    discarding restored drafts.
   //
-  // 2. The comparison uses `JSON.stringify`, which is property-order sensitive. A
-  //    rehydrated draft whose keys were serialized in a different order than the
-  //    server-loaded object will show as dirty even when the values are semantically
-  //    identical. This is a known limitation; replacing with `fast-deep-equal` is
-  //    tracked in `.claude/future-tasks/editor-async-patterns.md`.
+  // 2. The comparison uses `fast-deep-equal`, a value-based deep equality
+  //    check -- not property-order sensitive the way `JSON.stringify`
+  //    comparison was. A rehydrated draft whose keys were serialized in a
+  //    different order than the server-loaded object no longer shows as
+  //    dirty when the values are semantically identical.
   const modifiedCount = useMemo(
     () =>
-      Object.keys(drafts).filter(
-        (id) =>
-          !loadedValues[id] || JSON.stringify(drafts[id]) !== JSON.stringify(loadedValues[id]),
-      ).length,
+      Object.keys(drafts).filter((id) => !loadedValues[id] || !equal(drafts[id], loadedValues[id]))
+        .length,
     [drafts, loadedValues],
   )
 
@@ -295,7 +302,21 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
     options.setBusy(true)
     try {
       const saved = await options.saveEntry(options.currentEntry, effectiveValue)
-      setDrafts((prev) => ({ ...prev, [currentId]: saved }))
+      // Drop the draft now that it has been persisted, rather than
+      // overwriting it with `saved`. `effectiveValue` is `drafts[currentId]
+      // ?? loadedValues[currentId]`, and `loadedValues[currentId]` is about
+      // to become `saved` below, so removing the draft key is a no-op for
+      // the rendered value while fixing the "phantom dirty" bug: a draft
+      // that lingers forever is what made every fresh page load show Save
+      // enabled with zero real edits (see modifiedCount's doc comment above
+      // — a draft without a matching loadedValues entry is conservatively
+      // treated as dirty).
+      setDrafts((prev) => {
+        if (!(currentId in prev)) return prev
+        const next = { ...prev }
+        delete next[currentId]
+        return next
+      })
       setLoadedValues((prev) => ({ ...prev, [currentId]: saved }))
       notifications.show({
         message: 'Saved',
@@ -303,6 +324,7 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
         autoClose: getNotificationDuration(4000),
         withCloseButton: true,
       })
+      options.onSaved?.()
     } catch (err) {
       console.error(err)
       const isConflict = err instanceof SaveApiError && err.status === 409
@@ -310,6 +332,18 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
       // validateEntry hook; show its message and map per-field errors (e.g.
       // reference existence, which only the server can check) into the form.
       const isValidation = err instanceof SaveApiError && err.status === 422
+      // 403 = the writableBranch guard refused the write outright (base
+      // branch read-only, status past 'editing', or unreadable metadata --
+      // see api/guards.ts). This is exactly the window a fail-closed but
+      // still momentarily-stale client can hit: the branch list hasn't
+      // caught up yet, or the editor rendered before the server's answer
+      // arrived, so a Save that looked enabled got rejected server-side.
+      // #189 wrote specific guard copy explaining WHICH lock applies and how
+      // to recover (e.g. "withdraw it to make changes") -- falling through to
+      // the generic 'Save failed' below would throw that away in precisely
+      // the moment the user is most confused, so surface the server's own
+      // message instead, the same way the 422 branch already does.
+      const isForbidden = err instanceof SaveApiError && err.status === 403
       if (
         err instanceof SaveApiError &&
         err.status === 422 &&
@@ -320,13 +354,14 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
       }
       notifications.show({
         ...(isValidation ? { title: 'Save rejected' } : {}),
+        ...(isForbidden ? { title: 'Save not allowed' } : {}),
         message: isConflict
           ? 'Content was modified by another editor. Reload to see the latest changes.'
-          : isValidation
+          : isValidation || isForbidden
             ? err.message
             : 'Save failed',
         color: isConflict ? 'yellow' : 'red',
-        autoClose: getNotificationDuration(isConflict || isValidation ? 8000 : 6000),
+        autoClose: getNotificationDuration(isConflict || isValidation || isForbidden ? 8000 : 6000),
         withCloseButton: true,
       })
     } finally {
@@ -334,7 +369,7 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
     }
   }
 
-  const handleDiscardDrafts = () => {
+  const performDiscardDrafts = () => {
     setDrafts({})
     setErrorState(null)
     try {
@@ -352,7 +387,25 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
     })
   }
 
-  const handleDiscardFileDraft = () => {
+  // Discarding drafts is destructive, so confirm first — but only when there
+  // is actually something to lose (modifiedCount > 0, same definition used
+  // everywhere else in this hook). An all-clean discard (e.g. drafts that
+  // exactly mirror loaded values) clears silently.
+  const handleDiscardDrafts = () => {
+    if (modifiedCount === 0) {
+      performDiscardDrafts()
+      return
+    }
+    modals.openConfirmModal({
+      title: 'Discard drafts',
+      children: `Discard drafts for ${modifiedCount} ${modifiedCount === 1 ? 'file' : 'files'}? Unsaved changes will be lost.`,
+      labels: { confirm: 'Discard', cancel: 'Cancel' },
+      confirmProps: { color: 'red' },
+      onConfirm: performDiscardDrafts,
+    })
+  }
+
+  const performDiscardFileDraft = () => {
     if (!currentId) return
     setErrorState(null)
     setDrafts((prev) => {
@@ -377,6 +430,26 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
       color: 'blue',
       autoClose: getNotificationDuration(3000),
       withCloseButton: true,
+    })
+  }
+
+  // Only prompt when there is a real draft that actually differs from the
+  // loaded value (`isSelectedDirty()` below uses the exact same deep-equal
+  // comparison as `modifiedCount`). Discarding a draft that's identical to
+  // the loaded value, or discarding when there's no draft at all, has
+  // nothing to lose, so it clears silently.
+  const handleDiscardFileDraft = () => {
+    if (!currentId) return
+    if (!isSelectedDirty()) {
+      performDiscardFileDraft()
+      return
+    }
+    modals.openConfirmModal({
+      title: 'Discard draft',
+      children: 'Discard unsaved changes for this file?',
+      labels: { confirm: 'Discard', cancel: 'Cancel' },
+      confirmProps: { color: 'red' },
+      onConfirm: performDiscardFileDraft,
     })
   }
 
@@ -414,25 +487,22 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
 
     const id = entry.contentId
     if (!drafts[id]) return false
-    return !loadedValues[id] || JSON.stringify(drafts[id]) !== JSON.stringify(loadedValues[id])
+    return !loadedValues[id] || !equal(drafts[id], loadedValues[id])
   }
 
   // Convenience helper for checking current selection
   const isSelectedDirty = (): boolean => {
     if (!currentId) return false
     if (!drafts[currentId]) return false
-    return (
-      !loadedValues[currentId] ||
-      JSON.stringify(drafts[currentId]) !== JSON.stringify(loadedValues[currentId])
-    )
+    return !loadedValues[currentId] || !equal(drafts[currentId], loadedValues[currentId])
   }
 
   // Returns true if ANY draft entry differs from its loaded value.
   //
   // Used for branch-switch guards so unsaved work in non-selected entries is not
-  // silently discarded. Derived from `modifiedCount`, so the two semantics notes
-  // above also apply: localStorage-restored drafts without a loaded value count as
-  // dirty, and the underlying comparison is `JSON.stringify`-based.
+  // silently discarded. Derived from `modifiedCount`, so its semantics note
+  // above also applies: localStorage-restored drafts without a loaded value
+  // count as dirty.
   const isAnyDirty = (): boolean => modifiedCount > 0
 
   return {

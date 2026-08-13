@@ -12,8 +12,16 @@ test-results/
 playwright-report/
 .playwright-mcp/
 
+# `next build` with `output: 'export'` (apps/dual-build-fixture's static shape)
+out/
+
 # CanopyCMS local workspaces
 .canopy*/
+
+# Scratch projects scaffolded by packages/canopycms-cdk's scaffold-synth test.
+# Kept at the package root (never under src/) so a crashed run cannot leave
+# stray files inside the lint/tsc globs.
+packages/canopycms-cdk/.scaffold-synth/
 
 # Claude Code local/personal
 .claude/settings.local.json

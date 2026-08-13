@@ -1,9 +1,8 @@
+import { BASE_URL } from '../fixtures/base-url'
 import { test, expect } from '@playwright/test'
 import { EditorPage } from '../fixtures/editor-page'
-import { switchUser } from '../fixtures/test-users'
+import { switchUser, installE2EFlag } from '../fixtures/test-users'
 import { resetWorkspace, ensureMainBranch } from '../fixtures/test-workspace'
-
-const BASE_URL = 'http://localhost:5174'
 
 /**
  * E2E tests for editor draft behavior: persistence across reloads and discard.
@@ -12,9 +11,7 @@ test.describe('Draft Behavior', () => {
   let editorPage: EditorPage
 
   test.beforeEach(async ({ page }) => {
-    await page.addInitScript(() => {
-      ;(window as any).__E2E_TEST__ = true
-    })
+    await installE2EFlag(page)
     await test.step('reset workspace', () => resetWorkspace())
     await test.step('ensure main branch', () => ensureMainBranch(BASE_URL))
     editorPage = new EditorPage(page)
@@ -44,6 +41,12 @@ test.describe('Draft Behavior', () => {
       const discardItem = page.locator('[data-testid="discard-file-draft-menu-item"]')
       await discardItem.waitFor({ state: 'visible', timeout: 5000 })
       await discardItem.click()
+
+      // Discarding a dirty draft now asks for confirmation ("truthful draft
+      // lifecycle" UX rework) — confirm through the dialog.
+      const confirmDialog = page.getByRole('dialog', { name: 'Discard draft' })
+      await expect(confirmDialog).toBeVisible({ timeout: 5000 })
+      await confirmDialog.getByRole('button', { name: 'Discard' }).click()
 
       // Verify notification appears
       await expect(

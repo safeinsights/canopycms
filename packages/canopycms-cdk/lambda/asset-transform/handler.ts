@@ -234,7 +234,12 @@ async function handleTransformRequest(
     parsed.directives,
   )
   if (!transformed.ok) {
-    return errorResponse(422, transformed.error)
+    // Pass the real status through rather than flattening every rejection to
+    // 422 - `applyTransform` already distinguishes client-input errors (400
+    // unsupported format, 413 oversized output) from a genuine decode
+    // failure (422), and collapsing them all to 422 mislabels the first two
+    // as "unprocessable" when they're really "bad request"/"too large".
+    return errorResponse(transformed.status, transformed.error)
   }
 
   const canonicalKey = `${ASSET_PREFIXES.transform}/${formatDirectives(parsed.directives)}/${parsed.hash32}/${parsed.slug}.${parsed.ext}`

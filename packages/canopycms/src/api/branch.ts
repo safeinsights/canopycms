@@ -10,7 +10,15 @@ import type { ApiContext, ApiRequest, ApiResponse } from './types'
 import { defineEndpoint } from './route-builder'
 import { createDebugLogger } from '../utils/debug'
 import { clientOperatingStrategy } from '../operating-mode'
-import { isNotFoundError, getErrorMessage } from '../utils/error'
+import { isNotFoundError, getErrorMessage, sanitizeErrorMessage } from '../utils/error'
+import { filePathExists } from '../utils/fs'
+import { isNetworkRemoteUrl } from '../utils/git'
+import {
+  sanitizeBranchName,
+  RESERVED_SETTINGS_BRANCH_PREFIX,
+  RESERVED_ROUTE_BRANCH_NAMES,
+} from '../paths'
+import { GitManager } from '../git-manager'
 import { branchNameSchema, branchParamSchema } from './validators'
 
 const log = createDebugLogger({ prefix: 'BranchAPI' })
@@ -18,9 +26,49 @@ const log = createDebugLogger({ prefix: 'BranchAPI' })
 /** Response type for single branch operations (create, update, status) */
 export type BranchResponse = ApiResponse<{ branch: BranchMetadata }>
 
+/**
+ * A listed branch plus server-computed protected-base-branch flags (see
+ * authorization/protected-branch.ts). Optional on the wire, matching the
+ * `defaultBranch` precedent -- this server always emits all three, but an
+ * older server won't. That optionality does not make the two directions
+ * symmetric: the editor client now defaults every missing flag fail-closed
+ * (`?? true`), so a NEW client talking to an OLD server that omits these
+ * fields degrades to fully locked -- read-only, Submit hidden, and (see
+ * EditorHeader's `branchDataUnavailable`) a "could not be loaded" banner --
+ * rather than silently behaving as if nothing changed. That is by design:
+ * wire compatibility here means "doesn't break", not "behaves the same".
+ */
+export interface BranchListItem extends BranchMetadata {
+  isProtected?: boolean
+  readOnly?: boolean
+  /**
+   * True when content writes are rejected -- base-branch read-only OR a status
+   * lock (submitted/approved/archived). The editor renders its locked state off
+   * this instead of re-deriving the status rule client-side; `readOnly` still
+   * distinguishes WHICH lock applies, for banner copy.
+   */
+  writeBlocked?: boolean
+  /**
+   * Populated from {@link BranchWriteProtection.submitBlockedIncludingStatus}
+   * -- READ THAT DOC COMMENT before touching this field. On the wire this
+   * name means the COMPOUND answer (base-branch OR non-'editing' status),
+   * mirroring how `writeBlocked` above is the compound of `readOnly` + status
+   * while `readOnly` alone is just the base-branch part: `isProtected` /
+   * `submitBlocked` here is the same two-part shape (protected-branch.ts's
+   * `submitBlockedIncludingStatus = protection.submitBlocked || status !==
+   * 'editing'`). Do NOT "simplify" this to `protection.submitBlocked` --
+   * that field means ONLY "is the base branch" (it is what
+   * `api/guards.ts`'s `submittableBranch` guard reads, and that guard must
+   * keep refusing the base branch regardless of status), so swapping it in
+   * here would silently stop blocking submit on a submitted/approved/
+   * archived non-base branch.
+   */
+  submitBlocked?: boolean
+}
+
 /** Response type for listing branches */
 export type BranchListResponse = ApiResponse<{
-  branches: BranchMetadata[]
+  branches: BranchListItem[]
   /**
    * The server's effective default branch (the detected active branch in dev
    * mode). Clients without an explicitly pinned branch should open this one.
@@ -61,7 +109,13 @@ const updateBranchAccessBodySchema = z.object({
   allowedGroups: z.array(z.string()).optional(),
 })
 
-import { isPrivileged, isAdmin, loadPathPermissions } from '../authorization'
+import {
+  isPrivileged,
+  isAdmin,
+  loadPathPermissions,
+  getBranchProtection,
+  getBranchWriteProtection,
+} from '../authorization'
 import type { PathPermission } from '../config'
 import type { CanopyUser } from '../user'
 import { operatingStrategy } from '../operating-mode'
@@ -119,6 +173,37 @@ export interface CreateBranchBody {
   access?: BranchMetadata['access']
 }
 
+/**
+ * Read-only resolution of the local `remote.git` mirror's path, or undefined
+ * when none is configured/auto-detectable (ordinary dev mode) -- callers must
+ * still check `isNetworkRemoteUrl`/`filePathExists` before touching it.
+ *
+ * Resolving remote.git's path must not have side effects:
+ * GitManager.resolveRemoteUrl is NOT safe to call for this -- in dev mode its
+ * shouldAutoInitLocal branch CREATES a simulated remote as a side effect of
+ * merely asking where one would be. So this resolves read-only, mirroring
+ * resolveRemoteUrl's own precedence for its first three sources only
+ * (config.defaultRemoteUrl -> env var -> the strategy's auto-detect path);
+ * resolveRemoteUrl's fourth source (auto-init) is exactly the side effect
+ * being avoided, so it has no read-only equivalent here.
+ *
+ * Shared by createBranchHandler (create-time collision check against the
+ * mirror) and deleteBranchHandler (removing the deleted branch's stale local
+ * head from the mirror) -- the two halves of the same lifecycle: what create
+ * checks, delete must clean up.
+ */
+const resolveReadOnlyMirrorPath = (
+  ctx: ApiContext,
+  strategy: ReturnType<typeof operatingStrategy>,
+): string | undefined => {
+  const remoteUrlConfig = strategy.getRemoteUrlConfig()
+  return (
+    ctx.services.config.defaultRemoteUrl ??
+    process.env[remoteUrlConfig.envVarName] ??
+    remoteUrlConfig.autoDetectRemotePath
+  )
+}
+
 export const createBranchHandler = async (
   ctx: ApiContext,
   req: ApiRequest,
@@ -131,18 +216,216 @@ export const createBranchHandler = async (
       userId: req.user.userId,
     })
 
-    // Prevent git branch name collision with settings branch
-    // Settings live in separate directory but share same git remote
+    // Scope note: the collision guards below (settings-branch collision,
+    // reserved canopycms-settings- prefix, and the remote-mirror check
+    // further down) apply ONLY to this user-facing creation path.
+    // http/handler.ts's auto-create (base/active/settings branches) and
+    // branch-workspace.ts's loadOrCreateBranchContext (reached from content
+    // reads and the AI pipeline) provision system/known branch names, not
+    // user-chosen ones, and deliberately stay uncovered -- intentional, not
+    // an oversight.
+
+    // Prevent git branch name collision with the settings branch. Settings
+    // live in a separate directory but share the same git remote, and
+    // openOrCreateBranch (branch-workspace.ts) uses the SANITIZED name as the
+    // actual git branch name. parseBranchName (via branchNameSchema) permits
+    // '/', so a raw-string comparison here let a request for
+    // "canopycms/settings-prod" sail past this check while
+    // sanitizeBranchName() collapsed it to "canopycms-settings-prod" --
+    // creating a content branch whose real git ref WAS the settings branch.
+    // Comparing sanitized forms on both sides closes that bypass.
     const strategy = operatingStrategy(ctx.services.config.mode)
+    const sanitizedRequested = sanitizeBranchName(branchName)
     if (strategy.usesSeparateSettingsBranch()) {
       const settingsBranchName = strategy.getSettingsBranchName(ctx.services.config)
-      if (branchName === settingsBranchName) {
+      if (sanitizedRequested === sanitizeBranchName(settingsBranchName)) {
         return {
           ok: false,
           status: 400,
           error:
             'Cannot create content branch with settings branch name (git branch name collision)',
         }
+      }
+    }
+
+    // Reserve the WHOLE canopycms-settings- namespace, not just this
+    // deployment's own settings branch name. Two CanopyCMS deployments can
+    // share one GitHub repo, each with its own settings branch under this
+    // prefix; the worker (worker/cms-worker.ts) treats any
+    // `canopycms-settings-*` ref specially (orphan-branch reconcile/push
+    // logic), so another deployment's settings branch is a real name that
+    // must not be claimable as a content branch here either.
+    if (sanitizedRequested.startsWith(RESERVED_SETTINGS_BRANCH_PREFIX)) {
+      return {
+        ok: false,
+        status: 400,
+        error: `Branch names starting with "${RESERVED_SETTINGS_BRANCH_PREFIX}" are reserved for CanopyCMS settings branches`,
+      }
+    }
+
+    // Reject names that collide with a static top-level API route namespace --
+    // the router prefers a literal segment over `:branch`, so such a branch
+    // would be unreachable through its own routes (see
+    // RESERVED_ROUTE_BRANCH_NAMES). Checked on both the raw and sanitized form
+    // for the same reason as the settings-branch guard above: the raw name is
+    // what lands in the `/:branch` URL segment, the sanitized name is what
+    // becomes the actual git ref.
+    if (
+      RESERVED_ROUTE_BRANCH_NAMES.includes(branchName) ||
+      RESERVED_ROUTE_BRANCH_NAMES.includes(sanitizedRequested)
+    ) {
+      return {
+        ok: false,
+        status: 400,
+        error: `Branch name "${branchName}" is reserved: it collides with the /${branchName} API route namespace`,
+      }
+    }
+
+    // Reject the base branch name outright. openOrCreateBranch's save() (see
+    // branch-metadata.ts) field-merges the caller-supplied `access` over an
+    // EXISTING branch's metadata rather than replacing it, so a request
+    // naming the base branch would let the caller inject themselves into the
+    // protected base branch's ACL (gaining e.g. withdraw rights via the
+    // allowed_by_acl path). No recorded fork point exists yet for a
+    // not-yet-created branch, so this checks config protection only.
+    const { isProtected } = getBranchProtection(ctx.services.config, branchName)
+    if (isProtected) {
+      return {
+        ok: false,
+        status: 400,
+        error: 'Cannot create a branch with the base branch name',
+      }
+    }
+
+    // Reject a name collision with ANY existing branch for the same
+    // field-merge reason: creating over an existing branch name would let
+    // the caller's `access` ACL overwrite that branch's real ACL instead of
+    // creating a new, separate branch. Comparison uses the sanitized name
+    // since that's what's persisted in branch.json (see
+    // BranchWorkspaceManager.openOrCreateBranch). System branches
+    // auto-provisioned via http/handler.ts's getBranchContext don't go
+    // through this handler, so rejecting collisions here doesn't affect them.
+    if (!ctx.services.registry) {
+      return {
+        ok: false,
+        status: 400,
+        error: 'Branch registry not initialized — ensure the workspace has been initialized',
+      }
+    }
+    const existingBranch = await ctx.services.registry.get(sanitizeBranchName(branchName))
+    if (existingBranch) {
+      return {
+        ok: false,
+        status: 409,
+        error: 'A branch with this name already exists',
+      }
+    }
+
+    // L2: create-time collision check against this deployment's local
+    // GitHub mirror (`remote.git`). The CMS Lambda has no internet access
+    // (PRIVATE_ISOLATED subnets, no NAT -- see AGENTS.md), so a synchronous
+    // GitHub API call at branch-create time is not possible. But remote.git
+    // is BOTH this deployment's local git origin AND a mirror of GitHub's
+    // view of the repo: cms-worker.ts's syncGit() fetches GitHub into it
+    // (see GITHUB_TRACKING_REF_PREFIX's doc comment in git-manager.ts) and
+    // then reconciles refs/heads/* non-destructively, so it carries both
+    // this deployment's local heads and GitHub's view -- readable offline by
+    // this same Lambda, since it resolves to the same EFS inode the worker
+    // uses. Reading it here catches a sanitized-name collision with a branch
+    // another CanopyCMS deployment sharing this repo (or a direct push to
+    // GitHub) already created -- something the local registry check above
+    // cannot see.
+    //
+    const resolvedMirrorPath = resolveReadOnlyMirrorPath(ctx, strategy)
+
+    if (!resolvedMirrorPath) {
+      // No mirror configured or auto-detected at all. This is the ORDINARY
+      // dev-mode case, not an anomaly: DevStrategy's getRemoteUrlConfig()
+      // has no autoDetectRemotePath (its simulated remote lives at the
+      // relative defaultRemotePath instead), so unless an adopter sets
+      // defaultRemoteUrl this resolves to undefined on every create. Logged
+      // at debug, not warn, so dev doesn't emit a warning per branch
+      // creation for the expected shape. Cross-deployment collisions are a
+      // prod concern; dev mode being uncovered here is deliberate.
+      //
+      // Purely additive guard either way: skip and let creation proceed
+      // rather than fail closed -- a genuinely missing remote.git fails
+      // loudly a moment later when the branch workspace is cloned from it.
+      log.debug('api', 'No remote.git mirror resolved -- skipping create-time collision check')
+    } else if (isNetworkRemoteUrl(resolvedMirrorPath)) {
+      // A network URL (http(s)/ssh/git) means the internet-less Lambda
+      // cannot reach it synchronously (see AGENTS.md's deployment
+      // architecture) -- skip quietly, this is expected shape rather than a
+      // misconfiguration worth warning about.
+      log.debug('api', 'Resolved remote is a network URL -- skipping create-time collision check')
+    } else if (!(await filePathExists(resolvedMirrorPath))) {
+      // Distinct from "mirror unreadable" below: nothing exists at the
+      // resolved path yet.
+      log.warn(
+        'api',
+        'remote.git not found at resolved path -- skipping create-time collision check',
+        { path: resolvedMirrorPath },
+      )
+    } else {
+      try {
+        const collision = await GitManager.bareRemoteHasBranch(
+          resolvedMirrorPath,
+          sanitizedRequested,
+          // GitHub's view only -- see bareRemoteHasBranch. A local head in
+          // remote.git survives an editor-side branch delete forever, so
+          // including refs/heads/* here would make the ordinary create ->
+          // publish -> merge -> delete -> reuse cycle 409 permanently on a name
+          // the user just deleted. Locally-live branches are already rejected
+          // by the registry check above.
+          { namespaces: 'tracking' },
+        )
+        if (collision) {
+          return {
+            ok: false,
+            status: 409,
+            error:
+              `A branch named "${sanitizedRequested}" already exists on the remote. ` +
+              `It may have been created by another CanopyCMS deployment sharing this ` +
+              `repository, pushed directly to GitHub, or left behind by an earlier branch ` +
+              `of the same name. Choose a different name.`,
+          }
+        }
+        // No collision: GitHub does not have this name. Clear any STALE local
+        // head the mirror still carries for it, so this new branch's first
+        // publish can't be rejected non-fast-forward against a leftover tip.
+        // deleteBranchHandler's cleanup (below) handles the common case, but
+        // cannot cover every ordering: when the branch still existed on
+        // GitHub at editor-delete time, the sync loop's reconcile re-creates
+        // the local head from the tracking ref within a cycle, and once the
+        // GitHub side is later deleted (pruning the tracking ref) that
+        // re-created head is orphaned with no registry entry left for the
+        // delete path to ever run against. Healing at REUSE time covers
+        // every ordering, however the head got orphaned: the registry check
+        // above already proved no live branch owns this name, and the
+        // tracking check just proved GitHub doesn't either, so a remaining
+        // local head is stale by definition. Best-effort (old-value-guarded
+        // against a concurrent push): on failure, creation still proceeds --
+        // that is today's status quo, and the publish-time 409 message names
+        // this cause.
+        try {
+          await GitManager.deleteBareRemoteHead(resolvedMirrorPath, sanitizedRequested)
+        } catch (err: unknown) {
+          log.warn('api', 'Failed to clear stale mirror head at branch reuse', {
+            branch: sanitizedRequested,
+            path: resolvedMirrorPath,
+            error: getErrorMessage(err),
+          })
+        }
+      } catch (err: unknown) {
+        // Mirror EXISTS but is unreadable (corrupt, permissions, wrong git
+        // version, ...) -- distinct from "not found" above. Same
+        // purely-additive rationale: skip rather than fail closed; a
+        // genuinely broken remote.git fails loudly a moment later when the
+        // branch workspace is cloned from it.
+        log.warn('api', 'remote.git mirror is unreadable -- skipping create-time collision check', {
+          path: resolvedMirrorPath,
+          error: getErrorMessage(err),
+        })
       }
     }
 
@@ -201,21 +484,49 @@ export const listBranchesHandler = async (
 
   // The branch the editor should open when none is pinned via URL/config.
   // Read per-request so dev-mode refreshActiveBranch() updates are reflected.
-  const defaultBranch =
-    ctx.services.config.defaultActiveBranch ?? ctx.services.config.defaultBaseBranch ?? 'main'
+  // Sanitized: dev mode detects the RAW git HEAD name (e.g. 'claude/foo'),
+  // but registry branch names are filesystem-sanitized ('claude-foo') — the
+  // editor matches defaultBranch against registry names, so return the form
+  // that can actually be found there.
+  const defaultBranch = sanitizeBranchName(
+    ctx.services.config.defaultActiveBranch ?? ctx.services.config.defaultBaseBranch ?? 'main',
+  )
+
+  // Attach server-computed protected-base-branch flags; read config per-request
+  // so dev-mode refreshActiveBranch() updates are reflected here too.
+  const toListItem = (context: BranchContext): BranchListItem => {
+    const protection = getBranchWriteProtection(
+      ctx.services.config,
+      context.branch.name,
+      context.branch.baseBranch,
+      context.branch.status,
+    )
+    return {
+      ...context.branch,
+      isProtected: protection.isProtected,
+      readOnly: protection.readOnly,
+      writeBlocked: protection.writeBlocked,
+      submitBlocked: protection.submitBlockedIncludingStatus,
+    }
+  }
 
   // Admins and Reviewers see all branches
   if (isPrivileged(req.user.groups)) {
     return {
       ok: true,
       status: 200,
-      data: { branches: allBranches.map((c) => c.branch), defaultBranch },
+      data: { branches: allBranches.map(toListItem), defaultBranch },
     }
   }
 
   // Regular users only see branches they created or have explicit access to
   const visibleBranches = allBranches.filter((context) => {
     const branch = context.branch
+    // The protected base branch is where every user lands by default; always
+    // show it (read-only) so the editor can render its protected state.
+    if (getBranchProtection(ctx.services.config, branch.name, branch.baseBranch).isProtected) {
+      return true
+    }
     // User created the branch
     if (branch.createdBy === req.user.userId) {
       return true
@@ -238,7 +549,7 @@ export const listBranchesHandler = async (
   return {
     ok: true,
     status: 200,
-    data: { branches: visibleBranches.map((c) => c.branch), defaultBranch },
+    data: { branches: visibleBranches.map(toListItem), defaultBranch },
   }
 }
 
@@ -284,6 +595,18 @@ export const deleteBranchHandler = async (
   const branchContext = await ctx.getBranchContext(branchName)
   if (!branchContext) {
     return { ok: false, status: 404, error: 'Branch not found' }
+  }
+
+  // Deleting the base branch would destroy the prod serving clone (and any
+  // stranded edits on it) -- never valid, so this is checked before any
+  // permission check below.
+  const { isProtected } = getBranchProtection(
+    ctx.services.config,
+    branchContext.branch.name,
+    branchContext.branch.baseBranch,
+  )
+  if (isProtected) {
+    return { ok: false, status: 400, error: 'Cannot delete the base branch' }
   }
 
   // Check permission
@@ -343,7 +666,10 @@ export const deleteBranchHandler = async (
             retryDelay: 100,
           })
         } catch (err: unknown) {
-          cleanupWarning = `Failed to fully remove branch directory: ${getErrorMessage(err)}`
+          // sanitizeErrorMessage: this string goes back to the browser in the
+          // delete response (API-H2 — no absolute EFS paths to clients);
+          // the console line below keeps the raw detail for server logs.
+          cleanupWarning = `Failed to fully remove branch directory: ${sanitizeErrorMessage(getErrorMessage(err))}`
           console.error(
             `CanopyCMS: Failed to delete branch directory for ${branchName}:`,
             getErrorMessage(err),
@@ -358,6 +684,52 @@ export const deleteBranchHandler = async (
       ok: false,
       status: 409,
       error: `Branch is busy, try again: ${getErrorMessage(err)}`,
+    }
+  }
+
+  // Also delete the branch's local head from the remote.git mirror (the
+  // deployment's local origin). The sync loop deliberately never deletes a
+  // local head (see reconcileTrackedBranches), so THIS is the one explicit
+  // path that removes it -- without this, the head outlives the branch
+  // forever, and reusing the name after the GitHub side is gone (e.g. a
+  // squash-merged PR with auto-delete) has the reused branch's first publish
+  // rejected non-fast-forward against the stale old tip: a permanent,
+  // misleading 409 -- and a retried submit would then ship the STALE head to
+  // GitHub as an apparent success (see GitManager.deleteBareRemoteHead's doc
+  // comment for the full trace). The tracking ref is deliberately left
+  // alone: while the branch still exists on GitHub, the create-time
+  // collision check SHOULD keep matching it.
+  //
+  // Best-effort, same as the directory removal above: the branch is already
+  // logically deleted; a mirror we can't reach/write just leaves today's
+  // status quo behind (with a warning), it must not fail the delete.
+  const strategy = operatingStrategy(operatingMode)
+  const mirrorPath = resolveReadOnlyMirrorPath(ctx, strategy)
+  const sanitizedDeleted = sanitizeBranchName(branchContext.branch.name)
+  // Defense-in-depth only -- isProtected above already rejects the base
+  // branch, and settings branches never resolve through getBranchContext.
+  const sanitizedBase = sanitizeBranchName(
+    branchContext.branch.baseBranch ?? ctx.services.config.defaultBaseBranch ?? 'main',
+  )
+  const deletableHead =
+    sanitizedDeleted !== sanitizedBase &&
+    !sanitizedDeleted.startsWith(RESERVED_SETTINGS_BRANCH_PREFIX)
+  if (
+    deletableHead &&
+    mirrorPath &&
+    !isNetworkRemoteUrl(mirrorPath) &&
+    (await filePathExists(mirrorPath))
+  ) {
+    try {
+      await GitManager.deleteBareRemoteHead(mirrorPath, sanitizedDeleted)
+    } catch (err: unknown) {
+      // Client-facing copy is sanitized (API-H2 — no absolute EFS paths);
+      // the console line keeps the raw detail for server logs.
+      const warning = `Failed to remove the deleted branch's head from the local mirror: ${sanitizeErrorMessage(getErrorMessage(err))}`
+      cleanupWarning = cleanupWarning ? `${cleanupWarning}; ${warning}` : warning
+      console.warn(
+        `CanopyCMS: failed to remove deleted branch's mirror head (branch ${sanitizedDeleted}, mirror ${mirrorPath}): ${getErrorMessage(err)}`,
+      )
     }
   }
 
@@ -416,6 +788,24 @@ export const updateBranchAccessHandler = async (
   const branchContext = await ctx.getBranchContext(branchName)
   if (!branchContext) {
     return { ok: false, status: 404, error: 'Branch not found' }
+  }
+
+  // The protected base branch takes no ACL. Its content is read-only in prod and
+  // submit/delete are already blocked, but a base-branch ACL entry still feeds
+  // canPerformWorkflowAction's `allowed_by_acl` grant -- so writing one here
+  // would hand arbitrary users Withdraw rights on the base branch. Reject
+  // outright, consistent with the delete and submit rails.
+  const { isProtected } = getBranchProtection(
+    ctx.services.config,
+    branchContext.branch.name,
+    branchContext.branch.baseBranch,
+  )
+  if (isProtected) {
+    return {
+      ok: false,
+      status: 403,
+      error: 'The base branch does not take an access list. Create a branch to manage access.',
+    }
   }
 
   // Check permission
@@ -519,6 +909,13 @@ const deleteBranch = defineEndpoint({
 /**
  * Update branch access control
  * PATCH /:branch/access
+ *
+ * No 'writableBranch' guard: this rewrites branch.json's ACL, not branch
+ * content, so a submitted branch's ACL stays editable during review. The base
+ * branch is a different matter and IS refused -- the handler rejects protected
+ * branches up front, because a base-branch ACL entry feeds
+ * canPerformWorkflowAction's `allowed_by_acl` grant and would confer Withdraw
+ * rights there.
  */
 const updateBranchAccess = defineEndpoint({
   namespace: 'branches',

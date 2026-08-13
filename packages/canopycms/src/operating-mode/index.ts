@@ -15,7 +15,10 @@
  * Server code:
  *   import { operatingStrategy } from '@/operating-mode'
  *   const strategy = operatingStrategy(mode)
- *   const contentRoot = strategy.getContentRoot()
+ *   // contentRoot is REQUIRED: pass config.contentRoot (falling back to 'content'
+ *   // at the call site), never a bare call — see getContentRoot's doc comment in
+ *   // types.ts for why a default here would silently disarm a caller.
+ *   const contentRoot = strategy.getContentRoot(config.contentRoot ?? 'content')
  *   const branchesRoot = strategy.getContentBranchesRoot()
  *   const branchRoot = strategy.getContentBranchRoot('my-branch')
  *   const settingsRoot = strategy.getSettingsRoot()
@@ -27,6 +30,10 @@ export { clientOperatingStrategy, clearClientStrategyCache } from './client-safe
 
 // Client-unsafe factory and strategy (server-side only)
 export { operatingStrategy, clearStrategyCache } from './client-unsafe-strategy'
+
+// Single resolution point for deploymentName (env > config > mode default) —
+// server-only (reads process.env), used by the strategies' getSettingsBranchName.
+export { resolveDeploymentName } from './deployment-name'
 
 export type OperatingMode = 'prod' | 'dev'
 

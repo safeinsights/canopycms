@@ -6,6 +6,12 @@
       "runtimeExecutable": "pnpm",
       "runtimeArgs": ["--dir", "apps/example1", "dev"],
       "port": 3000
+    },
+    {
+      "name": "test-app",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": ["--dir", "apps/test-app", "dev"],
+      "port": 5174
     }
   ]
 }

@@ -32,6 +32,15 @@ happy path.
   [assets-media-system.md](resolved/assets-media-system.md); this is the concrete ticket for it.
   Decide the contract: synchronous public-object+original delete, or documented
   delist-only + async GC.
+
+  **COUPLED — read before implementing.** As of 2026-07-30, delete is no longer
+  admin-only: a non-admin may delete an asset whose `uploadedBy` is them
+  (`api/assets.ts`'s `deleteAssetHandler`). That permission is only safe *because*
+  delete is a de-list — nothing another branch references breaks. If this GC work
+  makes delete destroy the underlying blob, the uploader-owned permission must be
+  revisited at the same time: it would then need a reference check, or to revert
+  to admin-only. Do not land destructive GC without deciding that.
+  See [asset-listing-cross-branch-exposure.md](asset-listing-cross-branch-exposure.md).
 - **Multipart `filename` not shape-validated** (`api/assets.ts` uploadProxied override)
   — bypasses `filenameSchema`; stored unbounded in `meta.filename`. Not an injection
   risk (slug is capped, Content-Disposition uses the RFC 5987 lib), just inconsistent.
@@ -56,6 +65,10 @@ happy path.
   past 7.17.8 the peer mismatches; revisit if it bites.
 - `canary/bin/canary.ts` hardcodes the sandbox account id (deliberate for the canary,
   but note it).
-- Transform error-status flattening: the dev route collapses rejections to 502 and the
-  Lambda collapses 400|413|422 to 422 — map `transformed.status` through in both so a
-  client-input error isn't reported as a server error.
+- ~~Transform error-status flattening: the dev route collapses rejections to 502 and
+  the Lambda collapses 400|413|422 to 422 — map `transformed.status` through in both
+  so a client-input error isn't reported as a server error.~~ **RESOLVED
+  (2026-07-30, fix/finalize-validates-decodability):** both `serveLazyTransform`
+  (api/assets.ts) and the transform Lambda handler (canopycms-cdk/lambda/asset-transform/handler.ts)
+  now pass `transformed.status` through verbatim; handler.test.ts and assets.test.ts
+  assert 400/413/422 pass-through.

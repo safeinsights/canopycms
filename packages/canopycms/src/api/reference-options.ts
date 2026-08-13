@@ -6,7 +6,7 @@ import { ContentStore } from '../content-store'
 import { defineEndpoint } from './route-builder'
 import { ReferenceResolver } from '../reference-resolver'
 import { parseLogicalPath } from '../paths'
-import type { ContentId, LogicalPath } from '../paths/types'
+import type { LogicalPath } from '../paths/types'
 import { branchNameSchema } from './validators'
 
 /** Response type for reference options */
@@ -60,7 +60,9 @@ const getReferenceOptionsHandler = async (
   const search = queryResult.data.search
 
   const flatSchema = branchContext.flatSchema
-  const store = new ContentStore(branchContext.branchRoot, flatSchema)
+  const store = new ContentStore(branchContext.branchRoot, flatSchema, {
+    contentRootName: ctx.services.config.contentRoot || 'content',
+  })
 
   // Get ID index (automatically loads if needed)
   const idIndex = await store.idIndex()
@@ -94,31 +96,24 @@ const getReferenceOptionsHandler = async (
         .filter(Boolean)
     : undefined
 
-  // Load reference options
-  const resolver = new ReferenceResolver(store, idIndex)
-  const allOptions = await resolver.loadReferenceOptions(
-    collections,
-    displayField,
-    search,
-    entryTypes,
-  )
-
-  // Filter by path-level read permissions. Build the access checker once so
-  // permissions are loaded a single time and reused for every option, instead of
-  // re-loading per option inside the loop.
+  // Build the access checker once (permissions loaded a single time, reused for
+  // every candidate) and pass it into loadReferenceOptions as a filter *before*
+  // loading: a denied path is skipped outright, so it never triggers the
+  // store.read() that loadReferenceOptions would otherwise do just to compute a
+  // label for an option the caller isn't allowed to see.
   const checkAccess = await ctx.services.createContentAccessChecker(
     branchContext,
     branchContext.branchRoot,
     req.user,
   )
-  const options = []
-  for (const option of allOptions) {
-    const location = idIndex.findById(option.id as ContentId)
-    if (!location) continue
-    const access = checkAccess(location.relativePath, 'read')
-    if (!access.allowed) continue
-    options.push(option)
-  }
+  const resolver = new ReferenceResolver(store, idIndex)
+  const options = await resolver.loadReferenceOptions(
+    collections,
+    displayField,
+    search,
+    entryTypes,
+    (relativePath) => checkAccess(relativePath, 'read').allowed,
+  )
 
   return {
     ok: true,

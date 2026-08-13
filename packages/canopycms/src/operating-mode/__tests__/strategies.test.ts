@@ -4,7 +4,8 @@
  * Tests for both client-safe and client-unsafe strategies
  */
 
-import { describe, it, expect, afterEach } from 'vitest'
+import path from 'node:path'
+import { describe, it, expect, afterEach, vi } from 'vitest'
 import {
   clientOperatingStrategy,
   clearClientStrategyCache,
@@ -12,6 +13,7 @@ import {
   clearStrategyCache,
 } from '../index'
 import type { OperatingMode } from '..'
+import { mockConsole } from '../../test-utils'
 
 describe('Operating Mode Strategies', () => {
   // Clean up caches after each test
@@ -179,8 +181,14 @@ describe('Operating Mode Strategies', () => {
 
       it('should get content root', () => {
         const strategy = operatingStrategy(mode)
-        const contentRoot = strategy.getContentRoot()
+        const contentRoot = strategy.getContentRoot('content')
         expect(contentRoot).toContain('content')
+      })
+
+      it('should resolve a multi-segment content root', () => {
+        const strategy = operatingStrategy(mode)
+        const contentRoot = strategy.getContentRoot('cms/content', '/source/root')
+        expect(contentRoot).toBe(path.join('/source/root', 'cms', 'content'))
       })
 
       it('should create branch subdirectories', () => {
@@ -308,6 +316,18 @@ describe('Operating Mode Strategies', () => {
         expect(branchRoot).toContain('feature-branch')
       })
 
+      it('should get content root', () => {
+        const strategy = operatingStrategy(mode)
+        const contentRoot = strategy.getContentRoot('content', '/source/root')
+        expect(contentRoot).toBe(path.join('/source/root', 'content'))
+      })
+
+      it('should resolve a multi-segment content root', () => {
+        const strategy = operatingStrategy(mode)
+        const contentRoot = strategy.getContentRoot('cms/content', '/source/root')
+        expect(contentRoot).toBe(path.join('/source/root', 'cms', 'content'))
+      })
+
       it('should NOT require existing repo', () => {
         const strategy = operatingStrategy(mode)
         expect(strategy.requiresExistingRepo()).toBe(false)
@@ -371,6 +391,142 @@ describe('Operating Mode Strategies', () => {
         expect(clientStrategy.supportsBranching()).toBe(fullStrategy.supportsBranching())
         expect(clientStrategy.shouldCommit()).toBe(fullStrategy.shouldCommit())
         expect(clientStrategy.getPermissionsFileName()).toBe(fullStrategy.getPermissionsFileName())
+      })
+    })
+
+    describe('deploymentName resolution (env > config > modeDefault)', () => {
+      afterEach(() => {
+        vi.unstubAllEnvs()
+        clearStrategyCache()
+      })
+
+      it('falls back to the mode default when neither env nor config is set (prod -> prod, dev -> local)', () => {
+        vi.stubEnv('CANOPYCMS_DEPLOYMENT_NAME', '')
+        expect(operatingStrategy('prod').getSettingsBranchName({})).toBe('canopycms-settings-prod')
+        expect(operatingStrategy('dev').getSettingsBranchName({})).toBe('canopycms-settings-local')
+      })
+
+      it('uses config.deploymentName when env is unset', () => {
+        vi.stubEnv('CANOPYCMS_DEPLOYMENT_NAME', '')
+        expect(operatingStrategy('prod').getSettingsBranchName({ deploymentName: 'acme' })).toBe(
+          'canopycms-settings-acme',
+        )
+      })
+
+      it('ignores a whitespace-only env var and falls back to config', () => {
+        vi.stubEnv('CANOPYCMS_DEPLOYMENT_NAME', '   ')
+        expect(operatingStrategy('prod').getSettingsBranchName({ deploymentName: 'acme' })).toBe(
+          'canopycms-settings-acme',
+        )
+      })
+
+      it('uses the env var alone when config.deploymentName is unset', () => {
+        vi.stubEnv('CANOPYCMS_DEPLOYMENT_NAME', 'from-env')
+        expect(operatingStrategy('prod').getSettingsBranchName({})).toBe(
+          'canopycms-settings-from-env',
+        )
+      })
+
+      it('prefers the env var over config.deploymentName when both are set and differ (env is the value guaranteed to differ between two stacks sharing a repo)', () => {
+        const consoleSpy = mockConsole()
+        try {
+          vi.stubEnv('CANOPYCMS_DEPLOYMENT_NAME', 'from-env')
+          expect(
+            operatingStrategy('prod').getSettingsBranchName({ deploymentName: 'from-config' }),
+          ).toBe('canopycms-settings-from-env')
+        } finally {
+          consoleSpy.restore()
+        }
+      })
+
+      // These two use a freshly re-imported module (vi.resetModules + dynamic
+      // import) rather than the statically-imported `operatingStrategy` above,
+      // so each starts with resolveDeploymentName's module-level `warned` flag
+      // at its initial `false` - the mismatch test right above this one
+      // deliberately latches that flag on the ALREADY-loaded module, which
+      // would otherwise make a "did it warn" assertion here meaningless.
+      it('does not warn when env and config agree', async () => {
+        const consoleSpy = mockConsole()
+        try {
+          vi.resetModules()
+          const { resolveDeploymentName } = await import('../deployment-name')
+          vi.stubEnv('CANOPYCMS_DEPLOYMENT_NAME', 'same')
+          expect(resolveDeploymentName({ deploymentName: 'same' }, 'prod')).toBe('same')
+          expect(consoleSpy.all().warn).toHaveLength(0)
+        } finally {
+          consoleSpy.restore()
+          vi.resetModules()
+        }
+      })
+
+      it('warns exactly once (naming both values) across repeated mismatched resolutions', async () => {
+        const consoleSpy = mockConsole()
+        try {
+          vi.resetModules()
+          const { resolveDeploymentName } = await import('../deployment-name')
+          vi.stubEnv('CANOPYCMS_DEPLOYMENT_NAME', 'from-env')
+
+          resolveDeploymentName({ deploymentName: 'from-config' }, 'prod')
+          resolveDeploymentName({ deploymentName: 'from-config' }, 'prod')
+          resolveDeploymentName({ deploymentName: 'another-config' }, 'prod')
+
+          expect(consoleSpy.all().warn).toHaveLength(1)
+          expect(consoleSpy).toHaveWarned('from-env')
+          expect(consoleSpy).toHaveWarned('from-config')
+        } finally {
+          consoleSpy.restore()
+          vi.resetModules()
+        }
+      })
+
+      // The env route bypasses the config schema entirely, so this is the only
+      // thing standing between an infra-stamped value and a malformed git ref.
+      describe('rejects deployment names that would not be a valid ref component', () => {
+        const invalid = [
+          ['a slash (would add a ref hierarchy level)', 'team/prod'],
+          ['whitespace', 'my prod'],
+          ['a leading dash (parses as a git option)', '-prod'],
+          ['a git-forbidden character', 'prod:1'],
+          ['dot-dot', 'a..b'],
+          ['a leading dot', '.prod'],
+        ] as const
+
+        for (const [why, value] of invalid) {
+          it(`rejects ${why} from the env var`, () => {
+            vi.stubEnv('CANOPYCMS_DEPLOYMENT_NAME', value)
+            expect(() => operatingStrategy('prod').getSettingsBranchName({})).toThrow(
+              /invalid deploymentName/i,
+            )
+          })
+
+          it(`rejects ${why} from config`, () => {
+            vi.stubEnv('CANOPYCMS_DEPLOYMENT_NAME', '')
+            expect(() =>
+              operatingStrategy('prod').getSettingsBranchName({ deploymentName: value }),
+            ).toThrow(/invalid deploymentName/i)
+          })
+        }
+
+        it('names the offending source in the error', () => {
+          vi.stubEnv('CANOPYCMS_DEPLOYMENT_NAME', 'bad/name')
+          expect(() => operatingStrategy('prod').getSettingsBranchName({})).toThrow(
+            /CANOPYCMS_DEPLOYMENT_NAME/,
+          )
+        })
+
+        it('still accepts ordinary names with dots, dashes and underscores', () => {
+          vi.stubEnv('CANOPYCMS_DEPLOYMENT_NAME', 'acme-prod_2.1')
+          expect(operatingStrategy('prod').getSettingsBranchName({})).toBe(
+            'canopycms-settings-acme-prod_2.1',
+          )
+        })
+
+        it('does not validate an explicit settingsBranch override (it short-circuits first)', () => {
+          vi.stubEnv('CANOPYCMS_DEPLOYMENT_NAME', 'bad/name')
+          expect(
+            operatingStrategy('prod').getSettingsBranchName({ settingsBranch: 'my-settings' }),
+          ).toBe('my-settings')
+        })
       })
     })
   })

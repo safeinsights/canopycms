@@ -7,6 +7,7 @@
 
 import React from 'react'
 import { vi, type Mock } from 'vitest'
+import { SWRConfig } from 'swr'
 import { createMockApiClient, type MockApiClient } from '../../../api/__test__/mock-client'
 import { ApiClientProvider } from '../../context'
 
@@ -36,9 +37,25 @@ export async function setupMockApiClient(): Promise<MockApiClient> {
 }
 
 /**
- * Create a wrapper component that provides the mock API client via context.
+ * Create a wrapper component that provides the mock API client via context,
+ * plus an SWR cache isolated to this wrapper instance.
  *
- * Use this with renderHook to provide the ApiClientContext:
+ * The isolated cache (`provider: () => new Map()`) matters: several hooks
+ * (useBranchManager, useEntryManager, useCommentSystem) now read through
+ * SWR-backed data hooks keyed by resource/branch (e.g. "canopy:branches",
+ * "canopy:entries:main"). Without a fresh cache per wrapper, tests across
+ * this file (and other hook test files in the same worker) would all share
+ * SWR's real global cache and collide on those keys -- a later test could
+ * see an earlier test's mocked response instead of its own. `dedupingInterval`
+ * matches the production `SWRProvider` (2000ms) rather than 0: the manager
+ * hooks' explicit reload functions (loadBranches, loadComments,
+ * refreshEntries) always issue a fresh, un-deduped fetch regardless of this
+ * value -- see their doc comments -- so a non-zero interval here doesn't
+ * risk masking a duplicate-request bug, and it's needed for dedup
+ * regression tests that mount under React.StrictMode to actually observe
+ * SWR's coalescing behavior.
+ *
+ * Use this with renderHook to provide both contexts:
  *
  * @example
  * ```ts
@@ -49,7 +66,38 @@ export async function setupMockApiClient(): Promise<MockApiClient> {
  */
 export function createApiClientWrapper(mockClient: MockApiClient) {
   return function Wrapper({ children }: { children: React.ReactNode }) {
-    return <ApiClientProvider client={mockClient as any}>{children}</ApiClientProvider>
+    return (
+      <SWRConfig value={{ provider: () => new Map(), dedupingInterval: 2000 }}>
+        <ApiClientProvider client={mockClient as any}>{children}</ApiClientProvider>
+      </SWRConfig>
+    )
+  }
+}
+
+/**
+ * Like `createApiClientWrapper`, but the tree is additionally wrapped in
+ * `React.StrictMode`, which double-invokes effects (mount -> cleanup ->
+ * remount) in dev. Use this for dedup regression tests: without SWR's
+ * request deduplication, each fetch-on-load hook (useBranchManager,
+ * useEntryManager, useCommentSystem) fired its request twice under Strict
+ * Mode -- exactly the duplicate-request bug this SWR migration fixes.
+ *
+ * @example
+ * ```ts
+ * const mockClient = await setupMockApiClient()
+ * const wrapper = createStrictModeApiClientWrapper(mockClient)
+ * const { result } = renderHook(() => useSomeHook(), { wrapper })
+ * // assert the mock fetch was called exactly once, not twice
+ * ```
+ */
+export function createStrictModeApiClientWrapper(mockClient: MockApiClient) {
+  const Inner = createApiClientWrapper(mockClient)
+  return function StrictWrapper({ children }: { children: React.ReactNode }) {
+    return (
+      <React.StrictMode>
+        <Inner>{children}</Inner>
+      </React.StrictMode>
+    )
   }
 }
 

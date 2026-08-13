@@ -2,16 +2,20 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import type { ApiContext, ApiRequest } from './types'
 import type { PathPermission, CanopyConfig } from '../config'
 import type { AuthPlugin } from '../auth/plugin'
-import type { UserSearchResult, GroupMetadata } from '../auth/types'
+import type { UserSearchResult, GroupMetadata, PermissionGroupOption } from '../auth/types'
 import { RESERVED_GROUPS, SettingsFileConflictError } from '../authorization'
 import {
   createMockApiContext,
   createMockBranchContext,
   createMockGitManager,
   createMockSettingsMutation,
+  mockConsole,
 } from '../test-utils'
 
-// Mock authorization module (specifically the permissions loader/mutator)
+// Mock authorization module (specifically the permissions loader/mutator, plus
+// the groups loader that listGroups now reads to merge internal groups into the
+// permission picker). `deriveInternalGroups` stays real -- it's pure, and it's
+// exactly what the handler runs.
 vi.mock('../authorization', async (importOriginal) => {
   const { vi } = await import('vitest')
   const original = await importOriginal<typeof import('../authorization')>()
@@ -19,6 +23,7 @@ vi.mock('../authorization', async (importOriginal) => {
     ...original,
     loadPermissionsFile: vi.fn().mockResolvedValue(null),
     mutatePermissionsFile: vi.fn().mockResolvedValue(null),
+    loadGroupsFile: vi.fn().mockResolvedValue(null),
   }
 })
 
@@ -46,6 +51,10 @@ describe('permissions API', () => {
 
   beforeEach(() => {
     vi.clearAllMocks()
+    // clearAllMocks wipes call history but keeps implementations, so restore
+    // the "no groups file yet" default -- otherwise a test that makes
+    // loadGroupsFile reject leaks that into every test after it.
+    vi.mocked(authorization.loadGroupsFile).mockResolvedValue(null)
 
     mockAuthPlugin = {
       authenticate: vi.fn(),
@@ -228,6 +237,9 @@ describe('permissions API', () => {
     })
 
     it('surfaces a non-200 failure when the settings commit is saved but not pushed (API-H1)', async () => {
+      // The "committed but not pushed" path warns by design; swallow (and
+      // assert) it so it doesn't clutter the test reporter.
+      const consoleSpy = mockConsole()
       const settingsMutation = createMockSettingsMutation({ currentFile: null })
       vi.mocked(permissionsLoader.mutatePermissionsFile).mockImplementation(
         settingsMutation.impl as typeof authorization.mutatePermissionsFile,
@@ -265,6 +277,8 @@ describe('permissions API', () => {
       expect(result.ok).toBe(false)
       expect(result.status).toBe(502)
       expect(result.error).toContain('network unreachable')
+      expect(consoleSpy).toHaveWarned('committed but not pushed')
+      consoleSpy.restore()
     })
 
     it('requires permissions array in body', async () => {
@@ -410,7 +424,19 @@ describe('permissions API', () => {
   })
 
   describe('listGroups', () => {
-    it('lists groups for admin', async () => {
+    /** Read the picker options off a listGroups result. */
+    const optionsOf = (result: Awaited<ReturnType<typeof listGroups>>): PermissionGroupOption[] =>
+      (result.data as { groups: PermissionGroupOption[] }).groups
+
+    const adminReq: ApiRequest<undefined> = {
+      user: {
+        type: 'authenticated',
+        userId: 'admin-1',
+        groups: [RESERVED_GROUPS.ADMINS],
+      },
+    }
+
+    it('lists groups for admin, tagging the auth provider’s groups as external', async () => {
       const mockGroups: GroupMetadata[] = [
         { id: 'group-1', name: 'Engineering', memberCount: 10 },
         { id: 'group-2', name: 'Marketing', memberCount: 5 },
@@ -418,22 +444,122 @@ describe('permissions API', () => {
 
       vi.mocked(mockAuthPlugin.listGroups).mockResolvedValue(mockGroups)
 
-      const req: ApiRequest<undefined> = {
-        user: {
-          type: 'authenticated',
-          userId: 'admin-1',
-          groups: [RESERVED_GROUPS.ADMINS],
-        },
-      }
-
-      const result = await listGroups(mockContext, req)
+      const result = await listGroups(mockContext, adminReq)
 
       expect(result.ok).toBe(true)
       expect(result.status).toBe(200)
-      if (result.ok && result.data) {
-        expect((result.data as { groups: GroupMetadata[] }).groups).toEqual(mockGroups)
-      }
+      expect(optionsOf(result)).toEqual(
+        expect.arrayContaining([
+          { id: 'group-1', name: 'Engineering', memberCount: 10, source: 'external' },
+          { id: 'group-2', name: 'Marketing', memberCount: 5, source: 'external' },
+        ]),
+      )
       expect(mockAuthPlugin.listGroups).toHaveBeenCalled()
+    })
+
+    it('merges internal groups from groups.json alongside the external ones', async () => {
+      vi.mocked(mockAuthPlugin.listGroups).mockResolvedValue([
+        { id: 'group-1', name: 'Engineering' },
+      ])
+      vi.mocked(authorization.loadGroupsFile).mockResolvedValue({
+        version: 3,
+        updatedAt: '2024-01-01T00:00:00.000Z',
+        updatedBy: 'admin-1',
+        groups: [{ id: 'docs-team', name: 'Docs Team', description: 'Docs', members: ['u1'] }],
+      } as never)
+
+      const result = await listGroups(mockContext, adminReq)
+
+      expect(optionsOf(result)).toEqual(
+        expect.arrayContaining([
+          { id: 'docs-team', name: 'Docs Team', description: 'Docs', source: 'internal' },
+          { id: 'group-1', name: 'Engineering', source: 'external' },
+        ]),
+      )
+    })
+
+    it('orders internal options ahead of external ones', async () => {
+      vi.mocked(mockAuthPlugin.listGroups).mockResolvedValue([
+        { id: 'group-1', name: 'Engineering' },
+      ])
+      vi.mocked(authorization.loadGroupsFile).mockResolvedValue(null)
+
+      const sources = optionsOf(await listGroups(mockContext, adminReq)).map((g) => g.source)
+
+      // deriveInternalGroups synthesizes Admins/Reviewers when the file is
+      // absent, so the internal block is never empty.
+      expect(sources.indexOf('external')).toBeGreaterThan(sources.lastIndexOf('internal'))
+    })
+
+    it('never leaks internal group membership (endpoint is privileged, not admin-only)', async () => {
+      vi.mocked(mockAuthPlugin.listGroups).mockResolvedValue([])
+      vi.mocked(authorization.loadGroupsFile).mockResolvedValue({
+        version: 1,
+        updatedAt: '2024-01-01T00:00:00.000Z',
+        updatedBy: 'admin-1',
+        groups: [{ id: 'docs-team', name: 'Docs Team', members: ['u1', 'u2', 'u3'] }],
+      } as never)
+
+      for (const option of optionsOf(await listGroups(mockContext, adminReq))) {
+        expect(option).not.toHaveProperty('members')
+        expect(option).not.toHaveProperty('memberCount')
+      }
+    })
+
+    it('collapses an internal/external ID collision into one option marked as both', async () => {
+      // The two ID spaces are not namespaced against each other, and
+      // checkPathPermission matches a single flattened user.groups list by ID
+      // string -- so a shared ID is ONE permission target, not two. But the
+      // grant reaches BOTH memberships, so the option must not be labelled
+      // merely 'internal': that would understate its blast radius to the admin
+      // making the grant.
+      vi.mocked(mockAuthPlugin.listGroups).mockResolvedValue([
+        { id: 'docs-team', name: 'Provider Docs Team', memberCount: 99 },
+      ])
+      vi.mocked(authorization.loadGroupsFile).mockResolvedValue({
+        version: 1,
+        updatedAt: '2024-01-01T00:00:00.000Z',
+        updatedBy: 'admin-1',
+        groups: [{ id: 'docs-team', name: 'Docs Team', members: ['u1'] }],
+      } as never)
+
+      const matching = optionsOf(await listGroups(mockContext, adminReq)).filter(
+        (g) => g.id === 'docs-team',
+      )
+
+      expect(matching).toEqual([{ id: 'docs-team', name: 'Docs Team', source: 'both' }])
+    })
+
+    it('leaves a non-colliding internal group tagged internal', async () => {
+      // Guards the collision marking above from over-firing.
+      vi.mocked(mockAuthPlugin.listGroups).mockResolvedValue([
+        { id: 'group-1', name: 'Engineering' },
+      ])
+      vi.mocked(authorization.loadGroupsFile).mockResolvedValue({
+        version: 1,
+        updatedAt: '2024-01-01T00:00:00.000Z',
+        updatedBy: 'admin-1',
+        groups: [{ id: 'docs-team', name: 'Docs Team', members: ['u1'] }],
+      } as never)
+
+      const options = optionsOf(await listGroups(mockContext, adminReq))
+
+      expect(options.find((g) => g.id === 'docs-team')?.source).toBe('internal')
+      expect(options.find((g) => g.id === 'group-1')?.source).toBe('external')
+    })
+
+    it('fails loudly when groups.json cannot be read rather than serving a partial list', async () => {
+      vi.mocked(mockAuthPlugin.listGroups).mockResolvedValue([
+        { id: 'group-1', name: 'Engineering' },
+      ])
+      vi.mocked(authorization.loadGroupsFile).mockRejectedValue(new Error('EIO: disk on fire'))
+
+      const result = await listGroups(mockContext, adminReq)
+
+      // Degrading to external-only here would silently reproduce the very bug
+      // the merge exists to fix, so this must surface as an error.
+      expect(result.ok).toBe(false)
+      expect(result.status).toBe(500)
     })
 
     it('lists groups for reviewer', async () => {

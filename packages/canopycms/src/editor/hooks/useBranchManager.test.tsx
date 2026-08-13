@@ -3,12 +3,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { useBranchManager, UseBranchManagerOptions } from './useBranchManager'
 import type { BranchMetadata } from '../../types'
 import type { MockApiClient } from '../../api/__test__/mock-client'
+import { unsafeAsContentId } from '../../paths/test-utils'
 import {
   setupMockApiClient,
   setupMockLocation,
   setupMockHistory,
   setupMockConsole,
   createApiClientWrapper,
+  createStrictModeApiClientWrapper,
 } from './__test__/test-utils'
 
 // Mock the API client module
@@ -119,6 +121,27 @@ describe('useBranchManager', () => {
     expect(mockClient.branches.list).toHaveBeenCalled()
     expect(mockSetBusy).toHaveBeenCalledWith(true)
     expect(mockSetBusy).toHaveBeenCalledWith(false)
+  })
+
+  it('mounting under Strict Mode issues one branches request, not two', async () => {
+    // Headline claim for the SWR migration: React Strict Mode double-invokes
+    // effects (mount -> cleanup -> remount) in dev, which used to fire this
+    // hook's fetch-on-load effect twice. SWR's request dedup must collapse
+    // that to a single actual network call.
+    mockClient.branches.list.mockResolvedValue({
+      ok: true,
+      status: 200,
+      data: { branches: mockBranches },
+    })
+
+    const strictWrapper = createStrictModeApiClientWrapper(mockClient)
+    const { result } = renderHook(() => useBranchManager(defaultOptions), {
+      wrapper: strictWrapper,
+    })
+
+    await waitFor(() => expect(result.current.branches).toEqual(mockBranches))
+
+    expect(mockClient.branches.list).toHaveBeenCalledTimes(1)
   })
 
   it('adopts the server default branch when no branch is pinned', async () => {
@@ -269,7 +292,127 @@ describe('useBranchManager', () => {
     expect(result.current.branchSummaries[1].mergedAt).toBeUndefined()
   })
 
-  it('computes currentBranch and branchStatus', async () => {
+  it('maps isProtected/readOnly/writeBlocked/submitBlocked flags into branchSummaries, failing CLOSED when the wire omits them (version skew)', async () => {
+    // Version skew / a branches-list response that doesn't carry the newer
+    // flags at all must lock the UI, not unlock it -- see branchContentLocked's
+    // doc comment in Editor.tsx for the full rationale (the old client-side
+    // derivation locked correctly with zero data; an `?? false` default here
+    // would silently invert that).
+    const branchesWithFlags: BranchMetadata[] = [
+      {
+        ...mockBranches[0],
+        isProtected: true,
+        readOnly: true,
+        writeBlocked: true,
+        submitBlocked: true,
+      } as BranchMetadata,
+      mockBranches[1], // no flags on the wire at all -- the version-skew case
+    ]
+    mockClient.branches.list.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      data: { branches: branchesWithFlags },
+    })
+
+    const { result } = renderHook(() => useBranchManager(defaultOptions), {
+      wrapper,
+    })
+
+    await waitFor(() => {
+      expect(result.current.branchSummaries).toHaveLength(2)
+    })
+
+    expect(result.current.branchSummaries[0]).toMatchObject({
+      name: 'main',
+      isProtected: true,
+      readOnly: true,
+      writeBlocked: true,
+      submitBlocked: true,
+    })
+    // Absent case, asserted specifically (not just "always sends the field"):
+    // isProtected/writeBlocked/submitBlocked gate real mutating actions, so
+    // they must fail CLOSED (true) when missing. readOnly only picks WHICH
+    // lock banner to show once something is already locked, so it alone
+    // stays `false` (unlocked-looking) when absent -- see the comment beside
+    // its default in useBranchManager.tsx.
+    expect(result.current.branchSummaries[1]).toMatchObject({
+      name: 'feature',
+      isProtected: true,
+      readOnly: false,
+      writeBlocked: true,
+      submitBlocked: true,
+    })
+  })
+
+  it('lands branchless adoption on the protected default branch, carrying its flags', async () => {
+    const branchesWithFlags: BranchMetadata[] = [
+      { ...mockBranches[0], isProtected: true, readOnly: true } as BranchMetadata,
+      mockBranches[1],
+    ]
+    mockClient.branches.list.mockResolvedValue({
+      ok: true,
+      status: 200,
+      data: { branches: branchesWithFlags, defaultBranch: 'main' },
+    })
+
+    const { result } = renderHook(
+      () => useBranchManager({ ...defaultOptions, initialBranch: '' }),
+      { wrapper },
+    )
+
+    await waitFor(() => {
+      expect(result.current.branchName).toBe('main')
+    })
+    await waitFor(() => {
+      expect(result.current.currentBranch?.isProtected).toBe(true)
+      expect(result.current.currentBranch?.readOnly).toBe(true)
+    })
+  })
+
+  it('passes syncStatus, conflictStatus, and conflictFiles through branchSummaries unchanged', async () => {
+    const branchesWithSyncState: BranchMetadata[] = [
+      {
+        ...mockBranches[0],
+        syncStatus: 'sync-failed',
+        syncFailureReason: 'Push rejected for branch "main": it has moved on GitHub',
+        conflictStatus: 'conflicts-detected',
+        conflictFiles: [unsafeAsContentId('content/a.md'), unsafeAsContentId('content/b.md')],
+      },
+      {
+        ...mockBranches[1],
+        syncStatus: 'pending-sync',
+      },
+    ]
+    mockClient.branches.list.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      data: { branches: branchesWithSyncState },
+    })
+
+    const { result } = renderHook(() => useBranchManager(defaultOptions), {
+      wrapper,
+    })
+
+    await waitFor(() => {
+      expect(result.current.branchSummaries).toHaveLength(2)
+    })
+
+    expect(result.current.branchSummaries[0]).toMatchObject({
+      name: 'main',
+      syncStatus: 'sync-failed',
+      syncFailureReason: 'Push rejected for branch "main": it has moved on GitHub',
+      conflictStatus: 'conflicts-detected',
+      conflictFiles: ['content/a.md', 'content/b.md'],
+    })
+    expect(result.current.branchSummaries[1]).toMatchObject({
+      name: 'feature',
+      syncStatus: 'pending-sync',
+    })
+    expect(result.current.branchSummaries[1].conflictStatus).toBeUndefined()
+    expect(result.current.branchSummaries[1].conflictFiles).toBeUndefined()
+  })
+
+  it('computes currentBranch', async () => {
     mockClient.branches.list.mockResolvedValueOnce({
       ok: true,
       status: 200,
@@ -282,8 +425,35 @@ describe('useBranchManager', () => {
 
     await waitFor(() => {
       expect(result.current.currentBranch).toEqual(mockBranches[0])
-      expect(result.current.branchStatus).toBe('editing')
     })
+  })
+
+  it('resolves currentBranch when state holds the raw form of a sanitized branch name', async () => {
+    // Legacy deep-link case: the URL/state carries the raw, unsanitized name
+    // (e.g. "feature/x") but the server only ever persisted the sanitized
+    // form ("feature-x"). currentBranch must still resolve so its status,
+    // access, and isProtected/readOnly flags are available to the header.
+    const sanitizedBranch: BranchMetadata = {
+      ...mockBranches[1],
+      name: 'feature-x',
+    }
+    mockClient.branches.list.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      data: { branches: [mockBranches[0], sanitizedBranch] },
+    })
+
+    const { result } = renderHook(
+      () => useBranchManager({ ...defaultOptions, initialBranch: 'feature/x' }),
+      { wrapper },
+    )
+
+    await waitFor(() => {
+      expect(result.current.branches).toHaveLength(2)
+    })
+
+    expect(result.current.branchName).toBe('feature/x')
+    expect(result.current.currentBranch).toEqual(sanitizedBranch)
   })
 
   it('submits branch successfully', async () => {

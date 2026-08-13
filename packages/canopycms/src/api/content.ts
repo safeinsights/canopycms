@@ -164,7 +164,9 @@ const readContentHandler = async (
 ): Promise<ContentReadResponse> => {
   const { branchContext } = gc
   const flatSchema = branchContext.flatSchema
-  const store = new ContentStore(branchContext.branchRoot, flatSchema)
+  const store = new ContentStore(branchContext.branchRoot, flatSchema, {
+    contentRootName: ctx.services.config.contentRoot || 'content',
+  })
 
   // Parse path segments: params.path is like "content/posts/hello"
   const contentRoot = ctx.services.config.contentRoot || 'content'
@@ -216,7 +218,9 @@ const writeContentHandler = async (
 ): Promise<ContentWriteResponse> => {
   const { branchContext } = gc
   const flatSchema = branchContext.flatSchema
-  const store = new ContentStore(branchContext.branchRoot, flatSchema)
+  const store = new ContentStore(branchContext.branchRoot, flatSchema, {
+    contentRootName: ctx.services.config.contentRoot || 'content',
+  })
 
   // Parse path segments: params.path is like "content/posts/hello" or "posts/hello"
   const contentRoot = ctx.services.config.contentRoot || 'content'
@@ -355,7 +359,11 @@ const writeContentHandler = async (
       // read, so collapse them to id strings before checking.
       if (fieldErrors.length === 0) {
         const idIndex = await store.idIndex()
-        const refValidator = new ReferenceValidator(idIndex, fields)
+        const refValidator = new ReferenceValidator(
+          idIndex,
+          fields,
+          (name) => store.resolveCollectionItem(name)?.logicalPath,
+        )
         const refResult = await refValidator.validate(normalizeReferenceValues(fields, data))
         fieldErrors.push(
           ...refResult.errors.map((e) => ({ fieldPath: e.fieldPath, message: e.error })),
@@ -468,7 +476,9 @@ const validateReferencesHandler = async (
 ): Promise<ReferenceValidationResponse> => {
   const { branchContext } = gc
   const flatSchema = branchContext.flatSchema
-  const store = new ContentStore(branchContext.branchRoot, flatSchema)
+  const store = new ContentStore(branchContext.branchRoot, flatSchema, {
+    contentRootName: ctx.services.config.contentRoot || 'content',
+  })
 
   // Parse path segments to get collection/schema info
   const contentRoot = ctx.services.config.contentRoot || 'content'
@@ -529,7 +539,11 @@ const validateReferencesHandler = async (
   }
 
   // Validate references
-  const validator = new ReferenceValidator(idIndex, fields)
+  const validator = new ReferenceValidator(
+    idIndex,
+    fields,
+    (name) => store.resolveCollectionItem(name)?.logicalPath,
+  )
   const result = await validator.validate(body.data)
 
   return {
@@ -551,7 +565,9 @@ const renameEntryHandler = async (
 ): Promise<RenameEntryResponse> => {
   const { branchContext } = gc
   const flatSchema = branchContext.flatSchema
-  const store = new ContentStore(branchContext.branchRoot, flatSchema)
+  const store = new ContentStore(branchContext.branchRoot, flatSchema, {
+    contentRootName: ctx.services.config.contentRoot || 'content',
+  })
 
   // Parse path segments
   const contentRoot = ctx.services.config.contentRoot || 'content'
@@ -632,7 +648,7 @@ const writeContent = defineEndpoint({
   responseType: 'ContentWriteResponse',
   response: {} as ContentWriteResponse,
   defaultMockData: { format: 'json', data: {} },
-  guards: ['schema'] as const,
+  guards: ['schema', 'writableBranch'] as const,
   handler: writeContentHandler,
 })
 
@@ -672,7 +688,7 @@ const renameEntry = defineEndpoint({
   responseType: 'RenameEntryResponse',
   response: {} as RenameEntryResponse,
   defaultMockData: { newPath: 'content/posts/new-slug' },
-  guards: ['schema'] as const,
+  guards: ['schema', 'writableBranch'] as const,
   handler: renameEntryHandler,
 })
 

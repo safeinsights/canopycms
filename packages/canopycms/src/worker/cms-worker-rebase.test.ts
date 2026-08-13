@@ -27,13 +27,14 @@ import { CmsWorker } from './cms-worker'
 // ---------------------------------------------------------------------------
 
 /** Instantiate a CmsWorker with minimal config for testing rebase logic only. */
-const makeWorker = (workspacePath: string, baseBranch = 'main') =>
+const makeWorker = (workspacePath: string, baseBranch = 'main', contentRoot?: string) =>
   new CmsWorker({
     workspacePath,
     githubOwner: 'test-owner',
     githubRepo: 'test-repo',
     githubToken: 'fake-token',
     baseBranch,
+    contentRoot,
   })
 
 /** Invoke the private rebaseActiveBranches() method. */
@@ -506,6 +507,68 @@ describe('CmsWorker rebaseActiveBranches', () => {
       expect(meta?.conflictFiles).toContain(ROOT_COLLECTION_ID)
     })
 
+    it('records ROOT_COLLECTION_ID when root .collection.json conflicts with a multi-segment contentRoot', async () => {
+      // contentRoot: 'cms/content' is documented as valid (config/helpers.ts). The
+      // root .collection.json's parent directory basename is "content", which must
+      // NOT be compared against the full configured value "cms/content" -- that
+      // comparison is always false and is exactly the bug this test guards against
+      // (see cms-worker.ts's normalizedContentRoot comment).
+      const META_FILE = 'cms/content/.collection.json'
+
+      const setup = await createBranchSetup(tmpDir, 'my-feature', {
+        initialFiles: { [META_FILE]: '{"entries":[]}' },
+      })
+
+      await setup.commitToBranch(
+        { [META_FILE]: '{"entries":[],"order":["branch"]}' },
+        'branch: update root schema',
+      )
+      await setup.pushToRemote(
+        { [META_FILE]: '{"entries":[],"order":["main"]}' },
+        'main: update root schema',
+      )
+
+      await writeMeta(setup.branchPath, setup.contentBranchesPath, {})
+
+      const worker = makeWorker(tmpDir, 'main', 'cms/content')
+      await runRebase(worker)
+
+      const meta = await readMeta(setup.branchPath)
+      expect(meta?.conflictStatus).toBe('conflicts-detected')
+      expect(meta?.conflictFiles).toContain(ROOT_COLLECTION_ID)
+    })
+
+    it('filters out .collection.json that is neither in the content root nor an ID-bearing collection dir', async () => {
+      // "docs" carries no embedded ContentId (extractIdFromFilename -> null) AND is
+      // not the configured content root ("content") -- the fix must not start
+      // misclassifying every unrecognized .collection.json as the root collection.
+      const META_FILE = 'content/docs/.collection.json'
+
+      const setup = await createBranchSetup(tmpDir, 'my-feature', {
+        initialFiles: { [META_FILE]: '{"name":"docs","order":[]}' },
+      })
+
+      await setup.commitToBranch(
+        { [META_FILE]: '{"name":"docs","order":["branch"]}' },
+        'branch: reorder docs',
+      )
+      await setup.pushToRemote(
+        { [META_FILE]: '{"name":"docs","order":["main"]}' },
+        'main: reorder docs',
+      )
+
+      await writeMeta(setup.branchPath, setup.contentBranchesPath, {})
+
+      const worker = makeWorker(tmpDir)
+      await runRebase(worker)
+
+      const meta = await readMeta(setup.branchPath)
+      // No entry ContentIds, no root-collection match -- conflict is invisible to
+      // the editor, same as the pre-existing "excludes non-entry files" case.
+      expect(meta?.conflictStatus).toBe('clean')
+      expect(meta?.conflictFiles).toEqual([])
+    })
+
     it('records both entry and collection ContentIds for mixed conflicts', async () => {
       const COLLECTION_DIR = 'content/posts.cNbR5xFm2Kpd'
       const COLLECTION_ID = 'cNbR5xFm2Kpd'
@@ -543,6 +606,172 @@ describe('CmsWorker rebaseActiveBranches', () => {
       expect(meta?.conflictStatus).toBe('conflicts-detected')
       expect(meta?.conflictFiles).toContain(COLLECTION_ID)
       expect(meta?.conflictFiles).toContain('TESTENTRYabc')
+    })
+  })
+
+  // -------------------------------------------------------------------------
+  // rebaseFailure recording (PR-W2)
+  // -------------------------------------------------------------------------
+
+  describe('rebaseFailure recording', () => {
+    /**
+     * Installs a pre-rebase hook that always refuses the rebase before it
+     * starts. This drives the round loop's "unexpected error" branch for
+     * real (not a conflict -- st.conflicted stays empty since the rebase
+     * never begins -- and not the "nothing to commit"/"apply --skip" empty-
+     * commit message), without mocking simple-git internals.
+     */
+    const installRefusingPreRebaseHook = async (branchPath: string) => {
+      const hookPath = path.join(branchPath, '.git', 'hooks', 'pre-rebase')
+      await fs.writeFile(hookPath, '#!/bin/sh\necho "blocked by test hook" >&2\nexit 1\n')
+      await fs.chmod(hookPath, 0o755)
+    }
+
+    const readRawBranchJson = async (branchPath: string): Promise<Record<string, unknown>> => {
+      const raw = await fs.readFile(path.join(branchPath, '.canopy-meta', 'branch.json'), 'utf8')
+      return JSON.parse(raw) as Record<string, unknown>
+    }
+
+    it('records a rebaseFailure when the round loop hits an unexpected (non-conflict) error', async () => {
+      const setup = await createBranchSetup(tmpDir, 'my-feature')
+      await setup.commitToBranch({ 'branch-content.txt': 'branch work' })
+      await setup.pushToRemote({ 'main-update.txt': 'new from main' })
+      await writeMeta(setup.branchPath, setup.contentBranchesPath, {})
+      await installRefusingPreRebaseHook(setup.branchPath)
+
+      const worker = makeWorker(tmpDir)
+      await runRebase(worker)
+
+      const meta = await readMeta(setup.branchPath)
+      expect(typeof meta?.rebaseFailure?.message).toBe('string')
+      expect(meta?.rebaseFailure?.message.length).toBeGreaterThan(0)
+      expect(typeof meta?.rebaseFailure?.firstAt).toBe('string')
+      expect(typeof meta?.rebaseFailure?.lastAt).toBe('string')
+
+      // The rebase never completed, so the branch stays behind.
+      await setup.branchGit.fetch('origin', 'main')
+      const status = await setup.branchGit.status()
+      expect(status.behind).toBeGreaterThan(0)
+    })
+
+    it('clears a lingering rebaseFailure after a subsequent successful rebase', async () => {
+      const setup = await createBranchSetup(tmpDir, 'my-feature')
+      await setup.commitToBranch({ 'branch-content.txt': 'branch work' })
+      await setup.pushToRemote({ 'main-update.txt': 'new from main' })
+      await writeMeta(setup.branchPath, setup.contentBranchesPath, {
+        rebaseFailure: {
+          message: 'boom',
+          firstAt: '2024-01-01T00:00:00.000Z',
+          lastAt: '2024-01-01T00:00:00.000Z',
+        },
+      })
+
+      const worker = makeWorker(tmpDir)
+      await runRebase(worker)
+
+      // Read the raw file, not just the parsed metadata -- this pins the
+      // save() merge semantics (explicit `undefined` overwrites the
+      // existing key, and JSON.stringify then drops it) rather than just
+      // asserting the parsed value happens to be undefined.
+      const raw = await readRawBranchJson(setup.branchPath)
+      const branch = raw.branch as Record<string, unknown>
+      expect('rebaseFailure' in branch).toBe(false)
+    })
+
+    it('clears a lingering rebaseFailure when the branch is already up to date and clean', async () => {
+      const setup = await createBranchSetup(tmpDir, 'my-feature')
+      await writeMeta(setup.branchPath, setup.contentBranchesPath, {
+        conflictStatus: 'clean',
+        conflictFiles: [],
+        rebaseFailure: {
+          message: 'boom',
+          firstAt: '2024-01-01T00:00:00.000Z',
+          lastAt: '2024-01-01T00:00:00.000Z',
+        },
+      })
+
+      const worker = makeWorker(tmpDir)
+      await runRebase(worker)
+
+      const raw = await readRawBranchJson(setup.branchPath)
+      const branch = raw.branch as Record<string, unknown>
+      expect('rebaseFailure' in branch).toBe(false)
+    })
+
+    it('still skips the save when up to date, clean, and with no rebaseFailure (no-op guard unaffected)', async () => {
+      const setup = await createBranchSetup(tmpDir, 'my-feature')
+      await writeMeta(setup.branchPath, setup.contentBranchesPath, {
+        conflictStatus: 'clean',
+        conflictFiles: [],
+      })
+
+      const saveSpy = vi.spyOn(BranchMetadataFileManager.prototype, 'save')
+      const worker = makeWorker(tmpDir)
+      await runRebase(worker)
+      expect(saveSpy).not.toHaveBeenCalled()
+      saveSpy.mockRestore()
+    })
+
+    it('does not re-save an identical failure within the 1h refresh window (write-amplification guard)', async () => {
+      const setup = await createBranchSetup(tmpDir, 'my-feature')
+      await setup.commitToBranch({ 'branch-content.txt': 'branch work' })
+      await setup.pushToRemote({ 'main-update.txt': 'new from main' })
+      await writeMeta(setup.branchPath, setup.contentBranchesPath, {})
+      await installRefusingPreRebaseHook(setup.branchPath)
+
+      const worker = makeWorker(tmpDir)
+      await runRebase(worker) // first cycle: records the failure
+
+      const saveSpy = vi.spyOn(BranchMetadataFileManager.prototype, 'save')
+      await runRebase(worker) // second cycle: same failure, well within 1h
+      expect(saveSpy).not.toHaveBeenCalled()
+      saveSpy.mockRestore()
+    })
+
+    it('preserves firstAt but refreshes lastAt when the same failure recurs after the 1h window', async () => {
+      const setup = await createBranchSetup(tmpDir, 'my-feature')
+      await setup.commitToBranch({ 'branch-content.txt': 'branch work' })
+      await setup.pushToRemote({ 'main-update.txt': 'new from main' })
+      await writeMeta(setup.branchPath, setup.contentBranchesPath, {})
+      await installRefusingPreRebaseHook(setup.branchPath)
+
+      const worker = makeWorker(tmpDir)
+      await runRebase(worker) // first cycle: records the real failure message
+
+      const firstMeta = await readMeta(setup.branchPath)
+      const message = firstMeta?.rebaseFailure?.message
+      expect(message).toBeTruthy()
+
+      // Back-date the record so the next cycle's failure looks stale (>1h).
+      const staleFirstAt = new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString()
+      const staleLastAt = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString()
+      await writeMeta(setup.branchPath, setup.contentBranchesPath, {
+        rebaseFailure: { message, firstAt: staleFirstAt, lastAt: staleLastAt },
+      })
+
+      await runRebase(worker) // second cycle: same failure, but stale lastAt
+
+      const secondMeta = await readMeta(setup.branchPath)
+      expect(secondMeta?.rebaseFailure?.message).toBe(message)
+      expect(secondMeta?.rebaseFailure?.firstAt).toBe(staleFirstAt)
+      expect(secondMeta?.rebaseFailure?.lastAt).not.toBe(staleLastAt)
+    })
+
+    it('does not throw and skips recording when branch.json is corrupt (guarded-load path)', async () => {
+      const setup = await createBranchSetup(tmpDir, 'my-feature')
+      await setup.pushToRemote({ 'new-file.txt': 'from main' })
+
+      const metaDir = path.join(setup.branchPath, '.canopy-meta')
+      await fs.mkdir(metaDir, { recursive: true })
+      await fs.writeFile(path.join(metaDir, 'branch.json'), '{ not valid json')
+
+      const saveSpy = vi.spyOn(BranchMetadataFileManager.prototype, 'save')
+      const worker = makeWorker(tmpDir)
+
+      await runRebase(worker) // must complete without throwing
+
+      expect(saveSpy).not.toHaveBeenCalled()
+      saveSpy.mockRestore()
     })
   })
 })

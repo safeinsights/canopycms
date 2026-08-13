@@ -12,7 +12,18 @@
  * entrypoint that provides a different refreshAuthCache callback.
  */
 
-import { CmsWorker } from 'canopycms/worker/cms-worker'
+// workerLog/workerLogError, not bare console: every line in
+// /var/log/canopy-worker/worker.log must start with the ISO-8601 timestamp
+// these add, or the CloudWatch agent's multi_line_start_pattern folds it into
+// the previous event instead of starting a new one. See
+// packages/canopycms/src/worker/log.ts.
+import {
+  CmsWorker,
+  workerLog,
+  workerLogWarn,
+  workerLogError,
+  installWorkerLogger,
+} from 'canopycms/worker/cms-worker'
 import { refreshClerkCache } from 'canopycms-auth-clerk/cache-writer'
 import { getErrorMessage } from 'canopycms/utils/error'
 import path from 'node:path'
@@ -31,7 +42,7 @@ async function getSecret(secretArn: string, retries = 3): Promise<string> {
     } catch (err) {
       if (attempt === retries) throw err
       const delay = 1000 * Math.pow(2, attempt) // 1s, 2s, 4s
-      console.log(`Secrets Manager unavailable for ${secretArn}, retrying in ${delay}ms...`)
+      workerLog(`Secrets Manager unavailable for ${secretArn}, retrying in ${delay}ms...`)
       await new Promise((r) => setTimeout(r, delay))
     }
   }
@@ -39,7 +50,15 @@ async function getSecret(secretArn: string, retries = 3): Promise<string> {
 }
 
 async function main() {
-  console.log('CMS Worker starting...')
+  // FIRST, before anything that could log. The imports above only cover code
+  // this file calls directly; the worker also executes shared canopycms modules
+  // (github-service.ts's rate-limit callbacks and PR create/update,
+  // branch-registry.ts's registry scan) that are plain `console` under Lambda
+  // and must be prefixed here. This points their `canopyLog*` helpers at the
+  // timestamping functions. See canopycms's utils/logger.ts.
+  installWorkerLogger()
+
+  workerLog('CMS Worker starting...')
 
   // Required env vars
   const workspacePath = process.env.CANOPYCMS_WORKSPACE_ROOT
@@ -72,8 +91,14 @@ async function main() {
           secretKey: clerkSecretKey,
           cachePath,
           useOrganizationsAsGroups: true,
+          // Injected rather than left to default `console.warn`: this runs in
+          // the worker, so its per-user membership-fetch warning needs the
+          // ISO-8601 prefix like everything else here. canopycms is only a
+          // peer dependency of canopycms-auth-clerk, so the join happens at
+          // this entrypoint, which already imports both.
+          warn: workerLogWarn,
         })
-        console.log(`  ${result.userCount} users, ${result.groupCount} groups`)
+        workerLog(`  ${result.userCount} users, ${result.groupCount} groups`)
       }
     : undefined
 
@@ -84,6 +109,17 @@ async function main() {
     githubToken,
     refreshAuthCache,
     baseBranch: process.env.CANOPYCMS_BASE_BRANCH ?? 'main',
+    // deploymentName is deliberately NOT passed: CmsWorker resolves it through
+    // resolveDeploymentName, which reads CANOPYCMS_DEPLOYMENT_NAME itself
+    // (CanopyCmsService stamps that env var from
+    // CanopyCmsServiceProps.deploymentName), applies the same env > config >
+    // 'prod' precedence as the Lambda, and validates the result as a git ref
+    // component. Reading the env var here instead would re-implement the
+    // outer half of that chain and skip the validation.
+    // Explicit override, matching the strategy's own precedence: an adopter who
+    // sets `settingsBranch` in canopycms.config.ts must set this too, or the
+    // worker would own a branch name the Lambda never writes to.
+    settingsBranch: process.env.CANOPYCMS_SETTINGS_BRANCH,
     taskPollInterval: parseInt(process.env.CANOPYCMS_TASK_POLL_INTERVAL ?? '5000'),
     gitSyncInterval: parseInt(process.env.CANOPYCMS_GIT_SYNC_INTERVAL ?? '300000'),
     authCacheRefreshInterval: parseInt(
@@ -93,7 +129,7 @@ async function main() {
 
   // Graceful shutdown — stop() waits for in-flight operations to drain
   const shutdown = async () => {
-    console.log('Shutting down...')
+    workerLog('Shutting down...')
     await worker.stop()
     process.exit(0)
   }
@@ -104,6 +140,6 @@ async function main() {
 }
 
 main().catch((err) => {
-  console.error('Fatal error:', getErrorMessage(err))
+  workerLogError('Fatal error:', getErrorMessage(err))
   process.exit(1)
 })

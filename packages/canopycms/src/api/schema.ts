@@ -321,8 +321,14 @@ async function getSchemaOps(
     return { error: 'Branch not found', status: 404 }
   }
 
-  const contentRoot = path.join(context.branchRoot, 'content')
-  const store = new SchemaOps(contentRoot, ctx.services.entrySchemaRegistry, ctx.services)
+  const contentRootName = ctx.services.config.contentRoot || 'content'
+  const contentRoot = path.join(context.branchRoot, contentRootName)
+  const store = new SchemaOps(
+    contentRoot,
+    ctx.services.entrySchemaRegistry,
+    ctx.services,
+    context.branchRoot,
+  )
   return { store, branchRoot: context.branchRoot }
 }
 
@@ -825,7 +831,7 @@ export const createCollection = defineEndpoint({
     collectionPath: 'createLogicalPath',
     contentId: 'as ContentId',
   },
-  guards: ['admin'] as const,
+  guards: ['admin', 'writableBranch'] as const,
   handler: createCollectionHandler,
 })
 
@@ -844,7 +850,7 @@ export const updateCollection = defineEndpoint({
   responseType: 'UpdateCollectionApiResponse',
   response: {} as UpdateCollectionApiResponse,
   defaultMockData: { success: true },
-  guards: ['admin'] as const,
+  guards: ['admin', 'writableBranch'] as const,
   handler: updateCollectionHandler,
 })
 
@@ -861,7 +867,7 @@ export const deleteCollection = defineEndpoint({
   responseType: 'DeleteCollectionApiResponse',
   response: {} as DeleteCollectionApiResponse,
   defaultMockData: { success: true },
-  guards: ['admin'] as const,
+  guards: ['admin', 'writableBranch'] as const,
   handler: deleteCollectionHandler,
 })
 
@@ -880,7 +886,7 @@ export const addEntryType = defineEndpoint({
   responseType: 'AddEntryTypeApiResponse',
   response: {} as AddEntryTypeApiResponse,
   defaultMockData: { success: true },
-  guards: ['admin'] as const,
+  guards: ['admin', 'writableBranch'] as const,
   handler: addEntryTypeHandler,
 })
 
@@ -899,7 +905,7 @@ export const updateEntryType = defineEndpoint({
   responseType: 'UpdateEntryTypeApiResponse',
   response: {} as UpdateEntryTypeApiResponse,
   defaultMockData: { success: true },
-  guards: ['admin'] as const,
+  guards: ['admin', 'writableBranch'] as const,
   handler: updateEntryTypeHandler,
 })
 
@@ -916,7 +922,7 @@ export const removeEntryType = defineEndpoint({
   responseType: 'RemoveEntryTypeApiResponse',
   response: {} as RemoveEntryTypeApiResponse,
   defaultMockData: { success: true },
-  guards: ['admin'] as const,
+  guards: ['admin', 'writableBranch'] as const,
   handler: removeEntryTypeHandler,
 })
 
@@ -935,7 +941,7 @@ export const updateOrder = defineEndpoint({
   responseType: 'UpdateOrderApiResponse',
   response: {} as UpdateOrderApiResponse,
   defaultMockData: { success: true },
-  guards: ['admin'] as const,
+  guards: ['admin', 'writableBranch'] as const,
   handler: updateOrderHandler,
 })
 

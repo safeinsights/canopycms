@@ -585,6 +585,8 @@ Both branch identity fields are resolved once at service creation and baked into
 
 This only affects non-editor content serving (public site, `getCanopy()`, AI content). The editor is pinned to its own branch via URL params and stores drafts per-branch in localStorage.
 
+**The resolved base branch is protected** (see [ARCHITECTURE.md](ARCHITECTURE.md#protected-base-branch)): it can never be submitted for review in either mode, and in prod it is read-only in the editor. In dev the base branch — which is your detected HEAD branch when `defaultBaseBranch` is unset — **stays editable** (editing it is the normal local flow, reconciled via `canopycms sync`), but the Submit button is hidden on it: a branch can't PR against itself. Create a CMS editing branch when you want to exercise the submit/review flow locally.
+
 The detection priority for `defaultActiveBranch` is:
 
 1. Explicit `defaultActiveBranch` in config (both modes)
@@ -1358,6 +1360,19 @@ The on-demand image transform pipeline (`/assets/t/{directives}/{hash32}/{slug}.
 
 Both the dev-mode `/assets/t/*` route (`serveLazyTransform` in `packages/canopycms/src/api/assets.ts`) and the prod CDK transform Lambda (`packages/canopycms-cdk/lambda/asset-transform/handler.ts`, which imports `parseTransformPath`/`formatDirectives`/`applyTransform` via the `canopycms/server` re-exports) call into these same two files for the actual parsing and pixel work. **Never reimplement directive parsing or the sharp pipeline in just one place** -- change behavior in `transform-directives.ts`/`transform.ts` and both dev and prod pick it up automatically.
 
+Both of these paths surface a `TransformRejection` with a real HTTP status (`400` unsupported input, `413` output too large, `422` decode failure) -- always forward `transformed.status` verbatim rather than flattening every rejection to one code (e.g. a blanket 422 or 502). A client-input error reported as a server error, or vice versa, is a bug: `handler.test.ts` and `assets.test.ts` both assert 400/413/422 pass-through for exactly this reason.
+
+### Finalize Decode Validation: Fail Open on No Decoder, Fail Closed on a Real Rejection
+
+`pipeline.ts`'s `runFinalizePipeline` forces a real pixel decode for `kind === 'raster'` uploads (`rasterIsDecodable`), not just the header-only sniff `file-type`/`image-size` already do. This closes the "accepted at upload, unrenderable forever" gap: a PNG with a valid IHDR but a corrupt IDAT used to sail through finalize (header-only checks can't see it) and only fail later at `applyTransform`/render time, by which point it already looked like a successful upload.
+
+Two things about this check are worth knowing before touching it:
+
+- **A `.resize()` to a tiny throwaway output, not `.metadata()`.** `metadata()` only reads header fields -- the exact class of check that misses a corrupt IDAT. Forcing a real (if tiny) decode is what actually exercises libvips's decoder.
+- **`sharp` is loaded with a dynamic `await import('sharp')`, not `transform.ts`'s static `import sharp from 'sharp'`.** This is deliberate: if the native binary can't load in some environment (wrong platform/arch), a static import would throw at module load and take down finalize entirely. The dynamic import lets `pipeline.ts` catch that specific failure and **fail open** (log a warning, skip validation, let the upload through -- same as pre-fix behavior) -- but only for "no decoder available." If sharp loads fine and its decoder rejects the bytes, that's a real fact about the file, and the pipeline **fails closed** (422, generic user-facing message, never the raw libvips string). Keep that split explicit if you touch this function -- don't let "sharp failed to import" and "sharp decoded and said no" collapse into the same branch.
+
+Test fixtures for this area must be genuinely sharp-decodable, not the hand-built header-only base64 constants that used to live in `pipeline.test.ts`. Build fixtures with `sharp({ create: {...} })` (see `transform.test.ts`'s `makePng` or `pipeline.test.ts`'s local copy) rather than hand-crafted bytes -- a header-only fixture will now be correctly rejected by `rasterIsDecodable`, so it can no longer stand in for "a valid raster." `pipeline.test.ts` keeps exactly one deliberately-corrupt fixture (`makeCorruptPng`, built by flipping bytes well past the fixed-offset header fields) for the rejection test itself; the fail-open path (sharp unavailable) is covered separately in `pipeline.sharp-unavailable.test.ts`, which mocks the `sharp` module -- kept out of `pipeline.test.ts` because that file's own fixtures need the real thing.
+
 ### Client-Bundle Safety for Assets
 
 Editor/client code may import **only** the dependency-free isomorphic modules -- `assets/transform-directives` and `assets/asset-url` -- or `import type` from `assets/types`. It must never import the stores (`store-local.ts`, `store-s3.ts`), the upload/finalize pipeline (`pipeline.ts`, `finalize.ts`), or `transform.ts` -- all of those pull in server-only dependencies (`sharp`, `node:crypto`, the S3 SDK) that must never ship to a browser bundle.
@@ -1372,7 +1387,7 @@ import type { CropRect } from '../../assets/transform-directives'
 // import { LocalAssetStore } from '../../assets/store-local'
 ```
 
-This boundary is enforced by convention, not a lint rule -- when adding a new client-facing asset feature, double-check which file you're importing from before assuming it's safe for the browser bundle.
+Imports of node built-ins reachable from `canopycms/client` are caught by `pnpm lint:bundle` (see [Client-Bundle Boundary Check](#client-bundle-boundary-check)). That check does not follow into `node_modules`, so pulling in `sharp` or the S3 SDK from client code is still on you to avoid -- when adding a new client-facing asset feature, double-check which file you're importing from before assuming it's safe for the browser bundle.
 
 ### Dev Gotcha: Adopter Apps Run Against Built `dist/`
 
@@ -1633,6 +1648,22 @@ The warning tells you to run `npx canopycms sync push` to update the clone (see 
 
 **Implementation:** all logic lives in the core watcher `src/dev-content-watcher.ts` (`startDevContentWatcher()`); framework adapters just call it once at dev startup (see the Next wiring in `packages/canopycms-next/src/context-wrapper.ts`). The watcher is a no-op when not in dev mode, when mode is `'off'`, or when the working-tree content directory does not exist. On each check it re-resolves the active branch (so it follows git-HEAD branch switches) and dedupes across HMR reloads so dev restarts don't double-warn.
 
+### Committing and Pushing: Toolchain Gotchas
+
+Two things that bite in a scratch worktree or any non-interactive shell, where `pnpm`
+resolves only through a `corepack` shim rather than being on the ambient `PATH`:
+
+- **The husky `pre-push` hook shells out to a bare `pnpm`, so `git push` fails with
+  `pre-push script failed (code 127)`** — not a push or auth error, a
+  `pnpm: command not found` inside the hook. Hooks do not see aliases or shell
+  functions; the shim directory has to be exported on `PATH` in the _same_ command as
+  the push. The same applies to `lint-staged` on `pre-commit`.
+- **`prettier --write` silently skips `.claude/future-tasks/*.md`** — they are
+  prettier-ignored. Prettier reports only the files it actually formatted, so passing a
+  task file and seeing no mention of it is a skip, not a no-op-because-clean. The
+  "run prettier on touched files" step therefore never covers task-file formatting;
+  match the surrounding style by hand.
+
 ## Testing
 
 ### Test Coverage
@@ -1680,6 +1711,147 @@ timeout there would just mask real hangs. CI runs on ubuntu and is fast enough t
 headroom isn't needed there, but CI remains the source of truth for any timing-sensitive
 test behavior -- don't tune assertions to make a slow local run pass if CI already
 passes.
+
+The `editor` project loads `src/editor/test-setup.ts` first, which shims the browser
+APIs jsdom lacks but Mantine expects: `matchMedia`, `ResizeObserver`, and
+`Element.prototype.scrollIntoView`. Add a shim there when a Mantine component reaches
+for another one. The `scrollIntoView` case is worth knowing about because of how it
+fails: Mantine's Combobox (`Select`, `Autocomplete`, ...) calls it from a timer that
+fires _after_ the test which opened the dropdown has finished, so a missing shim
+surfaces as a Vitest "Unhandled Error" attributed to whichever test happened to run
+next -- and Vitest warns that such errors can cause false positives elsewhere in the
+run. If you see an unhandled error blamed on a test that plainly can't have caused it,
+suspect a missing jsdom shim in the test that ran before it.
+
+### Diagnosing a Test Failure
+
+**Attribute the failure to the base before blaming your diff.** Run the suite at the
+merge-base first. One failure is expected-red locally and is not a defect:
+
+- `src/cli/init.integration.test.ts` — 7 tests fail with `listen EPERM … tsx-501/*.pipe`.
+  The sandbox blocks tsx's IPC socket. Environmental, not a repo defect — and
+  **avoidable**: only the tsx _CLI_ binds that socket. The loader form runs fine
+  sandboxed, so a TS subprocess spawned as `node --import tsx <file>` works where
+  `node_modules/.bin/tsx <file>` dies. Verified both ways on the same file: the CLI form
+  exits 1 on the EPERM, the loader form exits 0. **Any new test that spawns a TypeScript
+  subprocess should use the loader form** rather than joining this expected-red set;
+  converting the existing seven is a live option, not just an explanation to live with.
+
+`canopycms-cdk` used to belong on that list and **no longer does** — treat a
+`CannotFindAsset` there as a real failure. Its `test` script chains
+`build:test-fixtures` (`build:worker` plus a `--skip-native` lambda build), so a fresh
+worktree synthesizes fine. If you see `CannotFindAsset` anyway, the fixture build itself
+broke, or `vitest` was invoked directly instead of through `pnpm test`, which skips that
+step. (The root `build` is `tsc` only; the full bundles still build under `prepack`.)
+
+**Two known intermittents**, both in `canopycms`, which pnpm runs first in dependency
+topology — so a flake there delays every other package's suite:
+
+- `MarkdownField.test.tsx` (MDXEditor mount). Triage shortcut:
+  `pnpm --filter canopycms exec vitest run --project editor` is reliably green for it,
+  so a MarkdownField failure in a full run **is** the known flake unless the
+  editor-only project also fails. A `scrollIntoView` shim is a ruled-out cause.
+- `git-manager.test.ts` — `ENOTEMPTY: … rmdir '.git/info'` in `afterEach`. `fs.rm`'s
+  `force: true` suppresses ENOENT but _not_ ENOTEMPTY, so it signals a concurrent
+  writer (likely a detached `git gc --auto` still running after simple-git resolved).
+
+**Three ways a run reports success while failing.** All three fail in the dangerous
+direction, so check for them explicitly:
+
+- **An exit code read through a pipe is the pipe's.** `pnpm test 2>&1 | tail` reports
+  `tail`'s 0 even when the suite failed — or when `pnpm` was never found. Capture
+  `${PIPESTATUS[0]}`, or run `echo $?` on its own line.
+  - **The agent-facing form is worse: the false green launders into a completion
+    notification that reads as authoritative.** Run that same piped command as a
+    background task and the harness reports _"completed (exit code 0)"_ — a system
+    message, not something you wrote — while the suite actually died with
+    `ERR_PNPM_RECURSIVE_FAIL`, or `pnpm install` died on an EPERM leaving no
+    `node_modules`. Seen both ways. A piped background command's notification tells you
+    nothing about the command; read the captured output before believing it.
+- **A backgrounded shell does not inherit the interactive profile**, so `pnpm install`
+  can no-op with "command not found" and still look like it worked. Verify
+  `node_modules` actually exists afterwards.
+- **When a probe's two arms agree, check they agree for the reason you think.** A
+  scratch workspace missing a `packageManager` field makes corepack fetch pnpm over the
+  network; behind a sandbox both arms of a comparison can fail identically for that
+  reason and produce a clean, wrong answer.
+
+**Reading CI logs.** `gh run view --log` truncates the vitest step to nothing, on green
+_and_ red runs alike. The real output is only in the downloadable archive:
+
+```bash
+gh api repos/OWNER/REPO/actions/runs/RUN_ID/logs > logs.zip
+# then read: "Validate, Typecheck & Test/13_Run tests.txt"
+```
+
+**"No checks reported" usually means conflicts, not an Actions outage.** `pull_request`
+runs are built from the merge commit, so a conflicted PR triggers _nothing_ — no run,
+no failure. Check `gh pr view <n> --json mergeable` (`CONFLICTING`/`DIRTY`) before
+suspecting CI.
+
+**...but a fresh `CONFLICTING` reading is often just stale.** The inverse trap: right
+after pushing a merge, `gh pr view --json mergeable` can still report
+`CONFLICTING`/`DIRTY` because GitHub has not recomputed mergeability yet — query again a
+moment later and it returns `MERGEABLE`. Before acting on a `CONFLICTING` reading (least
+of all re-resolving conflicts that are already resolved), confirm against local git:
+
+```bash
+git merge-base --is-ancestor origin/<base> HEAD && echo "base is merged in"
+```
+
+If that succeeds and GitHub still says `CONFLICTING`, believe git and re-query.
+
+### End-to-End Tests (Playwright)
+
+**Always run the e2e suite single-worker.** Use the root script, which pins it:
+
+```bash
+pnpm test:e2e                                   # playwright test --workers=1
+pnpm exec playwright test branch-workflow --workers=1   # single spec: pass the flag yourself
+```
+
+The reason to be careful here is that the failure mode when you don't is actively
+misleading. The whole suite shares **one** `.canopy-dev` workspace and **one** dev
+server port, so two workers (or two concurrent Playwright runs on the same machine)
+fight over the same git working tree. What you get back is not a recognizable
+contention error -- it's dozens of failures reading:
+
+```
+Error: Failed to ensure main branch
+Error: spawn git ENOENT
+TypeError: fetch failed
+```
+
+Those read exactly like genuine regressions in branch provisioning or git plumbing,
+which is the trap: the noise impersonates the subsystem under test. A run at
+`--workers=2` produced ~135 such failures with no real defect behind any of them.
+If you are touching `git-manager.ts`, `branch-workspace.ts`, or branch metadata and
+the suite suddenly reports broad git breakage, **check your worker count before you
+start debugging the code**.
+
+The same constraint applies across processes, not just within one run: only one
+Playwright run per machine at a time. Parallel agent sessions or a second terminal
+must serialise their e2e runs, or both runs corrupt each other's workspace and both
+report phantom failures. CI is unaffected -- it shards across separate runners, each
+with its own workspace.
+
+**Browser build.** Playwright pins an exact browser build per release, and having
+_some_ chromium in `~/Library/Caches/ms-playwright/` is not enough -- it must be the
+revision this repo's Playwright version asks for. A machine carrying only a newer
+build from another project will fail before any spec runs. Install the right one
+(~91 MB) after a fresh clone or a Playwright bump:
+
+```bash
+pnpm exec playwright install chromium
+```
+
+To see which revision is actually required, read `revision` for `chromium` in
+`node_modules/.pnpm/playwright-core@*/node_modules/playwright-core/browsers.json`
+rather than inferring it from the `package.json` range -- the range floats, the
+resolved version is what pins the build.
+
+Specs live in `apps/test-app/e2e/tests/`, with fixtures alongside and a written
+capability map in `apps/test-app/e2e/COVERAGE-MATRIX.md`.
 
 ### Integration Test Structure
 
@@ -2120,6 +2292,32 @@ expect(mockContext.services.commitFiles).toHaveBeenCalledWith({
 
 See `/packages/canopycms/src/api/permissions.test.ts` (lines 169-185) and `/packages/canopycms/src/api/groups.test.ts` (lines 195-210) for complete examples.
 
+### Testing Editor Hooks (SWR Cache Isolation, Strict Mode, Direct-Import Mocks)
+
+`createApiClientWrapper(mockClient)` (from `src/editor/hooks/__test__/test-utils.tsx`) wraps the test tree in both `ApiClientProvider` and an `SWRConfig` with an isolated cache (`provider: () => new Map()`, `dedupingInterval: 2000` to match production). This is transparent to existing call sites -- no changes needed. It matters because hooks that read via SWR (`useBranchManager`, `useEntryManager`, `useCommentSystem`, and the `useBranchesData`/`useEntriesData`/`useCommentsData` hooks underneath them) key their cache entries by resource/branch (e.g. `"canopy:branches"`, `"canopy:entries:main"`). Without a fresh `Map` per wrapper instance, tests in the same file/worker would share SWR's real global cache and one test could see another's mocked response on those keys.
+
+**Testing dedup/Strict Mode regressions:** use `createStrictModeApiClientWrapper(mockClient)`, which additionally wraps the tree in `<React.StrictMode>` (mount -> cleanup -> remount, doubling effects in dev). Without SWR's request coalescing, each manager hook's fetch-on-load effect fired twice under Strict Mode -- this wrapper is how you write a regression test for that:
+
+```typescript
+const mockClient = await setupMockApiClient()
+const wrapper = createStrictModeApiClientWrapper(mockClient)
+renderHook(() => useEntryManager(/* ... */), { wrapper })
+
+await waitFor(() => expect(mockClient.entries.list).toHaveBeenCalledTimes(1))
+```
+
+See the "mounting under Strict Mode issues one X request, not two" tests in `useEntryManager.test.ts`, `useBranchManager.test.tsx`, and `useCommentSystem.test.ts`.
+
+**Mocking `createApiClient()` for direct-call code:** most editor hooks/components get their API client via `useApiClient()` context (DI), so mocking the `'../api'` barrel is enough. Code that calls `createApiClient()` directly instead -- bypassing context, e.g. `useReferenceResolution.ts`'s dependency chain through `client-reference-resolver.ts`, and `ReferenceField.tsx` -- must mock the exact module it imports from, not the barrel:
+
+```typescript
+vi.mock('../api/client', () => ({
+  createApiClient: vi.fn(),
+}))
+```
+
+Use the relative specifier from the test file's own location (e.g. `'../../api/client'` from a deeper file) -- mocking `'../api'` won't intercept a direct `createApiClient` call. See `useReferenceResolution.test.ts`, `ReferenceField.test.tsx`, and `client-reference-resolver.test.ts` for the pattern.
+
 ### Testing with Real Git Operations
 
 Some subsystems -- particularly the worker's rebase logic -- need to test against actual git repositories rather than mocks. The `initTestRepo()` utility and a "local remote" pattern make this practical.
@@ -2365,6 +2563,31 @@ it('logs error when something fails', () => {
 
 Patterns can be strings (substring match) or RegExp.
 
+**`mockConsole()` is mandatory, and only CI enforces it.** `vitest.config.ts`'s
+`onConsoleLog` **throws on _any_ console output Vitest intercepts** — `log` and `info`
+just as much as `warn` and `error`, with no method filter — but the throwing path only
+fires under `CI=true`. Locally the same test prints the output as harmless noise and the
+suite reports green. So a stray `console.log` left in from debugging fails CI exactly as
+hard as an unasserted error. (Vitest's `type` argument is the _stream_, `'stdout'` or
+`'stderr'`, not the console method, so the thrown message reads
+`A test wrote to console.stdout` — that is this hook firing, not a real `console.stdout`
+call.)
+
+The failure mode this produces is nasty: a test that deliberately exercises a logged
+error path passes locally, then in CI the throw surfaces as an _unhandled rejection_
+that takes the whole test step down with **no vitest output at all** — which reads as
+a crashed or OOM-killed process, not a test failure. This cost two people time on
+2026-08-12 before the cause was found.
+
+Reproduce it locally before pushing any test that triggers an error handler:
+
+```bash
+CI=true pnpm exec vitest run          # from packages/canopycms
+```
+
+Assert the captured output rather than merely silencing it — a test that swallows the
+error it provoked has traded a visible failure for an invisible one.
+
 **Debugging captured messages:**
 
 ```typescript
@@ -2392,6 +2615,18 @@ This approach ensures:
 - Expected console output doesn't pollute test runs
 - Unexpected console output still surfaces (helping catch real issues)
 - Console behavior is properly tested as part of the functionality
+
+**Enforced in CI (keep the reporter "all dots"):** the Vitest `dot` reporter
+prints an intercepted `stdout | <file> > <test>` / `stderr | ...` block for any
+test that writes to the console, which makes it hard to tell expected output
+from real problems at a glance. To stop that from creeping back in, an
+`onConsoleLog` hook in [`packages/canopycms/vitest.config.ts`](packages/canopycms/vitest.config.ts)
+throws when a test logs to the console **while `CI` is set** (GitHub Actions sets
+`CI=true`, so the existing `pnpm test` step enforces it — no extra workflow
+step). Locally the log passes through unchanged, so ad-hoc `console.log`
+debugging still works. When CI fails with this error, wrap the expected output
+in `mockConsole()` (swallow + assert) as shown above, or remove the stray log —
+do **not** silence the guard.
 
 ### Testing GC-Dependent Code Deterministically (`WeakRef`/`FinalizationRegistry`)
 
@@ -2731,6 +2966,39 @@ it('caches context per request with React cache()', async () => {
 })
 ```
 
+### Shelling Out to Real Builds (CI Fixture Pattern)
+
+`apps/dual-build-fixture/dual-build.test.ts` is a vitest suite that verifies CanopyCMS's two deploy shapes (README.md "Dual-Build Sites") by actually running `next build` twice -- once per `CANOPY_BUILD` flavor (`static`, `cms`) -- against a minimal fixture app, then asserting on the real build output rather than just exit codes. It runs as its own CI job (`dual-build` in `.github/workflows/ci.yml`), gated on a paths-filter so the two (expensive) builds only run when something able to break the split actually changed. Run it locally with:
+
+```bash
+pnpm --filter canopycms-dual-build-fixture run verify:dual-build
+```
+
+Read the file in full before extending it or writing a similar "shell out to a real build, inspect output" test elsewhere -- it packs several fixed bugs worth reusing rather than reintroducing:
+
+- **Run the expensive step once, assert many times.** Both `next build` invocations run once in `beforeAll` (each takes tens of seconds); every `it()` afterward only inspects the resulting file trees. Never re-run a build per-assertion.
+- **Relocate output when two flavors share one `.next/`.** Both flavors write to the same `.next/` directory, so `moveNextOutputAside()` relocates the static build's non-cache output to `.next-static/` before the cms build starts, leaving both inspectable afterward. `.next/cache` (the SWC/webpack compilation cache) is deliberately left in place across both builds and preserved by `cleanNextOutputKeepCache()` -- a "clean everything under `.next/` except `cache/`" helper run before each build. This matters because `next build` isn't guaranteed to prune stale output for routes/`pageExtensions` that no longer apply: without the clean step, a leftover `.next/server/app/edit` from an earlier build could make an assertion pass for the wrong reason, while nuking the cache too would defeat CI's build-cache restore step.
+- **Use a dynamically-allocated port for live-server checks, never a hardcoded one.** A live-server smoke test spawns `next start` and fetches routes to verify runtime behavior (not just build artifacts) -- e.g. that the cms build's home route renders the same content as the static build's prerendered HTML. `getFreePort()` binds to port 0 and reads back what the OS picked. A hardcoded port previously caused a real false pass here: a stale `next start` left over from a prior manual test run kept answering on that port, so the freshly-spawned (and, in that run, deliberately broken) server was never actually exercised. A fresh port per run makes that class of contamination impossible instead of relying on cleanup discipline.
+- **Fail fast on child-process exit instead of polling out the full timeout.** `waitForServer()` listens for the spawned child's `exit` event and throws immediately -- surfacing the captured server log -- if the process dies before the first successful response, rather than blindly polling for the full timeout against a server that's already gone.
+- **Exclude dev-mode workspace clones from test discovery.** `vitest.config.ts` excludes `.canopy-dev/**`. CanopyCMS's dev-mode branch-workspace machinery clones the whole app directory -- including the test file itself -- into `.canopy-dev/content-branches/<branch>/` the first time a request-time content read happens; without the exclude, Vitest picks up that clone as a second, broken test file (no `node_modules` of its own).
+
+**Local-run gotcha:** the live-server test's request-time content read resolves against the last git commit (dev-mode branch-workspace resolution), not uncommitted working-tree edits. Running this test locally against WIP changes (to the fixture app or to `withCanopy()`) can make the cms server's `/` return a non-200 until you commit (or run `canopycms sync push`) -- that's expected dev-mode behavior, not a build-shape regression, and the test's own assertion message explains this inline. Read the failure message before assuming a real regression.
+
+### Scaffold-and-Synth Verification (`canopycms-cdk/src/scaffold-synth.test.ts`)
+
+`scaffold-synth.test.ts` verifies `canopycms init-deploy aws` end to end: it runs the real CLI into a scratch project, then executes the generated `cdk.json`'s own `app` command, and requires a CloudFormation template to come out the other end. It exists because the bug it fixes -- the generated GitHub Actions workflow deployed against a `cdk.json` that nothing had created -- was invisible to `init.test.ts`'s template-string assertions, which passed the whole time. The lesson generalizes past this one test: for generated/scaffolded output, assert on what the output _does_ (does it synth?), not on what it _contains_ (does the string look right?).
+
+Run it locally with:
+
+```bash
+pnpm --filter canopycms-cdk run build:test-fixtures   # stages worker/dist first, see below
+pnpm --filter canopycms-cdk exec vitest run src/scaffold-synth.test.ts
+```
+
+- **Why this test lives in `canopycms-cdk`, not next to the CLI it exercises.** The synth needs `aws-cdk-lib`, `constructs`, and a resolvable `canopycms-cdk` -- this is the one package where all three are guaranteed present. Scratch projects are created under `packages/canopycms-cdk/.scaffold-synth/` (gitignored) with **no `package.json` of their own**, and that omission is load-bearing: it's what lets Node's self-reference resolution find `canopycms-cdk` from the generated stack by walking up to this package's own manifest via its `exports` field. Adding a `package.json` in the scratch project would break that resolution. The scratch directory sits at the package root, never under `src/`, so a crashed run that skips cleanup can't start failing `pnpm lint`/`pnpm typecheck` with generated files -- both globs cover `src/`.
+- **`CDK_OUTDIR` + `CDK_CONTEXT_JSON` are how the CDK CLI drives an app.** The first triggers auto-synth; the second delivers `cdk.json`'s `context` block. A test that runs the generated `app` command without passing the context can't catch a bad context value -- e.g. a CDKv1-only feature flag that CDKv2 rejects at synth (`UnsupportedFeatureFlag`) -- because a context-free run never reaches that code path.
+- **Fails loudly, never skips, when `packages/canopycms-cdk/worker/dist` is missing.** The package's own `test` script builds it via `build:test-fixtures` first; running this file in isolation (as above) requires that step too. A skip here would restore exactly the going-green-without-checking property the test exists to remove.
+
 ## Deployment Infrastructure
 
 ### CmsWorker (canopycms/worker/cms-worker)
@@ -2742,6 +3010,20 @@ The `CmsWorker` class handles internet-requiring operations that Lambda cannot p
 - **Auth cache refresh**: Calls a pluggable `refreshAuthCache` callback
 
 The worker lives in the core `canopycms` package, not in `canopycms-cdk`, because it has no cloud dependencies.
+
+### Worker Logging: Never Call `console.*` Directly
+
+Code under `packages/canopycms/src/worker/**` and `packages/canopycms-cdk/worker/**` must log via `workerLog` / `workerLogWarn` / `workerLogError` from `src/worker/log.ts` (re-exported from `canopycms/worker/cms-worker`, so no new package entrypoint is needed) -- never call `console.log`/`console.warn`/`console.error` directly. Elsewhere in the codebase, normal console/`mockConsole()` conventions apply unchanged; see [Expecting Console Messages](#expecting-console-messages).
+
+```typescript
+import { workerLog, workerLogWarn, workerLogError } from './log'
+
+workerLog('CMS Worker started') // -> 2026-08-12T21:39:45.214Z INFO CMS Worker started
+```
+
+**Why it's not optional:** in production, the worker's stdout _and_ stderr both append to one file (`/var/log/canopy-worker/worker.log` on the EC2 instance), tailed by the amazon-cloudwatch-agent. The agent config (written by user-data in `packages/canopycms-cdk/src/constructs/cms-service.ts`) sets `multi_line_start_pattern` keyed on the helpers' ISO-8601 timestamp prefix, so a line missing that prefix doesn't start a new CloudWatch event -- it silently gets appended to the previous one, corrupting event boundaries rather than just looking inconsistent. The level tag (`INFO`/`WARN`/`ERROR`) is also load-bearing: it's the only way to tell the two interleaved streams apart downstream. A stray `console.log` in worker code breaks log shipping without erroring locally.
+
+The helpers pass the timestamp and level as separate `console` arguments rather than concatenating them into the message, so passing an `Error` still prints its stack normally.
 
 ### Task Queue (canopycms/worker/task-queue)
 
@@ -2959,6 +3241,51 @@ Before handoff, run typecheck and tests:
 pnpm typecheck
 pnpm test
 ```
+
+### Client-Bundle Boundary Check
+
+The editor reaches browsers through `canopycms/client` and `canopycms-next/client`. Anything reachable from those entries -- at any depth -- must stay free of node built-ins, or an adopter's production `next build` dies with `Module not found: Can't resolve 'fs'`. `next dev` tolerates the violation, so this used to surface only in the e2e production build, minutes after the mistake.
+
+`dependency-cruiser` now enforces the reachability directly:
+
+```bash
+pnpm lint:bundle
+```
+
+It runs in CI right after ESLint, and in the pre-commit hook whenever a commit touches either package's `src/`. Config lives in [.dependency-cruiser.mjs](.dependency-cruiser.mjs). `tsPreCompilationDeps` stays off on purpose, so `import type` edges (erased at compile time) are not followed -- type-only imports of server modules remain legal. A second rule fails on unresolvable relative imports, because an import the resolver can't follow is a subtree the reachability rule can't see.
+
+A violation prints the whole chain from the entry to the built-in, which is usually the fastest way to see where the boundary broke:
+
+```
+error client-bundle-no-node-builtins: packages/canopycms/src/client.ts → fs/promises
+    packages/canopycms/src/editor/CanopyEditor.tsx →
+    ...
+    packages/canopycms/src/editor/hooks/useBranchManager.tsx →
+    packages/canopycms/src/paths/branch.ts →
+    fs/promises
+```
+
+The fix is normally to import the dependency-free sibling instead of the node-importing module -- `paths/branch-name` (not `paths/branch` or the `paths` barrel), `assets/asset-prefixes` (not `assets/keys`), `assets/transform-directives` (not `assets/transform`) -- or to make the import `import type`. If a client-reachable module genuinely needs new browser-safe logic that currently lives in a node-importing file, extract that logic into its own dependency-free module rather than widening the rule.
+
+### Future-Tasks Backlog Check
+
+`.claude/future-tasks/` is the durable backlog, and AGENTS.md requires every deferred issue to exist as a task file **plus** an `index.md` row. Three failure modes kept slipping through review, so they are now enforced:
+
+```bash
+pnpm lint:tasks
+```
+
+It runs in CI right after `lint:bundle`, and in the pre-commit hook whenever a commit touches `.claude/future-tasks/`. The script is [scripts/check-future-tasks.mjs](scripts/check-future-tasks.mjs) -- plain node, no dependencies. It checks:
+
+- **Dead links** -- every `.md` link target must resolve **relative to the linking file's own directory**. This matters more than it sounds: task files cross-link with relative paths, so moving a file into `resolved/` breaks inbound links in the files that did _not_ change. Both dead links found on 2026-08-13 were relative-path errors (one missing a `../`, one carrying a stale `../`) that a repo-root-relative check would have called clean.
+- **Stale open rows** -- a row in an open priority table whose file already lives in `resolved/`. The open tables claim to list open work only, and program sequencing reads them.
+- **Orphans, both directions** -- a task file no `index.md` row points at, and a row pointing at a file that does not exist.
+
+Only `.md` targets are checked. Task files also cite source files (`packages/canopycms/src/config.ts`) as prose written relative to the repo root, not as navigable links; checking those would be pure false positives.
+
+When you retire a task, do all three things together or the check will tell you which you missed: `git mv` the file into `resolved/`, move its `index.md` row to the Resolved section, and fix any inbound links. One deliberate exception is documented in the backlog itself -- `program-b-final-review-followups.md` strikes findings ~~in place~~ rather than moving them, because the file still holds open work.
+
+One limit worth knowing: the check does not follow into `node_modules`, so a server-only npm package (`sharp`, `simple-git`, the S3 SDK) imported from client code slips past it. The e2e production `next build` remains the backstop for that.
 
 ### Public re-exports: attach JSDoc at the entrypoint
 

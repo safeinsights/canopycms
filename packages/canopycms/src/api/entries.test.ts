@@ -1544,6 +1544,113 @@ describe('deleteEntry', () => {
     expect(markerAfter.length).toBeGreaterThan(0)
   })
 
+  it('honors a non-default config.contentRoot when cleaning up the collection order', async () => {
+    // Regression: this handler built its order-cleanup SchemaOps from the
+    // literal 'content' rather than config.contentRoot, so for an adopter with
+    // a different content root it pointed at a directory that does not exist.
+    // Every other content-facing path honored the config, making this a
+    // confusing partial failure rather than an obvious one.
+    const contentRoot = 'cms-content'
+    const root = await tmpDir()
+
+    const postsId = 'q52DCVPuH4ga'
+    await fs.mkdir(path.join(root, `${contentRoot}/posts.${postsId}`), { recursive: true })
+
+    const entryId = 'abc123def456'
+    const otherEntryId = 'other000id001'
+    await fs.writeFile(
+      path.join(root, `${contentRoot}/posts.${postsId}/.collection.json`),
+      JSON.stringify({
+        name: 'posts',
+        entries: [{ name: 'post', format: 'json', schema: 'postSchema' }],
+        order: [entryId, otherEntryId],
+      }),
+      'utf8',
+    )
+    await fs.writeFile(
+      path.join(root, `${contentRoot}/posts.${postsId}/post.to-delete.${entryId}.json`),
+      JSON.stringify({ title: 'Delete Me' }),
+      'utf8',
+    )
+    await fs.writeFile(
+      path.join(root, `${contentRoot}/posts.${postsId}/post.keep-me.${otherEntryId}.json`),
+      JSON.stringify({ title: 'Keep Me' }),
+      'utf8',
+    )
+
+    const entrySchemaRegistry = { postSchema: [{ name: 'title', type: 'string' }] }
+    const metaFiles = await loadCollectionMetaFiles(path.join(root, contentRoot))
+    const schema = resolveCollectionReferences(metaFiles, entrySchemaRegistry)
+
+    const config = defineCanopyTestConfig({
+      defaultBranchAccess: 'allow',
+      contentRoot,
+      schema,
+    })
+
+    const checkBranchAccess = createCheckBranchAccess('allow')
+    const { checkContentAccess, createContentAccessChecker } = createTestContentAccess({
+      checkBranchAccess,
+      loadPathPermissions: vi.fn().mockResolvedValue([]),
+      defaultPathAccess: 'allow',
+      mode: 'dev',
+      getSettingsBranchRoot: () => Promise.resolve('/mock/settings'),
+    })
+
+    const ctx = createMockApiContext({
+      services: {
+        config,
+        entrySchemaRegistry,
+        checkBranchAccess,
+        checkContentAccess,
+        createContentAccessChecker,
+        branchSchemaCache: new BranchSchemaCache('dev'),
+      },
+      branchContext: {
+        ...createMockBranchContext({
+          branchName: 'main',
+          baseRoot: root,
+          branchRoot: root,
+          createdBy: 'u1',
+        }),
+        flatSchema: flattenSchema(schema, config.contentRoot),
+      },
+    })
+
+    const { deleteEntry } = await import('./entries')
+
+    const res = await deleteEntry.handler(
+      ctx,
+      { user: { type: 'authenticated', userId: 'u1', groups: [] } },
+      {
+        branch: unsafeAsBranchName('main'),
+        entryPath: unsafeAsLogicalPath(`${contentRoot}/posts/to-delete`),
+      },
+    )
+
+    expect(res.ok).toBe(true)
+    expect(res.data?.deleted).toBe(true)
+
+    // The order array under the CONFIGURED content root was cleaned up. With the
+    // hardcoded 'content', the SchemaOps pointed at a nonexistent directory and
+    // the order update threw instead.
+    const meta = JSON.parse(
+      await fs.readFile(
+        path.join(root, `${contentRoot}/posts.${postsId}/.collection.json`),
+        'utf8',
+      ),
+    ) as { order?: string[] }
+    expect(meta.order).toEqual([otherEntryId])
+
+    // branchRoot was resolved to the real branch root, so the generation marker
+    // landed there rather than inside the content tree.
+    const markerAfter = await fs.readFile(
+      resourceGenerationPath(root, SCHEMA_GENERATION_RESOURCE),
+      'utf8',
+    )
+    expect(markerAfter.length).toBeGreaterThan(0)
+  })
+
   it('still returns 200 when the order-cleanup update is rejected because the schema is busy', async () => {
     // deleteEntryHandler's order-array cleanup is best-effort order hygiene
     // (see the comment above that call site): a busy surrogate schema lock

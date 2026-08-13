@@ -33,6 +33,7 @@ import sharp from 'sharp'
 
 import { getErrorMessage } from '../utils/error'
 import {
+  MAX_ANIMATED_FRAMES,
   MAX_INPUT_PIXELS,
   type CropRect,
   type OutputFormat,
@@ -53,16 +54,6 @@ const ALLOWED_INPUT_EXTS = new Set(['png', 'jpg', 'jpeg', 'webp', 'gif'])
 
 /** Defensive cap on encoded output size - prevents cache-stuffing with giant re-encodes. */
 const MAX_OUTPUT_BYTES = 10 * 1024 * 1024
-
-/**
- * Cap on decoded animated frames (GIF/WebP) - without this, `{ animated: true }`
- * (sharp's `pages: -1`) decodes every frame of a maliciously-crafted
- * many-thousand-frame animation into memory at once, a decompression-bomb
- * vector distinct from (and not covered by) `limitInputPixels`, which only
- * bounds a single frame's width x height. 60 frames covers any reasonable
- * animated asset (2s at 30fps) with headroom.
- */
-const MAX_ANIMATED_FRAMES = 60
 
 const CONTENT_TYPE_BY_FORMAT: Record<OutputFormat, string> = {
   webp: 'image/webp',

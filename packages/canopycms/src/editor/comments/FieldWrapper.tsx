@@ -122,6 +122,7 @@ export const FieldWrapper: React.FC<FieldWrapperProps> = ({
           autoFocus={autoFocus}
           autoOpenNewThread={showCarousel && threads.length === 0}
           highlightThreadId={highlightThreadId}
+          onCancelNewThread={() => setShowCarousel(false)}
         />
       )}
     </Box>

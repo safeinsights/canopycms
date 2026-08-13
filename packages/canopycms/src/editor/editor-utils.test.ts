@@ -76,6 +76,55 @@ describe('buildPreviewSrc', () => {
     )
     expect(result).toBe('/posts/my-post?branch=main')
   })
+
+  describe('with a configured contentRoot', () => {
+    it('strips the whole multi-segment prefix from a collection entry URL', () => {
+      const result = buildPreviewSrc(
+        { collectionPath: 'cms/content/posts', slug: 'hello', itemType: 'entry' },
+        {
+          branchName: 'main',
+          previewBaseByCollection: undefined,
+          contentRoot: 'cms/content',
+        },
+      )
+      // Without threading contentRoot through, normalizeCollectionPath defaults to
+      // stripping only "content/" and the URL would keep the "cms/" prefix
+      // (/cms/posts/hello) instead of dropping the whole configured root.
+      expect(result).toBe('/posts/hello?branch=main')
+    })
+
+    it('leaves the default single-segment root behavior unchanged when contentRoot is undefined', () => {
+      const result = buildPreviewSrc(
+        { collectionPath: 'content/docs', slug: 'overview', itemType: 'entry' },
+        { branchName: 'main', previewBaseByCollection: undefined },
+      )
+      expect(result).toBe('/docs/overview?branch=main')
+    })
+
+    it('handles the root-entry branch for a multi-segment contentRoot', () => {
+      const result = buildPreviewSrc(
+        { collectionPath: 'cms/content', slug: 'about', itemType: 'entry' },
+        {
+          branchName: 'main',
+          previewBaseByCollection: undefined,
+          contentRoot: 'cms/content',
+        },
+      )
+      expect(result).toBe('/?branch=main')
+    })
+
+    it('uses a custom preview URL for a root entry under a multi-segment contentRoot', () => {
+      const result = buildPreviewSrc(
+        { collectionPath: 'cms/content', slug: 'about', itemType: 'entry' },
+        {
+          branchName: 'main',
+          previewBaseByCollection: { 'cms/content/about': '/custom-about' },
+          contentRoot: 'cms/content',
+        },
+      )
+      expect(result).toBe('/custom-about?branch=main')
+    })
+  })
 })
 
 describe('normalizeContentPayload', () => {

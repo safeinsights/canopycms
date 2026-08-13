@@ -38,6 +38,10 @@ import { BranchManager } from './BranchManager'
 import { CommentsPanel } from './CommentsPanel'
 import { GroupManager } from './GroupManager'
 import { PermissionManager } from './PermissionManager'
+import { SystemHealthPanel } from './admin/SystemHealthPanel'
+// Import directly from helpers to avoid server-only code in authorization barrel
+// (same rationale as BranchManager.tsx's identical import)
+import { isAdmin } from '../authorization/helpers'
 import type { CommentThread } from '../comment-store'
 import { buildPreviewSrc, buildCollectionLabels, buildBreadcrumbSegments } from './editor-utils'
 import {
@@ -55,7 +59,7 @@ import { useBranchActions } from './hooks/useBranchActions'
 import { useEntryLinkResolution } from './hooks/useEntryLinkResolution'
 import { EditorFooter, EditorHeader, EditorSidebar } from './components'
 import { RenameEntryModal } from './components/RenameEntryModal'
-import { EntryCreateModal } from './components/EntryCreateModal'
+import { EntryCreateModal, type EntryType } from './components/EntryCreateModal'
 import { ConfirmDeleteModal } from './components/ConfirmDeleteModal'
 import { CollectionEditor, type ExistingCollection, type ExistingEntryType } from './schema-editor'
 import type { LogicalPath, ContentId } from '../paths/types'
@@ -169,6 +173,7 @@ export const Editor: React.FC<EditorProps> = ({
   const [permissionManagerOpen, setPermissionManagerOpen] = useState(false)
   const [branchManagerOpen, setBranchManagerOpen] = useState(false)
   const [mediaLibraryOpen, setMediaLibraryOpen] = useState(false)
+  const [systemHealthOpen, setSystemHealthOpen] = useState(false)
 
   // Schema editor state
   const [collectionEditorOpen, setCollectionEditorOpen] = useState(false)
@@ -177,7 +182,6 @@ export const Editor: React.FC<EditorProps> = ({
     LogicalPath | undefined
   >(undefined)
   const [collectionEditorError, setCollectionEditorError] = useState<string | null>(null)
-  const [availableSchemas, setAvailableSchemas] = useState<string[]>([])
 
   // Rename entry modal state
   const [renameModalOpen, setRenameModalOpen] = useState(false)
@@ -206,6 +210,11 @@ export const Editor: React.FC<EditorProps> = ({
   // Fetch current user context for permission checks
   const { userContext } = useUserContext()
 
+  // The System Health panel (PR-U1) is admin-only -- gate both the sidebar
+  // menu item and the modal mount on it, same pattern BranchManager.tsx uses
+  // for its own admin-only actions.
+  const showSystemHealth = isAdmin(userContext?.groups)
+
   // Use custom hooks for layout, entry, draft, group, permission, comment, and branch management
   const { layout, setLayout, highlightEnabled, setHighlightEnabled, headerRef, headerHeight } =
     useEditorLayout()
@@ -232,6 +241,29 @@ export const Editor: React.FC<EditorProps> = ({
     comments: commentsForBranchSummaries,
   })
 
+  // Content mutations (add/delete/rename/reorder entries) are locked whenever the
+  // server says writes are blocked -- the protected base branch, or a workflow
+  // status past 'editing' (submitted for review, approved, archived). The flag is
+  // computed server-side by the same getBranchProtection() call the writableBranch
+  // guard uses, so the UI can never drift from what the API will accept.
+  //
+  // Fail CLOSED (`?? true`) when `currentBranch` is undefined or the wire didn't
+  // carry `writeBlocked` at all (branches-list fetch still in flight/failed, or
+  // editor/server version skew where an older server doesn't emit the flag). This
+  // is a deliberately inverted default from the OLD client-side derivation this
+  // flag replaced (`branchStatus !== 'editing'`), which locked correctly even with
+  // zero data from the server -- "no answer yet" and "not editing" both compute to
+  // locked when the fallback is itself a status comparison. Moving the decision
+  // server-side was the right call (the API guard and the UI now read one source
+  // of truth instead of two independent derivations that could drift), but an
+  // `?? false` default silently flipped what "no answer yet" means: a client that
+  // can't hear the server's answer now assumed UNLOCKED instead of LOCKED. A brief
+  // flash of locked (corrected the moment the branch list loads) is strictly safer
+  // than a flash of unlocked that invites a click the server is going to reject --
+  // and the pane is already showing a loading state during that same window, so
+  // the flash is not even visible in practice.
+  const branchContentLocked = currentBranch?.writeBlocked ?? true
+
   // 2. Entry manager (depends on branchNameState, owns selectedPath)
   const {
     selectedPath,
@@ -239,6 +271,7 @@ export const Editor: React.FC<EditorProps> = ({
     entries: entriesState,
     collections: collectionsFromApi,
     currentEntry,
+    availableSchemas,
     entriesInitializing,
     navigatorOpen,
     setNavigatorOpen,
@@ -269,6 +302,24 @@ export const Editor: React.FC<EditorProps> = ({
     contentRoot,
   })
 
+  // Keep the entry-type list referentially stable for as long as the create
+  // modal is showing the same collection. Building it inline in the JSX handed
+  // EntryCreateModal a new array on every render of this component, which its
+  // form-seeding effect used to treat as a reason to reset the user's input.
+  // That effect no longer keys on the array, but a stable prop is still the
+  // right thing to pass: it also keeps Mantine's Select `data` identity steady.
+  const createModalEntryTypes = useMemo<EntryType[]>(
+    () =>
+      createModalCollection?.entryTypes?.map((et) => ({
+        name: et.name,
+        label: et.label,
+        format: et.format,
+        default: et.default,
+        maxItems: et.maxItems,
+      })) ?? [],
+    [createModalCollection],
+  )
+
   // Use collections from API (falls back to props if not loaded yet)
   const activeCollections = collectionsFromApi.length > 0 ? collectionsFromApi : collections
 
@@ -283,8 +334,8 @@ export const Editor: React.FC<EditorProps> = ({
 
   // 3. Draft manager (depends on branchNameState, selectedPath from useEntryManager)
   const {
-    drafts,
     setDrafts,
+    loadedValues,
     setLoadedValues,
     effectiveValue,
     modifiedCount,
@@ -305,6 +356,11 @@ export const Editor: React.FC<EditorProps> = ({
     loadEntry,
     saveEntry,
     setBusy: setEntriesLoading,
+    onSaved: () => {
+      void refreshEntries(branchNameState).catch((err) =>
+        console.error('Failed to refresh entries after save', err),
+      )
+    },
   })
 
   // 4. Branch actions (depends on isAnyDirty, setBranchName)
@@ -374,50 +430,68 @@ export const Editor: React.FC<EditorProps> = ({
   )
   const schema = currentEntry?.schema ?? []
 
-  // Effect to load entry data when selection changes
+  // Effect to load entry data when selection changes.
+  //
+  // Gated on `loadedValues[contentId]` (not `drafts[contentId]`) so a
+  // restored-from-localStorage draft never skips the load: skipping left
+  // `loadedValues[contentId]` permanently undefined, which made dirty-
+  // tracking meaningless (a draft with no loaded value counts as dirty
+  // everywhere in useDraftManager) and silently starved the entry of a
+  // fresh server read. The draft is still preserved as an overlay below —
+  // only the "did we ever fetch the server value" gate changed.
+  const loadingEntryIdsRef = useRef<Set<ContentId>>(new Set())
+  // The contentId this effect is CURRENTLY targeting, kept in sync every
+  // render (not in an effect -- it must be current by the time an in-flight
+  // load's `finally`/`catch` runs, which can be after several re-renders).
+  // Lets a load whose entry the user has since navigated away from tell
+  // it's stale when it settles, so it doesn't clear the shared loading flag
+  // out from under a NEWER load that's still in flight, and doesn't surface
+  // a "Failed to load entry" notification for content nobody is looking at
+  // anymore.
+  const currentContentIdRef = useRef<ContentId | undefined>(currentEntry?.contentId)
+  currentContentIdRef.current = currentEntry?.contentId
 
   useEffect(() => {
+    const contentId = currentEntry?.contentId
     const load = async () => {
-      const contentId = currentEntry?.contentId
-      if (!currentEntry || !contentId || drafts[contentId]) return
+      if (!currentEntry || !contentId || loadedValues[contentId] !== undefined) return
+      // Guard against overlapping renders re-firing the same in-flight load
+      // (e.g. `currentEntry` getting a new object reference from an entries
+      // refresh while the fetch below is still pending).
+      if (loadingEntryIdsRef.current.has(contentId)) return
+      loadingEntryIdsRef.current.add(contentId)
       setEntriesLoading(true)
       try {
         const loaded = await loadEntry(currentEntry)
         setLoadedValues((prev) => ({ ...prev, [contentId]: loaded }))
         setDrafts((prev) => {
-          if (prev[contentId] !== undefined) return prev // preserve localStorage draft
+          if (prev[contentId] !== undefined) return prev // preserve existing (e.g. localStorage) draft
           return { ...prev, [contentId]: loaded }
         })
-      } catch (err) {
-        console.error(err)
-        notifications.show({ message: 'Failed to load entry', color: 'red' })
       } finally {
-        setEntriesLoading(false)
+        loadingEntryIdsRef.current.delete(contentId)
+        // Clear the shared flag if this load's entry is still selected, OR if
+        // no other load remains in flight. The second arm matters when the
+        // user navigates from a slow-loading entry to one that's ALREADY
+        // loaded: no new load starts, so "a newer selection's own load owns
+        // the flag now" doesn't hold -- without it, this stale settle would
+        // leave `entriesLoading` (and therefore `busy`) stuck true with
+        // nothing left to clear it.
+        if (currentContentIdRef.current === contentId || loadingEntryIdsRef.current.size === 0) {
+          setEntriesLoading(false)
+        }
       }
     }
     load().catch((err) => {
       console.error(err)
-      setEntriesLoading(false)
-      notifications.show({ message: 'Failed to load entry', color: 'red' })
-    })
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- stable setters, run only on entry/path change
-  }, [currentEntry, drafts, selectedPath])
-
-  // Load available schemas when branch changes
-  useEffect(() => {
-    if (!branchNameState) return
-    const loadSchemas = async () => {
-      try {
-        const result = await apiClient.schema.get({ branch: branchNameState })
-        if (result.ok && result.data) {
-          setAvailableSchemas(Object.keys(result.data.entrySchemas ?? {}))
-        }
-      } catch (err) {
-        console.error('Failed to load available schemas:', err)
+      // Same staleness guard as above: don't tell the user an entry failed
+      // to load when they've already navigated to a different one.
+      if (currentContentIdRef.current === contentId) {
+        notifications.show({ message: 'Failed to load entry', color: 'red' })
       }
-    }
-    loadSchemas()
-  }, [branchNameState, apiClient])
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- stable setters, run only on entry/path/loadedValues change
+  }, [currentEntry, loadedValues, selectedPath])
 
   // Schema editor handlers
   const handleOpenCollectionEditor = async (
@@ -631,8 +705,34 @@ export const Editor: React.FC<EditorProps> = ({
       }
       return undefined
     }
-    const collection = findCollection(activeCollections, collectionPath)
-    if (!collection) return
+    // Resolve against `collectionsFromApi`, NOT `activeCollections`. The
+    // latter falls back to the build-time `collections` prop whenever the
+    // fetched list is empty (`activeCollections = collectionsFromApi.length >
+    // 0 ? collectionsFromApi : collections`, above) -- which is exactly the
+    // state mid-branch-switch, before the new branch's entries/collections
+    // fetch has committed. Resolving a WRITE against that fallback meant this
+    // guard could never fire during a switch: it would happily find the OLD
+    // branch's collection in the stale build-time props and send ITS `order`
+    // array as a PATCH to the NEW branch. Reading `collectionsFromApi`
+    // directly makes "not yet loaded for this branch" and "loaded, has no
+    // such collection" the same (correct) not-found outcome, so the guard
+    // below is reachable again. See the correction to PR #196's "unreachable
+    // with entries empty" claim in
+    // .claude/future-tasks/program-b-final-review-followups.md for the write
+    // hazard this closes -- found by the 2026-08-12 adversarial review.
+    const collection = findCollection(collectionsFromApi, collectionPath)
+    if (!collection) {
+      // A silent no-op on a clicked menu item reads as a broken button --
+      // tell the user why nothing happened instead of leaving them to
+      // wonder. This fires legitimately during the ordinary branch-switch
+      // window (data not there YET), not only on a genuine error, so it's a
+      // transient "try again" notice rather than an error-red one.
+      notifications.show({
+        message: 'Content is still loading for this branch — try again in a moment.',
+        color: 'yellow',
+      })
+      return
+    }
 
     // Use the collection's order array as the source of truth
     // If no order array exists, build one from current entries and children
@@ -888,6 +988,16 @@ export const Editor: React.FC<EditorProps> = ({
             userContext={userContext}
             branchCreatedBy={currentBranch?.createdBy}
             branchAccess={currentBranch?.access}
+            // Fail-closed for the same reason branchContentLocked above is:
+            // isProtected/writeBlocked gate real actions in EditorHeader (hiding
+            // Submit, disabling Save), so a missing wire value must read as
+            // "protected"/"blocked", not "unprotected"/"unblocked".
+            // branchWriteBlocked reuses branchContentLocked itself rather than
+            // re-deriving `?? true` a second time here, so there is exactly one
+            // fail-closed computation of "are writes blocked" in this component.
+            branchIsProtected={currentBranch?.isProtected ?? true}
+            branchReadOnly={currentBranch?.readOnly}
+            branchWriteBlocked={branchContentLocked}
             onNavigatorOpen={() => setNavigatorOpen(true)}
             onFileReload={handleReload}
             onFileDiscardDraft={handleDiscardFileDraft}
@@ -896,10 +1006,18 @@ export const Editor: React.FC<EditorProps> = ({
             onBranchDiscardDrafts={handleDiscardDrafts}
             onBranchManagerOpen={() => {
               setBranchManagerOpen(true)
-              // Branchless = the initial load failed or found nothing; opening
-              // the manager doubles as the retry (adopts the server default on
-              // success and clears the sticky error toast).
-              if (!branchNameState) loadBranches().catch(console.error)
+              // Always retry, not only when branchless. Opening the manager is
+              // the one in-app retry for a failed branches fetch, and the fetch
+              // is terminal on its own: SWRProvider sets shouldRetryOnError and
+              // revalidateOnFocus false, and useBranchesData's refreshInterval
+              // is 0 without data. This used to be gated on `!branchNameState`,
+              // which was harmless while a failed fetch merely left the UI
+              // unlocked -- but content writes now fail CLOSED on missing branch
+              // data, so with a pinned branch (every ordinary adopter setup)
+              // that gate turned one network blip into a session-long lockout
+              // whose only escape was a page reload, behind a "Manage Branches"
+              // button that pointedly did not retry. Reloading is idempotent.
+              loadBranches().catch(console.error)
             }}
             onCommentsPanelOpen={() => setCommentsPanelOpen(true)}
             onSave={handleSave}
@@ -993,6 +1111,7 @@ export const Editor: React.FC<EditorProps> = ({
                 onPermissionManagerOpen={() => setPermissionManagerOpen(true)}
                 onGroupManagerOpen={() => setGroupManagerOpen(true)}
                 onMediaLibraryOpen={() => setMediaLibraryOpen(true)}
+                onSystemHealthOpen={showSystemHealth ? () => setSystemHealthOpen(true) : undefined}
                 AccountComponent={AccountComponent}
                 onAccountClick={onAccountClick}
                 onLogoutClick={onLogoutClick}
@@ -1015,6 +1134,7 @@ export const Editor: React.FC<EditorProps> = ({
                 <Group gap="xs">
                   {navCollections &&
                     navCollections.length > 0 &&
+                    !branchContentLocked &&
                     (navCollections[0].onAdd || navCollections[0].onAddSubCollection) && (
                       <Menu shadow="md" width={200} withinPortal position="bottom-end">
                         <Menu.Target>
@@ -1096,6 +1216,7 @@ export const Editor: React.FC<EditorProps> = ({
                     onReorderEntry={handleReorderEntry}
                     hiddenRootPath={hiddenRootPath}
                     loading={entriesInitializing}
+                    readOnly={branchContentLocked}
                   />
                 </Box>
               </Drawer.Body>
@@ -1230,6 +1351,14 @@ export const Editor: React.FC<EditorProps> = ({
             />
           </Drawer>
 
+          {/* System Health Panel (admin-only) */}
+          {showSystemHealth && (
+            <SystemHealthPanel
+              opened={systemHealthOpen}
+              onClose={() => setSystemHealthOpen(false)}
+            />
+          )}
+
           {/* Media Library Drawer */}
           <MediaLibrary
             opened={mediaLibraryOpen}
@@ -1282,15 +1411,7 @@ export const Editor: React.FC<EditorProps> = ({
             <EntryCreateModal
               isOpen={createModalOpen}
               collectionLabel={createModalCollection.label || createModalCollection.name}
-              entryTypes={
-                createModalCollection.entryTypes?.map((et) => ({
-                  name: et.name,
-                  label: et.label,
-                  format: et.format,
-                  default: et.default,
-                  maxItems: et.maxItems,
-                })) || []
-              }
+              entryTypes={createModalEntryTypes}
               onCreate={handleCreateModalSubmit}
               onClose={closeCreateModal}
               isCreating={createModalCreating}

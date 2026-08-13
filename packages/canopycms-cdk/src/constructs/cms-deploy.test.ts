@@ -482,6 +482,42 @@ describe('CanopyCmsService M4: worker ASG uses a LaunchTemplate, not LaunchConfi
   })
 })
 
+describe('CanopyCmsService: worker ASG rolling update policy', () => {
+  it('synthesizes a rolling UpdatePolicy with MinInstancesInService: 0, so a changed launch template actually replaces the running instance', () => {
+    // Without this, CloudFormation's default behavior for an ASG behind a
+    // changed launch template is to update the template resource and do
+    // NOTHING else - the running instance (and its stale worker bundle)
+    // survives until a spot interruption or manual terminate. Asserting on
+    // the raw synthesized UpdatePolicy (not just that the construct prop was
+    // passed) pins the actual CloudFormation behavior.
+    const template = synth()
+    template.hasResource(
+      'AWS::AutoScaling::AutoScalingGroup',
+      Match.objectLike({
+        UpdatePolicy: Match.objectLike({
+          AutoScalingRollingUpdate: Match.objectLike({
+            MinInstancesInService: 0,
+          }),
+        }),
+      }),
+    )
+  })
+})
+
+describe('CanopyCmsService: deploymentName validation', () => {
+  const invalid = ['team/prod', 'my prod', '-prod', 'prod:1', 'a..b', '.prod', 'prod.', 'prod.lock']
+
+  for (const value of invalid) {
+    it(`throws at synth for an invalid deploymentName: ${JSON.stringify(value)}`, () => {
+      expect(() => synth(false, { deploymentName: value })).toThrow(/invalid deploymentName/i)
+    })
+  }
+
+  it('accepts an ordinary deploymentName', () => {
+    expect(() => synth(false, { deploymentName: 'acme-prod_2.1' })).not.toThrow()
+  })
+})
+
 describe('CanopyCmsService: worker CloudWatch log shipping', () => {
   it('creates a dedicated worker log group named /canopycms/<stackName>/worker with 90-day default retention and DESTROY removal', () => {
     const template = synth()
@@ -555,6 +591,20 @@ describe('CanopyCmsService: worker CloudWatch log shipping', () => {
     expect(all).toContain('amazon-cloudwatch-agent-ctl -a fetch-config -m ec2 -s')
   })
 
+  it('parses the worker-emitted timestamp instead of ingestion time, and groups multi-line output into one event', () => {
+    const template = synth()
+    const all = workerUserDataBlobs(template)
+    // The worker prefixes every line with ISO-8601 UTC
+    // (packages/canopycms/src/worker/log.ts). These three keys are what make
+    // CloudWatch use that timestamp rather than the moment the agent shipped
+    // the line, and keep a stack trace as ONE event instead of one event per
+    // line. Without timezone, the trailing `Z` is ignored and the timestamp is
+    // read in the instance's local zone.
+    expect(all).toContain('\\"timestamp_format\\": \\"%Y-%m-%dT%H:%M:%S.%f\\"')
+    expect(all).toContain('\\"timezone\\": \\"UTC\\"')
+    expect(all).toContain('\\"multi_line_start_pattern\\": \\"{timestamp_format}\\"')
+  })
+
   it('references the WorkerLogs log group logical id as a deploy-time token in UserData (pins the implicit CFN dependency)', () => {
     const template = synth()
     const blobs = JSON.stringify(template.findResources('AWS::AutoScaling::LaunchConfiguration'))
@@ -623,5 +673,139 @@ describe('CanopyCmsService: worker CloudWatch log shipping', () => {
       expect(startIdx).toBeGreaterThanOrEqual(0)
       expect(mkdirIdx).toBeLessThan(startIdx)
     }
+  })
+})
+
+describe('CanopyCmsService: CMS Lambda CloudWatch log group', () => {
+  it('creates a dedicated CMS log group named /canopycms/<stackName>/cms with 90-day default retention and DESTROY removal', () => {
+    const template = synth()
+    template.hasResource(
+      'AWS::Logs::LogGroup',
+      Match.objectLike({
+        Properties: Match.objectLike({
+          LogGroupName: '/canopycms/TestStack/cms',
+          RetentionInDays: 90,
+        }),
+        DeletionPolicy: 'Delete',
+      }),
+    )
+  })
+
+  it('honors cmsLogRetention to override the default retention', () => {
+    const template = synth(false, { cmsLogRetention: RetentionDays.ONE_WEEK })
+    template.hasResourceProperties(
+      'AWS::Logs::LogGroup',
+      Match.objectLike({ LogGroupName: '/canopycms/TestStack/cms', RetentionInDays: 7 }),
+    )
+  })
+
+  it('honors cmsLogGroupName to override the default name', () => {
+    const template = synth(false, { cmsLogGroupName: '/custom/cms' })
+    template.hasResourceProperties(
+      'AWS::Logs::LogGroup',
+      Match.objectLike({ LogGroupName: '/custom/cms' }),
+    )
+  })
+
+  // Direct regression guard for the deploy-blocking trap: Lambda auto-creates
+  // `/aws/lambda/<function-name>` outside CloudFormation on first invoke, so
+  // a CDK LogGroup construct using that exact name fails CreateLogGroup with
+  // "already exists" the moment it's ever been deployed without one.
+  it('neither the CMS nor the worker log group name starts with /aws/lambda/', () => {
+    const template = synth()
+    const groups = template.findResources('AWS::Logs::LogGroup')
+    const names = Object.values(groups).map(
+      (group) => (group.Properties as { LogGroupName?: string }).LogGroupName ?? '',
+    )
+    expect(names.length).toBeGreaterThanOrEqual(2) // worker + cms
+    for (const name of names) {
+      expect(name.startsWith('/aws/lambda/')).toBe(false)
+    }
+  })
+
+  it('the CMS Lambda references its dedicated log group via LoggingConfig.LogGroup', () => {
+    const template = synth()
+    template.hasResourceProperties(
+      'AWS::Lambda::Function',
+      Match.objectLike({
+        LoggingConfig: Match.objectLike({
+          LogGroup: { Ref: Match.stringLikeRegexp('CmsFunctionLogs') },
+        }),
+      }),
+    )
+  })
+
+  it('grants the CMS Lambda role a log-group-scoped IAM statement (CreateLogStream + PutLogEvents only), not a broad grant', () => {
+    const template = synth()
+    template.hasResourceProperties(
+      'AWS::IAM::Policy',
+      Match.objectLike({
+        PolicyDocument: Match.objectLike({
+          Statement: Match.arrayWith([
+            Match.objectLike({
+              Effect: 'Allow',
+              Action: ['logs:CreateLogStream', 'logs:PutLogEvents'],
+              Resource: Match.objectLike({
+                'Fn::GetAtt': Match.arrayWith([Match.stringLikeRegexp('CmsFunctionLogs')]),
+              }),
+            }),
+          ]),
+        }),
+      }),
+    )
+  })
+})
+
+describe('CanopyCmsService: deploymentName -> CANOPYCMS_DEPLOYMENT_NAME (settings-branch namespacing)', () => {
+  it('defaults CANOPYCMS_DEPLOYMENT_NAME to "prod" in the Lambda environment', () => {
+    const template = synth()
+    template.hasResourceProperties(
+      'AWS::Lambda::Function',
+      Match.objectLike({
+        Environment: Match.objectLike({
+          Variables: Match.objectLike({ CANOPYCMS_DEPLOYMENT_NAME: 'prod' }),
+        }),
+      }),
+    )
+  })
+
+  it('honors deploymentName in the Lambda environment', () => {
+    const template = synth(false, { deploymentName: 'acme' })
+    template.hasResourceProperties(
+      'AWS::Lambda::Function',
+      Match.objectLike({
+        Environment: Match.objectLike({
+          Variables: Match.objectLike({ CANOPYCMS_DEPLOYMENT_NAME: 'acme' }),
+        }),
+      }),
+    )
+  })
+
+  it('lets an explicit environment.CANOPYCMS_DEPLOYMENT_NAME override deploymentName (placed after it in the object)', () => {
+    const template = synth(false, {
+      deploymentName: 'acme',
+      environment: { CANOPYCMS_DEPLOYMENT_NAME: 'explicit-override' },
+    })
+    template.hasResourceProperties(
+      'AWS::Lambda::Function',
+      Match.objectLike({
+        Environment: Match.objectLike({
+          Variables: Match.objectLike({ CANOPYCMS_DEPLOYMENT_NAME: 'explicit-override' }),
+        }),
+      }),
+    )
+  })
+
+  it('defaults to "prod" in the worker .env UserData when deploymentName is unset', () => {
+    const template = synth()
+    const all = workerUserDataBlobs(template)
+    expect(all).toContain('CANOPYCMS_DEPLOYMENT_NAME=prod')
+  })
+
+  it('honors deploymentName in the worker .env UserData', () => {
+    const template = synth(false, { deploymentName: 'acme' })
+    const all = workerUserDataBlobs(template)
+    expect(all).toContain('CANOPYCMS_DEPLOYMENT_NAME=acme')
+    expect(all).not.toContain('CANOPYCMS_DEPLOYMENT_NAME=prod')
   })
 })

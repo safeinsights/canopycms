@@ -26,6 +26,7 @@ vi.mock('../branch-metadata', () => ({
 
 import { withdrawBranch } from './branch-withdraw'
 import { mockConsole, createMockApiContext, createMockBranchContext } from '../test-utils'
+import { RESERVED_GROUPS } from '../authorization'
 
 // Extract handler for testing
 const withdrawHandler = withdrawBranch.handler
@@ -86,7 +87,49 @@ describe('branch withdraw api', () => {
       { branch: 'feature/x' as BranchName },
     )
     expect(res.status).toBe(400)
-    expect(res.error).toContain("Only 'submitted' branches can be withdrawn")
+    expect(res.error).toContain("Only 'submitted' or 'approved' branches can be withdrawn")
+  })
+
+  it('withdraws an approved branch back to editing', async () => {
+    // 'approved' is otherwise a dead end: request-changes and (before this)
+    // withdraw both required 'submitted', and the submit status gate closed the
+    // raw workflow.submit escape hatch that used to double as the exit -- while
+    // silently discarding the approval. Withdraw is now that exit.
+    mockMetadataSave.mockClear()
+    const ctx = makeCtx()
+    ctx.getBranchContext = vi.fn().mockResolvedValue({
+      ...baseContext,
+      branch: { ...baseContext.branch, status: 'approved' },
+    })
+
+    const res = await withdrawHandler(
+      ctx,
+      { user: { type: 'authenticated', userId: 'u1', groups: [] } },
+      { branch: 'feature/x' as BranchName },
+    )
+
+    expect(res.ok).toBe(true)
+    expect(res.status).toBe(200)
+    expect(mockMetadataSave).toHaveBeenCalledWith(
+      expect.objectContaining({
+        branch: expect.objectContaining({ status: 'editing' }),
+      }),
+    )
+  })
+
+  it('returns 400 when withdrawing an archived branch', async () => {
+    const ctx = makeCtx()
+    ctx.getBranchContext = vi.fn().mockResolvedValue({
+      ...baseContext,
+      branch: { ...baseContext.branch, status: 'archived' },
+    })
+    const res = await withdrawHandler(
+      ctx,
+      { user: { type: 'authenticated', userId: 'u1', groups: [] } },
+      { branch: 'feature/x' as BranchName },
+    )
+    expect(res.status).toBe(400)
+    expect(res.error).toContain("with status 'archived'")
   })
 
   it('withdraws branch when allowed', async () => {
@@ -225,5 +268,54 @@ describe('branch withdraw api', () => {
     )
     expect(res.ok).toBe(true)
     expect(convertToDraft).toHaveBeenCalledWith(123)
+  })
+
+  describe('protected base branch (recovery path)', () => {
+    // The base branch is auto-provisioned with createdBy: 'canopycms-system',
+    // which would normally grant withdraw to anyone with general branch
+    // access via the system-branch clause -- isProtectedBranch disables that
+    // grant, restricting withdraw to creator/ACL/privileged users. Withdraw
+    // itself stays reachable (unlike submit) as the deliberate recovery path
+    // for a protected branch wrongly stuck in 'submitted'.
+    const protectedContext = createMockBranchContext({
+      branchName: 'main',
+      status: 'submitted',
+      pullRequestNumber: 123,
+      pullRequestUrl: 'https://github.com/owner/repo/pull/123',
+      createdBy: 'canopycms-system',
+    })
+
+    const makeProtectedCtx = () =>
+      createMockApiContext({
+        branchContext: protectedContext,
+        allowBranchAccess: true,
+        services: {
+          config: { defaultBranchAccess: 'allow', mode: 'prod', defaultBaseBranch: 'main' } as any,
+        },
+      })
+
+    it('restricts withdraw on the protected base branch to privileged/creator/ACL users', async () => {
+      const res = await withdrawHandler(
+        makeProtectedCtx(),
+        { user: { type: 'authenticated', userId: 'random-user', groups: [] } },
+        { branch: 'main' as BranchName },
+      )
+      expect(res.status).toBe(403)
+    })
+
+    it('still allows an admin to withdraw the protected base branch (recovery)', async () => {
+      // The best-effort task enqueue may fail in this mock context (its queue
+      // dir isn't writable) and logs when it does; swallow so the reporter
+      // stays quiet. Not asserted: whether the enqueue fails at all is
+      // environment-dependent, and it isn't the behavior under test.
+      const consoleSpy = mockConsole()
+      const res = await withdrawHandler(
+        makeProtectedCtx(),
+        { user: { type: 'authenticated', userId: 'admin-1', groups: [RESERVED_GROUPS.ADMINS] } },
+        { branch: 'main' as BranchName },
+      )
+      expect(res.ok).toBe(true)
+      consoleSpy.restore()
+    })
   })
 })

@@ -1,13 +1,21 @@
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
+import { useSWRConfig } from 'swr'
 import { Text } from '@mantine/core'
 import { modals } from '@mantine/modals'
 import { notifications } from '@mantine/notifications'
-import type { BranchMetadata, PullRequestState } from '../../types'
+import type { ConflictStatus, PullRequestState, SyncStatus } from '../../types'
 import type { OperatingMode } from '../../operating-mode'
 import type { CommentThread } from '../../comment-store'
+import type { BranchListItem } from '../../api/branch'
 import { useApiClient } from '../context'
+import { BRANCHES_KEY, fetchBranches, useBranchesData } from './useBranchesData'
+// branch-name, NOT branch or the '../../paths' barrel: both of those pull
+// node:fs/promises + node:path at the top level (path RESOLUTION helpers),
+// which breaks adopters' production `next build` of the editor bundle.
+// paths/branch-name.ts is the dependency-free home of sanitizeBranchName.
+import { sanitizeBranchName } from '../../paths/branch-name'
 
 /**
  * Helper function to show confirmation modal for branch submit action.
@@ -69,7 +77,36 @@ export interface BranchSummary {
   pullRequestNumber?: number
   pullRequestState?: PullRequestState
   mergedAt?: string
+  /** Sync status for async GitHub operations (used when Lambda has no internet) */
+  syncStatus?: SyncStatus
+  /** Short, sanitized reason the last GitHub sync task failed (set alongside syncStatus: 'sync-failed') */
+  syncFailureReason?: string
+  /** Whether this branch has unresolved merge conflicts with the base branch */
+  conflictStatus?: ConflictStatus
+  /** ContentIds of entries where --theirs was applied during rebase; cleared on clean rebase */
+  conflictFiles?: string[]
   commentCount: number
+  isProtected: boolean
+  readOnly: boolean
+  /**
+   * Server-computed: content writes are rejected, because the branch is the
+   * read-only base branch OR its status is past 'editing'. `readOnly` still
+   * says WHICH, for banner copy.
+   */
+  writeBlocked: boolean
+  /**
+   * Server-computed compound submit rule: true when the branch can never be
+   * submitted for review, for EITHER reason -- it is the protected base
+   * branch, or its workflow status has moved past 'editing'. Mirrors
+   * `writeBlocked`'s shape (a base-branch half + a status half, combined),
+   * except this one is built from `isProtected`/`submitBlocked` (both modes)
+   * rather than `readOnly` (prod-only) -- see
+   * `BranchWriteProtection.submitBlockedIncludingStatus` for why those two
+   * compounds are genuinely different predicates, not duplicates of each
+   * other. Consumed as-is by `BranchManager.tsx`'s `canSubmit`; do not
+   * re-derive the status/protection halves client-side.
+   */
+  submitBlocked: boolean
 }
 
 export interface UseBranchManagerOptions {
@@ -97,10 +134,9 @@ export interface UseBranchManagerOptions {
 export interface UseBranchManagerReturn {
   branchName: string
   setBranchName: (name: string) => void
-  branches: BranchMetadata[]
+  branches: BranchListItem[]
   branchSummaries: BranchSummary[]
-  currentBranch: BranchMetadata | undefined
-  branchStatus: string
+  currentBranch: BranchListItem | undefined
   handleSubmit: (branchName: string) => Promise<void>
   handleWithdraw: (branchName: string) => Promise<void>
   handleRequestChanges: (branchName: string) => Promise<void>
@@ -146,11 +182,60 @@ export interface UseBranchManagerReturn {
  */
 export function useBranchManager(options: UseBranchManagerOptions): UseBranchManagerReturn {
   const apiClient = useApiClient()
+  const { mutate: globalMutate } = useSWRConfig()
   const [branchName, setBranchName] = useState<string>(options.initialBranch)
-  const [branches, setBranches] = useState<BranchMetadata[]>([])
+  // Automatic load, deduped by SWR (e.g. React Strict Mode's double effect
+  // invoke collapses to a single request). Not keyed by branchName -- the
+  // endpoint returns every branch regardless of which one is selected.
+  const {
+    data: branchesData,
+    error: branchesError,
+    isValidating: branchesIsValidating,
+  } = useBranchesData(apiClient)
+  const branches = useMemo(() => branchesData?.branches ?? [], [branchesData])
 
-  const currentBranch = branches.find((b) => b.name === branchName)
-  const branchStatus = currentBranch?.status ?? 'editing'
+  // Adopt the server's default branch once data arrives, if nothing pinned one.
+  useEffect(() => {
+    if (!branchName && branchesData?.defaultBranch) {
+      setBranchName(branchesData.defaultBranch)
+    }
+  }, [branchesData, branchName])
+
+  // Surface/clear the sticky error toast the same way loadBranches() used to.
+  useEffect(() => {
+    if (branchesError) {
+      console.error(branchesError)
+      const message =
+        branchesError instanceof Error ? branchesError.message : 'Failed to load branches'
+      // Fixed id: retries update the existing toast instead of stacking; sticky
+      // because the editor cannot function without the branch list.
+      notifications.show({
+        id: 'canopy-branches-load-failed',
+        message,
+        color: 'red',
+        autoClose: false,
+      })
+    } else if (branchesData) {
+      // A previous failure may have left the sticky error toast up; clear it
+      // now that loading succeeded (provisioning failures are often transient).
+      notifications.hide('canopy-branches-load-failed')
+    }
+  }, [branchesData, branchesError])
+
+  // Mirrors the automatic load's in-flight state onto the shared busy flag,
+  // matching loadBranches()'s own setBusy bracket below for explicit reloads.
+  useEffect(() => {
+    options.setBusy(branchesIsValidating)
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- options is a new object every Editor.tsx render; only setBusy (a stable setState) matters here
+  }, [branchesIsValidating, options.setBusy])
+
+  // Exact match first; fall back to comparing sanitized forms so a legacy
+  // deep-link carrying the raw, unsanitized name (e.g. "?branch=feature%2Fx"
+  // from before a branch was created, or from an old bookmark) still
+  // resolves to the branch the server actually persisted (e.g. "feature-x").
+  const currentBranch =
+    branches.find((b) => b.name === branchName) ??
+    branches.find((b) => b.name === sanitizeBranchName(branchName))
 
   // Compute branch summaries with comment counts
   const branchSummaries = useMemo(() => {
@@ -170,37 +255,46 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
         pullRequestNumber: b.pullRequestNumber,
         pullRequestState: b.pullRequestState,
         mergedAt: b.mergedAt,
+        syncStatus: b.syncStatus,
+        syncFailureReason: b.syncFailureReason,
+        conflictStatus: b.conflictStatus,
+        conflictFiles: b.conflictFiles,
         commentCount: unresolvedCount,
+        // Fail CLOSED (`?? true`): these flags are optional on the wire (see
+        // BranchListItem's doc comment in api/branch.ts) so a version-skewed
+        // server, or a branches-list fetch that returned partial/legacy data,
+        // can omit them. `isProtected` gates `canDelete`/`isSystemBranch` in
+        // BranchManager.tsx and `submitBlocked` gates `canSubmit` -- both real
+        // mutating actions -- so "no answer" must render as "protected"/
+        // "blocked", the same fail-closed direction as `writeBlocked` below
+        // (see Editor.tsx's `branchContentLocked` for the full rationale, which
+        // applies identically here).
+        isProtected: b.isProtected ?? true,
+        // NOT flipped to `?? true`: `readOnly` only selects WHICH lock banner
+        // to show (base-branch read-only vs. status lock) once something is
+        // already known to be locked via `writeBlocked`/`submitBlocked` --
+        // it never gates a write by itself. Defaulting it true on missing data
+        // would mislabel a status lock as a base-branch lock (wrong banner
+        // copy), not under-lock anything, so `?? false` stays correct here.
+        readOnly: b.readOnly ?? false,
+        writeBlocked: b.writeBlocked ?? true,
+        submitBlocked: b.submitBlocked ?? true,
       }
     })
   }, [branches, branchName, options.comments])
 
+  // Explicit reload: always issues a fresh, independent fetch (raw call, not
+  // SWR's `mutate()` revalidate path) so callers requesting a reload right
+  // after mount aren't coalesced against the still-in-flight automatic load
+  // -- then writes the result into the shared cache so useBranchesData's
+  // bound hook (and anything else reading BRANCHES_KEY) picks it up.
+  // Side effects (default-branch adoption, error/success notifications) are
+  // driven by the effects above, which react to that same cache write.
   const loadBranches = async () => {
     options.setBusy(true)
     try {
-      const result = await apiClient.branches.list()
-      if (result.status === 404) {
-        // No branch endpoint available; stay branchless. The branch dropdown
-        // stays clickable so the user can open Manage Branches (which also
-        // retries this load) and create or select a branch from there.
-        setBranches([])
-        return
-      }
-      if (!result.ok) {
-        // Surface the server's reason (e.g. workspace provisioning failures
-        // now arrive as 503s with the underlying git error)
-        throw new Error(result.error ?? `Failed to load branches: ${result.status}`)
-      }
-      const list = result.data?.branches ?? []
-      setBranches(list)
-      // A previous failure may have left the sticky error toast up; clear it
-      // now that loading succeeded (provisioning failures are often transient).
-      notifications.hide('canopy-branches-load-failed')
-      // No branch pinned via URL or client config — adopt the server's
-      // effective default (the detected active branch in dev mode).
-      if (!branchName && result.data?.defaultBranch) {
-        setBranchName(result.data.defaultBranch)
-      }
+      const fresh = await fetchBranches(apiClient)
+      await globalMutate(BRANCHES_KEY, fresh, { revalidate: false })
     } catch (err) {
       console.error(err)
       const message = err instanceof Error ? err.message : 'Failed to load branches'
@@ -318,13 +412,6 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
     await loadBranches()
   }
 
-  // Load branches on mount and when branchName changes
-
-  useEffect(() => {
-    loadBranches().catch(console.error)
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- loadBranches would cause infinite loop
-  }, [branchName])
-
   // Sync branch to URL parameter
   useEffect(() => {
     if (typeof window === 'undefined') return
@@ -343,7 +430,6 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
     branches,
     branchSummaries,
     currentBranch,
-    branchStatus,
     handleSubmit,
     handleWithdraw,
     handleRequestChanges,

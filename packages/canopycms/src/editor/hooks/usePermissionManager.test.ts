@@ -192,9 +192,10 @@ describe('usePermissionManager', () => {
   })
 
   it('lists groups successfully', async () => {
+    // listGroups merges both universes, tagging each option by source.
     const mockGroups = [
-      { id: 'group1', name: 'Editors' },
-      { id: 'group2', name: 'Writers' },
+      { id: 'group1', name: 'Editors', source: 'external' as const },
+      { id: 'docs-team', name: 'Docs Team', source: 'internal' as const },
     ]
 
     mockClient.permissions.listGroups.mockResolvedValueOnce({
@@ -211,17 +212,20 @@ describe('usePermissionManager', () => {
     expect(mockClient.permissions.listGroups).toHaveBeenCalled()
   })
 
-  it('handles list groups error', async () => {
+  it('propagates a list groups error instead of returning an empty list', async () => {
+    // Returning [] here would render as a silently empty picker: the generated
+    // client resolves with the error envelope rather than throwing, so the
+    // consumer's .catch (useGroupsAndUsers) would never fire and no warning
+    // would be shown.
     mockClient.permissions.listGroups.mockResolvedValueOnce({
       ok: false,
       status: 500,
+      error: 'Failed to read groups.json',
     })
 
     const { result } = renderHook(() => usePermissionManager({ isOpen: false }), { wrapper })
 
-    const groups = await result.current.handleListGroups()
-
-    expect(groups).toEqual([])
+    await expect(result.current.handleListGroups()).rejects.toThrow('Failed to read groups.json')
   })
 
   it('does not load permissions when isOpen is false', async () => {

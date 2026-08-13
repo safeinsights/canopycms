@@ -16,7 +16,7 @@ import {
   Tooltip,
 } from '@mantine/core'
 import type { OperatingMode } from '../operating-mode'
-import type { PullRequestState } from '../types'
+import type { ConflictStatus, PullRequestState, SyncStatus } from '../types'
 import type { CommentThread } from '../comment-store'
 import type { UserSearchResult } from '../auth/types'
 import { BranchComments } from './comments/BranchComments'
@@ -24,6 +24,7 @@ import { UserBadge } from './components/UserBadge'
 // Import directly from helpers to avoid server-only code in authorization barrel
 import { isAdmin, isReviewer } from '../authorization/helpers'
 import { clientOperatingStrategy } from '../operating-mode/client'
+import { formatRelativeTime } from './relative-time'
 
 export interface BranchSummary {
   name: string
@@ -38,7 +39,30 @@ export interface BranchSummary {
   pullRequestNumber?: number
   pullRequestState?: PullRequestState
   mergedAt?: string
+  /** Sync status for async GitHub operations (used when Lambda has no internet) */
+  syncStatus?: SyncStatus
+  /** Short, sanitized reason the last GitHub sync task failed (set alongside syncStatus: 'sync-failed') */
+  syncFailureReason?: string
+  /** Whether this branch has unresolved merge conflicts with the base branch */
+  conflictStatus?: ConflictStatus
+  /** ContentIds of entries where --theirs was applied during rebase; cleared on clean rebase */
+  conflictFiles?: string[]
   commentCount?: number
+  isProtected?: boolean
+  readOnly?: boolean
+  /**
+   * Server-computed compound submit rule (base-branch OR non-'editing'
+   * status) -- see `useBranchManager.tsx`'s `BranchSummary.submitBlocked` and
+   * `BranchWriteProtection.submitBlockedIncludingStatus` for the full
+   * rationale. `getBranchPermissions`'s `canSubmit` consumes this directly
+   * instead of re-deriving `status === 'editing' && !isProtected` --
+   * PR #189's stated invariant is "consume the server flag, don't
+   * re-derive", and shipping only the base-branch-only `submitBlocked` flag
+   * (rejected in #205, since that's the same value as `isProtected` and
+   * would still have left the status half re-derived here) would not have
+   * removed the re-derivation this replaces.
+   */
+  submitBlocked?: boolean
 }
 
 export interface UserContext {
@@ -75,7 +99,10 @@ export const getBranchPermissions = (
   const userIsAdmin = isAdmin(user.groups)
   const userIsReviewer = isReviewer(user.groups)
   const userIsCreator = branch.createdBy === user.userId
-  const isSystemBranch = branch.createdBy === 'canopycms-system'
+  // The system-branch grant is disabled on the protected base branch -- its
+  // auto-provision marker (createdBy: 'canopycms-system') would otherwise let
+  // anyone with general access submit/withdraw/delete it.
+  const isSystemBranch = branch.createdBy === 'canopycms-system' && !branch.isProtected
 
   // Check if user is in branch ACL
   const userInACL =
@@ -87,18 +114,46 @@ export const getBranchPermissions = (
   const canPerformWorkflowActions =
     userIsCreator || userInACL || isSystemBranch || userIsAdmin || userIsReviewer
 
-  // Submit: Can perform workflow actions AND branch is in editing status
-  const canSubmit = canPerformWorkflowActions && branch.status === 'editing'
+  // Submit: can perform workflow actions AND the server says submit isn't
+  // blocked. `submitBlocked` is the server's own compound answer -- status
+  // past 'editing' OR the protected base branch -- computed once in
+  // `getBranchWriteProtection` (protected-branch.ts) and threaded through
+  // unchanged; this used to re-derive the same conjunction locally
+  // (`branch.status === 'editing' && !branch.isProtected`), which is exactly
+  // the drift hazard PR #189's "consume the server flag, don't re-derive"
+  // invariant exists to prevent. See `BranchSummary.submitBlocked`'s doc
+  // comment above for why a bare `submitBlocked` flag (the base-branch-only
+  // meaning, as rejected in #205) would not have been enough on its own.
+  //
+  // `?? true` and not a bare `!branch.submitBlocked`: the field is optional on
+  // this type (as `isProtected`/`readOnly` beside it are), so a missing value
+  // must mean BLOCKED, not allowed. Dropping the default would reintroduce, one
+  // layer below, exactly the fail-open shape this change set exists to remove --
+  // `useBranchManager.tsx` already defaults the same flag to `true` when the
+  // wire omits it, and a second, contradictory default here would quietly undo
+  // that for anything constructing a BranchSummary directly.
+  const canSubmit = canPerformWorkflowActions && !(branch.submitBlocked ?? true)
 
-  // Withdraw: Can perform workflow actions AND branch is in submitted status.
+  // Withdraw: Can perform workflow actions AND branch is submitted or approved.
   // Allowed even when the PR was closed without merging -- that's the
   // deliberate recovery path for a closed-unmerged PR (a later resubmit
   // opens a fresh PR). The server skips the now-impossible draft conversion
-  // in that case; see api/branch-withdraw.ts.
-  const canWithdraw = canPerformWorkflowActions && branch.status === 'submitted'
+  // in that case; see api/branch-withdraw.ts. Not additionally gated on
+  // !branch.isProtected: withdraw is the recovery path for a protected branch
+  // wrongly stuck in 'submitted' -- creator/ACL/privileged users can still
+  // reach it (the system-branch grant above already excludes them).
+  //
+  // 'approved' is included because withdraw is that status's ONLY
+  // non-destructive exit (request-changes still requires 'submitted', and the
+  // submit status gate now refuses a non-editing branch). Surfacing it here is
+  // what makes the exit reachable -- the server accepting it is not enough.
+  const canWithdraw =
+    canPerformWorkflowActions && (branch.status === 'submitted' || branch.status === 'approved')
 
-  // Delete: Admin or creator (but not if submitted)
-  const canDelete = (userIsAdmin || userIsCreator) && branch.status !== 'submitted'
+  // Delete: Admin or creator (but not if submitted, and never the base branch --
+  // deleting the prod serving clone is never valid)
+  const canDelete =
+    (userIsAdmin || userIsCreator) && branch.status !== 'submitted' && !branch.isProtected
 
   // Request changes: Only Reviewers or Admins can request changes on submitted
   // branches. Same closed-PR restriction as withdraw applies (converts PR to draft).
@@ -113,7 +168,6 @@ export const getBranchPermissions = (
 const statusColorMap: Record<string, { color: string; variant?: 'light' | 'filled' }> = {
   editing: { color: 'brand', variant: 'light' },
   submitted: { color: 'green', variant: 'light' },
-  locked: { color: 'yellow', variant: 'light' },
 }
 
 export interface BranchManagerProps {
@@ -299,6 +353,15 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
                             Merged
                           </Badge>
                         )}
+                        {b.isProtected && (
+                          <Badge
+                            color="neutral"
+                            variant="outline"
+                            data-testid={`branch-protected-badge-${b.name}`}
+                          >
+                            Protected
+                          </Badge>
+                        )}
                         {b.pullRequestNumber && (
                           <Badge
                             color={
@@ -319,12 +382,56 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
                             {b.commentCount} {b.commentCount === 1 ? 'comment' : 'comments'}
                           </Badge>
                         )}
+                        {b.syncStatus === 'sync-failed' && (
+                          <Tooltip
+                            label={
+                              b.syncFailureReason
+                                ? `GitHub sync failed: ${b.syncFailureReason}`
+                                : 'GitHub sync failed — an admin can retry it from System health.'
+                            }
+                            multiline
+                            maw={320}
+                          >
+                            <Badge
+                              color="red"
+                              variant="light"
+                              data-testid={`sync-failed-badge-${b.name}`}
+                            >
+                              Sync failed
+                            </Badge>
+                          </Tooltip>
+                        )}
+                        {b.syncStatus === 'pending-sync' && (
+                          <Tooltip label="Changes are on their way to GitHub.">
+                            <Badge
+                              color="gray"
+                              variant="light"
+                              data-testid={`pending-sync-badge-${b.name}`}
+                            >
+                              Syncing…
+                            </Badge>
+                          </Tooltip>
+                        )}
+                        {b.conflictStatus === 'conflicts-detected' && (
+                          <Tooltip label="This branch's version was kept for conflicting entries during a rebase — review the flagged entries.">
+                            <Badge
+                              color="orange"
+                              variant="light"
+                              data-testid={`conflicts-badge-${b.name}`}
+                            >
+                              Conflicts
+                              {b.conflictFiles?.length ? ` (${b.conflictFiles.length})` : ''}
+                            </Badge>
+                          </Tooltip>
+                        )}
                       </Group>
                       <Group gap="xs" align="center">
                         {b.updatedAt && (
-                          <Text size="xs" c="dimmed">
-                            Updated {b.updatedAt}
-                          </Text>
+                          <Tooltip label={new Date(b.updatedAt).toLocaleString()}>
+                            <Text size="xs" c="dimmed">
+                              Updated {formatRelativeTime(b.updatedAt)}
+                            </Text>
+                          </Tooltip>
                         )}
                         {b.createdBy && (
                           <>
@@ -409,7 +516,16 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
                       >
                         Open
                       </Button>
-                      {b.status === 'submitted' ? (
+                      {/* Mirrors EditorHeader's `isWithdrawable` rather than
+                          testing 'submitted' alone. getBranchPermissions grants
+                          canWithdraw for 'approved' too -- withdraw is that
+                          status's only non-destructive exit -- but this render
+                          gate used to send 'approved' down the Submit arm, so
+                          the Withdraw button never mounted and the permission
+                          was computed and then thrown away. The two surfaces
+                          disagreed: EditorHeader offered the exit, this one
+                          didn't. */}
+                      {b.status === 'submitted' || b.status === 'approved' ? (
                         <Tooltip
                           label="Only the branch creator can withdraw"
                           disabled={perms.canWithdraw}
@@ -427,7 +543,23 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
                         </Tooltip>
                       ) : (
                         <Tooltip
-                          label="Only the branch creator can submit"
+                          label={
+                            b.isProtected
+                              ? 'The base branch cannot be submitted'
+                              : // A status arm, because canSubmit now folds in
+                                // the server's status rule as well as the
+                                // base-branch one. Without it, an archived (or
+                                // any non-editing) branch showed a disabled
+                                // Submit reading "Only the branch creator can
+                                // submit" -- to the creator. That is precisely
+                                // the permission-vs-no-available-transition
+                                // confusion #205 removed from EditorHeader, and
+                                // folding status into canSubmit reintroduced it
+                                // one component over.
+                                b.status !== 'editing'
+                                ? `A branch with status "${b.status}" cannot be submitted`
+                                : 'Only the branch creator can submit'
+                          }
                           disabled={perms.canSubmit}
                         >
                           <Button

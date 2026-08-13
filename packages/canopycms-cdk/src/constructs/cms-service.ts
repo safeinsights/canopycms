@@ -24,6 +24,19 @@ import type { IBucket } from 'aws-cdk-lib/aws-s3'
 // ../../lambda/asset-transform/build.mjs and ./asset-support.ts.
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
+/**
+ * Synth-time mirror of `resolveDeploymentName`'s rule in the `canopycms`
+ * package (packages/canopycms/src/operating-mode/deployment-name.ts).
+ * Duplicated rather than imported: `canopycms-cdk` deliberately does not
+ * depend on the runtime package. Keep the two in step — see the constructor
+ * guard for why this is checked here as well as at runtime.
+ */
+const isValidDeploymentName = (name: string): boolean =>
+  /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(name) &&
+  !name.includes('..') &&
+  !name.endsWith('.') &&
+  !name.endsWith('.lock')
+
 export interface CanopyCmsServiceProps {
   /** Docker image for the CMS Lambda function */
   cmsDockerImage: lambda.DockerImageCode
@@ -77,6 +90,26 @@ export interface CanopyCmsServiceProps {
   baseBranch?: string
 
   /**
+   * Deployment name (default: 'prod'). Namespaces the settings branch
+   * (`canopycms-settings-{deploymentName}`) so this stack's CMS Lambda/worker
+   * don't fight another CanopyCMS deployment over the same orphan settings
+   * branch. Stamped into the Lambda's `CANOPYCMS_DEPLOYMENT_NAME` environment
+   * variable and the worker's `.env`; both resolve it through
+   * `resolveDeploymentName` (packages/canopycms/src/operating-mode/deployment-name.ts),
+   * which lets this env value win over any `deploymentName` baked into the
+   * shared repo's `canopycms.config.ts` — the point of this prop.
+   *
+   * Two `CanopyCmsService` stacks pointed at the SAME GitHub repo MUST set
+   * distinct values here, or both resolve to `canopycms-settings-prod` and
+   * fight over the same branch (permissions/groups changes reviewed on one PR
+   * clobber the other). Changing this value later, on a stack that already
+   * has a populated settings workspace, is refused at boot (see
+   * settings-workspace.ts's rename guard) rather than silently reset — plan
+   * the value up front for any stack that shares a repo.
+   */
+  deploymentName?: string
+
+  /**
    * The asset bucket (from `AssetSupport`, or any bucket following its
    * prefix layout) the CMS Lambda's role should be granted access to. When
    * provided, grants the exact prefix-scoped put/get/delete permissions
@@ -88,7 +121,7 @@ export interface CanopyCmsServiceProps {
 
   /**
    * Retention for the EC2 worker's CloudWatch log group (default: three
-   * months). Worker-only: the Lambdas keep their auto-created log groups.
+   * months).
    */
   workerLogRetention?: logs.RetentionDays
 
@@ -99,6 +132,25 @@ export interface CanopyCmsServiceProps {
    * default name would collide).
    */
   workerLogGroupName?: string
+
+  /**
+   * Retention for the CMS Lambda's CloudWatch log group (default: three
+   * months / 90 days).
+   */
+  cmsLogRetention?: logs.RetentionDays
+
+  /**
+   * Name for the CMS Lambda's CloudWatch log group (default:
+   * `/canopycms/<stackName>/cms`). Deliberately NOT
+   * `/aws/lambda/<function-name>` - see the constructor's `cmsLogGroup`
+   * comment for why a CDK-managed group must avoid that exact name once the
+   * function has ever been deployed without one (CloudFormation's
+   * `CreateLogGroup` call fails "already exists" against a group Lambda
+   * itself auto-created outside CloudFormation). Override to follow an org
+   * naming convention, or when instantiating this construct twice in one
+   * stack (the default name would collide).
+   */
+  cmsLogGroupName?: string
 }
 
 /**
@@ -109,12 +161,21 @@ export interface CanopyCmsServiceProps {
  * - EFS filesystem with access point at /workspace
  * - Lambda function (Docker image, EFS mount, private subnet, no internet)
  * - Lambda Function URL (for CloudFront origin)
- * - EC2 Worker (t4g.nano spot in ASG, public subnet, EFS mount, systemd)
- * - Dedicated CloudWatch log group for the worker's stdout/stderr, shipped
- *   via the amazon-cloudwatch-agent (journald is not agent-readable)
+ * - EC2 Worker (t4g.nano spot in ASG, public subnet, EFS mount, systemd) -
+ *   rolled on every deploy via the ASG's UpdatePolicy, so a changed worker
+ *   bundle actually reaches the instance instead of sitting unused in a
+ *   launch template until the next spot interruption (see the UpdatePolicy
+ *   below)
+ * - Dedicated CloudWatch log groups for the CMS Lambda and the worker's
+ *   stdout/stderr (the worker's is shipped via the amazon-cloudwatch-agent -
+ *   journald is not agent-readable), each with a custom name/retention/
+ *   removal policy instead of the CloudFormation-implicit
+ *   `/aws/lambda/<function-name>` group (infinite retention, survives
+ *   `cdk destroy`)
  * - Security groups (least-privilege)
- * - IAM roles (Lambda: EFS only; EC2: EFS + Secrets Manager + CloudWatch
- *   Logs write, scoped to its own log group)
+ * - IAM roles (Lambda: EFS + CloudWatch Logs write scoped to its own log
+ *   group; EC2: EFS + Secrets Manager + CloudWatch Logs write, scoped to its
+ *   own log group)
  */
 export class CanopyCmsService extends Construct {
   /** Lambda Function URL — use as CloudFront origin */
@@ -129,6 +190,9 @@ export class CanopyCmsService extends Construct {
   /** The Lambda function */
   public readonly lambdaFunction: lambda.Function
 
+  /** The CMS Lambda's CloudWatch log group (Lambda stdout/stderr) */
+  public readonly cmsLogGroup: logs.LogGroup
+
   /** The EC2 worker Auto Scaling Group */
   public readonly workerAsg: autoscaling.AutoScalingGroup
 
@@ -137,6 +201,21 @@ export class CanopyCmsService extends Construct {
 
   constructor(scope: Construct, id: string, props: CanopyCmsServiceProps) {
     super(scope, id)
+
+    // Fail at synth, not at boot. deploymentName is interpolated BOTH into a
+    // git ref (`canopycms-settings-{deploymentName}`) and into a line of the
+    // worker's `.env`, which user-data writes with a shell heredoc — a value
+    // carrying a newline or quote would corrupt the worker's environment file
+    // before any runtime validation could run. Mirrors the package-side rule
+    // in operating-mode/deployment-name.ts (resolveDeploymentName); keep the
+    // two in step.
+    if (props.deploymentName !== undefined && !isValidDeploymentName(props.deploymentName)) {
+      throw new Error(
+        `CanopyCmsService: invalid deploymentName ${JSON.stringify(props.deploymentName)}. ` +
+          `It must start with a letter or digit, contain only letters, digits, '.', '_' or '-', ` +
+          `and must not contain '..' or end with '.' or '.lock'.`,
+      )
+    }
 
     // ========================================================================
     // VPC — 2 AZs, public + private subnets, NO NAT
@@ -242,6 +321,23 @@ export class CanopyCmsService extends Construct {
       'HTTPS to S3 (via gateway endpoint)',
     )
 
+    // Dedicated CloudWatch log group for the CMS Lambda's stdout/stderr.
+    // Custom name (NOT the CloudFormation-implicit `/aws/lambda/<function
+    // name>`), for two reasons: (1) CDK does not manage that implicit group
+    // at all - infinite retention, and `cdk destroy` leaves it behind (the
+    // deploy-test teardown had to sweep it manually); (2) Lambda auto-creates
+    // `/aws/lambda/<function name>` on first invoke, OUTSIDE CloudFormation -
+    // once that has happened (e.g. this stack was already deployed before
+    // this log group existed), a CDK `LogGroup` construct using that exact
+    // name would fail its `CreateLogGroup` call with "already exists" and
+    // block every future `cdk deploy`. Mirrors `workerLogGroup` below, which
+    // predates this and already follows the same convention.
+    this.cmsLogGroup = new logs.LogGroup(this, 'CmsFunctionLogs', {
+      logGroupName: props.cmsLogGroupName ?? `/canopycms/${Stack.of(this).stackName}/cms`,
+      retention: props.cmsLogRetention ?? logs.RetentionDays.THREE_MONTHS,
+      removalPolicy: RemovalPolicy.DESTROY,
+    })
+
     this.lambdaFunction = new lambda.DockerImageFunction(this, 'CmsFunction', {
       code: props.cmsDockerImage,
       memorySize: props.memorySize ?? 2048,
@@ -252,6 +348,11 @@ export class CanopyCmsService extends Construct {
       vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_ISOLATED },
       securityGroups: [lambdaSg],
       filesystem: lambda.FileSystem.fromEfsAccessPoint(accessPoint, '/mnt/efs'),
+      // Pass the pre-created group via `logGroup`, NOT `logRetention` (CDK
+      // throws LogRetentionLogGroupConflict/ConflictingLogPolicyOptions if
+      // both are set on the same function) - the removal policy lives on the
+      // LogGroup construct above instead.
+      logGroup: this.cmsLogGroup,
       environment: {
         // INVARIANT (B1): the Lambda mounts EFS through the WorkspaceAP access
         // point above, which is already rooted at EFS:/workspace - so /mnt/efs
@@ -261,6 +362,9 @@ export class CanopyCmsService extends Construct {
         // or the Lambda and worker silently operate on different directories.
         CANOPYCMS_WORKSPACE_ROOT: '/mnt/efs',
         CANOPY_AUTH_CACHE_PATH: '/mnt/efs/.cache',
+        // Placed before ...props.environment below so an adopter can still
+        // override it explicitly via that escape hatch.
+        CANOPYCMS_DEPLOYMENT_NAME: props.deploymentName ?? 'prod',
         // B7 note: git >= 2.35.2 refuses repos owned by another uid (the
         // access point forces uid 1000; Lambda containers run as a different
         // user). Env-based GIT_CONFIG_* CANNOT fix this - simple-git
@@ -270,6 +374,20 @@ export class CanopyCmsService extends Construct {
         ...props.environment,
       },
     })
+
+    // Explicit, scoped grant - NOT a reliance on the auto-created execution
+    // role's AWSLambdaBasicExecutionRole managed policy (attached by CDK's
+    // lambda.Function/DockerImageFunction regardless of `logGroup`, and
+    // never adjusted for it - passing `logGroup` only points the function's
+    // LoggingConfig at this group, it grants no IAM permissions). That
+    // managed policy's logs:CreateLogStream/logs:PutLogEvents statement is
+    // scoped to `arn:aws:logs:*:*:log-group:/aws/lambda/*:*` only (its
+    // logs:CreateLogGroup statement is the sole one that's unrestricted) -
+    // it grants nothing for a custom-named group like this one. Without this
+    // grantWrite, the function would still create log streams to the void:
+    // CloudWatch Logs delivery failures are never surfaced to the function's
+    // own invocation, so logs would simply vanish with no error anywhere.
+    this.cmsLogGroup.grantWrite(this.lambdaFunction)
 
     // Function URL for CloudFront origin.
     // AWS_IAM (not NONE): the URL must only be reachable through CloudFront,
@@ -380,6 +498,7 @@ export class CanopyCmsService extends Construct {
       `CANOPYCMS_GITHUB_OWNER=${props.githubOwner}`,
       `CANOPYCMS_GITHUB_REPO=${props.githubRepo}`,
       `CANOPYCMS_BASE_BRANCH=${props.baseBranch ?? 'main'}`,
+      `CANOPYCMS_DEPLOYMENT_NAME=${props.deploymentName ?? 'prod'}`,
       // B8: the AWS SDK JS v3 cannot resolve a region from IMDS on its own -
       // without this the worker's bare `SecretsManagerClient({})` crash-loops
       // with "Region is missing".
@@ -517,7 +636,22 @@ export class CanopyCmsService extends Construct {
       '          {',
       '            "file_path": "/var/log/canopy-worker/worker.log",',
       `            "log_group_name": "${this.workerLogGroup.logGroupName}",`,
-      '            "log_stream_name": "{instance_id}"',
+      '            "log_stream_name": "{instance_id}",',
+      // The worker prefixes every line with an ISO-8601 timestamp
+      // (packages/canopycms/src/worker/log.ts). Parsing it here is what makes
+      // CloudWatch show the time the WORKER emitted a line rather than the
+      // time the agent shipped it - those diverge exactly when it matters
+      // (agent hiccup, buffered burst, post-restart backlog).
+      '            "timestamp_format": "%Y-%m-%dT%H:%M:%S.%f",',
+      // The prefix ends in `Z`, so the parsed time is UTC. Without this the
+      // agent would interpret it in the instance's local zone.
+      '            "timezone": "UTC",',
+      // "{timestamp_format}" reuses the pattern above as the multi-line start
+      // marker: a line WITHOUT the timestamp prefix continues the previous
+      // event instead of becoming its own. That is what keeps a stack trace as
+      // one CloudWatch event, and why every writer to this file must go
+      // through the worker log helpers.
+      '            "multi_line_start_pattern": "{timestamp_format}"',
       '          }',
       '        ]',
       '      }',
@@ -559,7 +693,65 @@ export class CanopyCmsService extends Construct {
       healthCheck: autoscaling.HealthCheck.ec2({
         grace: Duration.minutes(5),
       }),
+      // Without an updatePolicy, CloudFormation's default behavior for an ASG
+      // behind a changed launch template is to update the template resource
+      // and do NOTHING else - the running instance keeps its old user-data
+      // (and therefore the old worker code: the worker bundle is a CDK S3
+      // asset whose hash is interpolated into user-data's `aws s3 cp
+      // s3://...`) until a spot interruption or a manual terminate happens
+      // to replace it. `cdk deploy` would then silently deploy everything
+      // EXCEPT the worker. `rollingUpdate` makes CloudFormation actually
+      // terminate-and-relaunch the instance on every deploy that changes the
+      // launch template, so a worker code change actually reaches it.
+      //
+      // minInstancesInService: 0 is REQUIRED, not just accepted, because
+      // minCapacity/maxCapacity are both 1: there is no way to keep an
+      // instance "in service" out of a max of 1 while its replacement is
+      // being created. The update is therefore terminate-then-relaunch, with
+      // a short worker outage while the replacement boots (yum install
+      // git/unzip/nodejs/efs-utils, mount EFS - realistically 2-4 minutes).
+      // That outage is acceptable: the task queue and branch workspaces live
+      // on EFS, not on the instance, so the new instance picks up exactly
+      // where the old one left off; the Lambda's Save/Publish paths only
+      // enqueue task files onto EFS and never talk to the worker directly,
+      // so they are unaffected by the worker being briefly down. A task that
+      // was actually mid-flight when the old instance was terminated is
+      // handled by orphan recovery now running on every task-queue cycle,
+      // not only at worker boot (see recoverOrphanedTasks's call site in
+      // CmsWorker.processTaskQueue(), packages/canopycms/src/worker/cms-worker.ts).
+      //
+      // Deliberately NOT paired with a `signals`/cfn-signal setup (and
+      // `waitOnResourceSignals` therefore defaults to false here, so this
+      // rolling update does not wait on one): see the comment below.
+      updatePolicy: autoscaling.UpdatePolicy.rollingUpdate({ minInstancesInService: 0 }),
     })
+
+    // Why this PR does NOT add cfn-signal, despite the rolling update above
+    // now making instance replacement routine instead of rare:
+    //
+    // 1. User-data runs under `set -euo pipefail`, and the CloudWatch-agent
+    //    block is placed at the very end ON PURPOSE (see that block's own
+    //    comment) so an agent failure there cannot kill the boot. A
+    //    cfn-signal placed after it would then never run when that block
+    //    fails, and CloudFormation would wait out its own timeout and
+    //    fail/roll back the ENTIRE deploy - the opposite of the intent
+    //    (agent shipping is best-effort; the worker itself must not be
+    //    blocked by it).
+    // 2. Even placed earlier (right after `systemctl start canopy-worker`),
+    //    a signal there would prove almost nothing: the systemd unit is
+    //    `Type=simple` with `Restart=always`, so `systemctl start` returns 0
+    //    the instant the process execs, regardless of what happens next. A
+    //    worker that immediately crash-loops (bad env, bad bundle) would
+    //    still signal SUCCESS. A real readiness gate would have to poll
+    //    `worker-status.json` or `systemctl is-active` in a loop before
+    //    signaling - a bigger change than this PR should carry.
+    //
+    // recoverOrphanedTasks()'s per-cycle recovery (see above) is the
+    // intentionally simpler fix for the actual problem (a stranded task
+    // surviving an instance replacement) - it works regardless of WHY the
+    // instance was replaced (rolling update, spot interruption, manual
+    // terminate) and does not depend on the new instance ever proving
+    // "ready" in the first place.
 
     // Boot ordering: the ASG can launch before EFS mount targets are
     // available; user-data runs with `set -euo pipefail`, so an early

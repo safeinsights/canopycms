@@ -1,8 +1,13 @@
-import { describe, it, expect, vi, beforeAll } from 'vitest'
-import { render, screen, fireEvent, act } from '@testing-library/react'
+import { describe, it, expect, vi, beforeAll, afterEach } from 'vitest'
+import { cleanup, render, screen, fireEvent, act, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { MantineProvider } from '@mantine/core'
 import { ThreadCarousel } from './ThreadCarousel'
 import type { CommentThread } from '../../comment-store'
+
+afterEach(() => {
+  cleanup()
+})
 
 // Setup for Mantine components
 beforeAll(() => {
@@ -370,8 +375,70 @@ describe('ThreadCarousel', () => {
       { wrapper: Wrapper },
     )
 
-    // Should NOT show navigation counter for single thread
-    expect(container.textContent).not.toMatch(/1\/1/)
+    // Should NOT render the chevron nav ActionIcons for a single thread.
+    // (Not asserting on the "1/1" counter text: with relative-time fallback
+    // formatting, an old fixture timestamp like 2024-01-01 can render as a
+    // locale date such as "1/1/2024", which would false-match that regex.)
+    expect(container.querySelector('.tabler-icon-chevron-left')).toBeNull()
+    expect(container.querySelector('.tabler-icon-chevron-right')).toBeNull()
+  })
+
+  it('calls onCancelNewThread when Cancel is clicked with zero threads', async () => {
+    const user = userEvent.setup()
+    const onCancelNewThread = vi.fn()
+
+    render(
+      <ThreadCarousel
+        threads={[]}
+        contextType="field"
+        currentUserId="alice"
+        canResolve={true}
+        onAddComment={vi.fn()}
+        onResolveThread={vi.fn()}
+        autoOpenNewThread={true}
+        onCancelNewThread={onCancelNewThread}
+      />,
+      { wrapper: Wrapper },
+    )
+
+    const cancelButton = screen.getByRole('button', { name: 'Cancel' })
+    await user.click(cancelButton)
+
+    expect(onCancelNewThread).toHaveBeenCalledTimes(1)
+    // The new-thread box itself should also close
+    expect(screen.queryByPlaceholderText('Start a new thread...')).toBeNull()
+  })
+
+  it('does not call onCancelNewThread when a new thread is created successfully', async () => {
+    const user = userEvent.setup()
+    const onCancelNewThread = vi.fn()
+    const onAddComment = vi.fn().mockResolvedValue(undefined)
+
+    render(
+      <ThreadCarousel
+        threads={[]}
+        contextType="field"
+        currentUserId="alice"
+        canResolve={true}
+        onAddComment={onAddComment}
+        onResolveThread={vi.fn()}
+        autoOpenNewThread={true}
+        onCancelNewThread={onCancelNewThread}
+      />,
+      { wrapper: Wrapper },
+    )
+
+    const textarea = screen.getByPlaceholderText('Start a new thread...')
+    await user.type(textarea, 'Hello world')
+
+    const createButton = screen.getByTestId('create-thread-button')
+    await user.click(createButton)
+
+    await waitFor(() => {
+      expect(onAddComment).toHaveBeenCalledWith('Hello world')
+    })
+
+    expect(onCancelNewThread).not.toHaveBeenCalled()
   })
 
   it('uses custom label when provided', () => {

@@ -3,7 +3,7 @@ import { describe, it, expect, vi } from 'vitest'
 import { executeGuards } from './guards'
 import type { GuardId } from './guards'
 import { createMockApiContext, createMockBranchContext, createMockUser } from '../test-utils'
-import type { FlatSchemaItem } from '../config'
+import type { CanopyConfig, FlatSchemaItem } from '../config'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -18,6 +18,16 @@ const fakeFlatSchema: FlatSchemaItem[] = [
     entries: [{ name: 'post', format: 'json' as const, schema: [] }],
   },
 ]
+
+/** Base config for writableBranch/submittableBranch guard tests; override mode/defaultBaseBranch per-case. */
+const baseConfig: CanopyConfig = {
+  gitBotAuthorName: 'Canopy Bot',
+  gitBotAuthorEmail: 'bot@example.com',
+  defaultBaseBranch: 'main',
+  mode: 'prod',
+  deployedAs: 'server',
+  contentRoot: 'content',
+}
 
 function makeReq(role: 'admin' | 'reviewer' | 'user' = 'user') {
   return { user: createMockUser(role) }
@@ -264,6 +274,253 @@ describe('executeGuards', () => {
       if (!result.ok) {
         expect(result.response.status).toBe(404)
       }
+    })
+  })
+
+  // ========================================================================
+  // writableBranch guard
+  // ========================================================================
+
+  describe('writableBranch guard', () => {
+    it('blocks the base branch in prod with a 403 and explanatory message', async () => {
+      const bc = createMockBranchContext({ branchName: 'main' })
+      const ctx = createMockApiContext({
+        branchContext: bc,
+        services: { config: { ...baseConfig, mode: 'prod', defaultBaseBranch: 'main' } },
+      })
+
+      const result = await executeGuards(['writableBranch'] as const, ctx, makeReq(), {
+        branch: 'main',
+      })
+
+      expect(result.ok).toBe(false)
+      if (!result.ok) {
+        expect(result.response.status).toBe(403)
+        expect(result.response.error).toBe(
+          'The base branch "main" is read-only. Create a branch to make changes.',
+        )
+      }
+    })
+
+    it('allows the base branch in dev (base stays editable)', async () => {
+      const bc = createMockBranchContext({ branchName: 'main' })
+      const ctx = createMockApiContext({
+        branchContext: bc,
+        services: { config: { ...baseConfig, mode: 'dev', defaultBaseBranch: 'main' } },
+      })
+
+      const result = await executeGuards(['writableBranch'] as const, ctx, makeReq(), {
+        branch: 'main',
+      })
+
+      expect(result.ok).toBe(true)
+    })
+
+    it('allows a non-base branch in prod', async () => {
+      const bc = createMockBranchContext({ branchName: 'feature/x' })
+      const ctx = createMockApiContext({
+        branchContext: bc,
+        services: { config: { ...baseConfig, mode: 'prod', defaultBaseBranch: 'main' } },
+      })
+
+      const result = await executeGuards(['writableBranch'] as const, ctx, makeReq(), {
+        branch: 'feature/x',
+      })
+
+      expect(result.ok).toBe(true)
+    })
+
+    it('blocks a sanitization-equivalent base branch name in prod', async () => {
+      const bc = createMockBranchContext({ branchName: 'feature-foo' })
+      const ctx = createMockApiContext({
+        branchContext: bc,
+        services: { config: { ...baseConfig, mode: 'prod', defaultBaseBranch: 'feature/foo' } },
+      })
+
+      const result = await executeGuards(['writableBranch'] as const, ctx, makeReq(), {
+        branch: 'feature-foo',
+      })
+
+      expect(result.ok).toBe(false)
+      if (!result.ok) {
+        expect(result.response.status).toBe(403)
+      }
+    })
+
+    it('preserves accumulated schema context from a preceding schema guard', async () => {
+      const bc = { ...createMockBranchContext({ branchName: 'feature/x' }), flatSchema: [] }
+      const ctx = createMockApiContext({
+        branchContext: bc,
+        services: { config: { ...baseConfig, mode: 'prod', defaultBaseBranch: 'main' } },
+      })
+
+      const result = await executeGuards(['schema', 'writableBranch'] as const, ctx, makeReq(), {
+        branch: 'feature/x',
+      })
+
+      expect(result.ok).toBe(true)
+      if (result.ok) {
+        expect(result.guardContext.branchContext.flatSchema).toBe(bc.flatSchema)
+      }
+    })
+
+    it('returns 404 when branch not found', async () => {
+      const ctx = createMockApiContext({ branchContext: null })
+
+      const result = await executeGuards(['writableBranch'] as const, ctx, makeReq(), {
+        branch: 'gone',
+      })
+
+      expect(result.ok).toBe(false)
+      if (!result.ok) {
+        expect(result.response.status).toBe(404)
+      }
+    })
+
+    // ------------------------------------------------------------------
+    // Branch status — content writes are only allowed while 'editing'
+    // ------------------------------------------------------------------
+
+    it('allows a non-base branch with status "editing"', async () => {
+      const bc = createMockBranchContext({ branchName: 'feature/x', status: 'editing' })
+      const ctx = createMockApiContext({
+        branchContext: bc,
+        services: { config: { ...baseConfig, mode: 'prod', defaultBaseBranch: 'main' } },
+      })
+
+      const result = await executeGuards(['writableBranch'] as const, ctx, makeReq(), {
+        branch: 'feature/x',
+      })
+
+      expect(result.ok).toBe(true)
+    })
+
+    it('blocks a branch with status "submitted" with a withdraw-focused message', async () => {
+      const bc = createMockBranchContext({ branchName: 'feature/x', status: 'submitted' })
+      const ctx = createMockApiContext({
+        branchContext: bc,
+        services: { config: { ...baseConfig, mode: 'prod', defaultBaseBranch: 'main' } },
+      })
+
+      const result = await executeGuards(['writableBranch'] as const, ctx, makeReq(), {
+        branch: 'feature/x',
+      })
+
+      expect(result.ok).toBe(false)
+      if (!result.ok) {
+        expect(result.response.status).toBe(403)
+        expect(result.response.error).toBe(
+          'Branch "feature/x" is submitted for review and cannot be edited. Withdraw it or request changes to resume editing.',
+        )
+      }
+    })
+
+    it.each(['approved', 'archived'] as const)(
+      'blocks a branch with status "%s"',
+      async (status) => {
+        const bc = createMockBranchContext({ branchName: 'feature/x', status })
+        const ctx = createMockApiContext({
+          branchContext: bc,
+          services: { config: { ...baseConfig, mode: 'prod', defaultBaseBranch: 'main' } },
+        })
+
+        const result = await executeGuards(['writableBranch'] as const, ctx, makeReq(), {
+          branch: 'feature/x',
+        })
+
+        expect(result.ok).toBe(false)
+        if (!result.ok) {
+          expect(result.response.status).toBe(403)
+          expect(result.response.error).toBe(
+            `Branch "feature/x" is ${status} and cannot be edited.`,
+          )
+        }
+      },
+    )
+
+    // Fail-closed regression guard. branch.json is parsed with a bare cast and
+    // no schema (branch-metadata.ts), so a hand-repaired or partially-written
+    // file yields no status at runtime -- exactly the state the corrupt-metadata
+    // quarantine exists for. If this ever flips to allowing the write, a branch
+    // whose review state is unknown becomes editable.
+    it('blocks a branch whose status is missing at runtime (fails closed)', async () => {
+      const bc = createMockBranchContext({ branchName: 'feature/x' })
+      // Simulate damaged metadata: the type says status is required, the file disagrees.
+      delete (bc.branch as { status?: unknown }).status
+
+      const ctx = createMockApiContext({
+        branchContext: bc,
+        services: { config: { ...baseConfig, mode: 'prod', defaultBaseBranch: 'main' } },
+      })
+
+      const result = await executeGuards(['writableBranch'] as const, ctx, makeReq(), {
+        branch: 'feature/x',
+      })
+
+      expect(result.ok).toBe(false)
+      if (!result.ok) {
+        expect(result.response.status).toBe(403)
+        expect(result.response.error).toBe(
+          'Branch "feature/x" has no readable workflow status and cannot be edited until its metadata is repaired.',
+        )
+      }
+    })
+  })
+
+  // ========================================================================
+  // submittableBranch guard
+  // ========================================================================
+
+  describe('submittableBranch guard', () => {
+    it('blocks the base branch in prod', async () => {
+      const bc = createMockBranchContext({ branchName: 'main' })
+      const ctx = createMockApiContext({
+        branchContext: bc,
+        services: { config: { ...baseConfig, mode: 'prod', defaultBaseBranch: 'main' } },
+      })
+
+      const result = await executeGuards(['submittableBranch'] as const, ctx, makeReq(), {
+        branch: 'main',
+      })
+
+      expect(result.ok).toBe(false)
+      if (!result.ok) {
+        expect(result.response.status).toBe(403)
+        expect(result.response.error).toBe(
+          'The base branch cannot be submitted for review. Create a branch and submit that instead.',
+        )
+      }
+    })
+
+    it('blocks the base branch in dev too (submit is blocked in both modes)', async () => {
+      const bc = createMockBranchContext({ branchName: 'main' })
+      const ctx = createMockApiContext({
+        branchContext: bc,
+        services: { config: { ...baseConfig, mode: 'dev', defaultBaseBranch: 'main' } },
+      })
+
+      const result = await executeGuards(['submittableBranch'] as const, ctx, makeReq(), {
+        branch: 'main',
+      })
+
+      expect(result.ok).toBe(false)
+      if (!result.ok) {
+        expect(result.response.status).toBe(403)
+      }
+    })
+
+    it('allows a non-base branch', async () => {
+      const bc = createMockBranchContext({ branchName: 'feature/x' })
+      const ctx = createMockApiContext({
+        branchContext: bc,
+        services: { config: { ...baseConfig, mode: 'prod', defaultBaseBranch: 'main' } },
+      })
+
+      const result = await executeGuards(['submittableBranch'] as const, ctx, makeReq(), {
+        branch: 'feature/x',
+      })
+
+      expect(result.ok).toBe(true)
     })
   })
 

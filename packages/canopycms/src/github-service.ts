@@ -3,6 +3,12 @@ import { throttling } from '@octokit/plugin-throttling'
 import type { CanopyConfig } from './config'
 import { operatingStrategy } from './operating-mode'
 import { getErrorMessage } from './utils/error'
+// canopyLogWarn, not console.warn: this module runs inside the WORKER process
+// (its Octokit is the worker's own, and the PR create/update path below is a
+// worker task), where every line must carry worker/log.ts's ISO-8601 prefix or
+// CloudWatch folds it into the previous event. Under Lambda/dev the helper is
+// plain console. See utils/logger.ts.
+import { canopyLogWarn } from './utils/logger'
 
 const ThrottledOctokit = Octokit.plugin(throttling)
 
@@ -35,14 +41,14 @@ export function createCanopyOctokit(options: { auth: string }): Octokit {
     auth: options.auth,
     throttle: {
       onRateLimit: (retryAfter, requestOptions, _octokit, retryCount) => {
-        console.warn(
+        canopyLogWarn(
           `CanopyCMS: GitHub primary rate limit hit for ${requestOptions.method} ${requestOptions.url} ` +
             `(retryAfter=${retryAfter}s, retryCount=${retryCount})`,
         )
         return shouldRetryRateLimit(retryAfter, retryCount)
       },
       onSecondaryRateLimit: (retryAfter, requestOptions, _octokit, retryCount) => {
-        console.warn(
+        canopyLogWarn(
           `CanopyCMS: GitHub secondary rate limit hit for ${requestOptions.method} ${requestOptions.url} ` +
             `(retryAfter=${retryAfter}s, retryCount=${retryCount})`,
         )
@@ -133,7 +139,7 @@ export async function createOrUpdatePullRequest(
       existing = [...existingPRs.data].sort(
         (a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime(),
       )[0]
-      console.warn(
+      canopyLogWarn(
         `CanopyCMS: Found ${existingPRs.data.length} open PRs for ${head} -> ${base}; updating the most recently updated (#${existing.number})`,
       )
     }
@@ -180,7 +186,7 @@ export async function createOrUpdatePullRequest(
           },
         )
       } catch (err) {
-        console.warn(
+        canopyLogWarn(
           `CanopyCMS: Failed to convert PR #${existing.number} to ready for review (the PR update itself succeeded; continuing):`,
           getErrorMessage(err),
         )
@@ -438,13 +444,13 @@ export const createGitHubService = (
   const token = process.env[tokenEnvVar] ?? process.env.CANOPYCMS_GITHUB_TOKEN
 
   if (!token) {
-    console.warn(`CanopyCMS: GitHub token not found in ${tokenEnvVar} or CANOPYCMS_GITHUB_TOKEN`)
+    canopyLogWarn(`CanopyCMS: GitHub token not found in ${tokenEnvVar} or CANOPYCMS_GITHUB_TOKEN`)
     return null
   }
 
   // Need remote URL to determine owner/repo
   if (!remoteUrl) {
-    console.warn('CanopyCMS: GitHub service requires remoteUrl to determine repository')
+    canopyLogWarn('CanopyCMS: GitHub service requires remoteUrl to determine repository')
     return null
   }
 
@@ -458,7 +464,7 @@ export const createGitHubService = (
       baseBranch: config.defaultBaseBranch ?? 'main',
     })
   } catch (err) {
-    console.warn('CanopyCMS: Failed to parse GitHub remote URL:', err)
+    canopyLogWarn('CanopyCMS: Failed to parse GitHub remote URL:', err)
     return null
   }
 }

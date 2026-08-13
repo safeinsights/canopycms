@@ -271,6 +271,27 @@ describe('occ-json-write', () => {
       expect(lockDirs).toEqual([])
     })
 
+    it('resolves cleanly when the lock target directory vanishes mid-hold (NIT-1)', async () => {
+      // Simulates a concurrent purge renaming the whole branch tree away
+      // out from under a held lock on a DIFFERENT resource inside it (e.g.
+      // comments.json) -- purge only serializes against branch.json's own
+      // lock, so this is a real scenario for other OCC-locked files.
+      // proper-lockfile's own removeLock() already ignores ENOENT when
+      // unlinking the marker; this asserts that stays true (i.e. the
+      // release resolves cleanly rather than throwing) so the redundant
+      // ENOENT guard in withOccFileLock's release path is exercised as
+      // dead-but-safe defense-in-depth, not a live crash waiting to happen.
+      const branchDir = path.join(tmpDir, 'branch')
+      const target = path.join(branchDir, '.canopy-meta', 'comments.json')
+      await fs.mkdir(path.dirname(target), { recursive: true })
+
+      await expect(
+        withOccFileLock(target, async () => {
+          await fs.rename(branchDir, path.join(tmpDir, '.trash-branch'))
+        }),
+      ).resolves.toBeUndefined()
+    })
+
     it('acquires a lock for a file that does not yet exist on disk', async () => {
       const notYetCreated = path.join(tmpDir, 'not-yet-created.json')
       let ran = false

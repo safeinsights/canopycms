@@ -1,15 +1,14 @@
+import { BASE_URL } from '../fixtures/base-url'
 import { test, expect } from '@playwright/test'
 import { EditorPage } from '../fixtures/editor-page'
 import { BranchPage } from '../fixtures/branch-page'
-import { switchUser } from '../fixtures/test-users'
+import { switchUser, installE2EFlag } from '../fixtures/test-users'
 import {
   resetWorkspace,
   ensureMainBranch,
   createBranchViaAPI,
   submitBranchViaAPI,
 } from '../fixtures/test-workspace'
-
-const BASE_URL = 'http://localhost:5174'
 
 /**
  * Branch Lifecycle & Workflow E2E Tests.
@@ -20,9 +19,7 @@ test.describe('Branch Lifecycle & Workflow', () => {
   let branchPage: BranchPage
 
   test.beforeEach(async ({ page }) => {
-    await page.addInitScript(() => {
-      ;(window as any).__E2E_TEST__ = true
-    })
+    await installE2EFlag(page)
     await test.step('reset workspace', () => resetWorkspace())
     await test.step('ensure main branch', () => ensureMainBranch(BASE_URL))
     editorPage = new EditorPage(page)
@@ -85,7 +82,7 @@ test.describe('Branch Lifecycle & Workflow', () => {
     await branchPage.closeBranchManager()
   })
 
-  test('branch creation with metadata and validation', async ({ page }) => {
+  test('branch creation with metadata and validation', async () => {
     await editorPage.goto()
     await editorPage.waitForReady()
     await branchPage.openBranchManager()

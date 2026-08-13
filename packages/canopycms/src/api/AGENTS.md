@@ -27,7 +27,7 @@ const createCollection = defineEndpoint({
 })
 ```
 
-Available guards: `branch`, `branchAccess`, `schema`, `branchAccessWithSchema`, `admin`, `reviewer`, `privileged`. See `guards.ts` for details.
+Available guards: `branch`, `branchAccess`, `schema`, `branchAccessWithSchema`, `admin`, `reviewer`, `privileged`, `writableBranch` (403 when the branch is the read-only protected base branch — prod only — or when its status is not `editing`, i.e. submitted/approved/locked/archived — both modes), `submittableBranch` (403 when the branch is the protected base branch — both modes). See `guards.ts` for details.
 
 ## Adding New API Endpoints
 

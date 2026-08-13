@@ -41,28 +41,42 @@ export const ensureSelectFieldsHaveOptions = (fields: unknown): void => {
  * Throws an error if a reference field has neither.
  */
 export const ensureReferenceFieldsHaveScope = (fields: unknown): void => {
+  forEachReferenceField(fields, (f) => {
+    const hasCollections = Array.isArray(f.collections) && f.collections.length > 0
+    const hasEntryTypes = Array.isArray(f.entryTypes) && f.entryTypes.length > 0
+    if (!hasCollections && !hasEntryTypes) {
+      const fieldName = (f?.name as string) ?? 'unknown'
+      throw new Error(
+        `Reference field "${fieldName}" requires at least one of "collections" or "entryTypes"`,
+      )
+    }
+  })
+}
+
+/**
+ * Walk a schema's fields and invoke `visit` for every reference field, descending
+ * into `group`/`object` fields and into each `block` template's fields.
+ *
+ * Schema-only by design: unlike validation/field-traversal.ts's `findFieldsByType`,
+ * which walks a schema alongside a concrete entry's data, this needs no data and so
+ * can run at config-validation and schema-load time, before any entry exists.
+ */
+export const forEachReferenceField = (
+  fields: unknown,
+  visit: (field: Record<string, unknown>) => void,
+): void => {
   if (!Array.isArray(fields)) return
   for (const field of fields) {
     const f = field as Record<string, unknown>
     if (f?.type === 'reference') {
-      const hasCollections = Array.isArray(f.collections) && f.collections.length > 0
-      const hasEntryTypes = Array.isArray(f.entryTypes) && f.entryTypes.length > 0
-      if (!hasCollections && !hasEntryTypes) {
-        const fieldName = (f?.name as string) ?? 'unknown'
-        throw new Error(
-          `Reference field "${fieldName}" requires at least one of "collections" or "entryTypes"`,
-        )
-      }
+      visit(f)
     }
-    if (f?.type === 'group') {
-      ensureReferenceFieldsHaveScope(f.fields)
-    }
-    if (f?.type === 'object') {
-      ensureReferenceFieldsHaveScope(f.fields)
+    if (f?.type === 'group' || f?.type === 'object') {
+      forEachReferenceField(f.fields, visit)
     }
     if (f?.type === 'block' && Array.isArray(f.templates)) {
       for (const template of f.templates as Array<{ fields?: unknown }>) {
-        ensureReferenceFieldsHaveScope(template.fields)
+        forEachReferenceField(template.fields, visit)
       }
     }
   }

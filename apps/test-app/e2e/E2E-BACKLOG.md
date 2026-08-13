@@ -26,7 +26,13 @@ Pick the first ⬜ item below and implement it end-to-end. Follow these steps:
 
 Each item below is a self-contained test scenario for a Claude session to implement.
 Existing tests live in `apps/test-app/e2e/tests/`. Fixtures are in `apps/test-app/e2e/fixtures/`.
-The test app runs on `http://localhost:5174` (started by `npm run dev -w canopycms-test-app`).
+The test app runs on `http://localhost:5174` by default. Set `CANOPY_E2E_PORT`
+to run on another port — REQUIRED when two checkouts of this repo run e2e on
+one machine: with the fixed port plus `reuseExistingServer`, the second
+session silently attaches to the first session's server (rooted in the other
+checkout's workspace) and seeded-filesystem assertions read the wrong
+`.canopy-dev`. Specs import `BASE_URL` from `fixtures/base-url.ts`; never
+hardcode the port in a spec.
 
 Use existing fixtures:
 

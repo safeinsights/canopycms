@@ -66,8 +66,14 @@ export {
   ensureBranchRoot,
   getDefaultBranchBase,
   resolveBranchPaths,
-  sanitizeBranchName,
   BranchPathError,
   type BranchPathOptions,
   type BranchPathResult,
 } from './branch'
+// From the dependency-free module (NOT ./branch, which imports node:fs) so
+// client-reachable importers of 'canopycms/src/paths' stay browser-safe.
+export {
+  sanitizeBranchName,
+  RESERVED_SETTINGS_BRANCH_PREFIX,
+  RESERVED_ROUTE_BRANCH_NAMES,
+} from './branch-name'

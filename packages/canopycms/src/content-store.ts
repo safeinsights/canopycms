@@ -147,6 +147,15 @@ export interface ContentStoreOptions {
    * debounce. Tests pass 0 for deterministic cross-process scenarios.
    */
   indexFreshnessIntervalMs?: number
+  /**
+   * Directory name (relative to `root`) holding the content tree — i.e.
+   * `config.contentRoot`. The ID index scans from here, so an adopter with a
+   * non-default content root would otherwise get an index built from a
+   * directory that does not exist: empty, so every ID-based lookup (reference
+   * resolution, entry links, order cleanup, rename) silently misses while
+   * path-based reads keep working. Defaults to 'content'.
+   */
+  contentRootName?: string
 }
 
 const DEFAULT_INDEX_FRESHNESS_INTERVAL_MS = 1000
@@ -161,6 +170,8 @@ const STALE_LOOKUP = Symbol('stale-index-lookup')
 
 export class ContentStore {
   private readonly root: string
+  /** See ContentStoreOptions.contentRootName — the ID index scan root. */
+  private readonly contentRootName: string
   private readonly schemaIndex: Map<string, FlatSchemaItem>
   /** Swapped wholesale on rebuild — in-flight callers keep their (older) snapshot. */
   private _idIndex: ContentIdIndex
@@ -182,6 +193,7 @@ export class ContentStore {
 
   constructor(root: string, flatSchema: FlatSchemaItem[], options: ContentStoreOptions = {}) {
     this.root = path.resolve(root)
+    this.contentRootName = options.contentRootName || 'content'
     this.indexFreshnessIntervalMs =
       options.indexFreshnessIntervalMs ?? DEFAULT_INDEX_FRESHNESS_INTERVAL_MS
     this.schemaIndex = new Map(flatSchema.map((item) => [item.logicalPath, item]))
@@ -238,7 +250,7 @@ export class ContentStore {
         // in-flight callers hold the previous reference across awaits and must
         // keep seeing a consistent (if outdated) snapshot, never a half-built one.
         const fresh = new ContentIdIndex(this.root)
-        await fresh.buildFromFilenames('content')
+        await fresh.buildFromFilenames(this.contentRootName)
         return { diskToken, fresh }
       })()
       this.indexBuild = build
@@ -1291,19 +1303,24 @@ export class ContentStore {
    * Returns array of entry metadata (relativePath, collection, slug).
    * Returns empty array if the collection doesn't exist.
    */
-  async getCollectionEntryPaths(collectionPath: LogicalPath): Promise<
-    Array<{
-      relativePath: PhysicalPath
-      collection: LogicalPath
-      slug: Slug
-    }>
-  > {
-    const idIndex = await this.idIndex()
-
-    // Try to find the collection in the schema index
+  /**
+   * Resolve a schema collection referenced by name or logical path.
+   *
+   * Accepts either a full logical path ("content/authors") or a bare
+   * collection name ("authors") — the contract reference fields use for
+   * `collections: [...]` (see README). This is the single normalization
+   * point shared by reference-option loading and reference validation so
+   * the dropdown and the write boundary can never disagree.
+   *
+   * CAVEAT: the bare-name fallback matches on the LAST path segment and
+   * returns the first hit in schema order — with two collections sharing a
+   * leaf name (e.g. content/blog/posts and content/news/posts), a bare
+   * 'posts' is ambiguous. Use the full logical path in schemas that nest
+   * same-named collections.
+   */
+  resolveCollectionItem(collectionPath: string): FlatSchemaItem | undefined {
     // The schema index uses normalized logical paths like "content/authors"
-    // But we might receive either "authors" or "content/authors"
-    const normalized = normalizeFilesystemPath(collectionPath)
+    const normalized = normalizeFilesystemPath(collectionPath as LogicalPath)
     let item = this.schemaIndex.get(normalized)
 
     // If not found by full path, try matching the last segment
@@ -1320,12 +1337,23 @@ export class ContentStore {
       }
     }
 
+    return item && item.type === 'collection' ? item : undefined
+  }
+
+  async getCollectionEntryPaths(collectionPath: LogicalPath): Promise<
+    Array<{
+      relativePath: PhysicalPath
+      collection: LogicalPath
+      slug: Slug
+    }>
+  > {
+    const idIndex = await this.idIndex()
+
     // Return empty array if collection doesn't exist or isn't a collection
-    if (!item || item.type !== 'collection') {
+    const collection = this.resolveCollectionItem(collectionPath)
+    if (!collection) {
       return []
     }
-
-    const collection = item
 
     // Get entries from this collection and all subcollections via tree traversal
     const treeEntries = idIndex.getEntriesInCollectionTree(collection.logicalPath)

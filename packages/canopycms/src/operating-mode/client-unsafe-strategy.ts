@@ -9,6 +9,7 @@
 
 import path from 'node:path'
 import { ProdClientSafeStrategy, DevClientSafeStrategy } from './client-safe-strategy'
+import { resolveDeploymentName } from './deployment-name'
 import type { OperatingMode, ClientUnsafeStrategy } from './types'
 import type { CanopyConfig } from '../config'
 import { DEFAULT_PROD_WORKSPACE } from '../config'
@@ -29,10 +30,10 @@ class ProdStrategy extends ProdClientSafeStrategy implements ClientUnsafeStrateg
     return path.resolve(process.env.CANOPYCMS_WORKSPACE_ROOT ?? DEFAULT_PROD_WORKSPACE)
   }
 
-  getContentRoot(sourceRoot?: string): string {
+  getContentRoot(contentRoot: string, sourceRoot?: string): string {
     // In prod, content is at workspace root (not project root)
     // This is called with sourceRoot = workspace path
-    return path.resolve(sourceRoot ?? process.cwd(), 'content')
+    return path.resolve(sourceRoot ?? process.cwd(), contentRoot)
   }
 
   getContentBranchesRoot(sourceRoot?: string): string {
@@ -74,8 +75,7 @@ class ProdStrategy extends ProdClientSafeStrategy implements ClientUnsafeStrateg
     defaultBaseBranch?: string
   }): string {
     if (config.settingsBranch) return config.settingsBranch
-    const deploymentName = config.deploymentName ?? 'prod'
-    return `canopycms-settings-${deploymentName}`
+    return `canopycms-settings-${resolveDeploymentName(config, 'prod')}`
   }
 
   getSettingsRoot(sourceRoot?: string): string {
@@ -108,8 +108,8 @@ class DevStrategy extends DevClientSafeStrategy implements ClientUnsafeStrategy 
     return path.resolve(sourceRoot ?? process.cwd(), '.canopy-dev')
   }
 
-  getContentRoot(sourceRoot?: string): string {
-    return path.resolve(sourceRoot ?? process.cwd(), 'content')
+  getContentRoot(contentRoot: string, sourceRoot?: string): string {
+    return path.resolve(sourceRoot ?? process.cwd(), contentRoot)
   }
 
   getContentBranchesRoot(sourceRoot?: string): string {
@@ -150,8 +150,7 @@ class DevStrategy extends DevClientSafeStrategy implements ClientUnsafeStrategy 
     defaultBaseBranch?: string
   }): string {
     if (config.settingsBranch) return config.settingsBranch
-    const deploymentName = config.deploymentName ?? 'local'
-    return `canopycms-settings-${deploymentName}`
+    return `canopycms-settings-${resolveDeploymentName(config, 'local')}`
   }
 
   getSettingsRoot(sourceRoot?: string): string {

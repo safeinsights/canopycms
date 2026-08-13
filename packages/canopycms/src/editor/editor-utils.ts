@@ -54,8 +54,14 @@ export const buildPreviewSrc = (
     (entry.collectionPath && previewBaseByCollection?.[entry.collectionPath]) ??
     (entry.collectionName && previewBaseByCollection?.[entry.collectionName])
   if (!base) {
-    // Build URL from collection path + slug
-    const collectionPath = entry.collectionPath ? normalizeCollectionPath(entry.collectionPath) : ''
+    // Build URL from collection path + slug. Pass contentRoot through so a
+    // non-default (or multi-segment, e.g. "cms/content") configured root is
+    // stripped too -- normalizeCollectionPath defaults to 'content' when
+    // contentRoot is undefined here, which matches the pre-existing behavior
+    // for adopters who never set it.
+    const collectionPath = entry.collectionPath
+      ? normalizeCollectionPath(entry.collectionPath, contentRoot)
+      : ''
     const encoded = encodeSlug(entry.slug)
     const segments = [collectionPath, encoded].filter(Boolean)
     const url = segments.length > 0 ? `/${segments.join('/')}` : '/'

@@ -12,8 +12,23 @@ A schema-driven, branch-aware content management system for git-backed, statical
 - **Minimal integration**: Just config, one editor component, and one API route
 - **Framework-agnostic core**: Works with Next.js today, adaptable to other frameworks
 
+## Requirements
+
+- **Next.js**: `^13.5.7`, `^14.2.25`, `^15.2.3`, or `16.x` excluding `16.2.x` (see [Known-bad version: Next 16.2.x](#known-bad-version-next-162x) below). This is `canopycms-next`'s `next` peer dependency range -- installing a version outside it triggers your package manager's peer-dependency warning.
+- **React**: `^18.0.0` or `^19.0.0`
+- **Node.js**: `>=18` to consume the published packages; `>=22` to work in this monorepo (see `.nvmrc`).
+
+### Known-bad version: Next 16.2.x
+
+Next 16.2.x fork-bombs `next dev --turbopack`: the dev server boots, logs `○ Compiling /`, and the Node process tree self-replicates (255 → 511 → 1023 ...) until the machine saturates. Bisected to Turbopack's PostCSS plugin resolution triggering on any imported CSS file -- including `@mantine/core/styles.css`, which the CanopyCMS editor depends on, so any adopter using the default editor hits this on first `pnpm dev` after upgrading. Not reproducible on Next 16.1.7.
+
+`canopycms-next`'s `next` peer dependency excludes `16.2.x` specifically -- 16.0.x and 16.1.x are unaffected, and 16.3.x+ is allowed because the regression has only been observed and bisected in 16.2.x; it has not been verified as still broken (or fixed) in later releases, so blocking them preemptively would be a guess, not a documented constraint. If you hit this on a version outside 16.2.x, please file an issue so this range can be corrected.
+
+If you're currently on 16.2.x, downgrade to `~16.1.7` (known-good) until this is resolved upstream.
+
 ## Table of Contents
 
+- [Requirements](#requirements)
 - [Quick Start](#quick-start)
 - [Schema Registry and References](#schema-registry-and-references)
 - [Configuration Reference](#configuration-reference)
@@ -30,6 +45,7 @@ A schema-driven, branch-aware content management system for git-backed, statical
 - [AI-Ready Content](#ai-ready-content)
 - [Using the Editor](#using-the-editor)
 - [Adopter Touchpoints Summary](#adopter-touchpoints-summary)
+- [Deploying to AWS](#deploying-to-aws)
 - [Local Development Sync](#local-development-sync)
 - [Migrating Existing Content](#migrating-existing-content)
 - [Environment Variables](#environment-variables)
@@ -626,7 +642,7 @@ Available schemas: author, home, doc
 | `gitBotAuthorEmail`   | `string`                                         | Yes      | -           | Email used for git commits made by CanopyCMS                                                                                                                                                                                                                                                                                     |
 | `mode`                | `'dev' \| 'prod'`                                | **Yes**  | -           | Operating mode (see below). No default — a deploy that omits `mode` fails config validation at startup with a clear error, rather than silently running insecure dev auth semantics in production.                                                                                                                               |
 | `contentRoot`         | `string`                                         | No       | `'content'` | Root directory for content files relative to project root                                                                                                                                                                                                                                                                        |
-| `defaultBaseBranch`   | `string`                                         | No       | `'main'`    | Git branch used as the fork point for CMS content branches (typically `main`)                                                                                                                                                                                                                                                    |
+| `defaultBaseBranch`   | `string`                                         | No       | `'main'`    | Git branch used as the fork point for CMS content branches (typically `main`). This branch can never be submitted for review, and in `prod` mode it's read-only in the editor — see [Submitting for Review](#submitting-for-review).                                                                                             |
 | `defaultActiveBranch` | `string`                                         | No       | (see below) | Which workspace the dev server serves content from and which branch the editor opens by default. In dev mode, auto-detected from the current git branch. In prod mode, falls back to `defaultBaseBranch`                                                                                                                         |
 | `defaultBranchAccess` | `'allow' \| 'deny'`                              | No       | `'deny'`    | Default access policy for new branches                                                                                                                                                                                                                                                                                           |
 | `defaultPathAccess`   | `'allow' \| 'deny' \| { read?, edit?, review? }` | No       | `'deny'`    | Default access policy for content paths when no permission rule matches. The object form scopes the default per permission level (e.g. `{ read: 'allow' }` for public read without opening edit/review). An unspecified level resolves to `'deny'`. See [Public read on server deployments](#public-read-on-server-deployments). |
@@ -675,7 +691,7 @@ The hook receives `{ entryPath, branch, entryType?, format, data, body }` for ev
 `mode` is required in `defineCanopyConfig` — there is no default. CanopyCMS throws at config validation time if it's omitted, so a deployment can't accidentally run in production with dev-mode auth semantics.
 
 - **`dev`**: Full-featured local development with branching and git operations. Uses a local bare remote at `.canopy-dev/remote.git` and branch workspaces at `.canopy-dev/content-branches/`. `defaultActiveBranch` is auto-detected from the current git branch (e.g., if you are on `feat-bar`, the dev server and editor default to that branch). The dev server silently follows branch switches — no restart needed. Add `.canopy-dev/` to `.gitignore`.
-- **`prod`**: Production deployment with branch workspaces on persistent storage (e.g., AWS Lambda + EFS). `defaultActiveBranch` falls back to `defaultBaseBranch` (usually `main`) but can be explicitly configured (e.g., to a staging branch). Permissions and groups are tracked in git on an orphan settings branch. In `prod` mode, your configured `authPlugin` must declare `verifiesCredentials: true` (see [Connecting the Schema Registry](#connecting-the-schema-registry)) — CanopyCMS refuses to start otherwise.
+- **`prod`**: Production deployment with branch workspaces on persistent storage (e.g., AWS Lambda + EFS). `defaultActiveBranch` falls back to `defaultBaseBranch` (usually `main`) but can be explicitly configured (e.g., to a staging branch). Because editors typically land on the base branch by default, it's read-only in the editor in `prod` mode (see [Submitting for Review](#submitting-for-review)). Permissions and groups are tracked in git on an orphan settings branch. In `prod` mode, your configured `authPlugin` must declare `verifiesCredentials: true` (see [Connecting the Schema Registry](#connecting-the-schema-registry)) — CanopyCMS refuses to start otherwise.
 
 ### Local Development Sync
 
@@ -907,6 +923,8 @@ Then place a `.collection.json` next to each collection's content. The directory
 }
 ```
 
+**Note**: For `type: 'string'` fields, `list: true` renders as a tag input — type a value and press Enter to add it, each value shows as a removable pill, and Backspace on an empty input removes the last one.
+
 ### Field Groups
 
 Field groups let you visually organize related fields in the editor without forcing you to restructure your content files. Two helpers are available:
@@ -1106,6 +1124,8 @@ Reference fields accept `collections`, `entryTypes`, or both to scope which entr
 - **`collections`** — Scope by collection path(s), including all subcollections within that tree
 - **`entryTypes`** — Scope by entry type name(s), regardless of which collection the entries live in
 - **Both** — Combine for precise scoping (e.g., only `partner` entries within the `data-catalog` tree)
+
+> Every `entryTypes` value is validated against the entry type names actually defined in your `.collection.json` files. A name that doesn't match any of them is a hard error at schema resolution — naming the field, its location, a "did you mean" suggestion when there's a close match, and the full list of known entry types — rather than a picker that silently returns zero options. **Upgrade note:** if you have an existing `entryTypes` typo, it previously failed silently; it will now fail loudly until corrected.
 
 ```typescript
 const schema = defineEntrySchema([
@@ -1671,9 +1691,17 @@ directive rather than a derived file. Declare an `aspect` on the field (e.g. `'1
 `'1:1'`) to enable the interactive crop step, and `altOptional: true` for decorative
 images.
 
-**Permissions** — any authenticated editor can upload and list assets; deleting an asset
-from the library is admin-only (and removes only the library record — existing content
-references keep resolving).
+**Permissions** — any authenticated editor can upload and list assets. Deleting an asset
+from the library requires being an admin **or** the person who uploaded it, and removes
+only the library record — existing content references keep resolving.
+
+> **The asset store is site-wide, not branch-scoped.** Because assets are content-addressed
+> and shared (which is what lets a branch merge avoid moving files), branch and path ACLs do
+> **not** apply to them. Any authenticated editor can list and fetch every asset in the site,
+> including images uploaded on branches they cannot otherwise access. Asset URLs are
+> unguessable, but the library listing is open to all signed-in users, so treat "uploaded to
+> CanopyCMS" as visible to your whole editorial team — confidential material does not belong
+> in the asset store.
 
 **Infrastructure** — the `canopycms-cdk` package ships an `AssetSupport` construct that
 provisions the bucket (or attaches to an existing one), the transform Lambda, and the
@@ -1982,6 +2010,10 @@ Every entry gets an automatic UUID that stays the same even when you rename or m
 5. **Auto-archive**: The CMS worker detects the merge on its next git-sync cycle (default every 5 minutes), archives the branch, and fast-forwards the base branch's content view automatically — no manual cleanup needed. If a PR is closed without merging, the branch stays "submitted" with a "PR closed" badge for an admin to follow up.
 6. **Deploy**: Your CI/CD rebuilds the site after merge
 
+The base branch itself (the PR target, usually `main`) is protected — it can never be submitted for review, and in production it's read-only in the editor until someone creates a branch off of it. See [Submitting for Review](#submitting-for-review).
+
+The branch list also surfaces live sync-status badges — `syncing`, `sync-failed`, and `conflict` — visible to every user, so anyone can see at a glance when a branch's underlying git clone needs attention, alongside the existing `Merged` and `PR closed` badges.
+
 ### Comments System
 
 Comments enable asynchronous review workflows at three levels:
@@ -2025,6 +2057,14 @@ Two things to weigh before enabling this:
 A `FORBIDDEN` denial from a server-component read via `readByUrlPath` renders as `null`, so your page's existing `if (!result) return notFound()` produces an ordinary 404 -- not a 500, and without revealing that the content exists but is restricted. The denial reason is still emitted to the debug log (`CANOPYCMS_DEBUG=true`) for troubleshooting.
 
 For this to work, pages that render content at request time should use the null-safe `readByUrlPath` rather than the strict `read()`: `read()` throws on both missing and forbidden content, which surfaces as a 500 error page unless you catch it yourself. Reserve `read()` for contexts where the content is known to exist and be readable (build-time generation, or after an explicit access check).
+
+### System Health (Admins)
+
+Admins get a "System health" panel in the editor's Settings menu for observing the CMS's operational state. It requires no extra integration -- it rides the same Editor component and catch-all API route as everything else:
+
+- **Worker liveness**: See whether the CMS worker daemon (the process that syncs branches with git, detects merges, and archives merged branches) is running, and its last heartbeat.
+- **Task queue**: Inspect queued and failed background tasks, with retry and delete actions.
+- **Branch directory health**: See the health of each branch's git workspace, with repair and purge actions for ones that have drifted or gone stale.
 
 ### Live Preview
 
@@ -2261,6 +2301,8 @@ This section describes how to use the CanopyCMS editor interface from a content 
 2. Sign in with your authentication provider (Clerk, etc.)
 3. Select or create a branch to work on
 
+> In production, the editor opens on the base branch (e.g. `main`) by default. This branch is browsable but read-only — click "Create a branch" in the banner, or use the branch selector, to start editing. See [Submitting for Review](#submitting-for-review).
+
 ### Working with Branches
 
 **Creating a branch:**
@@ -2270,11 +2312,21 @@ This section describes how to use the CanopyCMS editor interface from a content 
 3. Enter a descriptive name (e.g., `update-homepage-hero`)
 4. Your branch is created and you can start editing
 
+> Branch names are sanitized for use as git branch names and filesystem paths: any character other than letters, numbers, `.`, `_`, and `-` (e.g. `/`) is replaced with `-`. A name like `feature/hero-update` is created as `feature-hero-update`, and the editor consistently displays and uses that sanitized name everywhere (branch selector, Branches panel, URLs).
+>
+> A few names are reserved because they collide with a static top-level API route and can't be used for a branch: `admin`, `assets`, `branches`, `groups`, `permissions`, `users`, `whoami`. Creating one of these is rejected with a 400 error explaining the collision. Matching is exact and case-sensitive, so `Admin` or `admin-docs` are unaffected.
+
 **Switching branches:**
 
 1. Click the branch selector
 2. Choose from available branches
 3. The editor loads content from the selected branch
+
+> The base branch is marked with a "Protected" badge in the branch list. It can't be submitted for review, and in production it can't be edited directly — create a branch instead.
+
+**Branch status badges:**
+
+- The branch selector and Branches panel show status badges -- `syncing`, `sync-failed`, and `conflict` -- so anyone can tell at a glance when a branch's underlying git clone needs attention, alongside the existing `Merged` and `PR closed` badges.
 
 ### Editing Content
 
@@ -2288,11 +2340,11 @@ This section describes how to use the CanopyCMS editor interface from a content 
 
 1. Edit fields using the form on the left
 2. See changes reflected in the live preview on the right
-3. Click "Save" to persist changes to your branch (changes are NOT committed yet)
+3. Click "Save" to persist changes to your branch (changes are NOT committed yet) — this also clears your local unsaved draft for that file
 
 **Discarding changes:**
 
-- Use "Discard" to revert unsaved changes to the last saved state
+- Use "Discard" to revert unsaved changes to the last saved state. You'll be asked to confirm before anything is discarded.
 
 ### Submitting for Review
 
@@ -2303,6 +2355,10 @@ When your changes are ready:
 3. The PR can be reviewed using standard GitHub workflows
 4. Once merged, CanopyCMS detects it automatically (within one worker sync cycle) and marks the branch "Merged" in the Branches panel — your changes are also deployed with the next site build
 5. If the PR is closed without merging, the branch shows a "PR closed" badge and stays submitted until an admin follows up
+
+**A submitted branch is locked for content editing.** Once you submit, the editor disables Save and other write actions and shows a banner explaining that the branch is submitted for review (the server rejects edit requests too, so this isn't just a UI restriction). To resume editing, click "Withdraw" in the branch selector or Branches panel — this converts the PR back to a draft and returns the branch to `editing` status — or wait for a reviewer to click "Request changes" on the branch, which does the same thing and signals that revisions are needed.
+
+The base branch (the PR target, usually `main`) can never be submitted — a branch can't be reviewed against itself, so the "Submit for Review" button is hidden whenever you're viewing it, in both dev and production. In production the base branch is also read-only in the editor: you can browse it, but making changes requires creating a branch first (the editor shows a banner with a "Create a branch" button when you're viewing it, and the base branch carries a "Protected" badge in the branch list). In dev mode the base branch stays fully editable — since local development typically starts there — but you'll still need to move your work to a branch before it can be submitted.
 
 ### Using Comments
 
@@ -2329,6 +2385,15 @@ Admins can configure access control:
 2. **Groups**: Create groups and add users
 3. **Permissions**: Set path-based access rules
 
+### System Health (Admins)
+
+Admins can check the CMS's operational health from the same Settings menu:
+
+1. Go to Settings (gear icon) → **System Health**
+2. **Worker**: See whether the CMS worker daemon is alive and its last heartbeat
+3. **Task Queue**: Inspect queued and failed background tasks; retry or delete individual tasks
+4. **Branch Directories**: See per-branch workspace health; repair or purge unhealthy ones
+
 ## Adopter Touchpoints Summary
 
 CanopyCMS is designed for minimal integration effort. Run `npx canopycms init` to generate all required files, or create them manually. Use `--app-dir` to customize the app directory path (default: `app`).
@@ -2352,6 +2417,32 @@ CanopyCMS is designed for minimal integration effort. Run `npx canopycms init` t
 Setting the `CANOPY_AUTH_MODE` environment variable (`dev` or `clerk`) switches auth providers for `canopy.ts` and the edit page at runtime, with no regeneration needed for those two files. `middleware.ts` is the exception: it is generated once, frozen to the auth provider chosen at `init` time, and does not read `CANOPY_AUTH_MODE`. If you switch auth providers after init (or just flip the env var), you must regenerate (`npx canopycms init --force`) or manually swap `middleware.ts` to match -- otherwise the passthrough middleware keeps `/edit` and `/api/canopycms` unprotected at the edge. This is a defense-in-depth gap rather than a full auth bypass (the Clerk auth plugin still rejects unauthenticated API calls, and the core fails closed in prod mode), but it should not be left unaddressed. The generated passthrough `middleware.ts` logs a warning if it detects `CANOPY_AUTH_MODE=clerk` at runtime to help catch this mismatch.
 
 Everything else (branch management, content storage, permissions, comments, bootstrap admin groups, meta file loading) is handled automatically by CanopyCMS.
+
+## Deploying to AWS
+
+```bash
+npx canopycms init-deploy aws
+```
+
+Scaffolds a complete, deployable CDK app for the recommended AWS architecture (Lambda, no internet access, + an EC2 worker + EFS, with optional CloudFront/Route53) alongside the Dockerfile and CI workflow:
+
+| File                               | Purpose                                                                                                                                                                     |
+| ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Dockerfile.cms` / `.dockerignore` | Lambda Web Adapter image; install/build commands match your detected package manager (npm, pnpm, or Yarn — from `packageManager`, else the lockfile)                        |
+| `.github/workflows/deploy-cms.yml` | CI/CD workflow; triggers on your repo's default branch (detected from `origin/HEAD`) and deploys the stack **by name**, so it can't touch unrelated stacks in the same repo |
+| `cdk.json`                         | CDK app entry point                                                                                                                                                         |
+| `infrastructure/bin/app.ts`        | CDK app; reads its configuration from environment variables and refuses to synth if a required one is missing                                                               |
+| `infrastructure/lib/cms-stack.ts`  | the stack itself, yours to edit (memory/concurrency, media support, an existing distribution, etc.)                                                                         |
+
+Install the CDK dependencies it needs — the CLI, and the generated workflow, both warn if any are missing:
+
+```bash
+npm install --save-dev canopycms-cdk aws-cdk-lib constructs tsx aws-cdk
+```
+
+Like `init`, this command never overwrites files you already have; pass `--force` to regenerate them.
+
+Full walkthrough — required secrets/variables, filling in the stack, and troubleshooting — lives in [docs/deploying-to-aws.md](docs/deploying-to-aws.md).
 
 ## Environment Variables
 

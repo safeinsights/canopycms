@@ -1,4 +1,4 @@
-export type { Task, TaskStatus, QueueStats, TaskQueueLogger } from './types'
+export type { Task, TaskStatus, QueueStats, TaskQueueLogger, CorruptTaskFile } from './types'
 
 export {
   enqueueTask,
@@ -6,9 +6,11 @@ export {
   completeTask,
   failTask,
   retryTask,
+  requeueFailedTask,
   recoverOrphanedTasks,
   cleanupOldTasks,
   getTask,
   listTasks,
   getQueueStats,
+  listCorruptTaskFiles,
 } from './task-queue'

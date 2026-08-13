@@ -59,7 +59,7 @@ export async function generateAIContentFiles(
   assertBuildEntriesValid(entriesForValidation, 'AI content generation')
 
   // Create store and generate
-  const store = new ContentStore(branchRoot, flatSchema)
+  const store = new ContentStore(branchRoot, flatSchema, { contentRootName })
   const result = await generateAIContent({
     store,
     flatSchema,

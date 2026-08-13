@@ -1,13 +1,16 @@
+import { existsSync } from 'node:fs'
 import * as path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { Construct } from 'constructs'
 import {
   Duration,
   RemovalPolicy,
+  Stack,
   aws_cloudfront as cloudfront,
   aws_cloudfront_origins as origins,
   aws_iam as iam,
   aws_lambda as lambda,
+  aws_logs as logs,
   aws_s3 as s3,
 } from 'aws-cdk-lib'
 
@@ -15,6 +18,31 @@ import {
 // output is real ESM - `__dirname` is not a global there. Derive it from
 // `import.meta.url` instead (mirrors ../../lambda/asset-transform/build.mjs).
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
+
+/**
+ * The transform Lambda's built code asset. Computed ONCE and shared by the
+ * deployability guard and `Code.fromAsset()` below - if the check and the
+ * bundle ever read two independently-computed paths, the guard can silently
+ * start statting a directory that is never the one being deployed, and
+ * nothing about either call site would look wrong.
+ *
+ * The `'..', '..'` walk is correct from both `<pkg>/src/constructs/` (local
+ * source) and `<pkg>/dist/constructs/` (published package) only because those
+ * sit at the same depth - see the `__dirname` note above.
+ */
+const transformAssetDir = path.join(__dirname, '..', '..', 'lambda', 'asset-transform', 'dist')
+
+/**
+ * Written by `build:lambda` as the last act of a successful FULL build, once
+ * the linux/arm64 sharp binary is verified present. See that script's header
+ * for why the marker is positive rather than negative: a partial build (a
+ * thrown `npm install sharp`, a failed platform check) leaves a sharp-less
+ * `dist/` on disk WITHOUT reaching the `--skip-native` branch, so a
+ * "is it marked bad?" test would wave exactly that bundle through to a
+ * deploy. Requiring proof-of-good instead fails closed on every unexpected
+ * path, including the producer's and consumer's paths drifting apart.
+ */
+const DEPLOYABLE_MARKER = '.deployable'
 
 /**
  * The four S3 key prefixes the asset system uses, mirrored from
@@ -122,6 +150,43 @@ export interface AssetSupportProps {
    * @default false
    */
   readonly autoDeleteObjects?: boolean
+
+  /**
+   * Require the transform Lambda's code asset to carry proof that it was
+   * built with its native sharp binary (the `.deployable` marker written by
+   * `build:lambda`). Leave this ON for anything that can reach a real
+   * deploy.
+   *
+   * Set to `false` ONLY in this package's own tests, which deliberately
+   * synth against the cheap `--skip-native` fixture bundle that
+   * `build:test-fixtures` produces - the suite never executes the handler,
+   * so the binary is irrelevant to what it asserts, and requiring a real
+   * build would put a live `npm install sharp` back in front of every test
+   * run (which is what kept these tests out of CI in the first place).
+   *
+   * Adopters never need this: the published package's asset is built by
+   * `prepack`'s full `build:lambda`, so the marker is always present.
+   *
+   * @default true
+   */
+  readonly requireDeployableBundle?: boolean
+
+  /**
+   * Retention for the transform Lambda's CloudWatch log group (default:
+   * three months / 90 days).
+   */
+  readonly transformLogRetention?: logs.RetentionDays
+
+  /**
+   * Name for the transform Lambda's CloudWatch log group (default:
+   * `/canopycms/<stackName>/transform`). Deliberately NOT
+   * `/aws/lambda/<function-name>` - see `transformLogGroup`'s comment in the
+   * constructor for why a CDK-managed group must avoid that exact name once
+   * the function has ever been deployed without one. Override to follow an
+   * org naming convention, or when instantiating this construct twice in one
+   * stack (the default name would collide).
+   */
+  readonly transformLogGroupName?: string
 }
 
 /**
@@ -180,7 +245,10 @@ export interface AssetCloudFrontBehaviors {
  * - The bucket's asset-prefix lifecycle rule + CORS (standalone mode only).
  * - The transform Lambda (`../../lambda/asset-transform/handler.ts`, built
  *   via `pnpm run build:lambda` - see that script's doc comment for the
- *   no-Docker sharp bundling approach) and its OAC-locked Function URL.
+ *   no-Docker sharp bundling approach), its dedicated CloudWatch log group
+ *   (custom name/retention/removal policy instead of the
+ *   CloudFormation-implicit `/aws/lambda/<function-name>` group), and its
+ *   OAC-locked Function URL.
  * - `assetBehaviors()`, the two CloudFront behavior configs a consuming
  *   distribution attaches (see `AssetCloudFrontBehaviors`'s doc comment for
  *   both attachment shapes).
@@ -194,6 +262,9 @@ export class AssetSupport extends Construct {
   /** The transform Lambda function. */
   public readonly transformFunction: lambda.Function
 
+  /** The transform Lambda's CloudWatch log group (Lambda stdout/stderr). */
+  public readonly transformLogGroup: logs.LogGroup
+
   /** The transform Lambda's Function URL - use as a CloudFront origin (see `assetBehaviors()`). */
   public readonly transformFunctionUrl: lambda.FunctionUrl
 
@@ -204,6 +275,30 @@ export class AssetSupport extends Construct {
 
   constructor(scope: Construct, id: string, props: AssetSupportProps) {
     super(scope, id)
+
+    // Fail closed before anything else: refuse to build a stack around a
+    // transform Lambda whose code asset was never verified to contain the
+    // linux/arm64 sharp binary. Without this, `pnpm test` (whose
+    // canopycms-cdk suite rebuilds that directory as a --skip-native
+    // fixture) or any partially-failed build leaves a sharp-less bundle on
+    // disk, and a later in-repo `cdk deploy` ships it - producing a Lambda
+    // that throws at cold start on the first image request, a long way from
+    // the cause. Guarding in the construct rather than at one deploy
+    // entrypoint means future entrypoints inherit the protection instead of
+    // having to remember it.
+    if (
+      (props.requireDeployableBundle ?? true) &&
+      !existsSync(path.join(transformAssetDir, DEPLOYABLE_MARKER))
+    ) {
+      throw new Error(
+        `The transform Lambda code asset at ${transformAssetDir} carries no ${DEPLOYABLE_MARKER} ` +
+          'marker, so it was not built with its native sharp binary and must not be deployed. ' +
+          'This is usually a --skip-native fixture bundle left behind by `pnpm test`, or a ' +
+          '`build:lambda` run that failed partway through its sharp install.\n' +
+          'Build it for real:\n' +
+          '  pnpm --filter canopycms-cdk run build:lambda',
+      )
+    }
 
     this.maxUploadBytes = props.maxUploadBytes ?? DEFAULT_MAX_UPLOAD_BYTES
 
@@ -239,15 +334,32 @@ export class AssetSupport extends Construct {
       })
     }
 
+    // Dedicated CloudWatch log group for the transform Lambda's stdout/
+    // stderr. Custom name (NOT the CloudFormation-implicit
+    // `/aws/lambda/<function name>`), for two reasons: (1) CDK does not
+    // manage that implicit group at all - infinite retention, and
+    // `cdk destroy` leaves it behind; (2) Lambda auto-creates
+    // `/aws/lambda/<function name>` on first invoke, OUTSIDE CloudFormation -
+    // once that has happened (e.g. this construct was already deployed
+    // before this log group existed), a CDK `LogGroup` construct using that
+    // exact name would fail its `CreateLogGroup` call with "already exists"
+    // and block every future `cdk deploy`. Mirrors `CanopyCmsService`'s
+    // `workerLogGroup`/`cmsLogGroup` (cms-service.ts), which established this
+    // convention.
+    this.transformLogGroup = new logs.LogGroup(this, 'TransformFunctionLogs', {
+      logGroupName:
+        props.transformLogGroupName ?? `/canopycms/${Stack.of(this).stackName}/transform`,
+      retention: props.transformLogRetention ?? logs.RetentionDays.THREE_MONTHS,
+      removalPolicy: RemovalPolicy.DESTROY,
+    })
+
     this.transformFunction = new lambda.Function(this, 'TransformFunction', {
       // Built by `pnpm run build:lambda` (lambda/asset-transform/build.mjs) -
       // esbuild bundle + a real linux/arm64 `npm install sharp` alongside it,
       // no Docker. `cdk synth`/`deploy` need that script run first; it is
       // NOT run automatically here (kept explicit rather than magic - see
       // this construct's class doc comment).
-      code: lambda.Code.fromAsset(
-        path.join(__dirname, '..', '..', 'lambda', 'asset-transform', 'dist'),
-      ),
+      code: lambda.Code.fromAsset(transformAssetDir),
       handler: 'handler.handler',
       // nodejs20.x was deprecated 2026-04-30; CDK's CloudFormation validation
       // now fails synth on it. The esbuild bundle targets node20 and runs
@@ -256,10 +368,28 @@ export class AssetSupport extends Construct {
       architecture: lambda.Architecture.ARM_64,
       memorySize: TRANSFORM_LAMBDA_MEMORY_MB,
       timeout: TRANSFORM_LAMBDA_TIMEOUT,
+      // Pass the pre-created group via `logGroup`, NOT `logRetention` (CDK
+      // throws LogRetentionLogGroupConflict/ConflictingLogPolicyOptions if
+      // both are set on the same function) - the removal policy lives on the
+      // LogGroup construct above instead.
+      logGroup: this.transformLogGroup,
       environment: {
         ASSET_BUCKET: this.bucket.bucketName,
       },
     })
+
+    // Explicit, scoped grant - NOT a reliance on the auto-created execution
+    // role's AWSLambdaBasicExecutionRole managed policy (attached by CDK's
+    // lambda.Function regardless of `logGroup`, and never adjusted for it -
+    // passing `logGroup` only points the function's LoggingConfig at this
+    // group, it grants no IAM permissions). That managed policy's
+    // logs:CreateLogStream/logs:PutLogEvents statement is scoped to
+    // `arn:aws:logs:*:*:log-group:/aws/lambda/*:*` only (its
+    // logs:CreateLogGroup statement is the sole one that's unrestricted) -
+    // it grants nothing for a custom-named group like this one. Without this
+    // grantWrite, log delivery to this group would fail permission checks
+    // with no error surfaced anywhere - logs would simply vanish.
+    this.transformLogGroup.grantWrite(this.transformFunction)
 
     // Read access to originals (what it transforms) - deviation from the PR
     // spec's literal "read asset-originals/, write assets/" grant list: the

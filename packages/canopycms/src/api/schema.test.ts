@@ -75,11 +75,22 @@ describe('Schema API', () => {
     mockCtx = {
       getBranchContext: vi.fn().mockResolvedValue({
         branchRoot: '/test/branch',
-        branchName: 'main',
+        baseRoot: '/test',
+        branch: {
+          name: 'main',
+          status: 'editing',
+          access: {},
+          createdBy: 'u1',
+          createdAt: 'now',
+          updatedAt: 'now',
+        },
         flatSchema: mockFlatSchema,
       }),
       services: {
-        config: {},
+        // mode omitted (not 'prod') -- the 'writableBranch' guard's readOnly
+        // check is therefore always false here, matching these admin-only
+        // schema-mutation tests' intent (protection isn't under test).
+        config: { defaultBaseBranch: 'main' },
         entrySchemaRegistry: mockEntrySchemaRegistry,
         checkBranchAccess: vi.fn().mockReturnValue({ allowed: true }),
         checkContentAccess: vi.fn().mockResolvedValue({ allowed: true }),
@@ -1048,6 +1059,58 @@ describe('Schema API', () => {
 
       expect(result.ok).toBe(false)
       if (!result.ok) expect(result.error).toContain('physical path')
+    })
+  })
+
+  // Regression: getSchemaOps used to hardcode the literal 'content', so every
+  // schema mutation operated on the wrong directory for an adopter who
+  // configured a different contentRoot -- while the rest of the CMS correctly
+  // honored the config, making it a confusing partial failure.
+  describe('contentRoot configuration', () => {
+    const runCreateCollection = async (contentRoot?: string) => {
+      mockCtx.services.config = {
+        ...mockCtx.services.config,
+        ...(contentRoot === undefined ? {} : { contentRoot }),
+      } as typeof mockCtx.services.config
+
+      vi.mocked(SchemaOps).mockImplementation(function () {
+        return {
+          createCollection: vi.fn().mockResolvedValue({
+            collectionPath: 'newcol' as LogicalPath,
+            contentId: 'abc123def456',
+          }),
+        } as any
+      })
+
+      const result = await createCollection.handler(
+        mockCtx,
+        mockReq,
+        { branch: unsafeAsBranchName('main') },
+        { name: 'newcol', entries: [{ name: 'item', format: 'json', schema: 'postSchema' }] },
+      )
+      expect(result.ok).toBe(true)
+      return vi.mocked(SchemaOps).mock.calls[0]
+    }
+
+    it('builds the SchemaOps content root from config.contentRoot', async () => {
+      const call = await runCreateCollection('cms-content')
+      expect(call[0]).toBe('/test/branch/cms-content')
+    })
+
+    it('falls back to "content" when contentRoot is unset', async () => {
+      const call = await runCreateCollection(undefined)
+      expect(call[0]).toBe('/test/branch/content')
+    })
+
+    // A multi-segment contentRoot is documented as valid (config/helpers.ts).
+    // SchemaOps used to derive its branchRoot as dirname(contentRoot), which
+    // lands one level too deep for these -- putting the schema lock and
+    // .canopy-meta in the wrong directory -- so the branch root is now passed
+    // explicitly.
+    it('passes branchRoot explicitly so a multi-segment contentRoot still resolves', async () => {
+      const call = await runCreateCollection('cms/content')
+      expect(call[0]).toBe('/test/branch/cms/content')
+      expect(call[3]).toBe('/test/branch')
     })
   })
 })

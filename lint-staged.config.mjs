@@ -1,5 +1,12 @@
 const config = {
   '*.{js,jsx,ts,tsx,md,html,css,json,yaml,yml}': ['prettier --write', 'eslint --fix'],
+  // Client-bundle boundary is a whole-graph property, so this runs once per
+  // commit that touches package sources rather than once per file.
+  'packages/canopycms{,-next}/src/**/*.{ts,tsx}': () => 'pnpm run lint:bundle',
+  // Backlog consistency (dead links, stale open rows, orphans) is likewise a
+  // whole-tree property: a link breaks in the file that did NOT change when its
+  // target moved, so a per-file check would miss exactly the case that rots.
+  '.claude/future-tasks/**/*.md': () => 'pnpm run lint:tasks',
 }
 
 export default config
