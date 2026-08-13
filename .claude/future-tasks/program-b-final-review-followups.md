@@ -261,6 +261,27 @@ reorder handler at `Editor.tsx:694`) are guarded by not-found early returns and
 are unreachable with entries empty. No test covers a modal open across a switch;
 this was a reasoned call, not an oversight.
 
+**Correction (2026-08-13): the reorder handler's guard was NOT actually
+unreachable.** Found by the 2026-08-12 adversarial review of the editor's
+write-lock surface; fixed in the PR that added this correction. The claim above
+conflated the two write paths -- `handleCreateEntry`'s half is accurate,
+`handleReorderEntry`'s is not. `handleReorderEntry` never reads `entriesState`
+at all: it resolves its target collection with
+`findCollection(activeCollections, collectionPath)`, and `activeCollections`
+(`collectionsFromApi.length > 0 ? collectionsFromApi : collections`) is exactly
+what stays NON-empty during a switch for any adopter who passes a `collections`
+prop -- the first-party shape this whole section is about, and the same
+fallback the navigator-spinner correction above already flagged. So the
+guard's `if (!collection) return` never fired: the handler resolved the OLD
+branch's collection out of the stale build-time props and sent ITS `order`
+array as a write to the NEW branch. Fixed by resolving against
+`collectionsFromApi` directly instead of `activeCollections`, so "not yet
+loaded for this branch" and "loaded, has no such collection" are now the same
+(correct) not-found outcome -- plus a user-visible notification, since a
+silent no-op on a clicked menu item reads as a broken button. See
+`Editor.integration.test.tsx`'s `'reorder mid-branch-switch'` tests for the
+regression coverage this section noted was missing.
+
 ---
 
 ## ~~HIGH — the deploy template has no CDK app to deploy against~~ (RESOLVED 2026-08-12)
@@ -326,8 +347,22 @@ the GitHub fetch and this deployment simply has not had a settings edit yet —
 a warning every 5 minutes, wrongly.
 
 Note for adopters: env now beats a `deploymentName` passed programmatically to
-`CmsWorker`, matching the Lambda. An invalid stamped value now throws at
-construction (a loud startup exit) instead of producing a broken branch name.
+`CmsWorker`, matching the Lambda. An invalid stamped value now throws ~~at
+construction (a loud startup exit)~~ instead of producing a broken branch name.
+
+**Correction (2026-08-13, `fix/worker-startup-surfacing`).** "A loud startup
+exit" was wrong, and the 2026-08-12 adversarial review of
+`integration-202607-a` caught it. `lastFatalError` is written only by
+`start()`'s catch, and the AWS entrypoint constructs `CmsWorker`
+(`canopycms-cdk/worker/index.ts:85`) before calling `start()` (`:119`) — so a
+constructor throw landed outside every status-writing path. With systemd
+`Type=simple` + `Restart=always` and cfn-signal deliberately absent, the real
+behaviour was an INVISIBLE ~5s crash-loop: `cdk deploy` reported success and
+the admin panel showed the worker as `'absent'` with no fatal error. Resolution
+now happens in `ensureSettingsBranch()`, called first inside `start()`'s try,
+so the same throw is recorded to `worker-status.json` and reaches the admin
+panel. The claim above is struck rather than deleted so the mis-attribution
+stays visible.
 
 ---
 

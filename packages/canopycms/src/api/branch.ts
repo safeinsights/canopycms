@@ -29,8 +29,14 @@ export type BranchResponse = ApiResponse<{ branch: BranchMetadata }>
 /**
  * A listed branch plus server-computed protected-base-branch flags (see
  * authorization/protected-branch.ts). Optional on the wire, matching the
- * `defaultBranch` precedent, so older clients/servers stay compatible; this
- * server always emits all three.
+ * `defaultBranch` precedent -- this server always emits all three, but an
+ * older server won't. That optionality does not make the two directions
+ * symmetric: the editor client now defaults every missing flag fail-closed
+ * (`?? true`), so a NEW client talking to an OLD server that omits these
+ * fields degrades to fully locked -- read-only, Submit hidden, and (see
+ * EditorHeader's `branchDataUnavailable`) a "could not be loaded" banner --
+ * rather than silently behaving as if nothing changed. That is by design:
+ * wire compatibility here means "doesn't break", not "behaves the same".
  */
 export interface BranchListItem extends BranchMetadata {
   isProtected?: boolean
@@ -42,6 +48,22 @@ export interface BranchListItem extends BranchMetadata {
    * distinguishes WHICH lock applies, for banner copy.
    */
   writeBlocked?: boolean
+  /**
+   * Populated from {@link BranchWriteProtection.submitBlockedIncludingStatus}
+   * -- READ THAT DOC COMMENT before touching this field. On the wire this
+   * name means the COMPOUND answer (base-branch OR non-'editing' status),
+   * mirroring how `writeBlocked` above is the compound of `readOnly` + status
+   * while `readOnly` alone is just the base-branch part: `isProtected` /
+   * `submitBlocked` here is the same two-part shape (protected-branch.ts's
+   * `submitBlockedIncludingStatus = protection.submitBlocked || status !==
+   * 'editing'`). Do NOT "simplify" this to `protection.submitBlocked` --
+   * that field means ONLY "is the base branch" (it is what
+   * `api/guards.ts`'s `submittableBranch` guard reads, and that guard must
+   * keep refusing the base branch regardless of status), so swapping it in
+   * here would silently stop blocking submit on a submitted/approved/
+   * archived non-base branch.
+   */
+  submitBlocked?: boolean
 }
 
 /** Response type for listing branches */
@@ -484,6 +506,7 @@ export const listBranchesHandler = async (
       isProtected: protection.isProtected,
       readOnly: protection.readOnly,
       writeBlocked: protection.writeBlocked,
+      submitBlocked: protection.submitBlockedIncludingStatus,
     }
   }
 

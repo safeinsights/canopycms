@@ -94,6 +94,19 @@ export interface BranchSummary {
    * says WHICH, for banner copy.
    */
   writeBlocked: boolean
+  /**
+   * Server-computed compound submit rule: true when the branch can never be
+   * submitted for review, for EITHER reason -- it is the protected base
+   * branch, or its workflow status has moved past 'editing'. Mirrors
+   * `writeBlocked`'s shape (a base-branch half + a status half, combined),
+   * except this one is built from `isProtected`/`submitBlocked` (both modes)
+   * rather than `readOnly` (prod-only) -- see
+   * `BranchWriteProtection.submitBlockedIncludingStatus` for why those two
+   * compounds are genuinely different predicates, not duplicates of each
+   * other. Consumed as-is by `BranchManager.tsx`'s `canSubmit`; do not
+   * re-derive the status/protection halves client-side.
+   */
+  submitBlocked: boolean
 }
 
 export interface UseBranchManagerOptions {
@@ -124,7 +137,6 @@ export interface UseBranchManagerReturn {
   branches: BranchListItem[]
   branchSummaries: BranchSummary[]
   currentBranch: BranchListItem | undefined
-  branchStatus: string
   handleSubmit: (branchName: string) => Promise<void>
   handleWithdraw: (branchName: string) => Promise<void>
   handleRequestChanges: (branchName: string) => Promise<void>
@@ -224,7 +236,6 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
   const currentBranch =
     branches.find((b) => b.name === branchName) ??
     branches.find((b) => b.name === sanitizeBranchName(branchName))
-  const branchStatus = currentBranch?.status ?? 'editing'
 
   // Compute branch summaries with comment counts
   const branchSummaries = useMemo(() => {
@@ -249,9 +260,25 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
         conflictStatus: b.conflictStatus,
         conflictFiles: b.conflictFiles,
         commentCount: unresolvedCount,
-        isProtected: b.isProtected ?? false,
+        // Fail CLOSED (`?? true`): these flags are optional on the wire (see
+        // BranchListItem's doc comment in api/branch.ts) so a version-skewed
+        // server, or a branches-list fetch that returned partial/legacy data,
+        // can omit them. `isProtected` gates `canDelete`/`isSystemBranch` in
+        // BranchManager.tsx and `submitBlocked` gates `canSubmit` -- both real
+        // mutating actions -- so "no answer" must render as "protected"/
+        // "blocked", the same fail-closed direction as `writeBlocked` below
+        // (see Editor.tsx's `branchContentLocked` for the full rationale, which
+        // applies identically here).
+        isProtected: b.isProtected ?? true,
+        // NOT flipped to `?? true`: `readOnly` only selects WHICH lock banner
+        // to show (base-branch read-only vs. status lock) once something is
+        // already known to be locked via `writeBlocked`/`submitBlocked` --
+        // it never gates a write by itself. Defaulting it true on missing data
+        // would mislabel a status lock as a base-branch lock (wrong banner
+        // copy), not under-lock anything, so `?? false` stays correct here.
         readOnly: b.readOnly ?? false,
-        writeBlocked: b.writeBlocked ?? false,
+        writeBlocked: b.writeBlocked ?? true,
+        submitBlocked: b.submitBlocked ?? true,
       }
     })
   }, [branches, branchName, options.comments])
@@ -403,7 +430,6 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
     branches,
     branchSummaries,
     currentBranch,
-    branchStatus,
     handleSubmit,
     handleWithdraw,
     handleRequestChanges,

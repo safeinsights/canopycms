@@ -4,7 +4,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 
 import { SWRConfig } from 'swr'
-import type { EditorEntry } from './Editor'
+import type { EditorEntry, EditorCollection } from './Editor'
 import { Editor } from './Editor'
 import { ApiClientProvider } from './context'
 import { unsafeAsLogicalPath, unsafeAsContentId } from '../paths/test-utils'
@@ -119,8 +119,37 @@ describe('Editor integration', () => {
     const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const url =
         typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
-      if (url.endsWith('/api/canopycms/branches'))
-        return Promise.resolve(okJson({ ok: false, status: 404 }, 404))
+      if (url.endsWith('/api/canopycms/branches')) {
+        // A real, unlocked branch -- NOT the 404 "no branch endpoint"
+        // shorthand this test used before Change 1. `currentBranch` failing
+        // to resolve (which a 404 always produces, since branches stays [])
+        // now fails CLOSED (locks Save), and this test's point is the plain
+        // load/save flow, not branch-lock behavior, so it needs a real,
+        // unlocked branch to resolve against.
+        return Promise.resolve(
+          okJson({
+            ok: true,
+            status: 200,
+            data: {
+              branches: [
+                {
+                  name: 'main',
+                  status: 'editing',
+                  access: {},
+                  createdBy: 'user-1',
+                  createdAt: '2024-01-01',
+                  updatedAt: '2024-01-01',
+                  isProtected: false,
+                  readOnly: false,
+                  writeBlocked: false,
+                  submitBlocked: false,
+                },
+              ],
+              defaultBranch: 'main',
+            },
+          }),
+        )
+      }
       if (url.includes('/schema') && !url.includes('/schema/')) {
         return Promise.resolve(
           okJson({
@@ -295,8 +324,37 @@ describe('Editor integration', () => {
     const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const url =
         typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
-      if (url.endsWith('/api/canopycms/branches'))
-        return Promise.resolve(okJson({ ok: false, status: 404 }, 404))
+      if (url.endsWith('/api/canopycms/branches')) {
+        // A real, unlocked branch -- NOT the 404 "no branch endpoint"
+        // shorthand this test used before Change 1. `currentBranch` failing
+        // to resolve (which a 404 always produces, since branches stays [])
+        // now fails CLOSED (locks Save), and this test's point is the plain
+        // load/save flow, not branch-lock behavior, so it needs a real,
+        // unlocked branch to resolve against.
+        return Promise.resolve(
+          okJson({
+            ok: true,
+            status: 200,
+            data: {
+              branches: [
+                {
+                  name: 'main',
+                  status: 'editing',
+                  access: {},
+                  createdBy: 'user-1',
+                  createdAt: '2024-01-01',
+                  updatedAt: '2024-01-01',
+                  isProtected: false,
+                  readOnly: false,
+                  writeBlocked: false,
+                  submitBlocked: false,
+                },
+              ],
+              defaultBranch: 'main',
+            },
+          }),
+        )
+      }
       if (url.includes('/schema') && !url.includes('/schema/')) {
         return Promise.resolve(
           okJson({
@@ -456,8 +514,37 @@ describe('Editor integration', () => {
     const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const url =
         typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
-      if (url.endsWith('/api/canopycms/branches'))
-        return Promise.resolve(okJson({ ok: false, status: 404 }, 404))
+      if (url.endsWith('/api/canopycms/branches')) {
+        // A real, unlocked branch -- NOT the 404 "no branch endpoint"
+        // shorthand this test used before Change 1. `currentBranch` failing
+        // to resolve (which a 404 always produces, since branches stays [])
+        // now fails CLOSED (locks Save), and this test's point is the plain
+        // load/save flow, not branch-lock behavior, so it needs a real,
+        // unlocked branch to resolve against.
+        return Promise.resolve(
+          okJson({
+            ok: true,
+            status: 200,
+            data: {
+              branches: [
+                {
+                  name: 'main',
+                  status: 'editing',
+                  access: {},
+                  createdBy: 'user-1',
+                  createdAt: '2024-01-01',
+                  updatedAt: '2024-01-01',
+                  isProtected: false,
+                  readOnly: false,
+                  writeBlocked: false,
+                  submitBlocked: false,
+                },
+              ],
+              defaultBranch: 'main',
+            },
+          }),
+        )
+      }
       if (url.includes('/schema') && !url.includes('/schema/')) {
         return Promise.resolve(
           okJson({
@@ -818,6 +905,392 @@ describe('Editor integration', () => {
     })
   })
 
+  it('fails closed -- disables Save and hides Submit -- when the resolved branch is missing writeBlocked/isProtected on the wire (version skew)', async () => {
+    // Distinct from the read-only-banner test above: THIS branch resolves
+    // (currentBranch is defined, status is 'editing', nothing is actually
+    // protected) but the server simply didn't emit the newer flags at all --
+    // the version-skew scenario branchContentLocked's `?? true` default
+    // exists for. Before Change 1, `currentBranch?.writeBlocked ?? false`
+    // would render this branch UNLOCKED and let Save send a request the
+    // server has no basis to accept.
+    const entry: EditorEntry = {
+      path: unsafeAsLogicalPath('content/posts/hello'),
+      contentId: unsafeAsContentId('def456ABC123'),
+      label: 'Hello',
+      status: 'entry',
+      schema: [{ name: 'title', type: 'string' }],
+      apiPath: '/api/canopycms/main/content/content/posts/hello',
+      collectionPath: unsafeAsLogicalPath('content/posts'),
+      collectionName: 'posts',
+      slug: 'hello',
+      format: 'json',
+      type: 'entry',
+    }
+
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url =
+        typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
+      if (url.endsWith('/api/canopycms/branches')) {
+        return Promise.resolve(
+          okJson({
+            ok: true,
+            status: 200,
+            data: {
+              branches: [
+                {
+                  // writeBlocked/isProtected/readOnly/submitBlocked all
+                  // deliberately ABSENT -- an older server that predates
+                  // these wire fields.
+                  name: 'main',
+                  status: 'editing',
+                  access: {},
+                  createdBy: 'user-1',
+                  createdAt: '2024-01-01',
+                  updatedAt: '2024-01-01',
+                },
+              ],
+              defaultBranch: 'main',
+            },
+          }),
+        )
+      }
+      if (url.includes('/schema') && !url.includes('/schema/')) {
+        return Promise.resolve(
+          okJson({
+            ok: true,
+            status: 200,
+            data: {
+              schema: {},
+              flatSchema: [
+                {
+                  type: 'entry-type',
+                  logicalPath: 'content/posts/post',
+                  name: 'post',
+                  parentPath: 'content/posts',
+                  format: 'json',
+                  schemaRef: 'postSchema',
+                },
+              ],
+              entrySchemas: { postSchema: [{ name: 'title', type: 'string' }] },
+            },
+          }),
+        )
+      }
+      if (url.includes('/entries')) {
+        return Promise.resolve(
+          okJson({
+            ok: true,
+            status: 200,
+            data: {
+              collections: [],
+              entries: [
+                {
+                  logicalPath: entry.path,
+                  contentId: 'def456ABC123',
+                  collectionPath: entry.collectionPath,
+                  collectionName: entry.collectionName,
+                  slug: entry.slug,
+                  format: entry.format,
+                  entryType: 'post',
+                  physicalPath: '/content/posts.abc123XYZ789/post.hello.def456ABC123.json',
+                  exists: true,
+                },
+              ],
+              pagination: { hasMore: false, limit: 50 },
+            },
+          }),
+        )
+      }
+      if (url === entry.apiPath && (!init || !init.method || init.method === 'GET')) {
+        return Promise.resolve(okJson({ ok: true, status: 200, data: { title: 'Loaded title' } }))
+      }
+      return Promise.resolve(okJson({ ok: true, status: 200, data: {} }))
+    })
+
+    vi.stubGlobal('fetch', fetchMock)
+
+    renderWithProviders(
+      <Editor
+        entries={[entry]}
+        title="Test Editor"
+        branchName="main"
+        operatingMode="dev"
+        themeOptions={{}}
+      />,
+    )
+
+    let input: HTMLInputElement
+    await waitFor(() => {
+      const el = screen.queryByRole('textbox', { name: /title/i }) as HTMLInputElement | null
+      expect(el).not.toBeNull()
+      input = el!
+    })
+    fireEvent.change(input!, { target: { value: 'Modified title' } })
+
+    // Save stays disabled despite the edit -- writeBlocked's absence must
+    // fail closed, not read as "server says go ahead".
+    await waitFor(() => {
+      const saveButton = screen.getByTestId('save-button')
+      expect(saveButton.hasAttribute('disabled')).toBe(true)
+    })
+
+    // isProtected's absence must also fail closed -- Submit hides entirely,
+    // the same treatment a genuinely protected branch gets, rather than
+    // rendering enabled (or disabled-with-tooltip) as an ordinary editing
+    // branch would.
+    expect(screen.queryByTestId('submit-button')).toBeNull()
+  })
+
+  describe('reorder mid-branch-switch (Editor.tsx handleReorderEntry)', () => {
+    // Two sub-collections of a "content/posts" parent, referenced by the
+    // BUILD-TIME `collections` prop -- the data `activeCollections` falls
+    // back to whenever the fetched view (`collectionsFromApi`) is empty.
+    const subA: EditorCollection = {
+      path: unsafeAsLogicalPath('content/posts/sub-a'),
+      contentId: unsafeAsContentId('subA00000001'),
+      name: 'sub-a',
+      label: 'Sub A',
+      format: 'json',
+      type: 'collection',
+    }
+    const subB: EditorCollection = {
+      path: unsafeAsLogicalPath('content/posts/sub-b'),
+      contentId: unsafeAsContentId('subB00000002'),
+      name: 'sub-b',
+      label: 'Sub B',
+      format: 'json',
+      type: 'collection',
+    }
+    const buildTimeCollections: EditorCollection[] = [
+      {
+        path: unsafeAsLogicalPath('content/posts'),
+        name: 'posts',
+        label: 'Posts',
+        format: 'json',
+        type: 'collection',
+        order: ['subA00000001', 'subB00000002'],
+        children: [subA, subB],
+      },
+    ]
+
+    // A branch list that leaves the branch unlocked (editing, unprotected),
+    // so the reorder UI is reachable at all -- otherwise Change 1's
+    // fail-closed default would hide it and these tests would prove nothing.
+    const unlockedBranchesResponse = {
+      ok: true,
+      status: 200,
+      data: {
+        branches: [
+          {
+            name: 'main',
+            status: 'editing',
+            access: {},
+            createdBy: 'user-1',
+            createdAt: '2024-01-01',
+            updatedAt: '2024-01-01',
+            isProtected: false,
+            readOnly: false,
+            writeBlocked: false,
+            submitBlocked: false,
+          },
+        ],
+        defaultBranch: 'main',
+      },
+    }
+
+    const openNavigatorAndFindSubA = async () => {
+      fireEvent.click(screen.getByTestId('file-dropdown-button'))
+      await waitFor(() => {
+        expect(screen.getByTestId('all-files-menu-item')).toBeDefined()
+      })
+      fireEvent.click(screen.getByTestId('all-files-menu-item'))
+      // hiddenRootPath collapses the single "content/posts" root (contentRoot
+      // is pinned to it below), so its children render directly at the top
+      // level with no expand click needed.
+      await waitFor(() => {
+        expect(screen.getByTestId('entry-nav-item-sub-a')).toBeDefined()
+      })
+    }
+
+    it('does not call the update-order API and notifies the user when collectionsFromApi is empty, even though build-time collections are non-empty', async () => {
+      const fetchMock = vi.fn((input: RequestInfo | URL, _init?: RequestInit) => {
+        const url =
+          typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
+        if (url.endsWith('/api/canopycms/branches')) {
+          return Promise.resolve(okJson(unlockedBranchesResponse))
+        }
+        if (url.includes('/schema') && !url.includes('/schema/')) {
+          // Empty flatSchema -- collectionsFromApi (buildEditorCollections)
+          // resolves to [] for this branch, the same shape as the gap
+          // between a branch switch and the new branch's fetch committing.
+          return Promise.resolve(
+            okJson({
+              ok: true,
+              status: 200,
+              data: { schema: {}, flatSchema: [], entrySchemas: {} },
+            }),
+          )
+        }
+        if (url.includes('/entries')) {
+          return Promise.resolve(
+            okJson({
+              ok: true,
+              status: 200,
+              data: { collections: [], entries: [], pagination: { hasMore: false, limit: 50 } },
+            }),
+          )
+        }
+        return Promise.resolve(okJson({ ok: true, status: 200, data: {} }))
+      })
+      vi.stubGlobal('fetch', fetchMock)
+
+      renderWithProviders(
+        <Editor
+          entries={[]}
+          collections={buildTimeCollections}
+          contentRoot="content/posts"
+          title="Test Editor"
+          branchName="main"
+          operatingMode="dev"
+          themeOptions={{}}
+        />,
+      )
+
+      // Branch data has loaded and content is unlocked (no read-only banner).
+      await waitFor(() => {
+        expect(screen.queryByTestId('protected-branch-banner')).toBeNull()
+      })
+
+      await openNavigatorAndFindSubA()
+
+      fireEvent.click(screen.getByTestId('collection-menu-sub-a'))
+      const moveDown = await screen.findByText('Move Down')
+      fireEvent.click(moveDown)
+
+      const { notifications } = await import('@mantine/notifications')
+      await waitFor(() => {
+        expect(vi.mocked(notifications.show)).toHaveBeenCalledWith(
+          expect.objectContaining({ color: 'yellow' }),
+        )
+      })
+
+      // The not-found guard fired before any write went out.
+      expect(
+        fetchMock.mock.calls.some(([u, i]) => {
+          const calledUrl = typeof u === 'string' ? u : u instanceof URL ? u.toString() : u.url
+          return (
+            calledUrl.includes('/schema/order/') &&
+            (i as RequestInit | undefined)?.method === 'PATCH'
+          )
+        }),
+      ).toBe(false)
+    })
+
+    it('reorders normally once collectionsFromApi has loaded (regression guard for the fix above)', async () => {
+      const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+        const url =
+          typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
+        if (url.endsWith('/api/canopycms/branches')) {
+          return Promise.resolve(okJson(unlockedBranchesResponse))
+        }
+        if (url.includes('/schema') && !url.includes('/schema/')) {
+          return Promise.resolve(
+            okJson({
+              ok: true,
+              status: 200,
+              data: {
+                schema: {},
+                flatSchema: [
+                  {
+                    type: 'collection',
+                    logicalPath: 'content/posts',
+                    name: 'posts',
+                    label: 'Posts',
+                    order: ['subA00000001', 'subB00000002'],
+                  },
+                  {
+                    type: 'collection',
+                    logicalPath: 'content/posts/sub-a',
+                    parentPath: 'content/posts',
+                    contentId: 'subA00000001',
+                    name: 'sub-a',
+                    label: 'Sub A',
+                  },
+                  {
+                    type: 'collection',
+                    logicalPath: 'content/posts/sub-b',
+                    parentPath: 'content/posts',
+                    contentId: 'subB00000002',
+                    name: 'sub-b',
+                    label: 'Sub B',
+                  },
+                ],
+                entrySchemas: {},
+              },
+            }),
+          )
+        }
+        if (url.includes('/entries')) {
+          return Promise.resolve(
+            okJson({
+              ok: true,
+              status: 200,
+              data: { collections: [], entries: [], pagination: { hasMore: false, limit: 50 } },
+            }),
+          )
+        }
+        if (url.includes('/schema/order/') && init?.method === 'PATCH') {
+          return Promise.resolve(okJson({ ok: true, status: 200, data: { success: true } }))
+        }
+        return Promise.resolve(okJson({ ok: true, status: 200, data: {} }))
+      })
+      vi.stubGlobal('fetch', fetchMock)
+
+      renderWithProviders(
+        <Editor
+          entries={[]}
+          collections={buildTimeCollections}
+          contentRoot="content/posts"
+          title="Test Editor"
+          branchName="main"
+          operatingMode="dev"
+          themeOptions={{}}
+        />,
+      )
+
+      await waitFor(() => {
+        expect(screen.queryByTestId('protected-branch-banner')).toBeNull()
+      })
+
+      await openNavigatorAndFindSubA()
+
+      fireEvent.click(screen.getByTestId('collection-menu-sub-a'))
+      const moveDown = await screen.findByText('Move Down')
+      fireEvent.click(moveDown)
+
+      await waitFor(() => {
+        expect(
+          fetchMock.mock.calls.some(([u, i]) => {
+            const calledUrl = typeof u === 'string' ? u : u instanceof URL ? u.toString() : u.url
+            return (
+              calledUrl.includes('/schema/order/') &&
+              (i as RequestInit | undefined)?.method === 'PATCH'
+            )
+          }),
+        ).toBe(true)
+      })
+
+      const orderCall = fetchMock.mock.calls.find(([u, i]) => {
+        const calledUrl = typeof u === 'string' ? u : u instanceof URL ? u.toString() : u.url
+        return (
+          calledUrl.includes('/schema/order/') && (i as RequestInit | undefined)?.method === 'PATCH'
+        )
+      })
+      const body = JSON.parse((orderCall?.[1] as RequestInit).body as string)
+      expect(body.order).toEqual(['subB00000002', 'subA00000001'])
+    })
+  })
+
   // This test verifies the fix for the bug where the last manually expanded collection
   // wouldn't persist when the drawer closed and reopened. The fix captures the tree's
   // expanded state synchronously when the drawer closes, preventing race conditions
@@ -826,5 +1299,105 @@ describe('Editor integration', () => {
     // Test skipped: Requires full Editor render with all subcomponents.
     // The functionality is verified by the calculatePathToEntry unit tests
     // and manual testing in the actual application.
+  })
+})
+
+describe('branches-fetch failure recovery', () => {
+  it('retries the branches fetch when the branch manager is opened on a pinned branch', async () => {
+    // The write lock now fails CLOSED on missing branch data, which turned a
+    // pre-existing gate into a lockout: opening the branch manager only called
+    // loadBranches() `if (!branchNameState)`, and every ordinary adopter pins a
+    // branch. Meanwhile the fetch is terminal on its own -- SWRProvider sets
+    // shouldRetryOnError and revalidateOnFocus false, and useBranchesData's
+    // refreshInterval is 0 without data -- so one network blip locked the
+    // editor for the whole session behind a "Manage Branches" button that
+    // pointedly did not retry. Only a page reload got out.
+    // The deliberate 500 below makes useBranchManager report the failure via
+    // console.error, and vitest's onConsoleLog interceptor fails the whole run
+    // on a stray console write. Swallow it here and assert it instead.
+    const consoleSpy = mockConsole()
+    let branchCalls = 0
+    const fetchMock = vi.fn((input: RequestInfo | URL, _init?: RequestInit) => {
+      const url =
+        typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
+      if (url.endsWith('/api/canopycms/branches')) {
+        branchCalls += 1
+        // Fail the FIRST fetch only: the retry must be able to succeed, or
+        // this test would pass just as well against a retry that never runs.
+        if (branchCalls === 1) return Promise.resolve(okJson({ ok: false, status: 500 }, 500))
+        return Promise.resolve(
+          okJson({
+            ok: true,
+            status: 200,
+            data: {
+              branches: [
+                {
+                  name: 'main',
+                  status: 'editing',
+                  access: {},
+                  createdBy: 'user-1',
+                  createdAt: '2024-01-01',
+                  updatedAt: '2024-01-01',
+                  isProtected: false,
+                  readOnly: false,
+                  writeBlocked: false,
+                  submitBlocked: false,
+                },
+              ],
+            },
+          }),
+        )
+      }
+      // Real shapes, not a bare `data: {}`: fetchEntriesAndSchema maps over
+      // `data.flatSchema`, so an empty object makes it throw
+      // "Cannot read properties of undefined (reading 'map')" as an UNHANDLED
+      // rejection — which vitest reports separately from test results and
+      // fails the run on, even while every assertion passes.
+      if (url.includes('/schema') && !url.includes('/schema/')) {
+        return Promise.resolve(
+          okJson({ ok: true, status: 200, data: { schema: {}, flatSchema: [], entrySchemas: {} } }),
+        )
+      }
+      if (url.includes('/entries')) {
+        return Promise.resolve(
+          okJson({
+            ok: true,
+            status: 200,
+            data: { collections: [], entries: [], pagination: { hasMore: false, limit: 50 } },
+          }),
+        )
+      }
+      return Promise.resolve(okJson({ ok: true, status: 200, data: {} }))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    renderWithProviders(
+      <Editor
+        entries={[]}
+        collections={[]}
+        title="Test Editor"
+        branchName="main"
+        operatingMode="dev"
+        themeOptions={{}}
+      />,
+    )
+
+    // The failed fetch leaves the editor locked -- that part is correct and is
+    // what the fail-closed default is for.
+    await waitFor(() => expect(branchCalls).toBe(1))
+    await waitFor(() => expect(screen.getByTestId('status-locked-banner')).toBeTruthy())
+
+    // Open the branch manager the way the lock banner tells the user to.
+    fireEvent.click(screen.getByTestId('branch-dropdown-button'))
+    fireEvent.click(await screen.findByTestId('manage-branches-menu-item'))
+
+    // A second request goes out...
+    await waitFor(() => expect(branchCalls).toBeGreaterThan(1))
+    // ...and the editor actually recovers, without a reload.
+    await waitFor(() => expect(screen.queryByTestId('status-locked-banner')).toBeNull())
+
+    // The failure was reported, not swallowed silently.
+    expect(consoleSpy).toHaveErrored(/Failed to load branches/)
+    consoleSpy.restore()
   })
 })

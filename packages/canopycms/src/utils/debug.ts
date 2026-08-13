@@ -35,10 +35,21 @@ export class DebugLogger {
     return LOG_LEVELS[level] >= LOG_LEVELS[minLevel]
   }
 
+  /**
+   * The ISO-8601 timestamp leads the line BARE - not wrapped in brackets as it
+   * once was. `CANOPYCMS_DEBUG=true` can be set on the EC2 worker, whose stdout
+   * appends to /var/log/canopy-worker/worker.log; the CloudWatch agent's
+   * `multi_line_start_pattern` matches the timestamp at the START of a line
+   * (see worker/log.ts's INVARIANT and cms-service.ts's agent config), so a
+   * leading `[` meant every debug line was silently folded into the previous
+   * event instead of starting its own. The bracketed `[prefix:category]` and
+   * `[level]` fields still follow, so the human-readable shape is unchanged
+   * apart from those two characters.
+   */
   private formatMessage(level: LogLevel, category: string, message: string): string {
     const timestamp = new Date().toISOString()
     const prefix = this.options.prefix ?? 'CanopyCMS'
-    return `[${timestamp}] [${prefix}:${category}] [${level}] ${message}`
+    return `${timestamp} [${prefix}:${category}] [${level}] ${message}`
   }
 
   debug(category: string, message: string, data?: unknown) {

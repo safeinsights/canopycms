@@ -4,6 +4,7 @@
  * Tests for both client-safe and client-unsafe strategies
  */
 
+import path from 'node:path'
 import { describe, it, expect, afterEach, vi } from 'vitest'
 import {
   clientOperatingStrategy,
@@ -180,8 +181,14 @@ describe('Operating Mode Strategies', () => {
 
       it('should get content root', () => {
         const strategy = operatingStrategy(mode)
-        const contentRoot = strategy.getContentRoot()
+        const contentRoot = strategy.getContentRoot('content')
         expect(contentRoot).toContain('content')
+      })
+
+      it('should resolve a multi-segment content root', () => {
+        const strategy = operatingStrategy(mode)
+        const contentRoot = strategy.getContentRoot('cms/content', '/source/root')
+        expect(contentRoot).toBe(path.join('/source/root', 'cms', 'content'))
       })
 
       it('should create branch subdirectories', () => {
@@ -307,6 +314,18 @@ describe('Operating Mode Strategies', () => {
         const strategy = operatingStrategy(mode)
         const branchRoot = strategy.getContentBranchRoot('feature-branch')
         expect(branchRoot).toContain('feature-branch')
+      })
+
+      it('should get content root', () => {
+        const strategy = operatingStrategy(mode)
+        const contentRoot = strategy.getContentRoot('content', '/source/root')
+        expect(contentRoot).toBe(path.join('/source/root', 'content'))
+      })
+
+      it('should resolve a multi-segment content root', () => {
+        const strategy = operatingStrategy(mode)
+        const contentRoot = strategy.getContentRoot('cms/content', '/source/root')
+        expect(contentRoot).toBe(path.join('/source/root', 'cms', 'content'))
       })
 
       it('should NOT require existing repo', () => {

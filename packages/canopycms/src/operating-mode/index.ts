@@ -15,7 +15,10 @@
  * Server code:
  *   import { operatingStrategy } from '@/operating-mode'
  *   const strategy = operatingStrategy(mode)
- *   const contentRoot = strategy.getContentRoot()
+ *   // contentRoot is REQUIRED: pass config.contentRoot (falling back to 'content'
+ *   // at the call site), never a bare call — see getContentRoot's doc comment in
+ *   // types.ts for why a default here would silently disarm a caller.
+ *   const contentRoot = strategy.getContentRoot(config.contentRoot ?? 'content')
  *   const branchesRoot = strategy.getContentBranchesRoot()
  *   const branchRoot = strategy.getContentBranchRoot('my-branch')
  *   const settingsRoot = strategy.getSettingsRoot()

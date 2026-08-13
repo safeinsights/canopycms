@@ -50,6 +50,19 @@ export interface BranchSummary {
   commentCount?: number
   isProtected?: boolean
   readOnly?: boolean
+  /**
+   * Server-computed compound submit rule (base-branch OR non-'editing'
+   * status) -- see `useBranchManager.tsx`'s `BranchSummary.submitBlocked` and
+   * `BranchWriteProtection.submitBlockedIncludingStatus` for the full
+   * rationale. `getBranchPermissions`'s `canSubmit` consumes this directly
+   * instead of re-deriving `status === 'editing' && !isProtected` --
+   * PR #189's stated invariant is "consume the server flag, don't
+   * re-derive", and shipping only the base-branch-only `submitBlocked` flag
+   * (rejected in #205, since that's the same value as `isProtected` and
+   * would still have left the status half re-derived here) would not have
+   * removed the re-derivation this replaces.
+   */
+  submitBlocked?: boolean
 }
 
 export interface UserContext {
@@ -101,9 +114,25 @@ export const getBranchPermissions = (
   const canPerformWorkflowActions =
     userIsCreator || userInACL || isSystemBranch || userIsAdmin || userIsReviewer
 
-  // Submit: Can perform workflow actions AND branch is in editing status. The
-  // protected base branch can never be submitted (both modes).
-  const canSubmit = canPerformWorkflowActions && branch.status === 'editing' && !branch.isProtected
+  // Submit: can perform workflow actions AND the server says submit isn't
+  // blocked. `submitBlocked` is the server's own compound answer -- status
+  // past 'editing' OR the protected base branch -- computed once in
+  // `getBranchWriteProtection` (protected-branch.ts) and threaded through
+  // unchanged; this used to re-derive the same conjunction locally
+  // (`branch.status === 'editing' && !branch.isProtected`), which is exactly
+  // the drift hazard PR #189's "consume the server flag, don't re-derive"
+  // invariant exists to prevent. See `BranchSummary.submitBlocked`'s doc
+  // comment above for why a bare `submitBlocked` flag (the base-branch-only
+  // meaning, as rejected in #205) would not have been enough on its own.
+  //
+  // `?? true` and not a bare `!branch.submitBlocked`: the field is optional on
+  // this type (as `isProtected`/`readOnly` beside it are), so a missing value
+  // must mean BLOCKED, not allowed. Dropping the default would reintroduce, one
+  // layer below, exactly the fail-open shape this change set exists to remove --
+  // `useBranchManager.tsx` already defaults the same flag to `true` when the
+  // wire omits it, and a second, contradictory default here would quietly undo
+  // that for anything constructing a BranchSummary directly.
+  const canSubmit = canPerformWorkflowActions && !(branch.submitBlocked ?? true)
 
   // Withdraw: Can perform workflow actions AND branch is submitted or approved.
   // Allowed even when the PR was closed without merging -- that's the
@@ -487,7 +516,16 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
                       >
                         Open
                       </Button>
-                      {b.status === 'submitted' ? (
+                      {/* Mirrors EditorHeader's `isWithdrawable` rather than
+                          testing 'submitted' alone. getBranchPermissions grants
+                          canWithdraw for 'approved' too -- withdraw is that
+                          status's only non-destructive exit -- but this render
+                          gate used to send 'approved' down the Submit arm, so
+                          the Withdraw button never mounted and the permission
+                          was computed and then thrown away. The two surfaces
+                          disagreed: EditorHeader offered the exit, this one
+                          didn't. */}
+                      {b.status === 'submitted' || b.status === 'approved' ? (
                         <Tooltip
                           label="Only the branch creator can withdraw"
                           disabled={perms.canWithdraw}
@@ -508,7 +546,19 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
                           label={
                             b.isProtected
                               ? 'The base branch cannot be submitted'
-                              : 'Only the branch creator can submit'
+                              : // A status arm, because canSubmit now folds in
+                                // the server's status rule as well as the
+                                // base-branch one. Without it, an archived (or
+                                // any non-editing) branch showed a disabled
+                                // Submit reading "Only the branch creator can
+                                // submit" -- to the creator. That is precisely
+                                // the permission-vs-no-available-transition
+                                // confusion #205 removed from EditorHeader, and
+                                // folding status into canSubmit reintroduced it
+                                // one component over.
+                                b.status !== 'editing'
+                                ? `A branch with status "${b.status}" cannot be submitted`
+                                : 'Only the branch creator can submit'
                           }
                           disabled={perms.canSubmit}
                         >

@@ -26,6 +26,7 @@ import { extractIdFromFilename } from '../content-id-index'
 import { invalidateBranchContentCaches } from '../content-index-generation'
 import { type ContentId, type SanitizedBranchName, ROOT_COLLECTION_ID } from '../paths/types'
 import { sanitizeBranchName, RESERVED_SETTINGS_BRANCH_PREFIX } from '../paths/branch-name'
+import { normalizeFilesystemPath } from '../paths/normalize'
 import { GITHUB_TRACKING_REF_PREFIX, gitChildEnv, gitNetworkChildEnv } from '../git-manager'
 import { resolveDeploymentName } from '../operating-mode/deployment-name'
 import type { PullRequestState, WorkerStatusReport } from '../types'
@@ -39,7 +40,7 @@ import { workerLog, workerLogWarn, workerLogError } from './log'
 // new package entrypoint - `canopycms/worker/cms-worker` already exists. Every
 // line in worker.log must carry the timestamp prefix or it gets folded into
 // the previous CloudWatch event; see ./log.ts.
-export { workerLog, workerLogWarn, workerLogError } from './log'
+export { workerLog, workerLogWarn, workerLogError, installWorkerLogger } from './log'
 
 /**
  * Auth cache refresh function type.
@@ -314,7 +315,11 @@ export class CmsWorker {
   // This deployment's own settings branch — see CmsWorkerConfig.deploymentName.
   // `pushSettingsBranches` pushes ONLY this branch, never any other
   // `canopycms-settings-*` branch it happens to find locally.
-  private settingsBranch: string
+  //
+  // Resolved lazily by ensureSettingsBranch(), NOT in the constructor: see that
+  // method's doc comment. `undefined` here means "not resolved yet", never "no
+  // settings branch".
+  private settingsBranchResolved?: string
   private activeTimeouts = new Set<NodeJS.Timeout>()
   private running = false
   private activeOperations = new Set<Promise<void>>()
@@ -338,17 +343,6 @@ export class CmsWorker {
     this.contentBranchesPath = path.join(config.workspacePath, 'content-branches')
     this.baseBranch = config.baseBranch ?? 'main'
     this.sanitizedBaseBranch = sanitizeBranchName(this.baseBranch)
-    // Routed through the shared resolver, not a local `?? 'prod'`: it is the
-    // single definition of the env > config > mode-default precedence the
-    // Lambda already follows, and the only place the resolved value is
-    // validated as a git ref component. Without it the worker could silently
-    // own a different settings branch than the Lambda writing to the same
-    // workspace -- and pushSettingsBranches would then report the real branch
-    // as foreign and never push it. Throwing on an invalid infra-stamped
-    // value is deliberate: main()'s catch turns it into a loud startup exit.
-    this.settingsBranch =
-      config.settingsBranch ??
-      `${RESERVED_SETTINGS_BRANCH_PREFIX}${resolveDeploymentName({ deploymentName: config.deploymentName }, 'prod')}`
     this.maxTasksPerCycle = config.maxTasksPerCycle ?? 10
     this.taskTimeoutMs = config.taskTimeoutMs ?? DEFAULT_TASK_TIMEOUT
     this.maxRetries = config.maxRetries ?? DEFAULT_MAX_RETRIES
@@ -373,6 +367,43 @@ export class CmsWorker {
     return this.statusReport
   }
 
+  /**
+   * Resolve this deployment's settings branch, throwing if the infra-stamped
+   * deployment name is not a valid git ref component.
+   *
+   * Routed through the shared resolver, not a local `?? 'prod'`: it is the
+   * single definition of the env > config > mode-default precedence the Lambda
+   * already follows, and the only place the resolved value is validated.
+   * Without it the worker could silently own a different settings branch than
+   * the Lambda writing to the same workspace -- and pushSettingsBranches would
+   * then report the real branch as foreign and never push it.
+   *
+   * DEFERRED out of the constructor deliberately, and this is the whole point
+   * of the method existing. Resolving there made the throw land during `new
+   * CmsWorker(...)` (canopycms-cdk/worker/index.ts constructs before it calls
+   * start()), which is BEFORE the only code that writes `lastFatalError` --
+   * start()'s catch. The result was billed as "a loud startup exit" but was
+   * nothing of the kind: with systemd `Type=simple` + `Restart=always` and no
+   * cfn-signal, an invalid deployment name produced an invisible ~5s
+   * crash-loop that `cdk deploy` reported as success while the admin panel
+   * showed the worker as 'absent' with no fatal error to explain it. Resolving
+   * inside start()'s try block instead means the same throw is recorded to
+   * worker-status.json and surfaces in the admin panel.
+   *
+   * Lazy rather than start()-only so the value is still available to unit tests
+   * that drive pushSettingsBranches() directly without calling start() -- the
+   * same reason ensureStatusReport() above is shaped this way. Idempotent: the
+   * resolver is pure, so a later call returns the identical string.
+   */
+  private ensureSettingsBranch(): string {
+    if (this.settingsBranchResolved === undefined) {
+      this.settingsBranchResolved =
+        this.config.settingsBranch ??
+        `${RESERVED_SETTINGS_BRANCH_PREFIX}${resolveDeploymentName({ deploymentName: this.config.deploymentName }, 'prod')}`
+    }
+    return this.settingsBranchResolved
+  }
+
   async start(): Promise<void> {
     this.running = true
     workerLog('CMS Worker starting...')
@@ -394,6 +425,13 @@ export class CmsWorker {
     // clones elsewhere) — acquiring the lock first is what already
     // serializes that.
     try {
+      // FIRST inside the try, before any I/O: an infra-stamped deployment name
+      // that is not a valid git ref component throws here, where the catch
+      // below records it to worker-status.json. Resolving it in the
+      // constructor (as this used to) put the throw outside every
+      // status-writing path -- see ensureSettingsBranch()'s doc comment.
+      this.ensureSettingsBranch()
+
       // Ensure remote.git exists (init bare repo if first run)
       await this.ensureRemoteGit()
 
@@ -1349,7 +1387,7 @@ export class CmsWorker {
   }
 
   /**
-   * Push THIS deployment's own settings branch (`this.settingsBranch`) from
+   * Push THIS deployment's own settings branch (`ensureSettingsBranch()`) from
    * remote.git to GitHub. Non-fatal: a no-op push for an up-to-date branch
    * just succeeds quietly.
    *
@@ -1366,23 +1404,27 @@ export class CmsWorker {
     trackedNames: ReadonlySet<string>,
   ): Promise<void> {
     try {
+      // Resolved once here rather than at each use below: ensureSettingsBranch()
+      // is idempotent, but a local reads better and keeps the eight references
+      // in this method obviously talking about one value.
+      const settingsBranch = this.ensureSettingsBranch()
       const branches = await git.branch()
       const settingsBranches = branches.all.filter((b) =>
         b.startsWith(RESERVED_SETTINGS_BRANCH_PREFIX),
       )
-      const foreign = settingsBranches.filter((b) => b !== this.settingsBranch)
+      const foreign = settingsBranches.filter((b) => b !== settingsBranch)
       if (foreign.length > 0) {
         // Signal, not an error: this is exactly the "two deployments, one repo"
         // condition this workstream exists to make visible. Never push these.
         workerLogWarn(
-          `Found settings branch(es) not owned by this deployment (${this.settingsBranch}): ` +
+          `Found settings branch(es) not owned by this deployment (${settingsBranch}): ` +
             `${foreign.join(', ')}. Another CanopyCMS deployment may share this GitHub repo. Not pushing them.`,
         )
       }
 
       // Check the full branch list, not the `canopycms-settings-*` subset: an
       // adopter-supplied `settingsBranch` override need not carry that prefix.
-      const ownBranchMissing = !branches.all.includes(this.settingsBranch)
+      const ownBranchMissing = !branches.all.includes(settingsBranch)
 
       // [SYNC-M3] A settings branch present in remote.git but absent from
       // GitHub's tracking refs was pushed here LOCALLY -- only this
@@ -1401,13 +1443,13 @@ export class CmsWorker {
       if (strandedLocal.length > 0) {
         workerLogWarn(
           ownBranchMissing
-            ? `Settings branch mismatch: this worker owns "${this.settingsBranch}", which does not ` +
+            ? `Settings branch mismatch: this worker owns "${settingsBranch}", which does not ` +
                 `exist in remote.git, while ${strandedLocal.join(', ')} exist(s) here and has never ` +
                 `been pushed to GitHub. The API and this worker disagree about deploymentName, so ` +
                 `settings changes are NOT reaching GitHub. Set CANOPYCMS_DEPLOYMENT_NAME (or ` +
                 `settingsBranch) on this worker to match what the API resolves.`
             : `Settings branch(es) ${strandedLocal.join(', ')} exist in remote.git but not on ` +
-                `GitHub, and are not owned by this deployment (${this.settingsBranch}) -- nothing ` +
+                `GitHub, and are not owned by this deployment (${settingsBranch}) -- nothing ` +
                 `will ever push them onward. Check that deploymentName matches across this ` +
                 `deployment's API and worker.`,
         )
@@ -1419,29 +1461,29 @@ export class CmsWorker {
       }
 
       try {
-        await git.push(this.buildGitHubUrl(), this.settingsBranch)
-        workerLog(`Pushed settings branch ${this.settingsBranch} to GitHub`)
+        await git.push(this.buildGitHubUrl(), settingsBranch)
+        workerLog(`Pushed settings branch ${settingsBranch} to GitHub`)
       } catch (err) {
         // Non-fatal: branch may already be up-to-date. This call site has no
         // task to throw a PermanentTaskError into (unlike pushBranchToGitHub)
         // and is deliberately not restructured to add one -- but a
         // non-fast-forward rejection here is the highest-signal instance of
         // this whole failure class: it means another CanopyCMS deployment's
-        // worker already pushed ITS OWN state to `this.settingsBranch` on
+        // worker already pushed ITS OWN state to its own settings branch on
         // GitHub (an actual settings-branch name collision, not just the
         // "foreign branch found locally" case warned about above), so make
         // that explicit instead of a generic "push failed" line.
         const message = getErrorMessage(err)
         if (isNonFastForwardRejection(message)) {
           workerLogWarn(
-            `Settings push for ${this.settingsBranch} was rejected (non-fast-forward): another ` +
+            `Settings push for ${settingsBranch} was rejected (non-fast-forward): another ` +
               `CanopyCMS deployment appears to own this settings branch on GitHub. Settings from ` +
               `that deployment will NOT be overwritten; this deployment's local settings changes ` +
               `were not pushed. Rename this deployment's settings branch (config.settingsBranch or ` +
               `deploymentName) to resolve the collision.`,
           )
         } else {
-          workerLogWarn(`Settings push for ${this.settingsBranch}:`, message)
+          workerLogWarn(`Settings push for ${settingsBranch}:`, message)
         }
       }
     } catch (err) {
@@ -2360,8 +2402,26 @@ export class CmsWorker {
         // Entry files have IDs in their filename (e.g., "post.slug.a1b2c3d4e5f6.mdx").
         // .collection.json files have no ID themselves (extractIdFromFilename returns null
         // for dot-prefixed files), so we extract the ID from the parent directory instead.
-        // The root content directory (e.g., "content/") has no embedded ID, so we use
-        // ROOT_COLLECTION_ID as a sentinel — but only for the configured contentRoot.
+        // The root content directory (e.g., "content/", or "cms/content/" for a
+        // multi-segment contentRoot) has no embedded ID, so we use ROOT_COLLECTION_ID
+        // as a sentinel — but only for the configured contentRoot.
+        //
+        // Two different notions of "parent" are needed below, and conflating them
+        // reproduces the exact bug this comparison guards against (see
+        // schema-store.ts's contentRootName doc comment for the same shape elsewhere):
+        //  - `parentDir` (a basename) recovers a SUB-collection's own embedded ID
+        //    (e.g. "posts.cNbR5xFm2Kpd" -> "cNbR5xFm2Kpd") — correct as a basename,
+        //    since a collection directory carries its ID in its own name, one path
+        //    segment.
+        //  - `parentPath` (the full relative parent path, normalized) is what must be
+        //    compared against `this.contentRoot`, because `contentRoot` is documented
+        //    (config/helpers.ts) as allowed to span multiple segments (e.g.
+        //    "cms/content"). Comparing a basename ("content") against that full value
+        //    is always false, which silently drops the root collection's conflict.
+        //    Git reports POSIX-style paths and the configured value may be authored
+        //    with either separator, so both sides go through normalizeFilesystemPath
+        //    before comparing.
+        const normalizedContentRoot = normalizeFilesystemPath(this.contentRoot)
         const conflictIds = [...new Set(conflictedFiles)]
           .map((f) => {
             const fileId = extractIdFromFilename(path.basename(f))
@@ -2369,9 +2429,10 @@ export class CmsWorker {
             const parentDir = path.basename(path.dirname(f))
             const dirId = extractIdFromFilename(parentDir)
             if (dirId) return dirId
-            // Only assign ROOT_COLLECTION_ID when the parent matches the configured
-            // content root (e.g., "content"). Other unrecognized paths are filtered out.
-            if (path.basename(f) === '.collection.json' && parentDir === this.contentRoot) {
+            // Only assign ROOT_COLLECTION_ID when the file's parent directory IS the
+            // configured content root. Other unrecognized paths are filtered out.
+            const parentPath = normalizeFilesystemPath(path.dirname(f))
+            if (path.basename(f) === '.collection.json' && parentPath === normalizedContentRoot) {
               return ROOT_COLLECTION_ID
             }
             return null

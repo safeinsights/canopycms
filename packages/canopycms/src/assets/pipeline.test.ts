@@ -20,7 +20,11 @@ import { describe, expect, it } from 'vitest'
 import { mockConsole } from '../test-utils/console-spy'
 import { runFinalizePipeline, ALLOWED_UPLOAD_CONTENT_TYPES } from './pipeline'
 import { applyTransform } from './transform'
-import { MAX_INPUT_PIXELS, type TransformDirectives } from './transform-directives'
+import {
+  MAX_ANIMATED_FRAMES,
+  MAX_INPUT_PIXELS,
+  type TransformDirectives,
+} from './transform-directives'
 
 /** Cheapest transform that still forces a full decode - used to prove a fixture really is undecodable. */
 const IDENTITY_TRANSFORM: TransformDirectives = { identity: true }
@@ -121,6 +125,37 @@ async function animatedFrames(count: number): Promise<Buffer[]> {
 /** A genuinely decodable multi-frame animated GIF, built the same way transform.test.ts builds its animated fixtures. */
 async function makeAnimatedGif(frameCount: number): Promise<Uint8Array> {
   const buf = await sharp(await animatedFrames(frameCount), { join: { animated: true } })
+    .gif()
+    .toBuffer()
+  return new Uint8Array(buf)
+}
+
+/**
+ * A genuinely decodable multi-frame animated GIF at an arbitrary per-frame
+ * size, for the frame-cap test below - which needs a large enough total pixel
+ * count (frames x size x size) to actually exceed MAX_INPUT_PIXELS when read
+ * uncapped. Frames are SOLID colours that differ by frame index (not
+ * `animatedFrames()`'s noise) so the fixture stays tiny and fast to build at
+ * hundreds of frames x hundreds of pixels - the noisy per-pixel gradient
+ * exists for the *corrupt*-fixture tests, which need bytes worth damaging,
+ * not for this one, which only needs frames the encoder won't merge away.
+ */
+async function makeLargeAnimatedGif(frameCount: number, size: number): Promise<Uint8Array> {
+  const frames: Buffer[] = []
+  for (let i = 0; i < frameCount; i++) {
+    const buf = await sharp({
+      create: {
+        width: size,
+        height: size,
+        channels: 3,
+        background: { r: (i * 37) % 256, g: (i * 91) % 256, b: (i * 53) % 256 },
+      },
+    })
+      .png()
+      .toBuffer()
+    frames.push(buf)
+  }
+  const buf = await sharp(frames, { join: { animated: true } })
     .gif()
     .toBuffer()
   return new Uint8Array(buf)
@@ -319,13 +354,50 @@ describe('runFinalizePipeline - raster formats', () => {
   })
 
   it('accepts a valid animation with MORE frames than the cap - it is capped, not rejected', async () => {
-    // 65 > MAX_ANIMATED_FRAMES (60). sharp's `pages` is a fixed request rather
-    // than an upper bound, so a naive "read every frame" or an uncapped
-    // passthrough would either blow the decompression-bomb budget or throw
-    // "bad page number"; the Math.min in rasterIsDecodable is what makes this
-    // land as a normal acceptance.
-    const gif = await makeAnimatedGif(65)
-    expect((await sharp(gif).metadata()).pages).toBe(65) // sanity: really 65 pages
+    // The OLD version of this test used 65 frames of 32x32 (animatedFrames'
+    // fixed size) - 66,560 total pixels, nowhere near MAX_INPUT_PIXELS
+    // (16,777,216) even read completely uncapped. Nothing distinguished
+    // "accepted because capped" from "accepted because an uncapped read fit
+    // too" - the test passed identically with the Math.min cap in
+    // rasterIsDecodable (pipeline.ts) deleted outright.
+    //
+    // This version picks a per-frame size where the arithmetic actually
+    // forces the distinction:
+    //   FRAMES = MAX_ANIMATED_FRAMES (60) + 5 = 65
+    //   SIZE   = 512
+    //   FRAMES * SIZE^2 = 65 * 512 * 512 = 17,039,360  > MAX_INPUT_PIXELS  (uncapped read: over budget)
+    //   MAX_ANIMATED_FRAMES * SIZE^2 = 60 * 512 * 512  = 15,728,640 <= MAX_INPUT_PIXELS  (capped read: fits)
+    //   SIZE^2 = 512 * 512 = 262,144 <= MAX_INPUT_PIXELS  (the caller's cheap single-frame header check still passes)
+    // So acceptance below can only be explained by the cap actually applying
+    // - an uncapped decode of these exact bytes is asserted to fail two
+    // lines down, before the behavior-under-test assertion even runs.
+    const FRAMES = MAX_ANIMATED_FRAMES + 5
+    const SIZE = 512
+    const gif = await makeLargeAnimatedGif(FRAMES, SIZE)
+
+    // Sanity: the fixture really has the frame count and per-frame
+    // dimensions the arithmetic above assumes.
+    const meta = await sharp(gif).metadata()
+    expect(meta.pages).toBe(FRAMES)
+    expect(meta.width).toBe(SIZE)
+    expect(meta.height).toBe(SIZE)
+
+    // The vacuity guard, and what makes this fixture self-validating (same
+    // idiom as the "LATER frames are corrupt" test above): decoding the SAME
+    // bytes UNCAPPED must be rejected by sharp's own pixel-limit accounting.
+    // If a future sharp/libvips release ever changed how it counts pixels
+    // for a multi-page read such that this no longer held, this assertion
+    // fails loudly here instead of the acceptance assertion below passing
+    // for a reason that has nothing to do with the cap.
+    await expect(
+      sharp(gif, { pages: FRAMES, limitInputPixels: MAX_INPUT_PIXELS })
+        .resize({ width: 8, height: 8, fit: 'fill' })
+        .toBuffer(),
+    ).rejects.toThrow()
+
+    // The behavior under test: rasterIsDecodable's
+    // `Math.min(probeMeta.pages ?? 1, MAX_ANIMATED_FRAMES)` is what turns the
+    // same bytes from a rejection into a normal, successful acceptance.
     const result = await runFinalizePipeline({ data: gif, filename: 'long-animated.gif' })
     expect(result.ok).toBe(true)
   })

@@ -332,6 +332,18 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
       // validateEntry hook; show its message and map per-field errors (e.g.
       // reference existence, which only the server can check) into the form.
       const isValidation = err instanceof SaveApiError && err.status === 422
+      // 403 = the writableBranch guard refused the write outright (base
+      // branch read-only, status past 'editing', or unreadable metadata --
+      // see api/guards.ts). This is exactly the window a fail-closed but
+      // still momentarily-stale client can hit: the branch list hasn't
+      // caught up yet, or the editor rendered before the server's answer
+      // arrived, so a Save that looked enabled got rejected server-side.
+      // #189 wrote specific guard copy explaining WHICH lock applies and how
+      // to recover (e.g. "withdraw it to make changes") -- falling through to
+      // the generic 'Save failed' below would throw that away in precisely
+      // the moment the user is most confused, so surface the server's own
+      // message instead, the same way the 422 branch already does.
+      const isForbidden = err instanceof SaveApiError && err.status === 403
       if (
         err instanceof SaveApiError &&
         err.status === 422 &&
@@ -342,13 +354,14 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
       }
       notifications.show({
         ...(isValidation ? { title: 'Save rejected' } : {}),
+        ...(isForbidden ? { title: 'Save not allowed' } : {}),
         message: isConflict
           ? 'Content was modified by another editor. Reload to see the latest changes.'
-          : isValidation
+          : isValidation || isForbidden
             ? err.message
             : 'Save failed',
         color: isConflict ? 'yellow' : 'red',
-        autoClose: getNotificationDuration(isConflict || isValidation ? 8000 : 6000),
+        autoClose: getNotificationDuration(isConflict || isValidation || isForbidden ? 8000 : 6000),
         withCloseButton: true,
       })
     } finally {

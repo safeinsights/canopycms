@@ -73,9 +73,30 @@ describe('getBranchPermissions', () => {
       name: 'main',
       status: 'editing',
       createdBy: 'user1',
+      // Explicit, because canSubmit now consumes this flag and defaults a
+      // MISSING one to blocked -- see the fail-closed test below.
+      submitBlocked: false,
     }
     const perms = getBranchPermissions(branch, { userId: 'user1', groups: [] })
     expect(perms.canSubmit).toBe(true)
+  })
+
+  it('blocks submit when submitBlocked is absent entirely (fail closed)', () => {
+    // The field is optional on BranchSummary, so "the server never told us"
+    // is representable -- and it must read as BLOCKED. This branch would have
+    // passed the old `status === 'editing' && !isProtected` derivation, and a
+    // bare `!branch.submitBlocked` here would let it through too: undefined is
+    // falsy. That is the same fail-open shape this change set removes one
+    // layer up in useBranchManager, and this test is what stops it coming
+    // back at this layer.
+    const branch: BranchSummary = {
+      name: 'main',
+      status: 'editing',
+      createdBy: 'user1',
+      isProtected: false,
+    }
+    const perms = getBranchPermissions(branch, { userId: 'user1', groups: [] })
+    expect(perms.canSubmit).toBe(false)
   })
 
   it('allows creator to withdraw submitted branch', () => {
@@ -96,6 +117,10 @@ describe('getBranchPermissions', () => {
       name: 'main',
       status: 'approved',
       createdBy: 'user1',
+      // canSubmit now consumes this server-computed flag directly rather than
+      // re-deriving `status === 'editing'` -- a real BranchSummary would carry
+      // submitBlocked: true here (status is 'approved', not 'editing').
+      submitBlocked: true,
     }
     const perms = getBranchPermissions(branch, { userId: 'user1', groups: [] })
     expect(perms.canWithdraw).toBe(true)
@@ -107,6 +132,7 @@ describe('getBranchPermissions', () => {
       name: 'main',
       status: 'archived',
       createdBy: 'user1',
+      submitBlocked: true,
     }
     const perms = getBranchPermissions(branch, { userId: 'user1', groups: [] })
     expect(perms.canWithdraw).toBe(false)
@@ -209,6 +235,37 @@ describe('getBranchPermissions', () => {
     expect(perms.canRequestChanges).toBe(true)
   })
 
+  describe('canSubmit consumes submitBlocked, not a local re-derivation', () => {
+    it('blocks submit when submitBlocked is true even though status/isProtected would have allowed it under the old derivation', () => {
+      // The pre-Change-2 formula was `status === 'editing' && !isProtected`.
+      // Both of those would say "allow" here (editing, unprotected) -- only
+      // the server-computed submitBlocked flag says otherwise. If canSubmit
+      // ever regresses to re-deriving from status/isProtected instead of
+      // consuming this flag, this is the test that catches it.
+      const branch: BranchSummary = {
+        name: 'main',
+        status: 'editing',
+        createdBy: 'user1',
+        isProtected: false,
+        submitBlocked: true,
+      }
+      const perms = getBranchPermissions(branch, { userId: 'user1', groups: [] })
+      expect(perms.canSubmit).toBe(false)
+    })
+
+    it('allows submit when submitBlocked is false, mirroring an editing unprotected branch', () => {
+      const branch: BranchSummary = {
+        name: 'main',
+        status: 'editing',
+        createdBy: 'user1',
+        isProtected: false,
+        submitBlocked: false,
+      }
+      const perms = getBranchPermissions(branch, { userId: 'user1', groups: [] })
+      expect(perms.canSubmit).toBe(true)
+    })
+  })
+
   describe('protected base branch', () => {
     it('blocks submit even for the creator', () => {
       const branch: BranchSummary = {
@@ -216,6 +273,10 @@ describe('getBranchPermissions', () => {
         status: 'editing',
         createdBy: 'user1',
         isProtected: true,
+        // canSubmit reads submitBlocked directly now, not isProtected -- the
+        // server sets both together for the base branch (protected-branch.ts),
+        // so a real BranchSummary always carries this alongside isProtected.
+        submitBlocked: true,
       }
       const perms = getBranchPermissions(branch, { userId: 'user1', groups: [] })
       expect(perms.canSubmit).toBe(false)
@@ -275,6 +336,9 @@ describe('BranchManager', () => {
       createdBy: 'user1',
       updatedAt: '2024-01-01',
       access: { users: ['user1'] },
+      // What the server sends for an editing, unprotected branch. Explicit
+      // because a missing value now fails closed (see getBranchPermissions).
+      submitBlocked: false,
     },
     {
       name: 'feature/test',
@@ -654,8 +718,59 @@ describe('BranchManager', () => {
     expect(screen.queryByTestId('branch-protected-badge-main')).toBeNull()
   })
 
+  it('renders Withdraw, not Submit, for an approved branch', () => {
+    // getBranchPermissions has granted canWithdraw for 'approved' since #205
+    // (withdraw is that status's only non-destructive exit), but the render
+    // gate tested only for 'submitted', so an approved branch went down the
+    // Submit arm and the Withdraw button never mounted -- the permission was
+    // computed and thrown away. EditorHeader offered the exit; this surface
+    // did not. The existing tests all used 'submitted', which is why it passed.
+    const branches: BranchSummary[] = [
+      { ...baseBranches[0], status: 'approved', submitBlocked: true },
+    ]
+    renderBranchManager({
+      branches,
+      mode: 'prod',
+      user: { userId: 'user1', groups: [] },
+      onWithdraw: vi.fn(),
+    })
+
+    expect(screen.getByTestId('withdraw-branch-button-main')).toBeTruthy()
+    expect(screen.queryByTestId('submit-branch-button-main')).toBeNull()
+  })
+
+  it('explains a non-editing status on the disabled Submit tooltip instead of blaming permissions', async () => {
+    // canSubmit now folds in the server's status rule, so a non-editing branch
+    // shows Submit disabled. The tooltip used to say "Only the branch creator
+    // can submit" -- to the creator -- which is exactly the
+    // permission-vs-no-available-transition confusion #205 removed from
+    // EditorHeader, reintroduced one component over by that folding.
+    const branches: BranchSummary[] = [
+      { ...baseBranches[0], status: 'archived', submitBlocked: true },
+    ]
+    renderBranchManager({
+      branches,
+      mode: 'prod',
+      user: { userId: 'user1', groups: [] },
+      onSubmit: vi.fn(),
+    })
+
+    const submit = screen.getByTestId('submit-branch-button-main')
+    expect(submit.hasAttribute('disabled')).toBe(true)
+
+    // Hover to actually render the label. Asserting only that the WRONG copy is
+    // absent would pass even if no tooltip rendered at all -- the exact vacuity
+    // shape this epic exists to remove -- so assert the RIGHT copy is present
+    // first, then that the misleading one is gone.
+    await userEvent.hover(submit)
+    expect(await screen.findByText(/status "archived" cannot be submitted/i)).toBeTruthy()
+    expect(screen.queryByText(/Only the branch creator can submit/)).toBeNull()
+  })
+
   it('disables Submit with a tooltip on the protected branch, even for the creator', () => {
-    const branches: BranchSummary[] = [{ ...baseBranches[0], isProtected: true }]
+    const branches: BranchSummary[] = [
+      { ...baseBranches[0], isProtected: true, submitBlocked: true },
+    ]
     renderBranchManager({ branches, user: creatorUser, mode: 'prod' })
     const submitButton = screen.getByTestId('submit-branch-button-main')
     expect(submitButton.hasAttribute('disabled')).toBe(true)

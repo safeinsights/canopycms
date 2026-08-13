@@ -32,6 +32,8 @@
  * output.
  */
 
+import { setCanopyLogger } from '../utils/logger'
+
 /** ISO-8601 with milliseconds, e.g. `2026-08-12T14:30:00.000Z`. */
 function timestamp(): string {
   return new Date().toISOString()
@@ -56,4 +58,23 @@ export function workerLogWarn(...args: unknown[]): void {
 /** Failure worth alerting on. Routes to stderr. */
 export function workerLogError(...args: unknown[]): void {
   console.error(timestamp(), 'ERROR', ...args)
+}
+
+/**
+ * Point the shared `canopyLog*` helpers (`utils/logger.ts`) at the prefixing
+ * functions above, so modules the worker executes but does not own -
+ * `github-service.ts`, `branch-registry.ts` - satisfy the INVARIANT documented
+ * at the top of this file instead of writing bare, unprefixed lines into
+ * worker.log.
+ *
+ * Call this ONCE, first thing in a worker entrypoint, before any work that
+ * could log. Deliberately not a module-level side effect: importing
+ * `worker/log.ts` (or anything that re-exports it) must not silently
+ * reconfigure logging for a Lambda or dev-server process that merely wants the
+ * helpers' types. The eslint override for the two worker directories bans bare
+ * `console` there, but it cannot reach the shared modules above - those are
+ * legitimately plain `console` under Lambda. This is the half that covers them.
+ */
+export function installWorkerLogger(): void {
+  setCanopyLogger({ log: workerLog, warn: workerLogWarn, error: workerLogError })
 }

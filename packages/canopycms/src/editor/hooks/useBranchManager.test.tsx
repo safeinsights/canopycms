@@ -292,10 +292,21 @@ describe('useBranchManager', () => {
     expect(result.current.branchSummaries[1].mergedAt).toBeUndefined()
   })
 
-  it('maps isProtected/readOnly flags into branchSummaries, defaulting to false when absent', async () => {
+  it('maps isProtected/readOnly/writeBlocked/submitBlocked flags into branchSummaries, failing CLOSED when the wire omits them (version skew)', async () => {
+    // Version skew / a branches-list response that doesn't carry the newer
+    // flags at all must lock the UI, not unlock it -- see branchContentLocked's
+    // doc comment in Editor.tsx for the full rationale (the old client-side
+    // derivation locked correctly with zero data; an `?? false` default here
+    // would silently invert that).
     const branchesWithFlags: BranchMetadata[] = [
-      { ...mockBranches[0], isProtected: true, readOnly: true } as BranchMetadata,
-      mockBranches[1], // no flags on the wire -- must default to false, not undefined
+      {
+        ...mockBranches[0],
+        isProtected: true,
+        readOnly: true,
+        writeBlocked: true,
+        submitBlocked: true,
+      } as BranchMetadata,
+      mockBranches[1], // no flags on the wire at all -- the version-skew case
     ]
     mockClient.branches.list.mockResolvedValueOnce({
       ok: true,
@@ -315,11 +326,21 @@ describe('useBranchManager', () => {
       name: 'main',
       isProtected: true,
       readOnly: true,
+      writeBlocked: true,
+      submitBlocked: true,
     })
+    // Absent case, asserted specifically (not just "always sends the field"):
+    // isProtected/writeBlocked/submitBlocked gate real mutating actions, so
+    // they must fail CLOSED (true) when missing. readOnly only picks WHICH
+    // lock banner to show once something is already locked, so it alone
+    // stays `false` (unlocked-looking) when absent -- see the comment beside
+    // its default in useBranchManager.tsx.
     expect(result.current.branchSummaries[1]).toMatchObject({
       name: 'feature',
-      isProtected: false,
+      isProtected: true,
       readOnly: false,
+      writeBlocked: true,
+      submitBlocked: true,
     })
   })
 
@@ -391,7 +412,7 @@ describe('useBranchManager', () => {
     expect(result.current.branchSummaries[1].conflictFiles).toBeUndefined()
   })
 
-  it('computes currentBranch and branchStatus', async () => {
+  it('computes currentBranch', async () => {
     mockClient.branches.list.mockResolvedValueOnce({
       ok: true,
       status: 200,
@@ -404,14 +425,13 @@ describe('useBranchManager', () => {
 
     await waitFor(() => {
       expect(result.current.currentBranch).toEqual(mockBranches[0])
-      expect(result.current.branchStatus).toBe('editing')
     })
   })
 
   it('resolves currentBranch when state holds the raw form of a sanitized branch name', async () => {
     // Legacy deep-link case: the URL/state carries the raw, unsanitized name
     // (e.g. "feature/x") but the server only ever persisted the sanitized
-    // form ("feature-x"). currentBranch must still resolve so branchStatus,
+    // form ("feature-x"). currentBranch must still resolve so its status,
     // access, and isProtected/readOnly flags are available to the header.
     const sanitizedBranch: BranchMetadata = {
       ...mockBranches[1],
@@ -434,7 +454,6 @@ describe('useBranchManager', () => {
 
     expect(result.current.branchName).toBe('feature/x')
     expect(result.current.currentBranch).toEqual(sanitizedBranch)
-    expect(result.current.branchStatus).toBe(sanitizedBranch.status)
   })
 
   it('submits branch successfully', async () => {

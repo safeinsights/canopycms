@@ -5,6 +5,10 @@ import type { BranchContext } from './types'
 import { BranchMetadataFileManager } from './branch-metadata'
 import { isNotFoundError, getErrorMessage } from './utils/error'
 import { createDebugLogger } from './utils/debug'
+// canopyLogWarn, not console.warn: registry regeneration is reached from every
+// worker `meta.save()`, so this line lands in worker.log, where an unprefixed
+// line is folded into the previous CloudWatch event. See utils/logger.ts.
+import { canopyLogWarn } from './utils/logger'
 import {
   bumpResourceGeneration,
   readResourceGeneration,
@@ -284,7 +288,7 @@ export class BranchRegistry {
         try {
           meta = await BranchMetadataFileManager.loadOnly(branchRoot)
         } catch (err: unknown) {
-          console.warn(
+          canopyLogWarn(
             `CanopyCMS: Skipping branch directory '${entry.name}' during registry scan: ${getErrorMessage(err)}`,
           )
           continue

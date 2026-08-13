@@ -1704,8 +1704,11 @@ describe('CmsWorker.pushSettingsBranches() [deployment-namespaced settings branc
     // skipped both the env var the infrastructure stamps and the ref-name
     // validation -- so it could silently own a different settings branch than
     // the API writing into the same workspace.
+    // Drives the lazy resolver rather than reading a constructor-assigned
+    // field: resolution moved into ensureSettingsBranch() so that an invalid
+    // name throws somewhere start()'s catch can record it (see the next test).
     const settingsBranchOf = (worker: CmsWorker) =>
-      (worker as unknown as { settingsBranch: string }).settingsBranch
+      (worker as unknown as { ensureSettingsBranch(): string }).ensureSettingsBranch()
 
     vi.stubEnv('CANOPYCMS_DEPLOYMENT_NAME', '')
     expect(settingsBranchOf(makeSettingsWorker('from-config'))).toBe(
@@ -1726,12 +1729,54 @@ describe('CmsWorker.pushSettingsBranches() [deployment-namespaced settings branc
     vi.stubEnv('CANOPYCMS_DEPLOYMENT_NAME', 'from-env')
     expect(settingsBranchOf(makeSettingsWorker('from-config'))).toBe('canopycms-settings-from-env')
 
-    // A stamped value that is not a usable git ref component fails loudly at
-    // construction rather than producing a broken branch name.
+    // A stamped value that is not a usable git ref component still fails
+    // loudly rather than producing a broken branch name -- but at RESOLUTION,
+    // not at construction. See the next test for why that distinction is the
+    // whole point.
     vi.stubEnv('CANOPYCMS_DEPLOYMENT_NAME', 'bad/name')
-    expect(() => makeSettingsWorker('from-config')).toThrow(/invalid deploymentName/i)
+    expect(() => settingsBranchOf(makeSettingsWorker('from-config'))).toThrow(
+      /invalid deploymentName/i,
+    )
 
     vi.unstubAllEnvs()
+  })
+
+  it('surfaces an invalid deploymentName as a startup fatal error instead of an invisible crash-loop', async () => {
+    // #198's constructor throw was credited with being "a loud startup exit".
+    // It was not. `lastFatalError` is written ONLY by start()'s catch, and the
+    // AWS entrypoint constructs the worker (canopycms-cdk/worker/index.ts:85)
+    // before it calls start() (:119) -- so the throw happened where nothing
+    // could record it. With systemd Type=simple + Restart=always and no
+    // cfn-signal, the operator saw: `cdk deploy` reporting success, and an
+    // admin panel showing the worker 'absent' with no fatal error, while the
+    // process crash-looped every ~5 seconds.
+    vi.stubEnv('CANOPYCMS_DEPLOYMENT_NAME', 'bad/name')
+    const consoleSpy = mockConsole()
+    try {
+      // 1. Construction must NOT throw -- this is the regression guard. If it
+      //    does, everything below is unreachable in production too.
+      const worker = makeSettingsWorker('from-config')
+
+      // 2. start() surfaces it: throws for systemd, AND records it where the
+      //    admin panel reads.
+      await expect(worker.start()).rejects.toThrow(/invalid deploymentName/i)
+
+      const status = JSON.parse(
+        await fs.readFile(path.join(workspacePath, '.tasks', WORKER_STATUS_FILE), 'utf-8'),
+      ) as WorkerStatusReport
+      expect(status.lastFatalError?.phase).toBe('startup')
+      expect(status.lastFatalError?.message).toMatch(/invalid deploymentName/i)
+      expect(status.lastFatalError?.message).toContain('bad/name')
+
+      // 3. The lock must not be left held: systemd restarts immediately, and a
+      //    still-held lock would turn one config error into ELOCKED for up to
+      //    lockStaleMs on every retry. start()'s catch releases before
+      //    rethrowing; assert the file is actually gone rather than trusting it.
+      await expect(fs.access(path.join(workspacePath, '.tasks', '.worker-lock'))).rejects.toThrow()
+    } finally {
+      consoleSpy.restore()
+      vi.unstubAllEnvs()
+    }
   })
 
   it('reports a deploymentName mismatch when a settings branch was pushed here locally but never reached GitHub', async () => {
