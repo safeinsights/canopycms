@@ -223,17 +223,44 @@ export async function init(options: InitOptions): Promise<void> {
 }
 
 /**
- * Cloud deployment artifacts: generates AWS-specific files
- * (Dockerfile, CI workflow).
+ * Cloud deployment artifacts: generates everything AWS-specific an adopter
+ * needs to deploy -- the container image, the CI workflow, and the CDK app the
+ * workflow deploys (cdk.json + infrastructure/).
+ *
+ * The CDK app is scaffolded rather than left to the adopter because
+ * `cdk deploy` with no `--app` resolves through `cdk.json`, and `cdk init`
+ * cannot create one here: it refuses to run in a non-empty directory, so there
+ * is no one-liner to point an existing app at.
  */
 export async function initDeployAws(options: InitDeployOptions): Promise<void> {
   const { projectDir, force, nonInteractive } = options
   const writeOpts = { force, nonInteractive }
-  const { dockerfileCms, dockerignore, githubWorkflowCms } = await import('./templates')
+  const { dockerfileCms, dockerignore, githubWorkflowCms, cdkJson, cdkApp, cmsStack } =
+    await import('./templates')
+  const {
+    detectPackageManager,
+    detectDefaultBranch,
+    detectGitHubRepo,
+    commandsFor,
+    missingCdkDependencies,
+    CDK_DEPENDENCIES,
+  } = await import('./project-detect')
 
   p.intro('CanopyCMS init-deploy aws')
 
-  await writeFile(path.join(projectDir, 'Dockerfile.cms'), await dockerfileCms(), writeOpts)
+  // Detection never fails the command: each of these falls back to the value
+  // the templates hardcoded before detection existed, so an npm project on a
+  // `main`-default repo gets exactly the output it always got.
+  const packageManager = await detectPackageManager(projectDir)
+  const pm = commandsFor(packageManager)
+  const defaultBranch = await detectDefaultBranch(projectDir)
+  const repo = await detectGitHubRepo(projectDir)
+
+  await writeFile(
+    path.join(projectDir, 'Dockerfile.cms'),
+    await dockerfileCms({ copy: pm.dockerCopy, install: pm.dockerInstall, build: pm.build }),
+    writeOpts,
+  )
   const dockerignoreWritten = await writeFile(
     path.join(projectDir, '.dockerignore'),
     await dockerignore(),
@@ -242,15 +269,60 @@ export async function initDeployAws(options: InitDeployOptions): Promise<void> {
   if (!dockerignoreWritten) {
     p.log.warn(
       'Existing .dockerignore kept — verify it excludes .env* (secrets would otherwise ' +
-        'enter the build context) and does NOT exclude vendor/ (needed for `npm ci` with ' +
-        'file: deps).',
+        'enter the build context) and does NOT exclude vendor/ (needed by the ' +
+        'Dockerfile.cms install step with file: deps).',
     )
   }
   await writeFile(
     path.join(projectDir, '.github/workflows/deploy-cms.yml'),
-    await githubWorkflowCms(),
+    await githubWorkflowCms({
+      defaultBranch,
+      lockfile: pm.lockfile,
+      ciInstall: pm.ciInstall,
+      addDev: pm.addDev,
+    }),
     writeOpts,
   )
+
+  // The CDK app itself. Without these three files the generated workflow's
+  // `cdk deploy` has nothing to deploy against: `cdk deploy` with no --app
+  // requires a cdk.json, and `cdk init` cannot supply one because it refuses
+  // to run in a non-empty directory.
+  const cdkJsonPath = path.join(projectDir, 'cdk.json')
+  const existingCdkJson = (await filePathExists(cdkJsonPath))
+    ? await fs.readFile(cdkJsonPath, 'utf-8')
+    : null
+  const cdkJsonWritten = await writeFile(cdkJsonPath, await cdkJson(), writeOpts)
+
+  await writeFile(
+    path.join(projectDir, 'infrastructure/bin/app.ts'),
+    await cdkApp({
+      githubOwner: repo?.owner ?? 'your-org',
+      githubRepo: repo?.repo ?? 'your-docs-site',
+    }),
+    writeOpts,
+  )
+  await writeFile(
+    path.join(projectDir, 'infrastructure/lib/cms-stack.ts'),
+    await cmsStack(),
+    writeOpts,
+  )
+
+  // An adopter with their own CDK app keeps it (writeFile skips), which leaves
+  // the scaffolded infrastructure/ unreachable. Say so: the generated workflow
+  // deploys by stack name, so it will fail with "no stacks match" rather than
+  // deploying their unrelated stacks, but only this message explains why.
+  if (
+    !cdkJsonWritten &&
+    existingCdkJson &&
+    !existingCdkJson.includes('infrastructure/bin/app.ts')
+  ) {
+    p.log.warn(
+      'Existing cdk.json kept, and it does not point at infrastructure/bin/app.ts — the ' +
+        'scaffolded CDK app will not be deployed. Either wire CmsStack into your own app ' +
+        'entry point, or re-run with --force to replace cdk.json.',
+    )
+  }
 
   // Check if next.config already has CANOPY_BUILD support
   const nextConfigPath = path.join(projectDir, 'next.config.ts')
@@ -275,8 +347,50 @@ export async function initDeployAws(options: InitDeployOptions): Promise<void> {
     }
   }
 
+  // Yarn is detected and templated, but the two Yarn generations differ in
+  // ways a lockfile name cannot settle -- and Berry's PnP linker breaks Next's
+  // standalone output tracing outright, which the Dockerfile depends on. Say
+  // that plainly rather than let a green scaffold imply a tested path.
+  if (packageManager === 'yarn' || packageManager === 'yarn-berry') {
+    p.log.warn(
+      `Yarn detected (${packageManager === 'yarn-berry' ? 'Berry' : 'classic'}). The generated ` +
+        'install lines are a best effort and are not exercised by CanopyCMS tests — review them ' +
+        'in Dockerfile.cms and .github/workflows/deploy-cms.yml.' +
+        (packageManager === 'yarn-berry'
+          ? ' Berry additionally requires nodeLinker: node-modules; PnP is incompatible with ' +
+            "Next.js standalone output, which the CMS image's runner stage copies."
+          : ''),
+    )
+  }
+
+  const missing = await missingCdkDependencies(projectDir)
+  if (missing.length > 0) {
+    // A generic "install the CDK packages" note is what let the previous gap
+    // ship. Name the ones this project is actually missing.
+    p.log.warn(
+      `Not installed: ${missing.join(', ')}. cdk.json runs ` +
+        '`node --import tsx infrastructure/bin/app.ts`, so the deploy fails without them:\n' +
+        `   ${pm.addDev} ${CDK_DEPENDENCIES.join(' ')}`,
+    )
+  }
+
   p.note(
-    'CDK constructs are available via the canopycms-cdk package.\nSee the deployment plan for CDK stack setup.',
+    [
+      '1. Install the CDK dependencies (if you have not already):',
+      `   ${pm.addDev} ${CDK_DEPENDENCIES.join(' ')}`,
+      '',
+      '2. Fill in infrastructure/lib/cms-stack.ts and infrastructure/bin/app.ts',
+      `   (worker repo currently set to ${repo ? `${repo.owner}/${repo.repo}` : 'your-org/your-docs-site'})`,
+      '',
+      '3. Bootstrap CDK in the target account/region: cdk bootstrap',
+      '',
+      '4. Set the repository secrets and variables listed at the top of',
+      '   .github/workflows/deploy-cms.yml — the deploy fails at synth without them.',
+      '',
+      `Deploys trigger on pushes to '${defaultBranch}'; edit the workflow to change that.`,
+      '',
+      'Full walkthrough: docs/deploying-to-aws.md',
+    ].join('\n'),
     'AWS deployment',
   )
 

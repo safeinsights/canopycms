@@ -198,7 +198,7 @@ this was a reasoned call, not an oversight.
 
 ---
 
-## HIGH — the deploy template has no CDK app to deploy against
+## ~~HIGH — the deploy template has no CDK app to deploy against~~ (RESOLVED 2026-08-12)
 
 `cli/template-files/deploy-cms.yml.template` runs `npx cdk deploy --all` from
 the repo root with no `--app`, which requires a `cdk.json`. `initDeployAws()`
@@ -207,8 +207,21 @@ writes only `Dockerfile.cms`, `.dockerignore` and the workflow, and
 `bin/app.ts`. An adopter following the scripted path gets a CI run that fails on
 the first deploy step.
 
-**Fix direction:** scaffold a minimal `cdk.json` + `bin/app.ts` in
-`init-deploy aws`, or add the `cdk init` step to Step 4 of the deployment doc.
+**Resolved** on `fix/deploy-template-cdk-app`. `init-deploy aws` now scaffolds
+`cdk.json`, `infrastructure/bin/app.ts` and `infrastructure/lib/cms-stack.ts`.
+The `cdk init` alternative was rejected: it refuses to run in a non-empty
+directory, so it cannot be scripted into an existing app.
+
+Two further first-run failures were found while fixing this and fixed with it:
+the workflow passed none of the environment variables the stack needs (so the
+deploy would still have failed at synth), and nothing ensured the
+`tsx`/`aws-cdk-lib`/`constructs`/`canopycms-cdk` devDependencies the app entry
+point imports. The workflow also now deploys **by stack name** rather than
+`--all`, which would have deployed an existing-CDK adopter's unrelated stacks on
+every content merge.
+
+Verified by `packages/canopycms-cdk/src/scaffold-synth.test.ts`, which scaffolds
+with the real CLI and then synthesizes through the generated `cdk.json`.
 
 ---
 
@@ -272,6 +285,11 @@ which is the same code path as a first load.
 - Malformed `rev-list` output makes `parseInt` yield `NaN`, which falls through
   to `diverged` and is then warned to operators as a genuine cross-deployment
   collision (`cms-worker.ts`). Noise only.
-- `deploy-cms.yml.template` runs `npm ci` (this repo mandates pnpm, and it fails
-  with no `package-lock.json`) and hardcodes `branches: [main]`, so an adopter
-  with a different default branch gets silence rather than an error.
+- ~~`deploy-cms.yml.template` runs `npm ci` (this repo mandates pnpm, and it
+  fails with no `package-lock.json`) and hardcodes `branches: [main]`, so an
+  adopter with a different default branch gets silence rather than an error.~~
+  (RESOLVED 2026-08-12, `fix/deploy-template-cdk-app`.) The install and build
+  commands are now written for the detected package manager in **both**
+  `deploy-cms.yml.template` and `Dockerfile.cms.template` — fixing only the
+  workflow would have moved the same failure into `cdk deploy`'s image build.
+  The trigger branch comes from `origin/HEAD`, falling back to `main`.
