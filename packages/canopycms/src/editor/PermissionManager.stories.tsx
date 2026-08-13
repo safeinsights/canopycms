@@ -1,7 +1,7 @@
 import type { Meta, StoryObj } from '@storybook/react'
 import { PermissionManager } from './PermissionManager'
 import type { PathPermission } from '../config'
-import type { UserSearchResult, GroupMetadata } from '../auth/types'
+import type { UserSearchResult, PermissionGroupOption } from '../auth/types'
 import type { EditorCollection } from './Editor'
 import { unsafeAsPermissionPath } from '../authorization/test-utils'
 import { unsafeAsLogicalPath } from '../paths/test-utils'
@@ -58,14 +58,18 @@ const mockPermissions: PathPermission[] = [
   },
 ]
 
-// Mock groups
-const mockGroups: GroupMetadata[] = [
-  { id: 'editors', name: 'Editors', memberCount: 12 },
-  { id: 'content-team', name: 'Content Team', memberCount: 8 },
-  { id: 'marketing', name: 'Marketing', memberCount: 15 },
-  { id: 'engineering', name: 'Engineering', memberCount: 25 },
-  { id: 'managers', name: 'Managers', memberCount: 5 },
-  { id: 'customer-support', name: 'Customer Support', memberCount: 10 },
+// Mock groups. The picker offers both universes: Canopy's own groups from
+// groups.json ('internal', name-only) and the auth provider's ('external').
+const mockGroups: PermissionGroupOption[] = [
+  { id: 'Admins', name: 'Admins', description: 'Full access', source: 'internal' },
+  { id: 'Reviewers', name: 'Reviewers', description: 'Can review branches', source: 'internal' },
+  { id: 'docs-team', name: 'Docs Team', description: 'Owns the docs tree', source: 'internal' },
+  { id: 'editors', name: 'Editors', memberCount: 12, source: 'external' },
+  { id: 'content-team', name: 'Content Team', memberCount: 8, source: 'external' },
+  { id: 'marketing', name: 'Marketing', memberCount: 15, source: 'external' },
+  { id: 'engineering', name: 'Engineering', memberCount: 25, source: 'external' },
+  { id: 'managers', name: 'Managers', memberCount: 5, source: 'external' },
+  { id: 'customer-support', name: 'Customer Support', memberCount: 10, source: 'external' },
 ]
 
 // Mock user search results
@@ -90,7 +94,7 @@ const mockSearchUsers = async (query: string, limit?: number): Promise<UserSearc
   return limit ? filtered.slice(0, limit) : filtered
 }
 
-const mockListGroups = async (): Promise<GroupMetadata[]> => {
+const mockListGroups = async (): Promise<PermissionGroupOption[]> => {
   // Simulate API delay
   await new Promise((resolve) => setTimeout(resolve, 300))
   return mockGroups

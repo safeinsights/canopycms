@@ -3,7 +3,12 @@
  */
 
 import type { PathPermission, PermissionLevel, PermissionTarget } from '../../config'
-import type { UserSearchResult, GroupMetadata } from '../../auth/types'
+import type {
+  UserSearchResult,
+  GroupMetadata,
+  GroupSource,
+  PermissionGroupOption,
+} from '../../auth/types'
 import type { EditorCollection } from '../Editor'
 
 export interface PermissionManagerProps {
@@ -21,8 +26,8 @@ export interface PermissionManagerProps {
   onSearchUsers?: (query: string, limit?: number) => Promise<UserSearchResult[]>
   /** Handler to get user metadata by ID */
   onGetUserMetadata?: (userId: string) => Promise<UserSearchResult | null>
-  /** Handler to list groups */
-  onListGroups?: () => Promise<GroupMetadata[]>
+  /** Handler to list groups (internal + external, tagged by `source`) */
+  onListGroups?: () => Promise<PermissionGroupOption[]>
   /** Close handler */
   onClose?: () => void
   /** Loading state */
@@ -52,7 +57,17 @@ export interface TreeNode {
 export interface GroupSelectItem {
   value: string
   label: string
+  /** Which universe this option came from; shown as a tag in the picker. */
+  source: GroupSource
 }
 
 /** Re-export for convenience */
-export type { PathPermission, PermissionLevel, PermissionTarget, UserSearchResult, GroupMetadata }
+export type {
+  PathPermission,
+  PermissionLevel,
+  PermissionTarget,
+  UserSearchResult,
+  GroupMetadata,
+  GroupSource,
+  PermissionGroupOption,
+}

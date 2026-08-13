@@ -1,7 +1,35 @@
 # Permission Manager's "Add Groups" picker can't reach internal groups
 
-Confirmed while writing `apps/test-app/e2e/tests/permissions-groups.spec.ts`
-(D1/D2 coverage, 2026-07-30).
+RESOLVED 2026-08-12 on `fix/internal-groups-in-permission-picker`.
+`listGroupsHandler` now merges `deriveInternalGroups` with
+`authPlugin.listGroups()`, and each option carries a `source:
+'internal' | 'external'` tag rendered beside its name in the picker.
+
+Decisions taken while fixing it:
+
+- **Names only.** Internal options expose `id`/`name`/`description` and
+  deliberately drop `members`/`memberCount`. `permissions.listGroups` is
+  guarded `privileged` (admin OR reviewer) whereas `groups.getInternal` is
+  admin-only, so member identities and counts must not ride along. Reviewers
+  can reach this drawer — the "Manage Permissions" menu item is not
+  isAdmin()-gated, unlike "System health".
+- **Collisions collapse, internal wins.** The two ID spaces are not namespaced
+  against each other, but `checkPathPermission` matches one flattened
+  `user.groups` list by ID string, so a shared ID *is* a single permission
+  target; emitting two options would misrepresent enforcement.
+- **Fails loudly.** A groups.json read failure returns 500 rather than
+  degrading to an external-only list — a silently incomplete picker is the
+  exact failure this fix removes.
+
+Regression cover: `packages/canopycms/src/api/internal-groups-in-permission-picker.test.ts`
+(create via the groups API, read back through the picker endpoint), plus cases
+in `api/permissions.test.ts` and `editor/PermissionManager.test.tsx`.
+
+---
+
+Original report, confirmed while writing
+`apps/test-app/e2e/tests/permissions-groups.spec.ts` (D1/D2 coverage,
+2026-07-30):
 
 ## Problem
 

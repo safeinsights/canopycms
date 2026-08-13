@@ -2,10 +2,12 @@ import { z } from 'zod'
 
 import type { ApiContext, ApiRequest, ApiResponse } from './types'
 import type { PathPermission } from '../config'
-import type { UserSearchResult, GroupMetadata } from '../auth/types'
+import type { UserSearchResult, PermissionGroupOption } from '../auth/types'
 import {
   loadPermissionsFile,
   mutatePermissionsFile,
+  loadGroupsFile,
+  deriveInternalGroups,
   SettingsVersionConflictError,
   SettingsFileConflictError,
 } from '../authorization'
@@ -22,7 +24,7 @@ export type PermissionsResponse = ApiResponse<{ permissions: PathPermission[]; v
 export type SearchUsersResponse = ApiResponse<{ users: UserSearchResult[] }>
 
 /** Response type for list groups */
-export type ListGroupsResponse = ApiResponse<{ groups: GroupMetadata[] }>
+export type ListGroupsResponse = ApiResponse<{ groups: PermissionGroupOption[] }>
 
 /** Response type for get user metadata */
 export type GetUserMetadataResponse = ApiResponse<{
@@ -203,6 +205,17 @@ const searchUsersHandler = async (
 
 /**
  * List groups (for permission UI)
+ *
+ * Merges BOTH group universes, because both are valid `allowedGroups` targets:
+ * the auth provider's groups and Canopy's own internal groups from groups.json
+ * (see PermissionGroupOption in auth/types.ts). Feeding this endpoint from the
+ * auth plugin alone made internally-created groups unreachable from the
+ * Permission Manager's picker -- they could only be granted a path permission
+ * by hand-editing permissions.json.
+ *
+ * Internal entries are name-only (no members, no memberCount): this endpoint is
+ * `privileged` (admin or reviewer) whereas `groups.getInternal` is admin-only,
+ * so member identities and counts must not leak through here.
  */
 const listGroupsHandler = async (
   _gc: Record<string, never>,
@@ -215,9 +228,52 @@ const listGroupsHandler = async (
   }
 
   try {
-    const groups = await authPlugin.listGroups()
-    return { ok: true, status: 200, data: { groups } }
+    const externalGroups = await authPlugin.listGroups()
+
+    const result = await getSettingsBranchContext(ctx)
+    if ('error' in result) {
+      return { ok: false, status: result.status, error: result.error }
+    }
+
+    const { context, mode } = result
+    const file = await loadGroupsFile(context.branchRoot, mode)
+    const internalGroups = deriveInternalGroups(file?.groups ?? [], ctx.services.bootstrapAdminIds)
+
+    // Deduplicate by ID, internal first so it wins a collision. The two ID
+    // spaces are not namespaced against each other, but `checkPathPermission`
+    // matches `allowedGroups` by ID string against one flattened `user.groups`
+    // list -- so two same-ID groups ARE a single permission target, and
+    // emitting both would misrepresent what enforcement actually does.
+    // (Reserved IDs can never arrive from the provider: stripReservedGroups in
+    // user.ts removes them before they reach `user.groups`.)
+    const byId = new Map<string, PermissionGroupOption>()
+
+    for (const group of internalGroups) {
+      byId.set(group.id, {
+        id: group.id,
+        name: group.name,
+        description: group.description,
+        source: 'internal',
+      })
+    }
+
+    for (const group of externalGroups) {
+      const collision = byId.get(group.id)
+      if (collision) {
+        // Keep the internal entry, but record that granting this ID ALSO
+        // reaches the provider group's membership -- the picker surfaces that
+        // so an admin isn't shown a name-and-members set narrower than the
+        // grant's real reach.
+        collision.source = 'both'
+        continue
+      }
+      byId.set(group.id, { ...group, source: 'external' })
+    }
+
+    return { ok: true, status: 200, data: { groups: Array.from(byId.values()) } }
   } catch (error) {
+    // Deliberately NOT degrading to an external-only list on a groups.json read
+    // failure: a silently incomplete picker is the exact bug this merge fixes.
     return {
       ok: false,
       status: 500,
