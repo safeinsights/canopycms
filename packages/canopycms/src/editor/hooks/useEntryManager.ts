@@ -68,6 +68,20 @@ export interface UseEntryManagerReturn {
   renameEntry: (path: string, newSlug: string) => Promise<void>
   loadEntry: (entry: EditorEntry) => Promise<FormValue>
   saveEntry: (entry: EditorEntry, value: FormValue) => Promise<FormValue>
+  /**
+   * The OCC version token currently held for `contentId` ON THE BRANCH BEING
+   * SHOWN, or undefined when none is known (never loaded/saved on this branch,
+   * or the server didn't send a version). Branch-qualified internally, exactly
+   * like the token lookup `saveEntry` performs, so callers can't accidentally
+   * read another branch's mtime.
+   *
+   * Exposed so useDraftManager can pin the server version a draft was based on
+   * and detect, before a save goes out, that the token has moved on since (the
+   * cross-session case: a draft restored from localStorage, then a fresh load
+   * that captured a NEWER token, which would otherwise sail through the
+   * server's conflict check and revert whoever wrote that newer version).
+   */
+  getEntryVersion: (contentId: string) => number | undefined
   collectionByPath: Map<LogicalPath, EditorCollection>
   // Entry create modal state
   createModalOpen: boolean
@@ -324,6 +338,12 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
     }
     return normalizeContentPayload(result.data)
   }
+
+  // Read side of the same branch-qualified token map `saveEntry` writes/reads.
+  // Deliberately keyed off the CURRENT branch (not a pinned one): callers use
+  // it to reason about the entry they are looking at right now.
+  const getEntryVersion = (contentId: string): number | undefined =>
+    entryVersionsRef.current.get(versionKey(options.branchName, contentId))
 
   const saveEntry = async (entry: EditorEntry, value: FormValue) => {
     if (!entry.collectionPath) {
@@ -713,6 +733,7 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
     renameEntry,
     loadEntry,
     saveEntry,
+    getEntryVersion,
     collectionByPath: collectionByPath,
     createModalOpen,
     createModalCollection,

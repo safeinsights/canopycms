@@ -37,6 +37,57 @@ export const shallowEqualRecord = (
   return true
 }
 
+/** Storage-format tag for the persisted draft envelope (see `parsePersistedDrafts`). */
+const DRAFTS_STORAGE_VERSION = 2
+
+/**
+ * What `canopycms:drafts:<branch>` holds today.
+ *
+ * The pre-v2 shape was a bare `Record<contentId, FormValue>` with no record of
+ * which server version each draft was based on -- which is precisely what made
+ * cross-session conflicts undetectable: the draft restored, the entry then
+ * loaded and captured a FRESH OCC token, and a save sent that fresh token, so
+ * a stale snapshot passed the server's conflict check and reverted whatever
+ * had landed in between.
+ */
+interface PersistedDrafts {
+  v: typeof DRAFTS_STORAGE_VERSION
+  drafts: Record<string, FormValue>
+  /**
+   * contentId -> the server version the stored draft was based on. `null`
+   * means "unknown" and is treated as a conflict on save (see
+   * `isDraftBaseStale`).
+   */
+  baseVersions: Record<string, number | null>
+}
+
+/**
+ * Read the persisted draft store, tolerating the legacy pre-v2 shape.
+ *
+ * LEGACY DECISION: a pre-v2 payload carries no base versions at all, and we
+ * cannot reconstruct them -- the draft may predate any number of other
+ * people's saves. Every legacy draft is therefore restored with base version
+ * `null` ("unknown"), which surfaces the conflict UI on save instead of
+ * trusting it. Trusting it is the bug being fixed; silently DISCARDING it is a
+ * quieter version of the same bug, so the draft is kept and the user is told.
+ * This only affects drafts written before this change; everything written
+ * after carries a real base version.
+ */
+const parsePersistedDrafts = (
+  raw: string,
+): { drafts: Record<string, FormValue>; baseVersions: Record<string, number | null> } => {
+  const parsed: unknown = JSON.parse(raw)
+  if (!parsed || typeof parsed !== 'object') return { drafts: {}, baseVersions: {} }
+  if ((parsed as { v?: unknown }).v === DRAFTS_STORAGE_VERSION) {
+    const envelope = parsed as Partial<PersistedDrafts>
+    return { drafts: envelope.drafts ?? {}, baseVersions: envelope.baseVersions ?? {} }
+  }
+  const drafts = parsed as Record<string, FormValue>
+  const baseVersions: Record<string, number | null> = {}
+  for (const id of Object.keys(drafts)) baseVersions[id] = null
+  return { drafts, baseVersions }
+}
+
 export interface UseDraftManagerOptions {
   branchName: string
   selectedPath: string
@@ -45,6 +96,14 @@ export interface UseDraftManagerOptions {
   initialValues?: Record<string, FormValue>
   loadEntry: (entry: EditorEntry) => Promise<FormValue>
   saveEntry: (entry: EditorEntry, value: FormValue) => Promise<FormValue>
+  /**
+   * The OCC version token currently held for an entry on the branch being
+   * shown (useEntryManager's `getEntryVersion`). Used to stamp each draft with
+   * the version it was based on, and to detect at save time that the token has
+   * since moved on. Optional: without it no base versions are recorded and
+   * conflict detection falls back entirely to the server's 409.
+   */
+  getEntryVersion?: (contentId: string) => number | undefined
   setBusy: (busy: boolean) => void
   /**
    * Fired (fire-and-forget) after a successful save. Lets callers refresh
@@ -125,6 +184,27 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
     errors: Record<string, string>
   } | null>(null)
 
+  // contentId -> the server version the CURRENT draft for that entry is based
+  // on. A ref rather than state: nothing renders from it, and the persist
+  // effect below must be able to read the value stamped moments earlier in the
+  // same commit. Three distinguishable states, all load-bearing:
+  //   number  - known base version
+  //   null    - draft restored from storage with no recorded base ("unknown")
+  //   absent  - draft created this session before any version was known
+  //             (adopter-supplied `initialValues`, or an edit that somehow
+  //             preceded the entry's first load); treated as safe, matching
+  //             the behavior before base versions existed.
+  const draftBaseVersionsRef = useRef<Record<string, number | null>>({})
+  // The draft ids the reconcile effect below has already accounted for. It
+  // prunes on an observed present -> absent TRANSITION rather than on "not
+  // currently in drafts": the restore effect stamps base versions for ids
+  // whose `setDrafts` has only been QUEUED, so a prune keyed on the current
+  // `drafts` would delete every restored base version in the same commit that
+  // recorded it -- and the next pass would then re-stamp those drafts with the
+  // freshly loaded version, which is exactly the false "no conflict" this
+  // mechanism exists to prevent.
+  const reconciledDraftIdsRef = useRef<Set<string>>(new Set())
+
   const storageKey = useMemo(() => `canopycms:drafts:${options.branchName}`, [options.branchName])
 
   // Draft keys are now content IDs, not paths
@@ -176,6 +256,11 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
     if (prevBranchRef.current && prevBranchRef.current !== options.branchName) {
       setDrafts({})
       setLoadedValues({})
+      // Base versions are file mtimes, i.e. inherently per-branch -- carrying
+      // them across a switch would compare one branch's version against
+      // another's.
+      draftBaseVersionsRef.current = {}
+      reconciledDraftIdsRef.current = new Set()
     }
     prevBranchRef.current = options.branchName
   }, [options.branchName])
@@ -186,8 +271,15 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
     try {
       const raw = window.localStorage.getItem(storageKey)
       if (raw) {
-        const parsed = JSON.parse(raw) as Record<string, FormValue>
-        setDrafts((prev) => ({ ...prev, ...parsed }))
+        const { drafts: restored, baseVersions } = parsePersistedDrafts(raw)
+        // Stamp the base versions BEFORE queueing the state update: the
+        // reconcile effect below only stamps ids it has never seen, so
+        // recording them here is what stops a restored draft from being
+        // (wrongly) stamped with the version of the load that happens next.
+        for (const id of Object.keys(restored)) {
+          draftBaseVersionsRef.current[id] = baseVersions[id] ?? null
+        }
+        setDrafts((prev) => ({ ...prev, ...restored }))
       }
     } catch (err) {
       console.warn('Failed to restore drafts', err)
@@ -201,7 +293,15 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
     const handleStorage = (event: StorageEvent) => {
       if (event.key !== storageKey || !event.newValue) return
       try {
-        const parsed = JSON.parse(event.newValue) as Record<string, FormValue>
+        const { drafts: parsed, baseVersions } = parsePersistedDrafts(event.newValue)
+        // Same "only fill what's missing" rule as the merge below: an id we
+        // already have a base version for is one this tab is already drafting,
+        // so the other tab's base version must not overwrite ours.
+        for (const id of Object.keys(parsed)) {
+          if (!(id in draftBaseVersionsRef.current)) {
+            draftBaseVersionsRef.current[id] = baseVersions[id] ?? null
+          }
+        }
         setDrafts((prev) => {
           const missing = Object.keys(parsed).filter((id) => !(id in prev))
           if (missing.length === 0) return prev
@@ -226,12 +326,48 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
     draftsStorageKeyRef.current = storageKey
   }, [drafts])
 
+  // Keep the per-draft base versions in step with `drafts`.
+  //
+  // A draft key appearing here for the first time was created by the user
+  // editing an entry they had already opened, so the version currently held
+  // for that entry IS the version their edit is based on. Keys that disappear
+  // (saved, discarded, reloaded) drop their base version with them, so the
+  // next edit re-stamps against whatever the server returned most recently.
+  //
+  // Declared BEFORE the persist effect so both run in the same commit, in this
+  // order -- the persist effect reads the ref this one just updated.
+  useEffect(() => {
+    const bases = draftBaseVersionsRef.current
+    const draftIds = new Set(Object.keys(drafts))
+    for (const id of draftIds) {
+      if (id in bases) continue
+      const version = options.getEntryVersion?.(id)
+      // Only record a base we actually know. Leaving it absent (rather than
+      // writing `null`) keeps "never loaded, so nothing to compare" distinct
+      // from "restored with no recorded base", and lets a later edit stamp a
+      // real version once one is known.
+      if (version !== undefined) bases[id] = version
+    }
+    for (const id of reconciledDraftIdsRef.current) {
+      if (!draftIds.has(id)) delete bases[id]
+    }
+    reconciledDraftIdsRef.current = draftIds
+    // Deliberately keyed on `drafts` alone: `options.getEntryVersion` is a
+    // fresh closure every render, and only a drafts change can add or remove
+    // the keys this effect reconciles.
+  }, [drafts])
+
   // Persist drafts to localStorage whenever they change
   useEffect(() => {
     if (typeof window === 'undefined') return
     if (draftsStorageKeyRef.current !== storageKey) return
     try {
-      window.localStorage.setItem(storageKey, JSON.stringify(drafts))
+      const payload: PersistedDrafts = {
+        v: DRAFTS_STORAGE_VERSION,
+        drafts,
+        baseVersions: draftBaseVersionsRef.current,
+      }
+      window.localStorage.setItem(storageKey, JSON.stringify(payload))
     } catch (err) {
       console.warn('Failed to persist drafts', err)
     }
@@ -275,8 +411,56 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
     })
   }, [effectiveValue, currentId, options.currentEntry?.schema, options.currentEntry?.format])
 
+  /**
+   * The 409 presentation, in one place. The client-side stale-base check below
+   * and the server's own 409 response are the same situation from the user's
+   * point of view -- someone else's work is at risk -- so they must read
+   * identically, and "Reload" (now itself confirmed, see `handleReload`) is the
+   * recovery for both.
+   */
+  const showConflictNotification = () => {
+    notifications.show({
+      message: 'Content was modified by another editor. Reload to see the latest changes.',
+      color: 'yellow',
+      autoClose: getNotificationDuration(8000),
+      withCloseButton: true,
+    })
+  }
+
+  /**
+   * True when the selected entry's draft is based on a server version that is
+   * no longer the one we hold for it.
+   *
+   * This is the cross-session case the OCC token alone cannot catch: the draft
+   * was written against version N, the page was reloaded, the entry was
+   * re-read and captured version N+1, and a save would send N+1 -- passing the
+   * server's conflict check and reverting whoever wrote N+1. Comparing the
+   * draft's own base against the current token catches it BEFORE the write.
+   *
+   * `null` (unknown -- a draft restored from the pre-v2 storage format) counts
+   * as stale for the same reason: we cannot prove it isn't.
+   */
+  const isDraftBaseStale = (): boolean => {
+    if (!currentId || drafts[currentId] === undefined) return false
+    const currentVersion = options.getEntryVersion?.(currentId)
+    // No server version known for this entry at all -- nothing to compare
+    // against, so this check has no opinion (the server's 409 still applies).
+    if (currentVersion === undefined) return false
+    const base = draftBaseVersionsRef.current[currentId]
+    if (base === undefined) return false
+    return base === null || base !== currentVersion
+  }
+
   const handleSave = async () => {
     if (!options.currentEntry || !effectiveValue || !currentId) return
+
+    // Conflict check first: a stale-based draft must not be schema-validated
+    // into a green "Saved" -- and nagging about field errors is noise when the
+    // save is not going out at all.
+    if (isDraftBaseStale()) {
+      showConflictNotification()
+      return
+    }
 
     // Client-side pre-save validation (ED-H1): the same pure schema rules the
     // server enforces authoritatively at the write boundary. Blocks the save
@@ -352,18 +536,18 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
       ) {
         setErrorState({ entryId: currentId, errors: toFieldErrorMap(err.fieldErrors) })
       }
-      notifications.show({
-        ...(isValidation ? { title: 'Save rejected' } : {}),
-        ...(isForbidden ? { title: 'Save not allowed' } : {}),
-        message: isConflict
-          ? 'Content was modified by another editor. Reload to see the latest changes.'
-          : isValidation || isForbidden
-            ? err.message
-            : 'Save failed',
-        color: isConflict ? 'yellow' : 'red',
-        autoClose: getNotificationDuration(isConflict || isValidation || isForbidden ? 8000 : 6000),
-        withCloseButton: true,
-      })
+      if (isConflict) {
+        showConflictNotification()
+      } else {
+        notifications.show({
+          ...(isValidation ? { title: 'Save rejected' } : {}),
+          ...(isForbidden ? { title: 'Save not allowed' } : {}),
+          message: isValidation || isForbidden ? err.message : 'Save failed',
+          color: 'red',
+          autoClose: getNotificationDuration(isValidation || isForbidden ? 8000 : 6000),
+          withCloseButton: true,
+        })
+      }
     } finally {
       options.setBusy(false)
     }
@@ -417,9 +601,15 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
       if (typeof window !== 'undefined') {
         const raw = window.localStorage.getItem(storageKey)
         if (raw) {
-          const parsed = JSON.parse(raw) as Record<string, FormValue>
-          delete parsed[currentId]
-          window.localStorage.setItem(storageKey, JSON.stringify(parsed))
+          const { drafts: persisted, baseVersions } = parsePersistedDrafts(raw)
+          delete persisted[currentId]
+          delete baseVersions[currentId]
+          const payload: PersistedDrafts = {
+            v: DRAFTS_STORAGE_VERSION,
+            drafts: persisted,
+            baseVersions,
+          }
+          window.localStorage.setItem(storageKey, JSON.stringify(payload))
         }
       }
     } catch (err) {
@@ -453,13 +643,23 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
     })
   }
 
-  const handleReload = async () => {
+  const performReload = async () => {
     if (!options.currentEntry || !currentId) return
     options.setBusy(true)
     try {
       const loaded = await options.loadEntry(options.currentEntry)
       setLoadedValues((prev) => ({ ...prev, [currentId]: loaded }))
-      setDrafts((prev) => ({ ...prev, [currentId]: loaded }))
+      // Drop the draft rather than seeding it with `loaded`. `effectiveValue`
+      // falls back to `loadedValues`, so the rendered value is identical --
+      // and a draft that merely mirrors the server value is exactly the
+      // phantom-dirty snapshot this hook works to avoid (same reasoning as
+      // handleSave's drop above).
+      setDrafts((prev) => {
+        if (!(currentId in prev)) return prev
+        const next = { ...prev }
+        delete next[currentId]
+        return next
+      })
       notifications.show({
         message: 'Reloaded',
         color: 'blue',
@@ -477,6 +677,29 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
     } finally {
       options.setBusy(false)
     }
+  }
+
+  // Reloading replaces the working value with the server's copy, so over a
+  // real draft it is every bit as destructive as "Discard draft" -- and it is
+  // what the conflict notification tells the losing editor to do, i.e. the one
+  // moment their unsaved work matters most. Guarded exactly like
+  // handleDiscardFileDraft: the same `isSelectedDirty()` test (nothing to lose
+  // -> no prompt) and the same confirm-modal shape.
+  const handleReload = async () => {
+    if (!options.currentEntry || !currentId) return
+    if (!isSelectedDirty()) {
+      await performReload()
+      return
+    }
+    modals.openConfirmModal({
+      title: 'Reload file',
+      children: 'Reload this file from the server? Unsaved changes for this file will be lost.',
+      labels: { confirm: 'Reload', cancel: 'Cancel' },
+      confirmProps: { color: 'red' },
+      onConfirm: () => {
+        void performReload()
+      },
+    })
   }
 
   // Compute dirty state for a given entry

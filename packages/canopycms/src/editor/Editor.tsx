@@ -280,6 +280,7 @@ export const Editor: React.FC<EditorProps> = ({
     renameEntry,
     loadEntry,
     saveEntry,
+    getEntryVersion,
     createModalOpen,
     createModalCollection,
     createModalError,
@@ -356,6 +357,7 @@ export const Editor: React.FC<EditorProps> = ({
     initialValues,
     loadEntry,
     saveEntry,
+    getEntryVersion,
     setBusy: setEntriesLoading,
     onSaved: () => {
       void refreshEntries(branchNameState).catch((err) =>
@@ -440,7 +442,15 @@ export const Editor: React.FC<EditorProps> = ({
   // everywhere in useDraftManager) and silently starved the entry of a
   // fresh server read. The draft is still preserved as an overlay below —
   // only the "did we ever fetch the server value" gate changed.
-  const loadingEntryIdsRef = useRef<Set<ContentId>>(new Set())
+  //
+  // In-flight loads, keyed `${branch}:${contentId}` -- NOT the bare contentId.
+  // The same contentId exists on every branch (branches are clones and IDs are
+  // embedded in filenames), so a bare-id key made the PREVIOUS branch's pending
+  // load dedupe away the NEW branch's load entirely: the new branch's read was
+  // never issued, and the old response then settled into the shared state under
+  // that same id. Qualifying the key lets both loads coexist; the branch check
+  // at settle time decides which one is allowed to write.
+  const loadingEntryIdsRef = useRef<Set<string>>(new Set())
   // The contentId this effect is CURRENTLY targeting, kept in sync every
   // render (not in an effect -- it must be current by the time an in-flight
   // load's `finally`/`catch` runs, which can be after several re-renders).
@@ -451,34 +461,60 @@ export const Editor: React.FC<EditorProps> = ({
   // anymore.
   const currentContentIdRef = useRef<ContentId | undefined>(currentEntry?.contentId)
   currentContentIdRef.current = currentEntry?.contentId
+  // Same idea for the branch, and for the same reason useEntryManager keeps its
+  // own `currentBranchRef`: an async settle runs several renders later, so the
+  // branch captured in its closure is exactly the value that goes stale when
+  // the user switches mid-flight -- which is the only moment the check matters.
+  const currentBranchRef = useRef(branchNameState)
+  currentBranchRef.current = branchNameState
 
   useEffect(() => {
     const contentId = currentEntry?.contentId
+    // Pin the branch this load targets. `loadEntry` pins the same value
+    // internally (that is the branch its OCC token gets recorded under), so
+    // comparing against it at settle time answers "is the state I'm about to
+    // write still the state of the branch on screen?".
+    const requestBranch = branchNameState
+    const inFlightKey = `${requestBranch}:${contentId ?? ''}`
     const load = async () => {
       if (!currentEntry || !contentId || loadedValues[contentId] !== undefined) return
       // Guard against overlapping renders re-firing the same in-flight load
       // (e.g. `currentEntry` getting a new object reference from an entries
       // refresh while the fetch below is still pending).
-      if (loadingEntryIdsRef.current.has(contentId)) return
-      loadingEntryIdsRef.current.add(contentId)
+      if (loadingEntryIdsRef.current.has(inFlightKey)) return
+      loadingEntryIdsRef.current.add(inFlightKey)
       setEntriesLoading(true)
       try {
         const loaded = await loadEntry(currentEntry)
+        // A branch switch during the await makes this response another
+        // branch's content. Writing it would (a) show it as the new branch's
+        // content and (b) satisfy the skip gate above, permanently suppressing
+        // the new branch's own load -- which also leaves the new branch's OCC
+        // token unset, turning the next save into a blind overwrite that can
+        // never 409. Drop it instead; the new branch has its own load running
+        // under its own key.
+        if (currentBranchRef.current !== requestBranch) return
         setLoadedValues((prev) => ({ ...prev, [contentId]: loaded }))
-        setDrafts((prev) => {
-          if (prev[contentId] !== undefined) return prev // preserve existing (e.g. localStorage) draft
-          return { ...prev, [contentId]: loaded }
-        })
+        // NOTE: no draft is seeded here. `effectiveValue` is
+        // `drafts[id] ?? loadedValues[id]`, so the form renders from the line
+        // above alone; seeding `drafts[id] = loaded` only manufactured a
+        // pristine draft for every entry the user merely OPENED, which
+        // useDraftManager then persisted to localStorage -- restored next
+        // session as a dirty, stale full-content snapshot.
       } finally {
-        loadingEntryIdsRef.current.delete(contentId)
-        // Clear the shared flag if this load's entry is still selected, OR if
-        // no other load remains in flight. The second arm matters when the
-        // user navigates from a slow-loading entry to one that's ALREADY
-        // loaded: no new load starts, so "a newer selection's own load owns
-        // the flag now" doesn't hold -- without it, this stale settle would
-        // leave `entriesLoading` (and therefore `busy`) stuck true with
-        // nothing left to clear it.
-        if (currentContentIdRef.current === contentId || loadingEntryIdsRef.current.size === 0) {
+        loadingEntryIdsRef.current.delete(inFlightKey)
+        // Clear the shared flag if this load's entry is still selected on the
+        // branch it was loaded for, OR if no other load remains in flight. The
+        // second arm matters when the user navigates from a slow-loading entry
+        // to one that's ALREADY loaded: no new load starts, so "a newer
+        // selection's own load owns the flag now" doesn't hold -- without it,
+        // this stale settle would leave `entriesLoading` (and therefore
+        // `busy`) stuck true with nothing left to clear it.
+        if (
+          (currentBranchRef.current === requestBranch &&
+            currentContentIdRef.current === contentId) ||
+          loadingEntryIdsRef.current.size === 0
+        ) {
           setEntriesLoading(false)
         }
       }
@@ -486,13 +522,14 @@ export const Editor: React.FC<EditorProps> = ({
     load().catch((err) => {
       console.error(err)
       // Same staleness guard as above: don't tell the user an entry failed
-      // to load when they've already navigated to a different one.
-      if (currentContentIdRef.current === contentId) {
+      // to load when they've already navigated to a different one (or to a
+      // different branch).
+      if (currentBranchRef.current === requestBranch && currentContentIdRef.current === contentId) {
         notifications.show({ message: 'Failed to load entry', color: 'red' })
       }
     })
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- stable setters, run only on entry/path/loadedValues change
-  }, [currentEntry, loadedValues, selectedPath])
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- stable setters, run only on entry/path/branch/loadedValues change
+  }, [currentEntry, loadedValues, selectedPath, branchNameState])
 
   // Schema editor handlers
   const handleOpenCollectionEditor = async (
