@@ -87,7 +87,13 @@ const showDeleteConfirmation = (
       </Text>
     ),
     labels: { confirm: 'Delete Branch', cancel: 'Cancel' },
-    confirmProps: { color: 'red' },
+    // data-testid is load-bearing, not decoration: the e2e helper
+    // (apps/test-app/e2e/fixtures/branch-page.ts's deleteBranch) already
+    // anticipated a delete confirmation and clicks
+    // [data-testid="confirm-delete-branch"] when it appears. Without this the
+    // modal opens, nothing dismisses it, and the branch never disappears --
+    // which is exactly how the e2e suite caught this confirmation being added.
+    confirmProps: { color: 'red', 'data-testid': 'confirm-delete-branch' },
     onCancel,
     onConfirm,
   })
