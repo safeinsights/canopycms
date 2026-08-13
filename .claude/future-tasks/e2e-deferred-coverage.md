@@ -16,7 +16,7 @@ harness investment before they can be covered, grouped by what unblocks them.
   `protected-branch.test.ts`.
 
 A second test app (or a prod-mode variant of the existing one) would also unlock
-prod-only guard behaviour generally. Overlaps [dual-build-ci.md](dual-build-ci.md).
+prod-only guard behaviour generally. Overlaps [dual-build-ci.md](resolved/dual-build-ci.md).
 
 ## Needs a fake GitHub
 
@@ -57,4 +57,4 @@ prod-only guard behaviour generally. Overlaps [dual-build-ci.md](dual-build-ci.m
   **E2** string-list comma/duplicate handling, **E7** comments copy changes.
 - **F1–F5** — CLI (`init`, `migrate`), CDK constructs, static-build validation
   and dual-build shapes. Not browser-reachable; F5 is tracked by
-  [dual-build-ci.md](dual-build-ci.md).
+  [dual-build-ci.md](resolved/dual-build-ci.md).

@@ -32,7 +32,7 @@ gating adopter access on that review blocks all downstream work.
   `canopycms-cdk`). Reuse `publish.yml`'s trusted-publisher/OIDC setup, the npm@11
   bootstrap, and the `generate:client` step.
 - Keep the existing `prepack` build guards in play so a prerelease can never ship
-  stale `dist/` (see [resolved/canopycms-pack-needs-prepack.md](resolved/canopycms-pack-needs-prepack.md)).
+  stale `dist/` (see [canopycms-pack-needs-prepack.md](canopycms-pack-needs-prepack.md)).
 
 ### 2. Standing draft PR `integration-202607-a` → `main`
 

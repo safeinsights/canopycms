@@ -3267,6 +3267,24 @@ error client-bundle-no-node-builtins: packages/canopycms/src/client.ts → fs/pr
 
 The fix is normally to import the dependency-free sibling instead of the node-importing module -- `paths/branch-name` (not `paths/branch` or the `paths` barrel), `assets/asset-prefixes` (not `assets/keys`), `assets/transform-directives` (not `assets/transform`) -- or to make the import `import type`. If a client-reachable module genuinely needs new browser-safe logic that currently lives in a node-importing file, extract that logic into its own dependency-free module rather than widening the rule.
 
+### Future-Tasks Backlog Check
+
+`.claude/future-tasks/` is the durable backlog, and AGENTS.md requires every deferred issue to exist as a task file **plus** an `index.md` row. Three failure modes kept slipping through review, so they are now enforced:
+
+```bash
+pnpm lint:tasks
+```
+
+It runs in CI right after `lint:bundle`, and in the pre-commit hook whenever a commit touches `.claude/future-tasks/`. The script is [scripts/check-future-tasks.mjs](scripts/check-future-tasks.mjs) -- plain node, no dependencies. It checks:
+
+- **Dead links** -- every `.md` link target must resolve **relative to the linking file's own directory**. This matters more than it sounds: task files cross-link with relative paths, so moving a file into `resolved/` breaks inbound links in the files that did _not_ change. Both dead links found on 2026-08-13 were relative-path errors (one missing a `../`, one carrying a stale `../`) that a repo-root-relative check would have called clean.
+- **Stale open rows** -- a row in an open priority table whose file already lives in `resolved/`. The open tables claim to list open work only, and program sequencing reads them.
+- **Orphans, both directions** -- a task file no `index.md` row points at, and a row pointing at a file that does not exist.
+
+Only `.md` targets are checked. Task files also cite source files (`packages/canopycms/src/config.ts`) as prose written relative to the repo root, not as navigable links; checking those would be pure false positives.
+
+When you retire a task, do all three things together or the check will tell you which you missed: `git mv` the file into `resolved/`, move its `index.md` row to the Resolved section, and fix any inbound links. One deliberate exception is documented in the backlog itself -- `program-b-final-review-followups.md` strikes findings ~~in place~~ rather than moving them, because the file still holds open work.
+
 One limit worth knowing: the check does not follow into `node_modules`, so a server-only npm package (`sharp`, `simple-git`, the S3 SDK) imported from client code slips past it. The e2e production `next build` remains the backstop for that.
 
 ### Public re-exports: attach JSDoc at the entrypoint

@@ -1,6 +1,6 @@
 # Program B — Canopy hardening
 
-**Part of:** [production-readiness-program.md](production-readiness-program.md)
+**Part of:** [production-readiness-program.md](../production-readiness-program.md)
 **Size:** L (run as an epic via the `epic-workflow` skill) · **Status:** RESOLVED 2026-07-30
 **Blocks:** D (B1 + B2 specifically), and therefore E
 
@@ -72,7 +72,7 @@ found by inspection and neither yet hit.
   Found during docs-site content migration; with several editors it becomes a
   support burden. Fix via staleness detection against `updatedAt`, or
   always-load-and-merge.
-- ~~[swr.md](resolved/swr.md) + [editor-async-patterns.md](resolved/editor-async-patterns.md)~~
+- ~~[swr.md](swr.md) + [editor-async-patterns.md](editor-async-patterns.md)~~
   — RESOLVED 2026-07-30 on `feat/editor-request-dedup-and-cancellation`: SWR
   adopted for the branches/entries+schema/comments fetch-on-load hooks
   (dedup verified via React Strict Mode regression tests), `ReferenceField`
@@ -80,8 +80,8 @@ found by inspection and neither yet hit.
   `useReferenceResolution` gets a generation-counter guard, and the
   Editor.tsx entry-load race is fixed via a contentId ref check. One
   pre-existing quirk spun out separately: see
-  [reference-resolution-branch-switch-stale.md](reference-resolution-branch-switch-stale.md).
-- ~~[finalize-transform-decoder-mismatch.md](resolved/finalize-transform-decoder-mismatch.md)
+  [reference-resolution-branch-switch-stale.md](../reference-resolution-branch-switch-stale.md).
+- ~~[finalize-transform-decoder-mismatch.md](finalize-transform-decoder-mismatch.md)
   — upload `finalize` (header-sniffing, no sharp) accepts rasters the transform
   Lambda's libvips later rejects with a 422, so the asset "uploads fine" and
   renders broken everywhere with no user feedback. Confirmed on the live
@@ -91,15 +91,15 @@ found by inspection and neither yet hit.
 
 ## B4 — Build-shape safety net (M)
 
-- ~~[dual-build-ci.md](resolved/dual-build-ci.md) — nothing verifies the two deploy
+- ~~[dual-build-ci.md](dual-build-ci.md) — nothing verifies the two deploy
   shapes. `init.test.ts` only asserts template string content and never runs
   `next build`. Both adopter sites depend on the `page.static` / `page.server`
-  split (see [resolved/slug-route-nofallback-500.md](resolved/slug-route-nofallback-500.md)),
+  split (see [slug-route-nofallback-500.md](slug-route-nofallback-500.md)),
   so a `withCanopy()` pageExtensions regression would ship unnoticed. Build a CI
   fixture that runs both shapes, gated on relevant-path changes for cost.~~
   RESOLVED 2026-07-30 — `apps/dual-build-fixture` + `dual-build.test.ts` +
   the gated `dual-build` CI job.
-- [next-16.2-postcss-fork-bomb.md](next-16.2-postcss-fork-bomb.md) — Next 16.2.x +
+- [next-16.2-postcss-fork-bomb.md](../next-16.2-postcss-fork-bomb.md) — Next 16.2.x +
   Turbopack + PostCSS fork-bombs adopter `pnpm dev`. Both adopter sites are
   already pinned to 16.1.x, recorded as prose in two separate CLAUDE.md files.
   Make it a documented package-level constraint (README known-good versions at
