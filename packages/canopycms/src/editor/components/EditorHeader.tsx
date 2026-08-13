@@ -556,11 +556,28 @@ export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(functi
               return (
                 <Tooltip
                   label={
-                    !statusHasAction
-                      ? `This branch is ${branchStatus} and has no submit or withdraw action available`
-                      : !userHasPermission
-                        ? 'You do not have permission to submit or withdraw this branch'
-                        : ''
+                    // The unknown-status arm mirrors the banner's: with no
+                    // branch data, `statusHasAction` is false (undefined is
+                    // neither 'editing' nor withdrawable) and this label used
+                    // to interpolate it as "This branch is undefined and has
+                    // no submit or withdraw action available".
+                    //
+                    // Latent rather than live TODAY, and only by accident:
+                    // Editor.tsx passes `branchIsProtected={... ?? true}` since
+                    // the fail-closed change, so in that same window the early
+                    // return above (`branchIsProtected && !isWithdrawable`)
+                    // unmounts this button before the tooltip can render. That
+                    // is one guard away from being user-visible -- relax the
+                    // `?? true`, or pass `branchIsProtected={false}` from
+                    // anywhere, and the copy is live. Guarding it here rather
+                    // than relying on an unrelated condition to keep hiding it.
+                    branchStatus === undefined
+                      ? 'Branch data could not be loaded, so no submit or withdraw action is available'
+                      : !statusHasAction
+                        ? `This branch is ${branchStatus} and has no submit or withdraw action available`
+                        : !userHasPermission
+                          ? 'You do not have permission to submit or withdraw this branch'
+                          : ''
                   }
                   disabled={canPerformAction}
                 >

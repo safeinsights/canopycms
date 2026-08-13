@@ -124,6 +124,34 @@ describe('EditorHeader - review lock', () => {
     expect(screen.getByTestId('save-button').hasAttribute('disabled')).toBe(true)
   })
 
+  it('never interpolates an unknown status into the submit/withdraw tooltip either', async () => {
+    // The third and last `${branchStatus}` interpolation in this file. Reached
+    // by mounting the action button with no branch data: `statusHasAction` is
+    // false (undefined is neither 'editing' nor withdrawable), so the tooltip
+    // renders, and it used to read "This branch is undefined and has no submit
+    // or withdraw action available".
+    //
+    // Not reachable through Editor.tsx today, and only by accident: it passes
+    // `branchIsProtected={... ?? true}` since the fail-closed change, and the
+    // early return `branchIsProtected && !isWithdrawable` unmounts the button
+    // in exactly this window. So this test pins the COMPONENT's contract --
+    // `branchIsProtected={false}` is a legitimate prop combination -- rather
+    // than relying on an unrelated guard to keep the copy off screen.
+    renderHeader({
+      branchStatus: undefined,
+      branchIsProtected: false,
+      userContext: { userId: 'u1' },
+      branchCreatedBy: 'u1',
+    })
+
+    // Assert the RIGHT copy renders before asserting the wrong copy is gone --
+    // a bare absence check would pass against a tooltip that never mounted.
+    // Not withdrawable with an unknown status, so it renders as the submit side.
+    await userEvent.hover(screen.getByTestId('submit-button'))
+    expect(await screen.findByText(/Branch data could not be loaded/i)).toBeTruthy()
+    expect(screen.queryByText(/is undefined/)).toBeNull()
+  })
+
   it('still names a KNOWN status in the banner', () => {
     // Guards the fix from over-reaching: only the unknown case gets the new
     // copy, so a real status lock keeps saying which status locked it.

@@ -1312,6 +1312,10 @@ describe('branches-fetch failure recovery', () => {
     // refreshInterval is 0 without data -- so one network blip locked the
     // editor for the whole session behind a "Manage Branches" button that
     // pointedly did not retry. Only a page reload got out.
+    // The deliberate 500 below makes useBranchManager report the failure via
+    // console.error, and vitest's onConsoleLog interceptor fails the whole run
+    // on a stray console write. Swallow it here and assert it instead.
+    const consoleSpy = mockConsole()
     let branchCalls = 0
     const fetchMock = vi.fn((input: RequestInfo | URL, _init?: RequestInit) => {
       const url =
@@ -1344,6 +1348,25 @@ describe('branches-fetch failure recovery', () => {
           }),
         )
       }
+      // Real shapes, not a bare `data: {}`: fetchEntriesAndSchema maps over
+      // `data.flatSchema`, so an empty object makes it throw
+      // "Cannot read properties of undefined (reading 'map')" as an UNHANDLED
+      // rejection — which vitest reports separately from test results and
+      // fails the run on, even while every assertion passes.
+      if (url.includes('/schema') && !url.includes('/schema/')) {
+        return Promise.resolve(
+          okJson({ ok: true, status: 200, data: { schema: {}, flatSchema: [], entrySchemas: {} } }),
+        )
+      }
+      if (url.includes('/entries')) {
+        return Promise.resolve(
+          okJson({
+            ok: true,
+            status: 200,
+            data: { collections: [], entries: [], pagination: { hasMore: false, limit: 50 } },
+          }),
+        )
+      }
       return Promise.resolve(okJson({ ok: true, status: 200, data: {} }))
     })
     vi.stubGlobal('fetch', fetchMock)
@@ -1372,5 +1395,9 @@ describe('branches-fetch failure recovery', () => {
     await waitFor(() => expect(branchCalls).toBeGreaterThan(1))
     // ...and the editor actually recovers, without a reload.
     await waitFor(() => expect(screen.queryByTestId('status-locked-banner')).toBeNull())
+
+    // The failure was reported, not swallowed silently.
+    expect(consoleSpy).toHaveErrored(/Failed to load branches/)
+    consoleSpy.restore()
   })
 })
