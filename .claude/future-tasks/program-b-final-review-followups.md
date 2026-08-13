@@ -9,7 +9,7 @@ Related: [resolved/program-b-canopy-hardening.md](resolved/program-b-canopy-hard
 
 ---
 
-## HIGH — the non-fast-forward diagnosis names the wrong cause, and its advice would orphan a PR
+## ~~HIGH — the non-fast-forward diagnosis names the wrong cause, and its advice would orphan a PR~~ (RESOLVED 2026-08-12)
 
 `api/branch-status.ts` (409) and `worker/cms-worker.ts` (`PermanentTaskError`)
 both attribute a rejected push to "another CanopyCMS deployment sharing this
@@ -38,6 +38,46 @@ local-origin push in `branch-status.ts`, where the worker's own rebase is by far
 the likeliest explanation, from the GitHub push in `cms-worker.ts`, where a
 foreign deployment is at least plausible. Better still, have the rebase loop
 push the rebased branch into `remote.git` so the divergence never arises.
+
+**RESOLVED** (2026-08-12, `fix/worker-sync-divergence`) — fixed by the "better
+still" route, both hops together, plus both messages.
+
+One correction to the finding: today the FIRST observable failure is the 409,
+not the worker's `PermanentTaskError`. `submitBranch` pushes clone→`remote.git`
+before any task is queued, so that push is the one rejected; the worker-side
+message needs `remote.git` to diverge from GitHub, which nothing currently
+causes — and which publishing into `remote.git` **alone** would have armed.
+That is why both hops had to move together.
+
+The rebase loop now publishes what it rewrites: `historyRewrittenFrom` records
+the commit the rebase replaced, `remote.git` is force-pushed under
+`--force-with-lease=<branch>:<that commit>`, and the GitHub hop is queued and
+uses the same lease. Ordering is marker → push → queue, so every crash window
+leaves the marker set with the work unfinished, which a new self-heal pass
+completes on a later cycle without waiting for another base-branch advance.
+
+The arming guard is the load-bearing part, and an adversarial review of the
+first draft of this plan is what produced it: the loop force-publishes **only
+when `remote.git` holds exactly the commit the clone is rebasing away**. Branch
+clones never fetch their own branch while `reconcileTrackedBranches`
+fast-forwards `remote.git` to GitHub's tip, so after a reviewer pushes a fixup
+straight to the PR branch, `remote.git` legitimately holds a commit the clone
+has never seen. Leasing on "whatever remote.git holds" would have been
+satisfied there and would have silently deleted that fixup from `remote.git`
+and then from GitHub. `cms-worker-rebase-publish.test.ts` pins that case first.
+
+Two things surfaced only by testing against real git, both now covered:
+`isNonFastForwardRejection` does not match a refused lease (git prints
+`(stale info)` and none of the strings it looks for), so `isStaleLeaseRejection`
+was added beside it; and git refuses a stale lease **even for an ordinary
+fast-forward**, so a marker left behind by a failed clear would have wedged
+every later push on that branch. The GitHub push therefore falls back to a
+PLAIN push on a refused lease — git accepts that only if it fast-forwards, so
+it can never destroy anything — and only a rejection of THAT is permanent.
+
+The retry budget stays as-is (`PermanentTaskError`), deliberately: an identical
+push still cannot succeed, and the reconciliation is the leased push itself,
+attempted on the first try.
 
 ---
 
@@ -127,7 +167,7 @@ the first deploy step.
 
 ---
 
-## MEDIUM — the worker bypasses `resolveDeploymentName`
+## ~~MEDIUM — the worker bypasses `resolveDeploymentName`~~ (RESOLVED 2026-08-12)
 
 `canopycms-cdk/worker/index.ts` reads `process.env.CANOPYCMS_DEPLOYMENT_NAME ??
 'prod'` directly: it never consults `config.deploymentName` and never runs the
@@ -144,9 +184,31 @@ GitHub, behind one warn line.**
 fail loudly when the owned settings branch is absent while a differently-named
 `canopycms-settings-*` branch is present.
 
+**RESOLVED** (2026-08-12, `fix/worker-sync-divergence`) — both, because the
+first alone does **not** fix this finding's own scenario. The worker cannot
+read the adopter's `canopycms.config.ts`, so routing through the resolver
+cannot recover a `config.deploymentName` the worker was never given; what it
+does fix is precedence and validation, and it belonged in `CmsWorker`'s
+constructor (`config.deploymentName ?? 'prod'`) rather than only in the CDK
+entrypoint — the entry's `?? 'prod'` was just the outer half of the same
+mistake. That `?? 'prod'` is now gone; the resolver reads the env var itself.
+
+The scenario is caught by the second route, with a sharper signature than the
+one suggested here: a foreign `canopycms-settings-*` head **with no
+corresponding GitHub tracking ref**. Only this deployment's own API can push
+into `remote.git`, so such a branch was written locally and never reached
+GitHub. "Owned absent + foreign present" alone would have fired on the
+*supported* two-deployments-one-repo case, where the foreign branch arrives via
+the GitHub fetch and this deployment simply has not had a settings edit yet —
+a warning every 5 minutes, wrongly.
+
+Note for adopters: env now beats a `deploymentName` passed programmatically to
+`CmsWorker`, matching the Lambda. An invalid stamped value now throws at
+construction (a loud startup exit) instead of producing a broken branch name.
+
 ---
 
-## MEDIUM — one bad ref halts the whole sync cycle, every cycle
+## ~~MEDIUM — one bad ref halts the whole sync cycle, every cycle~~ (RESOLVED 2026-08-12)
 
 `worker/cms-worker.ts`'s `reconcileTrackedBranches` wraps both `update-ref`
 calls but **not** the `rev-list` between them. A single `refs/heads/<x>` pointing
@@ -157,6 +219,20 @@ Nothing self-heals, so it recurs every cycle.
 
 **Fix direction:** per-branch try/catch → log → `continue`, matching the two
 `update-ref` calls.
+
+**RESOLVED** (2026-08-12, `fix/worker-sync-divergence`) — fixed as directed,
+with the `NaN` LOW below folded in: a malformed `rev-list` count is now treated
+as an unreadable branch (log + `continue`) instead of falling through to
+`diverged`.
+
+The regression test needed three attempts to become real, and the working
+fixture is not the obvious one. A ref pointing at a wholly **absent** object
+kills the cycle-opening fetch, before the reconcile is ever reached; an ancestor
+object that is merely **deleted** gets silently re-sent by that same fetch and
+heals itself. Only a **zero-length (torn) ancestor object** survives the fetch
+and reaches `rev-list` — which is also the likelier EFS failure. It must also
+land on a workspace already in its steady state, since a fetch only walks a
+branch's history when it has something new to transfer.
 
 ---
 
@@ -175,9 +251,19 @@ entries. No live trigger today (single-editor model), and SSR does not leak.
 
 ## LOW
 
-- Malformed `rev-list` output makes `parseInt` yield `NaN`, which falls through
+- ~~Malformed `rev-list` output makes `parseInt` yield `NaN`, which falls through
   to `diverged` and is then warned to operators as a genuine cross-deployment
-  collision (`cms-worker.ts`). Noise only.
+  collision (`cms-worker.ts`). Noise only.~~ **RESOLVED 2026-08-12**
+  (`fix/worker-sync-divergence`) — folded into the sync-cycle guard above.
+  Covered structurally rather than by a test: reaching it needs `rev-list` to
+  exit 0 with unparseable output, which no fixture produces without mocking.
+- `GitManager.forcePush` uses a bare `--force-with-lease` with no expected
+  value. Branch clones are `--single-branch` and never fetch their own branch,
+  so they carry no remote-tracking ref for it and git would refuse with
+  "stale info" — the method cannot work as written for any caller. It has none
+  today (noted while fixing the HIGH above, which deliberately did not route
+  through it). Either give it an explicit expected-SHA parameter or delete it,
+  before someone calls it believing it works.
 - `deploy-cms.yml.template` runs `npm ci` (this repo mandates pnpm, and it fails
   with no `package-lock.json`) and hardcodes `branches: [main]`, so an adopter
   with a different default branch gets silence rather than an error.

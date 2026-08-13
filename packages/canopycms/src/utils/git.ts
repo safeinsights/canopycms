@@ -95,6 +95,31 @@ export function isNonFastForwardRejection(message: string): boolean {
   return hasNonFastForwardRejection || message.includes(REJECTION_HINT)
 }
 
+// git's reason text when a `--force-with-lease=<ref>:<sha>` push is refused
+// because the remote is not at `<sha>`.
+const STALE_LEASE_REASON = 'stale info'
+
+/**
+ * Whether a git push failure message is a refused `--force-with-lease` --
+ * the remote ref is NOT at the commit the pusher expected, so the forced
+ * update was declined and nothing was overwritten.
+ *
+ * A SEPARATE predicate from `isNonFastForwardRejection` because git's output
+ * for the two is disjoint: a refused lease prints
+ * ` ! [rejected]        branch -> branch (stale info)` and, unlike an
+ * ordinary rejection, emits NEITHER `non-fast-forward`/`fetch first` NOR the
+ * `Updates were rejected because` hint. Without this predicate every lease
+ * refusal would be classified transient and retried -- three identical,
+ * guaranteed-to-fail force attempts -- instead of surfacing as the permanent,
+ * human-actionable state it is.
+ *
+ * Same locale caveat as above: the reason text is gettext-translated, so
+ * callers MUST pin the locale (`gitChildEnv`/`gitNetworkChildEnv`).
+ */
+export function isStaleLeaseRejection(message: string): boolean {
+  return message.includes(REJECTED_MARKER) && message.includes(STALE_LEASE_REASON)
+}
+
 /**
  * Detect the current HEAD branch name for a given repository root.
  * Returns the branch name, or the provided fallback (default 'main')

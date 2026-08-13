@@ -249,7 +249,14 @@ describe('branch status api', () => {
     expect(res.ok).toBe(false)
     expect(res.status).toBe(409)
     expect(res.error).toContain('feature/x')
-    expect(res.error).toContain('another CanopyCMS deployment')
+    // States the observable fact and names no cause. This push targets the
+    // deployment's OWN local origin, which a foreign deployment cannot reach,
+    // so blaming one was actively misleading -- and it must never advise a
+    // rename: a branch that reaches this point has usually been submitted
+    // before, so a rename can orphan an open PR.
+    expect(res.error).toContain('diverged')
+    expect(res.error).not.toContain('another CanopyCMS deployment')
+    expect(res.error).not.toMatch(/rename/i)
     // No raw git output (branch/ref internals, hint text) leaks to the client.
     expect(res.error).not.toContain('rejected')
     expect(res.error).not.toContain('/tmp/canopy-test')

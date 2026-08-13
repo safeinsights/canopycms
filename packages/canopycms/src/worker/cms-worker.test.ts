@@ -13,6 +13,7 @@ import { simpleGit } from 'simple-git'
 import { CmsWorker, PermanentTaskError, isPermanentTaskFailure } from './cms-worker'
 import { enqueueTask, dequeueTask } from './task-queue'
 import { WORKER_STATUS_FILE } from './worker-status'
+import { BranchMetadataFileManager } from '../branch-metadata'
 import { initTestRepo, mockConsole, type MockConsole } from '../test-utils'
 import type { WorkerStatusReport } from '../types'
 
@@ -778,7 +779,10 @@ describe('CmsWorker.pushBranchToGitHub() [push-rejection classification]', () =>
 
     expect(caught).toBeInstanceOf(PermanentTaskError)
     expect((caught as Error).message).toContain('feature-x')
-    expect((caught as Error).message).toContain('moved on GitHub')
+    // States the observable fact without prescribing a rename: a branch that
+    // reaches this push usually has an open PR, which a rename would orphan.
+    expect((caught as Error).message).toContain('has diverged and needs reconciling')
+    expect((caught as Error).message).not.toContain('Rename')
     // The rejection must not have force-overwritten the other deployment's push.
     expect(await fixtureHasBranch('feature-x')).toBe(true)
   })
@@ -805,6 +809,153 @@ describe('CmsWorker.pushBranchToGitHub() [push-rejection classification]', () =>
 
     expect(caught).not.toBeInstanceOf(PermanentTaskError)
     expect(caught).toBeInstanceOf(Error)
+  })
+
+  // -------------------------------------------------------------------------
+  // [SYNC-H1] Leased force push for history the rebase loop rewrote.
+  //
+  // When the rebase loop rewrites a branch whose history was already
+  // published, it records the commit GitHub still holds
+  // (`historyRewrittenFrom`). The push then runs under
+  // `--force-with-lease=<branch>:<that commit>`, which moves GitHub off
+  // exactly that commit and refuses in every other case.
+  // -------------------------------------------------------------------------
+
+  /** Write branch metadata carrying a pending history rewrite. */
+  const writeRewriteMarker = async (branchName: string, marker: string) => {
+    const branchPath = path.join(contentBranchesPath, branchName)
+    await fs.mkdir(branchPath, { recursive: true })
+    const meta = BranchMetadataFileManager.get(branchPath, contentBranchesPath)
+    await meta.save({
+      branch: {
+        name: branchName,
+        status: 'editing' as const,
+        access: {},
+        createdBy: 'test',
+        historyRewrittenFrom: marker,
+      },
+    })
+  }
+
+  const readMarker = async (branchName: string): Promise<string | undefined> => {
+    const file = await BranchMetadataFileManager.loadOnly(
+      path.join(contentBranchesPath, branchName),
+    )
+    return file?.branch.historyRewrittenFrom
+  }
+
+  const shaOf = async (repo: string, ref: string): Promise<string> =>
+    (await simpleGit().raw(['--git-dir', repo, 'rev-parse', '--verify', ref])).trim()
+
+  it('force-pushes rewritten history over exactly the commit it replaced, then clears the marker', async () => {
+    // GitHub holds the pre-rebase commit; remote.git holds the rewritten one.
+    // A plain push would be rejected non-fast-forward forever.
+    await seedBranchInGitHubFixture('feature-rebased', 'pre-rebase')
+    const published = await shaOf(githubFixture, 'refs/heads/feature-rebased')
+    await seedBranchInRemoteGit('feature-rebased', 'rewritten by the rebase loop')
+    const rewrittenTip = await shaOf(remoteGitPath, 'refs/heads/feature-rebased')
+    await writeRewriteMarker('feature-rebased', published)
+
+    const worker = makePushWorker()
+    await (worker as unknown as PushBranchInternals).pushBranchToGitHub('feature-rebased')
+
+    expect(await shaOf(githubFixture, 'refs/heads/feature-rebased')).toBe(rewrittenTip)
+    // GitHub now holds something other than the marker, so the lease has done
+    // its job and must not be reused.
+    expect(await readMarker('feature-rebased')).toBeUndefined()
+  })
+
+  it('succeeds when an earlier attempt already landed the same commit (crash-retry idempotency)', async () => {
+    // Tasks are re-run after a crash (recoverOrphanedTasks). The push landed
+    // but the worker died before clearing the marker, so remote.git and
+    // GitHub already agree. git evaluates a lease only when it actually has
+    // an update to apply, so this is absorbed as "Everything up-to-date"
+    // rather than reaching the refusal path at all.
+    await seedBranchInRemoteGit('feature-relanded', 'rewritten')
+    const tip = await shaOf(remoteGitPath, 'refs/heads/feature-relanded')
+    // The earlier attempt: the same commit already reached GitHub.
+    await simpleGit().raw([
+      '--git-dir',
+      remoteGitPath,
+      'push',
+      githubFixture,
+      'feature-relanded:feature-relanded',
+    ])
+    // A marker naming a commit GitHub has already moved off.
+    await writeRewriteMarker('feature-relanded', '0'.repeat(40))
+
+    const worker = makePushWorker()
+    await expect(
+      (worker as unknown as PushBranchInternals).pushBranchToGitHub('feature-relanded'),
+    ).resolves.toBeUndefined()
+
+    expect(await shaOf(githubFixture, 'refs/heads/feature-relanded')).toBe(tip)
+    expect(await readMarker('feature-relanded')).toBeUndefined()
+  })
+
+  it('still fast-forwards when the marker is stale and the branch has moved on since', async () => {
+    // The wedge this guards against: git refuses a stale lease even when the
+    // update is an ordinary fast-forward. GitHub holds the rewritten commit
+    // from an earlier attempt, the editor has since submitted more work, and
+    // the marker was never cleared -- pushing under it fails, and would keep
+    // failing for every later submit on this branch.
+    await seedBranchInRemoteGit('feature-moved-on', 'rewritten')
+    await simpleGit().raw([
+      '--git-dir',
+      remoteGitPath,
+      'push',
+      githubFixture,
+      'feature-moved-on:feature-moved-on',
+    ])
+    const landed = await shaOf(githubFixture, 'refs/heads/feature-moved-on')
+
+    // New editor work on top, reaching remote.git only.
+    const morePath = path.join(tmpDir, 'more-work')
+    await simpleGit().clone(remoteGitPath, morePath, ['--branch', 'feature-moved-on'])
+    const moreGit = simpleGit({ baseDir: morePath })
+    await moreGit.addConfig('user.name', 'Editor')
+    await moreGit.addConfig('user.email', 'editor@canopycms.test')
+    await fs.writeFile(path.join(morePath, 'file.txt'), 'more editor work')
+    await moreGit.add(['file.txt'])
+    await moreGit.commit('more editor work')
+    await moreGit.raw(['push', 'origin', 'feature-moved-on:feature-moved-on'])
+    const newTip = await shaOf(remoteGitPath, 'refs/heads/feature-moved-on')
+    await writeRewriteMarker('feature-moved-on', '0'.repeat(40))
+
+    const worker = makePushWorker()
+    await (worker as unknown as PushBranchInternals).pushBranchToGitHub('feature-moved-on')
+
+    expect(newTip).not.toBe(landed)
+    expect(await shaOf(githubFixture, 'refs/heads/feature-moved-on')).toBe(newTip)
+    expect(await readMarker('feature-moved-on')).toBeUndefined()
+    expect(consoleSpy).toHaveLogged('already moved past the rewritten commit')
+  })
+
+  it('refuses to force over a GitHub tip that is neither the marker nor what it is pushing', async () => {
+    // Someone else moved the branch on GitHub. The lease refuses, nothing is
+    // overwritten, and the task fails permanently with the honest reason.
+    await seedBranchInGitHubFixture('feature-moved', 'someone else')
+    const foreignTip = await shaOf(githubFixture, 'refs/heads/feature-moved')
+    await seedBranchInRemoteGit('feature-moved', 'ours')
+    await writeRewriteMarker('feature-moved', '0'.repeat(40))
+
+    const worker = makePushWorker()
+    let caught: unknown
+    try {
+      await (worker as unknown as PushBranchInternals).pushBranchToGitHub('feature-moved')
+    } catch (err) {
+      caught = err
+    }
+
+    expect(caught).toBeInstanceOf(PermanentTaskError)
+    expect((caught as Error).message).toContain(
+      'has genuinely diverged and nothing was overwritten',
+    )
+    expect((caught as Error).message).not.toContain('Rename')
+    // The other party's commit survives, and the marker is kept for a
+    // human-reconciled retry rather than silently dropped.
+    expect(await shaOf(githubFixture, 'refs/heads/feature-moved')).toBe(foreignTip)
+    expect(await readMarker('feature-moved')).toBe('0'.repeat(40))
   })
 
   it('fails a push-branch task immediately (not after maxRetries) on a real rejection, and records the reason on branch metadata', async () => {
@@ -844,7 +995,7 @@ describe('CmsWorker.pushBranchToGitHub() [push-rejection classification]', () =>
     )
     expect(meta.branch.syncStatus).toBe('sync-failed')
     expect(meta.branch.syncFailureReason).toContain('feature-collision')
-    expect(meta.branch.syncFailureReason).toContain('moved on GitHub')
+    expect(meta.branch.syncFailureReason).toContain('has diverged and needs reconciling')
   })
 })
 
@@ -1419,7 +1570,13 @@ describe('CmsWorker.cleanupTrashedBranchDirs() [C1]', () => {
 // push) any other canopycms-settings-* branch it finds locally.
 
 type PushSettingsBranchesInternals = {
-  pushSettingsBranches(git: ReturnType<typeof simpleGit>): Promise<void>
+  pushSettingsBranches(
+    git: ReturnType<typeof simpleGit>,
+    // Branch names syncGit() saw on GitHub this cycle. A foreign settings
+    // branch missing from this set was pushed into remote.git locally and
+    // never reached GitHub -- see the [SYNC-M3] check in the implementation.
+    trackedNames: ReadonlySet<string>,
+  ): Promise<void>
 }
 
 describe('CmsWorker.pushSettingsBranches() [deployment-namespaced settings branches]', () => {
@@ -1482,7 +1639,7 @@ describe('CmsWorker.pushSettingsBranches() [deployment-namespaced settings branc
 
     const worker = makeSettingsWorker() // no deploymentName -> defaults to 'prod'
     const git = simpleGit({ baseDir: remoteGitPath })
-    await (worker as unknown as PushSettingsBranchesInternals).pushSettingsBranches(git)
+    await (worker as unknown as PushSettingsBranchesInternals).pushSettingsBranches(git, new Set())
 
     expect(await fixtureHasBranch('canopycms-settings-prod')).toBe(true)
     expect(consoleSpy).toHaveLogged('Pushed settings branch canopycms-settings-prod')
@@ -1493,7 +1650,7 @@ describe('CmsWorker.pushSettingsBranches() [deployment-namespaced settings branc
 
     const worker = makeSettingsWorker('acme')
     const git = simpleGit({ baseDir: remoteGitPath })
-    await (worker as unknown as PushSettingsBranchesInternals).pushSettingsBranches(git)
+    await (worker as unknown as PushSettingsBranchesInternals).pushSettingsBranches(git, new Set())
 
     expect(await fixtureHasBranch('canopycms-settings-acme')).toBe(true)
   })
@@ -1504,12 +1661,76 @@ describe('CmsWorker.pushSettingsBranches() [deployment-namespaced settings branc
 
     const worker = makeSettingsWorker('acme')
     const git = simpleGit({ baseDir: remoteGitPath })
-    await (worker as unknown as PushSettingsBranchesInternals).pushSettingsBranches(git)
+    // The foreign branch is present on GitHub, which is how it came to exist
+    // locally at all (reconcileTrackedBranches creates heads from tracking
+    // refs) -- i.e. the SUPPORTED two-deployments-one-repo case.
+    await (worker as unknown as PushSettingsBranchesInternals).pushSettingsBranches(
+      git,
+      new Set(['canopycms-settings-other-tenant']),
+    )
 
     expect(await fixtureHasBranch('canopycms-settings-acme')).toBe(true)
     expect(await fixtureHasBranch('canopycms-settings-other-tenant')).toBe(false)
     expect(consoleSpy).toHaveWarned('canopycms-settings-other-tenant')
     expect(consoleSpy).toHaveWarned('canopycms-settings-acme') // names this deployment's own branch too
+    // ...and must NOT be reported as a deploymentName mismatch: this is the
+    // supported shape, not the silent-settings-failure one.
+    expect(consoleSpy).not.toHaveWarned('Settings branch mismatch')
+  })
+
+  it('resolves its settings branch through resolveDeploymentName (env > config > prod) and validates it', async () => {
+    // The worker used to do its own `config.deploymentName ?? 'prod'`, which
+    // skipped both the env var the infrastructure stamps and the ref-name
+    // validation -- so it could silently own a different settings branch than
+    // the API writing into the same workspace.
+    const settingsBranchOf = (worker: CmsWorker) =>
+      (worker as unknown as { settingsBranch: string }).settingsBranch
+
+    vi.stubEnv('CANOPYCMS_DEPLOYMENT_NAME', '')
+    expect(settingsBranchOf(makeSettingsWorker('from-config'))).toBe(
+      'canopycms-settings-from-config',
+    )
+    expect(
+      settingsBranchOf(
+        new CmsWorker({
+          workspacePath,
+          githubOwner: 'o',
+          githubRepo: 'r',
+          githubToken: 't',
+        }),
+      ),
+    ).toBe('canopycms-settings-prod')
+
+    // Infra-stamped env wins over the shared repo's config, by design.
+    vi.stubEnv('CANOPYCMS_DEPLOYMENT_NAME', 'from-env')
+    expect(settingsBranchOf(makeSettingsWorker('from-config'))).toBe('canopycms-settings-from-env')
+
+    // A stamped value that is not a usable git ref component fails loudly at
+    // construction rather than producing a broken branch name.
+    vi.stubEnv('CANOPYCMS_DEPLOYMENT_NAME', 'bad/name')
+    expect(() => makeSettingsWorker('from-config')).toThrow(/invalid deploymentName/i)
+
+    vi.unstubAllEnvs()
+  })
+
+  it('reports a deploymentName mismatch when a settings branch was pushed here locally but never reached GitHub', async () => {
+    // The API resolved 'staging' and committed settings to
+    // canopycms-settings-staging in remote.git; this worker resolved 'prod',
+    // so it owns a branch that does not exist. Nothing pushes the real
+    // branch onward -- the silent failure this check exists to surface.
+    await seedBranchInRemoteGit('canopycms-settings-staging', '{"acls":["real settings"]}')
+
+    const worker = makeSettingsWorker('prod')
+    const git = simpleGit({ baseDir: remoteGitPath })
+    // Empty tracking set: the branch is NOT on GitHub, so it can only have
+    // been pushed into remote.git by this deployment's own API.
+    await (worker as unknown as PushSettingsBranchesInternals).pushSettingsBranches(git, new Set())
+
+    expect(consoleSpy).toHaveWarned('Settings branch mismatch')
+    expect(consoleSpy).toHaveWarned('canopycms-settings-staging')
+    expect(consoleSpy).toHaveWarned('settings changes are NOT reaching GitHub')
+    // Still never pushes a branch it does not own.
+    expect(await fixtureHasBranch('canopycms-settings-staging')).toBe(false)
   })
 
   it('skips quietly (no error) when this deployment has no settings branch locally yet', async () => {
@@ -1518,7 +1739,7 @@ describe('CmsWorker.pushSettingsBranches() [deployment-namespaced settings branc
     const git = simpleGit({ baseDir: remoteGitPath })
 
     await expect(
-      (worker as unknown as PushSettingsBranchesInternals).pushSettingsBranches(git),
+      (worker as unknown as PushSettingsBranchesInternals).pushSettingsBranches(git, new Set()),
     ).resolves.toBeUndefined()
     expect(await fixtureHasBranch('canopycms-settings-acme')).toBe(false)
   })
@@ -1543,7 +1764,7 @@ describe('CmsWorker.pushSettingsBranches() [deployment-namespaced settings branc
 
     const worker = makeSettingsWorker('acme')
     const git = simpleGit({ baseDir: remoteGitPath })
-    await (worker as unknown as PushSettingsBranchesInternals).pushSettingsBranches(git)
+    await (worker as unknown as PushSettingsBranchesInternals).pushSettingsBranches(git, new Set())
 
     expect(consoleSpy).toHaveWarned(
       'another CanopyCMS deployment appears to own this settings branch',
