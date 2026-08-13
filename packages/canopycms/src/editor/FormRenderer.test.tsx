@@ -503,8 +503,19 @@ describe('FormRenderer', () => {
       const input = screen.getByLabelText('Published At') as HTMLInputElement
       fireEvent.change(input, { target: { value: '2024-06-15T04:30:00' } })
 
+      // The expectation is DERIVED from the same local wall-clock the input
+      // carries, never hardcoded. A datetime-local value is local time, so the
+      // ISO string it converts to depends on the runner's timezone: hardcoding
+      // one asserts the author's machine. The first version of this test did
+      // exactly that and passed locally (UTC-6) while failing in CI's UTC by
+      // precisely six hours -- which is also why a green local suite could not
+      // catch it. `new Date(y, monthIndex, ...)` constructs in local time, so
+      // this stays correct in every zone, including ones with a half-hour
+      // offset or a DST boundary.
+      const expectedIso = new Date(2024, 5, 15, 4, 30, 0).toISOString()
+
       const state = JSON.parse(screen.getByTestId('form-state').textContent ?? '{}')
-      expect(state.publishedAt).toBe('2024-06-15T10:30:00.000Z')
+      expect(state.publishedAt).toBe(expectedIso)
     })
 
     it('a required datetime field can be filled and saved (previously permanently unsaveable)', () => {
