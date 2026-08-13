@@ -1707,6 +1707,54 @@ next -- and Vitest warns that such errors can cause false positives elsewhere in
 run. If you see an unhandled error blamed on a test that plainly can't have caused it,
 suspect a missing jsdom shim in the test that ran before it.
 
+### Diagnosing a Test Failure
+
+**Attribute the failure to the base before blaming your diff.** Run the suite at the
+merge-base first. Several failures are expected-red locally and are not defects:
+
+- `src/cli/init.integration.test.ts` — 7 tests fail with `listen EPERM … tsx-501/*.pipe`.
+  The sandbox blocks tsx's IPC socket. Environmental, not a repo defect.
+- `canopycms-cdk` — a fresh worktree fails with `CannotFindAsset` until the lambda and
+  worker bundles are built. Those only build under `prepack`, not the root `build`.
+
+**Two known intermittents**, both in `canopycms`, which pnpm runs first in dependency
+topology — so a flake there delays every other package's suite:
+
+- `MarkdownField.test.tsx` (MDXEditor mount). Triage shortcut:
+  `pnpm --filter canopycms exec vitest run --project editor` is reliably green for it,
+  so a MarkdownField failure in a full run **is** the known flake unless the
+  editor-only project also fails. A `scrollIntoView` shim is a ruled-out cause.
+- `git-manager.test.ts` — `ENOTEMPTY: … rmdir '.git/info'` in `afterEach`. `fs.rm`'s
+  `force: true` suppresses ENOENT but _not_ ENOTEMPTY, so it signals a concurrent
+  writer (likely a detached `git gc --auto` still running after simple-git resolved).
+
+**Three ways a run reports success while failing.** All three fail in the dangerous
+direction, so check for them explicitly:
+
+- **An exit code read through a pipe is the pipe's.** `pnpm test 2>&1 | tail` reports
+  `tail`'s 0 even when the suite failed — or when `pnpm` was never found. Capture
+  `${PIPESTATUS[0]}`, or run `echo $?` on its own line.
+- **A backgrounded shell does not inherit the interactive profile**, so `pnpm install`
+  can no-op with "command not found" and still look like it worked. Verify
+  `node_modules` actually exists afterwards.
+- **When a probe's two arms agree, check they agree for the reason you think.** A
+  scratch workspace missing a `packageManager` field makes corepack fetch pnpm over the
+  network; behind a sandbox both arms of a comparison can fail identically for that
+  reason and produce a clean, wrong answer.
+
+**Reading CI logs.** `gh run view --log` truncates the vitest step to nothing, on green
+_and_ red runs alike. The real output is only in the downloadable archive:
+
+```bash
+gh api repos/OWNER/REPO/actions/runs/RUN_ID/logs > logs.zip
+# then read: "Validate, Typecheck & Test/13_Run tests.txt"
+```
+
+**"No checks reported" usually means conflicts, not an Actions outage.** `pull_request`
+runs are built from the merge commit, so a conflicted PR triggers _nothing_ — no run,
+no failure. Check `gh pr view <n> --json mergeable` (`CONFLICTING`/`DIRTY`) before
+suspecting CI.
+
 ### End-to-End Tests (Playwright)
 
 **Always run the e2e suite single-worker.** Use the root script, which pins it:
@@ -2468,6 +2516,26 @@ it('logs error when something fails', () => {
 - `toHaveLogged(pattern)` - matches `console.log` calls
 
 Patterns can be strings (substring match) or RegExp.
+
+**`mockConsole()` is mandatory, and only CI enforces it.** `vitest.config.ts`'s
+`onConsoleLog` **throws** on any write to `console.error`/`console.warn` — but the
+throwing path only fires under `CI=true`. Locally the same test prints the output as
+harmless noise and the suite reports green.
+
+The failure mode this produces is nasty: a test that deliberately exercises a logged
+error path passes locally, then in CI the throw surfaces as an _unhandled rejection_
+that takes the whole test step down with **no vitest output at all** — which reads as
+a crashed or OOM-killed process, not a test failure. This cost two people time on
+2026-08-12 before the cause was found.
+
+Reproduce it locally before pushing any test that triggers an error handler:
+
+```bash
+CI=true pnpm exec vitest run          # from packages/canopycms
+```
+
+Assert the captured output rather than merely silencing it — a test that swallows the
+error it provoked has traded a visible failure for an invisible one.
 
 **Debugging captured messages:**
 
