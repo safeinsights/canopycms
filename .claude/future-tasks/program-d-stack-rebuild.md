@@ -174,7 +174,7 @@ the git-path soak is also their first real coverage:
   workspace, and **that attribution is wrong** — `initializeWorkspace` is called
   unconditionally, lock or no lock, and a lock-free rename guard is the actual
   protection. Tracked in
-  [settings-workspace-init-lock-uncatalogued.md](settings-workspace-init-lock-uncatalogued.md),
+  [settings-workspace-init-lock-uncatalogued.md](resolved/settings-workspace-init-lock-uncatalogued.md),
   which carries a "do not tidy this" warning worth reading before anyone touches
   that function.
 - `assets/store-local.ts` — `putMetaIfAbsent` writes with `{ flag: 'wx' }`. See

@@ -11,7 +11,7 @@ import {
   loadPathPermissions,
   type ContentAccessChecker,
 } from './authorization'
-import { GitManager, GitConflictError } from './git-manager'
+import { GitManager, GitRemoteRefMissingError } from './git-manager'
 import { BranchRegistry } from './branch-registry'
 import { SettingsWorkspaceManager } from './settings-workspace'
 import { getDefaultBranchBase, sanitizeBranchName } from './paths'
@@ -391,9 +391,20 @@ async function _createCanopyServicesInternal(
       try {
         await git.pullCurrentBranch()
       } catch (err) {
-        if (err instanceof GitConflictError) throw err
-        // First push, no remote branch yet, or no changes to pull
-        console.info('No remote settings branch changes to pull (this is normal for first commit)')
+        // Only ONE outcome here is benign: the settings branch has never been
+        // pushed, so the remote has no ref to pull. Anything else — a
+        // GitConflictError, a merge that cannot proceed, a broken workspace —
+        // must surface (the outer catch turns it into an error result).
+        // A blanket catch here previously logged every failure as "normal for
+        // first commit", which is how pullCurrentBranch could stay broken on
+        // every call without anyone noticing: the settings branch then silently
+        // never converged with the remote, and each save reported
+        // `committed: true, pushed: false` from the push below, forever.
+        if (!(err instanceof GitRemoteRefMissingError)) throw err
+        console.info(
+          'CanopyCMS: settings branch has no remote ref yet, nothing to pull ' +
+            '(normal for the first settings commit)',
+        )
       }
 
       // Commit

@@ -1,14 +1,34 @@
 # concurrency.md credits the settings-workspace init lock with a protection the lock does not provide
 
+> **RESOLVED 2026-08-13 (baseline review B2).** All three fix-direction steps are done.
+> Step 1 (doc attribution) landed earlier; steps 2 and 3 landed together with the B2
+> fix: `settings-workspace.ts`'s bespoke `O_CREAT|O_EXCL` + 30s-mtime pair is **deleted**
+> and replaced by Layer 3's `acquireProvisioningLock`, anchored on a dedicated
+> `{workspaceRoot}/.settings-init` target (it cannot live inside the settings root — git
+> clone refuses a non-empty destination — and it cannot be `path.dirname(settingsRoot)`,
+> which is the target `ensureLocalSimulatedRemote` already passes and would alias in
+> proper-lockfile's registry). The loser of the race now **waits** instead of proceeding
+> into a concurrent `initializeWorkspace`, which is the design change this file said it
+> had to be. The lock is catalogued in `docs/concurrency.md`'s table.
+>
+> The open TOCTOU question in "The open correctness question" below is also closed, by
+> construction rather than by tracing: the identity check now runs **twice** — lock-free
+> first (so a misconfigured deployment refuses immediately instead of queueing behind a
+> live provisioner, preserving the property this file insists on), then again under the
+> lock, where the state cannot change beneath it. Covered by
+> `settings-workspace.test.ts`'s "refuses immediately while another host holds the init
+> lock", "lets two concurrent cold starts initialize one empty settings root", and
+> "makes a losing cold start wait for the holder".
+
 Found 2026-08-12 while auditing exclusive-create primitives for the Workstream D
 force-with-lease verification
-([program-d-stack-rebuild.md](program-d-stack-rebuild.md), item 11).
+([program-d-stack-rebuild.md](../program-d-stack-rebuild.md), item 11).
 Independently re-derived twice, in both directions — an earlier draft of this
 file had the severity reasoning wrong, and the correction is the finding.
 
 ## The headline: a plausible "tidy" would delete the only real protection
 
-[docs/concurrency.md](../../docs/concurrency.md) says the workspace-identity
+[docs/concurrency.md](../../../docs/concurrency.md) says the workspace-identity
 check "runs entirely inside `ensureGitWorkspace`'s own pre-existing in-memory +
 file-based (`O_CREAT|O_EXCL`) init lock … so two hosts racing to initialize the
 same settings workspace still can't both decide it's safe and both destroy it."
@@ -40,7 +60,7 @@ would let that process wipe a populated workspace.
 > the mis-attribution is fixed in the doc first, this trap closes.
 
 **Update 2026-08-13 (PR-4 of the 2026-08-12 adversarial review): step 1 below is
-done.** [docs/concurrency.md](../../docs/concurrency.md) no longer attributes the
+done.** [docs/concurrency.md](../../../docs/concurrency.md) no longer attributes the
 protection to the lock — it now states that the identity check is lock-free by
 design, that `acquired` is read only to decide whether to release, that
 `initializeWorkspace` runs unconditionally, and carries the warning above with a
