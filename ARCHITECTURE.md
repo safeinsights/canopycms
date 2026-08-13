@@ -1873,7 +1873,7 @@ Complex state management logic is extracted into custom hooks:
 
 - **useBranchManager**: Branch selection and lifecycle management
 - **useEntryManager**: Entry CRUD operations
-- **useDraftManager**: Draft state and auto-save
+- **useDraftManager**: Draft state and localStorage persistence. Drafts exist only where the user actually edited — opening an entry seeds nothing, since `effectiveValue` falls back to `loadedValues`. Each draft is persisted under `canopycms:drafts:<branch>` in a `{ v: 2, drafts, baseVersions }` envelope; `baseVersions[contentId]` is the server OCC version the draft was based on (from `useEntryManager.getEntryVersion`), and a save whose base no longer matches the currently held token — including a draft restored from the pre-v2 format, which has no recorded base — surfaces the 409 conflict notification instead of writing. Both destructive actions ("Discard draft" and "Reload File") confirm first when the selected entry is dirty.
 - **useCommentSystem**: Comment threading and resolution
 - **useGroupManager**: Group administration
 - **usePermissionManager**: Permission rule management
