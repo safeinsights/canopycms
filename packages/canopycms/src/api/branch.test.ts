@@ -823,8 +823,10 @@ describe('canDeleteBranch', () => {
 })
 
 describe('deleteBranch api', () => {
-  const makeBranchContext = (createdBy: string, status: 'editing' | 'submitted' = 'editing') =>
-    createMockBranchContext({ branchName: 'feature/x', createdBy, status })
+  const makeBranchContext = (
+    createdBy: string,
+    status: 'editing' | 'submitted' | 'approved' = 'editing',
+  ) => createMockBranchContext({ branchName: 'feature/x', createdBy, status })
 
   const deleteCtx = baseCtx
 
@@ -867,6 +869,43 @@ describe('deleteBranch api', () => {
     )
     expect(res.status).toBe(400)
     expect(res.error).toBe('Cannot delete branch with open pull request')
+  })
+
+  // CF1/A7: a branch a reviewer has already approved -- its PR awaiting
+  // merge -- must be just as refused as a merely-submitted one. Before this
+  // guard, deletion here unlinked branch.json, removed the clone, and
+  // removed the branch head from the local git mirror, leaving the approved
+  // PR dangling on GitHub with mark-merged made impossible and no signal
+  // back to the reviewer who approved it.
+  it('returns 400 if branch has approved status, same shape as the submitted refusal', async () => {
+    const ctx = {
+      ...deleteCtx,
+      getBranchContext: vi.fn().mockResolvedValue(makeBranchContext('u1', 'approved')),
+    }
+    const res = await deleteBranch(
+      ctx,
+      { user: { type: 'authenticated', userId: 'u1', groups: [] } },
+      { branch: unsafeAsBranchName('feature/x') },
+    )
+    expect(res.ok).toBe(false)
+    expect(res.status).toBe(400)
+    expect(res.error).toBe('Cannot delete branch with open pull request')
+  })
+
+  // No over-blocking: an ordinary editing branch (the common case) must
+  // still delete cleanly once the guard above is extended.
+  it('still permits deleting an ordinary editing branch', async () => {
+    const ctx = {
+      ...deleteCtx,
+      getBranchContext: vi.fn().mockResolvedValue(makeBranchContext('u1', 'editing')),
+    }
+    const res = await deleteBranch(
+      ctx,
+      { user: { type: 'authenticated', userId: 'u1', groups: [] } },
+      { branch: unsafeAsBranchName('feature/x') },
+    )
+    expect(res.ok).toBe(true)
+    expect(res.data?.deleted).toBe(true)
   })
 
   it('refuses to delete the base (protected) branch, even for an admin', async () => {
