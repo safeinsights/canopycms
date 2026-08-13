@@ -49,6 +49,12 @@ jobs:
       - name: Lint client bundle boundary (dependency-cruiser)
         run: pnpm lint:bundle
 
+      # Backlog hygiene: dead links between task files, index rows still listed
+      # open whose file moved to resolved/, and orphans in both directions.
+      # Dependency-free and ~instant; also runs in pre-commit via lint-staged.
+      - name: Lint future-tasks backlog
+        run: pnpm lint:tasks
+
       - name: Format check (Prettier)
         run: pnpm exec prettier --check .
 

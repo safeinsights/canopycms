@@ -504,12 +504,18 @@ export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(functi
             {(() => {
               const isSubmitted = branchStatus === 'submitted'
               const isEditing = branchStatus === 'editing'
+              // 'approved' withdraws too -- it is that status's only
+              // non-destructive exit now that the submit status gate refuses a
+              // non-editing branch (api/branch-status.ts, api/branch-withdraw.ts).
+              // This button is a two-state toggle, so every withdrawable status
+              // has to drive the withdraw side of it, not just 'submitted'.
+              const isWithdrawable = isSubmitted || branchStatus === 'approved'
 
               // The protected base branch can never be submitted for review (both
               // modes); hide the button entirely rather than showing it disabled.
               // Withdraw stays available as the recovery path for a base branch
               // wrongly stuck in 'submitted'.
-              if (branchIsProtected && !isSubmitted) return null
+              if (branchIsProtected && !isWithdrawable) return null
 
               // Check if user can perform workflow actions (creator OR ACL access OR system
               // branch OR privileged). Admins/Reviewers must be able to withdraw a protected
@@ -527,27 +533,33 @@ export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(functi
                 !!userContext &&
                 (isAdmin(userContext.groups ?? []) || isReviewer(userContext.groups ?? []))
 
-              const canPerformAction =
-                (userIsCreator || userInACL || isSystemBranch || userIsPrivileged) &&
-                (isEditing || isSubmitted)
+              const userHasPermission =
+                userIsCreator || userInACL || isSystemBranch || userIsPrivileged
+              // A status with no available transition (today: 'archived') is a
+              // separate condition from lacking permission, and conflating them
+              // sent people to an admin to fix a non-permissions problem.
+              const statusHasAction = isEditing || isWithdrawable
+              const canPerformAction = userHasPermission && statusHasAction
 
               return (
                 <Tooltip
                   label={
-                    !canPerformAction
-                      ? 'You do not have permission to submit or withdraw this branch'
-                      : ''
+                    !statusHasAction
+                      ? `This branch is ${branchStatus} and has no submit or withdraw action available`
+                      : !userHasPermission
+                        ? 'You do not have permission to submit or withdraw this branch'
+                        : ''
                   }
                   disabled={canPerformAction}
                 >
                   <Button
                     size="sm"
-                    color={isSubmitted ? 'orange' : 'brand'}
-                    onClick={isSubmitted ? onWithdraw : onSubmit}
+                    color={isWithdrawable ? 'orange' : 'brand'}
+                    onClick={isWithdrawable ? onWithdraw : onSubmit}
                     disabled={!branchName || busy || !canPerformAction}
-                    data-testid={isSubmitted ? 'withdraw-button' : 'submit-button'}
+                    data-testid={isWithdrawable ? 'withdraw-button' : 'submit-button'}
                   >
-                    {isSubmitted ? 'Withdraw Branch...' : 'Submit Branch...'}
+                    {isWithdrawable ? 'Withdraw Branch...' : 'Submit Branch...'}
                   </Button>
                 </Tooltip>
               )

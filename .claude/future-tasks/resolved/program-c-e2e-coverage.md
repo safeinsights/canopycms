@@ -1,6 +1,6 @@
 # Program C — E2E coverage sweep
 
-**Part of:** [production-readiness-program.md](production-readiness-program.md)
+**Part of:** [production-readiness-program.md](../production-readiness-program.md)
 **Size:** L · **Status:** not started · **Runs parallel to B**
 
 ## The measured gap
@@ -129,7 +129,7 @@ runs at the write site, so the spec covers the display path only and says so.
 ## Defects found (filed, not fixed)
 
 - [permission-manager-internal-groups-unreachable.md](permission-manager-internal-groups-unreachable.md) (P1 — RESOLVED 2026-08-12)
-- [entry-create-modal-slug-reset-race.md](../entry-create-modal-slug-reset-race.md) (P1)
+- [entry-create-modal-slug-reset-race.md](entry-create-modal-slug-reset-race.md) (P1)
 - [e2e-harness-followups.md](../e2e-harness-followups.md) (P2) — incl. the settings
   workspace still not being reset between runs
 - [e2e-deferred-coverage.md](../e2e-deferred-coverage.md) (P2) — the deferrals,

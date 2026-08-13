@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { BranchName } from '../paths/types'
+import type { BranchContext, BranchStatus } from '../types'
 
 const mockMetadataUpdate = vi.fn().mockResolvedValue({
   schemaVersion: 1,
@@ -278,5 +279,108 @@ describe('branch status api', () => {
     expect(res.status).toBe(500)
     expect(res.error).toContain('Failed to push branch changes')
     consoleSpy.restore()
+  })
+
+  // ==========================================================================
+  // Submit status gate
+  // ==========================================================================
+
+  describe('submit status gate', () => {
+    // Build a context pinned to an arbitrary workflow status, keeping a handle
+    // on the injected services so the tests can assert the submit path was
+    // abandoned BEFORE it did any work -- a 400 that still pushed and stamped
+    // metadata would be no fix at all.
+    const makeStatusCtx = (status: BranchStatus | undefined) => {
+      const mockGit = createMockGitManager()
+      mockGit.status.mockResolvedValue({
+        files: [{ path: 'content/home.json' } as any],
+        ahead: 0,
+        behind: 0,
+        current: 'feature/x',
+      })
+
+      // Override branch.status after construction rather than through the
+      // helper's option: createMockBranchContext coerces an explicit
+      // `undefined` back to 'editing' (`options.status ?? 'editing'`), which
+      // would make the fail-closed case below silently untestable.
+      const built = createMockBranchContext({ branchName: 'feature/x', createdBy: 'u1' })
+      const branchContext = {
+        ...built,
+        branch: { ...built.branch, status },
+      } as BranchContext
+
+      const ctx = createMockApiContext({
+        branchContext,
+        allowBranchAccess: true,
+        services: {
+          createGitManagerFor: vi.fn().mockReturnValue(mockGit),
+          config: { defaultBranchAccess: 'allow' } as any,
+        },
+      })
+      ctx.services.submitBranch = vi.fn()
+      return { ctx, mockGit }
+    }
+
+    const submitAs = (ctx: ReturnType<typeof makeStatusCtx>['ctx']) =>
+      submitBranchForMerge(
+        ctx,
+        { user: { type: 'authenticated', userId: 'u1', groups: [] } },
+        { branch: 'feature/x' as BranchName },
+      )
+
+    it.each([
+      [
+        'archived',
+        "Cannot submit branch with status 'archived'. Only 'editing' branches can be submitted.",
+      ],
+      [
+        'approved',
+        "Cannot submit branch with status 'approved'. Only 'editing' branches can be submitted.",
+      ],
+      [
+        'submitted',
+        "Cannot submit branch with status 'submitted'. Only 'editing' branches can be submitted.",
+      ],
+    ] as const)('rejects submit on a %s branch', async (status, expectedError) => {
+      mockMetadataUpdate.mockClear()
+      const { ctx } = makeStatusCtx(status)
+
+      const res = await submitAs(ctx)
+
+      expect(res.ok).toBe(false)
+      expect(res.status).toBe(400)
+      expect(res.error).toBe(expectedError)
+
+      // Nothing may have happened: no commit/push, and above all no status
+      // re-stamp. Re-submitting an archived (merged) branch previously flipped
+      // it back to 'submitted' and fired syncSubmitPr at an already-merged PR.
+      expect(ctx.services.submitBranch).not.toHaveBeenCalled()
+      expect(mockMetadataUpdate).not.toHaveBeenCalled()
+    })
+
+    it('fails closed when the status is unreadable', async () => {
+      // branch.json is read with a bare JSON.parse (no schema validation), so a
+      // damaged or hand-repaired file can yield status: undefined at runtime --
+      // the same condition getBranchWriteProtection refuses writes for.
+      mockMetadataUpdate.mockClear()
+      const { ctx } = makeStatusCtx(undefined)
+
+      const res = await submitAs(ctx)
+
+      expect(res.ok).toBe(false)
+      expect(res.status).toBe(400)
+      expect(res.error).toContain('no readable workflow status')
+      expect(ctx.services.submitBranch).not.toHaveBeenCalled()
+      expect(mockMetadataUpdate).not.toHaveBeenCalled()
+    })
+
+    it('still allows submit on an editing branch', async () => {
+      const { ctx } = makeStatusCtx('editing')
+
+      const res = await submitAs(ctx)
+
+      expect(res.ok).toBe(true)
+      expect(ctx.services.submitBranch).toHaveBeenCalled()
+    })
   })
 })

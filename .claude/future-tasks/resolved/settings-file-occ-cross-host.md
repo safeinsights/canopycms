@@ -18,7 +18,7 @@ docs/concurrency.md table updated.
 The settings workspace files (`permissions.json`, `groups.json`) use their own
 app-level `contentVersion` optimistic-locking scheme that was NOT covered by the EFS
 cross-process concurrency epic (PRs #111–#118, see
-[docs/concurrency.md](../../docs/concurrency.md)). Rename-based OCC verification is
+[docs/concurrency.md](../../../docs/concurrency.md)). Rename-based OCC verification is
 same-host-only on EFS: two warm Lambda containers are separate NFS clients, so a
 foreign write can hide in the local dentry/attribute cache for 3–60s and both writers
 can conclude they won — a silent lost update. For branch.json and comments.json the

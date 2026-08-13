@@ -84,7 +84,7 @@ See [ARCHITECTURE.md](ARCHITECTURE.md#module-structure) for detailed module docu
 
 ## Quality Checks
 
-See [DEVELOPING.md](DEVELOPING.md#quality-checks) for testing and typecheck requirements. `pnpm lint:bundle` (dependency-cruiser) fails when anything reachable from `canopycms/client` reaches a node built-in — see [Client-Bundle Boundary Check](DEVELOPING.md#client-bundle-boundary-check). Claude subagents are available:
+See [DEVELOPING.md](DEVELOPING.md#quality-checks) for testing and typecheck requirements. `pnpm lint:bundle` (dependency-cruiser) fails when anything reachable from `canopycms/client` reaches a node built-in — see [Client-Bundle Boundary Check](DEVELOPING.md#client-bundle-boundary-check). `pnpm lint:tasks` enforces the backlog rule below — dead links between task files, rows still listed open whose file moved to `resolved/`, and orphans in both directions — see [Future-Tasks Backlog Check](DEVELOPING.md#future-tasks-backlog-check). Claude subagents are available:
 
 - `.claude/agents/test.md` - Run tests and fix failures
 - `.claude/agents/typecheck.md` - Type checking
