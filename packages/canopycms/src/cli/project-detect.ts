@@ -91,14 +91,56 @@ export function commandsFor(manager: PackageManager): PackageManagerCommands {
  * tell them apart -- only its first lines can.
  */
 export async function detectPackageManager(projectDir: string): Promise<PackageManager> {
-  const declared = await readDeclaredPackageManager(projectDir)
-  if (declared) return declared
+  for (const dir of await workspaceSearchPath(projectDir)) {
+    const declared = await readDeclaredPackageManager(dir)
+    if (declared) return declared
 
-  if (await filePathExists(path.join(projectDir, 'pnpm-lock.yaml'))) return 'pnpm'
-  if (await filePathExists(path.join(projectDir, 'yarn.lock'))) {
-    return (await isYarnBerryLockfile(projectDir)) ? 'yarn-berry' : 'yarn'
+    if (await filePathExists(path.join(dir, 'pnpm-lock.yaml'))) return 'pnpm'
+    if (await filePathExists(path.join(dir, 'yarn.lock'))) {
+      return (await isYarnBerryLockfile(dir)) ? 'yarn-berry' : 'yarn'
+    }
   }
   return 'npm'
+}
+
+/** Hard stop on the upward walk, so a pathological tree cannot climb forever. */
+const MAX_WORKSPACE_DEPTH = 8
+
+/**
+ * Directories to consult for package-manager evidence, nearest first.
+ *
+ * Normally just `projectDir`. The exception is a monorepo: in a pnpm/npm/yarn
+ * workspace the lockfile and `packageManager` field live at the repo root,
+ * while the Next.js app -- the directory an adopter naturally runs
+ * `init-deploy aws` in, because that is where `canopycms init` told them to
+ * run -- is `apps/site` and has neither. Looking only at `projectDir` there
+ * returns 'npm' for a pnpm repo and writes `npm ci` into both the workflow and
+ * Dockerfile.cms: silently wrong, and the exact failure this detection exists
+ * to prevent.
+ *
+ * The walk starts only when `projectDir` has a package.json but no evidence of
+ * its own -- the signal of a workspace member -- and stops at the directory
+ * holding `.git`. Both bounds matter: without them a project with no lockfile
+ * anywhere would keep climbing into unrelated directories and adopt a
+ * stranger's package manager.
+ */
+async function workspaceSearchPath(projectDir: string): Promise<string[]> {
+  const start = path.resolve(projectDir)
+  const dirs = [start]
+
+  // No manifest here means this is not a workspace member; treat the directory
+  // at face value rather than inheriting from above.
+  if (!(await filePathExists(path.join(start, 'package.json')))) return dirs
+
+  let dir = start
+  for (let depth = 0; depth < MAX_WORKSPACE_DEPTH; depth++) {
+    if (await filePathExists(path.join(dir, '.git'))) break
+    const parent = path.dirname(dir)
+    if (parent === dir) break
+    dir = parent
+    dirs.push(dir)
+  }
+  return dirs
 }
 
 async function readDeclaredPackageManager(projectDir: string): Promise<PackageManager | null> {

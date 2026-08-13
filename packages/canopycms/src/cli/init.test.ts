@@ -696,6 +696,44 @@ describe('canopycms init-deploy aws', () => {
     await initDeployAws({ cloud: 'aws', projectDir: tmpDir, force: false, nonInteractive: true })
 
     expect(await fs.readFile(path.join(tmpDir, 'cdk.json'), 'utf-8')).toBe(existing)
+    // Assert the skip is SELECTIVE, not a command that writes no cdk.json at
+    // all -- otherwise this test passes just as happily against a build with
+    // no CDK scaffolding whatsoever, which is what it is meant to rule out.
+    const stack = await fs.readFile(path.join(tmpDir, 'infrastructure/lib/cms-stack.ts'), 'utf-8')
+    expect(stack).toContain('CanopyCmsService')
+  })
+
+  it('reads the package manager from the workspace root when run in a subpackage', async () => {
+    // A monorepo keeps its lockfile and `packageManager` at the repo root
+    // while the Next app -- where `canopycms init` tells you to run -- is
+    // apps/site. Looking only at the app directory returns npm for a pnpm
+    // repo and writes `npm ci` into both generated files: silently wrong, in
+    // exactly the way this detection exists to prevent.
+    await fs.writeFile(path.join(tmpDir, '.git'), 'fake repo root marker', 'utf-8')
+    await fs.writeFile(path.join(tmpDir, 'pnpm-lock.yaml'), 'lockfileVersion: 9.0\n', 'utf-8')
+    await fs.writeFile(path.join(tmpDir, 'package.json'), '{"name":"root"}', 'utf-8')
+
+    const appDir = path.join(tmpDir, 'apps/site')
+    await fs.mkdir(appDir, { recursive: true })
+    await fs.writeFile(path.join(appDir, 'package.json'), '{"name":"site"}', 'utf-8')
+
+    await initDeployAws({ cloud: 'aws', projectDir: appDir, force: false, nonInteractive: true })
+
+    const dockerfile = await fs.readFile(path.join(appDir, 'Dockerfile.cms'), 'utf-8')
+    expect(dockerfile).toContain('pnpm install --frozen-lockfile')
+  })
+
+  it('does not inherit a package manager from outside the repository', async () => {
+    // The upward walk must stop at the repo root. A project with no evidence
+    // of its own must fall back to npm rather than adopt whatever an
+    // unrelated ancestor directory happens to use.
+    await fs.writeFile(path.join(tmpDir, '.git'), 'fake repo root marker', 'utf-8')
+    await fs.writeFile(path.join(tmpDir, 'package.json'), '{"name":"root"}', 'utf-8')
+
+    await initDeployAws({ cloud: 'aws', projectDir: tmpDir, force: false, nonInteractive: true })
+
+    const dockerfile = await fs.readFile(path.join(tmpDir, 'Dockerfile.cms'), 'utf-8')
+    expect(dockerfile).toContain('RUN npm ci')
   })
 
   it('overwrites the scaffolded CDK files with --force', async () => {
