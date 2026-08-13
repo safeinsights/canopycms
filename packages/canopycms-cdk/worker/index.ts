@@ -89,10 +89,13 @@ async function main() {
     githubToken,
     refreshAuthCache,
     baseBranch: process.env.CANOPYCMS_BASE_BRANCH ?? 'main',
-    // Namespaces which canopycms-settings-* branch this worker owns/pushes
-    // (see CmsWorker.pushSettingsBranches) — CanopyCmsService stamps this env
-    // var from CanopyCmsServiceProps.deploymentName.
-    deploymentName: process.env.CANOPYCMS_DEPLOYMENT_NAME ?? 'prod',
+    // deploymentName is deliberately NOT passed: CmsWorker resolves it through
+    // resolveDeploymentName, which reads CANOPYCMS_DEPLOYMENT_NAME itself
+    // (CanopyCmsService stamps that env var from
+    // CanopyCmsServiceProps.deploymentName), applies the same env > config >
+    // 'prod' precedence as the Lambda, and validates the result as a git ref
+    // component. Reading the env var here instead would re-implement the
+    // outer half of that chain and skip the validation.
     // Explicit override, matching the strategy's own precedence: an adopter who
     // sets `settingsBranch` in canopycms.config.ts must set this too, or the
     // worker would own a branch name the Lambda never writes to.

@@ -297,6 +297,79 @@ describe('CmsWorker.syncGit() non-destructive GitHub reconcile', () => {
     expect(status.lastGitSyncError).toBeUndefined()
   })
 
+  it('[SYNC-M2] one unreadable branch does not halt the rest of the sync cycle', async () => {
+    // A ref whose reachable ancestor object is missing -- plausible on EFS
+    // with a concurrent Lambda writer. The rev-list that classifies
+    // ahead/behind used to sit outside any try/catch (only the two update-ref
+    // calls around it were guarded), so this threw out of the reconcile loop,
+    // out of syncGit()'s try, and skipped pushSettingsBranches,
+    // refreshBaseBranchWorkspace and rebaseActiveBranches -- every cycle,
+    // with nothing to heal it.
+    //
+    // The fixture has to be a PARTIALLY WRITTEN ancestor, not a missing one,
+    // and not a bad tip. Verified against real git while writing this test:
+    // a ref pointing at a wholly absent object kills the cycle-opening fetch
+    // instead (never reaching the reconcile), and an ancestor object that is
+    // merely DELETED gets silently re-sent by that same fetch, healing itself
+    // before the reconcile runs. A zero-length (torn) object file survives
+    // the fetch untouched and makes rev-list fatal -- which is also the
+    // likelier EFS failure in the first place. Loose objects are written
+    // read-only, hence the chmod.
+    //
+    // Built on an orphan branch so the damaged object is reachable from this
+    // branch only and cannot harm 'main' or the healthy branch below.
+    await commitOnto(tmpDir, githubPath, 'feature-broken', { 'a.txt': 'base' })
+    await seedBranch(remoteGitPath, githubPath, 'feature-broken')
+    const brokenAncestor = await bareRevParse(remoteGitPath, 'refs/heads/feature-broken')
+
+    // A healthy branch that must still be reconciled despite the bad one.
+    await commitOnto(tmpDir, githubPath, 'feature-healthy', { 'b.txt': 'base' })
+    await seedBranch(remoteGitPath, githubPath, 'feature-healthy')
+
+    // Diverge the branch so it reaches the rev-list at all, then run one
+    // clean cycle. The damage has to land on a workspace already in its
+    // steady state (a cycle every 5 minutes in production): a fetch only
+    // walks a branch's history when it has something new to transfer, so
+    // corrupting before the branch's commits have been fetched would fail
+    // the fetch itself, before the reconcile is ever reached.
+    await commitOnto(tmpDir, remoteGitPath, 'feature-broken', { 'local.txt': 'local' })
+    await commitOnto(tmpDir, githubPath, 'feature-broken', { 'github.txt': 'github' })
+    await makeWorker().syncGit()
+
+    // Only the healthy branch has anything new this cycle.
+    const healthyAhead = await commitOnto(tmpDir, githubPath, 'feature-healthy', {
+      'b.txt': 'moved ahead on github',
+    })
+
+    // Truncate the ancestor commit object in remote.git.
+    const brokenObject = path.join(
+      remoteGitPath,
+      'objects',
+      brokenAncestor.slice(0, 2),
+      brokenAncestor.slice(2),
+    )
+    await fs.chmod(brokenObject, 0o644)
+    await fs.writeFile(brokenObject, '')
+
+    const consoleSpy = mockConsole()
+    const worker = makeWorker()
+    await expect(worker.syncGit()).resolves.toBeUndefined()
+    expect(consoleSpy).toHaveWarned(/skipping feature-broken/i)
+    consoleSpy.restore()
+
+    // The rest of the cycle ran: the healthy branch was still fast-forwarded,
+    // and the cycle recorded no error at all.
+    await expect(bareRevParse(remoteGitPath, 'refs/heads/feature-healthy')).resolves.toBe(
+      healthyAhead,
+    )
+    const status = await readStatus()
+    expect(trackedOf(status).fastForwarded).toContain('feature-healthy')
+    expect(trackedOf(status).diverged).not.toContain('feature-broken')
+    expect(status.lastGitSyncError).toBeUndefined()
+    // The phases that used to be skipped entirely still completed.
+    expect(status.lastGitSync).toBeDefined()
+  })
+
   it('does not delete a local head when the branch is removed from GitHub', async () => {
     await commitOnto(tmpDir, githubPath, 'feature-deleted-upstream', {
       'a.txt': 'will be deleted upstream',

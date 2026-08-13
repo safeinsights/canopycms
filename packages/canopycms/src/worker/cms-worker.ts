@@ -4,6 +4,8 @@ import { simpleGit } from 'simple-git'
 import lockfile from 'proper-lockfile'
 import { Octokit } from '@octokit/rest'
 import {
+  enqueueTask,
+  listTasks,
   dequeueTask,
   completeTask,
   failTask,
@@ -24,10 +26,11 @@ import { extractIdFromFilename } from '../content-id-index'
 import { invalidateBranchContentCaches } from '../content-index-generation'
 import { type ContentId, type SanitizedBranchName, ROOT_COLLECTION_ID } from '../paths/types'
 import { sanitizeBranchName, RESERVED_SETTINGS_BRANCH_PREFIX } from '../paths/branch-name'
-import { GITHUB_TRACKING_REF_PREFIX, gitNetworkChildEnv } from '../git-manager'
+import { GITHUB_TRACKING_REF_PREFIX, gitChildEnv, gitNetworkChildEnv } from '../git-manager'
+import { resolveDeploymentName } from '../operating-mode/deployment-name'
 import type { PullRequestState, WorkerStatusReport } from '../types'
 import { getErrorMessage, isNodeError, redactCredentials } from '../utils/error'
-import { isNonFastForwardRejection } from '../utils/git'
+import { isNonFastForwardRejection, isStaleLeaseRejection } from '../utils/git'
 import { writeWorkerStatus } from './worker-status'
 import { workerLog, workerLogWarn, workerLogError } from './log'
 
@@ -274,6 +277,15 @@ interface TrackedBranchSummary {
    * visible outcome.
    */
   diverged: string[]
+  /**
+   * Local heads that diverged from GitHub's tip because THIS worker's rebase
+   * loop rewrote them and published the rewrite into `remote.git`, with the
+   * GitHub push still outstanding (`BranchMetadata.historyRewrittenFrom` is
+   * set). Structurally identical to `diverged` at the ref level, but a known,
+   * self-resolving state rather than a cross-deployment collision -- kept in
+   * its own bucket so the collision warning stays meaningful.
+   */
+  rewritten: string[]
 }
 
 /**
@@ -326,9 +338,17 @@ export class CmsWorker {
     this.contentBranchesPath = path.join(config.workspacePath, 'content-branches')
     this.baseBranch = config.baseBranch ?? 'main'
     this.sanitizedBaseBranch = sanitizeBranchName(this.baseBranch)
+    // Routed through the shared resolver, not a local `?? 'prod'`: it is the
+    // single definition of the env > config > mode-default precedence the
+    // Lambda already follows, and the only place the resolved value is
+    // validated as a git ref component. Without it the worker could silently
+    // own a different settings branch than the Lambda writing to the same
+    // workspace -- and pushSettingsBranches would then report the real branch
+    // as foreign and never push it. Throwing on an invalid infra-stamped
+    // value is deliberate: main()'s catch turns it into a loud startup exit.
     this.settingsBranch =
       config.settingsBranch ??
-      `${RESERVED_SETTINGS_BRANCH_PREFIX}${config.deploymentName ?? 'prod'}`
+      `${RESERVED_SETTINGS_BRANCH_PREFIX}${resolveDeploymentName({ deploymentName: config.deploymentName }, 'prod')}`
     this.maxTasksPerCycle = config.maxTasksPerCycle ?? 10
     this.taskTimeoutMs = config.taskTimeoutMs ?? DEFAULT_TASK_TIMEOUT
     this.maxRetries = config.maxRetries ?? DEFAULT_MAX_RETRIES
@@ -910,7 +930,7 @@ export class CmsWorker {
     const branch = typeof task.payload.branch === 'string' ? task.payload.branch : null
     if (!branch) return
 
-    const branchPath = path.join(this.contentBranchesPath, branch)
+    const branchPath = this.branchWorkspacePath(branch)
     try {
       await fs.stat(branchPath)
     } catch {
@@ -965,7 +985,7 @@ export class CmsWorker {
     const branch = typeof task.payload.branch === 'string' ? task.payload.branch : null
     if (!branch) return
 
-    const branchPath = path.join(this.contentBranchesPath, branch)
+    const branchPath = this.branchWorkspacePath(branch)
     try {
       await fs.stat(branchPath)
     } catch {
@@ -989,6 +1009,236 @@ export class CmsWorker {
     return `https://x-access-token:${this.config.githubToken}@github.com/${this.config.githubOwner}/${this.config.githubRepo}.git`
   }
 
+  /**
+   * The workspace directory for a branch named by its GIT REF name -- the
+   * form task payloads carry (`context.branch.name`), not the directory form.
+   *
+   * These differ for any name outside `[A-Za-z0-9._-]`, `/` being the obvious
+   * one: workspaces are provisioned under `sanitizeBranchName(...)` (see
+   * paths/branch.ts's `resolveBranchPaths`), so `feature/x` lives in
+   * `feature-x`. Joining the raw name instead silently addresses a directory
+   * that does not exist -- which for the metadata writers below meant the
+   * update was quietly dropped, and for the leased push meant the
+   * history-rewrite marker read as absent and the push went out unleased,
+   * wedging exactly the branch this workstream exists to unwedge.
+   *
+   * `name` inside the metadata itself stays the raw ref name; only the path
+   * is sanitized.
+   */
+  private branchWorkspacePath(branchRefName: string): string {
+    return path.join(this.contentBranchesPath, sanitizeBranchName(branchRefName))
+  }
+
+  /**
+   * What `remote.git` currently holds for `branchRef`, or null when this
+   * branch was never published there (never submitted) or the ref is
+   * unreadable.
+   *
+   * Uses the same explicit `--git-dir` shape as verifyBaseBranchExists()
+   * above: reading a bare repo that way does not depend on
+   * `safe.bareRepository` being permissive, which is why prod code takes
+   * this route rather than the config override the test-only `openBareRepo`
+   * helper uses.
+   */
+  private async readPublishedSha(branchRef: string): Promise<string | null> {
+    try {
+      const out = await simpleGit().raw([
+        '--git-dir',
+        this.remoteGitPath,
+        'rev-parse',
+        '--verify',
+        `refs/heads/${branchRef}`,
+      ])
+      const sha = out.trim()
+      return sha.length > 0 ? sha : null
+    } catch {
+      // Absent from remote.git: this branch was never submitted, so none of
+      // its history was ever published. Not an error.
+      return null
+    }
+  }
+
+  /**
+   * Record that this worker rewrote `expectedSha` out of a branch's already
+   * published history (see BranchMetadata.historyRewrittenFrom).
+   *
+   * Set-once: if a marker is already present it is LEFT ALONE. Across two
+   * rebases before any GitHub push lands, GitHub still holds the commit the
+   * FIRST rebase replaced, so advancing the marker would aim the lease at a
+   * commit GitHub never had and permanently wedge the branch.
+   *
+   * Re-reads metadata rather than trusting the caller's loop-top snapshot:
+   * the task loop runs concurrently with syncGit() (see scheduleLoop) and may
+   * have cleared the marker while this branch was rebasing.
+   */
+  private async markHistoryRewritten(
+    branchPath: string,
+    branchDir: string,
+    expectedSha: string,
+  ): Promise<void> {
+    const current = await BranchMetadataFileManager.loadOnly(branchPath)
+    if (typeof current?.branch.historyRewrittenFrom === 'string') return
+    const meta = getBranchMetadataFileManager(branchPath, this.contentBranchesPath)
+    await meta.save({ branch: { name: branchDir, historyRewrittenFrom: expectedSha } })
+  }
+
+  /**
+   * Clear the marker once GitHub is confirmed to hold the rewritten history.
+   *
+   * Best-effort only in the sense that a failure here destroys nothing: the
+   * lease still refuses anything unexpected, and the plain-push fallback only
+   * ever fast-forwards. It is NOT harmless. A marker that outlives its
+   * episode can wedge the NEXT one -- if the base advances before the stale
+   * marker is revisited, the queued push leases a commit GitHub has already
+   * moved off, falls back to a plain push of a rebased (non-ancestor)
+   * history, and fails permanently with a "something else moved it on
+   * GitHub" diagnosis that is false: we did.
+   *
+   * Tracked, with the concurrent-clear race that can drop a marker
+   * mid-arming, in
+   * .claude/future-tasks/worker-history-rewrite-marker-races.md.
+   */
+  private async clearHistoryRewrittenMarker(branchPath: string, branchDir: string): Promise<void> {
+    try {
+      const meta = getBranchMetadataFileManager(branchPath, this.contentBranchesPath)
+      // Explicit undefined clears the key -- save()'s merge only overwrites
+      // keys present in the update (same pattern as rebaseFailure).
+      await meta.save({ branch: { name: branchDir, historyRewrittenFrom: undefined } })
+    } catch (err) {
+      workerLogWarn(
+        `  Failed to clear history-rewrite marker for ${branchDir}: ${getErrorMessage(err)}`,
+      )
+    }
+  }
+
+  /**
+   * Publish a branch clone's rebased history into `remote.git`, replacing
+   * EXACTLY `expectedSha` and nothing else.
+   *
+   * The lease is the entire safety argument. `--force-with-lease=<ref>:<sha>`
+   * refuses unless `remote.git` still stands at `<sha>`, so this can only
+   * ever undo the commit our own rebase rewrote away. Callers must never pass
+   * "whatever remote.git currently holds" -- see the arming guard in
+   * rebaseActiveBranches() for the interleaving where that would silently
+   * delete a reviewer's direct push.
+   *
+   * Returns whether the push landed. A refused lease means a concurrent
+   * Lambda push moved the ref; that is logged and retried by the self-heal
+   * pass on a later cycle, never thrown.
+   */
+  private async forcePublishToLocalRemote(
+    branchPath: string,
+    branchRef: string,
+    expectedSha: string,
+  ): Promise<boolean> {
+    // A dedicated instance rather than the caller's: `.env()` replaces the
+    // whole child environment, and the rebase loop's instance must keep its
+    // ambient one. gitChildEnv (not gitNetworkChildEnv) because this push
+    // targets the local bare repo -- and the locale pin is what keeps
+    // isStaleLeaseRejection below from silently becoming a no-op.
+    const pushGit = simpleGit({ baseDir: branchPath, timeout: { block: this.taskTimeoutMs } })
+    pushGit.env(gitChildEnv({}))
+    try {
+      await pushGit.raw([
+        'push',
+        `--force-with-lease=${branchRef}:${expectedSha}`,
+        // Real flags must precede --end-of-options; everything after it is
+        // positional (see GitManager.push() for the same guard).
+        '--end-of-options',
+        'origin',
+        `${branchRef}:${branchRef}`,
+      ])
+      workerLog(`  Published rebased ${branchRef} into remote.git`)
+      return true
+    } catch (err) {
+      const message = redactCredentials(getErrorMessage(err))
+      workerLogWarn(
+        isStaleLeaseRejection(message)
+          ? `  Did not publish rebased ${branchRef} into remote.git: it moved since this cycle read it (concurrent submit?) -- retrying next cycle`
+          : `  Failed to publish rebased ${branchRef} into remote.git: ${message}`,
+      )
+      return false
+    }
+  }
+
+  /**
+   * Queue the GitHub hop for a branch whose rewritten history now sits in
+   * `remote.git`, so an open PR's head follows the rebase within a cycle
+   * instead of waiting for the editor's next submit.
+   *
+   * Deliberately NOT skipped when a marker is already set: inferring "a task
+   * must already be queued" from the marker starves this hop whenever a task
+   * was lost, failed permanently, or was never written. Duplicate push tasks
+   * are bounded by base-branch advances and are idempotent (a repeat push is
+   * a no-op once GitHub holds the tip).
+   */
+  private async enqueueGitHubPush(branchRef: string): Promise<void> {
+    try {
+      // Dedupe against tasks actually in flight rather than against the
+      // marker: a branch whose GitHub push keeps failing would otherwise
+      // gain one task per sync cycle forever.
+      for (const status of ['pending', 'processing'] as const) {
+        const inFlight = await listTasks(this.taskDir, status)
+        if (inFlight.some((t) => t.action === 'push-branch' && t.payload.branch === branchRef)) {
+          return
+        }
+      }
+      await enqueueTask(this.taskDir, { action: 'push-branch', payload: { branch: branchRef } })
+      workerLog(`  Queued GitHub push for ${branchRef}`)
+    } catch (err) {
+      workerLogWarn(`  Failed to queue GitHub push for ${branchRef}: ${getErrorMessage(err)}`)
+    }
+  }
+
+  /**
+   * Complete a rewrite this worker started but did not finish: get the
+   * rebased history into `remote.git` and queued for GitHub.
+   *
+   * Runs from the rebase loop for any branch carrying a marker, whether or
+   * not it is behind base this cycle, so an interrupted publish converges
+   * without waiting for the next base-branch advance.
+   *
+   * Always leases on the MARKER, never on remote.git's current tip -- the
+   * marker is the one commit we know our own rebase replaced.
+   */
+  private async reconcilePendingRewrite(options: {
+    branchPath: string
+    branchDir: string
+    branchRef: string
+    headSha: string
+    marker: string
+  }): Promise<void> {
+    const { branchPath, branchDir, branchRef, headSha, marker } = options
+    const publishedSha = await this.readPublishedSha(branchRef)
+
+    if (publishedSha === null) {
+      workerLogWarn(
+        `  ${branchDir}: a rewritten history is recorded but ${branchRef} is gone from remote.git -- nothing to publish`,
+      )
+      return
+    }
+    if (publishedSha === headSha) {
+      // remote.git already carries the rewrite; only the GitHub hop is left
+      // (a crash between the push and the queue, or a task that was lost).
+      await this.enqueueGitHubPush(branchRef)
+      return
+    }
+    if (publishedSha === marker) {
+      // The publish into remote.git never landed -- a crash right after the
+      // marker was written, or a lease refused by a concurrent submit.
+      if (await this.forcePublishToLocalRemote(branchPath, branchRef, marker)) {
+        await this.enqueueGitHubPush(branchRef)
+      }
+      return
+    }
+    // Neither this branch's rebased tip nor the commit its rewrite replaced:
+    // something else moved remote.git. Never force over that.
+    workerLogWarn(
+      `  ${branchDir}: remote.git is at ${publishedSha} for ${branchRef}, which is neither the ` +
+        `rebased tip nor the commit the rewrite replaced -- left untouched`,
+    )
+  }
+
   private async pushBranchToGitHub(branch: string): Promise<void> {
     const git = simpleGit({
       baseDir: this.remoteGitPath,
@@ -1004,25 +1254,96 @@ export class CmsWorker {
     // it keeps ambient HTTPS_PROXY/GIT_SSL_*/GIT_SSH_COMMAND, which
     // gitChildEnv's local-ops allowlist deliberately drops.
     git.env(gitNetworkChildEnv())
+
+    // [SYNC-H1] If the rebase loop rewrote this branch's already-published
+    // history, GitHub still holds the commit it replaced, so an ordinary
+    // push is non-fast-forward forever. Push under a lease keyed to exactly
+    // that commit: it moves GitHub off the commit we rewrote away, and
+    // refuses in every other case (including a commit someone else pushed).
+    const branchPath = this.branchWorkspacePath(branch)
+    const metaFile = await BranchMetadataFileManager.loadOnly(branchPath).catch(() => null)
+    const marker = metaFile?.branch.historyRewrittenFrom
+    // What this push will actually send: remote.git's tip for the branch.
+    const outgoingSha = await this.readPublishedSha(branch)
+
     try {
-      // Pass URL directly to avoid persisting the token in remote.git/config
-      await git.push(this.buildGitHubUrl(), branch)
+      if (marker) {
+        await git.raw([
+          'push',
+          `--force-with-lease=${branch}:${marker}`,
+          '--end-of-options',
+          this.buildGitHubUrl(),
+          `${branch}:${branch}`,
+        ])
+      } else {
+        // Pass URL directly to avoid persisting the token in remote.git/config
+        await git.push(this.buildGitHubUrl(), branch)
+      }
     } catch (err) {
       const message = getErrorMessage(err)
-      // A non-fast-forward rejection means the branch already moved on
-      // GitHub -- most likely another CanopyCMS deployment sharing this repo
-      // picked the same content-branch name, or someone pushed directly to
-      // GitHub. Retrying the identical push can never succeed (DEP-L1's
-      // git-failure-is-transient carve-out does NOT apply here), so fail
-      // fast instead of burning the task's retry budget.
+
+      // A refused lease means GitHub is not at the commit we rewrote, so the
+      // marker is stale -- which is routine, not exceptional: tasks are
+      // re-run after a crash (recoverOrphanedTasks), and the marker survives
+      // any failure to clear it. Two benign shapes reach here, and both are
+      // ordinary fast-forwards that a lease has no business blocking:
+      // GitHub already holds the rewritten history from an earlier attempt,
+      // or the branch has since moved past it.
+      //
+      // Retry PLAIN, and let git adjudicate. A non-forced push succeeds if
+      // and only if it fast-forwards, so it can never destroy anything --
+      // there is no ancestry check to get wrong here, and no extra network
+      // round trip to read GitHub's tip. Only if THAT is also rejected has
+      // the branch genuinely diverged.
+      //
+      // (Verified: git evaluates the lease only when it actually has an
+      // update to apply. An up-to-date ref with a stale lease prints
+      // "Everything up-to-date" and exits 0, so the already-landed case is
+      // usually absorbed above and never even reaches this branch.)
+      if (marker && isStaleLeaseRejection(message)) {
+        try {
+          await git.push(this.buildGitHubUrl(), branch)
+        } catch (retryErr) {
+          const retryMessage = getErrorMessage(retryErr)
+          if (isNonFastForwardRejection(retryMessage)) {
+            throw new PermanentTaskError(
+              `Push rejected for branch "${branch}": GitHub's tip is neither the commit this ` +
+                `deployment last published nor an ancestor of what it is pushing, so the branch ` +
+                `has genuinely diverged and nothing was overwritten. Something else moved it on ` +
+                `GitHub -- a direct push, or another CanopyCMS deployment sharing this repository.`,
+            )
+          }
+          throw retryErr
+        }
+        // The lease was refused, so GitHub is provably not at the marker: it
+        // has moved past the rewritten commit and the marker is spent.
+        await this.clearHistoryRewrittenMarker(branchPath, branch)
+        workerLog(`Pushed ${branch} to GitHub (GitHub had already moved past the rewritten commit)`)
+        return
+      }
+
+      // An ordinary non-fast-forward rejection: GitHub has commits this
+      // deployment never published. Retrying the identical push can never
+      // succeed (DEP-L1's git-failure-is-transient carve-out does NOT apply
+      // here), so fail fast instead of burning the task's retry budget.
+      // Deliberately does NOT advise renaming the branch: a branch reaching
+      // this point usually has an open PR, and renaming would orphan it.
       if (isNonFastForwardRejection(message)) {
         throw new PermanentTaskError(
-          `Push rejected for branch "${branch}": it has moved on GitHub (likely another ` +
-            `CanopyCMS deployment sharing this repository, or a direct push). Rename this ` +
-            `branch or reconcile it with the remote before retrying.`,
+          `Push rejected for branch "${branch}": GitHub's tip is not what this deployment last ` +
+            `published, so the branch has diverged and needs reconciling. Something else moved it ` +
+            `on GitHub -- a direct push, or another CanopyCMS deployment sharing this repository.`,
         )
       }
       throw err
+    }
+
+    // Clear the marker only once GitHub is confirmed to hold something other
+    // than the commit we rewrote. A push that sent nothing new (remote.git
+    // still at the marker because its own publish has not landed yet) must
+    // leave the marker set -- it is the sole trigger for the self-heal pass.
+    if (marker && outgoingSha && outgoingSha !== marker) {
+      await this.clearHistoryRewrittenMarker(branchPath, branch)
     }
     workerLog(`Pushed ${branch} to GitHub`)
   }
@@ -1040,7 +1361,10 @@ export class CmsWorker {
    * local head here too. Pushing it would be this deployment shipping
    * settings state it doesn't own.
    */
-  private async pushSettingsBranches(git: ReturnType<typeof simpleGit>): Promise<void> {
+  private async pushSettingsBranches(
+    git: ReturnType<typeof simpleGit>,
+    trackedNames: ReadonlySet<string>,
+  ): Promise<void> {
     try {
       const branches = await git.branch()
       const settingsBranches = branches.all.filter((b) =>
@@ -1058,7 +1382,38 @@ export class CmsWorker {
 
       // Check the full branch list, not the `canopycms-settings-*` subset: an
       // adopter-supplied `settingsBranch` override need not carry that prefix.
-      if (!branches.all.includes(this.settingsBranch)) {
+      const ownBranchMissing = !branches.all.includes(this.settingsBranch)
+
+      // [SYNC-M3] A settings branch present in remote.git but absent from
+      // GitHub's tracking refs was pushed here LOCALLY -- only this
+      // deployment's own API can write to remote.git -- and has never
+      // reached GitHub. That is the discriminating signature: in the
+      // SUPPORTED two-deployments-one-repo case the foreign branch arrives
+      // through the GitHub fetch and therefore always has a tracking ref, so
+      // the warn above cannot tell the two apart on its own and a
+      // "owned-branch-absent" test alone would fire on every deployment that
+      // simply has not had a settings edit yet.
+      //
+      // With this deployment's own branch also missing, the API and this
+      // worker have resolved different deploymentNames, and every settings
+      // change the API commits is stranded in remote.git forever.
+      const strandedLocal = foreign.filter((b) => !trackedNames.has(b))
+      if (strandedLocal.length > 0) {
+        workerLogWarn(
+          ownBranchMissing
+            ? `Settings branch mismatch: this worker owns "${this.settingsBranch}", which does not ` +
+                `exist in remote.git, while ${strandedLocal.join(', ')} exist(s) here and has never ` +
+                `been pushed to GitHub. The API and this worker disagree about deploymentName, so ` +
+                `settings changes are NOT reaching GitHub. Set CANOPYCMS_DEPLOYMENT_NAME (or ` +
+                `settingsBranch) on this worker to match what the API resolves.`
+            : `Settings branch(es) ${strandedLocal.join(', ')} exist in remote.git but not on ` +
+                `GitHub, and are not owned by this deployment (${this.settingsBranch}) -- nothing ` +
+                `will ever push them onward. Check that deploymentName matches across this ` +
+                `deployment's API and worker.`,
+        )
+      }
+
+      if (ownBranchMissing) {
         // Not created locally yet — nothing to push.
         return
       }
@@ -1120,7 +1475,10 @@ export class CmsWorker {
    *   count/log it. A real collision (e.g. another deployment moved the
    *   same branch name on GitHub); the next push attempt will be rejected
    *   non-fast-forward, which is the correct, visible outcome -- this
-   *   method must never silently pick a winner.
+   *   method must never silently pick a winner. The one expected, benign
+   *   form of this -- our own rebase loop having published a rewrite into
+   *   remote.git with the GitHub push still queued -- is split out into the
+   *   `rewritten` bucket so the collision warning stays meaningful.
    *
    * Never deletes a local head: a branch removed on GitHub simply stops
    * being tracked here; the local ref persists until removed through its
@@ -1140,12 +1498,13 @@ export class CmsWorker {
    */
   private async reconcileTrackedBranches(
     git: ReturnType<typeof simpleGit>,
-  ): Promise<TrackedBranchSummary> {
+  ): Promise<{ summary: TrackedBranchSummary; trackedNames: Set<string> }> {
     const GIT_ZERO_OID = '0000000000000000000000000000000000000000'
     const created: string[] = []
     const fastForwarded: string[] = []
     const ahead: string[] = []
     const diverged: string[] = []
+    const rewritten: string[] = []
 
     // One invocation enumerates both namespaces: refs/heads/<name> (what the
     // Lambda pushes into and branch clones read from) and
@@ -1191,36 +1550,69 @@ export class CmsWorker {
 
       if (localSha === trackedSha) continue // nothing to do
 
-      // Count commits unique to each side in one call: left = commits local
-      // has that tracked doesn't (ahead), right = commits tracked has that
-      // local doesn't (behind). Exits 0 regardless of ancestry direction,
-      // unlike `merge-base --is-ancestor` (which simple-git would throw on
-      // a non-zero exit for the common "not an ancestor" case).
-      const counts = (
-        await git.raw(['rev-list', '--left-right', '--count', `${localSha}...${trackedSha}`])
-      ).trim()
-      const [leftStr, rightStr] = counts.split(/\s+/)
-      const localAheadCount = parseInt(leftStr, 10)
-      const localBehindCount = parseInt(rightStr, 10)
+      // [SYNC-M2] Everything below is per-branch best-effort. The rev-list
+      // used to sit between the two guarded update-ref calls with no guard
+      // of its own, so a single ref pointing at a missing or partially
+      // written object -- plausible on EFS with the Lambda writing
+      // concurrently -- threw out of this loop, out of syncGit()'s try, and
+      // skipped pushSettingsBranches(), refreshBaseBranchWorkspace() and
+      // rebaseActiveBranches() entirely. Nothing self-healed, so it recurred
+      // every cycle. One unreadable ref must cost its own branch, not the
+      // whole sync cycle.
+      try {
+        // Count commits unique to each side in one call: left = commits local
+        // has that tracked doesn't (ahead), right = commits tracked has that
+        // local doesn't (behind). Exits 0 regardless of ancestry direction,
+        // unlike `merge-base --is-ancestor` (which simple-git would throw on
+        // a non-zero exit for the common "not an ancestor" case).
+        const counts = (
+          await git.raw(['rev-list', '--left-right', '--count', `${localSha}...${trackedSha}`])
+        ).trim()
+        const [leftStr, rightStr] = counts.split(/\s+/)
+        const localAheadCount = parseInt(leftStr, 10)
+        const localBehindCount = parseInt(rightStr, 10)
 
-      if (localAheadCount === 0 && localBehindCount > 0) {
-        try {
-          await git.raw(['update-ref', localRef, trackedSha, localSha])
-          fastForwarded.push(name)
-        } catch (err) {
-          // Concurrent Lambda push moved the ref since the read above --
-          // the guard did its job; this branch is simply revisited next cycle.
+        if (!Number.isInteger(localAheadCount) || !Number.isInteger(localBehindCount)) {
+          // Unparseable output means we could not read this branch, NOT that
+          // it diverged: falling through to the `diverged` bucket below would
+          // warn operators about a cross-deployment collision that never
+          // happened (parseInt yields NaN, and NaN fails both comparisons).
           workerLogWarn(
-            `  Tracked-branch reconcile: failed to fast-forward ${name} (concurrent update?): ${getErrorMessage(err)}`,
+            `  Tracked-branch reconcile: skipping ${name}: unparseable rev-list output ${JSON.stringify(counts)}`,
           )
+          continue
         }
-      } else if (localBehindCount === 0 && localAheadCount > 0) {
-        // Unpushed local work -- exactly what the old destructive refspec
-        // used to force-rewind or delete. Leave it.
-        ahead.push(name)
-      } else {
-        // Neither side is an ancestor of the other. Leave both alone.
-        diverged.push(name)
+
+        if (localAheadCount === 0 && localBehindCount > 0) {
+          try {
+            await git.raw(['update-ref', localRef, trackedSha, localSha])
+            fastForwarded.push(name)
+          } catch (err) {
+            // Concurrent Lambda push moved the ref since the read above --
+            // the guard did its job; this branch is simply revisited next cycle.
+            workerLogWarn(
+              `  Tracked-branch reconcile: failed to fast-forward ${name} (concurrent update?): ${getErrorMessage(err)}`,
+            )
+          }
+        } else if (localBehindCount === 0 && localAheadCount > 0) {
+          // Unpushed local work -- exactly what the old destructive refspec
+          // used to force-rewind or delete. Leave it.
+          ahead.push(name)
+        } else if (await this.hasPendingHistoryRewrite(name)) {
+          // [SYNC-H1] Our own rebase published a rewrite into remote.git and
+          // the GitHub push has not landed yet. Ref-level this is identical
+          // to a collision, but it is expected and self-resolving, so it must
+          // not fire the collision warning below.
+          rewritten.push(name)
+        } else {
+          // Neither side is an ancestor of the other. Leave both alone.
+          diverged.push(name)
+        }
+      } catch (err) {
+        workerLogWarn(
+          `  Tracked-branch reconcile: skipping ${name} (unreadable ref or object?): ${getErrorMessage(err)}`,
+        )
+        continue
       }
     }
 
@@ -1229,8 +1621,41 @@ export class CmsWorker {
         `  Tracked-branch reconcile: ${diverged.length} branch(es) diverged from GitHub and were left untouched: ${diverged.join(', ')}`,
       )
     }
+    if (rewritten.length > 0) {
+      workerLog(
+        `  Tracked-branch reconcile: ${rewritten.length} branch(es) rebased locally with the GitHub push still pending: ${rewritten.join(', ')}`,
+      )
+    }
 
-    return { created, fastForwarded, ahead, diverged }
+    // trackedNames is returned alongside the summary (rather than folded into
+    // it) because it is a working set for pushSettingsBranches' stranded-
+    // branch check, not part of the worker-status snapshot -- it lists every
+    // branch on GitHub and would bloat worker-status.json for no reader.
+    return {
+      summary: { created, fastForwarded, ahead, diverged, rewritten },
+      trackedNames: new Set(tracked.keys()),
+    }
+  }
+
+  /**
+   * Whether this branch carries a pending history rewrite -- the rebase loop
+   * rewrote already-published history and the GitHub push has not landed yet
+   * (see BranchMetadata.historyRewrittenFrom).
+   *
+   * `branchName` is a git ref name; branch workspaces are directories named
+   * with the sanitized form, hence the conversion. Best-effort: a settings
+   * branch (no workspace at all), a missing directory or an unreadable
+   * branch.json all mean "no known rewrite", which is the conservative
+   * answer -- it keeps the branch in the louder `diverged` bucket.
+   */
+  private async hasPendingHistoryRewrite(branchName: string): Promise<boolean> {
+    try {
+      const branchPath = path.join(this.contentBranchesPath, sanitizeBranchName(branchName))
+      const metaFile = await BranchMetadataFileManager.loadOnly(branchPath)
+      return typeof metaFile?.branch.historyRewrittenFrom === 'string'
+    } catch {
+      return false
+    }
   }
 
   async syncGit(): Promise<void> {
@@ -1275,14 +1700,14 @@ export class CmsWorker {
       // Bring refs/heads/* toward what was just fetched, WITHOUT ever
       // force-rewinding or deleting a local head -- see
       // reconcileTrackedBranches()'s doc comment.
-      const trackedSummary = await this.reconcileTrackedBranches(git)
+      const { summary: trackedSummary, trackedNames } = await this.reconcileTrackedBranches(git)
 
       // Push settings branches to GitHub (belt-and-suspenders for task queue).
       // Ensures settings reach GitHub even if a task queue entry is lost.
       // Ordering relative to the fetch/reconcile above is no longer a
       // correctness dependency now that the fetch can't clobber refs/heads/*
       // -- this could run before or after them just as safely.
-      await this.pushSettingsBranches(git)
+      await this.pushSettingsBranches(git, trackedNames)
 
       await this.refreshBaseBranchWorkspace()
 
@@ -1745,6 +2170,31 @@ export class CmsWorker {
           continue
         }
 
+        // The clone's own ref name: branchDir is the sanitized DIRECTORY
+        // name and need not match it. A literal 'HEAD' means a detached
+        // clone (e.g. a crashed rebase left one behind) -- nothing below can
+        // safely name a ref then, so every publish path stays disarmed,
+        // which is the safe direction.
+        const branchRef = (await branchGit.revparse(['--abbrev-ref', 'HEAD'])).trim()
+        const canPublish = branchRef.length > 0 && branchRef !== 'HEAD'
+
+        // [SYNC-H1] Self-heal: finish an interrupted publish even when this
+        // branch is not behind base. Every crash window in the arming
+        // sequence below leaves the marker set with the work unfinished, and
+        // this is what completes it -- without it, one lost lease race would
+        // strand the branch until the base branch happened to advance again.
+        // Gated on the loop-top snapshot, so unmarked branches (nearly all
+        // of them, every cycle) cost nothing extra.
+        if (canPublish && metaFile?.branch.historyRewrittenFrom) {
+          await this.reconcilePendingRewrite({
+            branchPath,
+            branchDir,
+            branchRef,
+            headSha: (await branchGit.revparse(['HEAD'])).trim(),
+            marker: metaFile.branch.historyRewrittenFrom,
+          })
+        }
+
         await branchGit.fetch('origin', this.baseBranch)
 
         // Use rev-list instead of status.behind — status.behind only works when the
@@ -1801,6 +2251,13 @@ export class CmsWorker {
         }
 
         workerLog(`Rebasing ${branchDir} (${behindCount} commits behind)...`)
+
+        // Read BOTH sides before rewriting anything: the arming guard after
+        // the rebase compares what remote.git published against what this
+        // clone is about to rebase away. Reading them afterwards would be
+        // useless -- the clone's pre-rebase tip is exactly what disappears.
+        const preRebaseHead = (await branchGit.revparse(['HEAD'])).trim()
+        const publishedSha = canPublish ? await this.readPublishedSha(branchRef) : null
 
         // Resolve-and-continue loop: keep branch version for conflicting files, then continue
         // Non-conflicting files get main's changes; conflicting files keep branch version.
@@ -1943,6 +2400,48 @@ export class CmsWorker {
         // in the summary. Branches already up to date `continue`d above and
         // are deliberately not listed here.
         rebased.push(branchDir)
+
+        // [SYNC-H1] The rebase just rewrote this clone's history. If that
+        // history was already published, nothing else will ever reconcile
+        // remote.git (and GitHub) with it -- the editor's next submit would
+        // simply be rejected non-fast-forward. Carry the rewrite forward.
+        if (publishedSha !== null) {
+          if (publishedSha === preRebaseHead) {
+            // ARMING GUARD. remote.git holds EXACTLY what this clone just
+            // rebased away and nothing more, so a lease keyed to it can only
+            // undo our own rewrite.
+            //
+            // The inequality case below is not defensive padding: branch
+            // clones never fetch their own branch (GitManager's clone is
+            // --single-branch and checkoutBranch only checks out an existing
+            // local branch), while reconcileTrackedBranches fast-forwards
+            // remote.git to GitHub's tip. So after a reviewer pushes a fixup
+            // straight to the PR branch, remote.git legitimately holds a
+            // commit this clone has never seen. Leasing on "whatever
+            // remote.git currently holds" would be SATISFIED there and would
+            // delete that fixup from remote.git and then from GitHub,
+            // silently. Keying the lease to the pre-rebase tip turns that
+            // case into the visible divergence it should be.
+            //
+            // Order matters: mark, then push, then queue. A crash after any
+            // step leaves the marker set with the work unfinished, which
+            // reconcilePendingRewrite() completes on a later cycle. Pushing
+            // first would leave remote.git rewritten, GitHub stale and
+            // nothing recorded -- unrecoverable, and landing on exactly the
+            // false "another deployment" diagnosis this change removes.
+            await this.markHistoryRewritten(branchPath, branchDir, publishedSha)
+            if (await this.forcePublishToLocalRemote(branchPath, branchRef, publishedSha)) {
+              await this.enqueueGitHubPush(branchRef)
+            }
+          } else {
+            const divergence =
+              `rebased locally, but remote.git holds ${publishedSha} for ${branchRef}, which this ` +
+              `clone never had (a direct push to the branch?). Left untouched -- reconcile it ` +
+              `before submitting again.`
+            workerLogWarn(`  ${branchDir}: ${divergence}`)
+            await this.recordRebaseFailure(branchPath, branchDir, divergence)
+          }
+        }
       } catch (err) {
         const message = err instanceof Error ? err.message : 'Unknown error'
         workerLogWarn(`  Failed to sync ${branchDir}: ${message}`)

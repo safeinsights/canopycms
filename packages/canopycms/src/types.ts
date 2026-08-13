@@ -62,6 +62,23 @@ export interface BranchMetadata {
    */
   rebaseFailure?: { message: string; firstAt: string; lastAt: string }
   /**
+   * Set by the worker's rebase loop when it rewrote history this deployment
+   * had ALREADY published: the commit `remote.git` (and therefore GitHub)
+   * held for this branch, which the rebase replaced.
+   *
+   * Used as the `--force-with-lease` expected value on both hops, so a forced
+   * push can only ever move a ref off the exact commit our own rebase rewrote
+   * away -- never over anyone else's work.
+   *
+   * Set once per rewrite episode and never advanced while still set: across
+   * two rebases before any push lands, GitHub still holds the ORIGINAL
+   * commit, so advancing the marker would aim the lease at a commit GitHub
+   * never had. Cleared only once GitHub is confirmed to hold something else
+   * (CmsWorker.pushBranchToGitHub) -- while it is set, it is the sole trigger
+   * for the rebase loop's self-heal pass.
+   */
+  historyRewrittenFrom?: string
+  /**
    * Short, sanitized reason the worker's last GitHub sync task failed
    * permanently (set alongside `syncStatus: 'sync-failed'` by
    * CmsWorker.updateBranchMetadataOnFailure) -- e.g. a non-fast-forward push
@@ -127,6 +144,14 @@ export interface WorkerStatusReport {
       fastForwarded: string[]
       ahead: string[]
       diverged: string[]
+      /**
+       * Optional for the same reason as `tracked` itself: absent from a
+       * status file written before the rebase loop began publishing rewritten
+       * history. Branches here diverged from GitHub because THIS worker
+       * rebased them and the GitHub push is still queued -- expected and
+       * self-resolving, unlike `diverged`.
+       */
+      rewritten?: string[]
     }
   }
   lastFatalError?: { message: string; at: string; phase: 'startup' | 'run' }

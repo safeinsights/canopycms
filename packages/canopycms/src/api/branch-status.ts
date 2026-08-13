@@ -69,24 +69,30 @@ const submitBranchForMergeHandler = async (
       redactCredentials(message),
     )
 
-    // A non-fast-forward rejection means the branch moved on the remote out
-    // from under this push -- most likely another CanopyCMS deployment
-    // sharing this GitHub repo picked the same content-branch name, or
-    // someone pushed directly to GitHub. That's a user-actionable naming
-    // collision, not a server error: retrying the identical push can never
-    // succeed (see isNonFastForwardRejection), so surface 409 with guidance
-    // instead of the generic 500 below. Everything else (network, auth, lock
-    // contention) keeps the existing 500 path unchanged.
+    // A non-fast-forward rejection means this branch and the deployment's
+    // local repository have diverged. Retrying the identical push can never
+    // succeed (see isNonFastForwardRejection), so surface 409 instead of the
+    // generic 500 below. Everything else (network, auth, lock contention)
+    // keeps the existing 500 path unchanged.
+    //
+    // This push targets the deployment's OWN local origin (remote.git), not
+    // GitHub, so the message deliberately states only the observable fact and
+    // names no cause: a foreign deployment cannot reach this repo, and the
+    // realistic explanations are all internal (the worker's rebase loop
+    // reconciling the branch, or a commit reaching remote.git that this
+    // workspace never had). It also never advises renaming the branch --
+    // a branch that reaches this point has usually been submitted before, so
+    // it may well have an open PR that a rename would orphan.
     if (isNonFastForwardRejection(message)) {
       return {
         ok: false,
         status: 409,
         error:
-          `Could not submit "${branchContext.branch.name}": the branch has moved on the remote ` +
-          `(likely another CanopyCMS deployment sharing this repository, a direct push to ` +
-          `GitHub, or a leftover from an earlier deleted branch of the same name). Create a ` +
-          `branch under a different name, or reconcile this one with the remote before ` +
-          `submitting again.`,
+          `Could not submit "${branchContext.branch.name}": it has diverged from the copy in ` +
+          `this deployment's repository and needs to be reconciled before it can be submitted. ` +
+          `The background worker reconciles branches when the base branch moves, so this often ` +
+          `clears on its own within a few minutes -- try again shortly, and ask an administrator ` +
+          `to check the worker if it persists.`,
       }
     }
 
