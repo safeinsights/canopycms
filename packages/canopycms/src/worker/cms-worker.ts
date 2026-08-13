@@ -1084,8 +1084,19 @@ export class CmsWorker {
 
   /**
    * Clear the marker once GitHub is confirmed to hold the rewritten history.
-   * Best-effort: a failure here only costs a redundant forced push next time
-   * (the lease still refuses anything unexpected).
+   *
+   * Best-effort only in the sense that a failure here destroys nothing: the
+   * lease still refuses anything unexpected, and the plain-push fallback only
+   * ever fast-forwards. It is NOT harmless. A marker that outlives its
+   * episode can wedge the NEXT one -- if the base advances before the stale
+   * marker is revisited, the queued push leases a commit GitHub has already
+   * moved off, falls back to a plain push of a rebased (non-ancestor)
+   * history, and fails permanently with a "something else moved it on
+   * GitHub" diagnosis that is false: we did.
+   *
+   * Tracked, with the concurrent-clear race that can drop a marker
+   * mid-arming, in
+   * .claude/future-tasks/worker-history-rewrite-marker-races.md.
    */
   private async clearHistoryRewrittenMarker(branchPath: string, branchDir: string): Promise<void> {
     try {
