@@ -105,7 +105,7 @@ export const getBranchPermissions = (
   // protected base branch can never be submitted (both modes).
   const canSubmit = canPerformWorkflowActions && branch.status === 'editing' && !branch.isProtected
 
-  // Withdraw: Can perform workflow actions AND branch is in submitted status.
+  // Withdraw: Can perform workflow actions AND branch is submitted or approved.
   // Allowed even when the PR was closed without merging -- that's the
   // deliberate recovery path for a closed-unmerged PR (a later resubmit
   // opens a fresh PR). The server skips the now-impossible draft conversion
@@ -113,7 +113,13 @@ export const getBranchPermissions = (
   // !branch.isProtected: withdraw is the recovery path for a protected branch
   // wrongly stuck in 'submitted' -- creator/ACL/privileged users can still
   // reach it (the system-branch grant above already excludes them).
-  const canWithdraw = canPerformWorkflowActions && branch.status === 'submitted'
+  //
+  // 'approved' is included because withdraw is that status's ONLY
+  // non-destructive exit (request-changes still requires 'submitted', and the
+  // submit status gate now refuses a non-editing branch). Surfacing it here is
+  // what makes the exit reachable -- the server accepting it is not enough.
+  const canWithdraw =
+    canPerformWorkflowActions && (branch.status === 'submitted' || branch.status === 'approved')
 
   // Delete: Admin or creator (but not if submitted, and never the base branch --
   // deleting the prod serving clone is never valid)

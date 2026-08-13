@@ -88,6 +88,31 @@ describe('getBranchPermissions', () => {
     expect(perms.canWithdraw).toBe(true)
   })
 
+  it('allows creator to withdraw an approved branch', () => {
+    // Withdraw is 'approved's only non-destructive exit: request-changes still
+    // requires 'submitted', and the submit status gate refuses a non-editing
+    // branch. Without this the status is a dead end with no UI path out.
+    const branch: BranchSummary = {
+      name: 'main',
+      status: 'approved',
+      createdBy: 'user1',
+    }
+    const perms = getBranchPermissions(branch, { userId: 'user1', groups: [] })
+    expect(perms.canWithdraw).toBe(true)
+    expect(perms.canSubmit).toBe(false)
+  })
+
+  it('offers no withdraw on an archived branch', () => {
+    const branch: BranchSummary = {
+      name: 'main',
+      status: 'archived',
+      createdBy: 'user1',
+    }
+    const perms = getBranchPermissions(branch, { userId: 'user1', groups: [] })
+    expect(perms.canWithdraw).toBe(false)
+    expect(perms.canSubmit).toBe(false)
+  })
+
   it('allows admin to delete any branch', () => {
     const branch: BranchSummary = {
       name: 'main',
