@@ -167,18 +167,30 @@ alongside the push soak close it outright and are cheap next to the soak itself.
 **Two uncatalogued `O_CREAT|O_EXCL` dependencies already exist in the repo**, so
 the git-path soak is also their first real coverage:
 
-- `settings-workspace.ts` — a bespoke init lock (doc comment: "Uses
-  O_CREAT|O_EXCL (wx flag) for atomic file creation") which concurrency.md itself
-  flags as "**not one of the four numbered layers above** … not yet cataloged".
-  It is what stops two hosts both deciding it is safe to run `checkout --orphan`
-  + `rm -rf .` on a populated workspace — a sequence the doc calls **not
-  recoverable**.
+- `settings-workspace.ts` — a bespoke init lock, `fs.open(lockPath, 'wx')`, which
+  concurrency.md itself flags as "**not one of the four numbered layers above** …
+  not yet cataloged". It is what stops two hosts both deciding it is safe to run
+  `checkout --orphan` + `rm -rf .` on a populated workspace — a sequence the doc
+  calls **not recoverable**. Tracked separately, including a liveness problem
+  distinct from atomicity, in
+  [settings-workspace-init-lock-uncatalogued.md](settings-workspace-init-lock-uncatalogued.md).
 - `assets/store-local.ts` — `putMetaIfAbsent` writes with `{ flag: 'wx' }`. See
   [asset-meta-wx-vs-link.md](asset-meta-wx-vs-link.md).
 
-Cataloguing the `settings-workspace.ts` pair in concurrency.md's table is worth
-doing while D is in this area — an undocumented dependency guarding an
-unrecoverable operation is exactly what the table exists to surface.
+**One exception to the directional-coverage caveat above, and it is worth stating
+because a careful reader would otherwise discount coverage the soak genuinely
+earns.** The settings init lock is not merely the same guarantee *class* as git's
+ref lockfile — it is the **same syscall on the same object type**:
+`O_CREAT|O_EXCL` on a regular file (Node's `'wx'`), exactly as git creates
+`<ref>.lock`. So a green git-path soak certifies that lock's acquire **directly,
+not by generalization**. The "green git says nothing about `mkdir`/`link()`"
+caution applies to the other two primitives, not to this one.
+
+That leaves `O_CREAT|O_EXCL` with **three** production dependencies, **zero**
+documented coverage, the **weakest** historical NFS track record of the three
+primitives, and one of them guarding the only operation the doc calls
+unrecoverable. That — rather than the shared-foundation framing — is the argument
+for this being a D item.
 
 **What is already settled — do not re-litigate it.** The real compare-and-swap is
 **not** the client-side lease. For *every* push, forced or not, the client sends
