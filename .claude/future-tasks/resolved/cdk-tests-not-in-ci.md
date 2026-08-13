@@ -139,20 +139,59 @@ deploy, and the transform Lambda ships with no sharp binary and throws at cold
 start on the first image request. Before this change the on-disk artifact was
 always deployable, because running the CDK suite required the full `build:lambda`.
 
-The `.skip-native` marker was the right primitive but nothing consumed it.
-`canary/bin/canary.ts` now throws if the marker is present, naming the likely
-cause (`pnpm test`) and the fix (`build:lambda` with no flags). The guard is at
-the DEPLOY ENTRYPOINT and deliberately not inside `AssetSupport` — the CDK tests
-synth that construct against precisely this skip-native `dist/`, so a
-construct-level check would break the suite this whole change exists to gate.
-Verified all three states: marker present → synth refuses with the actionable
-message; real `build:lambda` → marker gone → synth exits 0; CDK suite → still
-82/82 with the guard in place.
+The guard went through two wrong shapes before the right one, and both
+corrections came out of review:
 
-Note the original doc comment warned "never pass `--skip-native` on a path that
-leads to a deploy", which addressed the wrong actor: the risk is not someone
-passing the flag, it is that `pnpm test` passes it for them and leaves the
-artifact behind.
+1. *Warn in a doc comment* ("never pass `--skip-native` on a deploy path") —
+   wrong ACTOR. The risk is not someone passing the flag; it is `pnpm test`
+   passing it for them and leaving the artifact behind.
+2. *Check for `.skip-native` at the deploy entrypoint* — wrong POLARITY and
+   wrong PLACE. A negative marker fails OPEN on any path nobody anticipated,
+   and this one is reachable: if `build:lambda`'s `npm install sharp` throws
+   (offline, proxy, an npm too old for `--os`/`--cpu`/`--libc`) or the
+   platform-binary check fails, `main()`'s catch sets a non-zero exit code but
+   leaves the partial `dist/` — `handler.js` + `package.json`, no sharp, and no
+   `.skip-native` marker either. Reproduced during review, and the CDK suite
+   runs 82/82 green against exactly that bundle. A "is it marked bad?" test
+   waves it straight through to a deploy.
+
+**Final shape: a positive `.deployable` marker, checked in the construct.**
+`build:lambda` writes `.deployable` (recording `sharpRange` and the verified
+`platformPkgDir`) as the LAST act of a successful full build, reachable only
+after the platform-binary check passes — so the file can only exist if the
+native install actually verified. `AssetSupport` requires it and throws
+otherwise, with `requireDeployableBundle?: boolean` (default `true`) as the
+opt-out that only this package's own tests pass. Truth table:
+
+| situation | marker | outcome |
+| --- | --- | --- |
+| full build succeeds | present | allowed |
+| `--skip-native` fixture | absent | blocked |
+| build fails at `npm install` | absent | blocked |
+| build fails at platform check | absent | blocked |
+| future/hand-rolled build path | absent | blocked |
+| stale marker blocking a good build | impossible | — `rmSync(distDir)` runs unconditionally at the top of every build |
+
+Placement is the construct, not `canary/bin/canary.ts`. The canary is the only
+in-repo CDK app that resolves `Code.fromAsset()` against local source today
+(`examples/aws-deployment` imports from the published package and never touches
+`AssetSupport`; the adopter template `npm ci`s the registry build), so an
+entrypoint check would have fixed this instance — but fail-open, with every
+future local-source entrypoint having to remember it. In the construct, new
+entrypoints inherit the protection. For adopters it is inert: `prepack` runs the
+full build, so the published asset always carries the marker (confirmed via
+`npm pack --dry-run` that the dotfile really is included).
+
+The asset path is hoisted to a single `transformAssetDir` shared by the guard
+and `Code.fromAsset()`, so the check can never end up statting a different
+directory than the one being deployed. The positive marker also makes THAT
+failure mode fail closed, since producer and consumer compute their paths
+independently.
+
+Verified all four states: skip-native fixture → CDK suite still 82/82 (opt-out
+works); skip-native fixture → synth refuses; partial build with neither marker
+→ synth refuses (the case the negative check missed); real `build:lambda` →
+marker written → synth exits 0.
 
 Minor accepted tradeoff: `pnpm --filter canopycms-cdk test` now always rebuilds
 fixtures (~3s) even when `dist/` is current. Worth it to kill the

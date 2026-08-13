@@ -39,11 +39,24 @@
  * 82-test CDK suite out of CI. Skipping it makes the suite cheap enough to
  * gate every PR, which is the whole point.
  *
- * NEVER pass `--skip-native` on a path that leads to a deploy: the bundle
- * left behind imports sharp and would throw at cold start. The publish
- * workflows and `prepack` call this script with no flags and are unchanged.
- * A `.skip-native` marker file is written into `dist/` so the omission is
- * discoverable on disk rather than inferred from a build log.
+ * LOAD-BEARING, do not quietly drop: a successful FULL build writes a
+ * `.deployable` marker into `dist/` as its very last act, and `AssetSupport`
+ * REFUSES to synth without one. The marker is deliberately positive
+ * ("this bundle was verified") rather than negative ("this one is bad"),
+ * because a negative marker fails open on every path nobody thought about.
+ * Concretely, this build can leave a partial, sharp-less `dist/` behind
+ * without ever reaching the `--skip-native` branch: if the `npm install`
+ * below throws (registry unreachable, offline, proxy, an npm too old for
+ * `--os`/`--cpu`/`--libc`) or the `platformPkgDir` check fails, `main()`'s
+ * catch sets a non-zero exit code but does NOT remove the handler.js and
+ * package.json already written. A "no `.skip-native` file" test would wave
+ * that bundle straight through to a deploy; requiring `.deployable` blocks
+ * it, because the marker can only exist if the native install actually
+ * verified.
+ *
+ * `--skip-native` additionally writes a `.skip-native` marker. Nothing
+ * consumes it - it is there so a human running `ls` can see at a glance why
+ * a bundle is being rejected.
  */
 
 import { execFileSync } from 'node:child_process'
@@ -62,6 +75,13 @@ function log(message) {
 }
 
 const skipNative = process.argv.includes('--skip-native')
+
+/**
+ * Consumed by `AssetSupport` (src/constructs/asset-support.ts), which refuses
+ * to synth a bundle without it. Keep the two names in step.
+ */
+const DEPLOYABLE_MARKER = '.deployable'
+const SKIP_NATIVE_MARKER = '.skip-native'
 
 async function main() {
   const canopycmsPkg = JSON.parse(readFileSync(canopycmsPkgPath, 'utf-8'))
@@ -104,8 +124,10 @@ async function main() {
     // Marker file, not just a log line: `dist/` is gitignored and long-lived,
     // so whoever finds one later (or a future script) can tell a test-only
     // bundle from a deployable one by looking at the directory itself.
+    // Human-facing only - nothing consumes this. The guard keys off the
+    // ABSENCE of DEPLOYABLE_MARKER, which is what makes it fail closed.
     writeFileSync(
-      path.join(distDir, '.skip-native'),
+      path.join(distDir, SKIP_NATIVE_MARKER),
       'Built with --skip-native: sharp is NOT installed here. Test fixtures only - do not deploy.\n',
     )
     log(`Bundle ready (--skip-native, NOT DEPLOYABLE): ${distDir}`)
@@ -134,9 +156,22 @@ async function main() {
     )
   }
 
+  // LAST act of a successful full build, and only reachable once the
+  // platform-binary check above has passed - that ordering is the whole
+  // point. AssetSupport requires this file, so anything that leaves a
+  // half-built dist/ behind (a thrown npm install, a failed platform check,
+  // some future hand-rolled path) is blocked by default rather than
+  // permitted by default. Records what was verified, not just that
+  // something was.
+  writeFileSync(
+    path.join(distDir, DEPLOYABLE_MARKER),
+    JSON.stringify({ sharpRange, platformPkgDir, builtBy: 'build:lambda' }, null, 2) + '\n',
+  )
+
   log(`Bundle ready: ${distDir}`)
   log(`  handler.js: ${(handlerBytes / 1024).toFixed(1)} KiB`)
   log(`  sharp platform binary: ${platformPkgDir}`)
+  log(`  ${DEPLOYABLE_MARKER}: written (AssetSupport will accept this bundle)`)
 }
 
 main().catch((err) => {

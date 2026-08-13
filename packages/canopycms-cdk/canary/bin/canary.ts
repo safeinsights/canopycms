@@ -29,8 +29,9 @@
  * Build the transform Lambda's asset first (`AssetSupport` points
  * `lambda.Code.fromAsset()` at a real directory that must already exist -
  * `cdk synth`/`deploy` will fail with "Cannot find asset" otherwise). Run the
- * build with NO flags: `pnpm test` leaves a `--skip-native` bundle behind, and
- * the guard below refuses to deploy it.
+ * build with NO flags: `pnpm test` leaves a fixture-only `--skip-native`
+ * bundle behind, and `AssetSupport` refuses to synth one (it requires the
+ * `.deployable` marker that only a full build writes).
  *
  *   pnpm --filter canopycms-cdk run build:lambda
  *   cd packages/canopycms-cdk/canary
@@ -38,51 +39,10 @@
  *   npx cdk deploy --profile sandbox-admin
  */
 
-import { existsSync } from 'node:fs'
-import path from 'node:path'
-import { fileURLToPath } from 'node:url'
-
 import { App, RemovalPolicy, Stack, aws_cloudfront as cloudfront } from 'aws-cdk-lib'
 import { DefaultStackSynthesizer } from 'aws-cdk-lib'
 
 import { AssetSupport } from '../../src/index'
-
-/**
- * Refuse to synth/deploy against a test-only Lambda bundle.
- *
- * `build:lambda --skip-native` (used by `build:test-fixtures`, which the CDK
- * package's own `test` script runs) produces a `dist/` with no sharp binary -
- * fine for the test suite, which only needs `Code.fromAsset()` to find a
- * directory and never executes the handler. But `pnpm test` REBUILDS that
- * directory in place, so simply having run the tests leaves a non-deployable
- * artifact on disk. Deploying from this repo afterwards would ship a transform
- * Lambda that throws on its first image request, at cold start, in whatever
- * environment it landed in - a failure discovered far from its cause.
- *
- * The guard lives here, at the deploy entrypoint, and deliberately NOT inside
- * `AssetSupport`: the CDK test suite synths that construct against exactly
- * this skip-native `dist/`, so a construct-level check would break the suite
- * this marker's own PR exists to put into CI. Recover with a full
- * `pnpm --filter canopycms-cdk run build:lambda` (no flags).
- */
-const skipNativeMarker = path.join(
-  path.dirname(fileURLToPath(import.meta.url)),
-  '..',
-  '..',
-  'lambda',
-  'asset-transform',
-  'dist',
-  '.skip-native',
-)
-if (existsSync(skipNativeMarker)) {
-  throw new Error(
-    'The transform Lambda bundle at lambda/asset-transform/dist was built with --skip-native ' +
-      '(no sharp binary) and is NOT deployable - most likely left behind by `pnpm test`, whose ' +
-      'canopycms-cdk suite rebuilds that directory as a test fixture.\n' +
-      'Rebuild it for real before synth/deploy:\n' +
-      '  pnpm --filter canopycms-cdk run build:lambda',
-  )
-}
 
 const CANARY_ACCOUNT = '905418271997'
 const CANARY_REGION = 'us-east-1'
