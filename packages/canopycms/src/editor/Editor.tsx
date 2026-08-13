@@ -245,10 +245,24 @@ export const Editor: React.FC<EditorProps> = ({
   // server says writes are blocked -- the protected base branch, or a workflow
   // status past 'editing' (submitted for review, approved, archived). The flag is
   // computed server-side by the same getBranchProtection() call the writableBranch
-  // guard uses, so the UI can never drift from what the API will accept. Undefined
-  // currentBranch (initial load) reads as unlocked so the UI doesn't flash a
-  // locked state.
-  const branchContentLocked = currentBranch?.writeBlocked ?? false
+  // guard uses, so the UI can never drift from what the API will accept.
+  //
+  // Fail CLOSED (`?? true`) when `currentBranch` is undefined or the wire didn't
+  // carry `writeBlocked` at all (branches-list fetch still in flight/failed, or
+  // editor/server version skew where an older server doesn't emit the flag). This
+  // is a deliberately inverted default from the OLD client-side derivation this
+  // flag replaced (`branchStatus !== 'editing'`), which locked correctly even with
+  // zero data from the server -- "no answer yet" and "not editing" both compute to
+  // locked when the fallback is itself a status comparison. Moving the decision
+  // server-side was the right call (the API guard and the UI now read one source
+  // of truth instead of two independent derivations that could drift), but an
+  // `?? false` default silently flipped what "no answer yet" means: a client that
+  // can't hear the server's answer now assumed UNLOCKED instead of LOCKED. A brief
+  // flash of locked (corrected the moment the branch list loads) is strictly safer
+  // than a flash of unlocked that invites a click the server is going to reject --
+  // and the pane is already showing a loading state during that same window, so
+  // the flash is not even visible in practice.
+  const branchContentLocked = currentBranch?.writeBlocked ?? true
 
   // 2. Entry manager (depends on branchNameState, owns selectedPath)
   const {
@@ -691,8 +705,34 @@ export const Editor: React.FC<EditorProps> = ({
       }
       return undefined
     }
-    const collection = findCollection(activeCollections, collectionPath)
-    if (!collection) return
+    // Resolve against `collectionsFromApi`, NOT `activeCollections`. The
+    // latter falls back to the build-time `collections` prop whenever the
+    // fetched list is empty (`activeCollections = collectionsFromApi.length >
+    // 0 ? collectionsFromApi : collections`, above) -- which is exactly the
+    // state mid-branch-switch, before the new branch's entries/collections
+    // fetch has committed. Resolving a WRITE against that fallback meant this
+    // guard could never fire during a switch: it would happily find the OLD
+    // branch's collection in the stale build-time props and send ITS `order`
+    // array as a PATCH to the NEW branch. Reading `collectionsFromApi`
+    // directly makes "not yet loaded for this branch" and "loaded, has no
+    // such collection" the same (correct) not-found outcome, so the guard
+    // below is reachable again. See the correction to PR #196's "unreachable
+    // with entries empty" claim in
+    // .claude/future-tasks/program-b-final-review-followups.md for the write
+    // hazard this closes -- found by the 2026-08-12 adversarial review.
+    const collection = findCollection(collectionsFromApi, collectionPath)
+    if (!collection) {
+      // A silent no-op on a clicked menu item reads as a broken button --
+      // tell the user why nothing happened instead of leaving them to
+      // wonder. This fires legitimately during the ordinary branch-switch
+      // window (data not there YET), not only on a genuine error, so it's a
+      // transient "try again" notice rather than an error-red one.
+      notifications.show({
+        message: 'Content is still loading for this branch — try again in a moment.',
+        color: 'yellow',
+      })
+      return
+    }
 
     // Use the collection's order array as the source of truth
     // If no order array exists, build one from current entries and children
@@ -948,9 +988,16 @@ export const Editor: React.FC<EditorProps> = ({
             userContext={userContext}
             branchCreatedBy={currentBranch?.createdBy}
             branchAccess={currentBranch?.access}
-            branchIsProtected={currentBranch?.isProtected}
+            // Fail-closed for the same reason branchContentLocked above is:
+            // isProtected/writeBlocked gate real actions in EditorHeader (hiding
+            // Submit, disabling Save), so a missing wire value must read as
+            // "protected"/"blocked", not "unprotected"/"unblocked".
+            // branchWriteBlocked reuses branchContentLocked itself rather than
+            // re-deriving `?? true` a second time here, so there is exactly one
+            // fail-closed computation of "are writes blocked" in this component.
+            branchIsProtected={currentBranch?.isProtected ?? true}
             branchReadOnly={currentBranch?.readOnly}
-            branchWriteBlocked={currentBranch?.writeBlocked}
+            branchWriteBlocked={branchContentLocked}
             onNavigatorOpen={() => setNavigatorOpen(true)}
             onFileReload={handleReload}
             onFileDiscardDraft={handleDiscardFileDraft}

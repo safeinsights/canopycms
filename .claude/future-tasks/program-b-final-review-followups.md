@@ -261,6 +261,27 @@ reorder handler at `Editor.tsx:694`) are guarded by not-found early returns and
 are unreachable with entries empty. No test covers a modal open across a switch;
 this was a reasoned call, not an oversight.
 
+**Correction (2026-08-13): the reorder handler's guard was NOT actually
+unreachable.** Found by the 2026-08-12 adversarial review of the editor's
+write-lock surface; fixed in the PR that added this correction. The claim above
+conflated the two write paths -- `handleCreateEntry`'s half is accurate,
+`handleReorderEntry`'s is not. `handleReorderEntry` never reads `entriesState`
+at all: it resolves its target collection with
+`findCollection(activeCollections, collectionPath)`, and `activeCollections`
+(`collectionsFromApi.length > 0 ? collectionsFromApi : collections`) is exactly
+what stays NON-empty during a switch for any adopter who passes a `collections`
+prop -- the first-party shape this whole section is about, and the same
+fallback the navigator-spinner correction above already flagged. So the
+guard's `if (!collection) return` never fired: the handler resolved the OLD
+branch's collection out of the stale build-time props and sent ITS `order`
+array as a write to the NEW branch. Fixed by resolving against
+`collectionsFromApi` directly instead of `activeCollections`, so "not yet
+loaded for this branch" and "loaded, has no such collection" are now the same
+(correct) not-found outcome -- plus a user-visible notification, since a
+silent no-op on a clicked menu item reads as a broken button. See
+`Editor.integration.test.tsx`'s `'reorder mid-branch-switch'` tests for the
+regression coverage this section noted was missing.
+
 ---
 
 ## ~~HIGH — the deploy template has no CDK app to deploy against~~ (RESOLVED 2026-08-12)

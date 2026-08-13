@@ -620,6 +620,52 @@ describe('branch api', () => {
     expect(byName('feature/submitted')?.isProtected).toBe(false)
   })
 
+  it('emits submitBlocked as the compound answer (base-branch OR non-editing status), not the base-only protection.submitBlocked', async () => {
+    const registry = createMockRegistry([
+      createMockBranchContext({
+        branchName: 'main',
+        createdBy: 'canopycms-system',
+        baseRoot: '/test/repo',
+        branchRoot: '/test/repo',
+        status: 'editing',
+      }),
+      createMockBranchContext({
+        branchName: 'feature/editing',
+        createdBy: 'u1',
+        status: 'editing',
+      }),
+      createMockBranchContext({
+        branchName: 'feature/submitted',
+        createdBy: 'u1',
+        status: 'submitted',
+      }),
+    ])
+    const ctx = createMockApiContext({
+      branchContext: createMockBranchContext({ branchName: 'main', createdBy: 'system' }),
+      services: {
+        registry: registry as any,
+        config: { defaultBaseBranch: 'main', mode: 'prod' } as any,
+      },
+    })
+
+    const res = await listBranches(ctx, {
+      user: { type: 'authenticated', userId: 'admin', groups: [RESERVED_GROUPS.ADMINS] },
+    })
+
+    const byName = (n: string) => res.data?.branches.find((b) => b.name === n)
+
+    // Editing, unprotected: neither half of the compound is true.
+    expect(byName('feature/editing')?.submitBlocked).toBe(false)
+    // Non-editing status alone blocks submit, even though this branch is not
+    // the base branch -- proves the STATUS half, not just protection.submitBlocked
+    // (which would be false here).
+    expect(byName('feature/submitted')?.submitBlocked).toBe(true)
+    // The base branch is submit-blocked even while 'editing' -- proves the
+    // BASE-BRANCH half, and specifically that this is NOT just a copy of
+    // writeBlocked (which a dev-mode base branch could have as false).
+    expect(byName('main')?.submitBlocked).toBe(true)
+  })
+
   it('emits writeBlocked for a branch whose status is missing (UI locks with the server)', async () => {
     // Same fail-closed contract the writableBranch guard has: if the wire flag
     // said "writable" here while the guard refused, the editor would offer a
