@@ -10,6 +10,16 @@ export * from './build-mode'
 export * from './context'
 export { operatingStrategy } from './operating-mode'
 export * from './authorization/groups'
+
+/**
+ * Resolve a CanopyUser for a request: loads internal groups from the
+ * settings workspace (the single source of truth — never a content branch
+ * clone) and merges them into an auth-plugin result via
+ * `authResultToCanopyUser`. Shared by the core HTTP handler and the Next.js
+ * SSR wrapper so the "authenticate -> load groups -> merge" pipeline can't
+ * drift between the two again.
+ */
+export { resolveCanopyUser, type ResolveCanopyUserDeps } from './resolve-canopy-user'
 export * from './branch-workspace'
 export * from './content-store'
 export {

@@ -417,6 +417,20 @@ async function _createCanopyServicesInternal(
 
       // Create or update PR — dual-path like content branches (api/github-sync.ts)
       if (options.createPR !== false) {
+        // Both permissions and groups are read live from the settings
+        // workspace (getSettingsBranchRoot) — never from this PR's base
+        // branch — so the change already took effect the moment it was
+        // committed and pushed above, before this PR even exists. Merging
+        // does not (re-)activate anything; it only records the change on
+        // `base` for review/audit history. Previously worded as "will be
+        // persisted when this PR is merged", which implied merging was what
+        // made the change durable/live — false for both settings files, and
+        // for groups specifically the read side didn't even look at this
+        // branch until that bug was fixed (see resolve-canopy-user.ts).
+        const settingsPRBody =
+          'Automated PR for permission and group changes. These changes already took ' +
+          'effect in the CMS when they were saved — merging this PR does not change ' +
+          "what's live; it only records the change here for review and audit history."
         // Direct path: githubService available (has internet)
         if (githubService) {
           let prUrl: string | undefined
@@ -429,7 +443,7 @@ async function _createCanopyServicesInternal(
               head: settingsBranch,
               base: config.defaultBaseBranch ?? 'main',
               title: 'Update permissions and groups',
-              body: 'Automated PR for permission and group changes. Changes are already active in the CMS and will be persisted when this PR is merged.',
+              body: settingsPRBody,
             })
             prUrl = result.url
           } catch (err) {
@@ -448,7 +462,7 @@ async function _createCanopyServicesInternal(
               branch: settingsBranch,
               baseBranch: config.defaultBaseBranch ?? 'main',
               title: 'Update permissions and groups',
-              body: 'Automated PR for permission and group changes. Changes are already active in the CMS and will be persisted when this PR is merged.',
+              body: settingsPRBody,
             },
           })
           return { committed: true, pushed: true, syncStatus: 'pending-sync' }

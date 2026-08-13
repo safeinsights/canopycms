@@ -8,12 +8,13 @@ import type { CanopyConfig } from '../config'
 import type { BranchContext } from '../types'
 import { loadBranchContext, BranchWorkspaceManager } from '../branch-workspace'
 import { BranchMetadataCorruptError } from '../branch-metadata'
-import { authResultToCanopyUser } from '../user'
-import { loadInternalGroups, RESERVED_GROUPS } from '../authorization'
+import { resolveCanopyUser } from '../resolve-canopy-user'
 import { clientOperatingStrategy, operatingStrategy } from '../operating-mode'
 import { getErrorMessage, redactCredentials, sanitizeErrorMessage } from '../utils/error'
-
-let warnedNoAdmins = false
+// canopyLogError, not console.error: http/handler.ts is shared code and not
+// guaranteed to stay out of the worker's runtime import closure (see
+// utils/logger.ts) — new log lines here should go through the indirection.
+import { canopyLogError } from '../utils/logger'
 
 /**
  * Options for creating a Canopy request handler.
@@ -218,25 +219,26 @@ export function createCanopyRequestHandler(options: CanopyHandlerOptions): Canop
       )
     }
 
-    // Load internal groups from the base branch and merge with user groups.
-    // This getBranchContext call also auto-creates the base/active workspace
-    // on first request — if that provisioning fails, every endpoint would
-    // otherwise return confusing empty results, so fail loudly instead.
+    // Ensure the base/active branch workspace is provisioned on first
+    // request. Internal groups no longer come from this branch (see
+    // resolveCanopyUser below) — this call is purely so many endpoints that
+    // assume the base/active workspace already exists (registry reads, etc.)
+    // don't return confusing empty results on a cold start, so fail loudly
+    // on a real provisioning error rather than let that surprise a later
+    // handler.
     const baseBranch = apiCtx.services.config.defaultBaseBranch ?? 'main'
-    let mainBranchContext: BranchContext | null
     try {
-      mainBranchContext = await apiCtx.getBranchContext(baseBranch)
+      await apiCtx.getBranchContext(baseBranch)
     } catch (err) {
       const message = getErrorMessage(err)
       if (err instanceof BranchMetadataCorruptError) {
         // Corrupt BASE branch metadata must not take down every endpoint —
         // the /admin recovery surface is how it gets fixed. Degrade instead:
-        // no internal groups this request (bootstrap admins retain admin via
-        // bootstrapAdminIds), and keep routing.
+        // keep routing (internal groups come from the settings workspace
+        // below, independent of this branch's health).
         console.error(
-          `CanopyCMS: Base branch '${baseBranch}' has corrupt metadata; serving without internal groups until repaired: ${redactCredentials(message)}`,
+          `CanopyCMS: Base branch '${baseBranch}' has corrupt metadata; serving without base-branch provisioning until repaired: ${redactCredentials(message)}`,
         )
-        mainBranchContext = null
       } else {
         // Full path detail to server logs; sanitized detail to the
         // (authenticated) client. Credentials (git errors can embed them) are
@@ -254,36 +256,36 @@ export function createCanopyRequestHandler(options: CanopyHandlerOptions): Canop
         )
       }
     }
-    const operatingMode = apiCtx.services.config.mode
-    const internalGroups = mainBranchContext
-      ? await loadInternalGroups(
-          mainBranchContext.branchRoot,
-          operatingMode,
-          apiCtx.services.bootstrapAdminIds,
-        ).catch((err: unknown) => {
-          console.warn('CanopyCMS: Failed to load internal groups from main branch:', err)
-          return []
-        })
-      : []
 
-    if (!warnedNoAdmins && Array.isArray(internalGroups)) {
-      const adminsGroup = internalGroups.find((g) => g.id === RESERVED_GROUPS.ADMINS)
-      const hasAdmins =
-        (adminsGroup && adminsGroup.members.length > 0) ||
-        apiCtx.services.bootstrapAdminIds.size > 0
-      if (!hasAdmins) {
-        console.warn(
-          'CanopyCMS: No admin users configured. Set CANOPY_BOOTSTRAP_ADMIN_IDS or add members to the Admins group.',
-        )
-      }
-      warnedNoAdmins = true
+    // Resolve the CanopyUser: internal groups are the single source of
+    // truth for group-based privileges and MUST be loaded from the settings
+    // workspace (see authorization/content.ts's createContentAccessChecker,
+    // the pattern this follows) — never from a content branch clone, which
+    // nothing in the product ever writes groups.json into. Fails loudly
+    // (throws, mapped to a 503 below) rather than degrading to an empty
+    // group list: "no groups" reads as "no privileges", so a silent
+    // fallback would be a silent authorization change.
+    let user
+    try {
+      user = await resolveCanopyUser(authResult, {
+        getSettingsBranchRoot: apiCtx.services.getSettingsBranchRoot,
+        mode: apiCtx.services.config.mode,
+        bootstrapAdminIds: apiCtx.services.bootstrapAdminIds,
+      })
+    } catch (err) {
+      const message = getErrorMessage(err)
+      canopyLogError(
+        `CanopyCMS: Failed to resolve internal groups from the settings workspace: ${redactCredentials(message)}`,
+      )
+      return jsonResponse(
+        {
+          ok: false,
+          status: 503,
+          error: `Settings workspace unavailable: ${sanitizeErrorMessage(message)}`,
+        },
+        503,
+      )
     }
-
-    const user = authResultToCanopyUser(
-      authResult,
-      apiCtx.services.bootstrapAdminIds,
-      internalGroups,
-    )
 
     // API routes require authentication - reject anonymous users
     if (user.type === 'anonymous') {

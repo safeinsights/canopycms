@@ -7,6 +7,8 @@ import type { InternalGroup } from '../../authorization'
 import type { CanopyConfig } from '../../config'
 import { defineCanopyTestConfig } from '../../config-test'
 import { initTestRepo } from '../../test-utils'
+import { operatingStrategy } from '../../operating-mode'
+import { SettingsWorkspaceManager } from '../../settings-workspace'
 
 /**
  * Initialize a bare git repository with the specified default branch.
@@ -23,13 +25,62 @@ export async function initBareRepo(remotePath: string, defaultBranch = 'main') {
 
 export interface TestWorkspaceOptions {
   /**
-   * Internal groups to seed into groups.json on the main branch.
+   * Internal groups to seed into groups.json on the settings workspace (the
+   * orphan `canopycms-settings-{deploymentName}` branch) — the same
+   * location `getSettingsBranchRoot()`/`resolveCanopyUser` read at runtime,
+   * mirroring `authorization/content.ts`'s `createContentAccessChecker`.
+   *
+   * Previously this seeded groups.json onto the main branch content clone
+   * instead, which happened to match a bug in the (now-fixed) read path in
+   * `http/handler.ts` / `canopycms-next`'s `context-wrapper.ts` — nothing in
+   * the product ever wrote groups.json there, so seeding it there encoded
+   * the bug into every test that used this option instead of catching it.
    *
    * Reserved group IDs (Admins/Reviewers) supplied by an auth provider are
    * stripped for security (SEC-H1), so tests that need a privileged persona
    * must grant membership through internal groups (or bootstrap admin IDs).
    */
   internalGroups?: InternalGroup[]
+}
+
+/**
+ * Seed groups.json onto the settings workspace's orphan settings branch,
+ * exactly as a real admin write would end up (provision workspace -> write
+ * file -> commit -> push), so it's visible to any later
+ * `getSettingsBranchRoot()` call against the same config (`config.defaultRemoteUrl`
+ * is what ties the settings workspace back to the shared bare remote).
+ */
+async function seedInternalGroups(config: CanopyConfig, groups: InternalGroup[]): Promise<void> {
+  const strategy = operatingStrategy(config.mode)
+  const branchName = strategy.getSettingsBranchName(config)
+  const settingsRoot = strategy.getSettingsRoot()
+
+  // Same provisioning path production code uses (services.ts's
+  // getSettingsBranchRoot) — creates/checks out the orphan settings branch
+  // at `settingsRoot`, reusable by any later call against the same path.
+  await new SettingsWorkspaceManager(config).ensureGitWorkspace({
+    settingsRoot,
+    branchName,
+    mode: config.mode,
+    remoteUrl: config.defaultRemoteUrl,
+  })
+
+  const groupsFile = {
+    version: 1,
+    updatedAt: new Date().toISOString(),
+    updatedBy: 'test-setup',
+    groups,
+  }
+  await fs.writeFile(
+    path.join(settingsRoot, 'groups.json'),
+    JSON.stringify(groupsFile, null, 2),
+    'utf8',
+  )
+
+  const git = simpleGit({ baseDir: settingsRoot })
+  await git.add('groups.json')
+  await git.commit('Seed internal groups for tests')
+  await git.push('origin', branchName, { '--set-upstream': null })
 }
 
 export interface TestWorkspace {
@@ -86,6 +137,11 @@ export async function createTestWorkspace(
   const remotePath = path.join(tmpRoot, 'remote.git')
   const seedPath = path.join(tmpRoot, 'seed')
 
+  // Declared here (not inside the try block) so the catch handler below can
+  // restore it if something throws after it's installed — e.g. a failure
+  // seeding internal groups, which runs after this mock is set up.
+  let cwdSpy: ReturnType<typeof vi.spyOn> | undefined
+
   try {
     // Initialize bare remote
     await initBareRepo(remotePath)
@@ -100,22 +156,6 @@ export async function createTestWorkspace(
 
     // Create initial commit with README
     await fs.writeFile(path.join(seedPath, 'README.md'), '# Test Repository\n', 'utf8')
-
-    // Seed internal groups (groups.json) so privileged personas get their
-    // reserved-group membership from a Canopy-managed source (SEC-H1)
-    if (options?.internalGroups) {
-      const groupsFile = {
-        version: 1,
-        updatedAt: new Date().toISOString(),
-        updatedBy: 'test-setup',
-        groups: options.internalGroups,
-      }
-      await fs.writeFile(
-        path.join(seedPath, 'groups.json'),
-        JSON.stringify(groupsFile, null, 2),
-        'utf8',
-      )
-    }
 
     await seedGit.add(['.'])
     await seedGit.commit('Initial commit')
@@ -138,7 +178,15 @@ export async function createTestWorkspace(
 
     // Mock process.cwd() to return tmpRoot so BranchRegistry uses isolated path
     // This prevents parallel tests from corrupting shared registry files
-    const cwdSpy = vi.spyOn(process, 'cwd').mockReturnValue(tmpRoot)
+    cwdSpy = vi.spyOn(process, 'cwd').mockReturnValue(tmpRoot)
+
+    // Seed internal groups (groups.json) on the settings workspace so
+    // privileged personas get their reserved-group membership from a
+    // Canopy-managed source (SEC-H1). Must run after the cwd mock above:
+    // getSettingsRoot() resolves relative to process.cwd().
+    if (options?.internalGroups) {
+      await seedInternalGroups(config, options.internalGroups)
+    }
 
     return {
       tmpRoot,
@@ -147,13 +195,14 @@ export async function createTestWorkspace(
       config,
       cleanup: async () => {
         warnSpy.mockRestore()
-        cwdSpy.mockRestore()
+        cwdSpy?.mockRestore()
         await fs.rm(tmpRoot, { recursive: true, force: true })
       },
     }
   } catch (error) {
     // Cleanup on error
     warnSpy.mockRestore()
+    cwdSpy?.mockRestore()
     await fs.rm(tmpRoot, { recursive: true, force: true }).catch(() => {})
     throw error
   }
