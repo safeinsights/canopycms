@@ -435,6 +435,112 @@ describe('useDraftManager', () => {
     consoleErrorSpy.mockRestore()
   })
 
+  describe('save error notification copy', () => {
+    // #189 wrote specific guard copy on the server (api/guards.ts) explaining
+    // WHICH lock applies and how to recover -- e.g. "withdraw it to make
+    // changes". Before this fix, the save catch block special-cased only 409
+    // and 422 and collapsed everything else (including 403) to a generic
+    // 'Save failed', which threw that copy away exactly when a locked-branch
+    // save gets rejected -- including the brief window Change 1's
+    // fail-closed default can still leave (client momentarily stale, server
+    // is authoritative and correctly says no).
+    it('surfaces the server message and a distinct title on a 403 (branch locked)', async () => {
+      const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+      mockSaveEntry.mockRejectedValueOnce(
+        new SaveApiError(
+          403,
+          'Branch "main" is submitted for review and cannot be edited. Withdraw it or request changes to resume editing.',
+        ),
+      )
+      const { result } = renderHook(() => useDraftManager(defaultOptions))
+
+      act(() => {
+        result.current.setDrafts({ abc123def456: { title: 'Draft' } })
+      })
+      await act(async () => {
+        await result.current.handleSave()
+      })
+
+      const { notifications } = await import('@mantine/notifications')
+      expect(vi.mocked(notifications.show)).toHaveBeenCalledWith(
+        expect.objectContaining({
+          title: 'Save not allowed',
+          message:
+            'Branch "main" is submitted for review and cannot be edited. Withdraw it or request changes to resume editing.',
+          color: 'red',
+        }),
+      )
+      consoleErrorSpy.mockRestore()
+    })
+
+    it('still shows the generic conflict copy on a 409, unaffected by the 403 branch', async () => {
+      const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+      mockSaveEntry.mockRejectedValueOnce(new SaveApiError(409, 'ignored server text'))
+      const { result } = renderHook(() => useDraftManager(defaultOptions))
+
+      act(() => {
+        result.current.setDrafts({ abc123def456: { title: 'Draft' } })
+      })
+      await act(async () => {
+        await result.current.handleSave()
+      })
+
+      const { notifications } = await import('@mantine/notifications')
+      expect(vi.mocked(notifications.show)).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message: 'Content was modified by another editor. Reload to see the latest changes.',
+          color: 'yellow',
+        }),
+      )
+      // No title on the 409 branch (matches the pre-existing shape).
+      const call = vi.mocked(notifications.show).mock.calls.at(-1)?.[0]
+      expect(call).not.toHaveProperty('title')
+      consoleErrorSpy.mockRestore()
+    })
+
+    it('still shows the server validation message and "Save rejected" title on a 422, unaffected by the 403 branch', async () => {
+      const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+      mockSaveEntry.mockRejectedValueOnce(new SaveApiError(422, 'title: is required'))
+      const { result } = renderHook(() => useDraftManager(defaultOptions))
+
+      act(() => {
+        result.current.setDrafts({ abc123def456: { title: 'Draft' } })
+      })
+      await act(async () => {
+        await result.current.handleSave()
+      })
+
+      const { notifications } = await import('@mantine/notifications')
+      expect(vi.mocked(notifications.show)).toHaveBeenCalledWith(
+        expect.objectContaining({
+          title: 'Save rejected',
+          message: 'title: is required',
+          color: 'red',
+        }),
+      )
+      consoleErrorSpy.mockRestore()
+    })
+
+    it('falls back to the generic "Save failed" for a non-SaveApiError failure', async () => {
+      const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+      mockSaveEntry.mockRejectedValueOnce(new Error('network exploded'))
+      const { result } = renderHook(() => useDraftManager(defaultOptions))
+
+      act(() => {
+        result.current.setDrafts({ abc123def456: { title: 'Draft' } })
+      })
+      await act(async () => {
+        await result.current.handleSave()
+      })
+
+      const { notifications } = await import('@mantine/notifications')
+      expect(vi.mocked(notifications.show)).toHaveBeenCalledWith(
+        expect.objectContaining({ message: 'Save failed', color: 'red' }),
+      )
+      consoleErrorSpy.mockRestore()
+    })
+  })
+
   it('does not save when no currentEntry', async () => {
     const { result } = renderHook(() =>
       useDraftManager({ ...defaultOptions, currentEntry: undefined }),

@@ -42,6 +42,22 @@ export interface BranchListItem extends BranchMetadata {
    * distinguishes WHICH lock applies, for banner copy.
    */
   writeBlocked?: boolean
+  /**
+   * Populated from {@link BranchWriteProtection.submitBlockedIncludingStatus}
+   * -- READ THAT DOC COMMENT before touching this field. On the wire this
+   * name means the COMPOUND answer (base-branch OR non-'editing' status),
+   * mirroring how `writeBlocked` above is the compound of `readOnly` + status
+   * while `readOnly` alone is just the base-branch part: `isProtected` /
+   * `submitBlocked` here is the same two-part shape (protected-branch.ts's
+   * `submitBlockedIncludingStatus = protection.submitBlocked || status !==
+   * 'editing'`). Do NOT "simplify" this to `protection.submitBlocked` --
+   * that field means ONLY "is the base branch" (it is what
+   * `api/guards.ts`'s `submittableBranch` guard reads, and that guard must
+   * keep refusing the base branch regardless of status), so swapping it in
+   * here would silently stop blocking submit on a submitted/approved/
+   * archived non-base branch.
+   */
+  submitBlocked?: boolean
 }
 
 /** Response type for listing branches */
@@ -484,6 +500,7 @@ export const listBranchesHandler = async (
       isProtected: protection.isProtected,
       readOnly: protection.readOnly,
       writeBlocked: protection.writeBlocked,
+      submitBlocked: protection.submitBlockedIncludingStatus,
     }
   }
 

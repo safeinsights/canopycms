@@ -209,4 +209,54 @@ describe('getBranchWriteProtection', () => {
     expect(result.isProtected).toBe(true)
     expect(result.writeBlocked).toBe(true)
   })
+
+  describe('submitBlockedIncludingStatus', () => {
+    // The compound submit rule: base-branch protection OR a non-'editing'
+    // status. Consumed as-is by BranchManager.tsx's canSubmit and emitted on
+    // the wire as BranchListItem.submitBlocked (api/branch.ts) -- neither
+    // side should re-derive either half locally.
+
+    it('is true for a submitted, unprotected branch', () => {
+      const result = getBranchWriteProtection(prod, 'feature-x', undefined, 'submitted')
+      expect(result.submitBlockedIncludingStatus).toBe(true)
+      // Confirms this really is the STATUS half doing the work here, not the
+      // base-branch half leaking in.
+      expect(result.submitBlocked).toBe(false)
+    })
+
+    it('is true for the base branch, even while editing', () => {
+      const result = getBranchWriteProtection(prod, 'main', undefined, 'editing')
+      expect(result.submitBlockedIncludingStatus).toBe(true)
+      expect(result.submitBlocked).toBe(true)
+    })
+
+    it('is false only for an editing, unprotected branch', () => {
+      const result = getBranchWriteProtection(prod, 'feature-x', undefined, 'editing')
+      expect(result.submitBlockedIncludingStatus).toBe(false)
+    })
+
+    it('fails closed when status is unreadable, same as writeBlocked', () => {
+      const result = getBranchWriteProtection(
+        prod,
+        'feature-x',
+        undefined,
+        undefined as unknown as BranchStatus,
+      )
+      expect(result.submitBlockedIncludingStatus).toBe(true)
+    })
+
+    // The asymmetry that justifies having two separate compound fields
+    // instead of one: in dev mode the base branch is WRITABLE (readOnly is
+    // false there, so writeBlocked can be false) but never SUBMITTABLE
+    // (isProtected/submitBlocked are mode-independent). A future "these look
+    // redundant, merge writeBlocked and submitBlockedIncludingStatus" refactor
+    // would break exactly this case.
+    it('stays submit-blocked on the dev-mode base branch even though writes are allowed there', () => {
+      const dev = { mode: 'dev', defaultBaseBranch: 'main' } as const
+      const result = getBranchWriteProtection(dev, 'main', undefined, 'editing')
+      expect(result.readOnly).toBe(false)
+      expect(result.writeBlocked).toBe(false)
+      expect(result.submitBlockedIncludingStatus).toBe(true)
+    })
+  })
 })

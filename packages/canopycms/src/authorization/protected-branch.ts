@@ -39,6 +39,40 @@ export interface BranchWriteProtection extends BranchProtection {
    * status could not be read at all.
    */
   writeBlocked: boolean
+  /**
+   * True when the branch can never be submitted for review, for EITHER
+   * reason: it is the protected base branch (`protection.submitBlocked`), or
+   * its workflow status has moved past `'editing'` (already submitted,
+   * approved, or archived -- or unreadable, which fails closed the same way
+   * `writeBlocked` does: `status !== 'editing'` is true when `status` is
+   * `undefined`).
+   *
+   * DELIBERATELY NOT named `submitBlocked` on this type, even though it
+   * replaces the naive re-derivation of the same conjunction client-side.
+   * `BranchProtection.submitBlocked` (the field this interface inherits) means
+   * ONLY "this is the base branch" -- `api/guards.ts`'s `submittableBranch`
+   * guard reads exactly that, narrow, meaning, and must keep reading it: the
+   * guard's whole point is to refuse the base branch regardless of status. If
+   * this wider, compound answer had reused the same field name on the
+   * subtype, the two meanings would be one property access apart and
+   * indistinguishable at every call site -- a future edit anywhere near the
+   * guard could silently start reading the wide answer where the narrow one
+   * is required (or vice versa) and no type error would catch it, because
+   * both are `boolean`. The verbose name is the guard against that: nobody
+   * writes `submitBlockedIncludingStatus` by accident.
+   *
+   * Also worth noting the asymmetry with `writeBlocked` above:
+   * `writeBlocked` is built from `readOnly` (protected base branch, PROD
+   * ONLY) plus the status clause, while this is built from `isProtected` /
+   * `submitBlocked` (protected base branch, BOTH MODES) plus the same status
+   * clause. They are not two spellings of one rule -- in dev, the base branch
+   * is writable (`readOnly` is false there, so `writeBlocked` can be false)
+   * but still never submittable (`isProtected` is true regardless of mode, so
+   * this stays true). A branch can be `writeBlocked: false,
+   * submitBlockedIncludingStatus: true` in dev's base branch specifically;
+   * collapsing the two fields into one would lose that state.
+   */
+  submitBlockedIncludingStatus: boolean
 }
 
 /**
@@ -112,5 +146,12 @@ export function getBranchWriteProtection(
     ...protection,
     // `undefined !== 'editing'` is true, so an unreadable status blocks writes.
     writeBlocked: protection.readOnly || status !== 'editing',
+    // Base-branch half is `protection.submitBlocked` (isProtected, BOTH
+    // modes) -- not `protection.readOnly` (PROD only) -- because submit is
+    // never valid on the base branch even in dev, where it stays writable.
+    // See the field's own doc comment on BranchWriteProtection for the
+    // asymmetry this produces against `writeBlocked` and why the name is
+    // deliberately verbose.
+    submitBlockedIncludingStatus: protection.submitBlocked || status !== 'editing',
   }
 }
