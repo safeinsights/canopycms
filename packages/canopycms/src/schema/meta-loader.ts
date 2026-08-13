@@ -3,6 +3,14 @@ import { join } from 'pathe'
 import { z } from 'zod'
 import chokidar from 'chokidar'
 import { getErrorMessage } from '../utils/error'
+// canopyLogError/canopyLogWarn, not console.*: this module sits in the
+// worker's runtime import closure (worker/cms-worker.ts ->
+// content-index-generation.ts -> branch-schema-cache.ts -> schema/resolver.ts
+// -> here), so a bare console line would land in worker.log without the
+// ISO-8601 prefix the CloudWatch agent's multi_line_start_pattern needs (see
+// worker/log.ts). Plain console under Lambda/dev, as everywhere else -- see
+// utils/logger.ts.
+import { canopyLogError, canopyLogWarn } from '../utils/logger'
 
 import type {
   ContentFormat,
@@ -154,7 +162,7 @@ async function scanForCollectionMeta(
       } catch (err) {
         if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
           // File exists but is invalid
-          console.error(`Error loading ${metaPath}:`, err)
+          canopyLogError(`Error loading ${metaPath}:`, err)
           throw new Error(`Invalid .collection.json in ${folderPath}: ${(err as Error).message}`)
         }
         // No .collection.json - still scan subfolders in case they have collections
@@ -369,7 +377,7 @@ export function watchCollectionMetaFiles(contentRoot: string, onChange: () => vo
   watcher.on('unlink', onChange)
   // Handle watcher errors (e.g. inotify ENOSPC/EMFILE) so an unhandled 'error' event can't crash dev.
   watcher.on('error', (err) =>
-    console.warn(`CanopyCMS: .collection.json watcher error: ${getErrorMessage(err)}`),
+    canopyLogWarn(`CanopyCMS: .collection.json watcher error: ${getErrorMessage(err)}`),
   )
 
   // Return cleanup function

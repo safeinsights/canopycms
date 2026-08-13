@@ -137,7 +137,6 @@ export interface UseBranchManagerReturn {
   branches: BranchListItem[]
   branchSummaries: BranchSummary[]
   currentBranch: BranchListItem | undefined
-  branchStatus: string
   handleSubmit: (branchName: string) => Promise<void>
   handleWithdraw: (branchName: string) => Promise<void>
   handleRequestChanges: (branchName: string) => Promise<void>
@@ -237,7 +236,6 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
   const currentBranch =
     branches.find((b) => b.name === branchName) ??
     branches.find((b) => b.name === sanitizeBranchName(branchName))
-  const branchStatus = currentBranch?.status ?? 'editing'
 
   // Compute branch summaries with comment counts
   const branchSummaries = useMemo(() => {
@@ -432,7 +430,6 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
     branches,
     branchSummaries,
     currentBranch,
-    branchStatus,
     handleSubmit,
     handleWithdraw,
     handleRequestChanges,

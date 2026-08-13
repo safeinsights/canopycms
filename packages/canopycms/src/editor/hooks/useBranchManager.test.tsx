@@ -412,7 +412,7 @@ describe('useBranchManager', () => {
     expect(result.current.branchSummaries[1].conflictFiles).toBeUndefined()
   })
 
-  it('computes currentBranch and branchStatus', async () => {
+  it('computes currentBranch', async () => {
     mockClient.branches.list.mockResolvedValueOnce({
       ok: true,
       status: 200,
@@ -425,14 +425,13 @@ describe('useBranchManager', () => {
 
     await waitFor(() => {
       expect(result.current.currentBranch).toEqual(mockBranches[0])
-      expect(result.current.branchStatus).toBe('editing')
     })
   })
 
   it('resolves currentBranch when state holds the raw form of a sanitized branch name', async () => {
     // Legacy deep-link case: the URL/state carries the raw, unsanitized name
     // (e.g. "feature/x") but the server only ever persisted the sanitized
-    // form ("feature-x"). currentBranch must still resolve so branchStatus,
+    // form ("feature-x"). currentBranch must still resolve so its status,
     // access, and isProtected/readOnly flags are available to the header.
     const sanitizedBranch: BranchMetadata = {
       ...mockBranches[1],
@@ -455,7 +454,6 @@ describe('useBranchManager', () => {
 
     expect(result.current.branchName).toBe('feature/x')
     expect(result.current.currentBranch).toEqual(sanitizedBranch)
-    expect(result.current.branchStatus).toBe(sanitizedBranch.status)
   })
 
   it('submits branch successfully', async () => {

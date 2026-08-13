@@ -29,8 +29,14 @@ export type BranchResponse = ApiResponse<{ branch: BranchMetadata }>
 /**
  * A listed branch plus server-computed protected-base-branch flags (see
  * authorization/protected-branch.ts). Optional on the wire, matching the
- * `defaultBranch` precedent, so older clients/servers stay compatible; this
- * server always emits all three.
+ * `defaultBranch` precedent -- this server always emits all three, but an
+ * older server won't. That optionality does not make the two directions
+ * symmetric: the editor client now defaults every missing flag fail-closed
+ * (`?? true`), so a NEW client talking to an OLD server that omits these
+ * fields degrades to fully locked -- read-only, Submit hidden, and (see
+ * EditorHeader's `branchDataUnavailable`) a "could not be loaded" banner --
+ * rather than silently behaving as if nothing changed. That is by design:
+ * wire compatibility here means "doesn't break", not "behaves the same".
  */
 export interface BranchListItem extends BranchMetadata {
   isProtected?: boolean

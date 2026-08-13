@@ -159,6 +159,25 @@ describe('EditorHeader - review lock', () => {
 
     expect(screen.getByTestId('status-locked-banner').textContent).toMatch(/archived/)
   })
+
+  it('treats a status-lock that contradicts a known "editing" status as unavailable data, not a real lock', () => {
+    // Version skew: an old server that omits `writeBlocked` while still
+    // sending `status: 'editing'` used to render the self-contradicting
+    // "Branch is editing — content is read-only" banner. `branchDataUnavailable`
+    // now also covers branchStatus === 'editing' under a status lock, so this
+    // renders the honest data-unavailable copy instead.
+    renderHeader({
+      branchWriteBlocked: true,
+      branchReadOnly: false,
+      branchStatus: 'editing',
+    })
+
+    // Assert the RIGHT copy renders before asserting the wrong copy is gone --
+    // a bare absence check would pass against a banner that never mounted.
+    const banner = screen.getByTestId('status-locked-banner')
+    expect(banner.textContent).toMatch(/could not be loaded/i)
+    expect(banner.textContent).not.toMatch(/is editing — content is read-only/)
+  })
 })
 
 describe('EditorHeader - branch menu file count', () => {

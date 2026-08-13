@@ -142,6 +142,12 @@ const eslintConfig = [
   //   operating-mode/deployment-name.ts - imported directly by cms-worker.ts and
   //                        resolved inside start(); its env-vs-config mismatch
   //                        warning is precisely what an operator greps for.
+  //   schema/meta-loader.ts - in the worker's runtime import closure
+  //                        (worker/cms-worker.ts -> content-index-generation.ts
+  //                        -> branch-schema-cache.ts -> schema/resolver.ts ->
+  //                        here). Latent, not live, as of the sweep that added
+  //                        it: no current worker path invokes schema
+  //                        resolution, but it is one call away.
   //
   // This list is a standing hazard: it is maintained by hand, so a module that
   // BECOMES worker-reachable later is not covered until someone remembers to add
@@ -154,6 +160,7 @@ const eslintConfig = [
       '**/canopycms/src/github-service.ts',
       '**/canopycms/src/branch-registry.ts',
       '**/canopycms/src/operating-mode/deployment-name.ts',
+      '**/canopycms/src/schema/meta-loader.ts',
     ],
     rules: {
       'no-console': 'off',
