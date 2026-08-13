@@ -153,19 +153,34 @@ function encode(pipeline: SharpPipeline, format: OutputFormat, quality: number |
   }
 }
 
-/** Re-encode through the source container format - used for identity and for requests that omit `f=`. */
-function encodeSourceFormat(pipeline: SharpPipeline, sourceExt: string) {
+/**
+ * Re-encode through the source container format - used for identity and for
+ * requests that omit `f=`. `quality` (C3) is honoured here exactly like
+ * `encode()` does for an explicit `f=`, so a `q=` directive without `f=` is
+ * never silently dropped - the cache key (`formatDirectives` in
+ * transform-directives.ts) already includes `q=` unconditionally, so the
+ * actual encode must agree with it. GIF has no quality knob in sharp
+ * (`GifOptions` carries no `quality` field - palette-based encoders are
+ * tuned via `colours`/`effort` instead), so `q=` remains a no-op there, same
+ * as `encode()` above (GIF is never a valid `f=` target either).
+ */
+function encodeSourceFormat(
+  pipeline: SharpPipeline,
+  sourceExt: string,
+  quality: number | undefined,
+) {
+  const options = quality !== undefined ? { quality } : undefined
   switch (sourceExt) {
     case 'gif':
       return pipeline.gif()
     case 'webp':
-      return pipeline.webp()
+      return pipeline.webp(options)
     case 'jpg':
     case 'jpeg':
-      return pipeline.jpeg()
+      return pipeline.jpeg(options)
     case 'png':
     default:
-      return pipeline.png()
+      return pipeline.png(options)
   }
 }
 
@@ -221,7 +236,9 @@ export async function applyTransform(
       pipeline = pipeline.resize({ width: resize.width, withoutEnlargement: true })
     }
 
-    pipeline = format ? encode(pipeline, format, quality) : encodeSourceFormat(pipeline, sourceExt)
+    pipeline = format
+      ? encode(pipeline, format, quality)
+      : encodeSourceFormat(pipeline, sourceExt, quality)
 
     const data = await pipeline.toBuffer()
     if (data.byteLength > MAX_OUTPUT_BYTES) {

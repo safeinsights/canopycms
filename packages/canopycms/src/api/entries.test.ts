@@ -16,6 +16,7 @@ import { unsafeAsBranchName, unsafeAsLogicalPath } from '../paths/test-utils'
 import { BranchSchemaCache, SCHEMA_GENERATION_RESOURCE } from '../branch-schema-cache'
 import { resourceGenerationPath } from '../resource-generation'
 import { SchemaOps, SchemaStoreBusyError } from '../schema/schema-store'
+import { ContentStore } from '../content-store'
 
 const tmpDir = async () => fs.mkdtemp(path.join(os.tmpdir(), 'canopycms-entries-'))
 
@@ -1757,6 +1758,191 @@ describe('deleteEntry', () => {
     expect(meta.order).toEqual([entryId, otherEntryId])
 
     updateOrderSpy.mockRestore()
+  })
+
+  // C6 (August 2026 baseline review): a NON-busy order-cleanup failure used
+  // to rethrow past the busy-only guard and get caught by the outer catch,
+  // which reported 500 "Failed to delete entry" even though the entry was
+  // already gone (the client's retry would then just 404). Order cleanup is
+  // best-effort hygiene for every failure reason, not only SchemaStoreBusyError.
+  it('still returns 200 (with a warning, not a 500) when order-cleanup fails for a reason other than busy', async () => {
+    const root = await tmpDir()
+
+    const postsId = 'q52DCVPuH4ga'
+    await fs.mkdir(path.join(root, `content/posts.${postsId}`), {
+      recursive: true,
+    })
+
+    const entryId = 'abc123def456'
+    const otherEntryId = 'other000id001'
+    await fs.writeFile(
+      path.join(root, `content/posts.${postsId}/.collection.json`),
+      JSON.stringify({
+        name: 'posts',
+        entries: [{ name: 'post', format: 'json', schema: 'postSchema' }],
+        order: [entryId, otherEntryId],
+      }),
+      'utf8',
+    )
+
+    await fs.writeFile(
+      path.join(root, `content/posts.${postsId}/post.to-delete.${entryId}.json`),
+      JSON.stringify({ title: 'Delete Me' }),
+      'utf8',
+    )
+    await fs.writeFile(
+      path.join(root, `content/posts.${postsId}/post.keep-me.${otherEntryId}.json`),
+      JSON.stringify({ title: 'Keep Me' }),
+      'utf8',
+    )
+
+    const entrySchemaRegistry = {
+      postSchema: [{ name: 'title', type: 'string' }],
+    }
+    const metaFiles = await loadCollectionMetaFiles(path.join(root, 'content'))
+    const schema = resolveCollectionReferences(metaFiles, entrySchemaRegistry)
+
+    const config = defineCanopyTestConfig({
+      defaultBranchAccess: 'allow',
+      contentRoot: 'content',
+      schema,
+    })
+
+    const checkBranchAccess = createCheckBranchAccess('allow')
+    const { checkContentAccess, createContentAccessChecker } = createTestContentAccess({
+      checkBranchAccess,
+      loadPathPermissions: vi.fn().mockResolvedValue([]),
+      defaultPathAccess: 'allow',
+      mode: 'dev',
+      getSettingsBranchRoot: () => Promise.resolve('/mock/settings'),
+    })
+
+    const ctx = createMockApiContext({
+      services: {
+        config,
+        entrySchemaRegistry,
+        checkBranchAccess,
+        checkContentAccess,
+        createContentAccessChecker,
+      },
+      branchContext: {
+        ...createMockBranchContext({
+          branchName: 'main',
+          baseRoot: root,
+          branchRoot: root,
+          createdBy: 'u1',
+        }),
+        flatSchema: flattenSchema(schema, config.contentRoot),
+      },
+    })
+
+    const updateOrderSpy = vi
+      .spyOn(SchemaOps.prototype, 'updateOrder')
+      .mockRejectedValue(Object.assign(new Error('ENOSPC'), { code: 'ENOSPC' }))
+
+    const { deleteEntry } = await import('./entries')
+
+    const res = await deleteEntry.handler(
+      ctx,
+      { user: { type: 'authenticated', userId: 'u1', groups: [] } },
+      {
+        branch: unsafeAsBranchName('main'),
+        entryPath: unsafeAsLogicalPath('content/posts/to-delete'),
+      },
+    )
+
+    expect(res.ok).toBe(true)
+    expect(res.status).toBe(200)
+    expect(res.data?.deleted).toBe(true)
+    expect(res.data?.warning).toBeTruthy()
+    expect(updateOrderSpy).toHaveBeenCalled()
+
+    // The entry file is still gone — the delete itself completed
+    // successfully; only the best-effort order cleanup was skipped.
+    const files = await fs.readdir(path.join(root, `content/posts.${postsId}`))
+    expect(files).not.toContain(`post.to-delete.${entryId}.json`)
+
+    // The order array still contains the deleted id (cleanup was skipped)
+    const meta = JSON.parse(
+      await fs.readFile(path.join(root, `content/posts.${postsId}/.collection.json`), 'utf8'),
+    ) as { order?: string[] }
+    expect(meta.order).toEqual([entryId, otherEntryId])
+
+    updateOrderSpy.mockRestore()
+  })
+
+  // C2 (August 2026 baseline review): deleteEntryHandler's early
+  // resolveDocumentPath() catch used to map ANY error - not just a
+  // recognized ContentStoreError - to a 400 "Invalid entry path", which
+  // mislabeled a genuine server fault as the client's mistake.
+  it('surfaces an unrecognized resolveDocumentPath error as a 500 (rethrown), not a 400', async () => {
+    const root = await tmpDir()
+
+    const postsId = 'q52DCVPuH4ga'
+    await fs.mkdir(path.join(root, `content/posts.${postsId}`), { recursive: true })
+    await fs.writeFile(
+      path.join(root, `content/posts.${postsId}/.collection.json`),
+      JSON.stringify({
+        name: 'posts',
+        entries: [{ name: 'post', format: 'json', schema: 'postSchema' }],
+        order: [],
+      }),
+      'utf8',
+    )
+
+    const entrySchemaRegistry = { postSchema: [{ name: 'title', type: 'string' }] }
+    const metaFiles = await loadCollectionMetaFiles(path.join(root, 'content'))
+    const schema = resolveCollectionReferences(metaFiles, entrySchemaRegistry)
+    const config = defineCanopyTestConfig({
+      defaultBranchAccess: 'allow',
+      contentRoot: 'content',
+      schema,
+    })
+    const checkBranchAccess = createCheckBranchAccess('allow')
+    const { checkContentAccess, createContentAccessChecker } = createTestContentAccess({
+      checkBranchAccess,
+      loadPathPermissions: vi.fn().mockResolvedValue([]),
+      defaultPathAccess: 'allow',
+      mode: 'dev',
+      getSettingsBranchRoot: () => Promise.resolve('/mock/settings'),
+    })
+    const ctx = createMockApiContext({
+      services: {
+        config,
+        entrySchemaRegistry,
+        checkBranchAccess,
+        checkContentAccess,
+        createContentAccessChecker,
+      },
+      branchContext: {
+        ...createMockBranchContext({
+          branchName: 'main',
+          baseRoot: root,
+          branchRoot: root,
+          createdBy: 'u1',
+        }),
+        flatSchema: flattenSchema(schema, config.contentRoot),
+      },
+    })
+
+    const resolveSpy = vi
+      .spyOn(ContentStore.prototype, 'resolveDocumentPath')
+      .mockRejectedValueOnce(Object.assign(new Error('EACCES'), { code: 'EACCES' }))
+
+    const { deleteEntry } = await import('./entries')
+
+    await expect(
+      deleteEntry.handler(
+        ctx,
+        { user: { type: 'authenticated', userId: 'u1', groups: [] } },
+        {
+          branch: unsafeAsBranchName('main'),
+          entryPath: unsafeAsLogicalPath('content/posts/some-entry'),
+        },
+      ),
+    ).rejects.toThrow('EACCES')
+
+    resolveSpy.mockRestore()
   })
 
   it('returns 403 when user lacks edit permission', async () => {

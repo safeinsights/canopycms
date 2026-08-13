@@ -509,8 +509,16 @@ const writeContentHandler = async (
         error: 'Content conflict: entry was modified by another editor',
       }
     }
-    const message = err instanceof ContentStoreError ? err.message : 'Write failed'
-    return { ok: false, status: 400, error: sanitizeErrorMessage(message) }
+    // C2: a ContentStoreError is a known/expected client fault (validation,
+    // bad slug, etc.) and keeps its existing 400. Anything else - ENOSPC,
+    // EACCES, a bug - is a genuine server fault and must not be mislabeled
+    // as the client's mistake; rethrow so it surfaces as a 500 (see
+    // readContentHandler's store.read() catch above, which already follows
+    // this same pattern).
+    if (err instanceof ContentStoreError) {
+      return { ok: false, status: 400, error: sanitizeErrorMessage(err.message) }
+    }
+    throw err
   }
 }
 
@@ -664,8 +672,14 @@ const renameEntryHandler = async (
             : 'Content conflict: entry was modified by another editor',
       }
     }
-    const message = err instanceof ContentStoreError ? err.message : 'Rename failed'
-    return { ok: false, status: 400, error: sanitizeErrorMessage(message) }
+    // C2: same distinction as writeContentHandler above - a ContentStoreError
+    // is an expected client fault and keeps its 400; anything else is a
+    // genuine server fault and must surface as a 500, not get mislabeled as
+    // "Rename failed" (the client's mistake).
+    if (err instanceof ContentStoreError) {
+      return { ok: false, status: 400, error: sanitizeErrorMessage(err.message) }
+    }
+    throw err
   }
 }
 
