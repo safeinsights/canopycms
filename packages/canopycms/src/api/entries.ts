@@ -3,7 +3,12 @@ import path from 'node:path'
 import { z } from 'zod'
 
 import type { ContentFormat, EntryTypeConfig, FlatSchemaItem } from '../config'
-import { ContentStore, ContentStoreError } from '../content-store'
+import {
+  BranchSyncingError,
+  ContentConflictError,
+  ContentStore,
+  ContentStoreError,
+} from '../content-store'
 import type { ApiContext, ApiRequest, ApiResponse } from './types'
 import type { BranchContextWithSchema } from '../types'
 import { defineEndpoint } from './route-builder'
@@ -471,6 +476,19 @@ const deleteEntryHandler = async (
   } catch (err) {
     if (isNotFoundError(err)) {
       return { ok: false, status: 404, error: 'Entry not found' }
+    }
+    // [SYNC-C1] Contention with the worker's rebase (or another editor) is a
+    // retriable conflict, not a server fault -- 409, with the syncing
+    // variant's own "try again" message when that is what happened.
+    if (err instanceof ContentConflictError) {
+      return {
+        ok: false,
+        status: 409,
+        error:
+          err instanceof BranchSyncingError
+            ? err.message
+            : 'Content conflict: entry was modified by another editor',
+      }
     }
     return {
       ok: false,

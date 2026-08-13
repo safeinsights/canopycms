@@ -281,6 +281,11 @@ function OverviewTab({ health }: { health: UseSystemHealthReturn }) {
           <Text size="xs" c="dimmed">
             {status.workerStatus?.lastGitSyncAt ?? 'unknown time'} · {lastGitSync.durationMs}ms ·{' '}
             {lastGitSync.rebased.length} rebased · {lastGitSync.skippedDirty.length} skipped (dirty)
+            {/* [SYNC-C1] Optional: a worker predating the content-write lock
+                writes no such field, so only render it when present. */}
+            {lastGitSync.skippedLocked && lastGitSync.skippedLocked.length > 0
+              ? ` · ${lastGitSync.skippedLocked.length} skipped (content write in progress)`
+              : ''}
           </Text>
           {lastGitSync.failed.length > 0 && (
             <Spoiler

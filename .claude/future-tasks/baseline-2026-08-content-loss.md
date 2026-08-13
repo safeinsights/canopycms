@@ -38,7 +38,20 @@ for a message that names the real problem.
 
 ---
 
-## 2. [P0] The worker's rebase deletes editor saves that were already acknowledged
+## ~~2. [P0] The worker's rebase deletes editor saves that were already acknowledged~~
+
+**RESOLVED (August 2026, [SYNC-C1]).** Fixed with a real cross-host lock rather than the
+marker sketched below: a marker is check-then-act, so a write can pass the check and still
+land mid-rebase. `utils/content-write-lock.ts` (proper-lockfile, anchored on
+`{branchRoot}/.canopy-meta`) is now taken by `ContentStore.write`/`delete`/`renameEntry`
+and, asymmetrically, by the rebase loop — the worker acquires with zero retries and skips
+the branch (reported as `skippedLocked`) because it retries every cycle, while writers wait
+briefly and then 409 with `BranchSyncingError`. Reads deliberately do not take it. The
+misleading comment is corrected, `docs/concurrency.md` documents the layer, the asymmetry
+and the stale-takeover caveat, and `worker/cms-worker-content-lock.test.ts` carries the
+regression (verified red against the pre-fix code first). Remaining gap tracked separately:
+schema and asset mutations are not under this lock — see
+[content-write-lock-coverage-gaps.md](content-write-lock-coverage-gaps.md).
 
 `worker/cms-worker.ts:2166-2171` skips dirty branches, then rebases. The comment at `:2162-2165`
 claims the residual TOCTOU is safe ("the rebase will fail and the catch block will abort

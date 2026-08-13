@@ -11,6 +11,10 @@ const writeContent = CONTENT_ROUTES.write.handler
 const renameEntry = CONTENT_ROUTES.renameEntry.handler
 
 vi.mock('../content-store', () => {
+  // [SYNC-C1] BranchSyncingError really is a ContentConflictError subclass in
+  // the module under mock -- keep that relationship here, or the handlers'
+  // `instanceof ContentConflictError` guard would not cover it.
+  const MockContentConflictError = class ContentConflictError extends Error {}
   return {
     ContentStore: vi.fn().mockImplementation(function () {
       return {
@@ -46,7 +50,8 @@ vi.mock('../content-store', () => {
       }
     }),
     ContentStoreError: class ContentStoreError extends Error {},
-    ContentConflictError: class ContentConflictError extends Error {},
+    ContentConflictError: MockContentConflictError,
+    BranchSyncingError: class BranchSyncingError extends MockContentConflictError {},
     getDefaultEntryType: (entries: Array<{ default?: boolean }> | undefined) =>
       entries && entries.length > 0 ? entries.find((e) => e.default) || entries[0] : undefined,
   }
