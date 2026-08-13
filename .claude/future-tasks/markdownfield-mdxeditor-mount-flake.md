@@ -23,3 +23,41 @@ of a synchronous query) is the probable fix.
 
 Loop `pnpm test` (package `canopycms`) until it fails, or run the editor
 project with CPU contention. Isolation always passes.
+
+## Triage shortcut (use this before investigating)
+
+```bash
+pnpm --filter canopycms exec vitest run --project editor
+```
+
+This is reliably green for the flake, so **a MarkdownField failure in a full run is
+this known flake unless the editor-only project also fails.** That turns a recurring
+"is this my change?" into one command. Confirmed 2026-08-12 across several sessions.
+
+Also ruled out: adding a `scrollIntoView` shim does **not** affect it — do not
+re-walk that path.
+
+## Frequency data
+
+- 2026-07-24: 1 failure in 2 full runs (e2e-stabilization branch).
+- 2026-08-12: 1 failure in 2 full runs **from the same commit**, and it failed
+  identically on the clean base as on the branch under test. Multiple parallel
+  sessions saw it independently the same evening.
+
+## Priority note (2026-08-12)
+
+Left at P3, but the reasoning is now conditional rather than absolute. PR #191 made
+the root `pnpm test` recursive across all packages, and pnpm orders by dependency
+topology, so `canopycms` runs first — a flake here delays every other package's
+suite. The root `test` script carries `--no-bail`, so the other packages still run
+and report independently; **if that ever changes, promote this to P2**, because it
+would then gate ~200 tests (including the CDK deploy-template assertions) behind an
+intermittent.
+
+It cannot produce a false green either way — a flaked run is red. The cost is churn
+and triage misattribution, which the shortcut above is meant to absorb.
+
+## Related
+
+- [git-manager-test-tmpdir-cleanup-race.md](git-manager-test-tmpdir-cleanup-race.md)
+  — the other known intermittent, same package, likely the cheaper of the two to fix
