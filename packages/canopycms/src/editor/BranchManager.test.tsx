@@ -162,6 +162,33 @@ describe('getBranchPermissions', () => {
     expect(perms.canDelete).toBe(false)
   })
 
+  // CF1/A7: a reviewer has already approved this branch's PR, which is
+  // awaiting merge. Deleting it would leave that PR dangling with no
+  // signal back to the reviewer -- must be blocked exactly like 'submitted',
+  // even for the branch creator (who need not be the reviewer who approved).
+  it('blocks delete for approved branches, even for the creator', () => {
+    const branch: BranchSummary = {
+      name: 'main',
+      status: 'approved',
+      createdBy: 'user1',
+    }
+    const perms = getBranchPermissions(branch, { userId: 'user1', groups: [] })
+    expect(perms.canDelete).toBe(false)
+  })
+
+  it('blocks delete for approved branches, even for an admin', () => {
+    const branch: BranchSummary = {
+      name: 'main',
+      status: 'approved',
+      createdBy: 'other',
+    }
+    const perms = getBranchPermissions(branch, {
+      userId: 'admin',
+      groups: [RESERVED_GROUPS.ADMINS],
+    })
+    expect(perms.canDelete).toBe(false)
+  })
+
   it('allows reviewer to request changes on submitted branch', () => {
     const branch: BranchSummary = {
       name: 'main',
@@ -797,5 +824,23 @@ describe('BranchManager', () => {
     await userEvent.click(deleteButtons[0])
 
     expect(onDelete).toHaveBeenCalledWith('main')
+  })
+
+  it('disables Delete for an approved branch, explaining the open-PR status instead of blaming permissions', async () => {
+    // Before this fix, an approved branch's Delete button fell through to
+    // the generic "Only Admin or branch creator can delete" copy -- to the
+    // very creator being blamed for a permission they do have. The real
+    // reason is the branch's status (an already-reviewed, open PR), not a
+    // permission gap -- this is the "make the disabled state honest" half
+    // of CF1/D2.
+    const branches: BranchSummary[] = [{ ...baseBranches[0], status: 'approved' }]
+    renderBranchManager({ branches, user: creatorUser, mode: 'prod' })
+
+    const deleteButton = screen.getByTestId('delete-branch-button-main')
+    expect(deleteButton.hasAttribute('disabled')).toBe(true)
+
+    await userEvent.hover(deleteButton)
+    expect(await screen.findByText(/open PR.*"approved"/i)).toBeTruthy()
+    expect(screen.queryByText(/Only Admin or branch creator can delete/)).toBeNull()
   })
 })

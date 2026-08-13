@@ -150,10 +150,14 @@ export const getBranchPermissions = (
   const canWithdraw =
     canPerformWorkflowActions && (branch.status === 'submitted' || branch.status === 'approved')
 
-  // Delete: Admin or creator (but not if submitted, and never the base branch --
-  // deleting the prod serving clone is never valid)
+  // Delete: Admin or creator (but not if submitted or approved -- both mean
+  // an open PR, the latter already reviewed and awaiting merge -- and never
+  // the base branch, since deleting the prod serving clone is never valid)
   const canDelete =
-    (userIsAdmin || userIsCreator) && branch.status !== 'submitted' && !branch.isProtected
+    (userIsAdmin || userIsCreator) &&
+    branch.status !== 'submitted' &&
+    branch.status !== 'approved' &&
+    !branch.isProtected
 
   // Request changes: Only Reviewers or Admins can request changes on submitted
   // branches. Same closed-PR restriction as withdraw applies (converts PR to draft).
@@ -595,9 +599,17 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
                       </Tooltip>
                       <Tooltip
                         label={
-                          b.status === 'submitted'
-                            ? 'Cannot delete branch with open PR'
-                            : 'Only Admin or branch creator can delete'
+                          b.isProtected
+                            ? 'The base branch cannot be deleted'
+                            : // A status arm, mirroring the Submit tooltip below: without
+                              // it, a branch blocked by its own status (open PR, reviewed
+                              // or not) showed "Only Admin or branch creator can delete" --
+                              // to the very admin/creator being blamed for a permission they
+                              // do have. 'approved' is included alongside 'submitted' since
+                              // both mean an open PR is blocking deletion.
+                              b.status === 'submitted' || b.status === 'approved'
+                              ? `Cannot delete branch with open PR (status "${b.status}")`
+                              : 'Only Admin or branch creator can delete'
                         }
                         disabled={perms.canDelete}
                       >

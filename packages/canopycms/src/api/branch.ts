@@ -619,8 +619,22 @@ export const deleteBranchHandler = async (
     }
   }
 
-  // Block deletion if branch has open PR (submitted status)
-  if (branchContext.branch.status === 'submitted') {
+  // Block deletion if branch has an open PR -- 'submitted' OR 'approved'.
+  // 'approved' means a reviewer has already signed off and the PR is
+  // awaiting merge: deleting here unlinks metadata, removes the clone, and
+  // removes the branch head from the local mirror, leaving that reviewed PR
+  // dangling on GitHub with no branch left to merge it from (mark-merged
+  // becomes impossible) -- and with no signal back to the reviewer. Same
+  // status code and message as the pre-existing 'submitted' refusal: the
+  // isProtected refusal above this one already uses 400 where the
+  // writableBranch/submittableBranch guards elsewhere use 403 for the same
+  // "protected" category (tracked as a deferred, deliberately out-of-scope
+  // cleanup in
+  // .claude/future-tasks/protected-branch-followup-cleanups.md); extending
+  // this check to 'approved' keeps it consistent with its own immediate
+  // neighbour rather than introducing a fresh 400/403 split between two
+  // arms of the same guard.
+  if (branchContext.branch.status === 'submitted' || branchContext.branch.status === 'approved') {
     return {
       ok: false,
       status: 400,

@@ -62,6 +62,44 @@ const showWithdrawConfirmation = (
 }
 
 /**
+ * Helper function to show confirmation modal for branch delete action.
+ *
+ * Unlike submit/withdraw (both reversible), delete is irreversible -- it
+ * unlinks branch.json, removes the clone, and removes the branch head from
+ * the local git mirror. Before this, `handleDelete` below called
+ * `apiClient.branches.delete` immediately on click with no confirmation
+ * anywhere in the chain (BranchManager.tsx's delete button calls `onDelete`
+ * directly), while submit and withdraw -- both reversible -- each went
+ * through this same `modals.openConfirmModal` pattern. This closes that gap;
+ * `color: 'red'` marks it as the destructive one, matching the button's own
+ * color in BranchManager.tsx.
+ */
+const showDeleteConfirmation = (
+  branchName: string,
+  onConfirm: () => Promise<void>,
+  onCancel: () => void,
+) => {
+  modals.openConfirmModal({
+    title: 'Delete Branch',
+    children: (
+      <Text size="sm" style={{ whiteSpace: 'pre-line' }}>
+        {`Are you sure you want to delete "${branchName}"?\n\nThis will:\n• Permanently remove the branch and its clone\n• Discard any unsaved or unmerged changes\n\nThis cannot be undone.`}
+      </Text>
+    ),
+    labels: { confirm: 'Delete Branch', cancel: 'Cancel' },
+    // data-testid is load-bearing, not decoration: the e2e helper
+    // (apps/test-app/e2e/fixtures/branch-page.ts's deleteBranch) already
+    // anticipated a delete confirmation and clicks
+    // [data-testid="confirm-delete-branch"] when it appears. Without this the
+    // modal opens, nothing dismisses it, and the branch never disappears --
+    // which is exactly how the e2e suite caught this confirmation being added.
+    confirmProps: { color: 'red', 'data-testid': 'confirm-delete-branch' },
+    onCancel,
+    onConfirm,
+  })
+}
+
+/**
  * Branch summary for display in BranchManager component.
  */
 export interface BranchSummary {
@@ -390,22 +428,34 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
   }
 
   const handleDelete = async (branchNameToDelete: string) => {
-    options.setBusy(true)
-    try {
-      const result = await apiClient.branches.delete({
-        branch: branchNameToDelete,
-      })
-      if (!result.ok) {
-        throw new Error(result.error || 'Failed to delete branch')
-      }
-      notifications.show({ message: 'Branch deleted', color: 'green' })
-      await loadBranches()
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to delete branch'
-      notifications.show({ message, color: 'red' })
-    } finally {
-      options.setBusy(false)
-    }
+    return new Promise<void>((resolve, reject) => {
+      showDeleteConfirmation(
+        branchNameToDelete,
+        async () => {
+          options.setBusy(true)
+          try {
+            const result = await apiClient.branches.delete({
+              branch: branchNameToDelete,
+            })
+            if (!result.ok) {
+              throw new Error(result.error || 'Failed to delete branch')
+            }
+            notifications.show({ message: 'Branch deleted', color: 'green' })
+            await loadBranches()
+          } catch (err) {
+            const message = err instanceof Error ? err.message : 'Failed to delete branch'
+            notifications.show({ message, color: 'red' })
+          } finally {
+            options.setBusy(false)
+            // Resolve regardless of API success/failure, matching the
+            // pre-confirmation behavior (errors were shown as a toast, not
+            // rethrown) -- only cancellation below rejects.
+            resolve()
+          }
+        },
+        () => reject(new Error('User cancelled delete')),
+      )
+    })
   }
 
   const handleReloadBranchData = async () => {
