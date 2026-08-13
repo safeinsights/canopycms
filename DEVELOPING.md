@@ -1729,7 +1729,13 @@ suspect a missing jsdom shim in the test that ran before it.
 merge-base first. Several failures are expected-red locally and are not defects:
 
 - `src/cli/init.integration.test.ts` — 7 tests fail with `listen EPERM … tsx-501/*.pipe`.
-  The sandbox blocks tsx's IPC socket. Environmental, not a repo defect.
+  The sandbox blocks tsx's IPC socket. Environmental, not a repo defect — and
+  **avoidable**: only the tsx _CLI_ binds that socket. The loader form runs fine
+  sandboxed, so a TS subprocess spawned as `node --import tsx <file>` works where
+  `node_modules/.bin/tsx <file>` dies. Verified both ways on the same file: the CLI form
+  exits 1 on the EPERM, the loader form exits 0. **Any new test that spawns a TypeScript
+  subprocess should use the loader form** rather than joining this expected-red set;
+  converting the existing seven is a live option, not just an explanation to live with.
 - `canopycms-cdk` — a fresh worktree fails with `CannotFindAsset` until the lambda and
   worker bundles are built. Those only build under `prepack`, not the root `build`.
 
@@ -1777,6 +1783,18 @@ gh api repos/OWNER/REPO/actions/runs/RUN_ID/logs > logs.zip
 runs are built from the merge commit, so a conflicted PR triggers _nothing_ — no run,
 no failure. Check `gh pr view <n> --json mergeable` (`CONFLICTING`/`DIRTY`) before
 suspecting CI.
+
+**...but a fresh `CONFLICTING` reading is often just stale.** The inverse trap: right
+after pushing a merge, `gh pr view --json mergeable` can still report
+`CONFLICTING`/`DIRTY` because GitHub has not recomputed mergeability yet — query again a
+moment later and it returns `MERGEABLE`. Before acting on a `CONFLICTING` reading (least
+of all re-resolving conflicts that are already resolved), confirm against local git:
+
+```bash
+git merge-base --is-ancestor origin/<base> HEAD && echo "base is merged in"
+```
+
+If that succeeds and GitHub still says `CONFLICTING`, believe git and re-query.
 
 ### End-to-End Tests (Playwright)
 
