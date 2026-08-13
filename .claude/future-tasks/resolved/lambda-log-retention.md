@@ -1,7 +1,7 @@
 # Lambda CloudWatch log groups: no explicit retention
 
 Found while implementing worker CloudWatch log shipping
-([worker-cloudwatch-logs.md](resolved/worker-cloudwatch-logs.md), 2026-07-24).
+([worker-cloudwatch-logs.md](worker-cloudwatch-logs.md), 2026-07-24).
 
 ## Problem
 

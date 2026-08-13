@@ -27,6 +27,7 @@
     "lint": "pnpm -r run lint",
     "lint:fix": "pnpm -r run lint -- --fix",
     "lint:bundle": "depcruise packages/canopycms/src/client.ts packages/canopycms-next/src/client.tsx --output-type err-long",
+    "lint:tasks": "node scripts/check-future-tasks.mjs",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "test": "pnpm -r --no-bail run test",
