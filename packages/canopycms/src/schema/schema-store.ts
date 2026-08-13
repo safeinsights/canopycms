@@ -58,7 +58,11 @@ import type { EntrySchemaRegistry } from './types'
 import { resolveCollectionPath } from '../content-id-index'
 import { invalidateBranchContentCaches } from '../content-index-generation'
 import { generateId, isValidId } from '../id'
-import { createLogicalPath, validateAndNormalizePath } from '../paths'
+import {
+  createLogicalPath,
+  normalizeCollectionPath as stripContentRootPrefix,
+  validateAndNormalizePath,
+} from '../paths'
 import type { LogicalPath, ContentId } from '../paths/types'
 import type { CanopyServices } from '../services'
 
@@ -360,6 +364,49 @@ export class SchemaOps {
   }
 
   // --------------------------------------------------------------------------
+  // Path Normalization
+  // --------------------------------------------------------------------------
+
+  /**
+   * The single normalisation boundary for logical collection paths entering
+   * this class. Every public method that accepts a logical collection path
+   * (or, for `createCollection`, `input.parentPath`) calls this exactly once
+   * before doing anything else with the path — that is the whole fix for the
+   * "Collection not found" bug: `flattenSchema` (branch-schema-cache.ts)
+   * produces content-root-prefixed logical paths (e.g. "content/posts", or
+   * "cms/content/posts" for a multi-segment `contentRoot: 'cms/content'`),
+   * the editor round-trips those straight back into every mutator
+   * (`CollectionEditor.tsx` passes `editingCollection.logicalPath` as-is),
+   * but `resolveCollectionPath(this.contentRoot, ...)` treats its second
+   * argument as relative to `this.contentRoot` — which already embeds the
+   * content-root segment(s). A prefixed path therefore resolved one level
+   * too deep and was reported as not found. `updateCollectionInner` used to
+   * strip the prefix itself (the only mutator that did); that bespoke strip
+   * is gone now that every entry point normalises here instead.
+   *
+   * Idempotent and prefix-only: strips one leading `"{contentRootName}/"` if
+   * present (exact string match against the full, possibly multi-segment,
+   * `contentRootName` — never `path.basename()`, which would break a
+   * multi-segment root like "cms/content"), otherwise returns the path
+   * unchanged. So both prefixed (production/editor) and unprefixed
+   * (existing store tests, adopters calling SchemaOps directly) input work,
+   * and normalising an already-normalised path is a no-op — safe to call
+   * from a method that receives a path some other method already
+   * normalised. Deliberately does NOT touch the bare root-collection
+   * sentinel (`collectionPath === this.contentRootName`, no trailing
+   * segment): that has no trailing "/" to match, so it passes through
+   * unchanged and the `=== this.contentRootName` checks in
+   * `updateCollectionInner`/`updateOrderInner` keep working.
+   *
+   * A future public method that accepts a logical collection path must call
+   * this first, the same way every existing one does — that is the
+   * "safe by construction" contract this boundary is meant to provide.
+   */
+  private normalizeCollectionPath(collectionPath: LogicalPath): LogicalPath {
+    return createLogicalPath(stripContentRootPrefix(collectionPath, this.contentRootName))
+  }
+
+  // --------------------------------------------------------------------------
   // Validation Helpers
   // --------------------------------------------------------------------------
 
@@ -412,8 +459,9 @@ export class SchemaOps {
    * Read a collection's .collection.json file
    */
   async readCollectionMeta(collectionPath: LogicalPath): Promise<CollectionMetaFile | null> {
+    const normalizedPath = this.normalizeCollectionPath(collectionPath)
     // Resolve logical path to physical path with embedded IDs
-    const physicalPath = await resolveCollectionPath(this.contentRoot, collectionPath)
+    const physicalPath = await resolveCollectionPath(this.contentRoot, normalizedPath)
     if (!physicalPath) {
       return null
     }
@@ -450,7 +498,8 @@ export class SchemaOps {
    * Check if a collection is empty (has no content files or child collections)
    */
   async isCollectionEmpty(collectionPath: LogicalPath): Promise<boolean> {
-    const physicalPath = await resolveCollectionPath(this.contentRoot, collectionPath)
+    const normalizedPath = this.normalizeCollectionPath(collectionPath)
+    const physicalPath = await resolveCollectionPath(this.contentRoot, normalizedPath)
     if (!physicalPath) {
       // Collection doesn't exist, consider it empty
       return true
@@ -533,7 +582,16 @@ export class SchemaOps {
       throw new Error(schemaValidation.error)
     }
 
-    const result = await this.withSchemaLock(() => this.createCollectionInner(input))
+    // Normalize parentPath (may be content-root-prefixed, e.g. "content/docs",
+    // exactly like every other logical collection path the editor sends) —
+    // see normalizeCollectionPath's doc comment for why this must happen
+    // exactly once, here at the public entry point, before createCollectionInner
+    // ever resolves it.
+    const normalizedInput: CreateCollectionInput = input.parentPath
+      ? { ...input, parentPath: this.normalizeCollectionPath(input.parentPath) }
+      : input
+
+    const result = await this.withSchemaLock(() => this.createCollectionInner(normalizedInput))
     // Invalidate schema cache after mutation (outside the lock — see withSchemaLock's doc comment)
     await this.invalidateSchemaCache()
     return result
@@ -623,7 +681,8 @@ export class SchemaOps {
       throw new Error(`Invalid input: ${parseResult.error.message}`)
     }
 
-    await this.withSchemaLock(() => this.updateCollectionInner(collectionPath, updates))
+    const normalizedPath = this.normalizeCollectionPath(collectionPath)
+    await this.withSchemaLock(() => this.updateCollectionInner(normalizedPath, updates))
     // Invalidate schema cache after mutation (outside the lock — see withSchemaLock's doc comment)
     await this.invalidateSchemaCache()
   }
@@ -633,6 +692,12 @@ export class SchemaOps {
    * read-modify-write. Called directly (not via the public `updateCollection`)
    * by `updateOrderInner` for non-root collections — `withSchemaLock` is NOT
    * re-entrant, so going through the public method there would deadlock.
+   *
+   * `collectionPath` here is always already normalized (content-root prefix
+   * stripped, if it had one) by whichever public method reached this — either
+   * `updateCollection` above or `updateOrder` via `updateOrderInner` — so this
+   * no longer re-strips the prefix itself; see normalizeCollectionPath's doc
+   * comment for the single boundary that owns that now.
    */
   private async updateCollectionInner(
     collectionPath: LogicalPath,
@@ -657,23 +722,16 @@ export class SchemaOps {
       return
     }
 
-    // Strip contentRoot prefix to get relative path for regular collection
-    // E.g., "content/posts" -> "posts"
-    const relativePath = collectionPath.startsWith(`${this.contentRootName}/`)
-      ? collectionPath.slice(this.contentRootName.length + 1)
-      : collectionPath
-
-    // Resolve path for regular collection
-    const physicalPath = await resolveCollectionPath(
-      this.contentRoot,
-      createLogicalPath(relativePath),
-    )
+    // Resolve path for regular collection. collectionPath is already
+    // normalized (no content-root prefix) by the caller — see this method's
+    // doc comment.
+    const physicalPath = await resolveCollectionPath(this.contentRoot, collectionPath)
     if (!physicalPath) {
       throw new Error(`Collection not found: ${collectionPath}`)
     }
 
     // Read existing meta
-    const meta = await this.readCollectionMeta(relativePath as LogicalPath)
+    const meta = await this.readCollectionMeta(collectionPath)
     if (!meta) {
       throw new Error(`Collection meta not found: ${collectionPath}`)
     }
@@ -753,7 +811,8 @@ export class SchemaOps {
    * Delete a collection (must be empty)
    */
   async deleteCollection(collectionPath: LogicalPath): Promise<void> {
-    await this.withSchemaLock(() => this.deleteCollectionInner(collectionPath))
+    const normalizedPath = this.normalizeCollectionPath(collectionPath)
+    await this.withSchemaLock(() => this.deleteCollectionInner(normalizedPath))
     // Invalidate schema cache after mutation (outside the lock — see withSchemaLock's doc comment)
     await this.invalidateSchemaCache()
   }
@@ -797,7 +856,8 @@ export class SchemaOps {
       throw new Error(`Schema reference "${entryType.schema}" not found. Available: ${available}`)
     }
 
-    await this.withSchemaLock(() => this.addEntryTypeInner(collectionPath, entryType))
+    const normalizedPath = this.normalizeCollectionPath(collectionPath)
+    await this.withSchemaLock(() => this.addEntryTypeInner(normalizedPath, entryType))
     // Invalidate schema cache after mutation (outside the lock — see withSchemaLock's doc comment)
     await this.invalidateSchemaCache()
   }
@@ -858,8 +918,9 @@ export class SchemaOps {
       throw new Error(`Schema reference "${updates.schema}" not found. Available: ${available}`)
     }
 
+    const normalizedPath = this.normalizeCollectionPath(collectionPath)
     await this.withSchemaLock(() =>
-      this.updateEntryTypeInner(collectionPath, entryTypeName, updates),
+      this.updateEntryTypeInner(normalizedPath, entryTypeName, updates),
     )
     // Invalidate schema cache after mutation (outside the lock — see withSchemaLock's doc comment)
     await this.invalidateSchemaCache()
@@ -930,7 +991,8 @@ export class SchemaOps {
    * Remove an entry type from a collection
    */
   async removeEntryType(collectionPath: LogicalPath, entryTypeName: string): Promise<void> {
-    await this.withSchemaLock(() => this.removeEntryTypeInner(collectionPath, entryTypeName))
+    const normalizedPath = this.normalizeCollectionPath(collectionPath)
+    await this.withSchemaLock(() => this.removeEntryTypeInner(normalizedPath, entryTypeName))
     // Invalidate schema cache after mutation (outside the lock — see withSchemaLock's doc comment)
     await this.invalidateSchemaCache()
   }
@@ -1001,8 +1063,9 @@ export class SchemaOps {
    * ```
    */
   async countEntriesUsingType(collectionPath: LogicalPath, entryTypeName: string): Promise<number> {
+    const normalizedPath = this.normalizeCollectionPath(collectionPath)
     // Resolve collection physical path
-    const physicalPath = await resolveCollectionPath(this.contentRoot, collectionPath)
+    const physicalPath = await resolveCollectionPath(this.contentRoot, normalizedPath)
     if (!physicalPath) {
       // Collection doesn't exist yet - return 0
       return 0
@@ -1058,7 +1121,8 @@ export class SchemaOps {
    * Update the order of items in a collection
    */
   async updateOrder(collectionPath: LogicalPath, order: string[]): Promise<void> {
-    await this.withSchemaLock(() => this.updateOrderInner(collectionPath, order))
+    const normalizedPath = this.normalizeCollectionPath(collectionPath)
+    await this.withSchemaLock(() => this.updateOrderInner(normalizedPath, order))
     // Invalidate schema cache after mutation (outside the lock — see withSchemaLock's doc comment)
     await this.invalidateSchemaCache()
   }
@@ -1077,8 +1141,9 @@ export class SchemaOps {
       return
     }
 
-    // Update regular collection (handles contentRoot prefix stripping internally).
-    // Calls updateCollectionInner DIRECTLY, never the public updateCollection:
+    // Update regular collection. collectionPath is already normalized (no
+    // content-root prefix) by the public updateOrder above. Calls
+    // updateCollectionInner DIRECTLY, never the public updateCollection:
     // we're already inside withSchemaLock's critical section here, and
     // withLock is not re-entrant — going through updateCollection would call
     // withSchemaLock again and deadlock waiting on the lock it itself holds.
