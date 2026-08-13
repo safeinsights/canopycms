@@ -28,7 +28,7 @@ type TreeController = ReturnType<typeof useTree>
 
 import type { ContentFormat, EntrySchema } from '../config'
 import { EntryNavigator, type EntryNavCollection } from './EntryNavigator'
-import type { FormValue } from './FormRenderer'
+import type { CustomFieldRenderers, FormValue } from './FormRenderer'
 import { FormRenderer } from './FormRenderer'
 import { PreviewFrame } from './preview-bridge'
 import type { OperatingMode } from '../operating-mode'
@@ -129,6 +129,14 @@ export interface EditorProps {
   canResolveComments?: boolean
   /** `media.publicBaseUrl` from config - prefixed onto asset URLs the editor builds (MediaLibrary/ImageField/MDX image dialog). Undefined means root-relative (editor and site share an origin). */
   assetBaseUrl?: string
+  /**
+   * Adopter-supplied overrides for how specific field types render, keyed by
+   * field `type` (see `FormRenderer`'s `customRenderers` prop). Threaded
+   * straight through to `FormRenderer` so this documented extension point is
+   * reachable from the public `CanopyEditor`/`CanopyEditorPage` surface, not
+   * just from a direct `FormRenderer` usage.
+   */
+  customRenderers?: CustomFieldRenderers
   // Auth UI handlers from config
   AccountComponent?: React.ComponentType
   onAccountClick?: () => void
@@ -162,6 +170,7 @@ export const Editor: React.FC<EditorProps> = ({
   AccountComponent,
   onAccountClick,
   onLogoutClick,
+  customRenderers,
 }) => {
   // Per-resource loading states
   const [branchesLoading, setBranchesLoading] = useState(false)
@@ -1112,6 +1121,7 @@ export const Editor: React.FC<EditorProps> = ({
                               setDrafts((prev) => ({ ...prev, [contentId]: next }))
                             }
                           }}
+                          customRenderers={customRenderers}
                           branch={branchNameState}
                           onResolvedValueChange={setPreviewData}
                           onLoadingStateChange={setPreviewLoadingState}
