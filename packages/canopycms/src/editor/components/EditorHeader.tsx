@@ -282,7 +282,18 @@ export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(functi
   // and permanently after a failed branches fetch. Worse under version skew,
   // where the status IS known ('editing') and the copy would assert a status
   // lock the status plainly contradicts. So: locked, but say why honestly.
-  const branchDataUnavailable = statusLocked && branchStatus === undefined
+  //
+  // Provably behavior-neutral for supported deployments: writeBlocked =
+  // readOnly || status !== 'editing', so when status === 'editing' that
+  // reduces to writeBlocked === readOnly. statusLocked = branchWriteBlocked
+  // && !branchReadOnly, so the new 'editing' arm below would require
+  // readOnly && !readOnly -- impossible. It is unreachable against any
+  // current server and only changes what renders under version skew (an old
+  // server that omits writeBlocked while still sending status: 'editing'),
+  // where it replaces the self-contradicting "Branch is editing — content is
+  // read-only" with the honest data-unavailable copy.
+  const branchDataUnavailable =
+    statusLocked && (branchStatus === undefined || branchStatus === 'editing')
 
   return (
     <Paper
