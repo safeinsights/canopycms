@@ -2,6 +2,13 @@ import { defineCanopyConfig } from 'canopycms'
 
 export default defineCanopyConfig({
   defaultBranchAccess: 'allow',
+  // Leave this as 'dev'. This file is loaded by `next dev`, by `next build`
+  // inside the deployment image, and by the deployed server -- and the first
+  // two must be 'dev' (a prod-mode build read would look for a branch
+  // workspace that only exists on the deployed filesystem). A deployment
+  // supplies its own mode at run time through the CANOPY_MODE environment
+  // variable, which wins over this value; `canopycms init-deploy aws` wires
+  // that up for you. See docs/deploying-to-aws.md, "Operating mode".
   mode: '{{MODE}}',
 {{DEPLOYED_AS}}  gitBotAuthorName: 'CanopyCMS Bot',
   gitBotAuthorEmail: 'canopycms-bot@example.com',

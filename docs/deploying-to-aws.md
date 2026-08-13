@@ -150,7 +150,8 @@ from `origin/HEAD`, and the worker's repo from your `origin` remote.
 Before deploying, test the full workflow locally:
 
 ```bash
-# Set mode in canopycms.config.ts to 'dev'
+# canopycms.config.ts says mode: 'dev' -- that is the value to keep (see
+# "Operating mode" below); a deployment overrides it at run time.
 npm run dev
 
 # In another terminal, initialize the auth cache:
@@ -164,6 +165,43 @@ In dev mode, CanopyCMS:
 - Creates a local bare repo at `.canopy-dev/remote.git`
 - Uses `CachingAuthPlugin` with file-based cache (same code path as prod)
 - Queues PR tasks to `.canopy-dev/.tasks/` (processed by `run-once`)
+
+## Operating mode
+
+CanopyCMS's `mode` decides where the workspace lives and how auth is enforced.
+The deployed CMS must run in **`prod`** mode; dev mode resolves its workspace to
+`<cwd>/.canopy-dev`, and Lambda's filesystem is read-only outside `/tmp`, so the
+first write fails with `EROFS`.
+
+**Leave `mode: 'dev'` in `canopycms.config.ts` anyway.** That one file is loaded
+by three different things — `next dev` locally, `next build` inside the
+deployment image, and the deployed server — and the first two genuinely need
+dev: a prod-mode build read looks for a branch workspace on EFS that cannot
+exist in an image builder, so a `mode: 'prod'` literal fails the image build.
+
+The deployed value therefore comes from the environment, in two halves:
+
+| Where                        | Variable                       | Set by                                               | Why it can't be the other one                                                                          |
+| ---------------------------- | ------------------------------ | ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| Server (Lambda), at run time | `CANOPY_MODE=prod`             | `CanopyCmsService` — automatic, nothing to configure | Must be absent during `next build`, so it cannot be baked into the image                               |
+| Browser (editor bundle)      | `NEXT_PUBLIC_CANOPY_MODE=prod` | the generated stack, as a Docker **build arg**       | The editor page imports `canopycms.config.ts` directly, so its copy of `mode` is inlined at build time |
+
+Both are resolved by `resolveOperatingMode`
+(`packages/canopycms/src/operating-mode/mode-env.ts`), which runs inside
+config validation — so `defineCanopyConfig` and `composeCanopyConfig` both get
+it — wins over the config literal, and **throws** on any value
+other than `prod`/`dev` rather than falling back — a typo like
+`CANOPY_MODE=production` would otherwise deploy dev auth semantics silently.
+
+Both are wired up by `canopycms init-deploy aws`; you only need this section if
+you hand-edit the stack or the Dockerfile. Two things to know if you do:
+
+- `environment: { CANOPY_MODE: ... }` on `CanopyCmsService` accepts only
+  `'prod'`, and rejects anything else at synth.
+- If you build the image yourself, pass
+  `--build-arg NEXT_PUBLIC_CANOPY_MODE=prod`. Without it the deployed editor
+  believes it is in dev mode: it sends dev-auth headers at a server enforcing
+  Clerk (every editor call rejected) and hides the pull-request UI.
 
 ## Step 4: CDK Stack
 
@@ -364,6 +402,8 @@ new CanopyCmsService(this, 'Cms', {
 3. the operating mode's default (`prod` / `local`)
 
 The env var deliberately wins over config: it's the one guaranteed to differ between two stacks sharing a repo, while `config.deploymentName` is checked out identically by both. If both are set and disagree, the Lambda logs a one-time warning naming both values and which one won.
+
+Setting `CANOPYCMS_DEPLOYMENT_NAME` through the construct's `environment` prop still works and still wins over the `deploymentName` prop, but it is resolved at synth rather than passed through: the winning value is validated by the same rule as the prop (an invalid one fails `cdk synth` instead of crash-looping the Lambda at boot) and is written to **both** the Lambda's environment and the worker's `.env`. Prefer the `deploymentName` prop — it says the same thing in one place.
 
 **Changing `deploymentName` (or `settingsBranch`) on a stack that already has a populated settings workspace is refused at boot, loudly** — it is not migrated automatically. Renaming the resolved settings branch would make CanopyCMS check out a _different_ orphan branch in the same on-disk workspace, which wipes `permissions.json`/`groups.json` with no history to recover them from (orphan branches share none). If you see this error, either restore the previous value or deliberately move the settings workspace aside first — see the error message for specifics.
 

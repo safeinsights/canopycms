@@ -12,6 +12,16 @@ import {
 import { CanopyCmsService } from './cms-service'
 import type { CanopyCmsServiceProps } from './cms-service'
 import { CanopyCmsDistribution } from './cms-distribution'
+// Test-only imports across the package boundary, deliberately: the construct
+// itself must NOT import `canopycms` (this package publishes with no runtime
+// dependency on it), but its SUITE can, which is what makes the duplicated
+// deployment-name rule a red test on drift rather than a comment asking nicely.
+// Both modules are dependency-free apart from canopycms's own logger shim.
+import { isValidDeploymentName } from '../../../canopycms/src/operating-mode/deployment-name'
+import {
+  VALID_DEPLOYMENT_NAMES,
+  INVALID_DEPLOYMENT_NAMES,
+} from '../../../canopycms/src/operating-mode/deployment-name-fixtures'
 
 /**
  * Synthesizes a stack with the CMS service (and optionally the distribution) so
@@ -505,16 +515,42 @@ describe('CanopyCmsService: worker ASG rolling update policy', () => {
 })
 
 describe('CanopyCmsService: deploymentName validation', () => {
-  const invalid = ['team/prod', 'my prod', '-prod', 'prod:1', 'a..b', '.prod', 'prod.', 'prod.lock']
-
-  for (const value of invalid) {
-    it(`throws at synth for an invalid deploymentName: ${JSON.stringify(value)}`, () => {
+  for (const [why, value] of INVALID_DEPLOYMENT_NAMES) {
+    it(`throws at synth for a deploymentName with ${why}: ${JSON.stringify(value)}`, () => {
       expect(() => synth(false, { deploymentName: value })).toThrow(/invalid deploymentName/i)
     })
   }
 
-  it('accepts an ordinary deploymentName', () => {
-    expect(() => synth(false, { deploymentName: 'acme-prod_2.1' })).not.toThrow()
+  for (const value of VALID_DEPLOYMENT_NAMES) {
+    it(`accepts the deploymentName ${JSON.stringify(value)}`, () => {
+      expect(() => synth(false, { deploymentName: value })).not.toThrow()
+    })
+  }
+
+  // The drift check the duplicated rule never had (PR #172 finding 3). The
+  // construct cannot import the runtime predicate -- `canopycms-cdk` publishes
+  // with no runtime dependency on `canopycms` -- so this TEST imports it and
+  // requires the two verdicts to match. The dangerous direction is a rule
+  // tightened at runtime but not here: the stack would synth clean and then
+  // crash-loop the Lambda at boot, which is what the synth guard exists to
+  // prevent.
+  it('agrees with the runtime predicate on every fixture name', () => {
+    const candidates = [
+      ...VALID_DEPLOYMENT_NAMES,
+      ...INVALID_DEPLOYMENT_NAMES.map(([, value]) => value),
+    ]
+    for (const value of candidates) {
+      let synthRejected = false
+      try {
+        synth(false, { deploymentName: value })
+      } catch {
+        synthRejected = true
+      }
+      expect(
+        synthRejected,
+        `synth and operating-mode/deployment-name.ts disagree about ${JSON.stringify(value)}`,
+      ).toBe(!isValidDeploymentName(value))
+    }
   })
 })
 
@@ -781,7 +817,7 @@ describe('CanopyCmsService: deploymentName -> CANOPYCMS_DEPLOYMENT_NAME (setting
     )
   })
 
-  it('lets an explicit environment.CANOPYCMS_DEPLOYMENT_NAME override deploymentName (placed after it in the object)', () => {
+  it('lets an explicit environment.CANOPYCMS_DEPLOYMENT_NAME override deploymentName', () => {
     const template = synth(false, {
       deploymentName: 'acme',
       environment: { CANOPYCMS_DEPLOYMENT_NAME: 'explicit-override' },
@@ -807,5 +843,143 @@ describe('CanopyCmsService: deploymentName -> CANOPYCMS_DEPLOYMENT_NAME (setting
     const all = workerUserDataBlobs(template)
     expect(all).toContain('CANOPYCMS_DEPLOYMENT_NAME=acme')
     expect(all).not.toContain('CANOPYCMS_DEPLOYMENT_NAME=prod')
+  })
+})
+
+/**
+ * PR #172 finding 1. `environment` is spread into the Lambda's variables, so
+ * CANOPYCMS_DEPLOYMENT_NAME set there used to (a) skip the synth guard, so an
+ * invalid value deployed clean and crash-looped the Lambda at boot, and (b)
+ * apply to the Lambda only, leaving the worker on `props.deploymentName` --
+ * the two halves resolving different settings branches, which is exactly the
+ * condition pushSettingsBranches's [SYNC-M3] warning was added to detect.
+ */
+describe('CanopyCmsService: the CANOPYCMS_DEPLOYMENT_NAME escape hatch is validated and mirrored', () => {
+  for (const [why, value] of INVALID_DEPLOYMENT_NAMES) {
+    it(`fails at synth, not at boot, for an environment override with ${why}`, () => {
+      expect(() => synth(false, { environment: { CANOPYCMS_DEPLOYMENT_NAME: value } })).toThrow(
+        /invalid deploymentName/i,
+      )
+    })
+  }
+
+  it('names the environment override as the source in the error', () => {
+    expect(() =>
+      synth(false, {
+        deploymentName: 'fine',
+        environment: { CANOPYCMS_DEPLOYMENT_NAME: 'bad name' },
+      }),
+    ).toThrow(/environment\.CANOPYCMS_DEPLOYMENT_NAME/)
+  })
+
+  // The mirror. One deployment resolves ONE settings branch
+  // (`canopycms-settings-<name>`), so every supported way of setting the name
+  // must land the same string on both halves.
+  const ways: Array<[string, Partial<CanopyCmsServiceProps>, string]> = [
+    ['neither prop nor environment (the default)', {}, 'prod'],
+    ['the deploymentName prop', { deploymentName: 'acme' }, 'acme'],
+    [
+      'the environment escape hatch alone',
+      { environment: { CANOPYCMS_DEPLOYMENT_NAME: 'from-env' } },
+      'from-env',
+    ],
+    [
+      'the environment escape hatch overriding the prop',
+      { deploymentName: 'acme', environment: { CANOPYCMS_DEPLOYMENT_NAME: 'from-env' } },
+      'from-env',
+    ],
+  ]
+
+  for (const [why, overrides, expected] of ways) {
+    it(`resolves the same deployment name on the Lambda and the worker with ${why}`, () => {
+      const template = synth(false, overrides)
+      template.hasResourceProperties(
+        'AWS::Lambda::Function',
+        Match.objectLike({
+          Environment: Match.objectLike({
+            Variables: Match.objectLike({ CANOPYCMS_DEPLOYMENT_NAME: expected }),
+          }),
+        }),
+      )
+      expect(workerUserDataBlobs(template)).toContain(`CANOPYCMS_DEPLOYMENT_NAME=${expected}`)
+    })
+  }
+})
+
+/**
+ * Baseline review E4. A deployed Lambda has to reach prod mode: dev mode
+ * resolves its workspace to `<cwd>/.canopy-dev`, and Lambda's filesystem is
+ * read-only outside /tmp, so the first write fails EROFS. The switch is
+ * CANOPY_MODE, read at runtime by resolveOperatingMode
+ * (packages/canopycms/src/operating-mode/mode-env.ts).
+ */
+describe('CanopyCmsService: operating mode', () => {
+  it('stamps CANOPY_MODE=prod on the Lambda', () => {
+    const template = synth()
+    template.hasResourceProperties(
+      'AWS::Lambda::Function',
+      Match.objectLike({
+        Environment: Match.objectLike({ Variables: Match.objectLike({ CANOPY_MODE: 'prod' }) }),
+      }),
+    )
+  })
+
+  it('keeps CANOPY_MODE=prod even when an environment escape hatch is supplied', () => {
+    const template = synth(false, { environment: { CANOPY_MODE: 'prod' } })
+    template.hasResourceProperties(
+      'AWS::Lambda::Function',
+      Match.objectLike({
+        Environment: Match.objectLike({ Variables: Match.objectLike({ CANOPY_MODE: 'prod' }) }),
+      }),
+    )
+  })
+
+  for (const value of ['dev', 'production', 'PROD', '']) {
+    it(`rejects environment.CANOPY_MODE=${JSON.stringify(value)} at synth`, () => {
+      expect(() => synth(false, { environment: { CANOPY_MODE: value } })).toThrow(
+        /invalid environment\.CANOPY_MODE/i,
+      )
+    })
+  }
+})
+
+/**
+ * PR #172 finding 2. Every value interpolated into the worker's `.env` goes
+ * through assertEnvSafe, not just deploymentName. Robustness rather than a
+ * security boundary -- the heredoc delimiter is quoted and these values are
+ * adopter-supplied -- but a newline silently injects an extra environment
+ * line, and an ENVEOF-bearing value ends the heredoc early so the remainder
+ * runs as user-data shell commands.
+ */
+describe('CanopyCmsService: worker .env values are heredoc-safe', () => {
+  const fields: Array<[string, (value: string) => Partial<CanopyCmsServiceProps>]> = [
+    ['githubOwner', (value) => ({ githubOwner: value })],
+    ['githubRepo', (value) => ({ githubRepo: value })],
+    ['baseBranch', (value) => ({ baseBranch: value })],
+    ['deploymentName', (value) => ({ deploymentName: value })],
+    ['githubTokenSecretArn', (value) => ({ githubTokenSecretArn: value })],
+    ['clerkSecretKeySecretArn', (value) => ({ clerkSecretKeySecretArn: value })],
+  ]
+
+  for (const [field, build] of fields) {
+    it(`rejects a newline in ${field}`, () => {
+      expect(() => synth(false, build('acme\nCANOPYCMS_DEPLOYMENT_NAME=hijacked'))).toThrow(
+        // deploymentName has its own (stricter) guard, which fires first.
+        field === 'deploymentName' ? /invalid deploymentName/i : /must not contain a newline/i,
+      )
+    })
+
+    it(`rejects an ENVEOF-bearing ${field}`, () => {
+      expect(() => synth(false, build('acmeENVEOFrm'))).toThrow(/must not contain "ENVEOF"/i)
+    })
+  }
+
+  it('still writes ordinary values through', () => {
+    const all = workerUserDataBlobs(
+      synth(false, { githubOwner: 'acme', githubRepo: 'site', baseBranch: 'trunk' }),
+    )
+    expect(all).toContain('CANOPYCMS_GITHUB_OWNER=acme')
+    expect(all).toContain('CANOPYCMS_GITHUB_REPO=site')
+    expect(all).toContain('CANOPYCMS_BASE_BRANCH=trunk')
   })
 })

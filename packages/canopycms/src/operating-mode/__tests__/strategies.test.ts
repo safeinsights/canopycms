@@ -13,6 +13,8 @@ import {
   clearStrategyCache,
 } from '../index'
 import type { OperatingMode } from '..'
+import { isValidDeploymentName } from '../deployment-name'
+import { VALID_DEPLOYMENT_NAMES, INVALID_DEPLOYMENT_NAMES } from '../deployment-name-fixtures'
 import { mockConsole } from '../../test-utils'
 
 describe('Operating Mode Strategies', () => {
@@ -482,16 +484,28 @@ describe('Operating Mode Strategies', () => {
       // The env route bypasses the config schema entirely, so this is the only
       // thing standing between an infra-stamped value and a malformed git ref.
       describe('rejects deployment names that would not be a valid ref component', () => {
-        const invalid = [
-          ['a slash (would add a ref hierarchy level)', 'team/prod'],
-          ['whitespace', 'my prod'],
-          ['a leading dash (parses as a git option)', '-prod'],
-          ['a git-forbidden character', 'prod:1'],
-          ['dot-dot', 'a..b'],
-          ['a leading dot', '.prod'],
-        ] as const
+        // Shared with canopycms-cdk's suite (cms-deploy.test.ts), which holds a
+        // duplicate of this rule it cannot import at build time. Asserting both
+        // against one list is what turns drift into a red test instead of a
+        // comment asking the next author to keep them in step (PR #172
+        // finding 3).
+        it('matches the shared fixture both packages assert against', () => {
+          for (const value of VALID_DEPLOYMENT_NAMES) {
+            expect(
+              isValidDeploymentName(value),
+              `expected ${JSON.stringify(value)} to be valid`,
+            ).toBe(true)
+          }
+          for (const [why, value] of INVALID_DEPLOYMENT_NAMES) {
+            expect(isValidDeploymentName(value), `expected ${why} to be rejected`).toBe(false)
+          }
+        })
 
-        for (const [why, value] of invalid) {
+        // The route tests below skip the empty string: an empty env var or an
+        // empty config value means "unset" to resolveDeploymentName (it falls
+        // through to the mode default), so it never reaches the predicate. The
+        // predicate and the synth guard still reject it.
+        for (const [why, value] of INVALID_DEPLOYMENT_NAMES.filter(([, v]) => v !== '')) {
           it(`rejects ${why} from the env var`, () => {
             vi.stubEnv('CANOPYCMS_DEPLOYMENT_NAME', value)
             expect(() => operatingStrategy('prod').getSettingsBranchName({})).toThrow(

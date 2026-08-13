@@ -33,7 +33,11 @@ export { operatingStrategy, clearStrategyCache } from './client-unsafe-strategy'
 
 // Single resolution point for deploymentName (env > config > mode default) —
 // server-only (reads process.env), used by the strategies' getSettingsBranchName.
-export { resolveDeploymentName } from './deployment-name'
+export { resolveDeploymentName, isValidDeploymentName } from './deployment-name'
+
+// Single resolution point for `mode` (env > config.mode) — isomorphic, applied
+// inside validateCanopyConfig so every config-authoring path gets it.
+export { resolveOperatingMode, SERVER_MODE_ENV_VAR, BROWSER_MODE_ENV_VAR } from './mode-env'
 
 export type OperatingMode = 'prod' | 'dev'
 
