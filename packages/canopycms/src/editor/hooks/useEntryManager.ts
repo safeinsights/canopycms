@@ -7,6 +7,7 @@ import type { LogicalPath } from '../../paths/types'
 import type { FormValue } from '../FormRenderer'
 import { buildWritePayload, normalizeContentPayload } from '../editor-utils'
 import { isDataOnlyFormat } from '../../utils/format'
+import { getErrorMessage } from '../../utils/error'
 import type { EntryFieldError } from '../../validation/entry-validator'
 import { useApiClient } from '../context'
 import { entriesKey, fetchEntriesAndSchema } from './useEntriesData'
@@ -78,6 +79,26 @@ export interface UseEntryManagerReturn {
 }
 
 /**
+ * One branch's fetched view, stamped with the branch that produced it so a
+ * stale record can never be rendered under a different branch. Committed
+ * atomically -- the three fields always describe the same fetch.
+ */
+interface BranchView {
+  branch: string
+  entries: EditorEntry[]
+  collections: EditorCollection[]
+  availableSchemas: string[]
+}
+
+// Module-level singletons for the derived-empty fallbacks. These must be
+// referentially stable: `collectionByPath` and `currentEntry` memoize on them,
+// and a fresh `[]` each render would invalidate both on every render while a
+// branch's data is in flight. Never mutate them.
+const EMPTY_ENTRIES: EditorEntry[] = []
+const EMPTY_COLLECTIONS: EditorCollection[] = []
+const EMPTY_SCHEMAS: string[] = []
+
+/**
  * Custom hook for managing editor entries (CRUD operations).
  *
  * Handles:
@@ -109,11 +130,45 @@ export interface UseEntryManagerReturn {
 export function useEntryManager(options: UseEntryManagerOptions): UseEntryManagerReturn {
   const apiClient = useApiClient()
   const { mutate: globalMutate } = useSWRConfig()
-  const [entriesState, setEntriesState] = useState<EditorEntry[]>(options.initialEntries)
-  const [collectionsState, setCollectionsState] = useState<EditorCollection[]>(
-    options.collections || [],
-  )
-  const [availableSchemas, setAvailableSchemas] = useState<string[]>([])
+  // The fetched view of ONE branch, committed as a single record stamped with
+  // the branch it came from. Everything below derives from it and falls back to
+  // empty whenever the stamp doesn't match the branch currently being shown, so
+  // another branch's content is unrenderable by construction.
+  //
+  // This replaced three independent mirrors (entries/collections/
+  // availableSchemas), which were only ever reset by a SUCCESSFUL commit. Every
+  // early return in the commit effect below therefore left the previous
+  // branch's data on screen: no cached data yet for the new branch (the common
+  // case -- any first visit to a branch, for the whole duration of its fetch),
+  // or a stale SWR slot. The editor then auto-selected one of those stale
+  // entries (see the selection effect below), and a save could file its OCC
+  // token under one contentId and look it up under another, silently skipping
+  // conflict detection -- `content-store.ts` only compares mtimes when
+  // `expectedVersion !== undefined`, so the write became a blind overwrite.
+  // Deriving from a stamped record fixes that structurally instead of relying
+  // on every code path remembering to clear.
+  const [view, setView] = useState<BranchView>(() => ({
+    branch: options.branchName,
+    entries: options.initialEntries,
+    collections: options.collections ?? [],
+    availableSchemas: [],
+  }))
+  const isCurrentBranchView = view.branch === options.branchName
+  const entriesState = isCurrentBranchView ? view.entries : EMPTY_ENTRIES
+  const collectionsState = isCurrentBranchView ? view.collections : EMPTY_COLLECTIONS
+  const availableSchemas = isCurrentBranchView ? view.availableSchemas : EMPTY_SCHEMAS
+
+  // Exposed as `setEntries` (see the return value). Merges rather than
+  // replaces -- a bare record write would wipe `collections`/
+  // `availableSchemas` -- and never grafts another branch's collections under
+  // the current branch's stamp.
+  const setEntries = (entries: EditorEntry[]) => {
+    setView((prev) =>
+      prev.branch === options.branchName
+        ? { ...prev, entries }
+        : { branch: options.branchName, entries, collections: [], availableSchemas: [] },
+    )
+  }
 
   // Initialize with prop value or empty (URL sync happens in effect after mount)
   const [selectedPath, setSelectedPath] = useState<string>(options.initialSelectedId ?? '')
@@ -129,9 +184,9 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
   // ("modified by another editor") on save-after-switch, proven by e2e trace.
   const entryVersionsRef = useRef<Map<string, number>>(new Map())
   const versionKey = (branch: string, contentId: string) => `${branch}:${contentId}`
-  // PER-BRANCH monotonic tokens guarding every commit of fetched entries/
-  // collections state, shared by BOTH the automatic SWR-backed load (below)
-  // and explicit `refreshEntries()` calls. Two maps, keyed by branch:
+  // PER-BRANCH monotonic tokens guarding every commit of the fetched
+  // `BranchView` record above, shared by BOTH the automatic SWR-backed load
+  // (below) and explicit `refreshEntries()` calls. Two maps, keyed by branch:
   //
   // - `claimed`: bumped the moment an attempt's request starts; the value is
   //   baked into that attempt's result tag.
@@ -156,7 +211,11 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
   // 2. On remount these refs reset to empty maps while SWR's cache (owned by
   //    the provider above this component) survives, so a replayed tag can
   //    carry a seq higher than anything this instance ever claimed -- still
-  //    the newest data known for that branch, and still committable.
+  //    the newest data known for that branch, and still committable. Note the
+  //    cache now belongs to `SWRProvider`'s own `provider` Map rather than
+  //    SWR's module global, so "survives" means across remounts BELOW
+  //    `CanopyEditor`; remounting `CanopyEditor` itself starts a fresh cache,
+  //    which is the same empty-cache path as a first load.
   //
   // What the committed-seq rule gives up: when two same-branch attempts race
   // and the OLDER response arrives second while the newer is still in
@@ -319,9 +378,7 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
       void globalMutate(entriesKey(branch), { fetched, seq, branch }, { revalidate: false })
       if (branch === currentBranchRef.current) {
         recordCommittedRefreshSeq(branch, seq)
-        setCollectionsState(fetched.collections)
-        setEntriesState(fetched.entries)
-        setAvailableSchemas(fetched.availableSchemas)
+        setView({ branch, ...fetched })
       }
     }
     return fetched.entries
@@ -484,6 +541,7 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
   const entriesSwrKey = options.branchName ? entriesKey(options.branchName) : null
   const {
     data: taggedEntries,
+    error: entriesError,
     isLoading: entriesIsLoading,
     isValidating: entriesIsValidating,
   } = useSWR(entriesSwrKey, () => {
@@ -523,9 +581,7 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
       return
     }
     recordCommittedRefreshSeq(taggedEntries.branch, taggedEntries.seq)
-    setCollectionsState(taggedEntries.fetched.collections)
-    setEntriesState(taggedEntries.fetched.entries)
-    setAvailableSchemas(taggedEntries.fetched.availableSchemas)
+    setView({ branch: taggedEntries.branch, ...taggedEntries.fetched })
     // Deps: only the tag and the current branch matter; the seq helpers and
     // globalMutate are stable. (This file is plain .ts, so the
     // react-hooks/exhaustive-deps rule isn't active here anyway -- same note
@@ -540,12 +596,44 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
     options.setBusy(entriesIsValidating)
   }, [entriesIsValidating, options.setBusy])
 
-  // True while the first entry load for the current branch is in flight (initial load, per
-  // branch). Lets the empty editor pane / navigator show "Loading…" instead of briefly
-  // flashing "Select an item…" / "No content". Each branch has its own SWR cache slot, so this
-  // is naturally per-branch: switching branches recomputes it against the NEW key's isLoading
-  // without needing a separate guard against a stale previous branch settling late.
-  const entriesInitializing = Boolean(options.branchName) && entriesIsLoading
+  // True while the current branch's entries are not yet on screen. Lets the empty editor pane
+  // show "Loading…" instead of briefly flashing "Select an item…". Each branch has its own SWR
+  // cache slot, so this is naturally per-branch.
+  //
+  // `!isCurrentBranchView` is part of the condition, not just `isLoading`: SWR reports
+  // `isLoading: false` whenever ANY cached data exists for the key, and the committed record
+  // can also lag a settled fetch by a render. Without it there would be a window that is
+  // simultaneously "showing nothing" and "not loading".
+  //
+  // `!entriesError` is what keeps that window from becoming permanent. The provider sets
+  // `shouldRetryOnError: false`, so a failed load never resolves on its own: the stamp would
+  // never match, and the pane would sit at "Loading content…" forever with no retry
+  // affordance. On error we fall through to the normal empty state, and the effect below
+  // says what happened.
+  const entriesInitializing =
+    Boolean(options.branchName) && !entriesError && (entriesIsLoading || !isCurrentBranchView)
+
+  // Surface a failed automatic load. The pre-SWR code showed a notification and logged once
+  // per failure; the SWR migration dropped that, and since `shouldRetryOnError` is false the
+  // failure is terminal until something else revalidates the key -- so without this the editor
+  // would just show an empty content tree with no explanation. Keyed by branch (switching
+  // branches can report a fresh failure) and cleared whenever there's no error, so returning
+  // to a branch that fails again still reports.
+  const notifiedErrorBranchRef = useRef<string | null>(null)
+  useEffect(() => {
+    if (!entriesError || !options.branchName) {
+      notifiedErrorBranchRef.current = null
+      return
+    }
+    if (notifiedErrorBranchRef.current === options.branchName) return
+    notifiedErrorBranchRef.current = options.branchName
+    console.error(entriesError)
+    notifications.show({
+      title: 'Could not load content',
+      message: getErrorMessage(entriesError),
+      color: 'red',
+    })
+  }, [entriesError, options.branchName])
 
   // Validate selected entry when entries change
   useEffect(() => {
@@ -587,7 +675,7 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
     selectedPath,
     setSelectedPath,
     entries: entriesState,
-    setEntries: setEntriesState,
+    setEntries,
     collections: collectionsState,
     currentEntry,
     availableSchemas,
