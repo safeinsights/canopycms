@@ -1,0 +1,638 @@
+# CanopyCMS Baseline Review — August 2026
+
+**Reviewed:** `integration-202607-a` @ `6770327c` (HEAD), all 5 packages + 3 apps.
+~151k LOC core, 850 TS/TSX files, 202 test files. Whole-codebase review, not a diff.
+
+**Method:** 5 independent deep reviews (Fable) along orthogonal dimensions, plus 2 mechanical
+sweeps (Sonnet), plus first-hand verification by the lead reviewer of every Critical/High
+finding before it entered this report. Reviewers were **deliberately not shown**
+`REVIEW-REPORT.md` (the July baseline) or `.claude/future-tasks/` — fresh eyes were requested,
+and cross-referencing against known work happened only here, at consolidation, and only to
+annotate findings, never to suppress them.
+
+**Branch state at review time:** `integration-202607-a` @ `6770327c`.
+
+---
+
+## Re-verification after PR #211 (2026-08-13)
+
+PR [#211](https://github.com/safeinsights/canopycms/pull/211) (the
+`epic/adv-review-remediation` epic, 24 commits) landed on `integration-202607-a` after this
+review was written, taking it to `bfe76e1e`. It remediated a **different** review — the
+2026-08-12 adversarial review of that night's 17 PRs — so overlap with these findings was
+possible but not by design.
+
+Re-checked at `bfe76e1e`:
+
+- **Untouched, so these findings stand as written:** `api/content.ts` (finding 1),
+  `schema/schema-store.ts` + `api/schema.ts` + `config/flatten.ts` (4), `http/handler.ts` +
+  `api/groups.ts` + `context-wrapper.ts` (3), `services.ts` (7), `utils/sanitize-href.ts` (10),
+  `editor/FormRenderer.tsx` + `config/types.ts` (9), `git-manager.ts` (B3),
+  `settings-workspace.ts` (B2), `content-id-index.ts` + `content-store.ts` (B4),
+  `paths/validation.ts` (A3).
+- **Touched but re-verified still broken:** finding 2 (`cms-worker.ts` — the dirty-check, the
+  `--theirs`/`--abort` paths, and the incorrect comment are unchanged, now at `:2204-2207`;
+  no content-write exclusion marker exists anywhere); finding 6 (`Editor.tsx:467-470` still
+  seeds a draft on load); finding 8 (`useDraftManager.ts:456` `handleReload` still has no
+  dirty check); CF1 both halves (`useBranchManager.tsx:392` still deletes without
+  confirmation, `api/branch.ts:623` still blocks only `submitted`, not `approved`).
+- **Fixed by #211 — struck from this report:** ~~E8, the dev content watcher silently
+  no-opping for a non-default `contentRoot`~~ (#206 now passes the resolved root to
+  `getContentRoot`). E6 (`meta-loader` dropping collections nested under plain directories) was
+  **not** fixed — those edits were only `console.*` → `canopyLog*` logging changes.
+
+**Standing instruction for implementers:** #211 shows this branch moves fast, and this report
+is a snapshot. Every fix PR must **reproduce its bug against current HEAD before changing
+anything**, and stop and report if it no longer reproduces rather than "fixing" working code.
+
+Two conventions #211 introduced that this work must follow: `pnpm lint:tasks`
+(`scripts/check-future-tasks.mjs`) now gates backlog consistency, and bare `console.*` is
+banned in the worker's runtime import closure — use `utils/logger.ts`'s `canopyLog*`.
+
+---
+
+## Executive summary
+
+The engineering foundation is genuinely strong, and stronger than the July baseline: the
+request pipeline authenticates before routing, path traversal is defended in depth with
+branded types and containment checks at every filesystem sink, git invocations are argv-based
+with `--end-of-options`, the SVG sanitizer and transform-directive parser are allowlist-based,
+and `docs/concurrency.md` describes a four-layer locking design that the code largely honors.
+Typecheck, lint, the client-bundle boundary check, and all 3,619 tests pass.
+
+That makes the actual finding sharper rather than softer: **the defects are concentrated
+almost entirely in one failure mode — operations that report success and then silently do not
+happen, or are silently undone.** Nine separate confirmed findings share this shape, found
+independently by five reviewers who could not see each other's work:
+
+- Creating an entry over an existing slug wipes it and says "Created" (**D1, Critical**).
+- The worker's rebase deletes editor saves that were already acknowledged with a 200 (**B1**).
+- Group grants and revocations in the admin UI return 200 and never change any privilege (**A1**).
+- A branch switch during a slow load writes the old branch's content into the new branch and
+  disables conflict detection (**D3**).
+- Merely opening an entry manufactures a persisted "draft" that can later revert a colleague's
+  work, passing OCC because it carries a fresh token (**D4**).
+- Re-submitting after a failed push skips the push and reports `submitted` (**C1**).
+- Most schema-editor mutations return 400 against the exact paths the editor sends (**E1**).
+- The settings-branch pull has never functioned in production and logs its own failure as
+  normal (**B3**).
+- `sanitizeHref` — the documented XSS helper — returns `'#'` for every relative URL (**S2-1**).
+
+None of these is caught by the test suite, and that is the systemic point: **the suite is green
+because the seams where these fail are exactly the seams that are mocked.** E1 survived because
+API tests mock `SchemaOps` while store tests use unprefixed paths; A1 survived because one test
+seeds groups on the base branch and another asserts writes land in the settings workspace, and
+nothing connects them; B3 survived because `pullCurrentBranch` is only tested in the clone shape
+where it works.
+
+Assessment: **not ready for multi-editor production**, but the distance is short and the work is
+well-shaped. Most fixes are small and local — several are one line, and in four cases the
+correct implementation already exists a few lines away in the same file. The July fix phase and
+the hardening epics clearly worked; what remains is a different, harder-to-see class than the
+one those passes were aimed at.
+
+---
+
+## Baseline health (measured, outside the sandbox)
+
+| Check                                                   | Result                                       |
+| ------------------------------------------------------- | -------------------------------------------- |
+| `pnpm typecheck`                                        | PASS                                         |
+| `pnpm lint`                                             | PASS                                         |
+| `pnpm lint:bundle` (dependency-cruiser client boundary) | PASS                                         |
+| `pnpm test` (vitest, 5 packages)                        | PASS — 3,619 passed, 6 skipped, **0 failed** |
+
+Caveat for future sessions: inside the command sandbox, 9 `cli/init.integration.test.ts` cases
+fail with `EPERM` on tsx's IPC socket and `MarkdownField.test.tsx` fails on an async-mount race.
+Both pass unsandboxed (9/9 and 2/2). These are environmental, not defects. No e2e run (another
+session held that harness).
+
+---
+
+## Compound findings
+
+Issues whose severity only appears when two reviewers' findings are combined.
+
+### CF1. A reviewer-approved branch can be destroyed by one unconfirmed misclick
+
+**D2 (High) × A7 (Low) → treat as High.**
+`api/branch.ts:599-606` refuses deletion for `status === 'submitted'` but **permits it for
+`approved`** — a branch whose PR a reviewer has already approved. `BranchManager.tsx:548-557`
+wires Delete straight to the API with **no confirmation**, while Submit and Withdraw both use
+`modals.openConfirmModal`. Composed: a branch creator, who need not be a reviewer, destroys a
+reviewed branch — clone, metadata, and mirror head — in one click. The PR is left dangling and
+`mark-merged` becomes impossible. Neither reviewer could see this: A rated A7 Low assuming
+deletion is deliberate; D rated D2 assuming what is deleted is ordinary work.
+
+### CF2. Stale drafts + disabled OCC = silent cross-editor reverts
+
+**D3 × D4 × D8.** Individually these are a branch-switch race, a phantom-dirty UX bug, and a
+missing draft base-version. Together they form a data-loss path with no conflict signal: the
+pristine draft (D4) is a full stale snapshot; the branch-switch race (D3) makes the OCC token
+lookup miss so `expectedVersion` is omitted; restored drafts save against a _freshly loaded_
+token (D8) so they pass conflict detection. Every guard that should stop a stale overwrite is
+independently defeated.
+
+### CF3. Untrusted image bytes reach two parsers with open DoS advisories
+
+**A (assets verified clean) × S2 (dependency audit).** Review A confirmed the asset _logic_ is
+solid — staging keys strictly validated, SVG sanitizer allowlist-based, transform directives
+fully allowlisted before sharp. But `assets/pipeline.ts:143` calls `imageSize(data)` and `:275`
+calls `fileTypeFromBuffer(input.data)` directly on uploaded bytes, and both libraries carry
+current DoS advisories — `image-size@2.0.2` **with no upstream fix available**. The validation
+layer is correct; the parsers underneath it are the exposure.
+
+### CF4. The permissive default is the scaffolded default
+
+`config/schemas/config.ts:14` correctly defaults `defaultBranchAccess` to fail-closed `'deny'`
+— but `cli/template-files/canopycms.config.ts.template:4` sets `'allow'`, so every project
+created by `canopycms init` opts out of it, as do all three apps. This is the precondition that
+makes A2 reachable by any authenticated user, and that turns the dead `services.checkPathAccess`
+export into an allow-everything checker. "Secure by default" holds for the schema and not for
+the generated project.
+
+---
+
+## Confirmed Critical / High findings
+
+Every finding below was independently verified by the lead reviewer against the source. Where I
+could not observe an end-to-end runtime effect, that limit is stated explicitly.
+
+### 1. [Critical] "Create entry" with an existing slug silently wipes that entry — D1
+
+**`api/content.ts:328,348-351,431-447`; `editor/hooks/useEntryManager.ts:404-440`;
+`editor/components/EntryCreateModal.tsx:93-108`**
+
+`validateSlug` checks emptiness, slashes, charset, length — **never collision**, though the
+collection's entries are already loaded client-side. The payload is `{format, data:{}, body:''}`
+with **no `expectedVersion`**. Server-side, `exists` is computed at `:328` but used only for the
+`maxItems` guard and to compute `isCreateScaffold` at `:348` — **never to refuse a create against
+an existing document**. Because the entry exists, `isCreateScaffold` is false, so the empty
+payload is validated as an ordinary update; if the entry type has no required fields that
+passes, and `store.write` runs with `expectedVersion: undefined`, so OCC is skipped entirely.
+The file's data becomes `{}` and its body `''`, and the client shows a green "Created new entry".
+
+Because Save writes the working tree and only Publish commits, the destroyed content was never
+in git — **there is no recovery path, not even `git checkout`**. With required fields present the
+write is blocked but the user gets "title: This field is required", which never mentions the
+real problem.
+
+The analogous guard already exists for **rename** (`api/content.test.ts:372` tests "returns 400
+when slug already exists"), so there is an established pattern to copy.
+
+**Fix:** server-side create-intent (or `expectedVersion: null` meaning "must not exist") that
+409s when `exists`; client-side pre-check for the better message.
+
+### 2. [High] Worker rebase silently destroys concurrent editor saves — B1
+
+**`worker/cms-worker.ts:2162-2171, 2277, 2292, 2315, 2332`**
+
+`rebaseActiveBranches` checks for a dirty tree and skips, then rebases. The comment at
+`:2162-2165` asserts the residual race is safe — "the rebase will fail and the catch block will
+abort safely". That is true only for a save landing **before** `git rebase` starts. After it
+starts — a window spanning fetch, replay, and N conflict rounds of awaited git subprocesses on
+EFS — a save is destroyed two ways: `rebase --abort` (`:2315`, `:2332`) hard-resets the tree,
+discarding uncommitted tracked changes; or `checkout --theirs` (`:2292`) overwrites the
+just-saved file with the committed version and stages it, **after which the rebase succeeds and
+nothing logs a failure at all**.
+
+This is architecturally unguarded, not a narrow race: Lambda's `ContentStore.write()` and the
+worker's rebase touch the same working tree on shared EFS, and content files have only an
+**in-process** mutex. `docs/concurrency.md`'s "who uses what" table lists no cross-process write
+exclusion for content files, and its residual-windows list does not name this.
+
+_Verification limit:_ mechanism confirmed by code and standard git semantics; I did not stage a
+two-process EFS run to observe the loss.
+
+**Fix:** real exclusion between rebase and content writes — a `.canopy-meta/rebase-in-progress`
+marker the write boundary turns into a 409, or a shared advisory lock. Correct the comment too;
+it is why this survived review.
+
+### 3. [High] Group grants and revocations never take effect — A1
+
+**`http/handler.ts:258-267`; `canopycms-next/src/context-wrapper.ts:275`; vs
+`api/groups.ts:128,177,189` + `api/settings-helpers.ts:27`**
+
+Request-time effective groups — what actually assigns `Admins` — come from
+`loadInternalGroups(mainBranchContext.branchRoot, …)`, the **base-branch content clone**. The
+Groups admin API reads and writes the **settings workspace**. Both resolve the filename via
+`operatingStrategy(mode).getGroupsFilePath(root)`; only `root` differs, and it differs in every
+mode (prod `{workspace}/settings` vs `{workspace}/content-branches/{branch}`; dev
+`.canopy-dev/settings` vs `.canopy-dev/content-branches/{base}`). `mutateGroupsFile` has exactly
+one non-test caller — `api/groups.ts:189`, settings root only — and nothing copies settings into
+the base clone (`initialFiles` in `git-manager.ts:1319-1365` only seeds the orphan settings
+branch at creation).
+
+Impact is **broader than failed revocation**: since nothing in the product writes the base
+clone's `groups.json`, the entire internal-groups feature is inert for authorization. Every
+group created or granted returns 200 and is echoed back by `GET`, but never enters any user's
+group list, so path/branch ACLs written against those groups match nobody. Admin access keeps
+working only because `bootstrapAdminIds` (env) is merged separately — which is exactly why this
+sits undetected: the one privilege anyone tests still works.
+
+Escalates to Critical for any deployment that committed a `groups.json` on its base branch and
+then tries to revoke a member: the revocation reports success and does nothing.
+
+**Fix:** load internal groups from `getSettingsBranchRoot()` in both pipelines (the pattern
+`createContentAccessChecker` already uses) and delete the base-branch read. Also correct the
+settings PR body, which claims "Changes are already active in the CMS".
+
+### 4. [High] Most schema-editor mutations fail on the paths the editor sends — E1
+
+**`schema/schema-store.ts:810` (also `:416, :453, :548, :770, :891, :943, :1005`)**
+
+Verified end to end:
+
+1. `branch-schema-cache.ts:312` calls `flattenSchema(result.schema, contentRootName)`, so
+   production logical paths are content-root-prefixed — `content/posts`.
+2. `CollectionEditor.tsx:284` passes `editingCollection.logicalPath` to `useSchemaManager.ts:196`.
+3. `api/schema.ts:591-598` runs `decodeCollectionPath`, which **only URL-decodes**, then calls
+   `store.addEntryType('content/posts', …)`.
+4. `schema-store.ts:810` passes that straight to `resolveCollectionPath(this.contentRoot, …)`,
+   which looks for `<contentRoot>/content/posts` → not found → throws → **400 "Collection not
+   found"**.
+
+`updateCollectionInner` is the outlier that **works**, because at `:662-663` it explicitly strips
+the prefix before resolving. Every other mutation lacks that strip. So add-entry-type,
+remove-entry-type, delete-collection, sub-collection create, and the field operations are all
+broken in the shipped product; only update-collection and update-order function.
+
+Reviewer E reproduced this at runtime against a real `SchemaOps`. Hidden because API tests mock
+`SchemaOps`, store tests use unprefixed paths, and `useSchemaManager.test.ts` mocks the API
+client — three layers each mocking the next, with no test crossing the seam.
+
+**Fix:** one shared path-normalisation helper applied at a single boundary (preferably where
+`SchemaOps` receives a logical path), plus one integration test that drives a real `SchemaOps`
+with the prefixed path the editor actually sends.
+
+### 5. [High] Branch-switch race writes old-branch content into the new branch — D3
+
+**`editor/Editor.tsx:441,447,452-456`**
+
+The load effect's skip gate (`loadedValues[contentId] !== undefined`), its in-flight dedup
+(`loadingEntryIdsRef.has(contentId)`), and its state writes are all keyed by **bare
+`contentId`** with no branch qualifier, and **none of the writes check whether the branch
+changed during the fetch**. (A `currentContentIdRef` staleness mechanism exists but its own
+comment scopes it to clearing the loading flag and suppressing a toast.)
+
+So: switch branch → the old branch's pending `loadEntry` resolves → it writes the old branch's
+content under the key the new branch also uses. Two consequences follow mechanically:
+`loadedValues[contentId]` is now defined, so the gate **suppresses the fresh load** and the
+editor shows old-branch content as the new branch's; and OCC tokens are branch-keyed, so the
+lookup misses, `expectedVersion` is omitted, and the save is a **blind cross-branch overwrite**.
+
+Precondition is mild — the same `contentId` on both branches is the normal case, since branches
+are clones and IDs are embedded in filenames.
+
+_Verification limit:_ mechanism confirmed structurally; I did not execute the interleaving.
+
+### 6. [High] Opening an entry manufactures a persisted draft — D4
+
+**`editor/Editor.tsx:453-456`; `editor/hooks/useDraftManager.ts:128,144,183-195,229-238`**
+
+Every successful load seeds `drafts[contentId] = loaded` — a **pristine** draft with zero user
+edits — and every drafts change is persisted to `localStorage`. The dirty rule (`:144`) counts a
+restored draft lacking a `loadedValues` entry as dirty, and `loadedValues` starts empty on
+mount. So browsing five entries yields "5 files modified" next session, plus false "unsaved
+changes" prompts on branch switch.
+
+Worse than UX: the restored draft is a full stale snapshot, `effectiveValue` prefers it over the
+fresh load, and Save sends the **fresh** load's OCC token — so it passes conflict detection and
+**reverts a colleague's intervening work** with a green "Saved".
+
+This partially regresses a bug the codebase already fixed: the comment at `:305-313` explains
+that dropping the draft key after save exists precisely to kill "the 'phantom dirty' bug". That
+fix covers the save path; the open path still seeds one.
+
+**Fix:** stop seeding drafts on load (`effectiveValue = draft ?? loadedValue` renders fine
+without it), and persist the draft's base version so a stale restore triggers the conflict UX.
+
+### 7. [High] `submitBranch` retry skips the push — C1
+
+**`services.ts:326-331`**
+
+```ts
+const status = await git.status()
+if (status.files.length > 0) {
+  await git.add('.'); await git.commit(…); await git.push(…)   // push inside the dirty gate
+}
+```
+
+Committing cleans the tree. So attempt 1 (commit succeeds, push fails) leaves a clean tree, and
+the retry — which the failure invites — skips the whole block, never pushes, and returns
+normally. The caller records `status: 'submitted'`. The worker then ships `remote.git`'s stale
+tip, so **the PR silently lacks the author's last edit** while every surface reports success.
+`submitBranch` has zero test coverage.
+
+**Triage disagreement worth your attention:** this is already tracked as
+`submit-retry-skips-push-after-failed-push.md` at **P3**. An independent reviewer who had never
+seen that file re-derived it and rated it High. I agree with High — it belongs to the same
+silent-loss class as D1/B1/A1. The re-derivation suggests the original P3 was set before the
+failure mode was fully traced.
+
+**Fix:** gate the push on "local branch is ahead of the mirror", not on a dirty tree.
+
+### 8. [High] "Reload File" silently discards unsaved edits — D5
+
+**`editor/hooks/useDraftManager.ts:443-467` vs `:428-441`**
+
+`handleDiscardFileDraft` checks `isSelectedDirty()` and confirms. `handleReload`, immediately
+below it, has **neither**, and at `:448-449` overwrites both `loadedValues` and `drafts` with the
+server value. So the action labelled "Discard" is guarded and the one that is destructive in
+practice is not — and Reload is **the advertised recovery for a 409**: the conflict toast tells
+the losing editor to reload, which destroys the work they were about to lose before they can
+copy it out. The localStorage copy is overwritten too.
+
+### 9. [High] Three declared field types are uneditable — D6
+
+**`config/types.ts:15-24` vs `editor/FormRenderer.tsx:228-458`**
+
+Declared primitives are `string, number, boolean, datetime, rich-text, markdown, mdx, code`.
+`FormRenderer` implements `string, boolean, markdown, mdx, select, reference, image, block,
+object, code`. **`number`, `datetime`, and `rich-text` fall through to the literal text
+"Unsupported field".** The shared validator fully supports them, so a **required** field of one
+of these types makes new entries of that type **permanently unsaveable** — validation demands a
+value the form cannot provide.
+
+The escape hatch does not rescue it: `customRenderers` is consulted at `FormRenderer.tsx:167`,
+but repo-wide it appears **only** in that file and its own test — no caller threads it, and the
+public `CanopyEditor` surface does not accept it.
+
+### 10. [High] `sanitizeHref` returns `'#'` for every relative URL — S2-1
+
+**`utils/sanitize-href.ts:20`**
+
+`new URL(url)` with **no base** throws for any relative reference, so `sanitizeHref('/about')`,
+`('docs/guide')`, and `('#section')` all fall to the fallback. Only absolute `http(s)://` URLs
+survive. This is exported from the package's **main entrypoint**, documented across
+`README.md:1564-1595` as the recommended way to render any CMS link, described in
+`ARCHITECTURE.md:2645` as the single auditable point for URL safety, used in
+`apps/example1`, and has **no test file at all**. Every internal link routed through the
+documented helper is dead.
+
+It fails _closed_, so this is not an XSS hole — which is exactly why it survived: the security
+property everyone checks still holds. Note the July report lists this function among its
+verified positives. Fix by parsing against a sentinel base (`new URL(url, 'https://relative.invalid')`),
+returning relative form when the origin matches the sentinel; dangerous schemes still surface
+their own protocol and stay blocked. Decide deliberately about protocol-relative `//evil.com`.
+
+### 11. [High] No scaffolded or documented path to prod mode — E4
+
+**`cli/cli.ts:123`; `cli/template-files/canopycms.config.ts.template:5`; `docs/deploying-to-aws.md`**
+
+`canopycms init` hardcodes `const mode = 'dev'` and bakes it into the generated config. There is
+**no env-var override in the runtime**: `CANOPY_MODE` appears only in a Dockerfile template
+comment and in a test asserting the Dockerfile does _not_ set it — no code reads it. Following
+the deployment guide therefore ships a **dev-mode Lambda**, which resolves its workspace to
+`<cwd>/.canopy-dev` and fails `EROFS` on a read-only container filesystem. An adopter can
+hand-edit the config, but nothing tells them to, and the one env var mentioned is a dead end.
+
+Given production readiness is the active program, this is the gap most likely to cost a day.
+
+---
+
+## Medium findings
+
+| ID  | Finding                                                                                                                                                                                                                                                                                                                                                                                              | Location                                              |
+| --- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------- |
+| E2  | `createCollection` has no duplicate-slug check (the rename path does), so `posts.id1/` and `posts.id2/` coexist and `resolveCollectionPath`'s first-match makes logical-path addressing nondeterministic across hosts                                                                                                                                                                                | `schema/schema-store.ts:542-611`                      |
+| B3  | `pullCurrentBranch` merges `origin/<branch>`, which cannot exist in `--single-branch` clones — the settings pull is a **permanent no-op**, and `services.ts:384` logs the failure as "normal for first commit". The sibling `pullBaseInner:1111` pins `FETCH_HEAD` and its comment explains exactly this; **third instance of a bug already fixed twice**                                            | `git-manager.ts:1138-1143`                            |
+| B4  | One duplicate content ID makes every index rebuild throw, bricking all content ops on the branch. `idIndex()` has no `catch`, so it re-scans and re-throws forever. Created by `renameEntry`'s acknowledged link/unlink crash window; `branch-health` doesn't classify it, so prod admins have no repair path                                                                                        | `content-id-index.ts:109`; `content-store.ts:258-262` |
+| A2  | The deployment's settings-branch name is auto-provisioned as a _content_ workspace by any `/:branch/…` request (`shouldAutoCreate` includes `branch === settingsBranch`), bypassing the create-time guard that explicitly rejects that namespace; and it is `canopycms-system`-created and unprotected, so `authorization/branch.ts:104-109` makes it **submittable by any user with branch access** | `http/handler.ts:76-86`                               |
+| A3  | `parseBranchName` accepts `!f`, which `sanitizeBranchName` maps to `-f`, voiding the documented invariant that `git-manager`'s separator-free calls rely on. Fails safe today (500 + orphan dir) but the invariant is asserted in a comment future call sites will trust                                                                                                                             | `paths/validation.ts:306`; `paths/branch-name.ts:21`  |
+| B2  | The settings-workspace init lock never makes losers wait — `acquired` only decides whether to _release_ — so concurrent cold starts genuinely race `git clone`/orphan-init. Also a stale-removal race with no inode identity check and no heartbeat                                                                                                                                                  | `settings-workspace.ts:144-248`                       |
+| B5  | `withOccFileLock`'s stale-takeover judges liveness via `fs.stat` mtime read through the NFS attribute cache, while the retry budget deliberately exceeds `stale` — a waiter can steal a live lock. Layer 3's "immune to client caching" is true of _acquisition_, not takeover (Suspected; EFS behavior asserted, not measured)                                                                      | `utils/occ-json-write.ts:217-266`                     |
+| C5  | `:param` is double-decoded (malformed `%` → URIError → 500); catch-alls are never router-decoded, and handlers compensate inconsistently (entries/schema decode, content doesn't)                                                                                                                                                                                                                    | `http/router.ts:141`                                  |
+| C2  | Unknown exceptions (ENOSPC/EACCES/bugs) mapped to **400** "Write failed"/"Rename failed" instead of 500, inconsistent with sibling read/delete handlers                                                                                                                                                                                                                                              | `api/content.ts:465,607`; `api/entries.ts:399`        |
+| C6  | A non-busy order-cleanup error after a _successful_ delete returns 500 "Failed to delete entry" though the entry is gone; the retry then 404s                                                                                                                                                                                                                                                        | `api/entries.ts:447-480`                              |
+| C3  | `q=` directive silently ignored when `f=` is omitted — the URL and cache key carry a quality the output doesn't honor                                                                                                                                                                                                                                                                                | `assets/transform.ts:224`                             |
+| C4  | An entry slugged `all` is overwritten by the collection aggregate `all.md`; the manifest then points that entry at the aggregate                                                                                                                                                                                                                                                                     | `ai/generate.ts:237,282`                              |
+| B7  | Entry-delete order cleanup is a read-modify-write whose read happens _outside_ the schema lock — concurrent deletes resurrect a removed ID; a delete racing a drag-reorder reverts the reorder                                                                                                                                                                                                       | `api/entries.ts:436-447`                              |
+| E5  | `flattenSchema` drops the root collection label — root label edits persist but never display                                                                                                                                                                                                                                                                                                         | `config/flatten.ts:100`                               |
+| E6  | `meta-loader` silently drops collections nested under plain directories                                                                                                                                                                                                                                                                                                                              | `schema/meta-loader.ts:348`                           |
+| E7  | `sync push --force` on a conflicted workspace exits **0**                                                                                                                                                                                                                                                                                                                                            | `cli/sync.ts:170`                                     |
+| E8  | The dev content watcher silently no-ops for a non-default `contentRoot`                                                                                                                                                                                                                                                                                                                              | `dev-content-watcher.ts:83`                           |
+| E3  | Entry delete has no referential-integrity check; `DeletionChecker` carries dead code and a latent resolved-reference bug                                                                                                                                                                                                                                                                             | `api/entries.ts:427`                                  |
+
+---
+
+## Low findings and hardening notes
+
+- **`services.checkPathAccess` is dead and fail-open-shaped** (`services.ts:236,473`) — bound
+  with an **empty rules array**, so it ignores every configured rule and answers purely from
+  `defaultPathAccess`; under the scaffolded `'allow'` that is allow-everything. Zero production
+  consumers; the only reference is a test that blesses the shape. It is a well-named trap for
+  the next person who wants a path check. Delete it or bind it lazily.
+- **A4** Comment threads are branch-scoped only, so a user with branch access reads comments on
+  entries they are path-forbidden to read (`api/comments.ts:52`). Comment text routinely quotes
+  the content it annotates.
+- **A5** Clerk `authorizedParties` is optional in prod, so CSRF posture rests on browser SameSite
+  defaults (`canopycms-auth-clerk/src/clerk-plugin.ts:100-150`).
+- **A6** `renameEntry` checks `edit` on the source path only, not the destination — slug-scoped
+  rules can be sidestepped by renaming (`api/content.ts:591`).
+- **B6** Corrupt `branches.json` bricks listing instead of regenerating; only ENOENT triggers
+  regeneration, and the file is only rewritten _by_ the regenerate path (`branch-registry.ts:113-121`).
+- **B8** A crash between `completeTask` and `updateBranchMetadata` wedges `syncStatus` with no
+  reconciliation; flipping the order fixes it (`worker/cms-worker.ts:720-723`).
+- **B9** Crash-leftover `*.tmp` files are staged by submit's `git add .` — content branches
+  exclude only `.canopy-meta/`, unlike settings workspaces which exclude `*.lock` for this exact
+  reason.
+- **B10** Content OCC uses `mtimeMs`; same-granule writes can miss a conflict.
+- **B11** After a worker-lock compromise, in-flight `syncGit` git mutations continue unbounded
+  alongside the new holder; `docs/concurrency.md` documents the overlap as harmless, which is
+  true for `worker-status.json` but not for branch-clone git state.
+- **D7** Switching back to an already-loaded entry clobbers preview data permanently — the
+  preview receives raw unresolved reference IDs (child effect fires before parent reset).
+- Plus 9 further Low items from C (client/response-shape drift, unsanitized error strings in two
+  handlers, `assetUrl` emitting always-400 URLs, crop `toFixed(4)` emitting a cache key its own
+  parser rejects, and others) and 7 from E.
+
+---
+
+## Systemic observations
+
+1. **Green tests, broken seams.** The suite's 3,619 passing tests are real, but four confirmed
+   High/Critical findings live precisely at boundaries where one layer is mocked and the layer
+   beneath is tested with different inputs (E1, A1, B3, C1). The highest-leverage structural
+   change is not more unit tests — it is a small number of tests that cross a seam with the
+   _exact_ values production sends.
+2. **Partial fixes of previously-found bugs.** D4 regresses a "phantom dirty" bug whose fix is
+   commented three lines away; B3 is the third occurrence of a `--single-branch` remote-ref bug
+   correctly fixed twice in the same files; E1's missing prefix-strip exists in exactly one of
+   nine call sites. When this codebase finds a bug class, the fix tends to land at the site
+   rather than at the abstraction — which is also why S1 found four independent walkers over the
+   same group/object/block structure, and four hand-rolled implementations of "does this user
+   match allowedUsers/allowedGroups" (`authorization/path.ts:40`, `authorization/branch.ts:39`,
+   `api/branch.ts:127`, `api/branch.ts:500`) that **already disagree**.
+3. **Comments that assert safety are a risk surface here.** Three confirmed findings are
+   protected from review by a comment claiming the hazard is handled: `cms-worker.ts:2162-2165`
+   ("the catch block will abort safely"), `services.ts:384` ("normal for first commit"),
+   `parseBranchName:303-305` ("validated names never reach git with a leading hyphen"). Each fix
+   must correct the comment, or the next reviewer will re-clear it.
+4. **Dead code is a non-issue.** Independent sweeps of ~1,100 exported symbols found **3**
+   genuinely dead exports. Do not spend effort here.
+
+---
+
+## Test-suite and dependency health
+
+**Highest-risk untested behavior** (from S2, risk-weighted): `api/route-builder.ts` (the codegen
+backbone, pervasively exercised but never tested in isolation); `utils/sanitize-href.ts` (zero
+tests, and broken — see finding 10); `editor/fields/BlockField.tsx` (zero coverage at any layer
+for a headline capability); `dev-content-watcher.ts`; `schema/meta-loader.ts`'s
+`watchCollectionMetaFiles`; `api/reference-options.ts` / `resolve-references.ts` (only edge cases
+tested, not the resolution logic); `auth/context-helpers.ts`; `services.ts`'s `submitBranch`
+(zero coverage — see finding 7).
+
+**Dependencies** (`pnpm audit`: 32 advisories; the ones that matter):
+
+| Package       | Where                                            | Issue                                                        | Action                                                                                                                                                      |
+| ------------- | ------------------------------------------------ | ------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `aws-cdk-lib` | `canopycms-cdk` dev **+ peer** `^2.192.0`        | OS command injection in `NodejsFunction` bundling (<2.260.0) | Routine same-major bump. **The peer range is the real exposure** — it lets adopters install a vulnerable version into the path that builds your prod Lambda |
+| `image-size`  | `canopycms` **prod** `^2.0.2`                    | DoS on malformed image; **no upstream fix**                  | Needs a decision, not a bump: bound input before the call, or replace. Reached directly from uploads (`assets/pipeline.ts:143`)                             |
+| `file-type`   | `canopycms` **prod** `^20.4.1`                   | DoS on malformed input; fixed in ≥21.3.2                     | Major bump + compat check. Reached directly from uploads (`:275`)                                                                                           |
+| `next`        | `canopycms-next` dev `^15.5.19`, wide peer range | multiple <15.5.21                                            | Bump dev; raise peer floors to patched versions                                                                                                             |
+| `sharp`       | `canopycms` prod `^0.35.3`                       | —                                                            | **Already patched**; the audit hit is a nested copy under `next`                                                                                            |
+
+---
+
+## What this codebase does well
+
+Worth stating plainly, because it calibrates everything above:
+
+- Every API request is authenticated **before** routing side effects, and the auth-plugin
+  allowlist makes it impossible to serve prod traffic with the header-trusting dev plugin.
+- Path traversal is genuinely defended in depth: branded types, Zod validators at the boundary,
+  re-validation after URL decoding, and containment checks at every filesystem sink.
+- Git invocations are argv-based with `--end-of-options` or ref-prefixing wherever
+  caller-influenced strings reach positionals, with written reasoning at each site.
+- The asset pipeline's own logic is careful — strict staging-key validation, an allowlist-based
+  SVG sanitizer with funciri/CSS-escape hardening, and fully allowlisted transform directives
+  before sharp.
+- `docs/concurrency.md` is an unusually good design document, and the four layers are
+  implemented consistently at every site traced. Where this review disputes it, the disputes are
+  about two specific claims, not the design.
+- The client/server boundary holds: `CanopyClientConfig` is a real allowlist with no secrets in
+  props, validation is genuinely shared between editor and server, preview-bridge `postMessage`
+  origin checks are careful in both directions, and no `dangerouslySetInnerHTML` exists anywhere.
+- Only 3 dead exports across ~1,100. Error messages route through `sanitizeErrorMessage` /
+  `redactCredentials` consistently.
+
+---
+
+## Fix plan
+
+Sequenced by risk-per-unit-effort. Each numbered item is one PR-sized unit; the branch names
+follow the repo's convention and avoid `claude` per house rules.
+
+### Wave 1 — Stop destroying user content (do these first, in this order)
+
+Rationale: every item is silent, unrecoverable loss of work a user was told was safe. Items 1.1
+and 1.2 are small and independent; 1.3 is the only one needing design thought.
+
+1. **`fix/create-entry-exclusive-create`** — finding 1 (Critical). Add create-intent semantics to
+   the write boundary that 409s when the document exists; add the client-side slug-collision
+   pre-check for the error message. Mirror the existing rename guard. **Test:** create over an
+   existing slug returns 409 and leaves content intact — the case `api/content.test.ts:372`
+   already covers for rename.
+2. **`fix/editor-draft-and-reload-safety`** — findings 6, 8 (+ D8, CF2). Stop seeding pristine
+   drafts on load; add the dirty-check + confirm to `handleReload`, matching
+   `handleDiscardFileDraft` three lines above; persist the draft's base version so a stale
+   restore raises the conflict UX instead of passing OCC. **Test:** open-without-editing leaves
+   zero drafts after reload; reload with a dirty draft prompts.
+3. **`fix/worker-rebase-content-exclusion`** — finding 2. Needs a design decision: marker-based
+   (write boundary returns 409 while a rebase is in progress) vs a shared advisory lock. Prefer
+   the marker — it reuses `resource-generation.ts` machinery and degrades to a retry rather than
+   a stall. Correct the `:2162-2165` comment. **Test:** inject a content write after conflict
+   round 1 and assert the file survives (the repo's existing rebase tests give the harness).
+4. **`fix/branch-switch-load-race`** — finding 5. Branch-qualify the keys (or check the branch
+   after `await loadEntry` before writing state). **Test:** switch branches mid-load; assert the
+   new branch's content loads and the save carries `expectedVersion`.
+
+### Wave 2 — Make the product do what it says
+
+5. **`fix/schema-store-content-root-paths`** — finding 4. One shared normalisation at a single
+   boundary, applied to all nine call sites; remove the bespoke strip in `updateCollectionInner`
+   in favour of it. **Test:** drive a real `SchemaOps` (not a mock) with `content/posts` for every
+   mutation — this is the seam test that would have caught it.
+6. **`fix/group-storage-single-source`** — finding 3. Read internal groups from
+   `getSettingsBranchRoot()` in both `http/handler.ts` and `context-wrapper.ts`; delete the
+   base-branch read; extract the duplicated "resolve effective user" pipeline into core so the
+   Next wrapper calls it rather than re-implementing it. Correct the settings PR body. **Test:**
+   `PUT /groups/internal` removing a user from `Admins` → their next `whoami` lacks `Admins`.
+7. **`fix/sanitize-href-relative-urls`** — finding 10. Sentinel-base parse; **write the test file
+   that does not exist** covering absolute, root-relative, relative, fragment-only, query-only,
+   `javascript:`, `data:`, `vbscript:`, protocol-relative, empty.
+8. **`fix/submit-push-on-ahead`** — finding 7. Gate the push on ahead-of-mirror rather than dirty
+   tree. **Test:** commit-succeeded/push-failed then retry actually pushes. Re-rate the existing
+   P3 backlog item.
+9. **`feat/field-renderers-number-datetime-richtext`** — finding 9. Implement the three
+   renderers, **or** remove the types from the public surface until supported. Either way thread
+   `customRenderers` through `Editor`/`CanopyEditor` so the documented extension point exists.
+
+### Wave 3 — Production readiness (blocks the active program)
+
+10. **`fix/prod-mode-deployment-path`** — finding 11. Give `init` a mode flag or a documented
+    runtime env override that the code actually reads; fix the Dockerfile comment referencing a
+    non-existent `CANOPY_MODE`; update `docs/deploying-to-aws.md` with the switch. **Test:** a
+    CI assertion that the generated deploy artifact resolves to prod mode.
+11. **`chore/dependency-security-bumps`** — `aws-cdk-lib` to `^2.260.0` **including the peer
+    range**; `next` dev + peer floors; `file-type` major bump with a compat check on
+    `assets/pipeline.ts`. Separately decide on `image-size` (no fix available) — bound input size
+    and dimensions before the call at minimum.
+12. **`fix/settings-workspace-init-lock`** — B2 + B3 together (both settings-workspace git
+    plumbing). Reuse `acquireProvisioningLock` for the init race; mirror `pullBaseInner`'s
+    `FETCH_HEAD` pin in `pullCurrentBranchInner` and narrow the swallow at `services.ts:381`.
+    Update `docs/concurrency.md`'s description of this lock — it currently describes behavior the
+    code does not have.
+13. **`fix/branch-delete-guardrails`** — CF1. Add the confirmation modal (matching submit/withdraw)
+    **and** extend the delete guard from `submitted` to `submitted | approved` — a one-literal
+    change in the same condition.
+
+### Wave 4 — Resilience and consistency
+
+14. **`fix/content-id-collision-recovery`** — B4. Surface duplicate-ID pairs in `scanBranchHealth`
+    with a repair action (the valuable half), and make the rebuild quarantine rather than throw.
+15. **`fix/api-error-status-consistency`** — C2, C6, C5, plus the two unsanitized-error handlers.
+16. **`fix/reserved-settings-branch-namespace`** — A2. Drop `branch === settingsBranch` from
+    `shouldAutoCreate` and refuse the reserved prefix in the workflow guards.
+17. **`fix/branch-name-sanitize-invariant`** — A3. Reject names whose sanitized form starts with
+    `-`; add the property test asserting the invariant the comment already claims.
+18. **`chore/authz-target-matcher-dedup`** — collapse the four already-diverging
+    `allowedUsers`/`allowedGroups` matchers into one; delete `services.checkPathAccess`.
+
+### Cross-cutting, do alongside rather than last
+
+- **Seam tests.** Wave 2 items 5 and 6 each carry one. Add a third for the write path (real
+  `ContentStore`, real validator, editor-shaped payload). These three are worth more than any
+  quantity of additional unit tests.
+- **Decide on `defaultBranchAccess: 'allow'` in the init template** (CF4) — deliberately, either
+  way; at minimum a comment saying what to tighten before production.
+- **Correct the three safety-asserting comments** as part of their fixes (finding 2, B3, A3), and
+  the four `docs/concurrency.md` claims B disputes.
+
+### What I would not do yet
+
+Dead-code cleanup (3 symbols), the large-file split, and the duplication items are real but
+low-value against the above. `image-size` has no upstream fix, so treat it as a mitigation
+decision rather than a blocked bump.
+
+---
+
+## Appendix: coverage and limits
+
+**Not reviewed or lightly covered:** `worker/cms-worker.ts` beyond the rebase loop, sync/PR loops
+end to end; `assets/store-s3.ts` beyond staging guards (presign policy/CORS); `github-service.ts`
+Octokit request logic; `auth/file-based-auth-cache.ts` internals; `content-tree` internals; the
+e2e suite (not run — another session held the harness).
+
+**Findings reported but not independently verified by me** (they carry their reviewer's
+confidence, not mine): B5 (EFS attribute-cache behavior asserted from NFS semantics, not
+measured), B6–B11, C2–C6 and C's Lows, D7–D15, E2–E8, A4–A6. All Critical/High findings in this
+report were verified first-hand.
+
+**Verification limits stated inline** for findings 2 and 5, where the mechanism is confirmed by
+code but the runtime effect was not staged.
+
+Full per-reviewer reports and the verification log are in this session's scratchpad
+(`reviews/A-…` through `E-…`, `S1-…`, `S2-…`, `V-verification-log.md`).
