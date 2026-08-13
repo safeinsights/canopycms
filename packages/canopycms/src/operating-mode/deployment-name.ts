@@ -23,6 +23,8 @@
  * case this feature exists to fix.
  */
 
+import { canopyLogWarn } from '../utils/logger'
+
 let warned = false
 
 /**
@@ -55,7 +57,15 @@ export function resolveDeploymentName(
   const configValue = config.deploymentName
 
   if (envValue && configValue && envValue !== configValue && !warned) {
-    console.warn(
+    // canopyLogWarn, not console.warn: cms-worker.ts imports this module and
+    // resolves through it inside start(), so this line lands in worker.log,
+    // where an unprefixed line is folded into the previous CloudWatch event.
+    // The mismatch this reports is exactly what an operator would be grepping
+    // for. Plain console under Lambda/dev, as everywhere else. See
+    // utils/logger.ts. (Missed by the worker-log sweep, which went by directory
+    // name and by the modules the finding named, rather than by the worker's
+    // real import graph.)
+    canopyLogWarn(
       `CanopyCMS: CANOPYCMS_DEPLOYMENT_NAME ("${envValue}") differs from config.deploymentName ` +
         `("${configValue}") — using the env var (infra-stamped env wins over shared-repo config ` +
         `by design; see resolveDeploymentName's doc comment). Update config.deploymentName to ` +

@@ -274,6 +274,16 @@ export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(functi
   // status lock.
   const statusLocked = branchWriteBlocked && !branchReadOnly
 
+  // The lock now fails CLOSED while the branch list is unresolved (Editor.tsx's
+  // `branchContentLocked` is `?? true`), which is right -- but `branchStatus` is
+  // `currentBranch?.status`, i.e. undefined in that same window. Without this
+  // distinction every banner and tooltip below interpolated it directly and read
+  // `Branch "main" is undefined - content is read-only`, on ordinary initial load
+  // and permanently after a failed branches fetch. Worse under version skew,
+  // where the status IS known ('editing') and the copy would assert a status
+  // lock the status plainly contradicts. So: locked, but say why honestly.
+  const branchDataUnavailable = statusLocked && branchStatus === undefined
+
   return (
     <Paper
       ref={ref}
@@ -474,13 +484,15 @@ export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(functi
               label={
                 branchReadOnly
                   ? 'The base branch is read-only'
-                  : statusLocked
-                    ? branchStatus === 'submitted'
-                      ? 'This branch is submitted for review — withdraw it to make changes'
-                      : `This branch is ${branchStatus} — content is read-only`
-                    : !hasUnsavedChanges && currentEntry
-                      ? 'No changes to save'
-                      : ''
+                  : branchDataUnavailable
+                    ? 'Branch details are still loading — saving is disabled until they arrive'
+                    : statusLocked
+                      ? branchStatus === 'submitted'
+                        ? 'This branch is submitted for review — withdraw it to make changes'
+                        : `This branch is ${branchStatus} — content is read-only`
+                      : !hasUnsavedChanges && currentEntry
+                        ? 'No changes to save'
+                        : ''
               }
               disabled={!branchReadOnly && !statusLocked && (hasUnsavedChanges || !currentEntry)}
             >
@@ -594,9 +606,11 @@ export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(functi
           >
             <Group justify="space-between" align="center" gap="sm" wrap="wrap">
               <Text size="sm">
-                {branchStatus === 'submitted'
-                  ? `Branch "${branchName}" is submitted for review and locked for edits. Use Withdraw Branch above to resume editing.`
-                  : `Branch "${branchName}" is ${branchStatus} — content is read-only.`}
+                {branchDataUnavailable
+                  ? `Branch details for "${branchName}" could not be loaded, so content is locked until they arrive. Use Manage Branches to retry.`
+                  : branchStatus === 'submitted'
+                    ? `Branch "${branchName}" is submitted for review and locked for edits. Use Withdraw Branch above to resume editing.`
+                    : `Branch "${branchName}" is ${branchStatus} — content is read-only.`}
               </Text>
               <Button size="xs" variant="light" color="yellow" onClick={onBranchManagerOpen}>
                 Manage Branches

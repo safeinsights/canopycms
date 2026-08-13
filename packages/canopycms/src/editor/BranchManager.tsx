@@ -516,7 +516,16 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
                       >
                         Open
                       </Button>
-                      {b.status === 'submitted' ? (
+                      {/* Mirrors EditorHeader's `isWithdrawable` rather than
+                          testing 'submitted' alone. getBranchPermissions grants
+                          canWithdraw for 'approved' too -- withdraw is that
+                          status's only non-destructive exit -- but this render
+                          gate used to send 'approved' down the Submit arm, so
+                          the Withdraw button never mounted and the permission
+                          was computed and then thrown away. The two surfaces
+                          disagreed: EditorHeader offered the exit, this one
+                          didn't. */}
+                      {b.status === 'submitted' || b.status === 'approved' ? (
                         <Tooltip
                           label="Only the branch creator can withdraw"
                           disabled={perms.canWithdraw}
@@ -537,7 +546,19 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
                           label={
                             b.isProtected
                               ? 'The base branch cannot be submitted'
-                              : 'Only the branch creator can submit'
+                              : // A status arm, because canSubmit now folds in
+                                // the server's status rule as well as the
+                                // base-branch one. Without it, an archived (or
+                                // any non-editing) branch showed a disabled
+                                // Submit reading "Only the branch creator can
+                                // submit" -- to the creator. That is precisely
+                                // the permission-vs-no-available-transition
+                                // confusion #205 removed from EditorHeader, and
+                                // folding status into canSubmit reintroduced it
+                                // one component over.
+                                b.status !== 'editing'
+                                ? `A branch with status "${b.status}" cannot be submitted`
+                                : 'Only the branch creator can submit'
                           }
                           disabled={perms.canSubmit}
                         >

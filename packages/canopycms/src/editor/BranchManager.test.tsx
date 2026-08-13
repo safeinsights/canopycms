@@ -718,6 +718,55 @@ describe('BranchManager', () => {
     expect(screen.queryByTestId('branch-protected-badge-main')).toBeNull()
   })
 
+  it('renders Withdraw, not Submit, for an approved branch', () => {
+    // getBranchPermissions has granted canWithdraw for 'approved' since #205
+    // (withdraw is that status's only non-destructive exit), but the render
+    // gate tested only for 'submitted', so an approved branch went down the
+    // Submit arm and the Withdraw button never mounted -- the permission was
+    // computed and thrown away. EditorHeader offered the exit; this surface
+    // did not. The existing tests all used 'submitted', which is why it passed.
+    const branches: BranchSummary[] = [
+      { ...baseBranches[0], status: 'approved', submitBlocked: true },
+    ]
+    renderBranchManager({
+      branches,
+      mode: 'prod',
+      user: { userId: 'user1', groups: [] },
+      onWithdraw: vi.fn(),
+    })
+
+    expect(screen.getByTestId('withdraw-branch-button-main')).toBeTruthy()
+    expect(screen.queryByTestId('submit-branch-button-main')).toBeNull()
+  })
+
+  it('explains a non-editing status on the disabled Submit tooltip instead of blaming permissions', async () => {
+    // canSubmit now folds in the server's status rule, so a non-editing branch
+    // shows Submit disabled. The tooltip used to say "Only the branch creator
+    // can submit" -- to the creator -- which is exactly the
+    // permission-vs-no-available-transition confusion #205 removed from
+    // EditorHeader, reintroduced one component over by that folding.
+    const branches: BranchSummary[] = [
+      { ...baseBranches[0], status: 'archived', submitBlocked: true },
+    ]
+    renderBranchManager({
+      branches,
+      mode: 'prod',
+      user: { userId: 'user1', groups: [] },
+      onSubmit: vi.fn(),
+    })
+
+    const submit = screen.getByTestId('submit-branch-button-main')
+    expect(submit.hasAttribute('disabled')).toBe(true)
+
+    // Hover to actually render the label. Asserting only that the WRONG copy is
+    // absent would pass even if no tooltip rendered at all -- the exact vacuity
+    // shape this epic exists to remove -- so assert the RIGHT copy is present
+    // first, then that the misleading one is gone.
+    await userEvent.hover(submit)
+    expect(await screen.findByText(/status "archived" cannot be submitted/i)).toBeTruthy()
+    expect(screen.queryByText(/Only the branch creator can submit/)).toBeNull()
+  })
+
   it('disables Submit with a tooltip on the protected branch, even for the creator', () => {
     const branches: BranchSummary[] = [
       { ...baseBranches[0], isProtected: true, submitBlocked: true },

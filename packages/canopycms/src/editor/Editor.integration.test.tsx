@@ -1301,3 +1301,76 @@ describe('Editor integration', () => {
     // and manual testing in the actual application.
   })
 })
+
+describe('branches-fetch failure recovery', () => {
+  it('retries the branches fetch when the branch manager is opened on a pinned branch', async () => {
+    // The write lock now fails CLOSED on missing branch data, which turned a
+    // pre-existing gate into a lockout: opening the branch manager only called
+    // loadBranches() `if (!branchNameState)`, and every ordinary adopter pins a
+    // branch. Meanwhile the fetch is terminal on its own -- SWRProvider sets
+    // shouldRetryOnError and revalidateOnFocus false, and useBranchesData's
+    // refreshInterval is 0 without data -- so one network blip locked the
+    // editor for the whole session behind a "Manage Branches" button that
+    // pointedly did not retry. Only a page reload got out.
+    let branchCalls = 0
+    const fetchMock = vi.fn((input: RequestInfo | URL, _init?: RequestInit) => {
+      const url =
+        typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
+      if (url.endsWith('/api/canopycms/branches')) {
+        branchCalls += 1
+        // Fail the FIRST fetch only: the retry must be able to succeed, or
+        // this test would pass just as well against a retry that never runs.
+        if (branchCalls === 1) return Promise.resolve(okJson({ ok: false, status: 500 }, 500))
+        return Promise.resolve(
+          okJson({
+            ok: true,
+            status: 200,
+            data: {
+              branches: [
+                {
+                  name: 'main',
+                  status: 'editing',
+                  access: {},
+                  createdBy: 'user-1',
+                  createdAt: '2024-01-01',
+                  updatedAt: '2024-01-01',
+                  isProtected: false,
+                  readOnly: false,
+                  writeBlocked: false,
+                  submitBlocked: false,
+                },
+              ],
+            },
+          }),
+        )
+      }
+      return Promise.resolve(okJson({ ok: true, status: 200, data: {} }))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    renderWithProviders(
+      <Editor
+        entries={[]}
+        collections={[]}
+        title="Test Editor"
+        branchName="main"
+        operatingMode="dev"
+        themeOptions={{}}
+      />,
+    )
+
+    // The failed fetch leaves the editor locked -- that part is correct and is
+    // what the fail-closed default is for.
+    await waitFor(() => expect(branchCalls).toBe(1))
+    await waitFor(() => expect(screen.getByTestId('status-locked-banner')).toBeTruthy())
+
+    // Open the branch manager the way the lock banner tells the user to.
+    fireEvent.click(screen.getByTestId('branch-dropdown-button'))
+    fireEvent.click(await screen.findByTestId('manage-branches-menu-item'))
+
+    // A second request goes out...
+    await waitFor(() => expect(branchCalls).toBeGreaterThan(1))
+    // ...and the editor actually recovers, without a reload.
+    await waitFor(() => expect(screen.queryByTestId('status-locked-banner')).toBeNull())
+  })
+})
