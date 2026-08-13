@@ -2,7 +2,7 @@ import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { ContentIdIndex, extractIdFromFilename, extractSlugFromFilename } from './content-id-index'
 import {
@@ -98,13 +98,59 @@ describe('ContentIdIndex', () => {
       expect(index.getAllLocations()).toHaveLength(0)
     })
 
-    it('throws on ID collision', async () => {
+    it('quarantines a duplicate ID instead of throwing, keeping the lexicographically-first path', async () => {
       const duplicateId = 'a1b2c3d4e5f6'
-      await fs.writeFile(path.join(tempDir, `content/file1.${duplicateId}.json`), '{}')
+      // 'file1' < 'file2' lexicographically, regardless of which is written
+      // (or discovered) first.
       await fs.writeFile(path.join(tempDir, `content/file2.${duplicateId}.json`), '{}')
+      await fs.writeFile(path.join(tempDir, `content/file1.${duplicateId}.json`), '{}')
 
-      // Should throw
-      await expect(index.buildFromFilenames('content')).rejects.toThrow('ID collision')
+      await expect(index.buildFromFilenames('content')).resolves.toBeUndefined()
+
+      // The winner is fully usable via the normal ID-based lookup.
+      const location = index.findById(duplicateId)
+      expect(location).not.toBeNull()
+      expect(location?.relativePath).toBe(`content/file1.${duplicateId}.json`)
+
+      // The loser is excluded from every index, as if it were never scanned.
+      expect(index.findByPath(unsafeAsPhysicalPath(`content/file2.${duplicateId}.json`))).toBeNull()
+      expect(index.getAllLocations()).toHaveLength(1)
+
+      // Both paths are reported for admin-facing health/repair.
+      const duplicates = index.getDuplicateIds()
+      expect(duplicates).toHaveLength(1)
+      expect(duplicates[0]).toMatchObject({
+        id: duplicateId,
+        keptPath: `content/file1.${duplicateId}.json`,
+        droppedPaths: [`content/file2.${duplicateId}.json`],
+      })
+    })
+
+    it('picks the same winner regardless of directory-entry (readdir) order -- cross-host determinism', async () => {
+      const duplicateId = 'a1b2c3d4e5f6'
+      await fs.writeFile(path.join(tempDir, `content/zzz.${duplicateId}.json`), '{}')
+      await fs.writeFile(path.join(tempDir, `content/aaa.${duplicateId}.json`), '{}')
+
+      // Force readdir() to return entries in reverse order, simulating a
+      // second host (or a different filesystem) that happens to enumerate
+      // the same directory differently. The winner must not depend on this.
+      const realReaddir = fs.readdir.bind(fs)
+      const spy = vi
+        .spyOn(fs, 'readdir')
+        .mockImplementation(((dirPath: string, opts: unknown) =>
+          (realReaddir as (a: string, b: unknown) => Promise<unknown[]>)(dirPath, opts).then(
+            (result) => [...result].reverse(),
+          )) as typeof fs.readdir)
+
+      try {
+        await index.buildFromFilenames('content')
+      } finally {
+        spy.mockRestore()
+      }
+
+      // 'aaa' < 'zzz' lexicographically -- must win even though it was
+      // discovered SECOND under the reversed readdir order forced above.
+      expect(index.findById(duplicateId)?.relativePath).toBe(`content/aaa.${duplicateId}.json`)
     })
 
     it('indexes nested directories', async () => {

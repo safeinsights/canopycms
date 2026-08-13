@@ -15,12 +15,19 @@ import path from 'node:path'
 import { z } from 'zod'
 import { simpleGit } from 'simple-git'
 
-import type { BranchMetadata } from '../types'
+import type { BranchAccessControl, BranchMetadata, BranchStatus } from '../types'
 import { BranchMetadataFileManager, getBranchMetadataFileManager } from '../branch-metadata'
 import { scanBranchHealth, type BranchHealthEntry } from '../branch-health'
+import { ContentIdIndex } from '../content-id-index'
+import { invalidateContentIndexesDurable } from '../content-index-generation'
 import { getDefaultBranchBase, sanitizeBranchName } from '../paths'
 import { withOccFileLock } from '../utils/occ-json-write'
 import { tryAcquireProvisioningLock } from '../utils/provisioning-lock'
+import {
+  withContentWriteLock,
+  ContentWriteLockBusyError,
+  DEFAULT_CONTENT_WRITE_LOCK_WAIT_MS,
+} from '../utils/content-write-lock'
 import { getErrorMessage, isNodeError, isNotFoundError } from '../utils/error'
 import type { ApiContext, ApiRequest, ApiResponse } from './types'
 import { defineEndpoint } from './route-builder'
@@ -62,10 +69,41 @@ export interface RepairBranchDirData {
   branch: BranchMetadata
   /** The archived corrupt file's name, e.g. `branch.json.corrupt-20260101T000000Z`. */
   archivedAs: string
+  /**
+   * `status`/`access`/`createdBy` could not be recovered from the corrupt
+   * branch.json (invalid JSON cannot be safely partially parsed for
+   * security-adjacent state -- see repairBranchDirHandler's doc comment) and
+   * were reset to these defaults during this repair. The archived file at
+   * `archivedAs` still holds the original bytes for manual inspection: an
+   * admin who needs the real prior status/ACLs should open it directly and
+   * re-apply, rather than trust an automated guess. Always present on a
+   * successful repair -- these three fields can never be recovered from a
+   * file that failed JSON.parse.
+   */
+  reset: {
+    status: BranchStatus
+    access: BranchAccessControl
+    createdBy: string
+  }
 }
 
 /** Response type for POST /admin/branch-dirs/:dirName/repair-metadata */
 export type RepairBranchDirResponse = ApiResponse<RepairBranchDirData>
+
+export interface RepairedContentDuplicate {
+  id: string
+  /** The path that was kept (the deterministic winner) -- untouched by this repair. */
+  keptPath: string
+  /** Archived names the quarantined duplicate(s) were renamed to, dot-prefixed so future scans skip them. */
+  archivedAs: string[]
+}
+
+export interface RepairContentDuplicatesData {
+  resolved: RepairedContentDuplicate[]
+}
+
+/** Response type for POST /admin/branch-dirs/:dirName/repair-content-duplicates */
+export type RepairContentDuplicatesResponse = ApiResponse<RepairContentDuplicatesData>
 
 // ============================================================================
 // Zod schemas
@@ -133,9 +171,10 @@ const getBranchHealthHandler = async (
   // wrong directory.
   const baseRoot = getDefaultBranchBase(ctx.services.config.mode)
   const baseBranchName = ctx.services.config.defaultBaseBranch ?? 'main'
+  const contentRootName = ctx.services.config.contentRoot || 'content'
 
   try {
-    const entries = await scanBranchHealth(baseRoot, { baseBranchName })
+    const entries = await scanBranchHealth(baseRoot, { baseBranchName, contentRootName })
     return {
       ok: true,
       status: 200,
@@ -319,6 +358,31 @@ const purgeBranchDirHandler = async (
  * releasing withOccFileLock (required before save(), per [M4] above) and
  * save() actually running -- save() would then resurrect a metadata-only
  * ghost of a directory purge just moved to trash.
+ *
+ * ## Reset, not recovered -- and why (August 2026 baseline review)
+ *
+ * save()'s defaults-merge sees no existing record once branch.json is
+ * archived out of the way, so a `submitted` (write-locked) branch comes back
+ * `editing` (unlocked), `access` ACLs are dropped to `{}`, and `createdBy`
+ * becomes the ADMIN RUNNING THIS REPAIR, not the branch's real creator. This
+ * handler deliberately does NOT attempt to recover those three fields from
+ * the corrupt file, even though it is sometimes technically "partially
+ * parseable" (e.g. valid JSON with a truncated tail, or a stray character
+ * breaking otherwise-valid JSON): branch.json is written via
+ * `writeOccJsonFile`, which is atomic (temp-file + rename/link, see
+ * utils/occ-json-write.ts), so a genuinely corrupt file on disk is not
+ * ordinary truncated-write debris -- it got that way some other, less
+ * predictable way. `status`/`access` are security-adjacent (branch
+ * protection and per-path ACLs); silently reinstating a best-effort guess
+ * parsed out of a file that failed strict JSON.parse risks resurrecting
+ * WRONG security state with no human review, which is worse than a clean,
+ * clearly-reported reset. The archived file (`archivedAs`) is preserved
+ * precisely so a human CAN recover the real values with full context (open
+ * it, cross-check the GitHub PR, ask the editor) -- that is the safe
+ * recovery path, not automation. What was missing before this fix was any
+ * signal that a reset happened at all; the `reset` field on the response
+ * closes that gap by always reporting the (new, defaulted) values for these
+ * three fields, so the admin knows to re-apply the ACL and re-submit.
  */
 const repairBranchDirHandler = async (
   _gc: Record<string, never>,
@@ -414,7 +478,23 @@ const repairBranchDirHandler = async (
       branch: { name: branchName, status: 'editing', createdBy: req.user.userId },
     })
 
-    return { ok: true, status: 200, data: { branch: saved.branch, archivedAs } }
+    // See the "Reset, not recovered" section above: these three fields could
+    // not survive the corrupt file and were reset to the values save() just
+    // wrote -- report them explicitly rather than leaving the admin to infer
+    // that from an otherwise-unremarkable 200.
+    return {
+      ok: true,
+      status: 200,
+      data: {
+        branch: saved.branch,
+        archivedAs,
+        reset: {
+          status: saved.branch.status,
+          access: saved.branch.access,
+          createdBy: saved.branch.createdBy,
+        },
+      },
+    }
   } finally {
     if (releaseProvisioningLock) {
       await releaseProvisioningLock().catch(() => {})
@@ -455,6 +535,97 @@ async function checkStillCorrupt(dirPath: string): Promise<'corrupt' | 'healthy'
   } catch (err: unknown) {
     if (isNotFoundError(err)) return 'missing'
     return 'corrupt'
+  }
+}
+
+/**
+ * Repair duplicate content IDs by archiving the quarantined (losing) file(s)
+ * out of the content tree -- renamed to a dot-prefixed name so every future
+ * ContentIdIndex scan skips them (the same skip rule that already excludes
+ * hidden files and `_ids_`, so no new mechanism is needed for the rename to
+ * take effect). The kept (winning) file is never touched.
+ *
+ * Mirrors repair-metadata's shape: server re-derives duplicate state itself
+ * (never trusts a client's stale view), archives rather than deletes
+ * (nothing evaporates -- an admin can still recover a dropped file by
+ * stripping the archive prefix and, if needed, renaming its slug), and 409s
+ * if there is nothing to repair.
+ *
+ * Runs under `withContentWriteLock` (the same cross-host lock
+ * ContentStore.write/delete/renameEntry take -- see
+ * utils/content-write-lock.ts) rather than the provisioning lock purge/
+ * repair-metadata use: this handler mutates CONTENT files, not
+ * `.canopy-meta/branch.json` or the directory's existence, so the relevant
+ * hazard is a concurrent ContentStore write/rename or the worker's rebase
+ * loop touching the same tree mid-repair, not branch provisioning.
+ *
+ * After the renames land, `invalidateContentIndexesDurable` bumps the
+ * on-disk content-index generation marker (so other processes' ContentStores
+ * rebuild) and invalidates any ContentStore already registered in THIS
+ * process for the same root.
+ */
+const repairContentDuplicatesHandler = async (
+  _gc: Record<string, never>,
+  ctx: ApiContext,
+  _req: ApiRequest,
+  params: BranchDirParams,
+): Promise<RepairContentDuplicatesResponse> => {
+  const baseRoot = getDefaultBranchBase(ctx.services.config.mode)
+
+  const dirPath = resolveDirWithinBase(baseRoot, params.dirName)
+  if (!dirPath) {
+    return { ok: false, status: 400, error: 'Invalid directory name' }
+  }
+
+  const dirExists = await fs
+    .stat(dirPath)
+    .then(() => true)
+    .catch(() => false)
+  if (!dirExists) {
+    return { ok: false, status: 404, error: 'Directory not found' }
+  }
+
+  const contentRootName = ctx.services.config.contentRoot || 'content'
+
+  try {
+    return await withContentWriteLock(
+      dirPath,
+      async (): Promise<RepairContentDuplicatesResponse> => {
+        // Re-derive under the lock -- never trust a pre-lock scan; a
+        // concurrent repair or write could already have resolved this.
+        const idIndex = new ContentIdIndex(dirPath)
+        await idIndex.buildFromFilenames(contentRootName)
+        const duplicates = idIndex.getDuplicateIds()
+        if (duplicates.length === 0) {
+          return { ok: false, status: 409, error: 'No duplicate content IDs found' }
+        }
+
+        const stamp = formatTrashStamp(new Date())
+        const resolved: RepairedContentDuplicate[] = []
+        for (const dup of duplicates) {
+          const archivedAs: string[] = []
+          for (const droppedPath of dup.droppedPaths) {
+            const droppedAbs = path.join(dirPath, droppedPath)
+            const archivedName = `.duplicate-content-id.${stamp}.${path.basename(droppedPath)}`
+            await fs.rename(droppedAbs, path.join(path.dirname(droppedAbs), archivedName))
+            archivedAs.push(archivedName)
+          }
+          resolved.push({ id: dup.id, keptPath: dup.keptPath, archivedAs })
+        }
+
+        // Publish so other processes' ContentStores rebuild, and invalidate
+        // any ContentStore already registered on this root in THIS process.
+        await invalidateContentIndexesDurable(dirPath)
+
+        return { ok: true, status: 200, data: { resolved } }
+      },
+      DEFAULT_CONTENT_WRITE_LOCK_WAIT_MS,
+    )
+  } catch (err: unknown) {
+    if (err instanceof ContentWriteLockBusyError) {
+      return { ok: false, status: 409, error: err.message }
+    }
+    return { ok: false, status: 500, error: getErrorMessage(err) }
   }
 }
 
@@ -517,9 +688,38 @@ const repairBranchDir = defineEndpoint({
       updatedAt: '2024-01-01T00:00:00.000Z',
     },
     archivedAs: 'branch.json.corrupt-20240101T000000Z',
+    reset: { status: 'editing', access: {}, createdBy: 'admin' },
   },
   guards: ['admin'] as const,
   handler: repairBranchDirHandler,
+})
+
+/**
+ * Repair duplicate content IDs in a healthy branch's content tree by
+ * archiving the quarantined (losing) file(s) with a dot-prefixed name --
+ * see content-id-index.ts's "Duplicate-ID quarantine" section and
+ * repairContentDuplicatesHandler's doc comment.
+ * POST /admin/branch-dirs/:dirName/repair-content-duplicates
+ */
+const repairContentDuplicates = defineEndpoint({
+  namespace: 'admin',
+  name: 'repairContentDuplicates',
+  method: 'POST',
+  path: '/admin/branch-dirs/:dirName/repair-content-duplicates',
+  params: branchDirParamsSchema,
+  responseType: 'RepairContentDuplicatesResponse',
+  response: {} as RepairContentDuplicatesResponse,
+  defaultMockData: {
+    resolved: [
+      {
+        id: 'a1b2c3d4e5f6',
+        keptPath: 'content/posts/dune.a1b2c3d4e5f6.json',
+        archivedAs: ['.duplicate-content-id.20240101T000000Z.post.dune-old.a1b2c3d4e5f6.json'],
+      },
+    ],
+  },
+  guards: ['admin'] as const,
+  handler: repairContentDuplicatesHandler,
 })
 
 /**
@@ -530,4 +730,5 @@ export const ADMIN_BRANCH_HEALTH_ROUTES = {
   branchHealth: getBranchHealth,
   purgeBranchDir,
   repairBranchDir,
+  repairContentDuplicates,
 } as const

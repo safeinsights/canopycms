@@ -21,7 +21,7 @@ import type { ExternalGroupsResponse, InternalGroupsResponse, UpdateInternalGrou
 import type { UserInfoResponse } from './user'
 import type { AddEntryTypeApiResponse, CreateCollectionApiResponse, DeleteCollectionApiResponse, GetCollectionApiResponse, GetSchemaApiResponse, InvalidateSchemaCacheApiResponse, RemoveEntryTypeApiResponse, UpdateCollectionApiResponse, UpdateEntryTypeApiResponse, UpdateOrderApiResponse, UpdateOrderBody } from './schema'
 import type { CreateCollectionInput, CreateEntryTypeInput, UpdateCollectionInput, UpdateEntryTypeInput } from './../schema/schema-store-types'
-import type { AdminDeleteTaskResponse, AdminRetryTaskResponse, AdminStatusResponse, AdminTasksResponse, BranchHealthResponse, PurgeBranchDirResponse, RepairBranchDirResponse } from './admin'
+import type { AdminDeleteTaskResponse, AdminRetryTaskResponse, AdminStatusResponse, AdminTasksResponse, BranchHealthResponse, PurgeBranchDirResponse, RepairBranchDirResponse, RepairContentDuplicatesResponse } from './admin'
 
 /**
  * Options for creating an ApiClient
@@ -461,6 +461,13 @@ export class CanopyApiClient {
      */
     repairBranchDir: (params: Record<string, string>): Promise<RepairBranchDirResponse> => {
       return this.request('POST', this.buildPath('/admin/branch-dirs/:dirName/repair-metadata', params))
+    },
+
+    /**
+     * repairContentDuplicates - POST /admin/branch-dirs/:dirName/repair-content-duplicates
+     */
+    repairContentDuplicates: (params: Record<string, string>): Promise<RepairContentDuplicatesResponse> => {
+      return this.request('POST', this.buildPath('/admin/branch-dirs/:dirName/repair-content-duplicates', params))
     },
 
     /**

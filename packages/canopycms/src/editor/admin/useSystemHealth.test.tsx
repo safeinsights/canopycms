@@ -145,6 +145,7 @@ describe('useSystemHealth', () => {
           updatedAt: '2026-01-01',
         },
         archivedAs: 'branch.json.corrupt-20260101T000000Z',
+        reset: { status: 'editing', access: {}, createdBy: 'admin' },
       },
     })
     mockClient.workflow.markMerged.mockResolvedValueOnce({

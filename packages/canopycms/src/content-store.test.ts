@@ -2707,3 +2707,94 @@ describe('ContentStore content-write lock', () => {
     }
   })
 })
+
+describe('ContentStore duplicate content ID resilience (August 2026 baseline review)', () => {
+  const schema = {
+    collections: [
+      {
+        name: 'posts',
+        path: 'posts',
+        entries: [
+          {
+            name: 'post',
+            format: 'md' as const,
+            schema: [{ name: 'title', type: 'string' as const }],
+          },
+        ],
+      },
+    ],
+  } as const
+
+  const posts = unsafeAsLogicalPath('content/posts')
+
+  const makeStore = async (root: string) => {
+    const config = defineCanopyTestConfig({ schema })
+    return new ContentStore(root, flattenSchema(schema, config.contentRoot))
+  }
+
+  it('stays usable (degraded, not dead) after a duplicate-ID pair lands on disk, as renameEntry crash debris would leave', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'canopycms-dupid-'))
+    const seedStore = await makeStore(root)
+
+    // A normal write establishes the collection dir with its embedded ID.
+    await seedStore.write(posts, unsafeAsSlug('one'), {
+      format: 'md',
+      data: { title: 'One' },
+      body: 'Body one',
+    })
+    const postsDir = path.dirname(
+      (await seedStore.resolveDocumentPath(posts, unsafeAsSlug('one'))).absolutePath,
+    )
+
+    // Simulate renameEntry()'s documented (but previously unhandled) crash
+    // window: fs.link() succeeded, the crash landed before fs.unlink()
+    // removed the old name, leaving two filenames sharing one embedded ID.
+    const dupId = generateId()
+    await fs.writeFile(
+      path.join(postsDir, `post.old-slug.${dupId}.md`),
+      '---\ntitle: Dup\n---\nBody',
+      'utf-8',
+    )
+    await fs.writeFile(
+      path.join(postsDir, `post.new-slug.${dupId}.md`),
+      '---\ntitle: Dup\n---\nBody',
+      'utf-8',
+    )
+
+    // A fresh store models a new process (e.g. a cold Lambda) whose FIRST
+    // scan of this branch clone encounters the duplicate pair already on
+    // disk -- the realistic failure mode, since the crash predates this
+    // process's existence.
+    const store = await makeStore(root)
+
+    // Before the fix, this rebuild threw and NEVER recovered (loadedIndexGeneration
+    // never advanced past the failed build) -- every subsequent call re-threw.
+    // Call twice to demonstrate that too: the first call must not be a fluke.
+    await expect(store.idIndex()).resolves.toBeDefined()
+    await expect(store.idIndex()).resolves.toBeDefined()
+
+    // Collection listing still works (the pre-existing, unrelated entry shows up).
+    const listing = await store.getCollectionEntryPaths(posts)
+    expect(listing.some((e) => e.slug === 'one')).toBe(true)
+
+    // Reads, and writes to OTHER entries, are unaffected -- the whole branch
+    // is not bricked by the one duplicate pair.
+    const doc = await store.read(posts, unsafeAsSlug('one'))
+    expect(doc.data.title).toBe('One')
+    await expect(
+      store.write(posts, unsafeAsSlug('two'), {
+        format: 'md',
+        data: { title: 'Two' },
+        body: 'Body two',
+      }),
+    ).resolves.toBeDefined()
+
+    // The duplicate pair itself is surfaced (not silently lost), even though
+    // ContentStore has no public accessor for it -- branch-health.ts's
+    // scanBranchHealth (tested separately) is the intended admin-facing
+    // surface for this signal.
+    const duplicates = (await store.idIndex()).getDuplicateIds()
+    expect(duplicates).toHaveLength(1)
+    expect(duplicates[0].id).toBe(dupId)
+  })
+})
