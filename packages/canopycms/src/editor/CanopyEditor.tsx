@@ -32,6 +32,7 @@ export const CanopyEditor: React.FC<CanopyEditorProps> = ({
   renderPreview,
   onCreateEntry,
   branchName,
+  customRenderers,
 }) => {
   const collections = useMemo(() => buildEditorCollections(config.flatSchema), [config.flatSchema])
   const previewBase = useMemo(
@@ -62,6 +63,7 @@ export const CanopyEditor: React.FC<CanopyEditorProps> = ({
           initialValues={initialValues as Record<string, FormValue> | undefined}
           renderPreview={renderPreview}
           onCreateEntry={onCreateEntry}
+          customRenderers={customRenderers}
           collections={collections}
           contentRoot={config.contentRoot}
           entryLinkUrl={config.entryLinkUrl}

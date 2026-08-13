@@ -20,6 +20,9 @@ import { MarkdownField } from './fields/MarkdownField'
 import { StringListField } from './fields/StringListField'
 import { TextField } from './fields/TextField'
 import { ToggleField } from './fields/ToggleField'
+import { NumberField } from './fields/NumberField'
+import { NumberListField } from './fields/NumberListField'
+import { DateTimeField } from './fields/DateTimeField'
 import { BlockField, type BlockInstance } from './fields/BlockField'
 import { SelectField } from './fields/SelectField'
 import { ReferenceField } from './fields/ReferenceField'
@@ -261,8 +264,54 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
             testId={`field-toggle-${field.name}`}
           />,
         )
+      case 'number':
+        if (field.list) {
+          return wrapWithComments(
+            <NumberListField
+              key={fieldKey(path)}
+              id={fieldId}
+              label={label}
+              value={
+                Array.isArray(currentValue)
+                  ? currentValue.filter((v): v is number => typeof v === 'number')
+                  : []
+              }
+              onChange={(v) => update(v)}
+              dataCanopyField={normalizeCanopyPath(path)}
+            />,
+          )
+        }
+        return wrapWithComments(
+          <NumberField
+            key={fieldKey(path)}
+            id={fieldId}
+            label={label}
+            value={typeof currentValue === 'number' ? currentValue : undefined}
+            onChange={(v) => update(v)}
+            dataCanopyField={normalizeCanopyPath(path)}
+          />,
+        )
+      case 'datetime':
+        return wrapWithComments(
+          <DateTimeField
+            key={fieldKey(path)}
+            id={fieldId}
+            label={label}
+            value={typeof currentValue === 'string' ? currentValue : ''}
+            onChange={(v) => update(v)}
+            dataCanopyField={normalizeCanopyPath(path)}
+          />,
+        )
+      // 'rich-text' has no distinct behavior anywhere else in the codebase:
+      // validation/entry-validator.ts's STRING_FIELD_TYPES,
+      // validation/entry-link-validator.ts's entry-link scan, and
+      // ai/json-to-markdown.ts's rendering all treat 'rich-text',
+      // 'markdown', and 'mdx' identically. Rather than invent a separate
+      // rich-text UI for a type with no observed distinct semantics, reuse
+      // the markdown editor here too.
       case 'markdown':
       case 'mdx':
+      case 'rich-text':
         return wrapWithComments(
           <MarkdownField
             key={fieldKey(path)}

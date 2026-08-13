@@ -56,4 +56,16 @@ describe('CanopyEditorPage', () => {
     const props = capturedProps as CanopyEditorProps | undefined
     expect(props?.branchName).toBe('main')
   })
+
+  it('threads the optional customRenderers argument through to CanopyEditor unchanged', () => {
+    capturedProps = undefined
+    const { render } = require('@testing-library/react') as typeof import('@testing-library/react')
+    const customRenderers: CanopyEditorProps['customRenderers'] = {
+      number: () => <div data-testid="custom-number" />,
+    }
+    const Page = CanopyEditorPage(baseConfig as any, customRenderers)
+    render(<Page />)
+    const props = capturedProps as CanopyEditorProps | undefined
+    expect(props?.customRenderers).toBe(customRenderers)
+  })
 })
