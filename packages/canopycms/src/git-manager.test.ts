@@ -1309,28 +1309,6 @@ describe('GitManager branch name argument safety (SEC-H2)', () => {
       /src refspec .* does not match any/i,
     )
   })
-
-  it('forcePush() treats a hostile-looking branch name as literal refspec data, not a git option', async () => {
-    const remotePath = path.join(tmpDir, 'remote.git')
-    await fs.mkdir(remotePath, { recursive: true })
-    const bareGit = openBareRepo(remotePath)
-    await bareGit.init(true)
-
-    const localPath = path.join(tmpDir, 'local')
-    await fs.mkdir(localPath, { recursive: true })
-    const git = await initTestRepo(localPath)
-    await git.raw(['branch', '-M', 'main'])
-    await fs.writeFile(path.join(localPath, 'a.txt'), 'a', 'utf8')
-    await git.add(['.'])
-    await git.commit('initial')
-    await git.addRemote('origin', remotePath)
-
-    const manager = new GitManager({ repoPath: localPath, baseBranch: 'main' })
-
-    await expect(manager.forcePush('--sentinel-marker')).rejects.toThrow(
-      /src refspec .* does not match any/i,
-    )
-  })
 })
 
 describe('GitManager.initializeWorkspace gitExcludePattern', () => {

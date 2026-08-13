@@ -16,7 +16,7 @@
  * try {
  *   await riskyOperation()
  * } catch (err: unknown) {
- *   console.error('Operation failed:', getErrorMessage(err))
+ *   canopyLogError('Operation failed:', getErrorMessage(err))
  * }
  * ```
  */

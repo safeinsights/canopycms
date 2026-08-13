@@ -41,8 +41,8 @@ function createMockGitInstance(overrides?: {
     add: vi.fn().mockResolvedValue(undefined),
     commit: vi.fn().mockResolvedValue(undefined),
     push: overrides?.push ?? vi.fn(),
-    // GitManager.push()/forcePush() route through raw() so --end-of-options can
-    // guard the positional refspec (SEC-H2); mock it here for those paths.
+    // GitManager.push() routes through raw() so --end-of-options can guard
+    // the positional refspec (SEC-H2); mock it here for that path.
     raw: overrides?.raw ?? vi.fn().mockResolvedValue(''),
     revparse: vi.fn().mockResolvedValue('main'),
     ...overrides?.extra,

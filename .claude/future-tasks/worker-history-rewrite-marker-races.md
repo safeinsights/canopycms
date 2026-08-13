@@ -1,7 +1,7 @@
 # The history-rewrite marker has three race/retry gaps that can wedge a branch with a false diagnosis
 
 Found by the adversarial review of PR #198
-([program-b-final-review-followups.md](program-b-final-review-followups.md),
+([program-b-final-review-followups.md](resolved/program-b-final-review-followups.md),
 HIGH #1, resolved 2026-08-12), which introduced the marker. The reviewer found
 no path where #198 destroys committed work — the lease discipline holds — but
 three ways the branch can end up **wedged and misdiagnosed**: the exact failure

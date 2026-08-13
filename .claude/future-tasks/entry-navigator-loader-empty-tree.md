@@ -1,7 +1,7 @@
 # EntryNavigator's loader keys on "empty tree", so it shows or hides depending on adopter shape
 
 Found while fixing the branch-switch stale-mirror bug
-([program-b-final-review-followups.md](program-b-final-review-followups.md),
+([program-b-final-review-followups.md](resolved/program-b-final-review-followups.md),
 HIGH #3, resolved 2026-08-12) — noticed during that work, deliberately left out
 of its PR to keep the fix scoped.
 
