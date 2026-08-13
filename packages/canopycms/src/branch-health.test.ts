@@ -7,6 +7,7 @@ import { describe, expect, it } from 'vitest'
 import { scanBranchHealth } from './branch-health'
 import { getBranchMetadataFileManager } from './branch-metadata'
 import { generateId } from './id'
+import { mockConsole } from './test-utils/console-spy'
 
 const tmpDir = async () => fs.mkdtemp(path.join(os.tmpdir(), 'canopycms-branch-health-'))
 
@@ -103,7 +104,19 @@ describe('scanBranchHealth', () => {
     await fs.writeFile(path.join(postsDir, `post.old-slug.${dupId}.json`), '{}', 'utf-8')
     await fs.writeFile(path.join(postsDir, `post.new-slug.${dupId}.json`), '{}', 'utf-8')
 
-    const entries = await scanBranchHealth(root, { baseBranchName: 'main' })
+    // The scan warns on quarantine, which is the POINT -- an operator has to
+    // learn a duplicate exists. Swallow and assert it rather than let it leak
+    // as incidental console noise (CI fails hard on unswallowed output; see
+    // vitest.config.ts's onConsoleLog, which only bites when process.env.CI
+    // is set, so a green local run does not prove this).
+    const consoleSpy = mockConsole()
+    let entries: Awaited<ReturnType<typeof scanBranchHealth>>
+    try {
+      entries = await scanBranchHealth(root, { baseBranchName: 'main' })
+      expect(consoleSpy).toHaveWarned(dupId)
+    } finally {
+      consoleSpy.restore()
+    }
     expect(entries).toHaveLength(1)
     // Still 'healthy' -- a content-tree duplicate degrades content operations
     // for that one ID, it does not make branch.json (or the branch) corrupt.
@@ -126,14 +139,30 @@ describe('scanBranchHealth', () => {
     await fs.writeFile(path.join(postsDir, `post.a.${dupId}.json`), '{}', 'utf-8')
     await fs.writeFile(path.join(postsDir, `post.b.${dupId}.json`), '{}', 'utf-8')
 
-    // Default contentRootName ('content') never sees 'my-content' -- no signal.
-    const withDefault = await scanBranchHealth(root, { baseBranchName: 'main' })
+    // Default contentRootName ('content') never sees 'my-content' -- no signal,
+    // and therefore no warning either: the scan cannot warn about a duplicate
+    // it never looked for. Asserting silence here is the other half of the
+    // contentRootName contract.
+    const quietSpy = mockConsole()
+    let withDefault: Awaited<ReturnType<typeof scanBranchHealth>>
+    try {
+      withDefault = await scanBranchHealth(root, { baseBranchName: 'main' })
+    } finally {
+      quietSpy.restore()
+    }
     expect(withDefault[0].duplicateContentIds).toBeUndefined()
 
-    const withCustomRoot = await scanBranchHealth(root, {
-      baseBranchName: 'main',
-      contentRootName: 'my-content',
-    })
+    const consoleSpy = mockConsole()
+    let withCustomRoot: Awaited<ReturnType<typeof scanBranchHealth>>
+    try {
+      withCustomRoot = await scanBranchHealth(root, {
+        baseBranchName: 'main',
+        contentRootName: 'my-content',
+      })
+      expect(consoleSpy).toHaveWarned(dupId)
+    } finally {
+      consoleSpy.restore()
+    }
     expect(withCustomRoot[0].duplicateContentIds).toHaveLength(1)
   })
 

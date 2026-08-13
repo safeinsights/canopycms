@@ -11,6 +11,7 @@ import {
   unsafeAsPhysicalPath,
   unsafeAsContentId,
 } from './paths/test-utils'
+import { mockConsole } from './test-utils/console-spy'
 
 describe('ContentIdIndex', () => {
   let tempDir: string
@@ -98,32 +99,53 @@ describe('ContentIdIndex', () => {
       expect(index.getAllLocations()).toHaveLength(0)
     })
 
-    it('quarantines a duplicate ID instead of throwing, keeping the lexicographically-first path', async () => {
+    it('quarantines a duplicate ID instead of throwing, keeping the lexicographically-first path, and warns with an operator-readable message', async () => {
       const duplicateId = 'a1b2c3d4e5f6'
       // 'file1' < 'file2' lexicographically, regardless of which is written
       // (or discovered) first.
       await fs.writeFile(path.join(tempDir, `content/file2.${duplicateId}.json`), '{}')
       await fs.writeFile(path.join(tempDir, `content/file1.${duplicateId}.json`), '{}')
 
-      await expect(index.buildFromFilenames('content')).resolves.toBeUndefined()
+      // canopyLogWarn on quarantine is intentional operator-facing behavior
+      // (an admin needs to know a duplicate was found) -- assert it rather
+      // than let it leak as incidental console noise (CI fails hard on
+      // unswallowed console output; see vitest.config.ts's onConsoleLog).
+      const consoleSpy = mockConsole()
+      try {
+        await expect(index.buildFromFilenames('content')).resolves.toBeUndefined()
 
-      // The winner is fully usable via the normal ID-based lookup.
-      const location = index.findById(duplicateId)
-      expect(location).not.toBeNull()
-      expect(location?.relativePath).toBe(`content/file1.${duplicateId}.json`)
+        // The winner is fully usable via the normal ID-based lookup.
+        const location = index.findById(duplicateId)
+        expect(location).not.toBeNull()
+        expect(location?.relativePath).toBe(`content/file1.${duplicateId}.json`)
 
-      // The loser is excluded from every index, as if it were never scanned.
-      expect(index.findByPath(unsafeAsPhysicalPath(`content/file2.${duplicateId}.json`))).toBeNull()
-      expect(index.getAllLocations()).toHaveLength(1)
+        // The loser is excluded from every index, as if it were never scanned.
+        expect(
+          index.findByPath(unsafeAsPhysicalPath(`content/file2.${duplicateId}.json`)),
+        ).toBeNull()
+        expect(index.getAllLocations()).toHaveLength(1)
 
-      // Both paths are reported for admin-facing health/repair.
-      const duplicates = index.getDuplicateIds()
-      expect(duplicates).toHaveLength(1)
-      expect(duplicates[0]).toMatchObject({
-        id: duplicateId,
-        keptPath: `content/file1.${duplicateId}.json`,
-        droppedPaths: [`content/file2.${duplicateId}.json`],
-      })
+        // Both paths are reported for admin-facing health/repair.
+        const duplicates = index.getDuplicateIds()
+        expect(duplicates).toHaveLength(1)
+        expect(duplicates[0]).toMatchObject({
+          id: duplicateId,
+          keptPath: `content/file1.${duplicateId}.json`,
+          droppedPaths: [`content/file2.${duplicateId}.json`],
+        })
+
+        // The warning names which file was kept, states the dropped file
+        // still exists (quarantined, not deleted), and points at the
+        // concrete repair action -- readable by an operator who has never
+        // seen this code, not just a developer who knows getDuplicateIds().
+        expect(consoleSpy).toHaveWarned(duplicateId)
+        expect(consoleSpy).toHaveWarned(`content/file1.${duplicateId}.json`)
+        expect(consoleSpy).toHaveWarned(`content/file2.${duplicateId}.json`)
+        expect(consoleSpy).toHaveWarned(/not.{0,10}been deleted/i)
+        expect(consoleSpy).toHaveWarned(/repair-content-duplicates/)
+      } finally {
+        consoleSpy.restore()
+      }
     })
 
     it('picks the same winner regardless of directory-entry (readdir) order -- cross-host determinism', async () => {
@@ -142,15 +164,20 @@ describe('ContentIdIndex', () => {
             (result) => [...result].reverse(),
           )) as typeof fs.readdir)
 
+      const consoleSpy = mockConsole()
       try {
         await index.buildFromFilenames('content')
       } finally {
         spy.mockRestore()
+        consoleSpy.restore()
       }
 
       // 'aaa' < 'zzz' lexicographically -- must win even though it was
       // discovered SECOND under the reversed readdir order forced above.
       expect(index.findById(duplicateId)?.relativePath).toBe(`content/aaa.${duplicateId}.json`)
+      // The operator warning still fires regardless of which order won --
+      // the full message shape is asserted in the test above.
+      expect(consoleSpy).toHaveWarned(duplicateId)
     })
 
     it('indexes nested directories', async () => {

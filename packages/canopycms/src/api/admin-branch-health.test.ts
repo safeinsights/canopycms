@@ -9,6 +9,7 @@ import { createMockApiContext, createMockUser, initTestRepo } from '../test-util
 import { BranchRegistry } from '../branch-registry'
 import { getBranchMetadataFileManager } from '../branch-metadata'
 import { acquireProvisioningLock } from '../utils/provisioning-lock'
+import { mockConsole } from '../test-utils/console-spy'
 import { tryAcquireContentWriteLock } from '../utils/content-write-lock'
 import { generateId } from '../id'
 
@@ -400,7 +401,19 @@ describe('admin branch-health api', () => {
     it('archives the quarantined (losing) duplicate, keeping the winner untouched', async () => {
       const { postsDir, dupId } = await createDuplicateContentIds('dup-branch')
 
-      const result = await repairContentDuplicatesHandler(ctx, req, { dirName: 'dup-branch' })
+      // The repair rebuilds the index, which warns on quarantine -- deliberate,
+      // since an operator has to learn the duplicate exists. Swallow and assert
+      // it rather than let it leak: vitest.config.ts's onConsoleLog fails the
+      // run on unswallowed console output, but ONLY when process.env.CI is set,
+      // so a green local run does not prove this. Reproduce with CI=1.
+      const consoleSpy = mockConsole()
+      let result: Awaited<ReturnType<typeof repairContentDuplicatesHandler>>
+      try {
+        result = await repairContentDuplicatesHandler(ctx, req, { dirName: 'dup-branch' })
+        expect(consoleSpy).toHaveWarned(dupId)
+      } finally {
+        consoleSpy.restore()
+      }
 
       expect(result.ok).toBe(true)
       expect(result.data?.resolved).toHaveLength(1)
@@ -420,7 +433,16 @@ describe('admin branch-health api', () => {
 
       // A rescan no longer reports the duplicate -- the dot-prefixed archive
       // name is skipped by every future ContentIdIndex scan.
-      const scan = await branchHealthHandler(ctx, req)
+      // The rescan must be SILENT as well as clean: a dot-prefixed archive that
+      // still warned would mean the operator keeps being told about a duplicate
+      // they already resolved.
+      const rescanSpy = mockConsole()
+      let scan: Awaited<ReturnType<typeof branchHealthHandler>>
+      try {
+        scan = await branchHealthHandler(ctx, req)
+      } finally {
+        rescanSpy.restore()
+      }
       const entry = scan.data?.entries.find((e) => e.dirName === 'dup-branch')
       expect(entry?.duplicateContentIds).toBeUndefined()
     })
@@ -451,9 +473,21 @@ describe('admin branch-health api', () => {
         },
       })
 
-      const result = await repairContentDuplicatesHandler(ctx, req, {
-        dirName: 'custom-root-branch',
-      })
+      // The repair rebuilds the index, which warns on quarantine -- deliberate,
+      // since an operator has to learn the duplicate exists. Swallow and assert
+      // it rather than let it leak: vitest.config.ts's onConsoleLog fails the
+      // run on unswallowed console output, but ONLY when process.env.CI is set,
+      // so a green local run does not prove this. Reproduce with CI=1.
+      const consoleSpy = mockConsole()
+      let result: Awaited<ReturnType<typeof repairContentDuplicatesHandler>>
+      try {
+        result = await repairContentDuplicatesHandler(ctx, req, {
+          dirName: 'custom-root-branch',
+        })
+        expect(consoleSpy).toHaveWarned(dupId)
+      } finally {
+        consoleSpy.restore()
+      }
       expect(result.ok).toBe(true)
       expect(result.data?.resolved[0].id).toBe(dupId)
     })

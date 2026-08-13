@@ -214,17 +214,28 @@ export class ContentIdIndex {
             // lexicographically-smaller relativePath, decided purely by
             // comparing the two strings so every host scanning the same
             // directory picks the same winner regardless of readdir order.
-            if (fullRelativePath < existing.relativePath) {
+            const newWins = fullRelativePath < existing.relativePath
+            const kept = newWins ? fullRelativePath : existing.relativePath
+            const dropped = newWins ? existing.relativePath : fullRelativePath
+            if (newWins) {
               this.evictLocation(existing)
               this.recordDuplicate(id, existing.relativePath)
               this.insertLocation(id, location)
             } else {
               this.recordDuplicate(id, fullRelativePath)
             }
+            // Written for an operator who has never seen this code: name
+            // both files, say explicitly that the dropped one still exists
+            // (quarantine, not deletion), and point at the concrete recovery
+            // action rather than an internal method name.
             canopyLogWarn(
-              `[ContentIdIndex] Duplicate content ID ${id} quarantined: keeping ` +
-                `${this.idToLocation.get(id)!.relativePath}, dropping the other file(s) ` +
-                `(see getDuplicateIds()). Root: ${this.root}`,
+              `[ContentIdIndex] Duplicate content ID ${id}: "${kept}" and "${dropped}" both ` +
+                `embed this ID. Keeping "${kept}" for ID-based lookups (reads, references, ` +
+                `listings); "${dropped}" is excluded from those lookups for now but has NOT ` +
+                `been deleted -- it is still on disk at that path. An admin can resolve this via ` +
+                `the repair-content-duplicates admin action for this branch, which archives ` +
+                `"${dropped}" with a dot-prefixed name so future scans stop flagging it. ` +
+                `Root: ${this.root}`,
             )
           } else {
             this.insertLocation(id, location)

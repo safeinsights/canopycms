@@ -21,6 +21,7 @@ import {
 import { tryAcquireContentWriteLock } from './utils/content-write-lock'
 import { generateId } from './id'
 import { unsafeAsLogicalPath, unsafeAsSlug } from './paths/test-utils'
+import { mockConsole } from './test-utils/console-spy'
 
 const tmpDir = async () => fs.mkdtemp(path.join(os.tmpdir(), 'canopycms-'))
 
@@ -2770,8 +2771,22 @@ describe('ContentStore duplicate content ID resilience (August 2026 baseline rev
     // Before the fix, this rebuild threw and NEVER recovered (loadedIndexGeneration
     // never advanced past the failed build) -- every subsequent call re-threw.
     // Call twice to demonstrate that too: the first call must not be a fluke.
-    await expect(store.idIndex()).resolves.toBeDefined()
-    await expect(store.idIndex()).resolves.toBeDefined()
+    //
+    // The rebuild warns on quarantine, which is deliberate -- an operator has
+    // to learn the duplicate exists. Swallow and assert it here rather than
+    // let it leak (CI fails hard on unswallowed console output via
+    // vitest.config.ts's onConsoleLog, which only bites when process.env.CI is
+    // set -- so a green local run does not prove this). Only the first build
+    // warns; the second is served from the cached index, which is exactly the
+    // recovery this test exists to prove.
+    const consoleSpy = mockConsole()
+    try {
+      await expect(store.idIndex()).resolves.toBeDefined()
+      await expect(store.idIndex()).resolves.toBeDefined()
+      expect(consoleSpy).toHaveWarned(dupId)
+    } finally {
+      consoleSpy.restore()
+    }
 
     // Collection listing still works (the pre-existing, unrelated entry shows up).
     const listing = await store.getCollectionEntryPaths(posts)
