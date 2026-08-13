@@ -1,3 +1,6 @@
+import { existsSync, renameSync } from 'node:fs'
+import * as path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { App, Duration, Stack } from 'aws-cdk-lib'
 import { Match, Template } from 'aws-cdk-lib/assertions'
 import { aws_cloudfront as cloudfront, aws_iam as iam, aws_s3 as s3 } from 'aws-cdk-lib'
@@ -9,9 +12,14 @@ import { AssetSupport } from './asset-support'
 const EDITOR_ORIGINS = ['http://localhost:3000']
 
 /**
- * Every construction below opts out of the deployable-bundle guard.
+ * Every construction below opts out of the deployable-bundle guard, with ONE
+ * deliberate exception: the 'deployable-bundle guard' describe block further
+ * down constructs `AssetSupport` WITHOUT spreading `BASE_PROPS`, specifically
+ * so that one test exercises the guard's real default-on behavior (the one
+ * that actually protects a live `cdk deploy`). Every other test here needs
+ * the opt-out because...
  *
- * This suite synths against the cheap `--skip-native` fixture bundle that
+ * ...this suite synths against the cheap `--skip-native` fixture bundle that
  * `build:test-fixtures` produces (see lambda/asset-transform/build.mjs): it
  * only needs `Code.fromAsset()` to find a directory and never executes the
  * handler, so the linux/arm64 sharp binary is irrelevant to everything
@@ -20,6 +28,20 @@ const EDITOR_ORIGINS = ['http://localhost:3000']
  * package's tests out of CI to begin with.
  */
 const BASE_PROPS = { editorOrigins: EDITOR_ORIGINS, requireDeployableBundle: false }
+
+/**
+ * Same derivation `asset-support.ts` uses for its own module-private
+ * `transformAssetDir` (see that file). This test file lives in the same
+ * directory (`src/constructs/`), so the identical expression from THIS
+ * file's own `import.meta.url` resolves to the identical path - computed
+ * independently rather than imported, since the source constant is
+ * module-private, but it MUST stay in lockstep with it: if the two ever
+ * drift, the guard test below silently stops testing the directory the
+ * construct actually checks.
+ */
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
+const transformAssetDir = path.join(__dirname, '..', '..', 'lambda', 'asset-transform', 'dist')
+const deployableMarkerPath = path.join(transformAssetDir, '.deployable')
 
 /**
  * `AssetSupport` itself never creates a `cloudfront.Distribution` - it only
@@ -351,5 +373,46 @@ describe('AssetSupport - BYO bucket mode', () => {
     const template = Template.fromStack(stack)
 
     template.resourceCountIs('AWS::S3::Bucket', 0)
+  })
+})
+
+describe('deployable-bundle guard', () => {
+  // Every other test in this file opts out via BASE_PROPS's
+  // requireDeployableBundle: false (see its doc comment above), which left
+  // the guard's actual default-on branch - the one that protects a real
+  // `cdk deploy` - with zero coverage. Flipping asset-support.ts's
+  // `(props.requireDeployableBundle ?? true)` to `?? false` broke nothing
+  // without this test.
+  it('throws when requireDeployableBundle is omitted (defaults on) and the .deployable marker is absent', () => {
+    // Fail loudly, not silently-for-the-wrong-reason, if the fixture layout
+    // this test depends on ever moves.
+    expect(existsSync(transformAssetDir)).toBe(true)
+
+    // Under `pnpm test` the fixture bundle is built --skip-native (see
+    // BASE_PROPS's doc comment), so the marker is normally absent and the
+    // guard fires naturally. But a developer who has run
+    // `pnpm --filter canopycms-cdk run build:lambda` for real will have a
+    // genuine marker on disk, which would make this test fail for a reason
+    // that has nothing to do with the guard. Move it aside for the duration
+    // of this one test - never delete it - and restore it unconditionally.
+    const markerWasPresent = existsSync(deployableMarkerPath)
+    const backupPath = `${deployableMarkerPath}.testbak`
+    if (markerWasPresent) {
+      renameSync(deployableMarkerPath, backupPath)
+    }
+    try {
+      const stack = makeStack()
+      // Deliberately does NOT spread BASE_PROPS - that sets
+      // requireDeployableBundle: false and would silently re-vacuate this
+      // test. This is the one construction in the whole suite that exercises
+      // the guard's real default.
+      expect(() => new AssetSupport(stack, 'Assets', { editorOrigins: EDITOR_ORIGINS })).toThrow(
+        /\.deployable/,
+      )
+    } finally {
+      if (markerWasPresent) {
+        renameSync(backupPath, deployableMarkerPath)
+      }
+    }
   })
 })
