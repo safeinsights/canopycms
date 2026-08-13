@@ -324,9 +324,21 @@ async function _createCanopyServicesInternal(
     })
     await git.checkoutBranch(options.context.branch.name)
     const status = await git.status()
+    // Commit and push are gated on two DIFFERENT questions. Committing
+    // cleans the working tree, so gating the push on "tree is dirty" (as a
+    // single combined check) makes a retry after a failed push a silent
+    // no-op: the earlier commit already cleaned the tree, so the retry sees
+    // nothing to commit, skips the whole block, and reports success even
+    // though the commit never reached the remote. Push instead whenever
+    // there's something new to send -- we just committed, or the local
+    // branch already had unpushed commits from an earlier failed attempt.
+    let committed = false
     if (status.files.length > 0) {
       await git.add('.')
       await git.commit(options.message ?? `Submit ${options.context.branch.name}`)
+      committed = true
+    }
+    if (committed || (await git.hasUnpushedCommits(options.context.branch.name))) {
       await git.push(options.context.branch.name)
     }
   }

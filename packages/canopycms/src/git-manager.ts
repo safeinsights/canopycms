@@ -1208,6 +1208,50 @@ export class GitManager {
     ])
   }
 
+  /**
+   * Check whether the local branch has commits the remote mirror doesn't
+   * have -- i.e. whether push() would actually move the remote ref forward.
+   *
+   * Exists so callers (submitBranch) can gate pushing on "is there anything
+   * new to send" rather than on "is the working tree dirty": committing
+   * cleans the tree, so a dirty-tree gate around commit+push skips the push
+   * entirely on a retry after a failed push, even though the just-created
+   * commit never reached the remote (see services.ts submitBranch).
+   *
+   * Workspaces are cloned `--single-branch`, so the remote-tracking ref for
+   * any branch other than the one cloned never exists locally -- same
+   * constraint pullBaseInner works around. This fetches the specific branch
+   * directly (bypassing the configured single-branch refspec, exactly like
+   * pullBaseInner) and pins the result to FETCH_HEAD's SHA immediately after
+   * the fetch that populated it, rather than trusting `<remote>/<branch>`:
+   * FETCH_HEAD is a shared mutable file that any other fetch in this clone
+   * can repoint before it's read.
+   *
+   * A branch that has never been pushed has no ref on the remote at all --
+   * `git fetch` then fails ("couldn't find remote ref"), which this treats
+   * as "ahead" (needs pushing) rather than an error.
+   */
+  async hasUnpushedCommits(branch?: string): Promise<boolean> {
+    const target = branch ?? (await this.git.revparse(['--abbrev-ref', 'HEAD']))
+    const localSha = (await this.git.revparse([target])).trim()
+    let fetchedTip: string
+    try {
+      await this.git.fetch(this.remote, target)
+      fetchedTip = (await this.git.revparse(['FETCH_HEAD'])).trim()
+    } catch {
+      // No ref on the remote yet -- the branch has never been pushed.
+      return true
+    }
+    if (fetchedTip === localSha) return false
+    // Commits reachable from the local tip but not from the remote's tip --
+    // robust to both the ordinary "local is ahead" case and a diverged
+    // mirror, unlike a bare SHA-inequality check.
+    const aheadCount = (
+      await this.git.raw(['rev-list', '--count', `${fetchedTip}..${localSha}`])
+    ).trim()
+    return aheadCount !== '0'
+  }
+
   async ensureAuthor(author: { name: string; email: string }): Promise<void> {
     const config = (await this.git.listConfig()) as ConfigListSummary
 
