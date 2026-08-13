@@ -58,6 +58,11 @@ const minimalServices = () => ({
   },
   bootstrapAdminIds: new Set<string>(),
   refreshActiveBranch: vi.fn().mockResolvedValue(undefined),
+  // Internal groups are resolved via resolveCanopyUser -> getSettingsBranchRoot
+  // (see resolve-canopy-user.ts). The path doesn't need to exist: groups.json
+  // just won't be found there, which loadInternalGroups treats as "no custom
+  // groups" (fine here - this file tests context caching/retry, not groups).
+  getSettingsBranchRoot: vi.fn().mockResolvedValue('/tmp/handler-context-retry-test-mock-settings'),
 })
 
 describe('createCanopyRequestHandler context retry (API-H3)', () => {

@@ -40,7 +40,7 @@ receives a logical path), applied to all nine sites; drop the bespoke strip in
 
 ---
 
-## 2. [P1] Group grants and revocations in the admin UI never change any privilege
+## ~~2. [P1] Group grants and revocations in the admin UI never change any privilege~~ (RESOLVED 2026-08-13)
 
 Request-time effective groups come from `loadInternalGroups(mainBranchContext.branchRoot, …)` —
 the **base-branch content clone** (`http/handler.ts:258-267`, and the same again in
@@ -71,6 +71,31 @@ re-implementing it — that duplication is the co-cause. Correct the settings PR
 **Guard to add:** `PUT /groups/internal` removing a user from `Admins` → that user's next
 `whoami` no longer contains `Admins`. Today `groups-api.test.ts` covers the settings-file side,
 `user-context.test.ts` covers the base-branch-seeded side, and nothing connects them.
+
+**RESOLVED** (2026-08-13) — both read pipelines now load internal groups from
+`getSettingsBranchRoot()`, matching `createContentAccessChecker`'s pattern, with the base-branch
+read deleted entirely. The duplicated "authenticate -> load groups -> merge" sequence is extracted
+into one shared helper, `resolve-canopy-user.ts` (`resolveCanopyUser`), exported off `canopycms/server`
+and called by both `http/handler.ts` and `canopycms-next/src/context-wrapper.ts`. Settings-workspace
+resolution failure now fails loud (503; the old silent `.catch(() => [])` fallback to an empty
+group list is gone) rather than degrading privileges silently. The base-branch `getBranchContext`
+call stays in `http/handler.ts` — it never actually served groups reads in the fixed pipeline, but
+it still does real work: auto-provisioning the base/active workspace on the first request so later
+handlers that assume it exists don't return confusing empty results, with the same
+`BranchMetadataCorruptError` degrade-and-keep-routing behavior preserved for the `/admin` recovery
+surface. `canopycms-next`'s copy of that call was dropped entirely (content reads already
+provision the base branch themselves via `loadOrCreateBranchContext`), removing a redundant
+per-request EFS round-trip there. The settings PR body in `services.ts` no longer claims merging
+is what makes a change durable — both permissions and groups are read live from the settings
+workspace, so a save already took effect before the PR exists; merging only records it for
+review/audit history. `__integration__/test-utils/test-workspace.ts`'s `internalGroups` fixture
+option, which previously seeded `groups.json` on the base branch content clone (the same wrong
+location the bug read from, so it silently matched the bug instead of catching it), now seeds the
+settings workspace's orphan branch the same way a real admin write would. New end-to-end coverage:
+`__integration__/settings/groups-effective-privileges.test.ts` — grant/revoke via the real HTTP
+API and assert the next `whoami`, a group created via the API matched by a branch ACL, and the
+settings-workspace-unavailable case failing loudly. Confirmed red-before-green by reverting just
+the `http/handler.ts` read-location change and observing the new test fail before restoring it.
 
 ---
 

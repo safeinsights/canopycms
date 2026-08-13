@@ -16,19 +16,15 @@ import {
   createCanopyServices,
   createAssetStore,
   operatingStrategy,
-  loadInternalGroups,
-  loadBranchContext,
+  resolveCanopyUser,
   STATIC_DEPLOY_USER,
 } from 'canopycms/server'
 import type { CanopyConfig, AuthPlugin, CanopyUser, FieldConfig } from 'canopycms'
-import { authResultToCanopyUser } from 'canopycms'
-import type { InternalGroup } from 'canopycms/server'
 import { assertAuthPluginAllowedForMode } from 'canopycms/auth'
 import { CachingAuthPlugin, FileBasedAuthCache } from 'canopycms/auth/cache'
 import { createCanopyCatchAllHandler } from './adapter'
 import { collectStaticParams, type GenerateContentStaticParamsOptions } from './static'
 
-let warnedNoAdmins = false
 let warnedStaticMode = false
 
 /**
@@ -259,40 +255,30 @@ export async function createNextCanopyContext(
     startDevContentWatcher(services, { mode: options.config.dev?.contentSync })
   }
 
-  // User extractor: passes Next.js headers to auth plugin, loads internal groups, applies authorization
+  // User extractor: passes Next.js headers to auth plugin, resolves internal
+  // groups, applies authorization. Delegates to the shared
+  // "authenticate -> load internal groups -> merge" pipeline
+  // (resolveCanopyUser, in canopycms core) so this stays in lockstep with
+  // http/handler.ts's API-layer equivalent rather than re-implementing it —
+  // a previous copy here loaded groups from the base branch content clone
+  // (via loadBranchContext), which nothing in the product ever writes
+  // groups.json into, so group-based privileges never took effect.
+  //
+  // No base-branch context resolution here (unlike the previous copy):
+  // that call existed only to source groups.json from the (wrong) content
+  // branch. Actual content reads (buildContentTree/listEntries/read) already
+  // provision the base/active branch themselves via loadOrCreateBranchContext
+  // (see context.ts's resolveSchemaContext), so dropping it here removes a
+  // redundant per-request EFS round-trip rather than losing provisioning.
   const extractUser = async (): Promise<CanopyUser> => {
     const headersList = await headers()
     const authResult = await authPlugin.authenticate(headersList)
 
-    // Load internal groups from main branch
-    const baseBranch = services.config.defaultBaseBranch ?? 'main'
-    const operatingMode = services.config.mode ?? 'dev'
-    const mainBranchContext = await loadBranchContext({
-      branchName: baseBranch,
-      mode: operatingMode,
+    return resolveCanopyUser(authResult, {
+      getSettingsBranchRoot: services.getSettingsBranchRoot,
+      mode: services.config.mode ?? 'dev',
+      bootstrapAdminIds: services.bootstrapAdminIds,
     })
-    const internalGroups: InternalGroup[] = mainBranchContext
-      ? await loadInternalGroups(
-          mainBranchContext.branchRoot,
-          operatingMode,
-          services.bootstrapAdminIds,
-        ).catch((err: unknown) => {
-          console.warn('CanopyCMS: Failed to load internal groups from main branch:', err)
-          return [] as InternalGroup[]
-        })
-      : []
-
-    if (!warnedNoAdmins && Array.isArray(internalGroups)) {
-      const adminsGroup = internalGroups.find((g) => g.id === 'Admins')
-      if (!adminsGroup || adminsGroup.members.length === 0) {
-        console.warn(
-          'CanopyCMS: No admin users configured. Set CANOPY_BOOTSTRAP_ADMIN_IDS or add members to the Admins group.',
-        )
-      }
-      warnedNoAdmins = true
-    }
-
-    return authResultToCanopyUser(authResult, services.bootstrapAdminIds, internalGroups)
   }
 
   // Create core context with pre-created services (framework-agnostic)

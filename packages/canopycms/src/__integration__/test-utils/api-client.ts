@@ -19,6 +19,13 @@ export interface ApiClientOptions {
   schema?: RootCollectionConfig
   /** Entry schema registry for resolving .collection.json references */
   entrySchemaRegistry?: CreateCanopyServicesOptions['entrySchemaRegistry']
+  /**
+   * Test-only override for settings-workspace resolution, e.g. to simulate
+   * "settings workspace unavailable" (make it reject) without touching the
+   * base-branch content workspace. Forwarded to createTestServices; see
+   * CreateCanopyServicesOptions.getSettingsBranchRoot.
+   */
+  getSettingsBranchRoot?: CreateCanopyServicesOptions['getSettingsBranchRoot']
 }
 
 /**
@@ -37,6 +44,7 @@ export async function createApiClient(options: ApiClientOptions) {
     },
     {
       entrySchemaRegistry: options.entrySchemaRegistry,
+      getSettingsBranchRoot: options.getSettingsBranchRoot,
     },
   )
   const handler = createCanopyRequestHandler({
@@ -49,8 +57,10 @@ export async function createApiClient(options: ApiClientOptions) {
       let context = await services.registry.get(branchName)
       if (!context) {
         // Mirror the production default getBranchContext: auto-provision the
-        // base branch workspace on first request so main-branch settings
-        // (e.g. internal groups for privileged roles) can be loaded.
+        // base/active workspace on first request, same as http/handler.ts's
+        // real default does (registry reads, etc. assume it already exists).
+        // Internal groups do NOT come from this branch — they're read from
+        // the settings workspace via resolveCanopyUser/getSettingsBranchRoot.
         const baseBranch = services.config.defaultBaseBranch ?? 'main'
         if (branchName !== baseBranch) {
           return null
