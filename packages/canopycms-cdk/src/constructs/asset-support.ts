@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs'
 import * as path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { Construct } from 'constructs'
@@ -17,6 +18,31 @@ import {
 // output is real ESM - `__dirname` is not a global there. Derive it from
 // `import.meta.url` instead (mirrors ../../lambda/asset-transform/build.mjs).
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
+
+/**
+ * The transform Lambda's built code asset. Computed ONCE and shared by the
+ * deployability guard and `Code.fromAsset()` below - if the check and the
+ * bundle ever read two independently-computed paths, the guard can silently
+ * start statting a directory that is never the one being deployed, and
+ * nothing about either call site would look wrong.
+ *
+ * The `'..', '..'` walk is correct from both `<pkg>/src/constructs/` (local
+ * source) and `<pkg>/dist/constructs/` (published package) only because those
+ * sit at the same depth - see the `__dirname` note above.
+ */
+const transformAssetDir = path.join(__dirname, '..', '..', 'lambda', 'asset-transform', 'dist')
+
+/**
+ * Written by `build:lambda` as the last act of a successful FULL build, once
+ * the linux/arm64 sharp binary is verified present. See that script's header
+ * for why the marker is positive rather than negative: a partial build (a
+ * thrown `npm install sharp`, a failed platform check) leaves a sharp-less
+ * `dist/` on disk WITHOUT reaching the `--skip-native` branch, so a
+ * "is it marked bad?" test would wave exactly that bundle through to a
+ * deploy. Requiring proof-of-good instead fails closed on every unexpected
+ * path, including the producer's and consumer's paths drifting apart.
+ */
+const DEPLOYABLE_MARKER = '.deployable'
 
 /**
  * The four S3 key prefixes the asset system uses, mirrored from
@@ -126,6 +152,26 @@ export interface AssetSupportProps {
   readonly autoDeleteObjects?: boolean
 
   /**
+   * Require the transform Lambda's code asset to carry proof that it was
+   * built with its native sharp binary (the `.deployable` marker written by
+   * `build:lambda`). Leave this ON for anything that can reach a real
+   * deploy.
+   *
+   * Set to `false` ONLY in this package's own tests, which deliberately
+   * synth against the cheap `--skip-native` fixture bundle that
+   * `build:test-fixtures` produces - the suite never executes the handler,
+   * so the binary is irrelevant to what it asserts, and requiring a real
+   * build would put a live `npm install sharp` back in front of every test
+   * run (which is what kept these tests out of CI in the first place).
+   *
+   * Adopters never need this: the published package's asset is built by
+   * `prepack`'s full `build:lambda`, so the marker is always present.
+   *
+   * @default true
+   */
+  readonly requireDeployableBundle?: boolean
+
+  /**
    * Retention for the transform Lambda's CloudWatch log group (default:
    * three months / 90 days).
    */
@@ -230,6 +276,30 @@ export class AssetSupport extends Construct {
   constructor(scope: Construct, id: string, props: AssetSupportProps) {
     super(scope, id)
 
+    // Fail closed before anything else: refuse to build a stack around a
+    // transform Lambda whose code asset was never verified to contain the
+    // linux/arm64 sharp binary. Without this, `pnpm test` (whose
+    // canopycms-cdk suite rebuilds that directory as a --skip-native
+    // fixture) or any partially-failed build leaves a sharp-less bundle on
+    // disk, and a later in-repo `cdk deploy` ships it - producing a Lambda
+    // that throws at cold start on the first image request, a long way from
+    // the cause. Guarding in the construct rather than at one deploy
+    // entrypoint means future entrypoints inherit the protection instead of
+    // having to remember it.
+    if (
+      (props.requireDeployableBundle ?? true) &&
+      !existsSync(path.join(transformAssetDir, DEPLOYABLE_MARKER))
+    ) {
+      throw new Error(
+        `The transform Lambda code asset at ${transformAssetDir} carries no ${DEPLOYABLE_MARKER} ` +
+          'marker, so it was not built with its native sharp binary and must not be deployed. ' +
+          'This is usually a --skip-native fixture bundle left behind by `pnpm test`, or a ' +
+          '`build:lambda` run that failed partway through its sharp install.\n' +
+          'Build it for real:\n' +
+          '  pnpm --filter canopycms-cdk run build:lambda',
+      )
+    }
+
     this.maxUploadBytes = props.maxUploadBytes ?? DEFAULT_MAX_UPLOAD_BYTES
 
     if (props.bucket) {
@@ -289,9 +359,7 @@ export class AssetSupport extends Construct {
       // no Docker. `cdk synth`/`deploy` need that script run first; it is
       // NOT run automatically here (kept explicit rather than magic - see
       // this construct's class doc comment).
-      code: lambda.Code.fromAsset(
-        path.join(__dirname, '..', '..', 'lambda', 'asset-transform', 'dist'),
-      ),
+      code: lambda.Code.fromAsset(transformAssetDir),
       handler: 'handler.handler',
       // nodejs20.x was deprecated 2026-04-30; CDK's CloudFormation validation
       // now fails synth on it. The esbuild bundle targets node20 and runs

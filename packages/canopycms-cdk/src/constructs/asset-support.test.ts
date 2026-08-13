@@ -9,6 +9,19 @@ import { AssetSupport } from './asset-support'
 const EDITOR_ORIGINS = ['http://localhost:3000']
 
 /**
+ * Every construction below opts out of the deployable-bundle guard.
+ *
+ * This suite synths against the cheap `--skip-native` fixture bundle that
+ * `build:test-fixtures` produces (see lambda/asset-transform/build.mjs): it
+ * only needs `Code.fromAsset()` to find a directory and never executes the
+ * handler, so the linux/arm64 sharp binary is irrelevant to everything
+ * asserted here. Requiring a real build would put a live
+ * `npm install sharp` in front of every test run - the cost that kept this
+ * package's tests out of CI to begin with.
+ */
+const BASE_PROPS = { editorOrigins: EDITOR_ORIGINS, requireDeployableBundle: false }
+
+/**
  * `AssetSupport` itself never creates a `cloudfront.Distribution` - it only
  * returns `IOrigin` value objects via `assetBehaviors()` (see that method's
  * doc comment). CloudFront resources like the OAC only materialize once
@@ -35,7 +48,7 @@ function makeStack(): Stack {
 describe('AssetSupport - standalone mode (creates its own bucket)', () => {
   it('creates exactly one bucket with the asset-staging/ lifecycle rule and editor-origin CORS', () => {
     const stack = makeStack()
-    new AssetSupport(stack, 'Assets', { editorOrigins: EDITOR_ORIGINS })
+    new AssetSupport(stack, 'Assets', { ...BASE_PROPS })
     const template = Template.fromStack(stack)
 
     template.resourceCountIs('AWS::S3::Bucket', 1)
@@ -71,7 +84,7 @@ describe('AssetSupport - standalone mode (creates its own bucket)', () => {
 
   it('configures the transform Lambda: arm64/nodejs22.x, memory/timeout, and the bucket name in its environment', () => {
     const stack = makeStack()
-    new AssetSupport(stack, 'Assets', { editorOrigins: EDITOR_ORIGINS })
+    new AssetSupport(stack, 'Assets', { ...BASE_PROPS })
     const template = Template.fromStack(stack)
 
     template.hasResourceProperties(
@@ -90,7 +103,7 @@ describe('AssetSupport - standalone mode (creates its own bucket)', () => {
 
   it('locks the transform Lambda Function URL to AWS_IAM (not publicly invokable)', () => {
     const stack = makeStack()
-    new AssetSupport(stack, 'Assets', { editorOrigins: EDITOR_ORIGINS })
+    new AssetSupport(stack, 'Assets', { ...BASE_PROPS })
     const template = Template.fromStack(stack)
 
     template.hasResourceProperties('AWS::Lambda::Url', Match.objectLike({ AuthType: 'AWS_IAM' }))
@@ -98,7 +111,7 @@ describe('AssetSupport - standalone mode (creates its own bucket)', () => {
 
   it('grants the transform Lambda read on asset-originals/+asset-meta/ and put on assets/ only', () => {
     const stack = makeStack()
-    new AssetSupport(stack, 'Assets', { editorOrigins: EDITOR_ORIGINS })
+    new AssetSupport(stack, 'Assets', { ...BASE_PROPS })
     const template = Template.fromStack(stack)
 
     const policies = template.findResources('AWS::IAM::Policy')
@@ -120,7 +133,7 @@ describe('AssetSupport - standalone mode (creates its own bucket)', () => {
 
   it('assetBehaviors(): the /assets/t/* behavior is an origin group with the same S3 origin as primary, the Lambda Function URL as fallback, and 403+404 failover', () => {
     const stack = makeStack()
-    const assetSupport = new AssetSupport(stack, 'Assets', { editorOrigins: EDITOR_ORIGINS })
+    const assetSupport = new AssetSupport(stack, 'Assets', { ...BASE_PROPS })
     const template = synthWithDistribution(assetSupport, stack)
 
     template.hasResourceProperties(
@@ -151,7 +164,7 @@ describe('AssetSupport - standalone mode (creates its own bucket)', () => {
 
   it('assetBehaviors(): the /assets/t/* behavior uses a custom cache policy with minTtl 0 (never the managed CACHING_OPTIMIZED, whose 1s min TTL caches the oversized-output no-store redirect)', () => {
     const stack = makeStack()
-    const assetSupport = new AssetSupport(stack, 'Assets', { editorOrigins: EDITOR_ORIGINS })
+    const assetSupport = new AssetSupport(stack, 'Assets', { ...BASE_PROPS })
     const template = synthWithDistribution(assetSupport, stack)
 
     const policies = template.findResources('AWS::CloudFront::CachePolicy')
@@ -187,7 +200,7 @@ describe('AssetSupport - standalone mode (creates its own bucket)', () => {
 
   it('creates Origin Access Control resources for both the S3 origin and the Lambda Function URL origin', () => {
     const stack = makeStack()
-    const assetSupport = new AssetSupport(stack, 'Assets', { editorOrigins: EDITOR_ORIGINS })
+    const assetSupport = new AssetSupport(stack, 'Assets', { ...BASE_PROPS })
     const template = synthWithDistribution(assetSupport, stack)
 
     const oacs = template.findResources('AWS::CloudFront::OriginAccessControl')
@@ -199,7 +212,7 @@ describe('AssetSupport - standalone mode (creates its own bucket)', () => {
 
   it('grantUploadAccess(): grants exactly the put/get/delete prefixes S3AssetStore calls for', () => {
     const stack = makeStack()
-    const assetSupport = new AssetSupport(stack, 'Assets', { editorOrigins: EDITOR_ORIGINS })
+    const assetSupport = new AssetSupport(stack, 'Assets', { ...BASE_PROPS })
     const role = new iam.Role(stack, 'EditorRole', {
       assumedBy: new iam.ServicePrincipal('lambda.amazonaws.com'),
     })
@@ -229,7 +242,7 @@ describe('AssetSupport - standalone mode (creates its own bucket)', () => {
 describe('AssetSupport - transform Lambda CloudWatch log group', () => {
   it('creates a dedicated transform log group named /canopycms/<stackName>/transform with 90-day default retention and DESTROY removal', () => {
     const stack = makeStack()
-    new AssetSupport(stack, 'Assets', { editorOrigins: EDITOR_ORIGINS })
+    new AssetSupport(stack, 'Assets', { ...BASE_PROPS })
     const template = Template.fromStack(stack)
 
     template.hasResource(
@@ -247,7 +260,7 @@ describe('AssetSupport - transform Lambda CloudWatch log group', () => {
   it('honors transformLogRetention to override the default retention', () => {
     const stack = makeStack()
     new AssetSupport(stack, 'Assets', {
-      editorOrigins: EDITOR_ORIGINS,
+      ...BASE_PROPS,
       transformLogRetention: RetentionDays.ONE_WEEK,
     })
     const template = Template.fromStack(stack)
@@ -261,7 +274,7 @@ describe('AssetSupport - transform Lambda CloudWatch log group', () => {
   it('honors transformLogGroupName to override the default name', () => {
     const stack = makeStack()
     new AssetSupport(stack, 'Assets', {
-      editorOrigins: EDITOR_ORIGINS,
+      ...BASE_PROPS,
       transformLogGroupName: '/custom/transform',
     })
     const template = Template.fromStack(stack)
@@ -278,7 +291,7 @@ describe('AssetSupport - transform Lambda CloudWatch log group', () => {
   // "already exists" the moment it's ever been deployed without one.
   it('the transform log group name does not start with /aws/lambda/', () => {
     const stack = makeStack()
-    new AssetSupport(stack, 'Assets', { editorOrigins: EDITOR_ORIGINS })
+    new AssetSupport(stack, 'Assets', { ...BASE_PROPS })
     const template = Template.fromStack(stack)
 
     const groups = template.findResources('AWS::Logs::LogGroup')
@@ -293,7 +306,7 @@ describe('AssetSupport - transform Lambda CloudWatch log group', () => {
 
   it('the transform Lambda references its dedicated log group via LoggingConfig.LogGroup', () => {
     const stack = makeStack()
-    new AssetSupport(stack, 'Assets', { editorOrigins: EDITOR_ORIGINS })
+    new AssetSupport(stack, 'Assets', { ...BASE_PROPS })
     const template = Template.fromStack(stack)
 
     template.hasResourceProperties(
@@ -308,7 +321,7 @@ describe('AssetSupport - transform Lambda CloudWatch log group', () => {
 
   it('grants the transform Lambda role a log-group-scoped IAM statement (CreateLogStream + PutLogEvents only), not a broad grant', () => {
     const stack = makeStack()
-    new AssetSupport(stack, 'Assets', { editorOrigins: EDITOR_ORIGINS })
+    new AssetSupport(stack, 'Assets', { ...BASE_PROPS })
     const template = Template.fromStack(stack)
 
     template.hasResourceProperties(
@@ -334,7 +347,7 @@ describe('AssetSupport - BYO bucket mode', () => {
   it('does not create a bucket when an existing one is provided', () => {
     const stack = makeStack()
     const existingBucket = s3.Bucket.fromBucketName(stack, 'Existing', 'my-existing-bucket')
-    new AssetSupport(stack, 'Assets', { bucket: existingBucket, editorOrigins: EDITOR_ORIGINS })
+    new AssetSupport(stack, 'Assets', { ...BASE_PROPS, bucket: existingBucket })
     const template = Template.fromStack(stack)
 
     template.resourceCountIs('AWS::S3::Bucket', 0)

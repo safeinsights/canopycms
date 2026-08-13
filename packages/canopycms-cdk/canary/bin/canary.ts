@@ -28,7 +28,10 @@
  *
  * Build the transform Lambda's asset first (`AssetSupport` points
  * `lambda.Code.fromAsset()` at a real directory that must already exist -
- * `cdk synth`/`deploy` will fail with "Cannot find asset" otherwise):
+ * `cdk synth`/`deploy` will fail with "Cannot find asset" otherwise). Run the
+ * build with NO flags: `pnpm test` leaves a fixture-only `--skip-native`
+ * bundle behind, and `AssetSupport` refuses to synth one (it requires the
+ * `.deployable` marker that only a full build writes).
  *
  *   pnpm --filter canopycms-cdk run build:lambda
  *   cd packages/canopycms-cdk/canary
