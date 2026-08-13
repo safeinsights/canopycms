@@ -326,8 +326,22 @@ the GitHub fetch and this deployment simply has not had a settings edit yet —
 a warning every 5 minutes, wrongly.
 
 Note for adopters: env now beats a `deploymentName` passed programmatically to
-`CmsWorker`, matching the Lambda. An invalid stamped value now throws at
-construction (a loud startup exit) instead of producing a broken branch name.
+`CmsWorker`, matching the Lambda. An invalid stamped value now throws ~~at
+construction (a loud startup exit)~~ instead of producing a broken branch name.
+
+**Correction (2026-08-13, `fix/worker-startup-surfacing`).** "A loud startup
+exit" was wrong, and the 2026-08-12 adversarial review of
+`integration-202607-a` caught it. `lastFatalError` is written only by
+`start()`'s catch, and the AWS entrypoint constructs `CmsWorker`
+(`canopycms-cdk/worker/index.ts:85`) before calling `start()` (`:119`) — so a
+constructor throw landed outside every status-writing path. With systemd
+`Type=simple` + `Restart=always` and cfn-signal deliberately absent, the real
+behaviour was an INVISIBLE ~5s crash-loop: `cdk deploy` reported success and
+the admin panel showed the worker as `'absent'` with no fatal error. Resolution
+now happens in `ensureSettingsBranch()`, called first inside `start()`'s try,
+so the same throw is recorded to `worker-status.json` and reaches the admin
+panel. The claim above is struck rather than deleted so the mis-attribution
+stays visible.
 
 ---
 
