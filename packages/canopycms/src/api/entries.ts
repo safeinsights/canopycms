@@ -316,6 +316,16 @@ export const listEntries = defineEndpoint({
 export type DeleteEntryResponse = ApiResponse<{
   deleted: boolean
   contentId?: string
+  /**
+   * Set when the entry itself was deleted successfully but the collection's
+   * order array could not be updated afterward (C6: order cleanup is
+   * best-effort hygiene that runs AFTER the delete, so its failure must not
+   * present as a failed delete - see content.ts's `validationWarnings` for
+   * the same "warn, don't fail" precedent on the write path). The order
+   * array still contains the now-nonexistent id until a later schema
+   * mutation cleans it up.
+   */
+  warning?: string
 }>
 
 const deleteEntryParamsSchema = z.object({
@@ -338,9 +348,13 @@ const deleteEntryHandler = async (
 
   // Parse entryPath to get collection and slug
   // Format: collectionPath/slug (e.g., "posts/hello-world" or "docs/api/getting-started")
-  // Re-validate after decoding to prevent double-encoding path traversal attacks
-  const decoded = decodeURIComponent(params.entryPath)
-  const entryPathResult = parseLogicalPath(decoded)
+  // params.entryPath is already decoded exactly once, uniformly with every
+  // other route param, by http/router.ts's matchRoute (C5) - re-decoding it
+  // here was the redundant second decode that made this route inconsistent
+  // with content.ts's (undecoded) catch-all and vulnerable to a malformed
+  // `%` escape throwing past this handler's try/catch. Still re-validate the
+  // final decoded value for traversal, same as before.
+  const entryPathResult = parseLogicalPath(params.entryPath)
   if (!entryPathResult.ok) {
     return {
       ok: false,
@@ -405,7 +419,14 @@ const deleteEntryHandler = async (
     if (isNotFoundError(err)) {
       return { ok: false, status: 404, error: 'Entry not found' }
     }
-    return { ok: false, status: 400, error: 'Invalid entry path' }
+    // C2: only a recognized ContentStoreError is the client's fault (bad
+    // slug/path shape); anything else - a real fs error, a bug - is a
+    // server fault and must surface as a 500, not get mislabeled as
+    // "Invalid entry path".
+    if (err instanceof ContentStoreError) {
+      return { ok: false, status: 400, error: 'Invalid entry path' }
+    }
+    throw err
   }
 
   // Check edit access using the real physical path
@@ -423,6 +444,8 @@ const deleteEntryHandler = async (
       error: 'Edit permission required to delete entry',
     }
   }
+
+  let orderCleanupWarning: string | undefined
 
   try {
     // Get the entry's content ID before deleting (for order update)
@@ -451,19 +474,21 @@ const deleteEntryHandler = async (
         try {
           await schemaStore.updateOrder(collectionPath as LogicalPath, newOrder as string[])
         } catch (err) {
-          if (!(err instanceof SchemaStoreBusyError)) {
-            throw err
-          }
-          // Best-effort order hygiene (see comment above): the entry is
-          // already deleted, so a busy schema lock must not turn an
-          // otherwise-successful delete into an error response. The order
-          // array will still contain the now-nonexistent id until a later
-          // schema mutation cleans it up.
-          log.warn('delete-entry', 'Skipped order cleanup — schema is busy', {
+          // C6: order cleanup is best-effort hygiene that runs AFTER the
+          // entry is already deleted, so no failure here - busy schema lock,
+          // ENOSPC, a bug, anything - is allowed to turn an otherwise-
+          // successful delete into an error response (the entry is gone; a
+          // client that sees an error and retries the delete would just get
+          // a confusing 404). Surface it as a warning on the success
+          // response instead (mirrors content.ts's write-path `validationWarnings`).
+          const reason =
+            err instanceof SchemaStoreBusyError ? 'schema is busy' : getErrorMessage(err)
+          log.warn('delete-entry', 'Skipped order cleanup', {
             collectionPath,
             contentId,
             error: getErrorMessage(err),
           })
+          orderCleanupWarning = `Entry deleted, but the collection order list could not be updated (${sanitizeErrorMessage(reason)}); it will still list this entry until the next schema change.`
         }
       }
     }
@@ -471,7 +496,7 @@ const deleteEntryHandler = async (
     return {
       ok: true,
       status: 200,
-      data: { deleted: true, contentId: contentId || undefined },
+      data: { deleted: true, contentId: contentId || undefined, warning: orderCleanupWarning },
     }
   } catch (err) {
     if (isNotFoundError(err)) {

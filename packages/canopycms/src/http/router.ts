@@ -116,6 +116,15 @@ function buildCanopyRoutes(): RouteDefinition[] {
 /**
  * Match a route pattern against actual path segments.
  * Supports :param for single-segment params and ...slug for catch-all.
+ *
+ * Params are returned RAW (undecoded) here on purpose (C5): matching is
+ * purely structural (segment counts, static-segment equality) and must never
+ * throw. Decoding happens exactly once, uniformly for :param and catch-all
+ * alike, in matchRoute() below - after the winning route has been picked, so
+ * a malformed `%` escape is handled in a single place instead of aborting
+ * mid-match (which previously let a URIError from a bad :param escape to
+ * `decodeURIComponent` bubble all the way to http/handler.ts's top-level
+ * catch and surface as a 500).
  */
 const matchPattern = (
   pattern: readonly string[],
@@ -137,8 +146,8 @@ const matchPattern = (
     if (!next) return null
 
     if (part.startsWith(':')) {
-      // Dynamic segment - extract param
-      params[part.slice(1)] = decodeURIComponent(next)
+      // Dynamic segment - extract param (still raw; see decode note above)
+      params[part.slice(1)] = next
     } else if (part !== next) {
       // Static segment - must match exactly
       return null
@@ -150,6 +159,18 @@ const matchPattern = (
 
   return { params }
 }
+
+/**
+ * Synthetic handler for a request whose matched route params contain a
+ * malformed `%` escape sequence (C5) - e.g. a lone `%` or `%zz`. Reported as
+ * a 400 (the request is malformed), never registered in the real route
+ * table, and only ever reachable via matchRoute()'s decode step below.
+ */
+const malformedPathHandler: CanopyHandler = async () => ({
+  ok: false,
+  status: 400,
+  error: 'Malformed URL-encoded path segment',
+})
 
 /**
  * Specificity rank of a pattern segment. Higher wins.
@@ -230,9 +251,28 @@ export function matchRoute(
 
   if (!best) return null
 
+  // Decode every matched param exactly once, here - uniformly for :param and
+  // catch-all values alike (C5). A malformed escape must produce a 400, not
+  // an uncaught URIError that would otherwise reach http/handler.ts's
+  // top-level catch and get reported as a 500. Downstream consumers
+  // (Zod's logicalPathSchema/branchNameSchema etc. in each route's
+  // `validate`, and any handler-local re-check such as entries.ts's
+  // parseLogicalPath call) still run their own traversal validation against
+  // this same final decoded value - decoding centrally here does not skip
+  // that, it just removes the redundant second decode that used to run
+  // alongside it in a few handlers.
+  let decodedParams: Record<string, string>
+  try {
+    decodedParams = Object.fromEntries(
+      Object.entries(best.params).map(([key, value]) => [key, decodeURIComponent(value)]),
+    )
+  } catch {
+    return { handler: malformedPathHandler, params: {} }
+  }
+
   return {
     handler: best.route.handler,
-    params: best.params,
+    params: decodedParams,
     validate: best.route.validate, // Include validation function if present
     bodyFormat: best.route.bodyFormat,
   }

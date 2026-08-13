@@ -186,6 +186,79 @@ describe('content api', () => {
     expect(res.status).toBe(409)
   })
 
+  // C2 (August 2026 baseline review): store.write() rejecting with an
+  // unrecognized error (ENOSPC, EACCES, a bug) is a genuine server fault,
+  // not the client's mistake, and must surface as a 500 - not get flattened
+  // to a 400 alongside real client faults (ContentStoreError).
+  describe('C2: write error classification', () => {
+    it('returns 500 (not 400) when store.write throws an error that is not a known ContentStoreError', async () => {
+      const ctx = allowedCtx()
+      const { ContentStore } = await import('../content-store')
+
+      const mockStore = {
+        resolvePath: vi.fn().mockReturnValue({
+          schemaItem: { logicalPath: 'content/posts', type: 'collection', entries: [] },
+          slug: 'hello',
+        }),
+        resolveDocumentPath: vi.fn().mockReturnValue({ relativePath: 'content/posts/hello' }),
+        write: vi.fn().mockRejectedValue(Object.assign(new Error('ENOSPC'), { code: 'ENOSPC' })),
+        idIndex: vi.fn().mockResolvedValue({ findById: vi.fn().mockReturnValue(null) }),
+        documentExists: vi.fn().mockResolvedValue(true),
+        getExistingEntryType: vi.fn().mockResolvedValue(undefined),
+        countEntriesOfType: vi.fn().mockResolvedValue(0),
+      }
+      vi.mocked(ContentStore).mockImplementationOnce(function () {
+        return mockStore as any
+      })
+
+      await expect(
+        writeContent(
+          ctx,
+          { user: { type: 'authenticated', userId: 'u1', groups: [] } },
+          { branch: unsafeAsBranchName('feature/x'), path: unsafeAsLogicalPath('posts/hello') },
+          { format: 'json', data: { title: 'hi' }, expectedVersion: 1 },
+        ),
+      ).rejects.toThrow('ENOSPC')
+    })
+
+    it('still returns 400 when store.write throws a ContentStoreError (unchanged client-fault behavior)', async () => {
+      const ctx = allowedCtx()
+      const { ContentStore, ContentStoreError } = await import('../content-store')
+
+      const mockStore = {
+        resolvePath: vi.fn().mockReturnValue({
+          schemaItem: { logicalPath: 'content/posts', type: 'collection', entries: [] },
+          slug: 'hello',
+        }),
+        resolveDocumentPath: vi.fn().mockReturnValue({ relativePath: 'content/posts/hello' }),
+        write: vi
+          .fn()
+          .mockRejectedValue(
+            new ContentStoreError('Slugs cannot contain forward slashes', 'VALIDATION'),
+          ),
+        idIndex: vi.fn().mockResolvedValue({ findById: vi.fn().mockReturnValue(null) }),
+        documentExists: vi.fn().mockResolvedValue(true),
+        getExistingEntryType: vi.fn().mockResolvedValue(undefined),
+        countEntriesOfType: vi.fn().mockResolvedValue(0),
+      }
+      vi.mocked(ContentStore).mockImplementationOnce(function () {
+        return mockStore as any
+      })
+
+      const res = await writeContent(
+        ctx,
+        { user: { type: 'authenticated', userId: 'u1', groups: [] } },
+        { branch: unsafeAsBranchName('feature/x'), path: unsafeAsLogicalPath('posts/hello') },
+        { format: 'json', data: { title: 'hi' }, expectedVersion: 1 },
+      )
+      expect(res.ok).toBe(false)
+      expect(res.status).toBe(400)
+      if (!res.ok) {
+        expect(res.error).toContain('Slugs cannot contain forward slashes')
+      }
+    })
+  })
+
   // Create-intent guard (August 2026 baseline review, Critical finding): a
   // create (expectedVersion: null) against a slug that already has content
   // must never silently overwrite it.
@@ -568,6 +641,40 @@ describe('content api', () => {
       if (!res.ok) {
         expect(res.error).toContain('already exists')
       }
+    })
+
+    // C2 (August 2026 baseline review): mirrors the write-path fix above -
+    // an unrecognized store.renameEntry() error is a server fault and must
+    // surface as a 500, not get flattened to "Rename failed" / 400.
+    it('returns 500 (not 400) when store.renameEntry throws an error that is not a known ContentStoreError', async () => {
+      const ctx = allowedCtx()
+      const { ContentStore } = await import('../content-store')
+
+      const mockStore = {
+        resolvePath: vi.fn().mockReturnValue({
+          schemaItem: { logicalPath: 'content/posts', type: 'collection' },
+          slug: 'old-slug',
+        }),
+        resolveDocumentPath: vi.fn().mockReturnValue({ relativePath: 'content/posts/old-slug' }),
+        renameEntry: vi
+          .fn()
+          .mockRejectedValue(Object.assign(new Error('EACCES'), { code: 'EACCES' })),
+      }
+      vi.mocked(ContentStore).mockImplementationOnce(function () {
+        return mockStore as any
+      })
+
+      await expect(
+        renameEntry(
+          ctx,
+          { user: { type: 'authenticated', userId: 'u1', groups: [] } },
+          {
+            branch: unsafeAsBranchName('feature/x'),
+            path: unsafeAsLogicalPath('posts/old-slug'),
+          },
+          { newSlug: unsafeAsSlug('new-slug') },
+        ),
+      ).rejects.toThrow('EACCES')
     })
   })
 
