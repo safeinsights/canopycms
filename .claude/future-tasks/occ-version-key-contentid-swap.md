@@ -1,7 +1,7 @@
 # OCC version tokens are keyed by contentId, so a contentId swap silently disables conflict detection
 
 Found while fixing the branch-switch stale-mirror bug
-([program-b-final-review-followups.md](program-b-final-review-followups.md),
+([program-b-final-review-followups.md](resolved/program-b-final-review-followups.md),
 HIGH #3, resolved 2026-08-12). That fix closed the branch-switch *trigger*; the
 underlying fragility is still there and can be reached without a branch switch.
 

@@ -71,5 +71,5 @@ envelope shape.
 
 - [resolved/submitted-branch-edit-locking.md](resolved/submitted-branch-edit-locking.md)
   — carries the fail-closed rationale inline
-- [program-b-final-review-followups.md](program-b-final-review-followups.md)
+- [program-b-final-review-followups.md](resolved/program-b-final-review-followups.md)
 - `branch-health.ts` — the corrupt-metadata classifier this should feed

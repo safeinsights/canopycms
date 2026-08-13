@@ -3,7 +3,7 @@
 Captured 2026-08-13 by PR-4 of the 2026-08-12 adversarial review of
 `integration-202607-a` (finding L14). The divergence itself was known — it was
 recorded 2026-08-12 inside a **struck/RESOLVED** finding's body in
-[program-b-final-review-followups.md](program-b-final-review-followups.md)
+[program-b-final-review-followups.md](resolved/program-b-final-review-followups.md)
 ("Related and NOT changed: the rebase loop writes the _sanitized_ directory name
 into metadata's `name` field while the API writes the raw ref name"). That is
 the wrong place for open work — a reader scanning for live findings skips struck

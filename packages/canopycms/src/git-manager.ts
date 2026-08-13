@@ -517,8 +517,8 @@ export class GitManager {
    * --list` instead of `rev-parse --verify --quiet`: simple-git only fails a
    * task on stderr output, and `--quiet` suppresses exactly that).
    * `--end-of-options` guards the ref-name positionals the same way
-   * `push`/`forcePush` below do, since `branch` here can be a sanitized but
-   * otherwise caller-influenced string.
+   * `push` below does, since `branch` here can be a sanitized but otherwise
+   * caller-influenced string.
    *
    * A failure here therefore means the remote itself is unreadable and is
    * surfaced, NOT treated as "branch absent" — that would route
@@ -1360,16 +1360,6 @@ export class GitManager {
   async getUncommittedFiles(): Promise<string[]> {
     const status = await this.status()
     return status.files.map((f) => f.path)
-  }
-
-  /**
-   * Force push (use with caution - for PR updates only)
-   * Uses --force-with-lease for safer force pushes
-   */
-  async forcePush(branch?: string): Promise<void> {
-    const target = branch ?? (await this.git.revparse(['--abbrev-ref', 'HEAD']))
-    // See push() above for why raw() + --end-of-options is used here.
-    await this.git.raw(['push', '--force-with-lease', '--end-of-options', this.remote, target])
   }
 
   /**
