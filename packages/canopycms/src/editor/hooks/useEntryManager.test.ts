@@ -1161,13 +1161,17 @@ describe('useEntryManager', () => {
       )
     })
 
-    it('a failed load settles to the empty state and reports, rather than loading forever', async () => {
-      // `entriesInitializing` now covers "the committed data is not this
-      // branch's yet", which a failed fetch would otherwise never clear:
-      // SWRProvider sets shouldRetryOnError: false, so the failure is terminal
-      // and the pane would sit at "Loading content…" with no retry affordance.
-      // The console spy also keeps the deliberate console.error from tripping
-      // vitest's onConsoleLog under CI.
+    it('reports a failed load on the branch it mounted on (does not cover the loading-forever case below)', async () => {
+      // Mounting directly on a failing branch does NOT exercise the guard
+      // this hook exists to protect: `view` initializes stamped with
+      // `options.branchName` (see BranchView's doc comment), so
+      // `isCurrentBranchView` is already true at render 1 and the
+      // `!entriesError` term in `entriesInitializing` is never consulted --
+      // deleting it leaves this test green. It survives anyway, under an
+      // honest name, purely as coverage of the SEPARATE reporting effect
+      // (console.error + a red notification on a failed load). The
+      // load-bearing case for the guard itself is the switch sequence in the
+      // next test.
       const { error, restore } = setupMockConsole(['error'])
       mockClient.schema.get.mockResolvedValue({ ok: false, status: 500 } as never)
 
@@ -1183,6 +1187,76 @@ describe('useEntryManager', () => {
         expect.objectContaining({ color: 'red' }),
       )
       restore()
+    })
+
+    it('a failed load after switching branches settles to the empty state and reports, rather than loading forever', async () => {
+      // THIS is the sequence that actually exercises the `!entriesError` term
+      // in useEntryManager.ts's `entriesInitializing` (see its doc comment) --
+      // replacing a version of this test that mounted directly on the failing
+      // branch and stayed green even with `!entriesError && ` deleted from
+      // that expression (the finding this test addresses).
+      //
+      // Mounting directly on a failing branch (previous test) can't exercise
+      // it: `view` initializes stamped with the mount branch, so
+      // `isCurrentBranchView` is already true at render 1. A SWITCH is what
+      // makes `isCurrentBranchView` false while the new branch's fetch is in
+      // flight -- `view` stays stamped with the OLD (successfully-loaded)
+      // branch until something commits over it -- so once branch B's fetch
+      // rejects, `!isCurrentBranchView` alone would keep `entriesInitializing`
+      // true forever: SWRProvider's `shouldRetryOnError: false` makes the
+      // failure terminal, so no revalidation is ever coming to clear it.
+      // `!entriesError` is what settles the pane to the empty state instead
+      // of leaving it stuck on "Loading content…" with no retry affordance.
+      const { error, restore } = setupMockConsole(['error'])
+      try {
+        mockClient.entries.list.mockResolvedValue(listPage('aaaaaaaaaaaa'))
+        // Keyed on the branch param, not a blanket failure: branch A must
+        // load successfully first (so there's a committed view for the
+        // switch to leave behind), and only branch B's fetch fails.
+        mockClient.schema.get.mockImplementation((params: Record<string, string>) =>
+          Promise.resolve(
+            params.branch === 'branch-b'
+              ? ({ ok: false, status: 500 } as never)
+              : ({ ok: true, status: 200, data: { flatSchema: [], entrySchemas: {} } } as never),
+          ),
+        )
+
+        const { result, rerender } = renderHook((props) => useEntryManager(props), {
+          wrapper,
+          initialProps: optionsFor('branch-a'),
+        })
+
+        // Branch A's load commits successfully -- `view` is now stamped
+        // 'branch-a' -- before the switch happens.
+        await waitFor(() => expect(result.current.entries).toHaveLength(1))
+        await waitFor(() => expect(result.current.entriesInitializing).toBe(false))
+
+        rerender(optionsFor('branch-b'))
+
+        // Pin the TRANSITION, not just the end state -- asserting only that
+        // the flag is false at the end would go green again under a future
+        // change that made it false from the first post-switch render, which
+        // is exactly the shape of vacuity this test was rewritten to remove.
+        // Deterministic, not a race: `rerender` is synchronous, `view` is
+        // still stamped 'branch-a' so `!isCurrentBranchView` holds, and
+        // branch B's rejection needs at least a microtask to land.
+        expect(result.current.entriesInitializing).toBe(true)
+
+        // The failure settles instead of hanging -- the whole point of the
+        // guard under test.
+        await waitFor(() => expect(result.current.entriesInitializing).toBe(false))
+        expect(result.current.entries).toEqual([])
+        expect(result.current.collections).toEqual([])
+        expect(result.current.currentEntry).toBeUndefined()
+
+        // ...and is reported, not silently swallowed.
+        expect(error).toHaveBeenCalled()
+        expect(vi.mocked(notifications.show)).toHaveBeenCalledWith(
+          expect.objectContaining({ color: 'red' }),
+        )
+      } finally {
+        restore()
+      }
     })
   })
 })
