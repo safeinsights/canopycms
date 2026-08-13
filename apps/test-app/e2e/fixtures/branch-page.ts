@@ -307,11 +307,18 @@ export class BranchPage {
     )
     await deleteButton.click()
 
-    // Handle confirmation dialog if present
+    // Deletion ALWAYS confirms now, so wait for the dialog rather than probing
+    // for it. The previous form was `if (await confirmButton.isVisible(...))`,
+    // which reads like a wait but is not one: locator.isVisible() resolves
+    // immediately and does not auto-wait. That branch was written
+    // speculatively and never actually fired -- no confirmation existed -- so
+    // its raciness stayed invisible until a real modal was added, at which
+    // point it lost the race against the modal's render, silently skipped the
+    // click, and left the test waiting 30s for a branch that was never
+    // deleted.
     const confirmButton = this.page.locator('[data-testid="confirm-delete-branch"]')
-    if (await confirmButton.isVisible({ timeout: 2000 }).catch(() => false)) {
-      await confirmButton.click()
-    }
+    await confirmButton.waitFor({ state: 'visible', timeout: STANDARD_TIMEOUT })
+    await confirmButton.click()
 
     // Wait for the branch to disappear from the list
     await this.branchManager
