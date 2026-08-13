@@ -3,10 +3,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { useEntryManager, listAllEntries } from './useEntryManager'
 import type { EditorEntry, EditorCollection } from '../Editor'
 import type { MockApiClient } from '../../api/__test__/mock-client'
+import { notifications } from '@mantine/notifications'
 import {
   setupMockApiClient,
   setupMockLocation,
   setupMockHistory,
+  setupMockConsole,
   createApiClientWrapper,
   createStrictModeApiClientWrapper,
 } from './__test__/test-utils'
@@ -1004,6 +1006,184 @@ describe('useEntryManager', () => {
     })
     // The late A response must not bleed into B's view.
     expect(result.current.entries.map((e) => e.path)).toEqual(['b-entries'])
+  })
+
+  describe('switching to a branch whose entries have not loaded yet', () => {
+    // Same logical path on both branches with DIFFERENT content IDs -- the
+    // shape that turns the stale render into a data bug (an entry created
+    // independently on each branch, rather than inherited by branching).
+    const itemWithId = (contentId: string) => ({
+      ...mockCollectionItem,
+      logicalPath: unsafeAsLogicalPath('content/posts/hello'),
+      contentId: unsafeAsContentId(contentId),
+      slug: unsafeAsSlug('hello'),
+      collectionPath: unsafeAsLogicalPath('content/posts'),
+    })
+
+    const optionsFor = (branch: string) => ({
+      ...defaultOptions,
+      initialEntries: [],
+      branchName: branch,
+    })
+
+    type ListResult = Awaited<ReturnType<typeof mockClient.entries.list>>
+    const listPage = (contentId: string) => ({
+      ok: true as const,
+      status: 200,
+      data: { entries: [itemWithId(contentId)], pagination: { hasMore: false, limit: 200 } },
+    })
+
+    /** Park every entries.list call so each branch's load settles on demand. */
+    const parkListCalls = () => {
+      const parked: Array<{ branch: string; resolve: (v: ListResult) => void }> = []
+      mockClient.entries.list.mockImplementation(
+        (params: Record<string, string>) =>
+          new Promise<ListResult>((resolve) => parked.push({ branch: params.branch, resolve })),
+      )
+      return parked
+    }
+
+    it('shows nothing from the previous branch while the new branch loads', async () => {
+      // Pre-SWR, `setEntriesInitializing(true)` fired unconditionally on every
+      // branch change. Gated on SWR's `isLoading` it stopped covering this
+      // case, and nothing reset the committed entries/collections -- so the
+      // PREVIOUS branch's entries stayed on screen for the whole duration of
+      // the new branch's fetch. Worse than a stale render: the selection
+      // fallback effect then auto-selected one of them, with no click from the
+      // user, while `branchName` already read the new branch.
+      const parked = parkListCalls()
+      const { result, rerender } = renderHook((props) => useEntryManager(props), {
+        wrapper,
+        initialProps: optionsFor('branch-a'),
+      })
+
+      await waitFor(() => expect(parked).toHaveLength(1))
+      await act(async () => {
+        parked[0].resolve(listPage('aaaaaaaaaaaa'))
+      })
+      await waitFor(() => expect(result.current.entries).toHaveLength(1))
+      expect(result.current.selectedPath).toBe('content/posts/hello')
+
+      // Branch B has never been visited, so SWR has no cache for it and its
+      // fetch is still in flight.
+      rerender(optionsFor('branch-b'))
+      await waitFor(() => expect(parked).toHaveLength(2))
+
+      expect(result.current.entries).toEqual([])
+      expect(result.current.collections).toEqual([])
+      expect(result.current.currentEntry).toBeUndefined()
+      expect(result.current.selectedPath).toBe('')
+      expect(result.current.entriesInitializing).toBe(true)
+
+      // ...and B's own entries still arrive normally.
+      await act(async () => {
+        parked[1].resolve(listPage('bbbbbbbbbbbb'))
+      })
+      await waitFor(() => expect(result.current.entries).toHaveLength(1))
+      expect(result.current.entries[0].contentId).toBe('bbbbbbbbbbbb')
+      expect(result.current.entriesInitializing).toBe(false)
+    })
+
+    it('never saves an entry without the OCC token from its own load', async () => {
+      // The data-loss half of the same bug, and the reason it is more than
+      // cosmetic. Version tokens are keyed `${branch}:${contentId}`. Pre-fix,
+      // clicking the stale entry mid-switch read branch B's file but filed the
+      // token under branch A's contentId; when B's entries landed, the
+      // same-path entry carried a different contentId, the lookup missed, and
+      // the save went out with `expectedVersion: undefined` -- which
+      // content-store.ts reads as "skip the mtime check", silently downgrading
+      // a conflicting save into a blind overwrite.
+      //
+      // Asserted as an invariant over every write rather than one value:
+      // whatever entry the UI lets the user select and save, it must carry the
+      // token from its own load.
+      const parked = parkListCalls()
+      mockClient.content.read.mockResolvedValue({
+        ok: true,
+        status: 200,
+        data: { format: 'mdx', data: {}, body: 'hi', version: 12345 } as never,
+      })
+      mockClient.content.write.mockResolvedValue({
+        ok: true,
+        status: 200,
+        data: { format: 'mdx', data: {}, body: 'edited', version: 999 } as never,
+      })
+
+      const { result, rerender } = renderHook((props) => useEntryManager(props), {
+        wrapper,
+        initialProps: optionsFor('branch-a'),
+      })
+
+      await waitFor(() => expect(parked).toHaveLength(1))
+      await act(async () => {
+        parked[0].resolve(listPage('aaaaaaaaaaaa'))
+      })
+      await waitFor(() => expect(result.current.entries).toHaveLength(1))
+
+      rerender(optionsFor('branch-b'))
+      await waitFor(() => expect(parked).toHaveLength(2))
+
+      // The interleaving is the bug, so the test has to reproduce it: the user
+      // OPENS an entry, the new branch's data lands while the form sits there,
+      // and only then do they save. A load and save back-to-back can't expose
+      // this -- the contentId has no chance to change in between.
+      //
+      // Pre-fix the editor offered branch A's entry here, still on screen under
+      // branch B; post-fix there is nothing to open until B's data arrives.
+      const openedMidSwitch = result.current.currentEntry
+      if (openedMidSwitch) {
+        await act(async () => {
+          await result.current.loadEntry(openedMidSwitch)
+        })
+      }
+
+      await act(async () => {
+        parked[1].resolve(listPage('bbbbbbbbbbbb'))
+      })
+      await waitFor(() => expect(result.current.entries[0]?.contentId).toBe('bbbbbbbbbbbb'))
+
+      // The user saves what the form is showing. If the editor never offered
+      // anything above, this is their first interaction with the entry.
+      const showing = result.current.currentEntry
+      expect(showing).toBeDefined()
+      if (!openedMidSwitch) {
+        await act(async () => {
+          await result.current.loadEntry(showing!)
+        })
+      }
+      await act(async () => {
+        await result.current.saveEntry(showing!, { body: 'edited' } as never)
+      })
+
+      expect(mockClient.content.write).toHaveBeenCalledTimes(1)
+      expect(mockClient.content.write.mock.calls[0][1]).toEqual(
+        expect.objectContaining({ expectedVersion: 12345 }),
+      )
+    })
+
+    it('a failed load settles to the empty state and reports, rather than loading forever', async () => {
+      // `entriesInitializing` now covers "the committed data is not this
+      // branch's yet", which a failed fetch would otherwise never clear:
+      // SWRProvider sets shouldRetryOnError: false, so the failure is terminal
+      // and the pane would sit at "Loading content…" with no retry affordance.
+      // The console spy also keeps the deliberate console.error from tripping
+      // vitest's onConsoleLog under CI.
+      const { error, restore } = setupMockConsole(['error'])
+      mockClient.schema.get.mockResolvedValue({ ok: false, status: 500 } as never)
+
+      const { result } = renderHook((props) => useEntryManager(props), {
+        wrapper,
+        initialProps: optionsFor('branch-a'),
+      })
+
+      await waitFor(() => expect(result.current.entriesInitializing).toBe(false))
+      expect(result.current.entries).toEqual([])
+      expect(error).toHaveBeenCalled()
+      expect(vi.mocked(notifications.show)).toHaveBeenCalledWith(
+        expect.objectContaining({ color: 'red' }),
+      )
+      restore()
+    })
   })
 })
 
