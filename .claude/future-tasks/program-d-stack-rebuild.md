@@ -169,11 +169,14 @@ the git-path soak is also their first real coverage:
 
 - `settings-workspace.ts` — a bespoke init lock, `fs.open(lockPath, 'wx')`, which
   concurrency.md itself flags as "**not one of the four numbered layers above** …
-  not yet cataloged". It is what stops two hosts both deciding it is safe to run
-  `checkout --orphan` + `rm -rf .` on a populated workspace — a sequence the doc
-  calls **not recoverable**. Tracked separately, including a liveness problem
-  distinct from atomicity, in
-  [settings-workspace-init-lock-uncatalogued.md](settings-workspace-init-lock-uncatalogued.md).
+  not yet cataloged". Note that concurrency.md *also* credits this lock with
+  stopping two hosts both running `checkout --orphan` + `rm -rf .` on a populated
+  workspace, and **that attribution is wrong** — `initializeWorkspace` is called
+  unconditionally, lock or no lock, and a lock-free rename guard is the actual
+  protection. Tracked in
+  [settings-workspace-init-lock-uncatalogued.md](settings-workspace-init-lock-uncatalogued.md),
+  which carries a "do not tidy this" warning worth reading before anyone touches
+  that function.
 - `assets/store-local.ts` — `putMetaIfAbsent` writes with `{ flag: 'wx' }`. See
   [asset-meta-wx-vs-link.md](asset-meta-wx-vs-link.md).
 
