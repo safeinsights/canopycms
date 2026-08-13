@@ -1707,6 +1707,58 @@ next -- and Vitest warns that such errors can cause false positives elsewhere in
 run. If you see an unhandled error blamed on a test that plainly can't have caused it,
 suspect a missing jsdom shim in the test that ran before it.
 
+### End-to-End Tests (Playwright)
+
+**Always run the e2e suite single-worker.** Use the root script, which pins it:
+
+```bash
+pnpm test:e2e                                   # playwright test --workers=1
+pnpm exec playwright test branch-workflow --workers=1   # single spec: pass the flag yourself
+```
+
+The reason to be careful here is that the failure mode when you don't is actively
+misleading. The whole suite shares **one** `.canopy-dev` workspace and **one** dev
+server port, so two workers (or two concurrent Playwright runs on the same machine)
+fight over the same git working tree. What you get back is not a recognizable
+contention error -- it's dozens of failures reading:
+
+```
+Error: Failed to ensure main branch
+Error: spawn git ENOENT
+TypeError: fetch failed
+```
+
+Those read exactly like genuine regressions in branch provisioning or git plumbing,
+which is the trap: the noise impersonates the subsystem under test. A run at
+`--workers=2` produced ~135 such failures with no real defect behind any of them.
+If you are touching `git-manager.ts`, `branch-workspace.ts`, or branch metadata and
+the suite suddenly reports broad git breakage, **check your worker count before you
+start debugging the code**.
+
+The same constraint applies across processes, not just within one run: only one
+Playwright run per machine at a time. Parallel agent sessions or a second terminal
+must serialise their e2e runs, or both runs corrupt each other's workspace and both
+report phantom failures. CI is unaffected -- it shards across separate runners, each
+with its own workspace.
+
+**Browser build.** Playwright pins an exact browser build per release, and having
+_some_ chromium in `~/Library/Caches/ms-playwright/` is not enough -- it must be the
+revision this repo's Playwright version asks for. A machine carrying only a newer
+build from another project will fail before any spec runs. Install the right one
+(~91 MB) after a fresh clone or a Playwright bump:
+
+```bash
+pnpm exec playwright install chromium
+```
+
+To see which revision is actually required, read `revision` for `chromium` in
+`node_modules/.pnpm/playwright-core@*/node_modules/playwright-core/browsers.json`
+rather than inferring it from the `package.json` range -- the range floats, the
+resolved version is what pins the build.
+
+Specs live in `apps/test-app/e2e/tests/`, with fixtures alongside and a written
+capability map in `apps/test-app/e2e/COVERAGE-MATRIX.md`.
+
 ### Integration Test Structure
 
 Integration tests are in `src/__integration__/` with shared fixtures and utilities:
