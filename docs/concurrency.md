@@ -68,11 +68,32 @@ cross-host lost update is tolerable — and today no store settles for OCC alone
 `proper-lockfile` mkdir-based locks: acquisition is atomic **at the NFS server**,
 immune to client caching, auto-refreshed while the holder lives (`stale` recovers from
 crashed holders). `withOccFileLock` is tuned for brief metadata writes;
-`acquireProvisioningLock` for long build-time provisioning.
+`acquireProvisioningLock` for long build-time provisioning;
+`utils/content-write-lock.ts` for content writes vs. the worker's rebase (below).
 
 _Guarantee:_ genuine cross-process, cross-host mutual exclusion. _Cost:_ extra fs
 round-trips per acquisition — reserve it for writes where a lost update is
-unacceptable (branch status/ACLs, user comments), not for every file touch.
+unacceptable (branch status/ACLs, user comments, content files against a rebase), not
+for every file touch, and never on a read path.
+
+_Caveat, stated plainly:_ staleness is judged by reading the lock directory's mtime
+with `fs.stat`, which on EFS is served through the **NFS attribute cache**. A live
+holder refreshes every `stale`/2, but a waiter can read a cached mtime, conclude the
+lock is stale, and take it over while the holder is very much alive. So this layer is
+_mutual exclusion in the normal case_, not a proof. Where it matters, note that the
+failure mode of a bad takeover is whatever the code did before the lock existed — that
+is what makes adding it a strict improvement rather than a guarantee to build further
+assumptions on.
+
+**Anchor path matters.** proper-lockfile keys its module-level `locks{}` bookkeeping
+(refresh timer, release fn) by the **target path** passed to `lock()`, not by
+`lockfilePath`. Two locks in one process that pass the same target alias each other
+even with different lock names — which is why `withOccFileLock` locks the FILE rather
+than its directory, and why the content-write lock anchors on
+`{branchRoot}/.canopy-meta` instead of the provisioning lock's
+`path.dirname(branchRoot)`. (Known consequence, not yet addressed: the provisioning
+locks for different branches all pass the shared content-branches directory and so
+already share one registry key.)
 
 ### 4. Generation markers for regenerating caches — `resource-generation.ts`
 
@@ -118,7 +139,7 @@ over anything the old code wrote; the window closes when the old processes drain
 
 | Resource (file under the workspace)                                               | Mutex (1)           | OCC (2)    | Lockfile (3)                                                                           | Marker (4)                                    | Notes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 | --------------------------------------------------------------------------------- | ------------------- | ---------- | -------------------------------------------------------------------------------------- | --------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Content entries (`content/**`)                                                    | ✔ content-ID keys   | —          | —                                                                                      | `content-index` bump on own writes            | Wrong-file writes prevented by the existence guard in `ContentStore.write()`; slug creates take a per-slug create key                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| Content entries (`content/**`)                                                    | ✔ content-ID keys   | —          | ✔ `.canopy-meta/content-write.lock`                                                    | `content-index` bump on own writes            | Wrong-file writes prevented by the existence guard in `ContentStore.write()`; slug creates take a per-slug create key. The lockfile is [SYNC-C1] cross-host exclusion against the worker's rebase loop, taken by `write`/`delete`/`renameEntry` (never by reads) — see "Content writes vs. the rebase loop" below                                                                                                                                                                                                                                                                                                                                                                        |
 | ContentId index (in-memory per store)                                             | rebuild dedup       | —          | —                                                                                      | ✔ reader protocol in `ContentStore.idIndex()` | Suspicious-lookup backstop; window E stays in-memory (never persisted)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | Branch registry (`branches.json` at baseRoot)                                     | regen dedup         | —          | —                                                                                      | ✔ `branch-registry`                           | Durable snapshot: eager regen in `invalidate()`, `get()` miss backstop                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | Schema cache (`.canopy-meta/schema-cache.json`)                                   | — (disk-only cache) | —          | —                                                                                      | ✔ `schema`                                    | Durable snapshot: mutating request re-reads immediately (same-host coherent); dev-only mtime walk for hand edits                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
@@ -147,6 +168,60 @@ markers entirely (`skipIndexMarker` on GitManager); their two mutable files foll
 mutable-JSON recipe instead (see the table row and
 `authorization/settings-file-store.ts`).
 
+## Content writes vs. the rebase loop [SYNC-C1]
+
+The worker's `rebaseActiveBranches()` (worker/cms-worker.ts) and Lambda's `ContentStore`
+mutate the **same branch working tree** on shared EFS. Content files had only the
+in-process mutex, which does not cross that boundary, and the loop's "skip dirty
+branches" check is plain check-then-act. Its old comment claimed the residual window was
+safe because a racing save would make `git rebase` fail — true only for a save landing
+**before** the rebase starts. After that (a window spanning fetch, replay and N conflict
+rounds of git subprocesses on EFS) the save is destroyed two ways:
+
+- `git checkout --theirs <file>` overwrites the just-saved working-tree content with the
+  branch's committed version and stages it — **the rebase then succeeds and nothing logs
+  a failure at all**; and
+- `git rebase --abort` hard-resets the tree, discarding it.
+
+Either way the editor already received a 200. That is an acknowledged write rolled back
+with no error on either side — which is why "no writes to the wrong file" was never a
+sufficient statement of write-path safety.
+
+The fix is one server-enforced lock per branch root
+(`utils/content-write-lock.ts`, layer 3), used **asymmetrically**, because the worker
+retries every branch automatically each sync cycle (~5 min) while the editor is a person
+waiting on a save:
+
+- **The worker yields.** It acquires with zero retries
+  (`tryAcquireContentWriteLock`) _before_ the dirty check — so that check is itself
+  inside the lock — and holds it across the whole rebase, every conflict round, and any
+  `--abort`, releasing in a `finally` so a throw cannot strand it. On contention it logs,
+  records the branch in the cycle summary's `skippedLocked` (surfaced in
+  `worker-status.json` and the admin panel, alongside `skippedDirty`), and retries next
+  cycle. The refresh heartbeat is a timer on the worker's event loop and every git step
+  is an awaited subprocess, so it keeps firing for the length of the hold.
+- **Writers wait, briefly, then fail loudly.** `write`/`delete`/`renameEntry` wrap their
+  existing `withLock` critical section in the lock with a short bounded wait
+  (`DEFAULT_CONTENT_WRITE_LOCK_WAIT_MS`, 2s; retrying only on `ELOCKED`). A rebase holds
+  the lock far longer than any wait an interactive save can absorb, so the wait exists to
+  absorb handoff and short holds — everything longer becomes `BranchSyncingError` (a
+  `ContentConflictError` subclass, so every existing 409 mapping keeps working) whose
+  message says the branch is syncing and to retry, rather than blaming another editor.
+- **Reads never take it.** An EFS round-trip on every read is not an acceptable price,
+  and a read racing a rebase gets an older or newer file, never a destroyed one.
+
+Acquisition order is always content lock → `withLock`, never the reverse. The lock
+anchors on `{branchRoot}/.canopy-meta` (git-excluded, so the marker can never dirty the
+tree or land in a publish commit) — deliberately a different proper-lockfile target from
+the provisioning lock, per the aliasing note in layer 3.
+
+**Residual (accepted):** the stale-takeover caveat in layer 3 applies here too — a
+waiter reading a cached mtime can take the lock from a live rebase. The result is
+exactly the pre-lock behavior for that one window, so this is a strict improvement and
+not a guarantee that an acknowledged write can never be rolled back. Not covered by this
+lock: schema mutations (`SchemaOps`, incl. `deleteCollection`) and asset writes, which
+touch the working tree through their own paths.
+
 ## Residual staleness windows (accepted, bounded)
 
 Named A/B/C/E for continuity with the original analysis
@@ -169,8 +244,12 @@ Named A/B/C/E for continuity with the original analysis
   matters.
 
 All are bounded by per-request store lifetimes, throttled backstops, and the next
-mutation's bump. None cause _writes_ to the wrong file — write-path corruption is
-prevented independently (existence guard, ID locks, server-enforced locks).
+mutation's bump. None of them cause a write to land in the wrong _file_ — that is
+prevented independently (existence guard, ID locks, server-enforced locks). Read that
+narrowly: "the right file" is not the same as "the write survives". Until [SYNC-C1]
+above, a correctly-targeted, already-acknowledged write could still be rolled back
+wholesale by the worker's rebase; the lock closes that, subject to the stale-takeover
+caveat noted there.
 
 ## Recipes
 
@@ -202,7 +281,12 @@ churn — relying on layers 1+3 via a coarse per-branch surrogate lock at
 (`schema/schema-store.ts`'s `withSchemaLock`).
 
 **Bulk tree mutation** (anything git-like that rewrites many files): call
-`invalidateBranchContentCaches(branchRoot)` after the mutation completes.
+`invalidateBranchContentCaches(branchRoot)` after the mutation completes — and if it
+rewrites the working tree of a branch editors can write to (checkout/merge/rebase/reset),
+take the content-write lock around it too (`withContentWriteLock`, or
+`tryAcquireContentWriteLock` if your caller can retry later). Cache invalidation tells
+readers the tree changed; only the lock stops a concurrent save from being reverted by
+it.
 
 **Never do:** counters in marker files (lost-update prone); `writeFile({flag:'wx'})`
 for exclusive creates (not crash-atomic); trusting a post-rename read-back across
@@ -229,6 +313,11 @@ All in use today; copy them rather than inventing new ones:
   corruption against the pre-fix code (stash the fix, run, restore).
 
 ## History
+
+August 2026 (baseline review, [SYNC-C1]): content files gained cross-process write
+exclusion against the worker's rebase loop (`utils/content-write-lock.ts`) — see
+"Content writes vs. the rebase loop" above. Before it, content entries were the one
+mutable resource class relying on the in-process mutex alone.
 
 Designed across PR #94 (ContentId index marker) and the July 2026 EFS cross-process
 concurrency epic (PRs #111–#116: shared primitives, branch-registry GIT-M1,

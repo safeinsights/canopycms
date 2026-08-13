@@ -127,6 +127,16 @@ export interface WorkerStatusReport {
     durationMs: number
     rebased: string[]
     skippedDirty: string[]
+    /**
+     * [SYNC-C1] Branches skipped because a content write held the branch's
+     * cross-host content-write lock (utils/content-write-lock.ts) -- the
+     * worker yields and retries next cycle.
+     *
+     * Optional for the same reason as `tracked` below: absent from a
+     * worker-status.json written by a worker predating that lock. Readers must
+     * tolerate its absence.
+     */
+    skippedLocked?: string[]
     failed: { branch: string; error: string }[]
     /**
      * Outcome of reconciling remote.git's `refs/heads/*` against GitHub's

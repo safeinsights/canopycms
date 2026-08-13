@@ -2,6 +2,7 @@ import { z } from 'zod'
 
 import type { ApiContext, ApiRequest, ApiResponse } from './types'
 import {
+  BranchSyncingError,
   ContentStore,
   ContentStoreError,
   ContentConflictError,
@@ -484,6 +485,14 @@ const writeContentHandler = async (
     return { ok: true, status: 200, data: { ...result, entryLinkWarnings, validationWarnings } }
   } catch (err) {
     if (err instanceof ContentConflictError) {
+      // [SYNC-C1] Not an editor-vs-editor collision at all: the branch's
+      // working tree is being rebased right now, so the write was refused
+      // rather than acknowledged and then rolled back. Its own message says
+      // that and says to retry -- checked first, since the generic branches
+      // below would otherwise blame another editor.
+      if (err instanceof BranchSyncingError) {
+        return { ok: false, status: 409, error: err.message }
+      }
       // The early `exists` short-circuit above catches this in the common
       // case; this is the race-safe fallback for a collision that landed
       // between that check and store.write()'s in-lock stat.
@@ -643,6 +652,18 @@ const renameEntryHandler = async (
     const result = await store.renameEntry(schemaItem.logicalPath, currentSlug, body.newSlug)
     return { ok: true, status: 200, data: { newPath: result.newPath } }
   } catch (err) {
+    // [SYNC-C1] The rename was refused because the branch is mid-rebase, not
+    // because the request was bad -- 409 + retry, never a 400.
+    if (err instanceof ContentConflictError) {
+      return {
+        ok: false,
+        status: 409,
+        error:
+          err instanceof BranchSyncingError
+            ? err.message
+            : 'Content conflict: entry was modified by another editor',
+      }
+    }
     const message = err instanceof ContentStoreError ? err.message : 'Rename failed'
     return { ok: false, status: 400, error: sanitizeErrorMessage(message) }
   }

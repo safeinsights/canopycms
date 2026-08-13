@@ -12,7 +12,13 @@ import {
   invalidateContentIndexesDurable,
 } from './content-index-generation'
 import { invalidateContentIndexesForRoot } from './content-index-registry'
-import { ContentStore, ContentStoreError, ContentConflictError } from './content-store'
+import {
+  BranchSyncingError,
+  ContentStore,
+  ContentStoreError,
+  ContentConflictError,
+} from './content-store'
+import { tryAcquireContentWriteLock } from './utils/content-write-lock'
 import { generateId } from './id'
 import { unsafeAsLogicalPath, unsafeAsSlug } from './paths/test-utils'
 
@@ -2622,5 +2628,82 @@ describe('ContentStore getExistingEntryType', () => {
     const posts = unsafeAsLogicalPath('content/posts')
     await store.write(posts, unsafeAsSlug('hello'), { format: 'json', data: {} }, 'post')
     expect(await store.getExistingEntryType(posts, unsafeAsSlug('hello'))).toBe('post')
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// [SYNC-C1] Cross-host content-write lock: every mutator that touches the
+// working tree takes it, and reads never do. The worker-side half (skip,
+// hold across the rebase, release on throw) lives in
+// worker/cms-worker-content-lock.test.ts.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('ContentStore content-write lock', () => {
+  const schema = {
+    collections: [
+      {
+        name: 'posts',
+        path: 'posts',
+        entries: [{ name: 'post', format: 'json' as const, schema: [] }],
+      },
+    ],
+  } as const
+
+  const posts = unsafeAsLogicalPath('content/posts')
+
+  const makeStore = async (root: string) => {
+    const config = defineCanopyTestConfig({ schema })
+    // Short wait: these cases are all "the lock is held for the whole test".
+    return new ContentStore(root, flattenSchema(schema, config.contentRoot), {
+      contentWriteLockWaitMs: 100,
+    })
+  }
+
+  it('fails write, delete and renameEntry with a retriable syncing conflict while the lock is held', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'canopycms-'))
+    const store = await makeStore(root)
+    await store.write(posts, unsafeAsSlug('hello'), { format: 'json', data: { title: 'v1' } })
+
+    const release = await tryAcquireContentWriteLock(root)
+    try {
+      for (const mutate of [
+        () => store.write(posts, unsafeAsSlug('hello'), { format: 'json', data: { title: 'v2' } }),
+        () => store.delete(posts, unsafeAsSlug('hello')),
+        () => store.renameEntry(posts, unsafeAsSlug('hello'), unsafeAsSlug('renamed')),
+      ]) {
+        const err = await mutate().then(
+          () => null,
+          (e: unknown) => e,
+        )
+        expect(err).toBeInstanceOf(BranchSyncingError)
+        // A ContentConflictError subclass, so every existing 409 mapping
+        // keeps working without a new branch at each call site.
+        expect(err).toBeInstanceOf(ContentConflictError)
+        expect((err as Error).message).toMatch(/syncing/i)
+      }
+      // Nothing was half-applied.
+      const doc = await store.read(posts, unsafeAsSlug('hello'))
+      expect(doc.data.title).toBe('v1')
+    } finally {
+      await release()
+    }
+  })
+
+  it('does not take the lock on the read path', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'canopycms-'))
+    const store = await makeStore(root)
+    await store.write(posts, unsafeAsSlug('hello'), { format: 'json', data: { title: 'v1' } })
+
+    const release = await tryAcquireContentWriteLock(root)
+    try {
+      // Reads must be untouched by a held lock — adding an EFS round-trip to
+      // the read path is exactly what this design refuses to do.
+      const doc = await store.read(posts, unsafeAsSlug('hello'))
+      expect(doc.data.title).toBe('v1')
+      expect(await store.documentExists(posts, unsafeAsSlug('hello'))).toBe(true)
+      expect(await store.getIdForEntry(posts, unsafeAsSlug('hello'))).toBeTruthy()
+    } finally {
+      await release()
+    }
   })
 })
