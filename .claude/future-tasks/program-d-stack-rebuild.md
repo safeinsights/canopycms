@@ -117,26 +117,74 @@ and this is the assumption a mistake destroys editors' committed work through.
 Recorded here rather than left as a resolved "probably fine", because Workstream
 D is the only place a real EFS mount and a real Lambda exist together.
 
+**This is not really about #198.** The primitive underneath is server-side
+exclusive create on NFS — and that is the *same guarantee* [concurrency.md](../../docs/concurrency.md)'s
+Layer 3 ("Server-enforced lock", `proper-lockfile` / `withOccFileLock` /
+`acquireProvisioningLock`) already bets the whole settings and metadata design
+on, the one whose stated guarantee is "genuine cross-process, cross-host mutual
+exclusion" and which branch status, ACLs and comments rely on for every write.
+**If it does not hold on EFS, far more than the worker is broken.** So D is
+verifying a shared foundation, not one PR's edge case — which is the argument for
+running it even if #198 is reverted or reworked.
+
+One refinement worth carrying into the test design: the two are the same
+*guarantee class*, not the same syscall. Git's ref lockfile is
+`O_CREAT|O_EXCL`; `proper-lockfile` is **mkdir**-based. Both rely on the NFS
+server rejecting a second exclusive create, but they are different operations, so
+a soak that exercises only git's path does not by itself certify
+`proper-lockfile`'s. Either cover both, or record explicitly that the result is
+being generalized across the class.
+
+**What is already settled — do not re-litigate it.** The real compare-and-swap is
+**not** the client-side lease. For *every* push, forced or not, the client sends
+`<old> <new> <ref>` and `git-receive-pack` re-verifies `<old>` under the per-ref
+lockfile before committing the update. A concurrent push that moves the ref
+between advertisement and commit therefore yields a **refused** update, not a
+lost one. #198's adversarial reviewer partially confirmed this locally: a
+mid-push ref move was forbidden by git's quarantine machinery rather than racing
+through. Confidence is **high** on git's mechanism and **moderate-high** on EFS
+honoring it — the residual is entirely "does EFS behave like a correct NFS
+server here", which is exactly what a real mount settles.
+
 **State the property precisely.** It is not "does `--force-with-lease` work" —
-it is: *does a lease refused by a concurrent push leave the loser's ref
-untouched?* Concretely, a Lambda `GitManager.push()` landing between the worker's
-`readPublishedSha()` and its force-push must cause the force to be **refused**,
-never to silently win.
+that phrasing invites a test that passes trivially. It is:
 
-**Test shape.** Two concurrent writers to the same `refs/heads/<branch>` in
-`remote.git` on real EFS, one leased and one plain. Assert the ref afterwards
-holds *exactly one* of the two histories, and never a torn state.
+> A lease refused by a concurrent push leaves the loser's ref untouched: two
+> concurrent writers to the same `refs/heads/<branch>` in the shared bare repo,
+> one leased and one plain, end with the ref holding **exactly one** of the two
+> histories, never a torn or partially-updated state, and the refused writer gets
+> an **error** rather than a silent no-op.
 
-**Run it on the mount options the stack actually uses.** The primitive underneath
-is git's ref lockfile, `O_CREAT|O_EXCL`, which NFS does enforce server-side —
-that part was reasoned through at the desk and is not the doubt. What cannot be
-settled from the desk is whether anything else in the path weakens it: ref
-caching, or `packed-refs` rewriting under contention. So the mount options are
-part of the test, not an incidental detail.
+**Soak design** (#198's reviewer's, preferred over a single two-writer race):
 
-If it holds, record that in [program-log.md](program-log.md) — it retires a
-standing unknown behind the worker's whole publish path. If it does not, it is a
-production data-loss bug and outranks the rest of this workstream.
+- Instance A loops **plain** pushes advancing a ref in the shared bare repo.
+- Instance B loops **`--force-with-lease`** pushes against sampled expected values.
+- Run for **hours** under real EFS with the stack's actual mount options.
+- Assert afterwards that (a) **every acknowledged push remains reachable** — this
+  is the assertion that would catch a lost update — and (b) `git fsck` is clean.
+
+**Two runbook details:**
+
+1. **Use the mount options the stack actually uses.** The doubt is not the
+   lockfile primitive but whether anything else in the path weakens it —
+   specifically **`packed-refs` rewriting under contention**, which is a
+   different code path from the loose-ref lockfile and is the first place to look
+   if the soak ever shows a discrepancy.
+2. **Pin the git version and record it.** The lease/rejection *stderr* text is
+   version- and locale-sensitive — the worker already depends on `LC_ALL=C` for
+   its `(stale info)` classifier — so a git bump on the AMI could change
+   classification behaviour independently of the atomicity question, and would
+   look like an atomicity regression if the version were not recorded.
+
+Relevant code: `forcePublishToLocalRemote` and `pushBranchToGitHub` in
+`packages/canopycms/src/worker/cms-worker.ts`, plus the `remote.git` refs row
+#198 adds to [concurrency.md](../../docs/concurrency.md) describing the intended
+invariant.
+
+If it holds, record it in [program-log.md](program-log.md) — it retires a
+standing unknown behind the worker's whole publish path *and* behind Layer 3. If
+it does not, it is a production data-loss bug that outranks the rest of this
+workstream.
 
 ### 5. Run it with an agent
 
