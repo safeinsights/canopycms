@@ -79,8 +79,14 @@ export interface WriteContentBody {
   format: 'json' | 'md' | 'mdx' | 'yaml'
   data?: Record<string, unknown>
   body?: string
-  /** OCC version token from a prior read/write response. When present, write is rejected with 409 if file has changed. */
-  expectedVersion?: number
+  /**
+   * OCC / create-intent token. Omit for a blind write (no opinion). A number
+   * from a prior read/write response rejects the write with 409 if the file
+   * has changed since. `null` means "this entry must not already exist" —
+   * the create path uses this so a create against an existing slug is
+   * rejected with 409 instead of silently overwriting it.
+   */
+  expectedVersion?: number | null
 }
 
 export interface ValidateReferencesBody {
@@ -134,7 +140,8 @@ const writeContentBodySchema = z.object({
   format: z.enum(['json', 'md', 'mdx', 'yaml']),
   data: boundedContentDataSchema.optional(),
   body: z.string().max(MAX_CONTENT_BODY_CHARS).optional(),
-  expectedVersion: z.number().optional(),
+  // null = create-intent ("must not already exist"); see WriteContentBody.
+  expectedVersion: z.number().nullish(),
 })
 
 const validateReferencesParamsSchema = z.object({
@@ -327,6 +334,27 @@ const writeContentHandler = async (
   try {
     const exists = await store.documentExists(schemaItem.logicalPath, slug)
 
+    // Create-intent guard (August 2026 baseline review, Critical finding): a
+    // create request (expectedVersion === null, "must not already exist")
+    // against a slug that already has content must never silently overwrite
+    // it. Without this, an entry type with no required fields passes field
+    // validation on the create path's empty payload and falls through to a
+    // blind store.write() — this short-circuits with an unambiguous 409
+    // before that validation (and the maxItems count below) even runs, so
+    // the error always names the real problem instead of a confusing
+    // "field is required" message or a bare conflict. store.write() also
+    // enforces this same guard itself, inside its per-entry lock against a
+    // fresh stat — that is the race-safe authoritative check; this early
+    // return is just a cheaper, clearer-messaged fast path for the common
+    // (non-racing) case.
+    if (body.expectedVersion === null && exists) {
+      return {
+        ok: false,
+        status: 409,
+        error: `An entry with slug "${slug}" already exists`,
+      }
+    }
+
     // SCH-H3: enforce maxItems server-side at the create boundary. The editor
     // only gates its "Add" button; a direct API create could otherwise exceed
     // the cap. Best-effort under concurrency: the count-then-create below is
@@ -456,6 +484,16 @@ const writeContentHandler = async (
     return { ok: true, status: 200, data: { ...result, entryLinkWarnings, validationWarnings } }
   } catch (err) {
     if (err instanceof ContentConflictError) {
+      // The early `exists` short-circuit above catches this in the common
+      // case; this is the race-safe fallback for a collision that landed
+      // between that check and store.write()'s in-lock stat.
+      if (body.expectedVersion === null) {
+        return {
+          ok: false,
+          status: 409,
+          error: `An entry with slug "${slug}" already exists`,
+        }
+      }
       return {
         ok: false,
         status: 409,
