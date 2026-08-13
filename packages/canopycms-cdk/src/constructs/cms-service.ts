@@ -27,15 +27,65 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 /**
  * Synth-time mirror of `resolveDeploymentName`'s rule in the `canopycms`
  * package (packages/canopycms/src/operating-mode/deployment-name.ts).
- * Duplicated rather than imported: `canopycms-cdk` deliberately does not
- * depend on the runtime package. Keep the two in step — see the constructor
- * guard for why this is checked here as well as at runtime.
+ * Duplicated rather than imported: `canopycms-cdk` publishes with no runtime
+ * dependency on `canopycms` (it is a devDependency, used only to bundle the
+ * worker), so importing it here would break the published construct.
+ *
+ * Drift between the two copies is caught by a test, not by this comment:
+ * cms-deploy.test.ts drives both this construct and the runtime predicate over
+ * the shared fixture in
+ * packages/canopycms/src/operating-mode/deployment-name-fixtures.ts and
+ * requires them to agree. Add a case there when you change either copy.
  */
 const isValidDeploymentName = (name: string): boolean =>
   /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(name) &&
   !name.includes('..') &&
   !name.endsWith('.') &&
   !name.endsWith('.lock')
+
+/**
+ * The heredoc delimiter user-data uses to write the worker's `.env` (see the
+ * `cat > … << 'ENVEOF'` block below).
+ */
+const ENV_HEREDOC_DELIMITER = 'ENVEOF'
+
+/**
+ * Guard every value interpolated into the worker's `.env` file.
+ *
+ * This is robustness, not a security boundary: the heredoc delimiter is
+ * quoted, so the shell performs no expansion on the body, and these values
+ * come from the adopter's own CDK code rather than from an attacker. What it
+ * catches is a malformed value silently producing a broken instance — a value
+ * carrying a newline injects an arbitrary extra line into the worker's
+ * environment, and a value containing the delimiter ends the heredoc early, so
+ * the rest of the value is executed as user-data shell commands. Both would
+ * deploy clean and fail at boot, or worse, boot with a subtly wrong
+ * environment.
+ *
+ * Applied to every entry in `envEntries` below by construction rather than by
+ * remembering to call it — the previous version validated `deploymentName`
+ * only, while giving a rationale that applied verbatim to the other three
+ * interpolated values.
+ *
+ * Returns the value so it can be used inline.
+ */
+function assertEnvSafe(name: string, value: string): string {
+  if (/[\r\n]/.test(value)) {
+    throw new Error(
+      `CanopyCmsService: ${name} must not contain a newline (got ${JSON.stringify(value)}). ` +
+        `It is written into the worker's .env file, where a newline injects an arbitrary ` +
+        `extra environment line.`,
+    )
+  }
+  if (value.includes(ENV_HEREDOC_DELIMITER)) {
+    throw new Error(
+      `CanopyCmsService: ${name} must not contain ${JSON.stringify(ENV_HEREDOC_DELIMITER)} ` +
+        `(got ${JSON.stringify(value)}). It is written into the worker's .env file with a ` +
+        `<< '${ENV_HEREDOC_DELIMITER}' heredoc, which that value would terminate early.`,
+    )
+  }
+  return value
+}
 
 export interface CanopyCmsServiceProps {
   /** Docker image for the CMS Lambda function */
@@ -68,7 +118,15 @@ export interface CanopyCmsServiceProps {
   /** Secrets Manager ARNs the worker needs to read (GitHub token, Clerk key) */
   secretsArns?: string[]
 
-  /** Environment variables for the Lambda function */
+  /**
+   * Environment variables for the Lambda function.
+   *
+   * Two keys are not free-form here, because the construct configures the
+   * worker from the same values and the two halves must agree:
+   * `CANOPYCMS_DEPLOYMENT_NAME` is folded into `deploymentName` (validated,
+   * and mirrored into the worker's `.env`), and `CANOPY_MODE` accepts only
+   * `'prod'`. Everything else is passed through untouched.
+   */
   environment?: Record<string, string>
 
   /** EFS removal policy (default: RETAIN) */
@@ -98,6 +156,11 @@ export interface CanopyCmsServiceProps {
    * `resolveDeploymentName` (packages/canopycms/src/operating-mode/deployment-name.ts),
    * which lets this env value win over any `deploymentName` baked into the
    * shared repo's `canopycms.config.ts` — the point of this prop.
+   *
+   * `environment.CANOPYCMS_DEPLOYMENT_NAME` still overrides this prop, but it
+   * is now folded in at synth: the winner is validated by the same rule and
+   * written to BOTH halves, so the Lambda and the worker can never resolve
+   * different settings branches.
    *
    * Two `CanopyCmsService` stacks pointed at the SAME GitHub repo MUST set
    * distinct values here, or both resolve to `canopycms-settings-prod` and
@@ -202,18 +265,72 @@ export class CanopyCmsService extends Construct {
   constructor(scope: Construct, id: string, props: CanopyCmsServiceProps) {
     super(scope, id)
 
+    // ------------------------------------------------------------------
+    // Deployment name: ONE effective value, validated once, used by both halves
+    // ------------------------------------------------------------------
+    //
+    // `props.environment` is spread into the Lambda's environment, so an
+    // adopter can set CANOPYCMS_DEPLOYMENT_NAME there directly. That escape
+    // hatch used to bypass both things that make this prop safe: the synth
+    // guard below (an invalid value deployed clean and crash-looped the Lambda
+    // at boot) and the worker, which kept reading `props.deploymentName` and so
+    // resolved a DIFFERENT settings branch than the Lambda — exactly the split
+    // that `pushSettingsBranches`'s [SYNC-M3] warning was added to detect.
+    //
+    // Kept rather than dropped (dropping is a breaking change for anyone
+    // already setting it), but resolved to a single value here: whatever wins
+    // is validated, and the same string is stamped on the Lambda AND written
+    // into the worker's `.env` below. The two halves cannot disagree.
+    const envDeploymentNameOverride = props.environment?.['CANOPYCMS_DEPLOYMENT_NAME']
+    const deploymentName = envDeploymentNameOverride ?? props.deploymentName ?? 'prod'
+    const deploymentNameSource =
+      envDeploymentNameOverride !== undefined
+        ? 'environment.CANOPYCMS_DEPLOYMENT_NAME'
+        : 'deploymentName'
+
     // Fail at synth, not at boot. deploymentName is interpolated BOTH into a
     // git ref (`canopycms-settings-{deploymentName}`) and into a line of the
     // worker's `.env`, which user-data writes with a shell heredoc — a value
     // carrying a newline or quote would corrupt the worker's environment file
     // before any runtime validation could run. Mirrors the package-side rule
-    // in operating-mode/deployment-name.ts (resolveDeploymentName); keep the
-    // two in step.
-    if (props.deploymentName !== undefined && !isValidDeploymentName(props.deploymentName)) {
+    // in operating-mode/deployment-name.ts (resolveDeploymentName); the
+    // fixture-driven drift test named above keeps the two in step.
+    if (!isValidDeploymentName(deploymentName)) {
       throw new Error(
-        `CanopyCmsService: invalid deploymentName ${JSON.stringify(props.deploymentName)}. ` +
+        `CanopyCmsService: invalid deploymentName ${JSON.stringify(deploymentName)} ` +
+          `(from ${deploymentNameSource}). ` +
           `It must start with a letter or digit, contain only letters, digits, '.', '_' or '-', ` +
           `and must not contain '..' or end with '.' or '.lock'.`,
+      )
+    }
+
+    // ------------------------------------------------------------------
+    // Operating mode
+    // ------------------------------------------------------------------
+    //
+    // The adopter's `canopycms.config.ts` is shared by local dev, the image
+    // build and this deployment, and it must say `dev` for the first two (a
+    // prod-mode `next build` would try to open an EFS branch workspace that
+    // cannot exist in an image builder). So the deployed mode is supplied
+    // here, at run time: `resolveOperatingMode`
+    // (packages/canopycms/src/operating-mode/mode-env.ts) reads CANOPY_MODE
+    // and it wins over the config literal. Without it the Lambda runs dev
+    // mode, resolves its workspace to `<cwd>/.canopy-dev`, and fails EROFS on
+    // Lambda's read-only filesystem.
+    //
+    // Only 'prod' is accepted from `props.environment`: this construct deploys
+    // the prod topology (EFS workspace, no internet, read-only container), and
+    // 'dev' there cannot work — better a synth error than an EROFS crash-loop.
+    // The browser half of `mode` cannot come from here at all; it is inlined
+    // at image-build time from the NEXT_PUBLIC_CANOPY_MODE build arg (see
+    // Dockerfile.cms.template and the generated cms-stack.ts).
+    const envModeOverride = props.environment?.['CANOPY_MODE']
+    if (envModeOverride !== undefined && envModeOverride !== 'prod') {
+      throw new Error(
+        `CanopyCmsService: invalid environment.CANOPY_MODE ${JSON.stringify(envModeOverride)}. ` +
+          `This construct deploys the prod topology, so the only supported value is "prod" ` +
+          `(dev mode resolves its workspace to <cwd>/.canopy-dev, which is read-only on Lambda). ` +
+          `Omit it to get the default.`,
       )
     }
 
@@ -362,9 +479,6 @@ export class CanopyCmsService extends Construct {
         // or the Lambda and worker silently operate on different directories.
         CANOPYCMS_WORKSPACE_ROOT: '/mnt/efs',
         CANOPY_AUTH_CACHE_PATH: '/mnt/efs/.cache',
-        // Placed before ...props.environment below so an adopter can still
-        // override it explicitly via that escape hatch.
-        CANOPYCMS_DEPLOYMENT_NAME: props.deploymentName ?? 'prod',
         // B7 note: git >= 2.35.2 refuses repos owned by another uid (the
         // access point forces uid 1000; Lambda containers run as a different
         // user). Env-based GIT_CONFIG_* CANNOT fix this - simple-git
@@ -372,6 +486,15 @@ export class CanopyCmsService extends Construct {
         // the image: Dockerfile.cms.template runs
         // `git config --system safe.directory '*'`.
         ...props.environment,
+        // AFTER the spread, deliberately. Both values are already the
+        // adopter's own choice (an `environment` override is folded into
+        // `deploymentName` above and validated; CANOPY_MODE is restricted to
+        // 'prod'), so nothing is being taken away here - what the placement
+        // buys is that the Lambda and the worker's `.env` cannot end up
+        // holding different strings, which is the failure mode that made this
+        // an escape hatch worth fixing rather than a harmless one.
+        CANOPYCMS_DEPLOYMENT_NAME: deploymentName,
+        CANOPY_MODE: 'prod',
       },
     })
 
@@ -492,25 +615,35 @@ export class CanopyCmsService extends Construct {
     })
     workerAsset.grantRead(workerRole)
 
-    // Build worker .env file content from CDK props
-    const envLines = [
-      `CANOPYCMS_WORKSPACE_ROOT=/mnt/efs/workspace`,
-      `CANOPYCMS_GITHUB_OWNER=${props.githubOwner}`,
-      `CANOPYCMS_GITHUB_REPO=${props.githubRepo}`,
-      `CANOPYCMS_BASE_BRANCH=${props.baseBranch ?? 'main'}`,
-      `CANOPYCMS_DEPLOYMENT_NAME=${props.deploymentName ?? 'prod'}`,
+    // Build worker .env file content from CDK props.
+    //
+    // Name/value PAIRS rather than pre-formatted lines: every value then flows
+    // through `assertEnvSafe` in the single `map` below, so a value added here
+    // later is guarded whether or not whoever adds it remembers to.
+    const envEntries: Array<[string, string]> = [
+      ['CANOPYCMS_WORKSPACE_ROOT', '/mnt/efs/workspace'],
+      ['CANOPYCMS_GITHUB_OWNER', props.githubOwner],
+      ['CANOPYCMS_GITHUB_REPO', props.githubRepo],
+      ['CANOPYCMS_BASE_BRANCH', props.baseBranch ?? 'main'],
+      // The SAME string the Lambda's environment gets above, including an
+      // `environment.CANOPYCMS_DEPLOYMENT_NAME` override - the two halves
+      // resolve one settings branch (`canopycms-settings-<name>`) between them,
+      // and disagreeing here is what [SYNC-M3] warns about at runtime.
+      ['CANOPYCMS_DEPLOYMENT_NAME', deploymentName],
       // B8: the AWS SDK JS v3 cannot resolve a region from IMDS on its own -
       // without this the worker's bare `SecretsManagerClient({})` crash-loops
       // with "Region is missing".
-      `AWS_REGION=${Stack.of(this).region}`,
+      ['AWS_REGION', Stack.of(this).region],
     ]
     if (props.githubTokenSecretArn) {
-      envLines.push(`CANOPYCMS_GITHUB_TOKEN_SECRET_ARN=${props.githubTokenSecretArn}`)
+      envEntries.push(['CANOPYCMS_GITHUB_TOKEN_SECRET_ARN', props.githubTokenSecretArn])
     }
     if (props.clerkSecretKeySecretArn) {
-      envLines.push(`CLERK_SECRET_KEY_SECRET_ARN=${props.clerkSecretKeySecretArn}`)
+      envEntries.push(['CLERK_SECRET_KEY_SECRET_ARN', props.clerkSecretKeySecretArn])
     }
-    const envFileContent = envLines.join('\n')
+    const envFileContent = envEntries
+      .map(([name, value]) => `${name}=${assertEnvSafe(name, value)}`)
+      .join('\n')
 
     // UserData script
     const userData = ec2.UserData.forLinux()

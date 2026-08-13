@@ -73,10 +73,16 @@ export class CmsStack extends Stack {
         // both locally and on an x86 CI runner.
         platform: Platform.LINUX_ARM64,
         // Next.js inlines NEXT_PUBLIC_* into the CLIENT bundle during
-        // `next build`, so this has to reach the image BUILD. A Lambda
+        // `next build`, so these have to reach the image BUILD. A Lambda
         // environment variable would be far too late.
         buildArgs: {
           NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: props.clerkPublishableKey,
+          // The browser half of the operating mode. The server half is the
+          // Lambda's CANOPY_MODE, set by CanopyCmsService; this one decides
+          // what the editor bundle believes (Clerk auth rather than dev auth,
+          // and the prod feature flags). The image's own `next build` stays in
+          // dev mode either way -- see Dockerfile.cms.
+          NEXT_PUBLIC_CANOPY_MODE: 'prod',
         },
       }),
       architecture: lambda.Architecture.ARM_64,

@@ -84,6 +84,11 @@ describe('canopycms init', () => {
     const config = await fs.readFile(path.join(tmpDir, 'canopycms.config.ts'), 'utf-8')
     expect(config).toContain("mode: 'dev'")
     expect(config).toContain('defineCanopyConfig')
+    // The generated literal is dev on purpose (this file is also loaded by
+    // `next dev` and by the deployment image's `next build`), so it has to say
+    // where the deployed value comes from -- an adopter reading only this file
+    // would otherwise conclude a deployment needs a hand-edit here.
+    expect(config).toContain('CANOPY_MODE')
   })
 
   it('generates API route with correct handler pattern', async () => {
@@ -429,6 +434,26 @@ describe('canopycms init-deploy aws', () => {
     // Prod-mode build reads would need an EFS remote.git inside the builder;
     // validated to fail in the deploy-test harness. Prod is runtime-only.
     expect(dockerfile).not.toContain('ENV CANOPY_MODE=prod')
+  })
+
+  it('Dockerfile.cms takes the browser half of the operating mode as a build arg', async () => {
+    await initDeployAws({ cloud: 'aws', projectDir: tmpDir, force: false, nonInteractive: true })
+
+    const dockerfile = await fs.readFile(path.join(tmpDir, 'Dockerfile.cms'), 'utf-8')
+    // The editor page is a client component that imports canopycms.config.ts,
+    // so the browser's copy of `mode` is inlined at build time and can only
+    // come from a NEXT_PUBLIC_* build arg -- never from the Lambda's
+    // environment. Defaulted to dev so a plain `docker build` is unchanged;
+    // the generated stack passes prod.
+    expect(dockerfile).toContain('ARG NEXT_PUBLIC_CANOPY_MODE=dev')
+    expect(dockerfile).toContain('ENV NEXT_PUBLIC_CANOPY_MODE=$NEXT_PUBLIC_CANOPY_MODE')
+  })
+
+  it('the generated CDK stack passes NEXT_PUBLIC_CANOPY_MODE=prod as a build arg', async () => {
+    await initDeployAws({ cloud: 'aws', projectDir: tmpDir, force: false, nonInteractive: true })
+
+    const stack = await fs.readFile(path.join(tmpDir, 'infrastructure/lib/cms-stack.ts'), 'utf-8')
+    expect(stack).toContain("NEXT_PUBLIC_CANOPY_MODE: 'prod'")
   })
 
   it('Dockerfile.cms keeps node_modules out of the synthesized snapshot repo without touching adopter files', async () => {

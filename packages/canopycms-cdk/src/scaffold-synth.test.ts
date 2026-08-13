@@ -74,6 +74,8 @@ let scaffoldDir: string
 let appCommand: string
 let synthesizedStacks: string[]
 let resourceTypes: Set<string>
+/** Every resource in every synthesized template, so assertions can look inside them. */
+let resources: unknown[]
 
 function readJsonField(value: unknown, field: string): unknown {
   return typeof value === 'object' && value !== null && field in value
@@ -138,11 +140,13 @@ beforeAll(async () => {
   synthesizedStacks = templateFiles.map((f) => f.replace('.template.json', ''))
 
   resourceTypes = new Set()
+  resources = []
   for (const file of templateFiles) {
     const template: unknown = JSON.parse(await fs.readFile(path.join(outDir, file), 'utf-8'))
-    const resources = readJsonField(template, 'Resources')
-    if (typeof resources !== 'object' || resources === null) continue
-    for (const resource of Object.values(resources)) {
+    const templateResources = readJsonField(template, 'Resources')
+    if (typeof templateResources !== 'object' || templateResources === null) continue
+    for (const resource of Object.values(templateResources)) {
+      resources.push(resource)
       const type = readJsonField(resource, 'Type')
       if (typeof type === 'string') resourceTypes.add(type)
     }
@@ -165,6 +169,52 @@ describe('canopycms init-deploy aws produces a synthesizable CDK app', () => {
     expect(resourceTypes).toContain('AWS::Lambda::Function')
     expect(resourceTypes).toContain('AWS::EFS::FileSystem')
     expect(resourceTypes).toContain('AWS::AutoScaling::AutoScalingGroup')
+  })
+
+  /**
+   * Baseline review E4. The generated project used to ship a dev-mode
+   * deployment: `canopycms init` bakes `mode: 'dev'` into
+   * canopycms.config.ts (correctly -- `next dev` and the image build both need
+   * it), and nothing supplied a deployed value, so the Lambda resolved its
+   * workspace to `<cwd>/.canopy-dev` and died with EROFS on Lambda's read-only
+   * filesystem. This asserts on the artifact the CLI actually emits, end to
+   * end, rather than on any single file's contents.
+   */
+  it('deploys a prod-mode CMS: CANOPY_MODE on the Lambda, NEXT_PUBLIC_CANOPY_MODE in the image build', async () => {
+    const cmsFunctions = resources.filter((resource) => {
+      if (readJsonField(resource, 'Type') !== 'AWS::Lambda::Function') return false
+      const variables = readJsonField(readJsonField(resource, 'Properties'), 'Environment')
+      return readJsonField(variables, 'Variables') !== undefined
+    })
+    expect(cmsFunctions.length).toBeGreaterThan(0)
+
+    // The server half, read at run time by resolveOperatingMode.
+    for (const fn of cmsFunctions) {
+      const variables = readJsonField(
+        readJsonField(readJsonField(fn, 'Properties'), 'Environment'),
+        'Variables',
+      )
+      expect(readJsonField(variables, 'CANOPY_MODE')).toBe('prod')
+    }
+
+    // The browser half. The editor page is a client component importing the
+    // adopter's config, so its `mode` is whatever was inlined at build time --
+    // a Lambda environment variable is far too late. Asserted on the generated
+    // stack source because Docker build args live in the CDK asset manifest,
+    // not in the CloudFormation template.
+    const stackSource = await fs.readFile(
+      path.join(scaffoldDir, 'infrastructure/lib/cms-stack.ts'),
+      'utf-8',
+    )
+    expect(stackSource).toContain("NEXT_PUBLIC_CANOPY_MODE: 'prod'")
+
+    // The image itself must NOT bake the server half in: `next build` runs its
+    // content reads in dev mode, and a prod-mode build read would look for a
+    // branch workspace that cannot exist in a builder. Build arg in, runtime
+    // variable out -- that pairing is the whole mechanism.
+    const dockerfile = await fs.readFile(path.join(scaffoldDir, 'Dockerfile.cms'), 'utf-8')
+    expect(dockerfile).toContain('ARG NEXT_PUBLIC_CANOPY_MODE')
+    expect(dockerfile).not.toContain('ENV CANOPY_MODE=prod')
   })
 
   it('names the stack exactly what the generated workflow deploys', async () => {
