@@ -40,11 +40,45 @@ actually reads; fix the Dockerfile comment; add the switch to the deploy guide.
 | Package | Where | Issue | Action |
 |---|---|---|---|
 | `aws-cdk-lib` | `canopycms-cdk` dev **and peer** `^2.192.0` | OS command injection in `NodejsFunction` bundling (<2.260.0) | Routine same-major bump. **The peer range is the real exposure** — it lets adopters install a vulnerable version into the path that builds the prod Lambda |
-| `image-size` | `canopycms` **prod** `^2.0.2` | DoS on malformed image; **no upstream fix exists** | A mitigation decision, not a bump — bound input size/dimensions before the call, or replace |
+| `image-size` | `canopycms` **prod** `^2.0.2` | DoS on malformed image; **no upstream fix exists** | **ACCEPTED RISK 2026-08-13** — see the note below the table. No code change. |
 | `file-type` | `canopycms` **prod** `^20.4.1` | DoS on malformed input; fixed ≥21.3.2 | Major bump + compat check |
 | `next` | `canopycms-next` dev `^15.5.19`, wide peer range | multiple <15.5.21 | Bump dev; raise peer floors |
 
 `sharp` is **already patched** at `^0.35.3`; that audit hit is a nested copy under `next`.
+
+### `image-size`: accepted risk, with an explicit revisit trigger (JP, 2026-08-13)
+
+**Decision: no code change now.** Recorded here with the reasoning so it is not re-litigated
+from the advisory alone — the raw "high, no fix available" reads far worse than the actual
+exposure in this codebase.
+
+What the exposure actually is, verified in `assets/pipeline.ts`:
+
+- **Dimension extraction is already non-fatal.** `computeDimensions` wraps `imageSize()` in a
+  `try/catch` and returns `{}` on any failure; `AssetMeta.width`/`height` are optional. A
+  malformed image already degrades to "no dimensions", not a failed upload.
+- **Input is already byte-capped** — `RASTER_MAX_BYTES` 50MB, `PDF_MAX_BYTES` 25MB.
+- **Uploads are authenticated.** Every API route authenticates before routing, so this is not
+  reachable anonymously. A crafted image burns CPU/memory in the Lambda serving that user's own
+  request.
+
+Why not replace it with `sharp.metadata()`, which is the obvious move given `sharp` is already a
+patched prod dependency and already used in this same pipeline for decode validation: `sharp` is
+**dynamically imported and deliberately fails open** — a missing native binary logs and skips.
+Routing dimensions through it means dimensions **silently vanish** in that case. That trades a
+narrow, authenticated-only DoS for a silent-data-loss shape, which is the exact failure class the
+August 2026 review was mostly about. SVG dimensions are a second problem: `image-size` handles
+them here, `sharp` needs librsvg.
+
+**Revisit if any of these becomes true:**
+
+1. Uploads become reachable by anyone less trusted than an authenticated editor (public upload,
+   a wider ACL default, or an unauthenticated ingestion path).
+2. `image-size` ships a patched version — then it is a routine bump, not a decision.
+3. The asset pipeline stops treating missing dimensions as acceptable, i.e. `width`/`height`
+   become required somewhere downstream.
+4. `sharp` stops failing open — if the decode path ever becomes mandatory rather than
+   best-effort, the objection to consolidating on it disappears.
 
 Both `image-size` and `file-type` are called directly on uploaded bytes —
 `assets/pipeline.ts:143` (`imageSize(data)`) and `:275` (`fileTypeFromBuffer(input.data)`). The
