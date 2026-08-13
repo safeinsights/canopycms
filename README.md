@@ -45,6 +45,7 @@ If you're currently on 16.2.x, downgrade to `~16.1.7` (known-good) until this is
 - [AI-Ready Content](#ai-ready-content)
 - [Using the Editor](#using-the-editor)
 - [Adopter Touchpoints Summary](#adopter-touchpoints-summary)
+- [Deploying to AWS](#deploying-to-aws)
 - [Local Development Sync](#local-development-sync)
 - [Migrating Existing Content](#migrating-existing-content)
 - [Environment Variables](#environment-variables)
@@ -2416,6 +2417,32 @@ CanopyCMS is designed for minimal integration effort. Run `npx canopycms init` t
 Setting the `CANOPY_AUTH_MODE` environment variable (`dev` or `clerk`) switches auth providers for `canopy.ts` and the edit page at runtime, with no regeneration needed for those two files. `middleware.ts` is the exception: it is generated once, frozen to the auth provider chosen at `init` time, and does not read `CANOPY_AUTH_MODE`. If you switch auth providers after init (or just flip the env var), you must regenerate (`npx canopycms init --force`) or manually swap `middleware.ts` to match -- otherwise the passthrough middleware keeps `/edit` and `/api/canopycms` unprotected at the edge. This is a defense-in-depth gap rather than a full auth bypass (the Clerk auth plugin still rejects unauthenticated API calls, and the core fails closed in prod mode), but it should not be left unaddressed. The generated passthrough `middleware.ts` logs a warning if it detects `CANOPY_AUTH_MODE=clerk` at runtime to help catch this mismatch.
 
 Everything else (branch management, content storage, permissions, comments, bootstrap admin groups, meta file loading) is handled automatically by CanopyCMS.
+
+## Deploying to AWS
+
+```bash
+npx canopycms init-deploy aws
+```
+
+Scaffolds a complete, deployable CDK app for the recommended AWS architecture (Lambda, no internet access, + an EC2 worker + EFS, with optional CloudFront/Route53) alongside the Dockerfile and CI workflow:
+
+| File                               | Purpose                                                                                                                                                                     |
+| ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Dockerfile.cms` / `.dockerignore` | Lambda Web Adapter image; install/build commands match your detected package manager (npm, pnpm, or Yarn — from `packageManager`, else the lockfile)                        |
+| `.github/workflows/deploy-cms.yml` | CI/CD workflow; triggers on your repo's default branch (detected from `origin/HEAD`) and deploys the stack **by name**, so it can't touch unrelated stacks in the same repo |
+| `cdk.json`                         | CDK app entry point                                                                                                                                                         |
+| `infrastructure/bin/app.ts`        | CDK app; reads its configuration from environment variables and refuses to synth if a required one is missing                                                               |
+| `infrastructure/lib/cms-stack.ts`  | the stack itself, yours to edit (memory/concurrency, media support, an existing distribution, etc.)                                                                         |
+
+Install the CDK dependencies it needs — the CLI, and the generated workflow, both warn if any are missing:
+
+```bash
+npm install --save-dev canopycms-cdk aws-cdk-lib constructs tsx aws-cdk
+```
+
+Like `init`, this command never overwrites files you already have; pass `--force` to regenerate them.
+
+Full walkthrough — required secrets/variables, filling in the stack, and troubleshooting — lives in [docs/deploying-to-aws.md](docs/deploying-to-aws.md).
 
 ## Environment Variables
 

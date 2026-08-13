@@ -12,6 +12,7 @@ coverage
 cdk.out
 test-results
 playwright-report
+packages/canopycms-cdk/.scaffold-synth
 package-lock.json
 pnpm-lock.yaml
 apps/example1/content

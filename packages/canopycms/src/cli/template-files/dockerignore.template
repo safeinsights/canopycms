@@ -10,4 +10,5 @@ cdk.out
 .env*
 
 # Do NOT ignore vendor/ -- file: dependencies (vendored tarballs) must reach
-# the Docker build context, or `npm ci` will fail to resolve them.
+# the Docker build context, or the install step in Dockerfile.cms will fail to
+# resolve them.
