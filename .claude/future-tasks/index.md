@@ -91,6 +91,7 @@ None currently open.
 | [static-export-sitemap.md](static-export-sitemap.md)                               | Static-export sitemap helper: enumerate published entries + singletons → `sitemap.xml` (framework-agnostic core + Next adapter) |
 | [static-export-seo-metadata.md](static-export-seo-metadata.md)                     | Static-export SEO metadata helper + recommended SEO field group → Next `Metadata`                                          |
 | [entry-navigator-scalability.md](entry-navigator-scalability.md)                   | Editor navigator loads all entries up front (the hard 10,000 ceiling is gone — verified 2026-07-24); move to collection-scoped/lazy loading (+ keyset cursor) |
+| [entrytypes-throw-verify-real-schemas.md](entrytypes-throw-verify-real-schemas.md) | PR #190 made a bad reference-field `entryTypes` a hard error at schema resolution, so one stale `.collection.json` typo takes a whole branch down until fixed. JP approved the throw; this is the verification it implies — run it against docs-site-proto's and example1's real schemas before Workstream E puts it in front of the live docs site |
 
 ---
 
