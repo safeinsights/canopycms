@@ -108,6 +108,36 @@ does not weaken the real instance) and a scripted runbook with human checkpoints
 (cheaper, not agent-runnable). Record the choice and reasoning in
 [program-log.md](program-log.md).
 
+#### 11. Does a refused `--force-with-lease` leave the loser's ref untouched? (EFS/NFS)
+
+**A verification D must run, not a suspected bug.** PR #198 has the production
+worker force-push rewritten history into `remote.git` under `--force-with-lease`.
+The code may well be correct; the point is that nobody can currently *prove* it,
+and this is the assumption a mistake destroys editors' committed work through.
+Recorded here rather than left as a resolved "probably fine", because Workstream
+D is the only place a real EFS mount and a real Lambda exist together.
+
+**State the property precisely.** It is not "does `--force-with-lease` work" —
+it is: *does a lease refused by a concurrent push leave the loser's ref
+untouched?* Concretely, a Lambda `GitManager.push()` landing between the worker's
+`readPublishedSha()` and its force-push must cause the force to be **refused**,
+never to silently win.
+
+**Test shape.** Two concurrent writers to the same `refs/heads/<branch>` in
+`remote.git` on real EFS, one leased and one plain. Assert the ref afterwards
+holds *exactly one* of the two histories, and never a torn state.
+
+**Run it on the mount options the stack actually uses.** The primitive underneath
+is git's ref lockfile, `O_CREAT|O_EXCL`, which NFS does enforce server-side —
+that part was reasoned through at the desk and is not the doubt. What cannot be
+settled from the desk is whether anything else in the path weakens it: ref
+caching, or `packed-refs` rewriting under contention. So the mount options are
+part of the test, not an incidental detail.
+
+If it holds, record that in [program-log.md](program-log.md) — it retires a
+standing unknown behind the worker's whole publish path. If it does not, it is a
+production data-loss bug and outranks the rest of this workstream.
+
 ### 5. Run it with an agent
 
 Every failure becomes a Canopy fix, then re-run until clean.
