@@ -40,7 +40,7 @@ import { workerLog, workerLogWarn, workerLogError } from './log'
 // new package entrypoint - `canopycms/worker/cms-worker` already exists. Every
 // line in worker.log must carry the timestamp prefix or it gets folded into
 // the previous CloudWatch event; see ./log.ts.
-export { workerLog, workerLogWarn, workerLogError } from './log'
+export { workerLog, workerLogWarn, workerLogError, installWorkerLogger } from './log'
 
 /**
  * Auth cache refresh function type.

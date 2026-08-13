@@ -43,6 +43,22 @@ export interface RefreshClerkCacheOptions {
   cachePath: string
   /** Whether to treat Clerk organizations as groups (default: true) */
   useOrganizationsAsGroups?: boolean
+  /**
+   * Where a recoverable warning goes. Defaults to `console.warn`.
+   *
+   * The EC2 worker passes `workerLogWarn` here: everything it writes lands in
+   * `/var/log/canopy-worker/worker.log`, where the CloudWatch agent's
+   * `multi_line_start_pattern` treats a line WITHOUT an ISO-8601 prefix as a
+   * continuation of the previous event rather than a new one - so an
+   * unprefixed warning inherits a stale timestamp and loses its severity tag
+   * (see `canopycms`'s `worker/log.ts`).
+   *
+   * Injected as a callback rather than imported: `canopycms` is only a PEER
+   * dependency here, and reaching into its process-scoped logger would couple
+   * this package to canopycms internals for one warning. The worker entrypoint
+   * that already imports both is the natural place to join them.
+   */
+  warn?: (...args: unknown[]) => void
 }
 
 export interface RefreshClerkCacheResult {
@@ -65,7 +81,12 @@ export interface RefreshClerkCacheResult {
 export async function refreshClerkCache(
   options: RefreshClerkCacheOptions,
 ): Promise<RefreshClerkCacheResult> {
-  const { secretKey, cachePath, useOrganizationsAsGroups = true } = options
+  const {
+    secretKey,
+    cachePath,
+    useOrganizationsAsGroups = true,
+    warn = (...args: unknown[]) => console.warn(...args),
+  } = options
 
   const clerkClient = createClerkClient({ secretKey })
 
@@ -127,7 +148,7 @@ export async function refreshClerkCache(
           memberships[user.id] = userMemberships.map((m) => m.organization.id)
         }
       } catch (err) {
-        console.warn(
+        warn(
           `Failed to fetch memberships for user ${user.id}:`,
           err instanceof Error ? err.message : err,
         )

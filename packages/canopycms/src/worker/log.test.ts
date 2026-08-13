@@ -12,12 +12,19 @@
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { workerLog, workerLogWarn, workerLogError } from './log'
+import { workerLog, workerLogWarn, workerLogError, installWorkerLogger } from './log'
+import { canopyLog, canopyLogWarn, canopyLogError, resetCanopyLogger } from '../utils/logger'
+import { createOrUpdatePullRequest } from '../github-service'
+import type { Octokit } from '@octokit/rest'
 
 /** `2026-08-12T14:30:00.000Z` - ISO-8601, millisecond precision, UTC. */
 const ISO_8601_MS = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/
 
 afterEach(() => {
+  // The logger is process-scoped module state, so a test that installs the
+  // worker logger would otherwise leak the prefix into every later test in
+  // this worker.
+  resetCanopyLogger()
   vi.restoreAllMocks()
 })
 
@@ -89,5 +96,79 @@ describe('worker log helpers', () => {
     const parsed = Date.parse(spy.mock.calls[0][0] as string)
     expect(parsed).toBeGreaterThanOrEqual(before)
     expect(parsed).toBeLessThanOrEqual(after)
+  })
+})
+
+describe('installWorkerLogger', () => {
+  it('is NOT applied by merely importing this module', () => {
+    // Deliberately not a module-level side effect: a Lambda or dev-server
+    // process that imports anything re-exporting worker/log.ts must keep plain
+    // console, where CloudWatch delimits events itself.
+    const spy = spyOn('warn')
+
+    canopyLogWarn('unprefixed by default')
+
+    expect(spy).toHaveBeenCalledWith('unprefixed by default')
+  })
+
+  it('routes every canopyLog* level through the prefixing helpers once installed', () => {
+    const log = spyOn('log')
+    const warn = spyOn('warn')
+    const error = spyOn('error')
+
+    installWorkerLogger()
+    canopyLog('info line')
+    canopyLogWarn('warn line')
+    canopyLogError('error line')
+
+    for (const [spy, level, message] of [
+      [log, 'INFO', 'info line'],
+      [warn, 'WARN', 'warn line'],
+      [error, 'ERROR', 'error line'],
+    ] as const) {
+      const [stamp, emittedLevel, emittedMessage] = spy.mock.calls[0]
+      expect(stamp).toMatch(ISO_8601_MS)
+      expect(emittedLevel).toBe(level)
+      expect(emittedMessage).toBe(message)
+    }
+  })
+
+  it('prefixes a warning emitted from a shared module the worker executes', async () => {
+    // The end-to-end shape of the finding, driven through a REAL production
+    // call path rather than the helper in isolation: github-service.ts is not
+    // in a worker directory, but createOrUpdatePullRequest runs as a worker
+    // task, and its GIT-M5 multi-PR warning used to reach worker.log with no
+    // timestamp - so the CloudWatch agent appended it to whatever event came
+    // before, inheriting that timestamp and dropping the WARN tag.
+    const warn = spyOn('warn')
+    installWorkerLogger()
+
+    const octokit = {
+      pulls: {
+        list: vi.fn().mockResolvedValue({
+          data: [
+            { number: 5, html_url: 'https://example.test/5', updated_at: '2026-01-01T00:00:00Z' },
+            { number: 9, html_url: 'https://example.test/9', updated_at: '2026-02-01T00:00:00Z' },
+          ],
+        }),
+        update: vi.fn().mockResolvedValue({}),
+      },
+    } as unknown as Octokit
+
+    await createOrUpdatePullRequest({
+      octokit,
+      owner: 'test-owner',
+      repo: 'test-repo',
+      head: 'feature-branch',
+      base: 'main',
+      title: 'Submit feature-branch',
+      body: 'Body',
+    })
+
+    expect(warn).toHaveBeenCalledTimes(1)
+    const [stamp, level, message] = warn.mock.calls[0]
+    expect(stamp).toMatch(ISO_8601_MS)
+    expect(level).toBe('WARN')
+    expect(message).toContain('Found 2 open PRs')
   })
 })
