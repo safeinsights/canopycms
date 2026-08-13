@@ -891,11 +891,12 @@ When a user opens a branch, CanopyCMS either opens an existing workspace or crea
 
 Branches have a lifecycle with several states:
 
-- **editing**: Active work in progress
+- **editing**: Active work in progress — the only status from which content can be written or the branch submitted
 - **submitted**: Sent for review, awaiting merge
 - **approved**: Approved and ready to merge
-- **locked**: Temporarily locked from editing
 - **archived**: Merged and preserved for audit
+
+There is deliberately no separate `locked` state: `submitted` already means "locked for review" (see `BranchStatus` in `types.ts`).
 
 In dev mode, users normally work directly on the base branch too—that's the expected local flow, and nothing prevents it. In prod mode, the base branch is read-only in the editor (see [Protected Base Branch](#protected-base-branch) below); real edits require creating a separate branch, which then goes through the submit/review/merge flow. The branch model provides isolation for team collaboration and, in prod, enforces it for the base branch specifically.
 
@@ -1601,7 +1602,9 @@ This flow applies to editing branches. The base branch itself can never be submi
 3. Reviewers can approve or request changes
 4. Requesting changes returns branch to "editing" status
 
-**Content is read-only while under review.** Once a branch leaves `editing` status (`submitted`, `approved`, or `archived`), the server write boundary rejects content saves, entry creation, and schema mutations with the same kind of 403 used for the protected base branch — a branch mid-review shouldn't have its content shift under the reviewer. The editor mirrors this on the client: Save is disabled, entry-tree mutations are hidden, and a status banner explains why. Comments are exempt from this lock by design, since they're the review mechanism itself and must stay writable while a branch is submitted. From `submitted`, withdrawing or requesting changes returns the branch to `editing` and immediately re-enables writes — both actions require `submitted` and reject any other status, so an `approved` branch has no such unlock (see [approved-status-dead-end.md](.claude/future-tasks/approved-status-dead-end.md)). A branch whose `status` cannot be read at all is also treated as locked: `branch.json` is parsed without schema validation, so the write guard fails closed rather than guessing.
+**Content is read-only while under review.** Once a branch leaves `editing` status (`submitted`, `approved`, or `archived`), the server write boundary rejects content saves, entry creation, and schema mutations with the same kind of 403 used for the protected base branch — a branch mid-review shouldn't have its content shift under the reviewer. The editor mirrors this on the client: Save is disabled, entry-tree mutations are hidden, and a status banner explains why. Comments are exempt from this lock by design, since they're the review mechanism itself and must stay writable while a branch is submitted. Withdrawing or requesting changes returns the branch to `editing` and immediately re-enables writes. Request-changes requires `submitted`; withdraw accepts `submitted` or `approved`, which makes it the general unlock — an approved branch's only non-destructive way back (whether `approved` should exist at all is still open; see [approved-status-dead-end.md](.claude/future-tasks/approved-status-dead-end.md)). A branch whose `status` cannot be read at all is also treated as locked: `branch.json` is parsed without schema validation, so the write guard fails closed rather than guessing.
+
+**Submitting follows the same rule as writing.** Only an `editing` branch may be submitted, and an unreadable status fails closed exactly as it does for writes — submitting a branch you are not allowed to edit is incoherent, since its content cannot have changed since the last submit. This is enforced in the submit handler alongside the three sibling transitions (withdraw, approve, request-changes), each of which returns a 400 naming the offending status. The `submittableBranch` route guard answers a different question — whether this is the protected base branch — and reads no status at all. Without the handler check, a merged (`archived`) branch could be re-submitted: the working tree is clean so nothing would be committed, but the branch would be re-stamped `submitted` and the PR sync would either overwrite the merged PR's title and body or, in prod, fail permanently against a PR that can no longer be reopened.
 
 ### Merging and Archiving
 

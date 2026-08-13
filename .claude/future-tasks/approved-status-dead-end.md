@@ -1,60 +1,53 @@
-# `approved` is a write-locked dead end with no UI exit
+# `approved`: exit fixed; "is it vestigial?" and the delete rail still open
 
-## Priority: P2
+## Priority: P3 (was P2 — the dead end itself is fixed)
 
 Found by the independent adversarial review of PR #189 (2026-08-12). The defect
 is **pre-existing** (introduced with the status lock in `3f74e7fc`), not caused
 by that PR — it was deliberately left out of #189's scope and filed here.
 
-## Problem
+## Fixed by the submit status gate PR (2026-08-13)
 
-Every non-`editing` status blocks content writes (`getBranchWriteProtection`),
-which is correct. But `approved` is the only locked status with no
-non-destructive way back:
+That PR closed the submit path's missing status gate, which had a direct bearing
+on this file: the "only non-destructive exit is a raw `workflow.submit` call"
+noted below was not just a hack, it **silently discarded the approval** by
+re-stamping the branch `submitted`. Closing that hole would have sealed this dead
+end completely, so the exit was opened in the same PR:
 
-- **Withdraw** requires `'submitted'` — `api/branch-withdraw.ts:42` rejects any
-  other status with a 400.
-- **Request changes** also requires `'submitted'` — `api/branch-review.ts:19`,
-  same shape.
+- **Withdraw now accepts `approved`** as well as `submitted`
+  (`api/branch-withdraw.ts`), returning the branch to `editing`.
+- **The UI surfaces it**: `BranchManager.tsx`'s `canWithdraw` and
+  `EditorHeader.tsx`'s action button both treat `approved` as withdrawable.
+  (The server accepting it is not enough — without this there is still no UI path.)
+- **The misleading tooltip is fixed**: a status with no available transition
+  (today only `archived`) now says so, instead of claiming the user lacks
+  permission.
 
-So an approved branch is frozen. Its only non-destructive exit is a raw
-`workflow.submit` API call; there is no UI path at all.
+## Still open
 
-Two things make it worse rather than merely awkward:
+**1. Is `approved` vestigial?** Unchanged and still undecided. Nothing in the
+editor calls `workflow.approve`, so branches reach `approved` only via a direct
+API call or a hand-edited `branch.json`. Either:
 
-- `editor/components/EditorHeader.tsx:530-532` disables the action button on
-  `approved` with a **misleading** tooltip — "You do not have permission to
-  submit or withdraw". The user has the permission; the transition simply does
-  not exist. This sends people to an admin to fix a non-permissions problem.
-- `api/branch.ts:572` blocks deletion only for `'submitted'`, so an `approved`
-  branch **with an open PR** is deletable — the destructive exit is the one
-  that stayed open.
-
-Reachability today is API-only: nothing in the editor calls `workflow.approve`,
-so branches reach `approved` only via a direct API call or hand-edited
-`branch.json`. That is why this is P2 rather than release-blocking — but the
-approve endpoint is shipped and reviewer-callable, so it is reachable in prod.
-
-## Decide
-
-The shape of the fix depends on what `approved` is *for*, which is not settled:
-
-- If `approved` means "reviewer signed off, awaiting merge", then withdraw
-  should accept it (returning to `editing`), and delete should be blocked for it
-  exactly as for `submitted`.
-- If `approved` is vestigial — the worker archives on merge, and nothing in the
-  product sets it — then consider deleting the literal, the way `'locked'` was
+- `approved` means "reviewer signed off, awaiting merge" — then it needs a real
+  UI affordance for reviewers, and the delete rail below needs fixing; or
+- it is vestigial — then consider deleting the literal, the way `'locked'` was
   deleted in #189. Check `pollMergeState` and the SystemHealthPanel's
   `canMarkMerged` (which reads `submitted || approved`) before removing.
 
-Either way, fix the tooltip: a disabled control should say why.
+Note the withdraw change above is compatible with either answer: if the literal
+is deleted, the `|| status === 'approved'` clauses go with it.
+
+**2. The delete rail still lets an approved branch with an open PR be deleted.**
+`api/branch.ts:572` blocks deletion only for `'submitted'`. If `approved` is
+kept, deletion should be blocked for it exactly as for `submitted`. This is now
+the only remaining destructive-exit asymmetry.
 
 ## Files
 
-- `packages/canopycms/src/api/branch-withdraw.ts:42`
-- `packages/canopycms/src/api/branch-review.ts:19`
-- `packages/canopycms/src/api/branch.ts:572` (delete rail)
-- `packages/canopycms/src/editor/components/EditorHeader.tsx:530-532` (tooltip)
+- `packages/canopycms/src/api/branch.ts:572` (delete rail — still open)
+- `packages/canopycms/src/api/branch-review.ts:19` (request-changes still
+  requires `'submitted'`; deliberate — withdraw is the general exit)
 
 ## Related
 

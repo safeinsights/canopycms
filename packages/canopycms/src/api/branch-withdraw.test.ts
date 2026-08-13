@@ -87,7 +87,49 @@ describe('branch withdraw api', () => {
       { branch: 'feature/x' as BranchName },
     )
     expect(res.status).toBe(400)
-    expect(res.error).toContain("Only 'submitted' branches can be withdrawn")
+    expect(res.error).toContain("Only 'submitted' or 'approved' branches can be withdrawn")
+  })
+
+  it('withdraws an approved branch back to editing', async () => {
+    // 'approved' is otherwise a dead end: request-changes and (before this)
+    // withdraw both required 'submitted', and the submit status gate closed the
+    // raw workflow.submit escape hatch that used to double as the exit -- while
+    // silently discarding the approval. Withdraw is now that exit.
+    mockMetadataSave.mockClear()
+    const ctx = makeCtx()
+    ctx.getBranchContext = vi.fn().mockResolvedValue({
+      ...baseContext,
+      branch: { ...baseContext.branch, status: 'approved' },
+    })
+
+    const res = await withdrawHandler(
+      ctx,
+      { user: { type: 'authenticated', userId: 'u1', groups: [] } },
+      { branch: 'feature/x' as BranchName },
+    )
+
+    expect(res.ok).toBe(true)
+    expect(res.status).toBe(200)
+    expect(mockMetadataSave).toHaveBeenCalledWith(
+      expect.objectContaining({
+        branch: expect.objectContaining({ status: 'editing' }),
+      }),
+    )
+  })
+
+  it('returns 400 when withdrawing an archived branch', async () => {
+    const ctx = makeCtx()
+    ctx.getBranchContext = vi.fn().mockResolvedValue({
+      ...baseContext,
+      branch: { ...baseContext.branch, status: 'archived' },
+    })
+    const res = await withdrawHandler(
+      ctx,
+      { user: { type: 'authenticated', userId: 'u1', groups: [] } },
+      { branch: 'feature/x' as BranchName },
+    )
+    expect(res.status).toBe(400)
+    expect(res.error).toContain("with status 'archived'")
   })
 
   it('withdraws branch when allowed', async () => {

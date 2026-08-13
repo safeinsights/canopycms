@@ -38,12 +38,23 @@ const withdrawBranchHandler = async (
     }
   }
 
-  // Verify branch is in submitted status
-  if (branchContext.branch.status !== 'submitted') {
+  // Verify branch is in a withdrawable status.
+  //
+  // 'approved' is accepted alongside 'submitted' because withdraw is its only
+  // non-destructive exit. Every non-'editing' status blocks content writes, and
+  // request-changes requires 'submitted' -- so before this, an approved branch
+  // could only be escaped by a raw workflow.submit call, which silently
+  // discarded the approval and is now refused by the submit status gate
+  // (api/branch-status.ts). Without this, closing that hole would seal the dead
+  // end completely, leaving deletion as the only way out.
+  //
+  // 'archived' stays refused: the PR is merged and there is nothing to return to.
+  const status = branchContext.branch.status
+  if (status !== 'submitted' && status !== 'approved') {
     return {
       ok: false,
       status: 400,
-      error: `Cannot withdraw branch with status '${branchContext.branch.status}'. Only 'submitted' branches can be withdrawn.`,
+      error: `Cannot withdraw branch with status '${status}'. Only 'submitted' or 'approved' branches can be withdrawn.`,
     }
   }
 
