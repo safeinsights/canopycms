@@ -160,6 +160,42 @@ by contentId, so any other path that swaps an entry object's contentId between
 load and save still yields a version-less write. Tracked in
 [occ-version-key-contentid-swap.md](occ-version-key-contentid-swap.md).
 
+### Three corrections to PR #196's own description
+
+Recorded here because #196 is merged and its body can no longer be the accurate
+version.
+
+**The navigator-spinner claim was too broad.** The PR said the navigator spinner
+will *not* appear during a switch, because `Editor.tsx`'s
+`collectionsFromApi.length > 0 ? collectionsFromApi : collections` falls back to
+the prop collections and keeps the tree non-empty. That holds only for adopters
+who **pass** a `collections` prop — which the first-party path does. For an
+adopter who passes none, the derived list going empty now leaves `treeData`
+empty too, and the spinner **does** show during the switch window. So the
+behaviour is inconsistent between the two adopter shapes; making it consistent
+is [entry-navigator-loader-empty-tree.md](entry-navigator-loader-empty-tree.md).
+
+**The fix closed a write hazard that was never separately filed.** Before #196,
+`handleCreateEntry` resolved through `collectionByPath`, which was built from the
+stale mirrors — so during a branch switch it could resolve a collection belonging
+to the **previous** branch and then create an entry at that path on the
+**current** branch, via `options.branchName`. Post-fix the derived map is empty
+during that window, so the handler's existing `if (!col) return` guard makes the
+create a no-op instead. This was found while chasing consumers of
+`activeCollections` after the fact, not while fixing; there is no regression test
+aimed at it specifically. **Anyone tempted to restore the old "fall back to the
+last known collections" behaviour would reopen it.**
+
+**One boundary was considered but is untested.** A long-lived modal mounted
+*across* a branch switch — `PermissionManager` (`collections={activeCollections}`)
+and `CollectionEditor` (`availableSchemas={availableSchemas}`) — now sees its
+list briefly empty out mid-switch where it previously saw the previous branch's
+data. Judged benign because both render lists rather than writing through them,
+and because the write paths that do consume these (`handleCreateEntry`, the
+reorder handler at `Editor.tsx:694`) are guarded by not-found early returns and
+are unreachable with entries empty. No test covers a modal open across a switch;
+this was a reasoned call, not an oversight.
+
 ---
 
 ## HIGH — the deploy template has no CDK app to deploy against

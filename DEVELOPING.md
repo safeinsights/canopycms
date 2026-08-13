@@ -1648,6 +1648,22 @@ The warning tells you to run `npx canopycms sync push` to update the clone (see 
 
 **Implementation:** all logic lives in the core watcher `src/dev-content-watcher.ts` (`startDevContentWatcher()`); framework adapters just call it once at dev startup (see the Next wiring in `packages/canopycms-next/src/context-wrapper.ts`). The watcher is a no-op when not in dev mode, when mode is `'off'`, or when the working-tree content directory does not exist. On each check it re-resolves the active branch (so it follows git-HEAD branch switches) and dedupes across HMR reloads so dev restarts don't double-warn.
 
+### Committing and Pushing: Toolchain Gotchas
+
+Two things that bite in a scratch worktree or any non-interactive shell, where `pnpm`
+resolves only through a `corepack` shim rather than being on the ambient `PATH`:
+
+- **The husky `pre-push` hook shells out to a bare `pnpm`, so `git push` fails with
+  `pre-push script failed (code 127)`** — not a push or auth error, a
+  `pnpm: command not found` inside the hook. Hooks do not see aliases or shell
+  functions; the shim directory has to be exported on `PATH` in the _same_ command as
+  the push. The same applies to `lint-staged` on `pre-commit`.
+- **`prettier --write` silently skips `.claude/future-tasks/*.md`** — they are
+  prettier-ignored. Prettier reports only the files it actually formatted, so passing a
+  task file and seeing no mention of it is a skip, not a no-op-because-clean. The
+  "run prettier on touched files" step therefore never covers task-file formatting;
+  match the surrounding style by hand.
+
 ## Testing
 
 ### Test Coverage
@@ -1734,6 +1750,13 @@ direction, so check for them explicitly:
 - **An exit code read through a pipe is the pipe's.** `pnpm test 2>&1 | tail` reports
   `tail`'s 0 even when the suite failed — or when `pnpm` was never found. Capture
   `${PIPESTATUS[0]}`, or run `echo $?` on its own line.
+  - **The agent-facing form is worse: the false green launders into a completion
+    notification that reads as authoritative.** Run that same piped command as a
+    background task and the harness reports _"completed (exit code 0)"_ — a system
+    message, not something you wrote — while the suite actually died with
+    `ERR_PNPM_RECURSIVE_FAIL`, or `pnpm install` died on an EPERM leaving no
+    `node_modules`. Seen both ways. A piped background command's notification tells you
+    nothing about the command; read the captured output before believing it.
 - **A backgrounded shell does not inherit the interactive profile**, so `pnpm install`
   can no-op with "command not found" and still look like it worked. Verify
   `node_modules` actually exists afterwards.
