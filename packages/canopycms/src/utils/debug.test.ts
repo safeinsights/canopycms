@@ -111,4 +111,22 @@ describe('DebugLogger', () => {
       logger.error('test', 'error message')
     }).not.toThrow()
   })
+
+  it('starts the line with a BARE ISO-8601 timestamp, not a bracketed one', () => {
+    // CANOPYCMS_DEBUG can be set on the EC2 worker, whose stdout appends to
+    // /var/log/canopy-worker/worker.log. The CloudWatch agent's
+    // multi_line_start_pattern matches the timestamp at the START of the line
+    // (worker/log.ts's INVARIANT, cms-service.ts's agent config), so the old
+    // `[2026-...]` form meant every debug line was folded into the previous
+    // event rather than starting its own. Same regex the worker log tests use.
+    const logger = createDebugLogger({ enabled: true })
+
+    logger.debug('cat', 'test message')
+
+    const line = vi.mocked(console.log).mock.calls[0][0] as string
+    expect(line).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z /)
+    // The rest of the human-readable shape is unchanged.
+    expect(line).toContain('[CanopyCMS:cat]')
+    expect(line).toContain('[DEBUG]')
+  })
 })

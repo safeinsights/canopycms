@@ -17,7 +17,13 @@
 // these add, or the CloudWatch agent's multi_line_start_pattern folds it into
 // the previous event instead of starting a new one. See
 // packages/canopycms/src/worker/log.ts.
-import { CmsWorker, workerLog, workerLogError } from 'canopycms/worker/cms-worker'
+import {
+  CmsWorker,
+  workerLog,
+  workerLogWarn,
+  workerLogError,
+  installWorkerLogger,
+} from 'canopycms/worker/cms-worker'
 import { refreshClerkCache } from 'canopycms-auth-clerk/cache-writer'
 import { getErrorMessage } from 'canopycms/utils/error'
 import path from 'node:path'
@@ -44,6 +50,14 @@ async function getSecret(secretArn: string, retries = 3): Promise<string> {
 }
 
 async function main() {
+  // FIRST, before anything that could log. The imports above only cover code
+  // this file calls directly; the worker also executes shared canopycms modules
+  // (github-service.ts's rate-limit callbacks and PR create/update,
+  // branch-registry.ts's registry scan) that are plain `console` under Lambda
+  // and must be prefixed here. This points their `canopyLog*` helpers at the
+  // timestamping functions. See canopycms's utils/logger.ts.
+  installWorkerLogger()
+
   workerLog('CMS Worker starting...')
 
   // Required env vars
@@ -77,6 +91,12 @@ async function main() {
           secretKey: clerkSecretKey,
           cachePath,
           useOrganizationsAsGroups: true,
+          // Injected rather than left to default `console.warn`: this runs in
+          // the worker, so its per-user membership-fetch warning needs the
+          // ISO-8601 prefix like everything else here. canopycms is only a
+          // peer dependency of canopycms-auth-clerk, so the join happens at
+          // this entrypoint, which already imports both.
+          warn: workerLogWarn,
         })
         workerLog(`  ${result.userCount} users, ${result.groupCount} groups`)
       }
