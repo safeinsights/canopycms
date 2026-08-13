@@ -117,23 +117,68 @@ and this is the assumption a mistake destroys editors' committed work through.
 Recorded here rather than left as a resolved "probably fine", because Workstream
 D is the only place a real EFS mount and a real Lambda exist together.
 
-**This is not really about #198.** The primitive underneath is server-side
-exclusive create on NFS — and that is the *same guarantee* [concurrency.md](../../docs/concurrency.md)'s
-Layer 3 ("Server-enforced lock", `proper-lockfile` / `withOccFileLock` /
-`acquireProvisioningLock`) already bets the whole settings and metadata design
-on, the one whose stated guarantee is "genuine cross-process, cross-host mutual
-exclusion" and which branch status, ACLs and comments rely on for every write.
-**If it does not hold on EFS, far more than the worker is broken.** So D is
-verifying a shared foundation, not one PR's edge case — which is the argument for
-running it even if #198 is reverted or reworked.
+**This is not really about #198 — but be careful about *why*.** The tempting
+argument is that the primitive underneath is the same one
+[concurrency.md](../../docs/concurrency.md)'s Layer 3 ("Server-enforced lock",
+`proper-lockfile`) already bets the settings and metadata design on, so a failure
+would break far more than the worker. That argument is **half right, and it
+overclaims in the direction that matters.** It was made and then withdrawn by
+#198's own session; the corrected version is below, because getting it wrong
+would license a green soak to certify things it never touched.
 
-One refinement worth carrying into the test design: the two are the same
-*guarantee class*, not the same syscall. Git's ref lockfile is
-`O_CREAT|O_EXCL`; `proper-lockfile` is **mkdir**-based. Both rely on the NFS
-server rejecting a second exclusive create, but they are different operations, so
-a soak that exercises only git's path does not by itself certify
-`proper-lockfile`'s. Either cover both, or record explicitly that the result is
-being generalized across the class.
+**There are three distinct exclusive-create primitives in play, not one:**
+
+| Primitive         | Where                                                                        | In the doc's stated foundation?             |
+| ----------------- | ---------------------------------------------------------------------------- | ------------------------------------------- |
+| `link()`          | `utils/occ-json-write.ts` — new-file creation (Layer 2)                       | **Yes**                                     |
+| `mkdir`           | `proper-lockfile` — `withOccFileLock`, `acquireProvisioningLock` (Layer 3)    | **Yes**                                     |
+| `O_CREAT\|O_EXCL` | git's ref lockfile (the worker's force-push)                                  | **No**                                      |
+
+concurrency.md's preamble names only two: "`link()`/`mkdir` fail with EEXIST
+**enforced by the server**, immune to client caching". `O_CREAT|O_EXCL` is absent
+from that list, and Layer 2 actively steers away from Node's equivalent ("never
+`writeFile({flag:'wx'})`, which can leave a partial file") — for crash semantics
+rather than atomicity, but the effect is that **nobody in this repo ever
+deliberately bet on that primitive.** So the worker's force-push inherits
+*nothing* from Layer 3 being sound.
+
+**The historical direction runs the same way.** `mkdir` and `link()` are the
+traditionally trusted NFS lock primitives *precisely because* `O_CREAT|O_EXCL`
+was unreliable on NFSv2/v3 — mkdir-based locking exists as the portable
+workaround for exactly that. NFSv4's EXCLUSIVE4/GUARDED4 create modes are meant
+to have fixed it, and there is no particular reason to think EFS is broken. But
+that makes git's path **the one most deserving of the soak**, not the one covered
+by inheritance.
+
+**What survives, and it is still the reason to run this:** all three rely on the
+NFS *server* enforcing exclusive-create-by-name, which is a coherent guarantee
+class. A failure here would most likely be a server-side exclusive-create
+failure, and that *would* implicate the whole class. But **a green result on one
+member certifies only that member** — and the inference is directional:
+
+- A green **git / `O_CREAT|O_EXCL`** soak says nothing about `mkdir` or `link()`.
+- A green **`mkdir`** result says nothing about git's path, and is the **weaker**
+  inference of the two, since `mkdir` is the historically safer primitive.
+
+So: cover all three, or record explicitly which member was exercised and that the
+rest is being generalized. A few `mkdir`- and `link()`-contention iterations
+alongside the push soak close it outright and are cheap next to the soak itself.
+
+**Two uncatalogued `O_CREAT|O_EXCL` dependencies already exist in the repo**, so
+the git-path soak is also their first real coverage:
+
+- `settings-workspace.ts` — a bespoke init lock (doc comment: "Uses
+  O_CREAT|O_EXCL (wx flag) for atomic file creation") which concurrency.md itself
+  flags as "**not one of the four numbered layers above** … not yet cataloged".
+  It is what stops two hosts both deciding it is safe to run `checkout --orphan`
+  + `rm -rf .` on a populated workspace — a sequence the doc calls **not
+  recoverable**.
+- `assets/store-local.ts` — `putMetaIfAbsent` writes with `{ flag: 'wx' }`. See
+  [asset-meta-wx-vs-link.md](asset-meta-wx-vs-link.md).
+
+Cataloguing the `settings-workspace.ts` pair in concurrency.md's table is worth
+doing while D is in this area — an undocumented dependency guarding an
+unrecoverable operation is exactly what the table exists to surface.
 
 **What is already settled — do not re-litigate it.** The real compare-and-swap is
 **not** the client-side lease. For *every* push, forced or not, the client sends
