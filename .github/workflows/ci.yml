@@ -193,10 +193,12 @@ jobs:
   e2e:
     name: E2E Tests (shard ${{ matrix.shard }}/4)
     # Re-enabled 2026-07-24 after the stabilization fix batch (see
-    # apps/test-app/e2e/E2E-FAILURE-ANALYSIS.md). Sharded 3-way at the CI
+    # apps/test-app/e2e/E2E-FAILURE-ANALYSIS.md). Sharded 4-way at the CI
     # level: each shard gets its own runner, server, and workspace, so the
     # shards can't contend (in-process Playwright workers CAN'T work here —
-    # all tests share one workspace + server; see playwright.config.ts).
+    # all tests share one workspace + server; see playwright.config.ts, and
+    # DEVELOPING.md "End-to-End Tests" for what contention looks like when
+    # someone runs the suite multi-worker locally).
     # No `needs: validate` — running in parallel with it cuts total PR
     # latency by the whole validate duration and lets e2e-only iteration
     # skip the wait.
