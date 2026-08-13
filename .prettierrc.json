@@ -6,6 +6,10 @@
     {
       "files": ["*.ts.template", "*.tsx.template"],
       "options": { "parser": "typescript" }
+    },
+    {
+      "files": ["*.json.template"],
+      "options": { "parser": "json" }
     }
   ]
 }

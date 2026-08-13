@@ -131,7 +131,19 @@ npx canopycms init-deploy aws
 This creates:
 
 - `Dockerfile.cms` — Lambda Web Adapter image
-- `.github/workflows/deploy-cms.yml` — CI/CD workflow template
+- `.dockerignore` — keeps `.env*` out of the build context
+- `.github/workflows/deploy-cms.yml` — CI/CD workflow
+- `cdk.json` — CDK app configuration; `cdk deploy` resolves the app through this
+- `infrastructure/bin/app.ts` — CDK app entry point
+- `infrastructure/lib/cms-stack.ts` — the stack itself, yours to edit
+
+The install and build commands in `Dockerfile.cms` and the workflow are written
+for the package manager the command detects (npm, pnpm, or Yarn — from your
+`packageManager` field, else your lockfile). The deploy trigger branch comes
+from `origin/HEAD`, and the worker's repo from your `origin` remote.
+
+`init-deploy aws` never overwrites a file you already have — re-run it with
+`--force` to replace them.
 
 ## Step 3: Test Locally in Dev Mode
 
@@ -155,104 +167,64 @@ In dev mode, CanopyCMS:
 
 ## Step 4: CDK Stack
 
-Install the CDK constructs:
+Step 2 scaffolded the CDK app. Install what it needs to run:
 
 ```bash
-npm install canopycms-cdk aws-cdk-lib constructs
+npm install --save-dev canopycms-cdk aws-cdk-lib constructs tsx aws-cdk
 ```
 
-Create your CDK stack:
+All five are load-bearing: `cdk.json` runs
+`node --import tsx infrastructure/bin/app.ts`, which imports the first three,
+and pinning `aws-cdk` keeps the deploying CLI version reproducible instead of
+whatever `npx` fetches that day. The generated workflow checks for them before
+deploying, so a missing one fails with a named error rather than an
+`ERR_MODULE_NOT_FOUND` several minutes into `cdk deploy`.
 
-```typescript
-// infrastructure/lib/cms-stack.ts
-import { Stack, StackProps } from 'aws-cdk-lib'
-import { Construct } from 'constructs'
-import * as lambda from 'aws-cdk-lib/aws-lambda'
-import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager'
-import { Platform } from 'aws-cdk-lib/aws-ecr-assets'
-import { CanopyCmsService, CanopyCmsDistribution } from 'canopycms-cdk'
+### What to fill in
 
-export class CmsStack extends Stack {
-  constructor(scope: Construct, id: string, props?: StackProps) {
-    super(scope, id, props)
+`infrastructure/bin/app.ts` reads its configuration from the environment so the
+same file works locally and in CI. The generated file marks each one; the ones
+without a default refuse to synth when unset, deliberately — every one of them
+has a silent-failure mode that is far more expensive to diagnose after a
+successful deploy.
 
-    // Secrets: reference by their FULL ARN (with the random 6-char suffix,
-    // e.g. `...:secret:canopycms/github-token-Ab12Cd`). `secretsArns` below is
-    // written verbatim into the worker's IAM policy, so a partial/name-based
-    // ARN silently never matches the real secret and the worker gets
-    // AccessDenied at boot. Use fromSecretCompleteArn, not fromSecretNameV2.
-    const githubToken = secretsmanager.Secret.fromSecretCompleteArn(
-      this,
-      'GitHubToken',
-      process.env.GITHUB_TOKEN_SECRET_ARN!, // full suffixed ARN
-    )
-    const clerkSecretKey = secretsmanager.Secret.fromSecretCompleteArn(
-      this,
-      'ClerkSecret',
-      process.env.CLERK_SECRET_KEY_SECRET_ARN!,
-    )
+| Variable                                     | Required | Notes                                                                                                                                                                                |
+| -------------------------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `GITHUB_TOKEN_SECRET_ARN`                    | yes      | **Full** ARN including the six-character suffix — it goes verbatim into the worker's IAM policy, so a name-based ARN silently never matches and the worker gets AccessDenied at boot |
+| `CLERK_SECRET_KEY_SECRET_ARN`                | yes      | Full ARN, same reason                                                                                                                                                                |
+| `CLERK_JWT_KEY`                              | yes      | Clerk's public JWKS PEM. Unset, Clerk falls back to a network JWKS fetch and the no-internet Lambda hangs at sign-in                                                                 |
+| `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`          | no       | Deploys fine when empty and ships an editor that cannot sign in                                                                                                                      |
+| `CANOPY_BOOTSTRAP_ADMIN_IDS`                 | no       | Comma-separated Clerk user IDs granted admin on first boot                                                                                                                           |
+| `CANOPYCMS_DEPLOYMENT_NAME`                  | no       | Defaults to `prod`. Two stacks sharing one GitHub repo **must** differ — see [Two deployments, one repository](#two-deployments-one-repository)                                      |
+| `CMS_DOMAIN_NAME` / `CMS_HOSTED_ZONE_DOMAIN` | no       | Set both to add CloudFront + Route53; leave unset to use the Lambda Function URL directly                                                                                            |
 
-    // Public JWKS PEM — enables networkless session verification on the
-    // isolated Lambda. Fail at synth if missing: an empty value makes Clerk
-    // silently fall back to a network JWKS fetch, and the no-internet Lambda
-    // hangs at sign-in (the exact trap this guide's deploy test diagnosed).
-    const clerkJwtKey = process.env.CLERK_JWT_KEY
-    if (!clerkJwtKey) throw new Error('CLERK_JWT_KEY must be set at synth time')
+Then edit `infrastructure/lib/cms-stack.ts` for anything beyond that — memory
+and concurrency, `AssetSupport` for media (a commented block in the generated
+file), or a distribution you already own.
 
-    // Core infrastructure
-    const cmsService = new CanopyCmsService(this, 'CmsService', {
-      // architecture MUST match the platform the Docker image is built for.
-      // Building on Apple Silicon defaults to arm64 — pair Platform.LINUX_ARM64
-      // (aws-cdk-lib/aws-ecr-assets) with Architecture.ARM_64 or the Lambda
-      // fails at invoke with an exec-format error.
-      cmsDockerImage: lambda.DockerImageCode.fromImageAsset('.', {
-        file: 'Dockerfile.cms',
-        platform: Platform.LINUX_ARM64,
-        buildArgs: {
-          NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY!,
-        },
-      }),
-      architecture: lambda.Architecture.ARM_64,
-      githubOwner: 'your-org',
-      githubRepo: 'your-docs-site',
-      secretsArns: [githubToken.secretArn, clerkSecretKey.secretArn],
-      githubTokenSecretArn: githubToken.secretArn,
-      clerkSecretKeySecretArn: clerkSecretKey.secretArn,
-      // Optional: give the deployed editor a media backend (see the assets/media
-      // section). Pass an AssetSupport bucket here + wire its behaviors on the
-      // distribution.
-      // assetBucket: assetSupport.bucket,
-      environment: {
-        CANOPY_AUTH_MODE: 'clerk',
-        // Do NOT put CLERK_SECRET_KEY on the Lambda unless you must (the
-        // shipped clerkMiddleware asserts it; see notes below).
-        CLERK_JWT_KEY: clerkJwtKey,
-        CANOPY_BOOTSTRAP_ADMIN_IDS: 'user_xxx,user_yyy',
-      },
-    })
+`githubOwner` / `githubRepo` in `infrastructure/bin/app.ts` are prefilled from
+your `origin` remote. Check them: they decide which repository the worker
+pushes branches and opens PRs against.
 
-    // CloudFront + DNS (optional — use your own if you have existing infra).
-    // CanopyCmsDistribution needs a Route53 hosted zone + ACM. With no domain,
-    // build a raw cloudfront.Distribution instead (managed CACHING_DISABLED
-    // cache policy + ALL_VIEWER_EXCEPT_HOST_HEADER origin request policy on the
-    // Function-URL origin, and a viewer-request CloudFront Function that sets
-    // x-forwarded-host from Host — but NOT x-forwarded-proto, a disallowed
-    // header). See the deployment-test writeup referenced below.
-    // (CanopyCmsDistribution wires the x-forwarded-host function automatically.)
-    new CanopyCmsDistribution(this, 'CmsDist', {
-      functionUrl: cmsService.functionUrl,
-      domainName: 'cms.docs.example.org',
-      hostedZoneDomain: 'example.org',
-    })
-  }
-}
-```
+### Why `cdk.json`'s `context` is empty
 
-Deploy:
+`cdk init` pins a long list of feature flags into new projects. This scaffold
+deliberately pins none: the `canopycms-cdk` constructs are developed and tested
+under aws-cdk-lib's own defaults, so an inherited flag set would be untested
+here. Add flags if you need them, but note that a flag which only existed in
+CDKv1 is rejected outright at synth (`UnsupportedFeatureFlag`).
+
+### Deploy
 
 ```bash
-cdk deploy CmsStack
+cdk bootstrap                # once per account/region
+cdk synth                    # confirm it builds before touching the account
+cdk deploy CanopyCms
 ```
+
+`cdk synth` needs the required variables above but no AWS credentials, as long
+as you leave `CMS_DOMAIN_NAME` unset — `CanopyCmsDistribution` resolves your
+hosted zone with a context lookup, which needs a real account.
 
 ## Step 5: CI/CD
 
@@ -283,6 +255,31 @@ Prerequisites that an update-function-code pipeline did not need:
    `-image-publishing-role`, `-lookup-role`). `cdk deploy` mutates
    infrastructure, so this is a wider grant than updating a function's code.
 3. **A Docker daemon on the runner** (`ubuntu-latest` has one).
+4. **The CDK devDependencies from Step 4**, committed to `package.json`. The
+   workflow checks for them before deploying.
+
+### Repository secrets and variables
+
+The Deploy step passes these through to `infrastructure/bin/app.ts`. The
+required ones are read by `required()` there, so a missing value fails the
+deploy at synth — before anything is changed in the account.
+
+| Name                                        | Kind      | Required                                     |
+| ------------------------------------------- | --------- | -------------------------------------------- |
+| `AWS_DEPLOY_ROLE_ARN`                       | secret    | yes                                          |
+| `GITHUB_TOKEN_SECRET_ARN`                   | secret    | yes                                          |
+| `CLERK_SECRET_KEY_SECRET_ARN`               | secret    | yes                                          |
+| `CLERK_JWT_KEY`                             | secret    | yes                                          |
+| `AWS_REGION`                                | variable  | yes                                          |
+| `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`         | variable  | no, but the editor cannot sign in without it |
+| `CANOPY_BOOTSTRAP_ADMIN_IDS`                | variable  | no                                           |
+| `CANOPYCMS_DEPLOYMENT_NAME`                 | variable  | no (defaults to `prod`)                      |
+| `CMS_DOMAIN_NAME`, `CMS_HOSTED_ZONE_DOMAIN` | variables | no (enables CloudFront + Route53)            |
+
+The workflow deploys the stack **by name**, not with `--all`: `--all` would
+also deploy any unrelated stacks you keep in the same repository, on every
+content merge. Rename the stack in `infrastructure/bin/app.ts` and you must
+rename it in the workflow's Deploy step too.
 
 ### Build-time client keys
 
@@ -491,6 +488,8 @@ new CmsStack(app, 'CmsProd', {
 ```
 
 Separate AWS accounts mean these two stacks' settings branches would never collide even without `deploymentName` — but set distinct values anyway: it's the same repo's `canopycms-settings-*` branch namespace on GitHub, and a future stack sharing an account (or repo) with either of these should not have to guess that the convention exists. See [Two deployments, one repository](#two-deployments-one-repository).
+
+The generated workflow deploys one stack by name, so adding a second one here means updating its Deploy step too — either naming both (`npx cdk deploy CmsTest CmsProd`) or, more usually, giving each environment its own workflow with its own trigger and its own OIDC role.
 
 ## Troubleshooting
 

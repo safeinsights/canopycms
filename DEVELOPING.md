@@ -2933,6 +2933,21 @@ Read the file in full before extending it or writing a similar "shell out to a r
 
 **Local-run gotcha:** the live-server test's request-time content read resolves against the last git commit (dev-mode branch-workspace resolution), not uncommitted working-tree edits. Running this test locally against WIP changes (to the fixture app or to `withCanopy()`) can make the cms server's `/` return a non-200 until you commit (or run `canopycms sync push`) -- that's expected dev-mode behavior, not a build-shape regression, and the test's own assertion message explains this inline. Read the failure message before assuming a real regression.
 
+### Scaffold-and-Synth Verification (`canopycms-cdk/src/scaffold-synth.test.ts`)
+
+`scaffold-synth.test.ts` verifies `canopycms init-deploy aws` end to end: it runs the real CLI into a scratch project, then executes the generated `cdk.json`'s own `app` command, and requires a CloudFormation template to come out the other end. It exists because the bug it fixes -- the generated GitHub Actions workflow deployed against a `cdk.json` that nothing had created -- was invisible to `init.test.ts`'s template-string assertions, which passed the whole time. The lesson generalizes past this one test: for generated/scaffolded output, assert on what the output _does_ (does it synth?), not on what it _contains_ (does the string look right?).
+
+Run it locally with:
+
+```bash
+pnpm --filter canopycms-cdk run build:test-fixtures   # stages worker/dist first, see below
+pnpm --filter canopycms-cdk exec vitest run src/scaffold-synth.test.ts
+```
+
+- **Why this test lives in `canopycms-cdk`, not next to the CLI it exercises.** The synth needs `aws-cdk-lib`, `constructs`, and a resolvable `canopycms-cdk` -- this is the one package where all three are guaranteed present. Scratch projects are created under `packages/canopycms-cdk/.scaffold-synth/` (gitignored) with **no `package.json` of their own**, and that omission is load-bearing: it's what lets Node's self-reference resolution find `canopycms-cdk` from the generated stack by walking up to this package's own manifest via its `exports` field. Adding a `package.json` in the scratch project would break that resolution. The scratch directory sits at the package root, never under `src/`, so a crashed run that skips cleanup can't start failing `pnpm lint`/`pnpm typecheck` with generated files -- both globs cover `src/`.
+- **`CDK_OUTDIR` + `CDK_CONTEXT_JSON` are how the CDK CLI drives an app.** The first triggers auto-synth; the second delivers `cdk.json`'s `context` block. A test that runs the generated `app` command without passing the context can't catch a bad context value -- e.g. a CDKv1-only feature flag that CDKv2 rejects at synth (`UnsupportedFeatureFlag`) -- because a context-free run never reaches that code path.
+- **Fails loudly, never skips, when `packages/canopycms-cdk/worker/dist` is missing.** The package's own `test` script builds it via `build:test-fixtures` first; running this file in isolation (as above) requires that step too. A skip here would restore exactly the going-green-without-checking property the test exists to remove.
+
 ## Deployment Infrastructure
 
 ### CmsWorker (canopycms/worker/cms-worker)

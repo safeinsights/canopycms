@@ -1,0 +1,9 @@
+{
+  "app": "node --import tsx infrastructure/bin/app.ts",
+  "output": "cdk.out",
+  "watch": {
+    "include": ["infrastructure/**"],
+    "exclude": ["cdk.out/**", "node_modules/**", ".next/**", "out/**"]
+  },
+  "context": {}
+}
