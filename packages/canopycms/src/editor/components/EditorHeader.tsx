@@ -274,6 +274,16 @@ export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(functi
   // status lock.
   const statusLocked = branchWriteBlocked && !branchReadOnly
 
+  // The lock now fails CLOSED while the branch list is unresolved (Editor.tsx's
+  // `branchContentLocked` is `?? true`), which is right -- but `branchStatus` is
+  // `currentBranch?.status`, i.e. undefined in that same window. Without this
+  // distinction every banner and tooltip below interpolated it directly and read
+  // `Branch "main" is undefined - content is read-only`, on ordinary initial load
+  // and permanently after a failed branches fetch. Worse under version skew,
+  // where the status IS known ('editing') and the copy would assert a status
+  // lock the status plainly contradicts. So: locked, but say why honestly.
+  const branchDataUnavailable = statusLocked && branchStatus === undefined
+
   return (
     <Paper
       ref={ref}
@@ -474,13 +484,15 @@ export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(functi
               label={
                 branchReadOnly
                   ? 'The base branch is read-only'
-                  : statusLocked
-                    ? branchStatus === 'submitted'
-                      ? 'This branch is submitted for review — withdraw it to make changes'
-                      : `This branch is ${branchStatus} — content is read-only`
-                    : !hasUnsavedChanges && currentEntry
-                      ? 'No changes to save'
-                      : ''
+                  : branchDataUnavailable
+                    ? 'Branch details are still loading — saving is disabled until they arrive'
+                    : statusLocked
+                      ? branchStatus === 'submitted'
+                        ? 'This branch is submitted for review — withdraw it to make changes'
+                        : `This branch is ${branchStatus} — content is read-only`
+                      : !hasUnsavedChanges && currentEntry
+                        ? 'No changes to save'
+                        : ''
               }
               disabled={!branchReadOnly && !statusLocked && (hasUnsavedChanges || !currentEntry)}
             >
@@ -544,11 +556,28 @@ export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(functi
               return (
                 <Tooltip
                   label={
-                    !statusHasAction
-                      ? `This branch is ${branchStatus} and has no submit or withdraw action available`
-                      : !userHasPermission
-                        ? 'You do not have permission to submit or withdraw this branch'
-                        : ''
+                    // The unknown-status arm mirrors the banner's: with no
+                    // branch data, `statusHasAction` is false (undefined is
+                    // neither 'editing' nor withdrawable) and this label used
+                    // to interpolate it as "This branch is undefined and has
+                    // no submit or withdraw action available".
+                    //
+                    // Latent rather than live TODAY, and only by accident:
+                    // Editor.tsx passes `branchIsProtected={... ?? true}` since
+                    // the fail-closed change, so in that same window the early
+                    // return above (`branchIsProtected && !isWithdrawable`)
+                    // unmounts this button before the tooltip can render. That
+                    // is one guard away from being user-visible -- relax the
+                    // `?? true`, or pass `branchIsProtected={false}` from
+                    // anywhere, and the copy is live. Guarding it here rather
+                    // than relying on an unrelated condition to keep hiding it.
+                    branchStatus === undefined
+                      ? 'Branch data could not be loaded, so no submit or withdraw action is available'
+                      : !statusHasAction
+                        ? `This branch is ${branchStatus} and has no submit or withdraw action available`
+                        : !userHasPermission
+                          ? 'You do not have permission to submit or withdraw this branch'
+                          : ''
                   }
                   disabled={canPerformAction}
                 >
@@ -594,9 +623,11 @@ export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(functi
           >
             <Group justify="space-between" align="center" gap="sm" wrap="wrap">
               <Text size="sm">
-                {branchStatus === 'submitted'
-                  ? `Branch "${branchName}" is submitted for review and locked for edits. Use Withdraw Branch above to resume editing.`
-                  : `Branch "${branchName}" is ${branchStatus} — content is read-only.`}
+                {branchDataUnavailable
+                  ? `Branch details for "${branchName}" could not be loaded, so content is locked until they arrive. Use Manage Branches to retry.`
+                  : branchStatus === 'submitted'
+                    ? `Branch "${branchName}" is submitted for review and locked for edits. Use Withdraw Branch above to resume editing.`
+                    : `Branch "${branchName}" is ${branchStatus} — content is read-only.`}
               </Text>
               <Button size="xs" variant="light" color="yellow" onClick={onBranchManagerOpen}>
                 Manage Branches

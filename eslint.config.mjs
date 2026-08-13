@@ -139,8 +139,22 @@ const eslintConfig = [
   //                        callbacks; PR create/update is a worker task.
   //   branch-registry.ts - registry regeneration, reached from every worker
   //                        `meta.save()`.
+  //   operating-mode/deployment-name.ts - imported directly by cms-worker.ts and
+  //                        resolved inside start(); its env-vs-config mismatch
+  //                        warning is precisely what an operator greps for.
+  //
+  // This list is a standing hazard: it is maintained by hand, so a module that
+  // BECOMES worker-reachable later is not covered until someone remembers to add
+  // it. deployment-name.ts was missed on the first pass for exactly that reason
+  // (the sweep went by directory name and by the modules the finding named,
+  // rather than by the worker's real import graph). If this list grows much
+  // further, derive it from the import graph instead of curating it.
   {
-    files: ['**/canopycms/src/github-service.ts', '**/canopycms/src/branch-registry.ts'],
+    files: [
+      '**/canopycms/src/github-service.ts',
+      '**/canopycms/src/branch-registry.ts',
+      '**/canopycms/src/operating-mode/deployment-name.ts',
+    ],
     rules: {
       'no-console': 'off',
       'no-restricted-syntax': [
@@ -155,8 +169,15 @@ const eslintConfig = [
   },
   // ...except log.ts itself, which IS the wrapper: it is the one module in those
   // directories that must call console. Must come AFTER the ban above - later
-  // overrides win in flat config. (Their *test* files need no exemption here:
-  // the test-file override further down already turns no-console off.)
+  // overrides win in flat config.
+  //
+  // Their *test* files are deliberately NOT exempted here. Note the test-file
+  // override further down turns off `no-console` only, so `no-restricted-syntax`
+  // stays active in worker tests - which is fine today (no worker test uses a
+  // `console.x` member access; `vi.spyOn(console, 'warn')` passes a bare
+  // identifier and does not match the selector) but means the first worker test
+  // that writes `vi.mocked(console.log)` will hit a message about worker.log
+  // that has nothing to do with its test. Add the exemption then, not now.
   {
     files: ['**/worker/log.ts'],
     rules: {

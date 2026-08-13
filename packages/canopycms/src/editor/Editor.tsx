@@ -1006,10 +1006,18 @@ export const Editor: React.FC<EditorProps> = ({
             onBranchDiscardDrafts={handleDiscardDrafts}
             onBranchManagerOpen={() => {
               setBranchManagerOpen(true)
-              // Branchless = the initial load failed or found nothing; opening
-              // the manager doubles as the retry (adopts the server default on
-              // success and clears the sticky error toast).
-              if (!branchNameState) loadBranches().catch(console.error)
+              // Always retry, not only when branchless. Opening the manager is
+              // the one in-app retry for a failed branches fetch, and the fetch
+              // is terminal on its own: SWRProvider sets shouldRetryOnError and
+              // revalidateOnFocus false, and useBranchesData's refreshInterval
+              // is 0 without data. This used to be gated on `!branchNameState`,
+              // which was harmless while a failed fetch merely left the UI
+              // unlocked -- but content writes now fail CLOSED on missing branch
+              // data, so with a pinned branch (every ordinary adopter setup)
+              // that gate turned one network blip into a session-long lockout
+              // whose only escape was a page reload, behind a "Manage Branches"
+              // button that pointedly did not retry. Reloading is idempotent.
+              loadBranches().catch(console.error)
             }}
             onCommentsPanelOpen={() => setCommentsPanelOpen(true)}
             onSave={handleSave}
