@@ -1,7 +1,7 @@
 import { defineCanopyConfig } from 'canopycms'
 
 export default defineCanopyConfig({
-  defaultBranchAccess: 'allow',
+  defaultBranchAccess: 'deny',
   defaultPathAccess: 'allow',
   mode: 'dev',
   sourceRoot: 'apps/test-app',
