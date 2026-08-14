@@ -51,6 +51,38 @@ which is why it shows up there and not locally.
 Worth checking whether other suites that shell out to git under a mkdtemp share
 the same `afterEach` shape — the fix probably belongs in one shared helper.
 
+## A second instance, same family, different symptom (observed 2026-08-14)
+
+Seen locally twice in ~7 full-suite runs while implementing the `listEntries`
+ACL work, on a branch touching none of the code involved:
+
+```
+⎯⎯⎯ Unhandled Errors ⎯⎯⎯  Vitest caught 1 unhandled error during the test run.
+⎯⎯⎯ Uncaught Exception ⎯⎯⎯
+Serialized Error: { errno: -2, code: 'ECOMPROMISED', syscall: 'stat',
+  path: '…/canopy-test-JZDW3t/.canopy-dev/content-branches/.admin-feature.init.lock' }
+```
+
+Every test file reported **passing** (201 files, 3661 tests) — only the process
+exit code was non-zero, so a naive `| tail` on the output reads as green. The
+lock is the provisioning lock taken by
+`src/__integration__/workflows/api-editing-workflow.test.ts`.
+
+Different mechanism from the ENOTEMPTY case above, same root shape: work
+outstanding against a tmpdir after the test that owns it has finished.
+`proper-lockfile` keeps a background interval that re-stats the lockfile to
+prove it still holds it; when `afterEach` removes the tmpdir first, that stat
+gets ENOENT and the library raises `ECOMPROMISED` **asynchronously**, with no
+promise left to attach it to → unhandled exception.
+
+Both observed failures were under `pnpm -r` (packages testing in parallel);
+three consecutive standalone runs and two further recursive runs were green, so
+it needs contention to surface. Fix direction is narrower than the ENOTEMPTY
+one: ensure provisioning locks are released (or their compromise handler
+detached) before the owning test's tmpdir is removed — a lock still held at
+`afterEach` is the actual defect, and the unhandled error is just how it
+surfaces.
+
 ## Related
 
 - [markdownfield-mdxeditor-mount-flake](resolved/markdownfield-mdxeditor-mount-flake.md) — the other known intermittent in this

@@ -236,6 +236,24 @@ export interface ListEntriesOptions<T = Record<string, unknown>> {
 }
 
 /**
+ * Server-only path-ACL predicate, applied to raw entries before any of their data
+ * reaches a caller.
+ *
+ * Deliberately NOT part of `ListEntriesOptions`/`BuildContentTreeOptions`: those are
+ * adopter-facing, and adopter code must not be able to supply, widen, or override the
+ * access check. `context.ts` is the only intended producer — it builds the predicate
+ * from `services.createContentAccessChecker` for the request-scoped user, and omits it
+ * entirely at build time / on static deployments (synthetic admin, no ACLs).
+ *
+ * Omitting it preserves the pre-existing unfiltered behavior exactly, which is what
+ * build-time callers want.
+ */
+export interface ContentVisibilityOptions {
+  /** Return false to drop an entry. Receives the entry's branch-root-relative physical path. */
+  shouldInclude?: (physicalPath: PhysicalPath) => boolean
+}
+
+/**
  * List all content entries as a flat array.
  *
  * Walks the schema to discover collections, reads entries from each,
@@ -245,12 +263,14 @@ export interface ListEntriesOptions<T = Record<string, unknown>> {
  * @param flatSchema - Flattened schema items (from flattenSchema)
  * @param contentRootName - The content root name (e.g. "content")
  * @param options - Listing options (extract, filter, rootPath, sort)
+ * @param visibility - Internal path-ACL predicate; see `ContentVisibilityOptions`
  */
 export async function listEntries<T = Record<string, unknown>>(
   branchRoot: string,
   flatSchema: FlatSchemaItem[],
   contentRootName: string,
   options?: ListEntriesOptions<T>,
+  visibility?: ContentVisibilityOptions,
 ): Promise<ListEntriesItem<T>[]> {
   const rootPath = options?.rootPath ?? contentRootName
   const extract = options?.extract
@@ -265,11 +285,15 @@ export async function listEntries<T = Record<string, unknown>>(
       (item.logicalPath === rootPath || item.logicalPath.startsWith(`${rootPath}/`)),
   )
 
-  // List entries from all collections in parallel
+  // List entries from all collections in parallel.
+  // The visibility predicate is applied here, before the map below, so a denied entry's
+  // data never reaches `extract` (let alone the returned items).
+  const shouldInclude = visibility?.shouldInclude
   const collectionResults = await Promise.all(
     collections.map(async (collection) => {
       const entries = await listCollectionEntries(branchRoot, collection)
-      return entries.map((entry) => ({ entry, collection }))
+      const visible = shouldInclude ? entries.filter((e) => shouldInclude(e.physicalPath)) : entries
+      return visible.map((entry) => ({ entry, collection }))
     }),
   )
 
