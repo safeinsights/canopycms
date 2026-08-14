@@ -12,6 +12,17 @@ export { operatingStrategy } from './operating-mode'
 export * from './authorization/groups'
 
 /**
+ * One-call factory for a **build/admin** Canopy context — for standalone
+ * scripts that run entirely outside a Next.js request or build phase (index
+ * builders, content audits, codegen, ad hoc reports). Reads the filesystem
+ * directly as a synthetic admin user and bypasses ALL branch/path ACLs —
+ * never use it in request-handling code. See the source JSDoc for the full
+ * security note and the `createNextCanopyContext().getCanopyForBuild()`
+ * comparison this mirrors.
+ */
+export { createBuildCanopy, type CreateBuildCanopyOptions } from './build-canopy'
+
+/**
  * Resolve a CanopyUser for a request: loads internal groups from the
  * settings workspace (the single source of truth — never a content branch
  * clone) and merges them into an auth-plugin result via
@@ -58,6 +69,22 @@ export { validateEntrySchemaRegistry } from './entry-schema-registry'
  * `buildContentTree`'s `TEntryTypes` generic.
  */
 export type { EntryTypesFromRegistry } from './entry-schema'
+
+/**
+ * Resolve a display title for an entry using the full fallback chain: a
+ * schema-marked `isTitle` field, then `data.title`/`data.name`, then an
+ * entry-type label, then a humanized slug, then `"Untitled"`. Useful
+ * anywhere an entry needs a display title without re-deriving this chain —
+ * search-document/index builders in particular, since a search UI needs a
+ * title for every result regardless of which field the schema uses.
+ *
+ * Client-safe (no dependencies beyond `FieldConfig`/`InlineGroupFieldConfig`
+ * type imports, which are erased at compile time) — also re-exported from
+ * the root `canopycms` entry for that reason. Exported here too because
+ * build/admin scripts (the primary reason this was unreachable before) are
+ * more likely to `import` from `canopycms/server` than the root entry.
+ */
+export { resolveEntryTitle } from './utils/title-field'
 
 /** Generate a Canopy-format 12-character Base58 content ID. */
 export { generateId } from './id'

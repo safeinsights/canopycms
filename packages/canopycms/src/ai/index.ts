@@ -8,6 +8,15 @@
 export { defineAIContentConfig } from './types'
 export { createAIContentHandler } from './handler'
 export { generateAIContent } from './generate'
+/**
+ * Convert MDX/Markdown body content to plain prose text (for a search index
+ * or any other "just the words" consumer). Distinct from the AI-content
+ * pipeline above: this strips markup down to human-readable text rather
+ * than preparing MDX for model consumption. See the source JSDoc for the
+ * full pipeline and why paired custom components keep their inner text
+ * while losing their tags.
+ */
+export { toPlainText } from './to-plain-text'
 export type {
   AIContentConfig,
   ExcludeConfig,
