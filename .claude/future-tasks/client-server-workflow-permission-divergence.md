@@ -1,6 +1,16 @@
 # Client permission model grants the branch creator unconditionally; the server requires general branch access first
 
-## Priority: P3
+## Priority: P3 — but it gates a P1
+
+> **Sequencing note (added 2026-08-14).** This is a **prerequisite** for
+> [acl-defaults-and-dead-path-checker.md](acl-defaults-and-dead-path-checker.md),
+> not an independent nice-to-have. That task wants the `canopycms init`
+> template's `defaultBranchAccess: 'allow'` changed to the fail-closed `'deny'`
+> the schema already defaults to — but flipping it while this divergence stands
+> makes **every newly created branch unusable by its own creator** (enabled
+> button, 403 from the server), because `canPerformWorkflowAction` checks branch
+> access *before* it considers creator status. Answer the open question below
+> first; the template default then follows from it.
 
 Found 2026-08-13 state-space-mapping the composed diff for the review-followups
 epic. Pre-existing -- none of #205/#209/#210 touched either half of this -- but

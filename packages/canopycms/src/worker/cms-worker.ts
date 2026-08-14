@@ -30,6 +30,7 @@ import { normalizeFilesystemPath } from '../paths/normalize'
 import { GITHUB_TRACKING_REF_PREFIX, gitChildEnv, gitNetworkChildEnv } from '../git-manager'
 import { resolveDeploymentName } from '../operating-mode/deployment-name'
 import type { PullRequestState, WorkerStatusReport } from '../types'
+import { tryAcquireContentWriteLock } from '../utils/content-write-lock'
 import { getErrorMessage, isNodeError, redactCredentials } from '../utils/error'
 import { isNonFastForwardRejection, isStaleLeaseRejection } from '../utils/git'
 import { writeWorkerStatus } from './worker-status'
@@ -248,6 +249,13 @@ interface RebaseSummary {
   rebased: string[]
   /** Branches skipped this cycle because their working tree had uncommitted changes. */
   skippedDirty: string[]
+  /**
+   * [SYNC-C1] Branches skipped this cycle because a content write held the
+   * branch's cross-host content-write lock (utils/content-write-lock.ts). The
+   * worker yields on contention -- it retries the branch next cycle, while the
+   * editor on the other side is a person waiting on a save.
+   */
+  skippedLocked: string[]
   /** Branches whose rebase attempt failed (fetch error, unexpected rebase error, or MAX_ROUNDS exceeded). */
   failed: { branch: string; error: string }[]
 }
@@ -1774,6 +1782,7 @@ export class CmsWorker {
         durationMs: Date.now() - cycleStartedAt,
         rebased: rebaseSummary.rebased,
         skippedDirty: rebaseSummary.skippedDirty,
+        skippedLocked: rebaseSummary.skippedLocked,
         failed: rebaseSummary.failed,
         tracked: trackedSummary,
       }
@@ -2120,19 +2129,34 @@ export class CmsWorker {
     }
   }
 
+  /**
+   * Test-only seam: awaited inside `rebaseActiveBranches()`'s conflict round,
+   * after `git rebase` reported conflicted files and BEFORE the
+   * `checkout --theirs` resolution loop overwrites them. No-op in production.
+   *
+   * A test subclass overrides this to land a real `ContentStore` write at
+   * exactly the instant the rebase is mid-flight -- the window the old TOCTOU
+   * comment above the dirty check wrongly called safe -- without any sleeps or
+   * shell rendezvous. See the "Deterministic interleavings" testing pattern in
+   * docs/concurrency.md, and `ContentStore.afterPrePassForTesting()` for the
+   * same idiom on the write side.
+   */
+  protected async afterConflictDetectedForTesting(): Promise<void> {}
+
   private async rebaseActiveBranches(): Promise<RebaseSummary> {
     // PR-W1: collected across the loop below and returned as a summary
     // (folded into worker-status.json by syncGit()). Purely additive
     // bookkeeping -- doesn't change any control flow or existing logging.
     const rebased: string[] = []
     const skippedDirty: string[] = []
+    const skippedLocked: string[] = []
     const failed: { branch: string; error: string }[] = []
 
     let branchDirs: string[]
     try {
       branchDirs = await fs.readdir(this.contentBranchesPath)
     } catch {
-      return { rebased, skippedDirty, failed }
+      return { rebased, skippedDirty, skippedLocked, failed }
     }
 
     for (const branchDir of branchDirs) {
@@ -2201,307 +2225,354 @@ export class CmsWorker {
           unsafe: { allowUnsafeEditor: true },
         })
 
-        // Skip dirty branches — editor has unsaved changes that can't be rebased.
-        // Note: there's a small TOCTOU window between this check and the rebase start.
-        // If an editor saves between here and `git rebase`, the rebase will fail and
-        // the catch block will abort safely — the branch stays behind and retries next cycle.
-        const dirtyCheck = await branchGit.status()
-        if (dirtyCheck.files.length > 0) {
-          workerLog(`  Skipping ${branchDir}: has uncommitted changes`)
-          skippedDirty.push(branchDir)
-          continue
-        }
-
-        // The clone's own ref name: branchDir is the sanitized DIRECTORY
-        // name and need not match it. A literal 'HEAD' means a detached
-        // clone (e.g. a crashed rebase left one behind) -- nothing below can
-        // safely name a ref then, so every publish path stays disarmed,
-        // which is the safe direction.
-        const branchRef = (await branchGit.revparse(['--abbrev-ref', 'HEAD'])).trim()
-        const canPublish = branchRef.length > 0 && branchRef !== 'HEAD'
-
-        // [SYNC-H1] Self-heal: finish an interrupted publish even when this
-        // branch is not behind base. Every crash window in the arming
-        // sequence below leaves the marker set with the work unfinished, and
-        // this is what completes it -- without it, one lost lease race would
-        // strand the branch until the base branch happened to advance again.
-        // Gated on the loop-top snapshot, so unmarked branches (nearly all
-        // of them, every cycle) cost nothing extra.
-        if (canPublish && metaFile?.branch.historyRewrittenFrom) {
-          await this.reconcilePendingRewrite({
-            branchPath,
-            branchDir,
-            branchRef,
-            headSha: (await branchGit.revparse(['HEAD'])).trim(),
-            marker: metaFile.branch.historyRewrittenFrom,
-          })
-        }
-
-        await branchGit.fetch('origin', this.baseBranch)
-
-        // Use rev-list instead of status.behind — status.behind only works when the
-        // branch has an upstream tracking branch configured, which isn't guaranteed
-        // (checkoutBranch fallback paths create branches without --track).
-        // The just-fetched tip, not origin/<base>: branch clones are
-        // --single-branch, so no remote-tracking ref exists for a base branch
-        // other than the one they were cloned from (see the base-refresh
-        // comment above). Pinned to a SHA immediately — FETCH_HEAD is one
-        // shared mutable file per repo, repointed by any concurrent fetch.
-        const fetchedBaseTip = (await branchGit.revparse(['FETCH_HEAD'])).trim()
-        const behindCount = parseInt(
-          (await branchGit.raw(['rev-list', '--count', `HEAD..${fetchedBaseTip}`])).trim(),
-          10,
-        )
-        const meta = getBranchMetadataFileManager(branchPath, this.contentBranchesPath)
-
-        if (behindCount === 0) {
-          // Already in sync. This is the overwhelmingly common outcome per
-          // branch per cycle (most branches are caught up most of the
-          // time), so skip the save entirely when metadata already reflects
-          // a clean state -- every save() now eager-regenerates the branch
-          // registry (branch-metadata.ts's invalidateRegistry(), O(branch
-          // count) fs reads on EFS), so an unconditional save here turns
-          // every rebase cycle into O(N^2) registry work across N branches
-          // for what is otherwise a true no-op. Re-load fresh (not the
-          // `metaFile` snapshot from before the fetch/rev-list above) so a
-          // concurrent editor-driven metadata change during that window
-          // isn't clobbered by a stale skip decision.
-          const currentMeta = await BranchMetadataFileManager.loadOnly(branchPath)
-          const conflictStatus = currentMeta?.branch.conflictStatus
-          const conflictFiles = currentMeta?.branch.conflictFiles
-          const conflictAlreadyClean =
-            (conflictStatus === undefined || conflictStatus === 'clean') &&
-            (conflictFiles === undefined || conflictFiles.length === 0)
-          // PR-W2: a lingering rebaseFailure must also be cleared once the
-          // branch catches up clean -- otherwise it sticks as a stale
-          // warning forever (nothing else touches this branch once it's
-          // caught up, so no other save site would ever clear it).
-          const alreadyClean =
-            conflictAlreadyClean && currentMeta?.branch.rebaseFailure === undefined
-          if (alreadyClean) {
+        // [SYNC-C1] Take the branch's cross-host content-write lock BEFORE the
+        // dirty check, and hold it for the whole rebase.
+        //
+        // The dirty check alone is check-then-act. The old comment here claimed
+        // the residual window was safe ("the rebase will fail and the catch
+        // block will abort safely"), which only holds for a save landing before
+        // `git rebase` STARTS. After that -- a window spanning fetch, replay and
+        // N conflict rounds of awaited git subprocesses on EFS -- a save is
+        // destroyed two ways: `checkout --theirs` below overwrites the
+        // just-saved file with the branch's committed version and the rebase
+        // then SUCCEEDS (nothing logs a failure at all), and `rebase --abort`
+        // hard-resets the tree. The editor already got its 200 either way.
+        //
+        // Zero-retry acquisition, deliberately: on contention this branch is
+        // skipped and retried on the next sync cycle (~5 min), which is the
+        // same principle as the skip-dirty-branches behavior below. Writers get
+        // the patient side of the asymmetry -- see utils/content-write-lock.ts.
+        //
+        // The heartbeat that keeps this lock fresh (proper-lockfile refreshes
+        // every `stale`/2 = 15s) is a timer on this event loop; every git step
+        // below is an awaited subprocess, never a synchronous block, so the
+        // refresh keeps firing for the whole hold.
+        let releaseContentLock: (() => Promise<void>) | undefined
+        try {
+          releaseContentLock = await tryAcquireContentWriteLock(branchPath)
+        } catch (lockErr: unknown) {
+          if (isNodeError(lockErr) && lockErr.code === 'ELOCKED') {
+            workerLog(`  Skipping ${branchDir}: content write in progress (retrying next cycle)`)
+            skippedLocked.push(branchDir)
             continue
           }
+          // Anything else (ENOENT on a branch dir deleted mid-cycle, EACCES,
+          // ...) is a real failure: let the outer catch record it.
+          throw lockErr
+        }
+
+        try {
+          // Skip dirty branches — editor has unsaved changes that can't be rebased.
+          // Now inside the lock, so no write can land between this check and the
+          // rebase below.
+          const dirtyCheck = await branchGit.status()
+          if (dirtyCheck.files.length > 0) {
+            workerLog(`  Skipping ${branchDir}: has uncommitted changes`)
+            skippedDirty.push(branchDir)
+            continue
+          }
+
+          // The clone's own ref name: branchDir is the sanitized DIRECTORY
+          // name and need not match it. A literal 'HEAD' means a detached
+          // clone (e.g. a crashed rebase left one behind) -- nothing below can
+          // safely name a ref then, so every publish path stays disarmed,
+          // which is the safe direction.
+          const branchRef = (await branchGit.revparse(['--abbrev-ref', 'HEAD'])).trim()
+          const canPublish = branchRef.length > 0 && branchRef !== 'HEAD'
+
+          // [SYNC-H1] Self-heal: finish an interrupted publish even when this
+          // branch is not behind base. Every crash window in the arming
+          // sequence below leaves the marker set with the work unfinished, and
+          // this is what completes it -- without it, one lost lease race would
+          // strand the branch until the base branch happened to advance again.
+          // Gated on the loop-top snapshot, so unmarked branches (nearly all
+          // of them, every cycle) cost nothing extra.
+          if (canPublish && metaFile?.branch.historyRewrittenFrom) {
+            await this.reconcilePendingRewrite({
+              branchPath,
+              branchDir,
+              branchRef,
+              headSha: (await branchGit.revparse(['HEAD'])).trim(),
+              marker: metaFile.branch.historyRewrittenFrom,
+            })
+          }
+
+          await branchGit.fetch('origin', this.baseBranch)
+
+          // Use rev-list instead of status.behind — status.behind only works when the
+          // branch has an upstream tracking branch configured, which isn't guaranteed
+          // (checkoutBranch fallback paths create branches without --track).
+          // The just-fetched tip, not origin/<base>: branch clones are
+          // --single-branch, so no remote-tracking ref exists for a base branch
+          // other than the one they were cloned from (see the base-refresh
+          // comment above). Pinned to a SHA immediately — FETCH_HEAD is one
+          // shared mutable file per repo, repointed by any concurrent fetch.
+          const fetchedBaseTip = (await branchGit.revparse(['FETCH_HEAD'])).trim()
+          const behindCount = parseInt(
+            (await branchGit.raw(['rev-list', '--count', `HEAD..${fetchedBaseTip}`])).trim(),
+            10,
+          )
+          const meta = getBranchMetadataFileManager(branchPath, this.contentBranchesPath)
+
+          if (behindCount === 0) {
+            // Already in sync. This is the overwhelmingly common outcome per
+            // branch per cycle (most branches are caught up most of the
+            // time), so skip the save entirely when metadata already reflects
+            // a clean state -- every save() now eager-regenerates the branch
+            // registry (branch-metadata.ts's invalidateRegistry(), O(branch
+            // count) fs reads on EFS), so an unconditional save here turns
+            // every rebase cycle into O(N^2) registry work across N branches
+            // for what is otherwise a true no-op. Re-load fresh (not the
+            // `metaFile` snapshot from before the fetch/rev-list above) so a
+            // concurrent editor-driven metadata change during that window
+            // isn't clobbered by a stale skip decision.
+            const currentMeta = await BranchMetadataFileManager.loadOnly(branchPath)
+            const conflictStatus = currentMeta?.branch.conflictStatus
+            const conflictFiles = currentMeta?.branch.conflictFiles
+            const conflictAlreadyClean =
+              (conflictStatus === undefined || conflictStatus === 'clean') &&
+              (conflictFiles === undefined || conflictFiles.length === 0)
+            // PR-W2: a lingering rebaseFailure must also be cleared once the
+            // branch catches up clean -- otherwise it sticks as a stale
+            // warning forever (nothing else touches this branch once it's
+            // caught up, so no other save site would ever clear it).
+            const alreadyClean =
+              conflictAlreadyClean && currentMeta?.branch.rebaseFailure === undefined
+            if (alreadyClean) {
+              continue
+            }
+            await meta.save({
+              branch: {
+                name: branchDir,
+                conflictStatus: 'clean',
+                conflictFiles: [],
+                rebaseFailure: undefined,
+              },
+            })
+            continue
+          }
+
+          workerLog(`Rebasing ${branchDir} (${behindCount} commits behind)...`)
+
+          // Read BOTH sides before rewriting anything: the arming guard after
+          // the rebase compares what remote.git published against what this
+          // clone is about to rebase away. Reading them afterwards would be
+          // useless -- the clone's pre-rebase tip is exactly what disappears.
+          const preRebaseHead = (await branchGit.revparse(['HEAD'])).trim()
+          const publishedSha = canPublish ? await this.readPublishedSha(branchRef) : null
+
+          // Resolve-and-continue loop: keep branch version for conflicting files, then continue
+          // Non-conflicting files get main's changes; conflicting files keep branch version.
+          const conflictedFiles: string[] = []
+          let nextAction: 'start' | 'continue' | 'skip' = 'start'
+          let completed = false
+          // PR-W1: captured only on the "unexpected error" exit below, for the
+          // failed-summary entry pushed at the `if (!completed)` check.
+          let failureReason: string | undefined
+          const MAX_ROUNDS = 50 // safety limit against infinite loops
+
+          for (let round = 0; round < MAX_ROUNDS && !completed; round++) {
+            try {
+              if (nextAction === 'start') {
+                // The pinned base tip fetched above (single-branch clones have
+                // no origin/<base> remote-tracking ref for other branches).
+                await branchGit.rebase([fetchedBaseTip])
+              } else if (nextAction === 'continue') {
+                await branchGit.rebase(['--continue'])
+              } else {
+                await branchGit.rebase(['--skip'])
+              }
+              completed = true
+            } catch (rebaseErr) {
+              nextAction = 'continue'
+              const st = await branchGit.status()
+
+              if (st.conflicted.length > 0) {
+                await this.afterConflictDetectedForTesting()
+                // During rebase, --theirs = the branch being replayed (editor's work).
+                // (git rebase reverses ours/theirs: "ours" is the rebase target, "theirs" is the branch.)
+                for (const file of st.conflicted) {
+                  await branchGit.raw(['checkout', '--theirs', file])
+                  await branchGit.add(file)
+                  conflictedFiles.push(file)
+                }
+                // nextAction stays 'continue'
+              } else {
+                const msg = rebaseErr instanceof Error ? rebaseErr.message : ''
+                if (
+                  msg.toLowerCase().includes('nothing to commit') ||
+                  msg.toLowerCase().includes('apply --skip')
+                ) {
+                  // Empty commit after --theirs resolution — skip it
+                  nextAction = 'skip'
+                } else {
+                  // Unexpected error — abort and leave branch behind.
+                  // We intentionally don't update conflictStatus/conflictFiles here:
+                  // the rebase didn't complete so we can't determine the true conflict
+                  // state. Previous metadata (possibly stale) is preserved until the
+                  // next successful rebase cycle corrects it.
+                  workerLogWarn(
+                    `  Unexpected rebase error in ${branchDir}: ${msg || 'Unknown error'}`,
+                  )
+                  failureReason = msg || 'Unknown error'
+                  await branchGit.rebase(['--abort']).catch(() => {})
+                  break
+                }
+              }
+            }
+          }
+
+          if (!completed) {
+            // PR-W2 (M1 rider): failureReason is only set on the "unexpected
+            // error" break above -- MAX_ROUNDS exhaustion is a distinct exit
+            // path with no error message of its own, so the warn text must
+            // not conflate the two.
+            workerLogWarn(
+              failureReason !== undefined
+                ? `  Rebase of ${branchDir} aborted due to unexpected error: ${failureReason}`
+                : `  Rebase of ${branchDir} did not complete within ${MAX_ROUNDS} rounds, aborting`,
+            )
+            await branchGit.rebase(['--abort']).catch(() => {})
+            const rebaseFailureMessage =
+              failureReason ?? `did not complete within ${MAX_ROUNDS} rounds`
+            // [HIGH-1] failed[] folds into worker-status.json's
+            // lastGitSync.failed, served to the browser -- failureReason can
+            // be an arbitrary git error message that embeds the bot token.
+            const redactedRebaseFailureMessage = redactCredentials(rebaseFailureMessage)
+            failed.push({
+              branch: branchDir,
+              error: redactedRebaseFailureMessage,
+            })
+            // PR-W2: record once here for the "!completed" exit -- the
+            // unexpected-error break above is NOT disjoint from this block (it
+            // always falls through here), so recording at the break itself
+            // would double-record. The outer catch below is the only other
+            // record site (a distinct, non-overlapping failure class: errors
+            // outside this round loop, e.g. fetch/rev-list failures).
+            await this.recordRebaseFailure(branchPath, branchDir, redactedRebaseFailureMessage)
+            continue
+          }
+
+          // The rebase rewrote the branch clone's working tree — mark ContentStore
+          // ID indexes rooted here stale so lookups rebuild from disk, in this
+          // process and (via the on-disk generation marker) in the Lambda
+          // containers sharing this filesystem.
+          await invalidateBranchContentCaches(branchPath)
+
+          // Convert file paths to ContentIds — immutable, survives slug renames.
+          // Entry files have IDs in their filename (e.g., "post.slug.a1b2c3d4e5f6.mdx").
+          // .collection.json files have no ID themselves (extractIdFromFilename returns null
+          // for dot-prefixed files), so we extract the ID from the parent directory instead.
+          // The root content directory (e.g., "content/", or "cms/content/" for a
+          // multi-segment contentRoot) has no embedded ID, so we use ROOT_COLLECTION_ID
+          // as a sentinel — but only for the configured contentRoot.
+          //
+          // Two different notions of "parent" are needed below, and conflating them
+          // reproduces the exact bug this comparison guards against (see
+          // schema-store.ts's contentRootName doc comment for the same shape elsewhere):
+          //  - `parentDir` (a basename) recovers a SUB-collection's own embedded ID
+          //    (e.g. "posts.cNbR5xFm2Kpd" -> "cNbR5xFm2Kpd") — correct as a basename,
+          //    since a collection directory carries its ID in its own name, one path
+          //    segment.
+          //  - `parentPath` (the full relative parent path, normalized) is what must be
+          //    compared against `this.contentRoot`, because `contentRoot` is documented
+          //    (config/helpers.ts) as allowed to span multiple segments (e.g.
+          //    "cms/content"). Comparing a basename ("content") against that full value
+          //    is always false, which silently drops the root collection's conflict.
+          //    Git reports POSIX-style paths and the configured value may be authored
+          //    with either separator, so both sides go through normalizeFilesystemPath
+          //    before comparing.
+          const normalizedContentRoot = normalizeFilesystemPath(this.contentRoot)
+          const conflictIds = [...new Set(conflictedFiles)]
+            .map((f) => {
+              const fileId = extractIdFromFilename(path.basename(f))
+              if (fileId) return fileId
+              const parentDir = path.basename(path.dirname(f))
+              const dirId = extractIdFromFilename(parentDir)
+              if (dirId) return dirId
+              // Only assign ROOT_COLLECTION_ID when the file's parent directory IS the
+              // configured content root. Other unrecognized paths are filtered out.
+              const parentPath = normalizeFilesystemPath(path.dirname(f))
+              if (path.basename(f) === '.collection.json' && parentPath === normalizedContentRoot) {
+                return ROOT_COLLECTION_ID
+              }
+              return null
+            })
+            .filter((id): id is ContentId => id !== null)
+          const conflictIdsDeduped = [...new Set(conflictIds)]
+
+          const hadConflicts = conflictIdsDeduped.length > 0
+          workerLog(
+            hadConflicts
+              ? `  Rebased ${branchDir} (kept branch version for ${conflictIdsDeduped.length} conflicting file(s))`
+              : `  Rebased ${branchDir} successfully`,
+          )
           await meta.save({
             branch: {
               name: branchDir,
-              conflictStatus: 'clean',
-              conflictFiles: [],
+              conflictStatus: hadConflicts ? 'conflicts-detected' : 'clean',
+              conflictFiles: conflictIdsDeduped,
+              // PR-W2: the cycle completed successfully -- clear any prior
+              // failure record regardless of conflict outcome.
               rebaseFailure: undefined,
             },
           })
-          continue
-        }
+          // PR-W1: the branch was behind and the rebase completed (with or
+          // without --theirs conflict resolution) -- it moved, so it belongs
+          // in the summary. Branches already up to date `continue`d above and
+          // are deliberately not listed here.
+          rebased.push(branchDir)
 
-        workerLog(`Rebasing ${branchDir} (${behindCount} commits behind)...`)
-
-        // Read BOTH sides before rewriting anything: the arming guard after
-        // the rebase compares what remote.git published against what this
-        // clone is about to rebase away. Reading them afterwards would be
-        // useless -- the clone's pre-rebase tip is exactly what disappears.
-        const preRebaseHead = (await branchGit.revparse(['HEAD'])).trim()
-        const publishedSha = canPublish ? await this.readPublishedSha(branchRef) : null
-
-        // Resolve-and-continue loop: keep branch version for conflicting files, then continue
-        // Non-conflicting files get main's changes; conflicting files keep branch version.
-        const conflictedFiles: string[] = []
-        let nextAction: 'start' | 'continue' | 'skip' = 'start'
-        let completed = false
-        // PR-W1: captured only on the "unexpected error" exit below, for the
-        // failed-summary entry pushed at the `if (!completed)` check.
-        let failureReason: string | undefined
-        const MAX_ROUNDS = 50 // safety limit against infinite loops
-
-        for (let round = 0; round < MAX_ROUNDS && !completed; round++) {
-          try {
-            if (nextAction === 'start') {
-              // The pinned base tip fetched above (single-branch clones have
-              // no origin/<base> remote-tracking ref for other branches).
-              await branchGit.rebase([fetchedBaseTip])
-            } else if (nextAction === 'continue') {
-              await branchGit.rebase(['--continue'])
-            } else {
-              await branchGit.rebase(['--skip'])
-            }
-            completed = true
-          } catch (rebaseErr) {
-            nextAction = 'continue'
-            const st = await branchGit.status()
-
-            if (st.conflicted.length > 0) {
-              // During rebase, --theirs = the branch being replayed (editor's work).
-              // (git rebase reverses ours/theirs: "ours" is the rebase target, "theirs" is the branch.)
-              for (const file of st.conflicted) {
-                await branchGit.raw(['checkout', '--theirs', file])
-                await branchGit.add(file)
-                conflictedFiles.push(file)
+          // [SYNC-H1] The rebase just rewrote this clone's history. If that
+          // history was already published, nothing else will ever reconcile
+          // remote.git (and GitHub) with it -- the editor's next submit would
+          // simply be rejected non-fast-forward. Carry the rewrite forward.
+          if (publishedSha !== null) {
+            if (publishedSha === preRebaseHead) {
+              // ARMING GUARD. remote.git holds EXACTLY what this clone just
+              // rebased away and nothing more, so a lease keyed to it can only
+              // undo our own rewrite.
+              //
+              // The inequality case below is not defensive padding: branch
+              // clones never fetch their own branch (GitManager's clone is
+              // --single-branch and checkoutBranch only checks out an existing
+              // local branch), while reconcileTrackedBranches fast-forwards
+              // remote.git to GitHub's tip. So after a reviewer pushes a fixup
+              // straight to the PR branch, remote.git legitimately holds a
+              // commit this clone has never seen. Leasing on "whatever
+              // remote.git currently holds" would be SATISFIED there and would
+              // delete that fixup from remote.git and then from GitHub,
+              // silently. Keying the lease to the pre-rebase tip turns that
+              // case into the visible divergence it should be.
+              //
+              // Order matters: mark, then push, then queue. A crash after any
+              // step leaves the marker set with the work unfinished, which
+              // reconcilePendingRewrite() completes on a later cycle. Pushing
+              // first would leave remote.git rewritten, GitHub stale and
+              // nothing recorded -- unrecoverable, and landing on exactly the
+              // false "another deployment" diagnosis this change removes.
+              await this.markHistoryRewritten(branchPath, branchDir, publishedSha)
+              if (await this.forcePublishToLocalRemote(branchPath, branchRef, publishedSha)) {
+                await this.enqueueGitHubPush(branchRef)
               }
-              // nextAction stays 'continue'
             } else {
-              const msg = rebaseErr instanceof Error ? rebaseErr.message : ''
-              if (
-                msg.toLowerCase().includes('nothing to commit') ||
-                msg.toLowerCase().includes('apply --skip')
-              ) {
-                // Empty commit after --theirs resolution — skip it
-                nextAction = 'skip'
-              } else {
-                // Unexpected error — abort and leave branch behind.
-                // We intentionally don't update conflictStatus/conflictFiles here:
-                // the rebase didn't complete so we can't determine the true conflict
-                // state. Previous metadata (possibly stale) is preserved until the
-                // next successful rebase cycle corrects it.
-                workerLogWarn(
-                  `  Unexpected rebase error in ${branchDir}: ${msg || 'Unknown error'}`,
-                )
-                failureReason = msg || 'Unknown error'
-                await branchGit.rebase(['--abort']).catch(() => {})
-                break
-              }
+              const divergence =
+                `rebased locally, but remote.git holds ${publishedSha} for ${branchRef}, which this ` +
+                `clone never had (a direct push to the branch?). Left untouched -- reconcile it ` +
+                `before submitting again.`
+              workerLogWarn(`  ${branchDir}: ${divergence}`)
+              await this.recordRebaseFailure(branchPath, branchDir, divergence)
             }
           }
-        }
-
-        if (!completed) {
-          // PR-W2 (M1 rider): failureReason is only set on the "unexpected
-          // error" break above -- MAX_ROUNDS exhaustion is a distinct exit
-          // path with no error message of its own, so the warn text must
-          // not conflate the two.
-          workerLogWarn(
-            failureReason !== undefined
-              ? `  Rebase of ${branchDir} aborted due to unexpected error: ${failureReason}`
-              : `  Rebase of ${branchDir} did not complete within ${MAX_ROUNDS} rounds, aborting`,
-          )
-          await branchGit.rebase(['--abort']).catch(() => {})
-          const rebaseFailureMessage =
-            failureReason ?? `did not complete within ${MAX_ROUNDS} rounds`
-          // [HIGH-1] failed[] folds into worker-status.json's
-          // lastGitSync.failed, served to the browser -- failureReason can
-          // be an arbitrary git error message that embeds the bot token.
-          const redactedRebaseFailureMessage = redactCredentials(rebaseFailureMessage)
-          failed.push({
-            branch: branchDir,
-            error: redactedRebaseFailureMessage,
+        } finally {
+          // [SYNC-C1] Released on EVERY exit -- the `continue`s above, a throw
+          // into the outer catch, and the happy path alike. A stranded lock
+          // would wedge every write to this branch until it went stale.
+          await releaseContentLock?.().catch((releaseErr: unknown) => {
+            workerLogWarn(
+              `  Failed to release content-write lock for ${branchDir}: ${getErrorMessage(releaseErr)}`,
+            )
           })
-          // PR-W2: record once here for the "!completed" exit -- the
-          // unexpected-error break above is NOT disjoint from this block (it
-          // always falls through here), so recording at the break itself
-          // would double-record. The outer catch below is the only other
-          // record site (a distinct, non-overlapping failure class: errors
-          // outside this round loop, e.g. fetch/rev-list failures).
-          await this.recordRebaseFailure(branchPath, branchDir, redactedRebaseFailureMessage)
-          continue
-        }
-
-        // The rebase rewrote the branch clone's working tree — mark ContentStore
-        // ID indexes rooted here stale so lookups rebuild from disk, in this
-        // process and (via the on-disk generation marker) in the Lambda
-        // containers sharing this filesystem.
-        await invalidateBranchContentCaches(branchPath)
-
-        // Convert file paths to ContentIds — immutable, survives slug renames.
-        // Entry files have IDs in their filename (e.g., "post.slug.a1b2c3d4e5f6.mdx").
-        // .collection.json files have no ID themselves (extractIdFromFilename returns null
-        // for dot-prefixed files), so we extract the ID from the parent directory instead.
-        // The root content directory (e.g., "content/", or "cms/content/" for a
-        // multi-segment contentRoot) has no embedded ID, so we use ROOT_COLLECTION_ID
-        // as a sentinel — but only for the configured contentRoot.
-        //
-        // Two different notions of "parent" are needed below, and conflating them
-        // reproduces the exact bug this comparison guards against (see
-        // schema-store.ts's contentRootName doc comment for the same shape elsewhere):
-        //  - `parentDir` (a basename) recovers a SUB-collection's own embedded ID
-        //    (e.g. "posts.cNbR5xFm2Kpd" -> "cNbR5xFm2Kpd") — correct as a basename,
-        //    since a collection directory carries its ID in its own name, one path
-        //    segment.
-        //  - `parentPath` (the full relative parent path, normalized) is what must be
-        //    compared against `this.contentRoot`, because `contentRoot` is documented
-        //    (config/helpers.ts) as allowed to span multiple segments (e.g.
-        //    "cms/content"). Comparing a basename ("content") against that full value
-        //    is always false, which silently drops the root collection's conflict.
-        //    Git reports POSIX-style paths and the configured value may be authored
-        //    with either separator, so both sides go through normalizeFilesystemPath
-        //    before comparing.
-        const normalizedContentRoot = normalizeFilesystemPath(this.contentRoot)
-        const conflictIds = [...new Set(conflictedFiles)]
-          .map((f) => {
-            const fileId = extractIdFromFilename(path.basename(f))
-            if (fileId) return fileId
-            const parentDir = path.basename(path.dirname(f))
-            const dirId = extractIdFromFilename(parentDir)
-            if (dirId) return dirId
-            // Only assign ROOT_COLLECTION_ID when the file's parent directory IS the
-            // configured content root. Other unrecognized paths are filtered out.
-            const parentPath = normalizeFilesystemPath(path.dirname(f))
-            if (path.basename(f) === '.collection.json' && parentPath === normalizedContentRoot) {
-              return ROOT_COLLECTION_ID
-            }
-            return null
-          })
-          .filter((id): id is ContentId => id !== null)
-        const conflictIdsDeduped = [...new Set(conflictIds)]
-
-        const hadConflicts = conflictIdsDeduped.length > 0
-        workerLog(
-          hadConflicts
-            ? `  Rebased ${branchDir} (kept branch version for ${conflictIdsDeduped.length} conflicting file(s))`
-            : `  Rebased ${branchDir} successfully`,
-        )
-        await meta.save({
-          branch: {
-            name: branchDir,
-            conflictStatus: hadConflicts ? 'conflicts-detected' : 'clean',
-            conflictFiles: conflictIdsDeduped,
-            // PR-W2: the cycle completed successfully -- clear any prior
-            // failure record regardless of conflict outcome.
-            rebaseFailure: undefined,
-          },
-        })
-        // PR-W1: the branch was behind and the rebase completed (with or
-        // without --theirs conflict resolution) -- it moved, so it belongs
-        // in the summary. Branches already up to date `continue`d above and
-        // are deliberately not listed here.
-        rebased.push(branchDir)
-
-        // [SYNC-H1] The rebase just rewrote this clone's history. If that
-        // history was already published, nothing else will ever reconcile
-        // remote.git (and GitHub) with it -- the editor's next submit would
-        // simply be rejected non-fast-forward. Carry the rewrite forward.
-        if (publishedSha !== null) {
-          if (publishedSha === preRebaseHead) {
-            // ARMING GUARD. remote.git holds EXACTLY what this clone just
-            // rebased away and nothing more, so a lease keyed to it can only
-            // undo our own rewrite.
-            //
-            // The inequality case below is not defensive padding: branch
-            // clones never fetch their own branch (GitManager's clone is
-            // --single-branch and checkoutBranch only checks out an existing
-            // local branch), while reconcileTrackedBranches fast-forwards
-            // remote.git to GitHub's tip. So after a reviewer pushes a fixup
-            // straight to the PR branch, remote.git legitimately holds a
-            // commit this clone has never seen. Leasing on "whatever
-            // remote.git currently holds" would be SATISFIED there and would
-            // delete that fixup from remote.git and then from GitHub,
-            // silently. Keying the lease to the pre-rebase tip turns that
-            // case into the visible divergence it should be.
-            //
-            // Order matters: mark, then push, then queue. A crash after any
-            // step leaves the marker set with the work unfinished, which
-            // reconcilePendingRewrite() completes on a later cycle. Pushing
-            // first would leave remote.git rewritten, GitHub stale and
-            // nothing recorded -- unrecoverable, and landing on exactly the
-            // false "another deployment" diagnosis this change removes.
-            await this.markHistoryRewritten(branchPath, branchDir, publishedSha)
-            if (await this.forcePublishToLocalRemote(branchPath, branchRef, publishedSha)) {
-              await this.enqueueGitHubPush(branchRef)
-            }
-          } else {
-            const divergence =
-              `rebased locally, but remote.git holds ${publishedSha} for ${branchRef}, which this ` +
-              `clone never had (a direct push to the branch?). Left untouched -- reconcile it ` +
-              `before submitting again.`
-            workerLogWarn(`  ${branchDir}: ${divergence}`)
-            await this.recordRebaseFailure(branchPath, branchDir, divergence)
-          }
         }
       } catch (err) {
         const message = err instanceof Error ? err.message : 'Unknown error'
@@ -2518,7 +2589,7 @@ export class CmsWorker {
       }
     }
 
-    return { rebased, skippedDirty, failed }
+    return { rebased, skippedDirty, skippedLocked, failed }
   }
 
   async refreshAuthCache(): Promise<void> {

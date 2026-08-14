@@ -36,12 +36,25 @@ basis that keys are unguessable 128-bit hashes. But the list endpoint hands out 
 entire catalog, so nothing has to be guessed. The unguessability mitigation does not
 actually mitigate anything as long as `GET /assets` is open.
 
-### Delete: admin-only, and non-destructive
+### Delete: admin-or-uploader, and non-destructive
 
-`DELETE /assets` carries `guards: ['admin']` — the site-wide `Admins` reserved group.
-Admins already bypass branch ACLs everywhere (`authorization/branch.ts`), so this is
-consistent with existing privilege semantics rather than a new escalation. Non-admins
-can delete nothing at all, so there is no cross-branch delete vector.
+**Corrected 2026-08-13.** This section used to say `DELETE /assets` carries
+`guards: ['admin']` and that "non-admins can delete nothing at all". That was
+never true of the shipped code, and it contradicted this file's own later
+"Same caveat applies to `uploadedBy`" section — both were written in the same
+commit (`1c6f186e`).
+
+What the code actually does: `deleteAsset` has **no `guards` array**
+(`api/assets.ts:522-532`). Authorization is an inline check inside the handler
+(`api/assets.ts:305-311`) — an admin may delete anything; a non-admin may delete
+only an asset whose `meta.uploadedBy` equals their own `userId`, and otherwise
+gets a 403. Admins already bypass branch ACLs everywhere
+(`authorization/branch.ts`), so the admin half is consistent with existing
+privilege semantics rather than a new escalation, and the uploader half fails
+closed when `uploadedBy` is missing.
+
+There is still no cross-branch *delete* vector, which is what this section was
+getting at — but the reason is the uploader-identity check, not an admin guard.
 
 Delete also only removes the **meta sidecar**. Originals, public objects and cached
 transforms survive, so nothing another branch references breaks. `MediaLibraryBody.tsx`

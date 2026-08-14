@@ -23,6 +23,32 @@ vi.mock('@mantine/modals', () => ({
   },
 }))
 
+/**
+ * Read the persisted draft map, tolerating BOTH the legacy bare
+ * `Record<contentId, FormValue>` shape and the current `{ v, drafts,
+ * baseVersions }` envelope -- assertions are about which entries have drafts,
+ * not about the serialization format.
+ */
+const readPersistedDrafts = (branch: string): Record<string, unknown> => {
+  const raw = window.localStorage.getItem(`canopycms:drafts:${branch}`)
+  if (!raw) return {}
+  const parsed: unknown = JSON.parse(raw)
+  if (parsed && typeof parsed === 'object' && 'drafts' in parsed) {
+    return (parsed as { drafts: Record<string, unknown> }).drafts
+  }
+  return parsed as Record<string, unknown>
+}
+
+const readPersistedBaseVersions = (branch: string): Record<string, number | null> => {
+  const raw = window.localStorage.getItem(`canopycms:drafts:${branch}`)
+  if (!raw) return {}
+  const parsed: unknown = JSON.parse(raw)
+  if (parsed && typeof parsed === 'object' && 'baseVersions' in parsed) {
+    return (parsed as { baseVersions: Record<string, number | null> }).baseVersions
+  }
+  return {}
+}
+
 describe('useDraftManager', () => {
   const mockEntry: EditorEntry = {
     path: unsafeAsLogicalPath('entry1'),
@@ -323,8 +349,9 @@ describe('useDraftManager', () => {
       })
     })
 
-    const stored = window.localStorage.getItem('canopycms:drafts:main')
-    expect(stored).toBe(JSON.stringify({ abc123def456: { title: 'New Draft', body: 'Content' } }))
+    expect(readPersistedDrafts('main')).toEqual({
+      abc123def456: { title: 'New Draft', body: 'Content' },
+    })
   })
 
   it('saves draft successfully', async () => {
@@ -568,9 +595,9 @@ describe('useDraftManager', () => {
     })
 
     expect(result.current.drafts).toEqual({})
-    // After discarding, localStorage is removed, but the effect will write {} next
-    const stored = window.localStorage.getItem('canopycms:drafts:main')
-    expect(stored === null || stored === '{}').toBe(true)
+    // After discarding, localStorage is removed, but the persist effect will
+    // write an empty store back next.
+    expect(readPersistedDrafts('main')).toEqual({})
   })
 
   it('discards single file draft (via the auto-confirmed modal, since it has no loaded value to match)', () => {
@@ -732,9 +759,86 @@ describe('useDraftManager', () => {
       title: 'Loaded Title',
       body: 'Loaded Content',
     })
-    expect(result.current.drafts.abc123def456).toEqual({
-      title: 'Loaded Title',
-      body: 'Loaded Content',
+    // Reload no longer seeds a draft with the server value: `effectiveValue`
+    // falls back to `loadedValues`, so the seed only ever manufactured a
+    // phantom-dirty snapshot in localStorage.
+    expect(result.current.drafts.abc123def456).toBeUndefined()
+  })
+
+  describe('reload confirmation (D5)', () => {
+    // "Reload File" overwrites the working value with the server's copy, so it
+    // is at least as destructive as "Discard draft" -- which has always been
+    // behind a confirm. It is also the recovery path the 409 conflict toast
+    // points at, so an unguarded reload destroys exactly the work the user was
+    // told to protect.
+    const dirtyDraft = { title: 'My unsaved edit', body: 'Loaded Content' }
+
+    const makeDirty = async (result: { current: ReturnType<typeof useDraftManager> }) => {
+      act(() => {
+        result.current.setLoadedValues({
+          abc123def456: { title: 'Loaded Title', body: 'Loaded Content' },
+        })
+      })
+      act(() => {
+        result.current.setDrafts({ abc123def456: dirtyDraft })
+      })
+      await waitFor(() => expect(result.current.isSelectedDirty()).toBe(true))
+    }
+
+    it('opens a confirm modal before reloading over a dirty draft', async () => {
+      const { result } = renderHook(() => useDraftManager(defaultOptions))
+      await makeDirty(result)
+
+      await act(async () => {
+        await result.current.handleReload()
+      })
+
+      const { modals } = await import('@mantine/modals')
+      expect(modals.openConfirmModal).toHaveBeenCalledWith(
+        expect.objectContaining({ title: 'Reload file' }),
+      )
+      // Auto-confirmed by the modals mock, so the reload still went through and
+      // the stale draft is gone (the loaded value is the working value again).
+      await waitFor(() => {
+        expect(result.current.drafts.abc123def456).toBeUndefined()
+      })
+      expect(result.current.loadedValues.abc123def456).toEqual({
+        title: 'Loaded Title',
+        body: 'Loaded Content',
+      })
+    })
+
+    it('reloads without a confirm modal when the selected draft is clean', async () => {
+      const { result } = renderHook(() => useDraftManager(defaultOptions))
+
+      await act(async () => {
+        await result.current.handleReload()
+      })
+
+      const { modals } = await import('@mantine/modals')
+      expect(modals.openConfirmModal).not.toHaveBeenCalled()
+      expect(mockLoadEntry).toHaveBeenCalledWith(mockEntry)
+    })
+
+    it('keeps the unsaved draft when the user cancels the reload confirmation', async () => {
+      const { modals } = await import('@mantine/modals')
+      vi.mocked(modals.openConfirmModal).mockImplementationOnce(
+        (opts: { onCancel?: () => void }) => {
+          opts.onCancel?.()
+          return 'cancelled-modal-id'
+        },
+      )
+
+      const { result } = renderHook(() => useDraftManager(defaultOptions))
+      await makeDirty(result)
+      mockLoadEntry.mockClear()
+
+      await act(async () => {
+        await result.current.handleReload()
+      })
+
+      expect(mockLoadEntry).not.toHaveBeenCalled()
+      expect(result.current.drafts.abc123def456).toEqual(dirtyDraft)
     })
   })
 
@@ -999,6 +1103,214 @@ describe('useDraftManager', () => {
       ([key, value]) => key === 'canopycms:drafts:feature' && value.includes('Branch A draft'),
     )
     expect(leakedWrites).toHaveLength(0)
+  })
+
+  describe('draft base versions (cross-session conflict detection)', () => {
+    const mockGetEntryVersion = vi.fn<(contentId: string) => number | undefined>()
+    const versionedOptions = { ...defaultOptions, getEntryVersion: mockGetEntryVersion }
+
+    const persistV2 = (drafts: Record<string, unknown>, baseVersions: Record<string, number>) => {
+      window.localStorage.setItem(
+        'canopycms:drafts:main',
+        JSON.stringify({ v: 2, drafts, baseVersions }),
+      )
+    }
+
+    beforeEach(() => {
+      mockGetEntryVersion.mockReset()
+    })
+
+    it('stamps a new draft with the version currently held for that entry, and persists it', () => {
+      mockGetEntryVersion.mockReturnValue(100)
+      const { result } = renderHook(() => useDraftManager(versionedOptions))
+
+      act(() => {
+        result.current.setDrafts({ abc123def456: { title: 'My edit' } })
+      })
+
+      expect(readPersistedBaseVersions('main')).toEqual({ abc123def456: 100 })
+    })
+
+    it('drops the base version again once the draft is saved', async () => {
+      mockGetEntryVersion.mockReturnValue(100)
+      const { result } = renderHook(() => useDraftManager(versionedOptions))
+
+      act(() => {
+        result.current.setDrafts({ abc123def456: { title: 'My edit' } })
+      })
+      await act(async () => {
+        await result.current.handleSave()
+      })
+
+      expect(mockSaveEntry).toHaveBeenCalled()
+      await waitFor(() => {
+        expect(readPersistedBaseVersions('main')).toEqual({})
+      })
+    })
+
+    it('shows the conflict UI instead of saving when a restored draft is based on an older version', async () => {
+      persistV2({ abc123def456: { title: 'Draft from last session' } }, { abc123def456: 100 })
+      // The entry was re-read this session and captured a NEWER token -- the
+      // exact situation the OCC token alone cannot catch, because the save
+      // would send 200 and pass the server's check.
+      mockGetEntryVersion.mockReturnValue(200)
+
+      const { result } = renderHook(() => useDraftManager(versionedOptions))
+      await waitFor(() =>
+        expect(result.current.drafts.abc123def456).toEqual({ title: 'Draft from last session' }),
+      )
+
+      await act(async () => {
+        await result.current.handleSave()
+      })
+
+      const { notifications } = await import('@mantine/notifications')
+      expect(vi.mocked(notifications.show)).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message: 'Content was modified by another editor. Reload to see the latest changes.',
+          color: 'yellow',
+        }),
+      )
+      // Not saved -- and not silently discarded either.
+      expect(mockSaveEntry).not.toHaveBeenCalled()
+      expect(result.current.drafts.abc123def456).toEqual({ title: 'Draft from last session' })
+    })
+
+    describe('legacy draft with no recorded base version (pre-v2 storage)', () => {
+      /** Pre-v2 storage format: a bare map, no base versions anywhere. */
+      const persistLegacyDraft = () => {
+        window.localStorage.setItem(
+          'canopycms:drafts:main',
+          JSON.stringify({ abc123def456: { title: 'Legacy draft' } }),
+        )
+        mockGetEntryVersion.mockReturnValue(200)
+      }
+
+      it('asks before overwriting rather than saving silently', async () => {
+        const { modals } = await import('@mantine/modals')
+        persistLegacyDraft()
+        const { result } = renderHook(() => useDraftManager(versionedOptions))
+        await waitFor(() =>
+          expect(result.current.drafts.abc123def456).toEqual({ title: 'Legacy draft' }),
+        )
+
+        await act(async () => {
+          await result.current.handleSave()
+        })
+
+        expect(modals.openConfirmModal).toHaveBeenCalledWith(
+          expect.objectContaining({ title: 'Unsaved draft from an older editor version' }),
+        )
+      })
+
+      // The defect: `null` was treated exactly like a known-stale base, and
+      // nothing ever re-stamps `null`, so the draft was visible and
+      // unsaveable by any sequence of actions - while the only advice given
+      // (Reload / Discard) destroyed it.
+      it('saves the draft once the overwrite is confirmed', async () => {
+        persistLegacyDraft()
+        const { result } = renderHook(() => useDraftManager(versionedOptions))
+        await waitFor(() =>
+          expect(result.current.drafts.abc123def456).toEqual({ title: 'Legacy draft' }),
+        )
+
+        await act(async () => {
+          await result.current.handleSave()
+        })
+
+        expect(mockSaveEntry).toHaveBeenCalled()
+      })
+
+      it('re-stamps the base on confirm so the next save is not asked again', async () => {
+        const { modals } = await import('@mantine/modals')
+        persistLegacyDraft()
+        const { result } = renderHook(() => useDraftManager(versionedOptions))
+        await waitFor(() =>
+          expect(result.current.drafts.abc123def456).toEqual({ title: 'Legacy draft' }),
+        )
+
+        await act(async () => {
+          await result.current.handleSave()
+        })
+        // A fresh edit after the save re-stamps from the current version, so
+        // the only way to prove the null was cleared is a second save on a
+        // draft that still exists. Re-create the draft and save again.
+        await act(async () => {
+          result.current.setDrafts({ abc123def456: { title: 'Edited after upgrade' } })
+        })
+        vi.mocked(modals.openConfirmModal).mockClear()
+        await act(async () => {
+          await result.current.handleSave()
+        })
+
+        expect(modals.openConfirmModal).not.toHaveBeenCalled()
+        expect(mockSaveEntry).toHaveBeenCalledTimes(2)
+      })
+
+      it('keeps the draft and does not save when the overwrite is declined', async () => {
+        const { modals } = await import('@mantine/modals')
+        persistLegacyDraft()
+        vi.mocked(modals.openConfirmModal).mockImplementationOnce(
+          (options: { onCancel?: () => void }) => {
+            options.onCancel?.()
+            return 'mock-modal-id'
+          },
+        )
+
+        const { result } = renderHook(() => useDraftManager(versionedOptions))
+        await waitFor(() =>
+          expect(result.current.drafts.abc123def456).toEqual({ title: 'Legacy draft' }),
+        )
+
+        await act(async () => {
+          await result.current.handleSave()
+        })
+
+        expect(mockSaveEntry).not.toHaveBeenCalled()
+        expect(result.current.drafts.abc123def456).toEqual({ title: 'Legacy draft' })
+      })
+
+      // Escape/overlay dismissal does not call onCancel in Mantine, so a
+      // promise settled only by onCancel would hang here forever and the
+      // Save button would never come back.
+      it('does not hang when the modal is dismissed without a button', async () => {
+        const { modals } = await import('@mantine/modals')
+        persistLegacyDraft()
+        vi.mocked(modals.openConfirmModal).mockImplementationOnce(
+          (options: { onClose?: () => void }) => {
+            options.onClose?.()
+            return 'mock-modal-id'
+          },
+        )
+
+        const { result } = renderHook(() => useDraftManager(versionedOptions))
+        await waitFor(() =>
+          expect(result.current.drafts.abc123def456).toEqual({ title: 'Legacy draft' }),
+        )
+
+        await act(async () => {
+          await result.current.handleSave()
+        })
+
+        expect(mockSaveEntry).not.toHaveBeenCalled()
+      })
+    })
+
+    it('saves normally when the restored draft base version still matches the server', async () => {
+      persistV2({ abc123def456: { title: 'Draft from last session' } }, { abc123def456: 100 })
+      mockGetEntryVersion.mockReturnValue(100)
+
+      const { result } = renderHook(() => useDraftManager(versionedOptions))
+      await waitFor(() =>
+        expect(result.current.drafts.abc123def456).toEqual({ title: 'Draft from last session' }),
+      )
+
+      await act(async () => {
+        await result.current.handleSave()
+      })
+
+      expect(mockSaveEntry).toHaveBeenCalledWith(mockEntry, { title: 'Draft from last session' })
+    })
   })
 
   it('merges drafts from another tab without overwriting local edits', () => {

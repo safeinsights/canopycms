@@ -194,6 +194,90 @@ describe('createCanopyRouter - real route table (SEC-H3 regression)', () => {
   })
 })
 
+describe('matchRoute - decoding (C5)', () => {
+  // Synthetic routes (not the real table) so these tests isolate matchRoute's
+  // decode step from guard execution - a guard short-circuiting on a missing
+  // `branch` param would otherwise also produce a 400, for an unrelated
+  // reason, and mask a decode regression.
+  it('decodes a :param value exactly once', () => {
+    const routes = [route('GET', [':branch'], 'branch')]
+    const match = matchRoute(routes, 'GET', ['my%20branch'])
+    expect(match?.params).toEqual({ branch: 'my branch' })
+  })
+
+  it('decodes a catch-all value uniformly with :param, instead of leaving it raw', () => {
+    const routes = [route('GET', [':branch', 'content', '...path'], 'content')]
+    const match = matchRoute(routes, 'GET', ['main', 'content', 'posts', 'hello%20world'])
+    expect(match?.params).toEqual({ branch: 'main', path: 'posts/hello world' })
+  })
+
+  it('a malformed % escape in a :param segment produces a 400 response instead of throwing', async () => {
+    const routes = [route('GET', [':branch'], 'branch')]
+    expect(() => matchRoute(routes, 'GET', ['%zz'])).not.toThrow()
+    const match = matchRoute(routes, 'GET', ['%zz'])
+    expect(match).not.toBeNull()
+    const result = await match?.handler()
+    expect(result).toMatchObject({ ok: false, status: 400 })
+    // The malformed input must never reach the real route's handler.
+    expect(tagOf(match)).toBeUndefined()
+  })
+
+  it('a malformed % escape in a catch-all segment produces a 400 response instead of throwing', async () => {
+    const routes = [route('GET', [':branch', 'content', '...path'], 'content')]
+    const match = matchRoute(routes, 'GET', ['main', 'content', 'posts', '%zz'])
+    expect(match).not.toBeNull()
+    const result = await match?.handler()
+    expect(result).toMatchObject({ ok: false, status: 400 })
+    expect(tagOf(match)).toBeUndefined()
+  })
+})
+
+describe('matchRoute + route.validate - decoding once still catches real traversal (C5)', () => {
+  // Uses the real route table (DELETE /:branch/entries/...entryPath, whose
+  // Zod params schema validates entryPath with logicalPathSchema) so this
+  // exercises the actual decode-then-validate composition end to end, not a
+  // synthetic route.
+  it('a doubly percent-encoded ".." decodes to a harmless literal (not a smuggled traversal) after the single router decode', () => {
+    const router = createCanopyRouter()
+    // '..' percent-encoded twice: %2e -> %252e (the '%' of the first
+    // encoding re-encoded as %25).
+    const match = router.match('DELETE', ['main', 'entries', 'posts', '%252e%252e'])
+    expect(match).not.toBeNull()
+    // Exactly one decode pass: '%252e' -> '%2e' (only the %25 escape is
+    // consumed), not '..' - if this ever reads '..' here, something is
+    // decoding twice again and the traversal check below is no longer
+    // meaningful.
+    expect(match?.params.entryPath).toBe('posts/%2e%2e')
+    const validated = match?.validate?.({ params: match?.params })
+    expect(validated?.ok).toBe(true)
+  })
+
+  it('a real (single-encoded) ".." traversal attempt is still rejected after the router decode', () => {
+    const router = createCanopyRouter()
+    const match = router.match('DELETE', ['main', 'entries', 'posts', '%2e%2e'])
+    expect(match).not.toBeNull()
+    expect(match?.params.entryPath).toBe('posts/..')
+    const validated = match?.validate?.({ params: match?.params })
+    expect(validated?.ok).toBe(false)
+  })
+
+  // content.ts's `...path` catch-all previously received the raw, never
+  // router-decoded segment (the inconsistency the C5 finding calls out) -
+  // it now gets the same uniform decode + Zod (logicalPathSchema) traversal
+  // check as entries.ts and schema.ts, entirely from the router-level fix,
+  // with no content.ts code change required.
+  it('GET /:branch/content/...path also decodes and rejects traversal after the router decode', () => {
+    const router = createCanopyRouter()
+    const encoded = router.match('GET', ['main', 'content', 'posts', 'hello%20world'])
+    expect(encoded?.params.path).toBe('posts/hello world')
+    expect(encoded?.validate?.({ params: encoded?.params })?.ok).toBe(true)
+
+    const traversal = router.match('GET', ['main', 'content', 'posts', '%2e%2e'])
+    expect(traversal?.params.path).toBe('posts/..')
+    expect(traversal?.validate?.({ params: traversal?.params })?.ok).toBe(false)
+  })
+})
+
 describe('matchRoute - CanopyHandler may return a CanopyBinaryResponse (M2 plumbing)', () => {
   it('matches a route whose handler returns a binary response and leaves the result unchanged', async () => {
     const binaryResult: CanopyBinaryResponse = {

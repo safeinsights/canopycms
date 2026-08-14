@@ -37,7 +37,7 @@ import type {
   ContentFormat,
   EntrySchema,
 } from '../config'
-import { type LogicalPath, type ContentId, parseLogicalPath } from '../paths'
+import { type LogicalPath, type ContentId } from '../paths'
 
 // ============================================================================
 // Wire Types — API response shapes with schemaRef instead of resolved schema
@@ -333,22 +333,23 @@ async function getSchemaOps(
 }
 
 /**
- * Decode a collection path from URL params.
- * The path is validated by Zod before decoding, then re-validated after
- * decoding to prevent double-encoding path traversal attacks.
+ * `collectionPath` (C5, August 2026 baseline review follow-up): this used to
+ * decode the catch-all param itself, because http/router.ts's matchRoute did
+ * not decode catch-all segments at all - only `:param` ones. matchRoute now
+ * decodes every matched param exactly once, uniformly for `:param` and
+ * catch-all alike, and `collectionParamsSchema`'s `logicalPathSchema`
+ * already re-validates that single decoded value for traversal before this
+ * handler ever runs. Decoding again here would be a second, unauthorized
+ * decode pass on an already-decoded value - exactly the "double-encoding
+ * smuggles a traversal sequence" hazard this function's own re-validation
+ * was written to defend against, just relocated. This is now a passthrough;
+ * kept as a named function (rather than inlined at each call site) so a
+ * future re-validation need has one place to add it back.
  */
 function decodeCollectionPath(
   collectionPath: LogicalPath,
 ): { ok: true; path: LogicalPath } | { ok: false; error: string } {
-  const decoded = decodeURIComponent(collectionPath)
-  if (decoded === collectionPath) {
-    return { ok: true, path: collectionPath }
-  }
-  const result = parseLogicalPath(decoded)
-  if (!result.ok) {
-    return { ok: false, error: `Invalid collection path after decoding: ${result.error}` }
-  }
-  return { ok: true, path: result.path }
+  return { ok: true, path: collectionPath }
 }
 
 // ============================================================================

@@ -9,11 +9,15 @@ import { createMockApiContext, createMockUser, initTestRepo } from '../test-util
 import { BranchRegistry } from '../branch-registry'
 import { getBranchMetadataFileManager } from '../branch-metadata'
 import { acquireProvisioningLock } from '../utils/provisioning-lock'
+import { mockConsole } from '../test-utils/console-spy'
+import { tryAcquireContentWriteLock } from '../utils/content-write-lock'
+import { generateId } from '../id'
 
 // Extract composed (guard + handler) functions for testing, matching admin.test.ts's pattern.
 const branchHealthHandler = ADMIN_ROUTES.branchHealth.handler
 const purgeHandler = ADMIN_ROUTES.purgeBranchDir.handler
 const repairHandler = ADMIN_ROUTES.repairBranchDir.handler
+const repairContentDuplicatesHandler = ADMIN_ROUTES.repairContentDuplicates.handler
 
 describe('admin branch-health api', () => {
   let tmpDir: string
@@ -270,6 +274,46 @@ describe('admin branch-health api', () => {
       expect(() => JSON.parse(newContent)).not.toThrow()
     })
 
+    it('reports the reset status/access/createdBy so the admin knows they were not recovered (August 2026 baseline review)', async () => {
+      // A submitted (write-locked) branch with real ACLs, created by someone
+      // other than the repairing admin -- exactly the state save()'s
+      // defaults-merge silently drops once branch.json is archived away.
+      const branchDir = path.join(branchesRoot, 'was-submitted')
+      await fs.mkdir(branchDir, { recursive: true })
+      const manager = getBranchMetadataFileManager(branchDir, branchesRoot, { settleMs: 0 })
+      await manager.save({
+        branch: {
+          name: 'was-submitted',
+          status: 'submitted',
+          createdBy: 'original-author',
+          access: { allowedUsers: ['alice'] },
+        },
+      })
+      // Corrupt it in place, as an external crash/tampering would.
+      await fs.writeFile(
+        path.join(branchDir, '.canopy-meta', 'branch.json'),
+        'not json {{{',
+        'utf-8',
+      )
+
+      const result = await repairHandler(ctx, req, { dirName: 'was-submitted' })
+
+      expect(result.ok).toBe(true)
+      // The bug: the real prior status/ACLs/creator do not survive repair --
+      // status comes back unlocked, ACLs are dropped, and the repairing
+      // admin becomes the recorded creator.
+      expect(result.data?.branch.status).toBe('editing')
+      expect(result.data?.branch.access).toEqual({})
+      expect(result.data?.branch.createdBy).toBe(req.user.userId)
+      // The fix: the response says so explicitly instead of a silent 200 --
+      // an admin reading this knows to re-apply the ACL and re-submit.
+      expect(result.data?.reset).toEqual({
+        status: 'editing',
+        access: {},
+        createdBy: req.user.userId,
+      })
+    })
+
     it('allows repairing the base branch (H3 regression)', async () => {
       await createCorruptBranch('main')
       const result = await repairHandler(ctx, req, { dirName: 'main' })
@@ -337,7 +381,149 @@ describe('admin branch-health api', () => {
     })
   })
 
-  // Guard coverage (every ADMIN_ROUTES entry, including these three, 403s
+  describe('POST /admin/branch-dirs/:dirName/repair-content-duplicates', () => {
+    /**
+     * Two filenames sharing one embedded content ID, matching
+     * renameEntry()'s documented (previously unhandled) crash window:
+     * fs.link() succeeded, the crash landed before fs.unlink() removed the
+     * old name.
+     */
+    const createDuplicateContentIds = async (dirName: string, contentRootName = 'content') => {
+      await createHealthyBranch(dirName)
+      const postsDir = path.join(branchesRoot, dirName, contentRootName, 'posts')
+      await fs.mkdir(postsDir, { recursive: true })
+      const dupId = generateId()
+      await fs.writeFile(path.join(postsDir, `post.old-slug.${dupId}.json`), '{}', 'utf-8')
+      await fs.writeFile(path.join(postsDir, `post.new-slug.${dupId}.json`), '{}', 'utf-8')
+      return { postsDir, dupId }
+    }
+
+    it('archives the quarantined (losing) duplicate, keeping the winner untouched', async () => {
+      const { postsDir, dupId } = await createDuplicateContentIds('dup-branch')
+
+      // The repair rebuilds the index, which warns on quarantine -- deliberate,
+      // since an operator has to learn the duplicate exists. Swallow and assert
+      // it rather than let it leak: vitest.config.ts's onConsoleLog fails the
+      // run on unswallowed console output, but ONLY when process.env.CI is set,
+      // so a green local run does not prove this. Reproduce with CI=1.
+      const consoleSpy = mockConsole()
+      let result: Awaited<ReturnType<typeof repairContentDuplicatesHandler>>
+      try {
+        result = await repairContentDuplicatesHandler(ctx, req, { dirName: 'dup-branch' })
+        expect(consoleSpy).toHaveWarned(dupId)
+      } finally {
+        consoleSpy.restore()
+      }
+
+      expect(result.ok).toBe(true)
+      expect(result.data?.resolved).toHaveLength(1)
+      const [resolved] = result.data!.resolved
+      expect(resolved.id).toBe(dupId)
+      expect(resolved.keptPath).toBe(`content/posts/post.new-slug.${dupId}.json`)
+      expect(resolved.archivedAs).toHaveLength(1)
+      // Repo-relative, not a bare basename: with duplicates in several
+      // collections the operator otherwise cannot tell which file went where.
+      expect(resolved.archivedAs[0]).toMatch(
+        /^content\/posts\/\.duplicate-content-id\.\d{8}T\d{6}Z\./,
+      )
+
+      // The winner is untouched, still at its original name.
+      await expect(
+        fs.stat(path.join(postsDir, `post.new-slug.${dupId}.json`)),
+      ).resolves.toBeTruthy()
+      // The loser was renamed (archived), never deleted -- nothing evaporates.
+      await expect(fs.stat(path.join(postsDir, `post.old-slug.${dupId}.json`))).rejects.toThrow()
+      // Resolved against the BRANCH ROOT, not the collection dir: the reported
+      // path is repo-relative, so it is directly usable to find the archived
+      // file (which is the whole point of reporting more than a basename).
+      await expect(
+        fs.stat(path.join(branchesRoot, 'dup-branch', resolved.archivedAs[0])),
+      ).resolves.toBeTruthy()
+
+      // A rescan no longer reports the duplicate -- the dot-prefixed archive
+      // name is skipped by every future ContentIdIndex scan.
+      // The rescan must be SILENT as well as clean: a dot-prefixed archive that
+      // still warned would mean the operator keeps being told about a duplicate
+      // they already resolved.
+      const rescanSpy = mockConsole()
+      let scan: Awaited<ReturnType<typeof branchHealthHandler>>
+      try {
+        scan = await branchHealthHandler(ctx, req)
+      } finally {
+        rescanSpy.restore()
+      }
+      const entry = scan.data?.entries.find((e) => e.dirName === 'dup-branch')
+      expect(entry?.duplicateContentIds).toBeUndefined()
+    })
+
+    it('returns 409 when there are no duplicate content IDs to repair', async () => {
+      await createHealthyBranch('clean-branch')
+      const result = await repairContentDuplicatesHandler(ctx, req, { dirName: 'clean-branch' })
+      expect(result.ok).toBe(false)
+      expect(result.status).toBe(409)
+    })
+
+    it('returns 404 for a nonexistent directory', async () => {
+      const result = await repairContentDuplicatesHandler(ctx, req, { dirName: 'never-existed' })
+      expect(result.ok).toBe(false)
+      expect(result.status).toBe(404)
+    })
+
+    it('respects a non-default contentRootName', async () => {
+      const { dupId } = await createDuplicateContentIds('custom-root-branch', 'my-content')
+      ctx = createMockApiContext({
+        services: {
+          config: {
+            mode: 'prod',
+            defaultBaseBranch: 'main',
+            contentRoot: 'my-content',
+          } as CanopyConfig,
+          registry,
+        },
+      })
+
+      // The repair rebuilds the index, which warns on quarantine -- deliberate,
+      // since an operator has to learn the duplicate exists. Swallow and assert
+      // it rather than let it leak: vitest.config.ts's onConsoleLog fails the
+      // run on unswallowed console output, but ONLY when process.env.CI is set,
+      // so a green local run does not prove this. Reproduce with CI=1.
+      const consoleSpy = mockConsole()
+      let result: Awaited<ReturnType<typeof repairContentDuplicatesHandler>>
+      try {
+        result = await repairContentDuplicatesHandler(ctx, req, {
+          dirName: 'custom-root-branch',
+        })
+        expect(consoleSpy).toHaveWarned(dupId)
+      } finally {
+        consoleSpy.restore()
+      }
+      expect(result.ok).toBe(true)
+      expect(result.data?.resolved[0].id).toBe(dupId)
+    })
+
+    it('returns 409 on content-write-lock contention against a real held lock', async () => {
+      await createDuplicateContentIds('contended-branch')
+      const release = await tryAcquireContentWriteLock(path.join(branchesRoot, 'contended-branch'))
+      try {
+        const result = await repairContentDuplicatesHandler(ctx, req, {
+          dirName: 'contended-branch',
+        })
+        expect(result.ok).toBe(false)
+        expect(result.status).toBe(409)
+      } finally {
+        await release()
+      }
+    })
+
+    it('rejects a traversal dirName at the validation layer', () => {
+      const validationResult = ADMIN_ROUTES.repairContentDuplicates.validate({
+        params: { dirName: '../../etc' },
+      })
+      expect(validationResult.ok).toBe(false)
+    })
+  })
+
+  // Guard coverage (every ADMIN_ROUTES entry, including these four, 403s
   // for a non-admin user) is asserted generically in admin.test.ts's
   // "guard coverage" describe block, which loops Object.values(ADMIN_ROUTES).
 })

@@ -48,6 +48,156 @@ class GatedSchemaOps extends SchemaOps {
   }
 }
 
+/** Shape of a raw `.collection.json` as read directly off disk, bypassing SchemaOps. */
+interface RawCollectionJson {
+  name?: string
+  label?: string
+  entries?: Array<{ name: string; label?: string; format: string; schema: string }>
+  order?: string[]
+}
+
+/**
+ * Read a collection's `.collection.json` straight off the filesystem by
+ * locating its `{slug}.{id}` directory under `dir` and parsing the file
+ * directly -- deliberately NOT via `store.readCollectionMeta()`, so that
+ * asserting the effect of one SchemaOps method never depends on the
+ * correctness of another (readCollectionMeta is itself one of the methods
+ * under test below).
+ */
+async function readCollectionJsonByDirPrefix(
+  dir: string,
+  slugPrefix: string,
+): Promise<RawCollectionJson> {
+  const entries = await fs.readdir(dir)
+  const dirName = entries.find((d) => d.startsWith(`${slugPrefix}.`))
+  if (!dirName) {
+    throw new Error(`No directory starting with "${slugPrefix}." found in ${dir}`)
+  }
+  const raw = await fs.readFile(path.join(dir, dirName, '.collection.json'), 'utf-8')
+  return JSON.parse(raw) as RawCollectionJson
+}
+
+/**
+ * One row per public SchemaOps method that `normalizeCollectionPath`
+ * normalizes (see schema-store.ts). Each `run` drives the method with the
+ * content-root-prefixed path the editor actually sends and asserts the
+ * method both succeeded AND produced its intended effect -- read straight
+ * off disk (or via a return value / a different, unrelated read) rather
+ * than merely asserting "did not throw" (the vacuous-test shape PR #211
+ * removed elsewhere). Runs against a shared "posts" collection with two
+ * entry types ("post", "page") created by the enclosing describe's
+ * `beforeEach`.
+ */
+interface PrefixedPathCase {
+  method: string
+  run: (store: SchemaOps, contentRoot: string) => Promise<void>
+}
+
+const prefixedPathCases: PrefixedPathCase[] = [
+  {
+    method: 'readCollectionMeta',
+    run: async (store) => {
+      const meta = await store.readCollectionMeta(unsafeAsLogicalPath('content/posts'))
+      expect(meta?.name).toBe('posts')
+      expect(meta?.entries?.map((e) => e.name)).toEqual(['post', 'page'])
+    },
+  },
+  {
+    method: 'isCollectionEmpty',
+    run: async (store, contentRoot) => {
+      await expect(store.isCollectionEmpty(unsafeAsLogicalPath('content/posts'))).resolves.toBe(
+        true,
+      )
+      // Drop a content file directly onto disk (SchemaOps never writes
+      // content files itself) so the "not empty" branch is genuinely
+      // exercised, not just the vacuously-true empty case.
+      const dirName = (await fs.readdir(contentRoot)).find((d) => d.startsWith('posts.'))!
+      await fs.writeFile(path.join(contentRoot, dirName, 'dummy.txt'), 'x')
+      await expect(store.isCollectionEmpty(unsafeAsLogicalPath('content/posts'))).resolves.toBe(
+        false,
+      )
+    },
+  },
+  {
+    method: 'updateCollection',
+    run: async (store, contentRoot) => {
+      await store.updateCollection(unsafeAsLogicalPath('content/posts'), { label: 'Posts!' })
+      const json = await readCollectionJsonByDirPrefix(contentRoot, 'posts')
+      expect(json.label).toBe('Posts!')
+    },
+  },
+  {
+    method: 'deleteCollection',
+    run: async (store, contentRoot) => {
+      await store.deleteCollection(unsafeAsLogicalPath('content/posts'))
+      const dirs = await fs.readdir(contentRoot)
+      expect(dirs.some((d) => d.startsWith('posts.'))).toBe(false)
+    },
+  },
+  {
+    method: 'addEntryType',
+    run: async (store, contentRoot) => {
+      await store.addEntryType(unsafeAsLogicalPath('content/posts'), {
+        name: 'gallery',
+        format: 'json',
+        schema: 'postSchema',
+      })
+      const json = await readCollectionJsonByDirPrefix(contentRoot, 'posts')
+      expect(json.entries?.map((e) => e.name)).toEqual(['post', 'page', 'gallery'])
+    },
+  },
+  {
+    method: 'updateEntryType',
+    run: async (store, contentRoot) => {
+      await store.updateEntryType(unsafeAsLogicalPath('content/posts'), 'page', { label: 'Page' })
+      const json = await readCollectionJsonByDirPrefix(contentRoot, 'posts')
+      expect(json.entries?.find((e) => e.name === 'page')?.label).toBe('Page')
+    },
+  },
+  {
+    method: 'removeEntryType',
+    run: async (store, contentRoot) => {
+      await store.removeEntryType(unsafeAsLogicalPath('content/posts'), 'page')
+      const json = await readCollectionJsonByDirPrefix(contentRoot, 'posts')
+      expect(json.entries?.map((e) => e.name)).toEqual(['post'])
+    },
+  },
+  {
+    method: 'countEntriesUsingType',
+    run: async (store, contentRoot) => {
+      const dirName = (await fs.readdir(contentRoot)).find((d) => d.startsWith('posts.'))!
+      // Filename pattern: {type}.{slug}.{id}.{ext} -- id must be a valid
+      // 12-char Base58 id for countEntriesUsingType to count it.
+      await fs.writeFile(path.join(contentRoot, dirName, `post.hello.${'a'.repeat(12)}.json`), '{}')
+      await expect(
+        store.countEntriesUsingType(unsafeAsLogicalPath('content/posts'), 'post'),
+      ).resolves.toBe(1)
+    },
+  },
+  {
+    method: 'updateOrder',
+    run: async (store, contentRoot) => {
+      await store.updateOrder(unsafeAsLogicalPath('content/posts'), ['x', 'y'])
+      const json = await readCollectionJsonByDirPrefix(contentRoot, 'posts')
+      expect(json.order).toEqual(['x', 'y'])
+    },
+  },
+  {
+    method: 'createCollection (input.parentPath, sub-collection create)',
+    run: async (store, contentRoot) => {
+      const result = await store.createCollection({
+        name: 'featured',
+        parentPath: unsafeAsLogicalPath('content/posts'),
+        entries: [{ name: 'post', format: 'json', schema: 'postSchema' }],
+      })
+      expect(result.collectionPath).toBe('posts/featured')
+      const dirName = (await fs.readdir(contentRoot)).find((d) => d.startsWith('posts.'))!
+      const childDirs = await fs.readdir(path.join(contentRoot, dirName))
+      expect(childDirs.some((d) => d.startsWith('featured.'))).toBe(true)
+    },
+  },
+]
+
 describe('SchemaOps', () => {
   let tempDir: string
   let contentRoot: string
@@ -66,7 +216,7 @@ describe('SchemaOps', () => {
       ],
       pageSchema: [
         { name: 'title', type: 'string', required: true },
-        { name: 'content', type: 'rich-text' },
+        { name: 'content', type: 'markdown' },
       ],
       authorSchema: [
         { name: 'name', type: 'string', required: true },
@@ -1383,6 +1533,176 @@ describe('SchemaOps', () => {
       })
 
       await expect(fs.stat(path.join(branchRoot, '.canopy-meta'))).resolves.toBeTruthy()
+    })
+
+    // August 2026 baseline review finding 4, multi-segment variant: the same
+    // "content-root-prefixed path" bug (see the sibling describe block below)
+    // also has to survive a multi-segment contentRoot -- a naive fix that
+    // strips a prefix by basename() rather than full-string match would pass
+    // the single-segment tests below while still being broken here.
+    it('every mutation succeeds with the "cms/content"-prefixed path the editor sends for a multi-segment contentRoot', async () => {
+      const nested = new SchemaOps(nestedContentRoot, entrySchemaRegistry, undefined, branchRoot)
+
+      const created = await nested.createCollection({
+        name: 'posts',
+        entries: [{ name: 'post', format: 'json', schema: 'postSchema' }],
+      })
+      expect(created.collectionPath).toBe('posts')
+
+      const prefixed = unsafeAsLogicalPath('cms/content/posts')
+
+      await nested.updateCollection(prefixed, { label: 'Posts' })
+      await nested.addEntryType(prefixed, { name: 'page', format: 'json', schema: 'postSchema' })
+      await nested.updateEntryType(prefixed, 'page', { label: 'Page' })
+      await expect(nested.countEntriesUsingType(prefixed, 'page')).resolves.toBe(0)
+      await nested.removeEntryType(prefixed, 'page')
+      await nested.updateOrder(prefixed, [created.contentId])
+
+      const meta = await nested.readCollectionMeta(unsafeAsLogicalPath('posts'))
+      expect(meta!.label).toBe('Posts')
+      expect(meta!.entries!.map((e) => e.name)).toEqual(['post'])
+      expect(meta!.order).toEqual([created.contentId])
+
+      await nested.deleteCollection(prefixed)
+      await expect(nested.readCollectionMeta(unsafeAsLogicalPath('posts'))).resolves.toBeNull()
+    })
+  })
+
+  // August 2026 baseline review finding 4: `flattenSchema`
+  // (branch-schema-cache.ts) produces content-root-prefixed logical paths
+  // (e.g. "content/posts"), and the editor round-trips those straight back
+  // into every mutator (CollectionEditor.tsx passes
+  // `editingCollection.logicalPath` as-is). Every mutator except
+  // updateCollection/updateOrder used to resolve the raw prefixed path
+  // against `this.contentRoot` (itself already the content root), landing
+  // one level too deep and throwing "Collection not found" -- a 400 for
+  // every add/update/remove entry type, sub-collection create, and delete.
+  //
+  // These tests drive a REAL SchemaOps (never a mock) with the prefixed
+  // paths the editor actually sends -- api/schema.test.ts mocks SchemaOps,
+  // the rest of this file uses unprefixed paths, and
+  // useSchemaManager.test.ts mocks the API client, so this is the one place
+  // that actually crosses the seam where the bug lived.
+  describe('content-root-prefixed logical paths (the editor-seam bug)', () => {
+    it('every mutation succeeds when given the content-root-prefixed path the editor actually sends', async () => {
+      const created = await store.createCollection({
+        name: 'posts',
+        label: 'Posts',
+        entries: [{ name: 'post', format: 'json', schema: 'postSchema' }],
+      })
+      expect(created.collectionPath).toBe('posts')
+
+      const prefixed = unsafeAsLogicalPath('content/posts')
+
+      // updateCollection
+      await store.updateCollection(prefixed, { label: 'Posts!' })
+      expect((await store.readCollectionMeta(unsafeAsLogicalPath('posts')))!.label).toBe('Posts!')
+
+      // addEntryType
+      await store.addEntryType(prefixed, { name: 'page', format: 'json', schema: 'postSchema' })
+      expect(
+        (await store.readCollectionMeta(unsafeAsLogicalPath('posts')))!.entries!.map((e) => e.name),
+      ).toEqual(['post', 'page'])
+
+      // updateEntryType
+      await store.updateEntryType(prefixed, 'page', { label: 'Page' })
+      expect(
+        (await store.readCollectionMeta(unsafeAsLogicalPath('posts')))!.entries!.find(
+          (e) => e.name === 'page',
+        )!.label,
+      ).toBe('Page')
+
+      // countEntriesUsingType -- used directly by api/schema.ts's
+      // getCollectionHandler, and internally by the breaking-change/removal
+      // guards below
+      await expect(store.countEntriesUsingType(prefixed, 'page')).resolves.toBe(0)
+
+      // removeEntryType
+      await store.removeEntryType(prefixed, 'page')
+      expect(
+        (await store.readCollectionMeta(unsafeAsLogicalPath('posts')))!.entries!.map((e) => e.name),
+      ).toEqual(['post'])
+
+      // sub-collection create (parentPath itself content-root-prefixed, as
+      // the editor sends when creating a collection nested under an
+      // existing one)
+      const child = await store.createCollection({
+        name: 'featured',
+        parentPath: prefixed,
+        entries: [{ name: 'post', format: 'json', schema: 'postSchema' }],
+      })
+      expect(child.collectionPath).toBe('posts/featured')
+
+      // updateOrder (non-root)
+      await store.updateOrder(prefixed, [child.contentId])
+      expect((await store.readCollectionMeta(unsafeAsLogicalPath('posts')))!.order).toEqual([
+        child.contentId,
+      ])
+
+      // deleteCollection (must be empty -- delete the child first)
+      await store.deleteCollection(unsafeAsLogicalPath('content/posts/featured'))
+      await store.deleteCollection(prefixed)
+      await expect(store.readCollectionMeta(unsafeAsLogicalPath('posts'))).resolves.toBeNull()
+    })
+
+    it('updateCollection and updateOrder on the root collection still work with the bare content-root path', async () => {
+      await fs.writeFile(
+        path.join(contentRoot, '.collection.json'),
+        JSON.stringify({
+          entries: [{ name: 'home', format: 'json', schema: 'pageSchema' }],
+          order: [],
+        }),
+      )
+
+      await store.updateCollection(unsafeAsLogicalPath('content'), { label: 'Home' })
+      expect((await store.readRootCollectionMeta())!.label).toBe('Home')
+
+      await store.updateOrder(unsafeAsLogicalPath('content'), ['a', 'b'])
+      expect((await store.readRootCollectionMeta())!.order).toEqual(['a', 'b'])
+    })
+
+    it('unprefixed paths keep working (back-compat for existing callers and tests)', async () => {
+      await store.createCollection({
+        name: 'posts',
+        entries: [{ name: 'post', format: 'json', schema: 'postSchema' }],
+      })
+      await store.addEntryType(unsafeAsLogicalPath('posts'), {
+        name: 'page',
+        format: 'json',
+        schema: 'postSchema',
+      })
+      expect(
+        (await store.readCollectionMeta(unsafeAsLogicalPath('posts')))!.entries!.map((e) => e.name),
+      ).toEqual(['post', 'page'])
+    })
+
+    // Table-driven, one row per public method that normalizeCollectionPath
+    // normalizes (see the list in schema-store.ts's doc comment). The
+    // sequential test above already exercises a realistic call chain, but
+    // bundles several methods' assertions together and never calls
+    // readCollectionMeta/isCollectionEmpty with a prefixed path directly (it
+    // only used them, unprefixed, to verify OTHER methods' effects) -- so a
+    // regression in just one of those two methods could slip through. Each
+    // row here gets its own fresh "posts" collection (via the beforeEach
+    // below) and asserts its method's effect independently, off disk where
+    // possible, so a failure names exactly which method regressed.
+    describe('every normalized method, individually, with its intended effect asserted', () => {
+      beforeEach(async () => {
+        await store.createCollection({
+          name: 'posts',
+          entries: [
+            { name: 'post', format: 'json', schema: 'postSchema' },
+            { name: 'page', format: 'json', schema: 'postSchema' },
+          ],
+        })
+      })
+
+      it.each(prefixedPathCases)(
+        '$method succeeds and has its intended effect when given the content-root-prefixed path',
+        async ({ run }) => {
+          await run(store, contentRoot)
+        },
+      )
     })
   })
 })

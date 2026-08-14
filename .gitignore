@@ -23,6 +23,15 @@ out/
 # stray files inside the lint/tsc globs.
 packages/canopycms-cdk/.scaffold-synth/
 
+# pnpm's content-addressed store, when pnpm places it inside the repo.
+#
+# Not hypothetical and not harmless: a globally-installed pnpm with no
+# `store-dir` configured created a 21MB `.pnpm-store/` here, and because it was
+# neither ignored nor prettier-ignored it broke `prettier --check .` -- which is
+# the pre-push hook, so it blocked every push until the directory was moved out.
+# It is also exactly the kind of thing a `git add -A` sweeps into a commit.
+.pnpm-store/
+
 # Claude Code local/personal
 .claude/settings.local.json
 .claude/memory/

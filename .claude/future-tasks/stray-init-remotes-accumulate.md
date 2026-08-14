@@ -61,4 +61,6 @@ to be mistaken for a missing `origin` (which is what happened here).
 
 ## Related
 
-- [[dev-mode-workspace-hygiene]] — adjacent cleanup concerns, if it exists
+- No dev-mode-workspace-hygiene task exists (checked 2026-08-13); this was the
+  only inbound reference to it. If a general dev-workspace cleanup task is ever
+  filed, this belongs under it.

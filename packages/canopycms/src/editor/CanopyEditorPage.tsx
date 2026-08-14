@@ -1,7 +1,18 @@
 import type { CanopyClientConfig } from '../config'
+import type { CustomFieldRenderers } from './FormRenderer'
 import { CanopyEditor } from './CanopyEditor'
 
-export const CanopyEditorPage = (config: CanopyClientConfig) => {
+/**
+ * @param customRenderers Optional adopter overrides for how specific field
+ * types render (see `FormRenderer`'s `customRenderers` prop). Threaded
+ * through to `CanopyEditor` so the extension point is reachable from the
+ * page-factory entrypoint, not just from a direct `<CanopyEditor>`/`<Editor>`
+ * usage.
+ */
+export const CanopyEditorPage = (
+  config: CanopyClientConfig,
+  customRenderers?: CustomFieldRenderers,
+) => {
   const CanopyEditorPageInner = ({
     searchParams,
   }: {
@@ -19,6 +30,7 @@ export const CanopyEditorPage = (config: CanopyClientConfig) => {
         branchName={branchName}
         initialSelectedId={initialSelectedId}
         entries={[]}
+        customRenderers={customRenderers}
       />
     )
   }

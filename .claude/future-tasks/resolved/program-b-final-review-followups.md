@@ -5,7 +5,7 @@ Found by the adversarial review of the full `epic/canopy-hardening` diff
 false-positive HIGHs were fixed on `docs/program-b-bookkeeping` before the epic
 PR opened; these are the remainder, ranked as the reviewer ranked them.
 
-Related: [resolved/program-b-canopy-hardening.md](resolved/program-b-canopy-hardening.md).
+Related: [resolved/program-b-canopy-hardening.md](program-b-canopy-hardening.md).
 
 ---
 
@@ -98,7 +98,7 @@ today (`name` is not used for path resolution) but a genuine inconsistency —
 worth a separate look rather than a drive-by in this PR.
 
 > **Now tracked on its own** (2026-08-13):
-> [branch-metadata-name-sanitized-vs-raw.md](branch-metadata-name-sanitized-vs-raw.md).
+> [branch-metadata-name-sanitized-vs-raw.md](../branch-metadata-name-sanitized-vs-raw.md).
 > It sat here inside a struck finding, where open work is invisible. That file
 > also corrects this paragraph: the raw-ref writer is the admin metadata
 > **repair** path, not the API handlers (those write back whatever metadata
@@ -223,7 +223,7 @@ pass against the unfixed hook.
 One related hazard is deliberately **not** closed here: the version map is keyed
 by contentId, so any other path that swaps an entry object's contentId between
 load and save still yields a version-less write. Tracked in
-[occ-version-key-contentid-swap.md](occ-version-key-contentid-swap.md).
+[occ-version-key-contentid-swap.md](../occ-version-key-contentid-swap.md).
 
 ### Three corrections to PR #196's own description
 
@@ -238,7 +238,7 @@ who **pass** a `collections` prop — which the first-party path does. For an
 adopter who passes none, the derived list going empty now leaves `treeData`
 empty too, and the spinner **does** show during the switch window. So the
 behaviour is inconsistent between the two adopter shapes; making it consistent
-is [entry-navigator-loader-empty-tree.md](entry-navigator-loader-empty-tree.md).
+is [entry-navigator-loader-empty-tree.md](../entry-navigator-loader-empty-tree.md).
 
 **The fix closed a write hazard that was never separately filed.** Before #196,
 `handleCreateEntry` resolved through `collectionByPath`, which was built from the
@@ -424,13 +424,22 @@ which is the same code path as a first load.
   (`fix/worker-sync-divergence`) — folded into the sync-cycle guard above.
   Covered structurally rather than by a test: reaching it needs `rev-list` to
   exit 0 with unparseable output, which no fixture produces without mocking.
-- `GitManager.forcePush` uses a bare `--force-with-lease` with no expected
+- ~~`GitManager.forcePush` uses a bare `--force-with-lease` with no expected
   value. Branch clones are `--single-branch` and never fetch their own branch,
   so they carry no remote-tracking ref for it and git would refuse with
   "stale info" — the method cannot work as written for any caller. It has none
   today (noted while fixing the HIGH above, which deliberately did not route
   through it). Either give it an explicit expected-SHA parameter or delete it,
-  before someone calls it believing it works.
+  before someone calls it believing it works.~~ **RESOLVED 2026-08-13** (PR #172
+  human review, finding 6) — deleted rather than given an expected-SHA
+  parameter. Confirmed zero production callers (only its own SEC-H2 test) and
+  that `GitManager` is not re-exported from any package entrypoint, so removal
+  is not a breaking change. The removed test only re-checked the
+  `--end-of-options` option-injection guard already covered by `push()`'s
+  identical test; no unique coverage was lost. The real
+  `--force-with-lease=<branch>:<sha>` mechanism used in production
+  (`worker/cms-worker.ts`'s rebase-publish path) is untouched and keeps its own
+  test coverage.
 - ~~`deploy-cms.yml.template` runs `npm ci` (this repo mandates pnpm, and it
   fails with no `package-lock.json`) and hardcodes `branches: [main]`, so an
   adopter with a different default branch gets silence rather than an error.~~

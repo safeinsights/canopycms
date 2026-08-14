@@ -3269,7 +3269,7 @@ The fix is normally to import the dependency-free sibling instead of the node-im
 
 ### Future-Tasks Backlog Check
 
-`.claude/future-tasks/` is the durable backlog, and AGENTS.md requires every deferred issue to exist as a task file **plus** an `index.md` row. Three failure modes kept slipping through review, so they are now enforced:
+`.claude/future-tasks/` is the durable backlog, and AGENTS.md requires every deferred issue to exist as a task file **plus** an `index.md` row. Four failure modes kept slipping through review, so they are now enforced:
 
 ```bash
 pnpm lint:tasks
@@ -3280,6 +3280,19 @@ It runs in CI right after `lint:bundle`, and in the pre-commit hook whenever a c
 - **Dead links** -- every `.md` link target must resolve **relative to the linking file's own directory**. This matters more than it sounds: task files cross-link with relative paths, so moving a file into `resolved/` breaks inbound links in the files that did _not_ change. Both dead links found on 2026-08-13 were relative-path errors (one missing a `../`, one carrying a stale `../`) that a repo-root-relative check would have called clean.
 - **Stale open rows** -- a row in an open priority table whose file already lives in `resolved/`. The open tables claim to list open work only, and program sequencing reads them.
 - **Orphans, both directions** -- a task file no `index.md` row points at, and a row pointing at a file that does not exist.
+- **`[[wikilinks]]`** -- they render as literal `[[text]]` on GitHub and are invisible to the dead-link check, so they rot silently. Of the 41 present on 2026-08-13, 5 were already dead, four of them pointing at a Claude _memory_ filename rather than anything in the repo. All were converted to markdown links; this check keeps them from returning. Kebab-case slugs only, so `[[...slug]]` (Next.js catch-all routes) and `[[:space:]]` (POSIX class) stay legal in prose.
+
+### Resolving a task: use `--fix`
+
+Moving a file into `resolved/` invalidates relative paths in two directions at once -- links _inside_ the moved file (siblings are now one level up, repo-root docs one level further) and links _pointing at_ it (now behind `resolved/`). That churn is mechanical, and the checker already knows where the target went, so let it do the edit:
+
+```bash
+pnpm lint:tasks --fix
+```
+
+It repairs only paths whose target exists somewhere unambiguous, refuses when a basename is ambiguous across directories, and rewrites the `](target)` form specifically so a path that also appears as prose is left alone. A 2026-08-13 audit moved 9 files and needed 13 hand-edits; `--fix` reproduces all of them byte-for-byte.
+
+Two things it deliberately will **not** fix, because both need judgment: a **stale open row** (moving it to the Resolved section usually means rewriting the summary too) and an **orphan file** (its row has to be written by whoever knows what the task is).
 
 Only `.md` targets are checked. Task files also cite source files (`packages/canopycms/src/config.ts`) as prose written relative to the repo root, not as navigable links; checking those would be pure false positives.
 

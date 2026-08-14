@@ -41,6 +41,14 @@ export interface EntryCreateModalProps {
   isCreating?: boolean
   /** Error message to display */
   error?: string | null
+  /**
+   * Slugs already taken in the target collection (from the already-loaded
+   * entries list). Used to reject an obvious collision client-side with a
+   * clear message, instead of the server returning a 409 (or, for entry
+   * types with no required fields, silently succeeding via an update path
+   * that never mentions the real problem).
+   */
+  existingSlugs?: Set<string>
 }
 
 export function EntryCreateModal({
@@ -52,6 +60,7 @@ export function EntryCreateModal({
   onClose,
   isCreating = false,
   error = null,
+  existingSlugs,
 }: EntryCreateModalProps) {
   // Helper to get default or first entry type
   const getDefaultEntryTypeName = () => {
@@ -103,6 +112,9 @@ export function EntryCreateModal({
     }
     if (value.length > 64) {
       return 'Slug must be 64 characters or less'
+    }
+    if (existingSlugs?.has(value)) {
+      return 'An entry with this slug already exists'
     }
     return null
   }

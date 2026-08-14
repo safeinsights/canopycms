@@ -67,6 +67,17 @@ describe('CanopyEditor', () => {
     const props = capturedProps as EditorProps | undefined
     expect(props?.branchName).toBe('feature')
   })
+
+  it('threads customRenderers through to Editor unchanged', () => {
+    capturedProps = undefined
+    const customRenderers: EditorProps['customRenderers'] = {
+      number: () => <div data-testid="custom-number" />,
+    }
+    renderComponent({ customRenderers })
+
+    const props = capturedProps as EditorProps | undefined
+    expect(props?.customRenderers).toBe(customRenderers)
+  })
 })
 
 function renderComponent(

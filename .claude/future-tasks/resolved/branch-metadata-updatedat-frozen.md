@@ -38,4 +38,4 @@ advances it. Consider whether pure no-op-guard paths (which skip `save()`
 entirely) are already the only intended exception — they are, no change needed
 there. Add a test: save() advances updatedAt; createdAt untouched.
 
-Relates to [[post-merge-sync-gaps]] (the review that found it).
+Relates to [post-merge-sync-gaps](post-merge-sync-gaps.md) (the review that found it).

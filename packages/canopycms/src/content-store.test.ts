@@ -12,9 +12,18 @@ import {
   invalidateContentIndexesDurable,
 } from './content-index-generation'
 import { invalidateContentIndexesForRoot } from './content-index-registry'
-import { ContentStore, ContentStoreError, ContentConflictError } from './content-store'
+import {
+  BranchSyncingError,
+  ContentStore,
+  ContentStoreError,
+  ContentConflictError,
+  DuplicateContentIdError,
+} from './content-store'
+import { tryAcquireContentWriteLock } from './utils/content-write-lock'
+import { getErrorMessage } from './utils/error'
 import { generateId } from './id'
 import { unsafeAsLogicalPath, unsafeAsSlug } from './paths/test-utils'
+import { mockConsole } from './test-utils/console-spy'
 
 const tmpDir = async () => fs.mkdtemp(path.join(os.tmpdir(), 'canopycms-'))
 
@@ -1952,6 +1961,85 @@ describe('ContentStore OCC', () => {
 })
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Create-intent guard (expectedVersion: null) — August 2026 baseline review,
+// Critical finding: a "create" write against a slug that already has content
+// used to be indistinguishable from a blind update, so it silently
+// overwrote the existing entry and reported success. `expectedVersion: null`
+// is the create-intent signal: "this slug must not already exist yet."
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('ContentStore create-intent guard (expectedVersion: null)', () => {
+  const schema = {
+    collections: [
+      {
+        name: 'posts',
+        path: 'posts',
+        // No required fields — the destructive arm. A schema with required
+        // fields would mask the bug: field validation would reject an empty
+        // create payload before the write boundary is ever reached.
+        entries: [{ name: 'post', format: 'json' as const, schema: [] }],
+      },
+    ],
+  } as const
+
+  const makeStore = async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'canopycms-create-guard-'))
+    const config = defineCanopyTestConfig({ schema })
+    return new ContentStore(root, flattenSchema(schema, config.contentRoot))
+  }
+
+  it('rejects a create-intent write against an existing slug, and leaves the file byte-identical', async () => {
+    const store = await makeStore()
+    const collectionPath = unsafeAsLogicalPath('content/posts')
+    const slug = unsafeAsSlug('important-post')
+
+    const original = await store.write(collectionPath, slug, {
+      format: 'json',
+      data: { title: 'Important Post', body: 'do not lose me' },
+    })
+    const rawBefore = await fs.readFile(original.absolutePath, 'utf-8')
+
+    // Mirrors the create path's payload: empty data, create-intent signal.
+    // Asserting the specific message (not just the error class) matters: a
+    // numeric-mismatch OCC check would ALSO throw ContentConflictError for
+    // `expectedVersion: null` (null !== any mtime), but with the generic
+    // "modified by another editor" message -- this must be the distinct
+    // create-collision message instead.
+    await expect(
+      store.write(collectionPath, slug, {
+        format: 'json',
+        data: {},
+        expectedVersion: null,
+      }),
+    ).rejects.toThrow('An entry with this slug already exists')
+
+    // The whole point: the file on disk must be untouched, not just the
+    // status code. A byte-for-byte comparison, not merely the parsed data.
+    const rawAfter = await fs.readFile(original.absolutePath, 'utf-8')
+    expect(rawAfter).toBe(rawBefore)
+
+    const doc = await store.read(collectionPath, slug)
+    expect(doc.data).toEqual({ title: 'Important Post', body: 'do not lose me' })
+  })
+
+  it('allows a create-intent write when the slug does not exist yet', async () => {
+    const store = await makeStore()
+    const collectionPath = unsafeAsLogicalPath('content/posts')
+    const slug = unsafeAsSlug('brand-new-post')
+
+    const doc = await store.write(collectionPath, slug, {
+      format: 'json',
+      data: { title: 'New' },
+      expectedVersion: null,
+    })
+    expect((doc.data as Record<string, unknown>).title).toBe('New')
+
+    const read = await store.read(collectionPath, slug)
+    expect(read.data).toEqual({ title: 'New' })
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
 // ID index invalidation (in-process staleness after checkout/pull/rebase/sync)
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -2543,5 +2631,387 @@ describe('ContentStore getExistingEntryType', () => {
     const posts = unsafeAsLogicalPath('content/posts')
     await store.write(posts, unsafeAsSlug('hello'), { format: 'json', data: {} }, 'post')
     expect(await store.getExistingEntryType(posts, unsafeAsSlug('hello'))).toBe('post')
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// [SYNC-C1] Cross-host content-write lock: every mutator that touches the
+// working tree takes it, and reads never do. The worker-side half (skip,
+// hold across the rebase, release on throw) lives in
+// worker/cms-worker-content-lock.test.ts.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('ContentStore content-write lock', () => {
+  const schema = {
+    collections: [
+      {
+        name: 'posts',
+        path: 'posts',
+        entries: [{ name: 'post', format: 'json' as const, schema: [] }],
+      },
+    ],
+  } as const
+
+  const posts = unsafeAsLogicalPath('content/posts')
+
+  const makeStore = async (root: string) => {
+    const config = defineCanopyTestConfig({ schema })
+    // Short wait: these cases are all "the lock is held for the whole test".
+    return new ContentStore(root, flattenSchema(schema, config.contentRoot), {
+      contentWriteLockWaitMs: 100,
+    })
+  }
+
+  it('fails write, delete and renameEntry with a retriable syncing conflict while the lock is held', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'canopycms-'))
+    const store = await makeStore(root)
+    await store.write(posts, unsafeAsSlug('hello'), { format: 'json', data: { title: 'v1' } })
+
+    const release = await tryAcquireContentWriteLock(root)
+    try {
+      for (const mutate of [
+        () => store.write(posts, unsafeAsSlug('hello'), { format: 'json', data: { title: 'v2' } }),
+        () => store.delete(posts, unsafeAsSlug('hello')),
+        () => store.renameEntry(posts, unsafeAsSlug('hello'), unsafeAsSlug('renamed')),
+      ]) {
+        const err = await mutate().then(
+          () => null,
+          (e: unknown) => e,
+        )
+        expect(err).toBeInstanceOf(BranchSyncingError)
+        // A ContentConflictError subclass, so every existing 409 mapping
+        // keeps working without a new branch at each call site.
+        expect(err).toBeInstanceOf(ContentConflictError)
+        expect((err as Error).message).toMatch(/syncing/i)
+      }
+      // Nothing was half-applied.
+      const doc = await store.read(posts, unsafeAsSlug('hello'))
+      expect(doc.data.title).toBe('v1')
+    } finally {
+      await release()
+    }
+  })
+
+  it('does not take the lock on the read path', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'canopycms-'))
+    const store = await makeStore(root)
+    await store.write(posts, unsafeAsSlug('hello'), { format: 'json', data: { title: 'v1' } })
+
+    const release = await tryAcquireContentWriteLock(root)
+    try {
+      // Reads must be untouched by a held lock — adding an EFS round-trip to
+      // the read path is exactly what this design refuses to do.
+      const doc = await store.read(posts, unsafeAsSlug('hello'))
+      expect(doc.data.title).toBe('v1')
+      expect(await store.documentExists(posts, unsafeAsSlug('hello'))).toBe(true)
+      expect(await store.getIdForEntry(posts, unsafeAsSlug('hello'))).toBeTruthy()
+    } finally {
+      await release()
+    }
+  })
+})
+
+describe('ContentStore duplicate content ID resilience (August 2026 baseline review)', () => {
+  const schema = {
+    collections: [
+      {
+        name: 'posts',
+        path: 'posts',
+        entries: [
+          {
+            name: 'post',
+            format: 'md' as const,
+            schema: [{ name: 'title', type: 'string' as const }],
+          },
+        ],
+      },
+    ],
+  } as const
+
+  const posts = unsafeAsLogicalPath('content/posts')
+
+  const makeStore = async (root: string) => {
+    const config = defineCanopyTestConfig({ schema })
+    return new ContentStore(root, flattenSchema(schema, config.contentRoot))
+  }
+
+  it('stays usable (degraded, not dead) after a duplicate-ID pair lands on disk, as renameEntry crash debris would leave', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'canopycms-dupid-'))
+    const seedStore = await makeStore(root)
+
+    // A normal write establishes the collection dir with its embedded ID.
+    await seedStore.write(posts, unsafeAsSlug('one'), {
+      format: 'md',
+      data: { title: 'One' },
+      body: 'Body one',
+    })
+    const postsDir = path.dirname(
+      (await seedStore.resolveDocumentPath(posts, unsafeAsSlug('one'))).absolutePath,
+    )
+
+    // Simulate renameEntry()'s documented (but previously unhandled) crash
+    // window: fs.link() succeeded, the crash landed before fs.unlink()
+    // removed the old name, leaving two filenames sharing one embedded ID.
+    const dupId = generateId()
+    await fs.writeFile(
+      path.join(postsDir, `post.old-slug.${dupId}.md`),
+      '---\ntitle: Dup\n---\nBody',
+      'utf-8',
+    )
+    await fs.writeFile(
+      path.join(postsDir, `post.new-slug.${dupId}.md`),
+      '---\ntitle: Dup\n---\nBody',
+      'utf-8',
+    )
+
+    // A fresh store models a new process (e.g. a cold Lambda) whose FIRST
+    // scan of this branch clone encounters the duplicate pair already on
+    // disk -- the realistic failure mode, since the crash predates this
+    // process's existence.
+    const store = await makeStore(root)
+
+    // Before the fix, this rebuild threw and NEVER recovered (loadedIndexGeneration
+    // never advanced past the failed build) -- every subsequent call re-threw.
+    // Call twice to demonstrate that too: the first call must not be a fluke.
+    //
+    // The rebuild warns on quarantine, which is deliberate -- an operator has
+    // to learn the duplicate exists. Swallow and assert it here rather than
+    // let it leak (CI fails hard on unswallowed console output via
+    // vitest.config.ts's onConsoleLog, which only bites when process.env.CI is
+    // set -- so a green local run does not prove this). Only the first build
+    // warns; the second is served from the cached index, which is exactly the
+    // recovery this test exists to prove.
+    const consoleSpy = mockConsole()
+    try {
+      await expect(store.idIndex()).resolves.toBeDefined()
+      await expect(store.idIndex()).resolves.toBeDefined()
+      expect(consoleSpy).toHaveWarned(dupId)
+    } finally {
+      consoleSpy.restore()
+    }
+
+    // Collection listing still works (the pre-existing, unrelated entry shows up).
+    const listing = await store.getCollectionEntryPaths(posts)
+    expect(listing.some((e) => e.slug === 'one')).toBe(true)
+
+    // Reads, and writes to OTHER entries, are unaffected -- the whole branch
+    // is not bricked by the one duplicate pair.
+    const doc = await store.read(posts, unsafeAsSlug('one'))
+    expect(doc.data.title).toBe('One')
+    await expect(
+      store.write(posts, unsafeAsSlug('two'), {
+        format: 'md',
+        data: { title: 'Two' },
+        body: 'Body two',
+      }),
+    ).resolves.toBeDefined()
+
+    // The duplicate pair itself is surfaced (not silently lost), even though
+    // ContentStore has no public accessor for it -- branch-health.ts's
+    // scanBranchHealth (tested separately) is the intended admin-facing
+    // surface for this signal.
+    const duplicates = (await store.idIndex()).getDuplicateIds()
+    expect(duplicates).toHaveLength(1)
+    expect(duplicates[0].id).toBe(dupId)
+  })
+
+  // [F1] A quarantined duplicate is still fully addressable by
+  // collection+slug (buildPaths() resolves slugs by directory scan, which
+  // knows nothing about the ID index's quarantine), so a stale editor tab --
+  // or anyone who kept the URL -- can still issue a save against the losing
+  // file. These tests pin the invariant that makes that safe: a mutation
+  // must never remove or modify a file it did not address.
+  describe('mutations addressed to a quarantined (losing) duplicate', () => {
+    const KEPT_CONTENT = '---\ntitle: Kept\n---\nKept body\n'
+    const DROPPED_CONTENT = '---\ntitle: Dropped\n---\nDropped body\n'
+
+    /**
+     * Seeds a branch clone holding an unrelated entry plus a duplicate-ID
+     * pair, as a crash between renameEntry()'s link() and unlink() would
+     * leave. The two files carry DIFFERENT content so a test can tell which
+     * one a mutation touched. `post.kept-slug.<id>.md` sorts before
+     * `post.zzz-dropped-slug.<id>.md`, so the quarantine's string-MIN rule
+     * makes kept-slug the deterministic winner.
+     */
+    const seedDuplicatePair = async () => {
+      const root = await fs.mkdtemp(path.join(os.tmpdir(), 'canopycms-dupid-'))
+      const seedStore = await makeStore(root)
+      await seedStore.write(posts, unsafeAsSlug('one'), {
+        format: 'md',
+        data: { title: 'One' },
+        body: 'Body one',
+      })
+      const postsDir = path.dirname(
+        (await seedStore.resolveDocumentPath(posts, unsafeAsSlug('one'))).absolutePath,
+      )
+      const dupId = generateId()
+      const keptPath = path.join(postsDir, `post.kept-slug.${dupId}.md`)
+      const droppedPath = path.join(postsDir, `post.zzz-dropped-slug.${dupId}.md`)
+      await fs.writeFile(keptPath, KEPT_CONTENT, 'utf-8')
+      await fs.writeFile(droppedPath, DROPPED_CONTENT, 'utf-8')
+      // A fresh store models the process that first scans the debris.
+      const store = await makeStore(root)
+      return { root, store, postsDir, dupId, keptPath, droppedPath }
+    }
+
+    it('refuses a write to the losing slug instead of deleting the kept file', async () => {
+      const { store, dupId, keptPath, droppedPath } = await seedDuplicatePair()
+
+      const consoleSpy = mockConsole()
+      try {
+        const duplicates = (await store.idIndex()).getDuplicateIds()
+        expect(duplicates).toHaveLength(1)
+        expect(duplicates[0].keptPath).toContain('kept-slug')
+        expect(duplicates[0].droppedPaths).toEqual([expect.stringContaining('zzz-dropped-slug')])
+
+        // The save a stale client tab still addressed to the losing slug
+        // would issue. Its OCC token matches (that file's mtime never
+        // changed), so nothing else stops it.
+        const err = await store
+          .write(posts, unsafeAsSlug('zzz-dropped-slug'), {
+            format: 'md',
+            data: { title: 'Saved' },
+            body: 'Saved body',
+          })
+          .then(() => null)
+          .catch((e: unknown) => e)
+
+        expect(err).toBeInstanceOf(DuplicateContentIdError)
+        expect(err).toBeInstanceOf(ContentConflictError)
+        const message = getErrorMessage(err)
+        expect(message).toContain(dupId)
+        expect(message).toContain('kept-slug')
+        expect(message).toContain('zzz-dropped-slug')
+        // Names the state and who resolves it, NOT an action name: nothing in
+        // the editor triggers repair-content-duplicates, so naming it sent
+        // the editor to an admin who could not run it.
+        expect(message).toContain('administrator')
+        expect(message).not.toContain('repair-content-duplicates')
+
+        // THE invariant: the write addressed the losing file, so the kept
+        // file must be byte-for-byte what it was. (Asserted on contents, not
+        // just existence -- a silent overwrite is the same bug as a delete.)
+        expect(await fs.readFile(keptPath, 'utf-8')).toBe(KEPT_CONTENT)
+        // And a refused write mutates nothing at all, including its target.
+        expect(await fs.readFile(droppedPath, 'utf-8')).toBe(DROPPED_CONTENT)
+
+        expect(consoleSpy).toHaveWarned(dupId)
+      } finally {
+        consoleSpy.restore()
+      }
+    })
+
+    it('refuses an ID-addressed write that would relocate the pair to a third slug', async () => {
+      const { store, postsDir, dupId, keptPath, droppedPath } = await seedDuplicatePair()
+
+      const consoleSpy = mockConsole()
+      try {
+        await store.idIndex()
+
+        const err = await store
+          .write(
+            posts,
+            unsafeAsSlug('third-slug'),
+            { format: 'md', data: { title: 'Saved' }, body: 'Saved body' },
+            undefined,
+            dupId,
+          )
+          .then(() => null)
+          .catch((e: unknown) => e)
+
+        expect(err).toBeInstanceOf(DuplicateContentIdError)
+        expect(await fs.readFile(keptPath, 'utf-8')).toBe(KEPT_CONTENT)
+        expect(await fs.readFile(droppedPath, 'utf-8')).toBe(DROPPED_CONTENT)
+        // No third file was created either -- the refusal is total.
+        const files = await fs.readdir(postsDir)
+        expect(files.filter((f) => f.includes(dupId)).sort()).toEqual([
+          `post.kept-slug.${dupId}.md`,
+          `post.zzz-dropped-slug.${dupId}.md`,
+        ])
+        expect(consoleSpy).toHaveWarned(dupId)
+      } finally {
+        consoleSpy.restore()
+      }
+    })
+
+    it('keeps the branch usable: the kept slug and unrelated entries stay writable', async () => {
+      const { store, dupId, keptPath, droppedPath } = await seedDuplicatePair()
+
+      const consoleSpy = mockConsole()
+      try {
+        // The visible half of the pair is the one editors actually see in
+        // listings, and it must keep working -- refusing it would reinstate
+        // the branch-wide brick the quarantine exists to prevent.
+        await expect(
+          store.write(posts, unsafeAsSlug('kept-slug'), {
+            format: 'md',
+            data: { title: 'Kept edited' },
+            body: 'Kept edited body',
+          }),
+        ).resolves.toBeDefined()
+        expect(await store.read(posts, unsafeAsSlug('kept-slug'))).toMatchObject({
+          data: { title: 'Kept edited' },
+        })
+        // Editing the winner does not touch the quarantined file.
+        expect(await fs.readFile(droppedPath, 'utf-8')).toBe(DROPPED_CONTENT)
+        expect(keptPath).toContain(dupId)
+
+        // Entries with no duplicate are unaffected.
+        await expect(
+          store.write(posts, unsafeAsSlug('two'), {
+            format: 'md',
+            data: { title: 'Two' },
+            body: 'Body two',
+          }),
+        ).resolves.toBeDefined()
+        expect(consoleSpy).toHaveWarned(dupId)
+      } finally {
+        consoleSpy.restore()
+      }
+    })
+
+    it('delete() removes only the losing file it addressed', async () => {
+      const { store, keptPath, droppedPath, dupId } = await seedDuplicatePair()
+
+      const consoleSpy = mockConsole()
+      try {
+        await store.idIndex()
+        // Deleting the file you addressed is exactly what was asked for, and
+        // it resolves the duplicate rather than perpetuating it.
+        await expect(store.delete(posts, unsafeAsSlug('zzz-dropped-slug'))).resolves.toBeUndefined()
+
+        await expect(fs.access(droppedPath)).rejects.toThrow()
+        expect(await fs.readFile(keptPath, 'utf-8')).toBe(KEPT_CONTENT)
+        expect(consoleSpy).toHaveWarned(dupId)
+      } finally {
+        consoleSpy.restore()
+      }
+    })
+
+    it('renameEntry() moves only the losing file it addressed', async () => {
+      const { store, postsDir, dupId, keptPath, droppedPath } = await seedDuplicatePair()
+
+      const consoleSpy = mockConsole()
+      try {
+        await store.idIndex()
+        await expect(
+          store.renameEntry(
+            posts,
+            unsafeAsSlug('zzz-dropped-slug'),
+            unsafeAsSlug('renamed-dropped'),
+          ),
+        ).resolves.toEqual({ newPath: 'content/posts/renamed-dropped' })
+
+        // The addressed file moved, contents intact; the kept file is untouched.
+        expect(
+          await fs.readFile(path.join(postsDir, `post.renamed-dropped.${dupId}.md`), 'utf-8'),
+        ).toBe(DROPPED_CONTENT)
+        await expect(fs.access(droppedPath)).rejects.toThrow()
+        expect(await fs.readFile(keptPath, 'utf-8')).toBe(KEPT_CONTENT)
+        expect(consoleSpy).toHaveWarned(dupId)
+      } finally {
+        consoleSpy.restore()
+      }
+    })
   })
 })

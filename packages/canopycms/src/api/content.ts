@@ -2,9 +2,11 @@ import { z } from 'zod'
 
 import type { ApiContext, ApiRequest, ApiResponse } from './types'
 import {
+  BranchSyncingError,
   ContentStore,
   ContentStoreError,
   ContentConflictError,
+  DuplicateContentIdError,
   getDefaultEntryType,
   type WriteInput,
 } from '../content-store'
@@ -79,8 +81,14 @@ export interface WriteContentBody {
   format: 'json' | 'md' | 'mdx' | 'yaml'
   data?: Record<string, unknown>
   body?: string
-  /** OCC version token from a prior read/write response. When present, write is rejected with 409 if file has changed. */
-  expectedVersion?: number
+  /**
+   * OCC / create-intent token. Omit for a blind write (no opinion). A number
+   * from a prior read/write response rejects the write with 409 if the file
+   * has changed since. `null` means "this entry must not already exist" —
+   * the create path uses this so a create against an existing slug is
+   * rejected with 409 instead of silently overwriting it.
+   */
+  expectedVersion?: number | null
 }
 
 export interface ValidateReferencesBody {
@@ -134,7 +142,8 @@ const writeContentBodySchema = z.object({
   format: z.enum(['json', 'md', 'mdx', 'yaml']),
   data: boundedContentDataSchema.optional(),
   body: z.string().max(MAX_CONTENT_BODY_CHARS).optional(),
-  expectedVersion: z.number().optional(),
+  // null = create-intent ("must not already exist"); see WriteContentBody.
+  expectedVersion: z.number().nullish(),
 })
 
 const validateReferencesParamsSchema = z.object({
@@ -327,6 +336,27 @@ const writeContentHandler = async (
   try {
     const exists = await store.documentExists(schemaItem.logicalPath, slug)
 
+    // Create-intent guard (August 2026 baseline review, Critical finding): a
+    // create request (expectedVersion === null, "must not already exist")
+    // against a slug that already has content must never silently overwrite
+    // it. Without this, an entry type with no required fields passes field
+    // validation on the create path's empty payload and falls through to a
+    // blind store.write() — this short-circuits with an unambiguous 409
+    // before that validation (and the maxItems count below) even runs, so
+    // the error always names the real problem instead of a confusing
+    // "field is required" message or a bare conflict. store.write() also
+    // enforces this same guard itself, inside its per-entry lock against a
+    // fresh stat — that is the race-safe authoritative check; this early
+    // return is just a cheaper, clearer-messaged fast path for the common
+    // (non-racing) case.
+    if (body.expectedVersion === null && exists) {
+      return {
+        ok: false,
+        status: 409,
+        error: `An entry with slug "${slug}" already exists`,
+      }
+    }
+
     // SCH-H3: enforce maxItems server-side at the create boundary. The editor
     // only gates its "Add" button; a direct API create could otherwise exceed
     // the cap. Best-effort under concurrency: the count-then-create below is
@@ -456,14 +486,49 @@ const writeContentHandler = async (
     return { ok: true, status: 200, data: { ...result, entryLinkWarnings, validationWarnings } }
   } catch (err) {
     if (err instanceof ContentConflictError) {
+      // [SYNC-C1] Not an editor-vs-editor collision at all: the branch's
+      // working tree is being rebased right now, so the write was refused
+      // rather than acknowledged and then rolled back. Its own message says
+      // that and says to retry -- checked first, since the generic branches
+      // below would otherwise blame another editor.
+      if (err instanceof BranchSyncingError) {
+        return { ok: false, status: 409, error: err.message }
+      }
+      // [F1] Also not an editor-vs-editor collision: this entry's content ID
+      // is on two files (ContentIdIndex's duplicate-ID quarantine), so the
+      // save was refused rather than allowed to mutate an ambiguous target.
+      // Surface its own message — the generic one below would tell the editor
+      // to reload and retry, which cannot help and would have them hammering
+      // a save that stays refused until an admin runs repair-content-duplicates.
+      if (err instanceof DuplicateContentIdError) {
+        return { ok: false, status: 409, error: err.message }
+      }
+      // The early `exists` short-circuit above catches this in the common
+      // case; this is the race-safe fallback for a collision that landed
+      // between that check and store.write()'s in-lock stat.
+      if (body.expectedVersion === null) {
+        return {
+          ok: false,
+          status: 409,
+          error: `An entry with slug "${slug}" already exists`,
+        }
+      }
       return {
         ok: false,
         status: 409,
         error: 'Content conflict: entry was modified by another editor',
       }
     }
-    const message = err instanceof ContentStoreError ? err.message : 'Write failed'
-    return { ok: false, status: 400, error: sanitizeErrorMessage(message) }
+    // C2: a ContentStoreError is a known/expected client fault (validation,
+    // bad slug, etc.) and keeps its existing 400. Anything else - ENOSPC,
+    // EACCES, a bug - is a genuine server fault and must not be mislabeled
+    // as the client's mistake; rethrow so it surfaces as a 500 (see
+    // readContentHandler's store.read() catch above, which already follows
+    // this same pattern).
+    if (err instanceof ContentStoreError) {
+      return { ok: false, status: 400, error: sanitizeErrorMessage(err.message) }
+    }
+    throw err
   }
 }
 
@@ -605,8 +670,26 @@ const renameEntryHandler = async (
     const result = await store.renameEntry(schemaItem.logicalPath, currentSlug, body.newSlug)
     return { ok: true, status: 200, data: { newPath: result.newPath } }
   } catch (err) {
-    const message = err instanceof ContentStoreError ? err.message : 'Rename failed'
-    return { ok: false, status: 400, error: sanitizeErrorMessage(message) }
+    // [SYNC-C1] The rename was refused because the branch is mid-rebase, not
+    // because the request was bad -- 409 + retry, never a 400.
+    if (err instanceof ContentConflictError) {
+      return {
+        ok: false,
+        status: 409,
+        error:
+          err instanceof BranchSyncingError
+            ? err.message
+            : 'Content conflict: entry was modified by another editor',
+      }
+    }
+    // C2: same distinction as writeContentHandler above - a ContentStoreError
+    // is an expected client fault and keeps its 400; anything else is a
+    // genuine server fault and must surface as a 500, not get mislabeled as
+    // "Rename failed" (the client's mistake).
+    if (err instanceof ContentStoreError) {
+      return { ok: false, status: 400, error: sanitizeErrorMessage(err.message) }
+    }
+    throw err
   }
 }
 

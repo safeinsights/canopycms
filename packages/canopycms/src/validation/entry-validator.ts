@@ -52,7 +52,7 @@ export interface EntryFieldError {
 const KNOWN_FIELD_TYPES = new Set<string>(fieldTypes)
 
 /** Field types whose value is a plain string. */
-const STRING_FIELD_TYPES = new Set(['string', 'rich-text', 'markdown', 'mdx', 'code'])
+const STRING_FIELD_TYPES = new Set(['string', 'markdown', 'mdx', 'code'])
 
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)

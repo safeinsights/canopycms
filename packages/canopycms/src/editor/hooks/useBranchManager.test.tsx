@@ -565,6 +565,131 @@ describe('useBranchManager', () => {
     })
   })
 
+  // CF1/D2: delete is irreversible -- unlike submit/withdraw, which the
+  // top-of-file modals mock auto-confirms for every other test in this file
+  // -- so this exercises the actual confirm/cancel branches rather than
+  // relying on the blanket auto-confirm.
+  describe('handleDelete confirmation (CF1/D2)', () => {
+    it('shows a confirmation modal naming the branch before deleting', async () => {
+      const { modals } = await import('@mantine/modals')
+      mockClient.branches.list.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        data: { branches: mockBranches },
+      })
+      mockClient.branches.delete.mockResolvedValueOnce({ ok: true, status: 200 })
+
+      const { result } = renderHook(() => useBranchManager(defaultOptions), {
+        wrapper,
+      })
+
+      await waitFor(() => {
+        expect(result.current.branches).toHaveLength(2)
+      })
+
+      await act(async () => {
+        await result.current.handleDelete('feature')
+      })
+
+      expect(modals.openConfirmModal).toHaveBeenCalledWith(
+        expect.objectContaining({
+          confirmProps: expect.objectContaining({ color: 'red' }),
+        }),
+      )
+      // The modal mock auto-confirms, so the delete call is the proof the
+      // confirmation flow actually ran through to onConfirm, not just that
+      // the modal was shown.
+      expect(mockClient.branches.delete).toHaveBeenCalledWith({ branch: 'feature' })
+    })
+
+    it('cancelling the confirmation issues no delete request', async () => {
+      const { modals } = await import('@mantine/modals')
+      // Override the default auto-confirm mock for this test only: simulate
+      // the user clicking "Cancel" instead of "Delete Branch".
+      vi.mocked(modals.openConfirmModal).mockImplementationOnce((options) => {
+        options.onCancel?.()
+        return 'mock-modal-id'
+      })
+
+      mockClient.branches.list.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        data: { branches: mockBranches },
+      })
+
+      const { result } = renderHook(() => useBranchManager(defaultOptions), {
+        wrapper,
+      })
+
+      await waitFor(() => {
+        expect(result.current.branches).toHaveLength(2)
+      })
+
+      // Resolves, not rejects: a dismissal is a normal outcome. The only
+      // caller (Editor.tsx) catches into console.error, so rejecting turned
+      // every Cancel click into a logged error.
+      await act(async () => {
+        await expect(result.current.handleDelete('feature')).resolves.toBeUndefined()
+      })
+
+      expect(mockClient.branches.delete).not.toHaveBeenCalled()
+    })
+
+    // Mantine does not call onCancel for these, so a promise settled only by
+    // onCancel stayed pending forever and the caller's `await` never returned.
+    it('resolves when the confirmation is dismissed via Escape or the overlay', async () => {
+      const { modals } = await import('@mantine/modals')
+      vi.mocked(modals.openConfirmModal).mockImplementationOnce((options) => {
+        options.onClose?.()
+        return 'mock-modal-id'
+      })
+
+      mockClient.branches.list.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        data: { branches: mockBranches },
+      })
+
+      const { result } = renderHook(() => useBranchManager(defaultOptions), {
+        wrapper,
+      })
+
+      await waitFor(() => {
+        expect(result.current.branches).toHaveLength(2)
+      })
+
+      await act(async () => {
+        await expect(result.current.handleDelete('feature')).resolves.toBeUndefined()
+      })
+
+      expect(mockClient.branches.delete).not.toHaveBeenCalled()
+    })
+
+    it('confirming issues exactly one delete request', async () => {
+      mockClient.branches.list.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        data: { branches: mockBranches },
+      })
+      mockClient.branches.delete.mockResolvedValueOnce({ ok: true, status: 200 })
+
+      const { result } = renderHook(() => useBranchManager(defaultOptions), {
+        wrapper,
+      })
+
+      await waitFor(() => {
+        expect(result.current.branches).toHaveLength(2)
+      })
+
+      await act(async () => {
+        await result.current.handleDelete('feature')
+      })
+
+      expect(mockClient.branches.delete).toHaveBeenCalledTimes(1)
+      expect(mockClient.branches.delete).toHaveBeenCalledWith({ branch: 'feature' })
+    })
+  })
+
   it('requests changes successfully', async () => {
     mockClient.branches.list
       .mockResolvedValueOnce({

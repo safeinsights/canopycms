@@ -1,5 +1,21 @@
 # Transform Lambda bundle pulls in unrelated canopycms code via canopycms/server
 
+> **Re-scoped 2026-08-14 — the "blocked on approving a new package entrypoint"
+> framing was answering the wrong question.** The consumer here is
+> `packages/canopycms-cdk/lambda/asset-transform/handler.ts`, which is
+> **first-party code in this monorepo**, not an adopter. So no *public* entrypoint
+> is needed: what is needed is for the Lambda bundle to stop pulling in the
+> `canopycms/server` barrel. Solve it at the build layer — an esbuild alias, a
+> private `#internal` subpath via the `imports` field, or pointing the Lambda
+> build at the source module directly — and the `exports` map stays untouched.
+>
+> That matters because the no-new-entrypoints rule exists to stop public API
+> surface sprawl: every entrypoint is a contract maintained forever, and this
+> one would exist solely to serve a caller we control. **JP's call, 2026-08-14:
+> do not grant the entrypoint.** Stays P3 — the bloat is non-functional (well
+> under Lambda's 250MB limit, negligible cold-start), so this is hygiene to do
+> when someone is already in the transform Lambda's build, not on its own.
+
 ## Problem
 
 `packages/canopycms-cdk/lambda/asset-transform/handler.ts` (the prod on-demand image

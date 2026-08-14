@@ -64,7 +64,16 @@ Tradeoff: init picks up a runtime dependency on Prettier being resolvable from t
 
 ## Implementation sketch
 
-1. `src/cli/init.ts` — add `detectStyle(cwd)` and `detectPackageManager(cwd)`.
+**Reuse note (added 2026-08-13):** `detectPackageManager` and `commandsFor`
+already exist in `src/cli/project-detect.ts` — but they are wired only into
+`initDeployAws` (`init.ts:235-284`), which generates deployment artifacts. The
+base `init` next-steps block this task is about still hardcodes `npm install` /
+`npm run dev` / `npm run build` (`init.ts:204,208,214-215`). So step 1 below is
+half-built already: reuse the existing detector rather than writing a second one.
+Only the Prettier/style half is genuinely greenfield.
+
+1. `src/cli/init.ts` — add `detectStyle(cwd)`; reuse `project-detect.ts`'s
+   existing `detectPackageManager(cwd)`.
 2. `src/cli/init.ts` — if Prettier resolves from `cwd`, lazy-import and format each emitted string.
 3. Next-steps printer — take detected `pm` and template the suggested commands.
 4. Test coverage:

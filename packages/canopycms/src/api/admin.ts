@@ -27,7 +27,7 @@ import { getErrorMessage, isNotFoundError } from '../utils/error'
 import { ADMIN_BRANCH_HEALTH_ROUTES } from './admin-branch-health'
 // generate-client.ts resolves a route's response/body type module purely
 // from its `namespace` field (see typeNameToModule/namespaceToModule in
-// scripts/generate-client.ts) -- it has no way to know these three types
+// scripts/generate-client.ts) -- it has no way to know these four types
 // actually live in admin-branch-health.ts, so client.ts's generated import
 // expects them here. Re-export rather than teaching the generator a second
 // file per namespace.
@@ -35,6 +35,7 @@ export type {
   BranchHealthResponse,
   PurgeBranchDirResponse,
   RepairBranchDirResponse,
+  RepairContentDuplicatesResponse,
 } from './admin-branch-health'
 
 // ============================================================================

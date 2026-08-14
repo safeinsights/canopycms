@@ -11,6 +11,10 @@ const writeContent = CONTENT_ROUTES.write.handler
 const renameEntry = CONTENT_ROUTES.renameEntry.handler
 
 vi.mock('../content-store', () => {
+  // [SYNC-C1] BranchSyncingError really is a ContentConflictError subclass in
+  // the module under mock -- keep that relationship here, or the handlers'
+  // `instanceof ContentConflictError` guard would not cover it.
+  const MockContentConflictError = class ContentConflictError extends Error {}
   return {
     ContentStore: vi.fn().mockImplementation(function () {
       return {
@@ -46,7 +50,23 @@ vi.mock('../content-store', () => {
       }
     }),
     ContentStoreError: class ContentStoreError extends Error {},
-    ContentConflictError: class ContentConflictError extends Error {},
+    ContentConflictError: MockContentConflictError,
+    BranchSyncingError: class BranchSyncingError extends MockContentConflictError {},
+    // [F1] Same reasoning as BranchSyncingError above: a real
+    // ContentConflictError subclass, so the handler's `instanceof` chain
+    // behaves here the way it does in production. The constructor mirrors the
+    // real one's shape (id + paths -> a message naming the state that needs
+    // an administrator) so the handler test can assert on a realistic
+    // message; the exact wording is asserted against the real class in
+    // content-store.test.ts.
+    DuplicateContentIdError: class DuplicateContentIdError extends MockContentConflictError {
+      constructor(contentId: string, paths: readonly string[]) {
+        super(
+          `Content ID ${contentId} is on more than one file (${paths.join(', ')}); ` +
+            `an administrator needs to resolve the duplicate on the server.`,
+        )
+      }
+    },
     getDefaultEntryType: (entries: Array<{ default?: boolean }> | undefined) =>
       entries && entries.length > 0 ? entries.find((e) => e.default) || entries[0] : undefined,
   }
@@ -179,6 +199,279 @@ describe('content api', () => {
     )
     expect(res.ok).toBe(false)
     expect(res.status).toBe(409)
+  })
+
+  // C2 (August 2026 baseline review): store.write() rejecting with an
+  // unrecognized error (ENOSPC, EACCES, a bug) is a genuine server fault,
+  // not the client's mistake, and must surface as a 500 - not get flattened
+  // to a 400 alongside real client faults (ContentStoreError).
+  describe('C2: write error classification', () => {
+    it('returns 500 (not 400) when store.write throws an error that is not a known ContentStoreError', async () => {
+      const ctx = allowedCtx()
+      const { ContentStore } = await import('../content-store')
+
+      const mockStore = {
+        resolvePath: vi.fn().mockReturnValue({
+          schemaItem: { logicalPath: 'content/posts', type: 'collection', entries: [] },
+          slug: 'hello',
+        }),
+        resolveDocumentPath: vi.fn().mockReturnValue({ relativePath: 'content/posts/hello' }),
+        write: vi.fn().mockRejectedValue(Object.assign(new Error('ENOSPC'), { code: 'ENOSPC' })),
+        idIndex: vi.fn().mockResolvedValue({ findById: vi.fn().mockReturnValue(null) }),
+        documentExists: vi.fn().mockResolvedValue(true),
+        getExistingEntryType: vi.fn().mockResolvedValue(undefined),
+        countEntriesOfType: vi.fn().mockResolvedValue(0),
+      }
+      vi.mocked(ContentStore).mockImplementationOnce(function () {
+        return mockStore as any
+      })
+
+      await expect(
+        writeContent(
+          ctx,
+          { user: { type: 'authenticated', userId: 'u1', groups: [] } },
+          { branch: unsafeAsBranchName('feature/x'), path: unsafeAsLogicalPath('posts/hello') },
+          { format: 'json', data: { title: 'hi' }, expectedVersion: 1 },
+        ),
+      ).rejects.toThrow('ENOSPC')
+    })
+
+    it('still returns 400 when store.write throws a ContentStoreError (unchanged client-fault behavior)', async () => {
+      const ctx = allowedCtx()
+      const { ContentStore, ContentStoreError } = await import('../content-store')
+
+      const mockStore = {
+        resolvePath: vi.fn().mockReturnValue({
+          schemaItem: { logicalPath: 'content/posts', type: 'collection', entries: [] },
+          slug: 'hello',
+        }),
+        resolveDocumentPath: vi.fn().mockReturnValue({ relativePath: 'content/posts/hello' }),
+        write: vi
+          .fn()
+          .mockRejectedValue(
+            new ContentStoreError('Slugs cannot contain forward slashes', 'VALIDATION'),
+          ),
+        idIndex: vi.fn().mockResolvedValue({ findById: vi.fn().mockReturnValue(null) }),
+        documentExists: vi.fn().mockResolvedValue(true),
+        getExistingEntryType: vi.fn().mockResolvedValue(undefined),
+        countEntriesOfType: vi.fn().mockResolvedValue(0),
+      }
+      vi.mocked(ContentStore).mockImplementationOnce(function () {
+        return mockStore as any
+      })
+
+      const res = await writeContent(
+        ctx,
+        { user: { type: 'authenticated', userId: 'u1', groups: [] } },
+        { branch: unsafeAsBranchName('feature/x'), path: unsafeAsLogicalPath('posts/hello') },
+        { format: 'json', data: { title: 'hi' }, expectedVersion: 1 },
+      )
+      expect(res.ok).toBe(false)
+      expect(res.status).toBe(400)
+      if (!res.ok) {
+        expect(res.error).toContain('Slugs cannot contain forward slashes')
+      }
+    })
+  })
+
+  // Create-intent guard (August 2026 baseline review, Critical finding): a
+  // create (expectedVersion: null) against a slug that already has content
+  // must never silently overwrite it.
+  describe('create-intent guard (expectedVersion: null)', () => {
+    it('returns 409 before validation or store.write when the slug already exists, even with no required fields', async () => {
+      const ctx = allowedCtx()
+      const { ContentStore } = await import('../content-store')
+
+      const writeSpy = vi.fn()
+      const mockStore = {
+        resolvePath: vi.fn().mockReturnValue({
+          // The destructive arm: an entry type with an EMPTY schema, so a
+          // stale required-fields validation would never have caught this.
+          schemaItem: {
+            logicalPath: 'content/posts',
+            type: 'collection',
+            entries: [{ name: 'post', format: 'json', schema: [] }],
+          },
+          slug: 'existing-post',
+        }),
+        resolveDocumentPath: vi
+          .fn()
+          .mockReturnValue({ relativePath: 'content/posts/existing-post' }),
+        write: writeSpy,
+        idIndex: vi.fn().mockResolvedValue({ findById: vi.fn().mockReturnValue(null) }),
+        documentExists: vi.fn().mockResolvedValue(true),
+        getExistingEntryType: vi.fn().mockResolvedValue(undefined),
+        countEntriesOfType: vi.fn().mockResolvedValue(0),
+      }
+      vi.mocked(ContentStore).mockImplementationOnce(function () {
+        return mockStore as any
+      })
+
+      const res = await writeContent(
+        ctx,
+        { user: { type: 'authenticated', userId: 'u1', groups: [] } },
+        {
+          branch: unsafeAsBranchName('feature/x'),
+          path: unsafeAsLogicalPath('posts/existing-post'),
+        },
+        { format: 'json', data: {}, expectedVersion: null },
+      )
+      expect(res.ok).toBe(false)
+      expect(res.status).toBe(409)
+      if (!res.ok) {
+        expect(res.error).toContain('already exists')
+      }
+      // The whole point of the fix: the destructive write must never be attempted.
+      expect(writeSpy).not.toHaveBeenCalled()
+    })
+
+    it('returns 409 (not the generic conflict message) when the slug already exists and the entry type HAS required fields', async () => {
+      // Guards the previous failure mode: with required fields, the old code
+      // returned a 422 ("title: This field is required") that never
+      // mentioned the real problem. The create-intent guard must short
+      // circuit before validation, regardless of the entry type's fields.
+      const ctx = allowedCtx()
+      const { ContentStore } = await import('../content-store')
+
+      const writeSpy = vi.fn()
+      const mockStore = {
+        resolvePath: vi.fn().mockReturnValue({
+          schemaItem: {
+            logicalPath: 'content/posts',
+            type: 'collection',
+            entries: [
+              {
+                name: 'post',
+                format: 'json',
+                schema: [{ name: 'title', type: 'text', required: true }],
+              },
+            ],
+          },
+          slug: 'existing-post',
+        }),
+        resolveDocumentPath: vi
+          .fn()
+          .mockReturnValue({ relativePath: 'content/posts/existing-post' }),
+        write: writeSpy,
+        idIndex: vi.fn().mockResolvedValue({ findById: vi.fn().mockReturnValue(null) }),
+        documentExists: vi.fn().mockResolvedValue(true),
+        getExistingEntryType: vi.fn().mockResolvedValue(undefined),
+        countEntriesOfType: vi.fn().mockResolvedValue(0),
+      }
+      vi.mocked(ContentStore).mockImplementationOnce(function () {
+        return mockStore as any
+      })
+
+      const res = await writeContent(
+        ctx,
+        { user: { type: 'authenticated', userId: 'u1', groups: [] } },
+        {
+          branch: unsafeAsBranchName('feature/x'),
+          path: unsafeAsLogicalPath('posts/existing-post'),
+        },
+        { format: 'json', data: {}, expectedVersion: null },
+      )
+      expect(res.ok).toBe(false)
+      expect(res.status).toBe(409)
+      if (!res.ok) {
+        expect(res.error).toContain('already exists')
+        expect(res.error).not.toContain('required')
+      }
+      expect(writeSpy).not.toHaveBeenCalled()
+    })
+
+    it('allows a create-intent write when the slug does not exist yet', async () => {
+      const ctx = allowedCtx()
+      const res = await writeContent(
+        ctx,
+        { user: { type: 'authenticated', userId: 'u1', groups: [] } },
+        { branch: unsafeAsBranchName('feature/x'), path: unsafeAsLogicalPath('posts/hello') },
+        { format: 'json', data: {}, expectedVersion: null },
+      )
+      expect(res.ok).toBe(true)
+    })
+
+    it('returns a slug-collision message (not the generic conflict message) when store.write races into a create-intent conflict', async () => {
+      const ctx = allowedCtx()
+      const { ContentStore, ContentConflictError } = await import('../content-store')
+
+      const mockStore = {
+        resolvePath: vi.fn().mockReturnValue({
+          schemaItem: { logicalPath: 'content/posts', type: 'collection', entries: [] },
+          slug: 'hello',
+        }),
+        resolveDocumentPath: vi.fn().mockReturnValue({ relativePath: 'content/posts/hello' }),
+        write: vi.fn().mockRejectedValue(new ContentConflictError()),
+        idIndex: vi.fn().mockResolvedValue({ findById: vi.fn().mockReturnValue(null) }),
+        // Pre-write check sees no document (the race window), so the early
+        // short circuit doesn't fire; store.write's in-lock check is what
+        // catches it.
+        documentExists: vi.fn().mockResolvedValue(false),
+        getExistingEntryType: vi.fn().mockResolvedValue(undefined),
+        countEntriesOfType: vi.fn().mockResolvedValue(0),
+      }
+      vi.mocked(ContentStore).mockImplementationOnce(function () {
+        return mockStore as any
+      })
+
+      const res = await writeContent(
+        ctx,
+        { user: { type: 'authenticated', userId: 'u1', groups: [] } },
+        { branch: unsafeAsBranchName('feature/x'), path: unsafeAsLogicalPath('posts/hello') },
+        { format: 'json', data: {}, expectedVersion: null },
+      )
+      expect(res.ok).toBe(false)
+      expect(res.status).toBe(409)
+      if (!res.ok) {
+        expect(res.error).toContain('already exists')
+        expect(res.error).not.toContain('modified by another editor')
+      }
+    })
+
+    it('[F1] surfaces the duplicate-content-ID refusal instead of the generic conflict message', async () => {
+      const ctx = allowedCtx()
+      const { ContentStore, DuplicateContentIdError } = await import('../content-store')
+
+      const duplicateError = new DuplicateContentIdError('a1b2c3d4e5f6', [
+        'content/posts/post.hello.a1b2c3d4e5f6.json',
+        'content/posts/post.other.a1b2c3d4e5f6.json',
+      ])
+      const mockStore = {
+        resolvePath: vi.fn().mockReturnValue({
+          schemaItem: { logicalPath: 'content/posts', type: 'collection', entries: [] },
+          slug: 'hello',
+        }),
+        resolveDocumentPath: vi.fn().mockReturnValue({ relativePath: 'content/posts/hello' }),
+        write: vi.fn().mockRejectedValue(duplicateError),
+        idIndex: vi.fn().mockResolvedValue({ findById: vi.fn().mockReturnValue(null) }),
+        documentExists: vi.fn().mockResolvedValue(true),
+        getExistingEntryType: vi.fn().mockResolvedValue(undefined),
+        countEntriesOfType: vi.fn().mockResolvedValue(0),
+      }
+      vi.mocked(ContentStore).mockImplementationOnce(function () {
+        return mockStore as unknown as InstanceType<typeof ContentStore>
+      })
+
+      const res = await writeContent(
+        ctx,
+        { user: { type: 'authenticated', userId: 'u1', groups: [] } },
+        { branch: unsafeAsBranchName('feature/x'), path: unsafeAsLogicalPath('posts/hello') },
+        { format: 'json', data: {}, expectedVersion: 123 },
+      )
+      expect(res.ok).toBe(false)
+      expect(res.status).toBe(409)
+      if (!res.ok) {
+        // The editor must be told what is actually wrong and who fixes it --
+        // "reload and retry" is advice that cannot work here.
+        expect(res.error).toBe(duplicateError.message)
+        expect(res.error).toContain('a1b2c3d4e5f6')
+        expect(res.error).toContain('administrator')
+        expect(res.error).not.toContain('modified by another editor')
+        // Must NOT name an action the editor's admin cannot actually run:
+        // no UI triggers repair-content-duplicates.
+        expect(res.error).not.toContain('repair-content-duplicates')
+      }
+    })
   })
 
   describe('validateEntry hook', () => {
@@ -408,6 +701,40 @@ describe('content api', () => {
       if (!res.ok) {
         expect(res.error).toContain('already exists')
       }
+    })
+
+    // C2 (August 2026 baseline review): mirrors the write-path fix above -
+    // an unrecognized store.renameEntry() error is a server fault and must
+    // surface as a 500, not get flattened to "Rename failed" / 400.
+    it('returns 500 (not 400) when store.renameEntry throws an error that is not a known ContentStoreError', async () => {
+      const ctx = allowedCtx()
+      const { ContentStore } = await import('../content-store')
+
+      const mockStore = {
+        resolvePath: vi.fn().mockReturnValue({
+          schemaItem: { logicalPath: 'content/posts', type: 'collection' },
+          slug: 'old-slug',
+        }),
+        resolveDocumentPath: vi.fn().mockReturnValue({ relativePath: 'content/posts/old-slug' }),
+        renameEntry: vi
+          .fn()
+          .mockRejectedValue(Object.assign(new Error('EACCES'), { code: 'EACCES' })),
+      }
+      vi.mocked(ContentStore).mockImplementationOnce(function () {
+        return mockStore as any
+      })
+
+      await expect(
+        renameEntry(
+          ctx,
+          { user: { type: 'authenticated', userId: 'u1', groups: [] } },
+          {
+            branch: unsafeAsBranchName('feature/x'),
+            path: unsafeAsLogicalPath('posts/old-slug'),
+          },
+          { newSlug: unsafeAsSlug('new-slug') },
+        ),
+      ).rejects.toThrow('EACCES')
     })
   })
 

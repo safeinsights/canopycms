@@ -1,4 +1,4 @@
-# `approved`: exit fixed; "is it vestigial?" and the delete rail still open
+# `approved`: exit and delete rail both fixed; only "is it vestigial?" is open
 
 ## Priority: P3 (was P2 — the dead end itself is fixed)
 
@@ -38,19 +38,27 @@ API call or a hand-edited `branch.json`. Either:
 Note the withdraw change above is compatible with either answer: if the literal
 is deleted, the `|| status === 'approved'` clauses go with it.
 
-**2. The delete rail still lets an approved branch with an open PR be deleted.**
-`api/branch.ts:572` blocks deletion only for `'submitted'`. If `approved` is
-kept, deletion should be blocked for it exactly as for `submitted`. This is now
-the only remaining destructive-exit asymmetry.
+~~**2. The delete rail still lets an approved branch with an open PR be
+deleted.** `api/branch.ts:572` blocks deletion only for `'submitted'`.~~
+**RESOLVED 2026-08-13** by `8bce5a09` ("a reviewed, approved branch could be
+destroyed by one unconfirmed click"), which landed later the same day this file
+was last edited — hence the stale text above. `api/branch.ts:637` now blocks
+deletion for `'submitted' || 'approved'`, with the reasoning recorded in-code at
+`:622-636`; a confirmation modal and a corrected delete tooltip were added
+client-side (`BranchManager.tsx:600-615`). No destructive-exit asymmetry remains.
 
 ## Files
 
-- `packages/canopycms/src/api/branch.ts:572` (delete rail — still open)
+- ~~`packages/canopycms/src/api/branch.ts:572` (delete rail)~~ → fixed, now
+  `api/branch.ts:637`
 - `packages/canopycms/src/api/branch-review.ts:19` (request-changes still
   requires `'submitted'`; deliberate — withdraw is the general exit)
+- `packages/canopycms/src/api/branch-review.ts:103` + `api/client.ts:124` —
+  `approveBranch` / `workflow.approve` exist server-side with **no editor caller**
+  (grep across `editor/` and `apps/`), which is the evidence for item 1
 
 ## Related
 
-- [[submitted-branch-edit-locking]] (resolved) — established the status lock
-- [[locked-branch-status-dead]] (resolved) — the decide-or-delete precedent
-- [[content-lifecycle-scenarios]] — owns the broader workflow/UX question
+- [submitted-branch-edit-locking](resolved/submitted-branch-edit-locking.md) (resolved) — established the status lock
+- [locked-branch-status-dead](resolved/locked-branch-status-dead.md) (resolved) — the decide-or-delete precedent
+- [content-lifecycle-scenarios](content-lifecycle-scenarios.md) — owns the broader workflow/UX question

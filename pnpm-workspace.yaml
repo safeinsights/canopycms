@@ -1,3 +1,23 @@
 packages:
   - 'packages/*'
   - 'apps/*'
+
+# Security pins for transitive dependencies (advisory remediation).
+#
+# MUST live here, not in package.json's "pnpm" field: pnpm 11 no longer reads
+# that field, and it does so SILENTLY - verified directly against 11.21.0, where
+# a package.json override resolved to the vulnerable transitive version and the
+# lockfile gained no `overrides:` section at all. Every entry below is a security
+# pin, so that failure mode is "advisories quietly come back", with no error to
+# notice. The repo is pinned to pnpm 10.12.1 via `packageManager` (honored by
+# pnpm/action-setup@v4 in CI), so this file is what keeps the pins working across
+# that upgrade whenever it happens.
+overrides:
+  ws: ^8.20.1
+  uuid: ^11.1.1
+  js-cookie: ^3.0.7
+  fast-xml-parser: ^5.7.0
+  brace-expansion: ^2.0.3
+  picomatch: ^4.0.4
+  postcss: ^8.5.10
+  'yaml@1': ^1.10.3

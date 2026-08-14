@@ -102,6 +102,11 @@ const createMockServices = () => ({
   },
   bootstrapAdminIds: new Set<string>(),
   refreshActiveBranch: vi.fn().mockResolvedValue(undefined),
+  // Internal groups are resolved via resolveCanopyUser -> getSettingsBranchRoot
+  // (see resolve-canopy-user.ts). The path doesn't need to exist: groups.json
+  // just won't be found there, which loadInternalGroups treats as "no custom
+  // groups" (fine for these tests, none of which assert on group content).
+  getSettingsBranchRoot: vi.fn().mockResolvedValue('/tmp/handler-test-mock-settings'),
 })
 
 describe('createCanopyRequestHandler', () => {
@@ -262,6 +267,120 @@ describe('createCanopyRequestHandler', () => {
     } finally {
       consoleSpy.restore()
     }
+  })
+
+  describe('settings-workspace failure', () => {
+    const failingSettingsServices = (bootstrapAdminIds = new Set<string>()) => {
+      const services: any = createMockServices()
+      services.bootstrapAdminIds = bootstrapAdminIds
+      services.getSettingsBranchRoot = vi
+        .fn()
+        .mockRejectedValue(
+          new Error(
+            "Settings workspace at /mnt/efs/workspace/.settings is on branch 'canopycms-settings-old', expected 'canopycms-settings'",
+          ),
+        )
+      return services
+    }
+
+    it('503s an ordinary route and names the settings branch so the operator can act', async () => {
+      const consoleSpy = mockConsole()
+      try {
+        const handler = createCanopyRequestHandler({
+          services: failingSettingsServices(),
+          authPlugin: createMockAuthPlugin(),
+          getBranchContext: async () => null,
+        })
+
+        const response = await handler(createMockRequest(), ['branches'])
+
+        expect(response.status).toBe(503)
+        const error = (response.body as { error?: string }).error ?? ''
+        expect(error).toContain('Settings workspace unavailable')
+        // The diagnostic that survives path redaction, and the one that
+        // identifies a deploymentName drift: the branch the deployment
+        // EXPECTS, resolved the same way the workspace resolves it.
+        expect(error).toContain("settings branch 'canopycms-settings-local'")
+        expect(error).not.toContain('/mnt/efs')
+      } finally {
+        consoleSpy.restore()
+      }
+    })
+
+    // The recovery surface must survive the failure it exists to repair -
+    // matching the base-branch-corruption decision made in the same function.
+    it('keeps /admin reachable for a bootstrap admin instead of 503ing it', async () => {
+      const consoleSpy = mockConsole()
+      try {
+        const handler = createCanopyRequestHandler({
+          services: failingSettingsServices(new Set(['test-user'])),
+          authPlugin: createMockAuthPlugin(),
+          getBranchContext: async () => null,
+        })
+
+        const req = createMockRequest({
+          url: 'http://localhost:3000/api/canopycms/admin/status',
+        })
+        const response = await handler(req, ['admin', 'status'])
+
+        expect(response.status).not.toBe(503)
+        expect(consoleSpy).toHaveErrored(/recovery endpoints stay reachable/)
+      } finally {
+        consoleSpy.restore()
+      }
+    })
+
+    // The two below DO NOT FLIP RED against the pre-fix handler, which 503'd
+    // everything unconditionally. They are guards on the new degraded path
+    // staying privilege-monotonic, not coverage of the fixed defect.
+    it('still 503s /admin for a user whose admin rights would have come from the unreadable groups', async () => {
+      const consoleSpy = mockConsole()
+      try {
+        const handler = createCanopyRequestHandler({
+          // No bootstrap admins: this user's privileges, if any, live in the
+          // settings workspace that just failed to load, so there is nothing
+          // to degrade TO and the 503 is the more useful answer than a 403.
+          services: failingSettingsServices(),
+          authPlugin: createMockAuthPlugin(),
+          getBranchContext: async () => null,
+        })
+
+        const req = createMockRequest({
+          url: 'http://localhost:3000/api/canopycms/admin/status',
+        })
+        const response = await handler(req, ['admin', 'status'])
+
+        expect(response.status).toBe(503)
+      } finally {
+        consoleSpy.restore()
+      }
+    })
+
+    it('does not let the degraded path grant a non-admin any access to /admin', async () => {
+      const consoleSpy = mockConsole()
+      try {
+        const handler = createCanopyRequestHandler({
+          services: failingSettingsServices(new Set(['someone-else'])),
+          authPlugin: createMockAuthPlugin({
+            type: 'authenticated',
+            userId: 'test-user',
+            // Claiming the reserved group externally must not work here any
+            // more than it does on the normal path (SEC-H1).
+            groups: [ADMINS],
+          }),
+          getBranchContext: async () => null,
+        })
+
+        const req = createMockRequest({
+          url: 'http://localhost:3000/api/canopycms/admin/status',
+        })
+        const response = await handler(req, ['admin', 'status'])
+
+        expect(response.status).toBe(503)
+      } finally {
+        consoleSpy.restore()
+      }
+    })
   })
 
   it('returns 401 for unauthenticated requests', async () => {

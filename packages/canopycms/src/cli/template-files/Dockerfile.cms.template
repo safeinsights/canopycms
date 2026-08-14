@@ -16,7 +16,16 @@ RUN mkdir -p public
 # Build-time content reads (generateStaticParams / prerendering) run in dev
 # mode -- never set CANOPY_MODE=prod for `next build`: prod-mode build reads
 # would try to open a branch workspace (EFS remote.git) that cannot exist in
-# the image builder. Dev-mode reads require the project to be a git
+# the image builder.
+#
+# CANOPY_MODE is read at RUN time by resolveOperatingMode
+# (canopycms/src/operating-mode/mode-env.ts) and wins over the `mode` literal
+# in canopycms.config.ts, which is why leaving it unset here is the whole
+# trick: the same image builds in dev mode and then runs in prod mode, because
+# CanopyCmsService sets CANOPY_MODE=prod on the Lambda. Do not "fix" the config
+# file to say prod -- that would break this build.
+#
+# Dev-mode reads require the project to be a git
 # repository, and .git is excluded from the build context by .dockerignore --
 # so synthesize a single-commit repo from the copied files. node_modules
 # (created by the install step above) is excluded via .git/info/exclude - an
@@ -33,6 +42,15 @@ ENV CANOPY_BUILD=cms
 # publishable key is public material, so it's safe to bake into image layers.
 ARG NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY
 ENV NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=$NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY
+# The browser needs the operating mode too: the editor page is a client
+# component that imports canopycms.config.ts, so its copy of `mode` is whatever
+# was inlined at build time -- a runtime Lambda variable can never reach it.
+# Left as dev by default (the default target of a plain `docker build`); the
+# generated CDK stack passes `prod` as a build arg. Distinct from CANOPY_MODE
+# above on purpose: this one is read only in the browser, so setting it here
+# does NOT put the build's own server-side content reads into prod mode.
+ARG NEXT_PUBLIC_CANOPY_MODE=dev
+ENV NEXT_PUBLIC_CANOPY_MODE=$NEXT_PUBLIC_CANOPY_MODE
 RUN {{DOCKER_BUILD}}
 
 FROM public.ecr.aws/docker/library/node:20-slim AS runner

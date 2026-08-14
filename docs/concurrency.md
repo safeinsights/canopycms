@@ -68,11 +68,35 @@ cross-host lost update is tolerable — and today no store settles for OCC alone
 `proper-lockfile` mkdir-based locks: acquisition is atomic **at the NFS server**,
 immune to client caching, auto-refreshed while the holder lives (`stale` recovers from
 crashed holders). `withOccFileLock` is tuned for brief metadata writes;
-`acquireProvisioningLock` for long build-time provisioning.
+`acquireProvisioningLock` for long build-time provisioning;
+`utils/content-write-lock.ts` for content writes vs. the worker's rebase (below).
 
 _Guarantee:_ genuine cross-process, cross-host mutual exclusion. _Cost:_ extra fs
 round-trips per acquisition — reserve it for writes where a lost update is
-unacceptable (branch status/ACLs, user comments), not for every file touch.
+unacceptable (branch status/ACLs, user comments, content files against a rebase), not
+for every file touch, and never on a read path.
+
+_Caveat, stated plainly:_ staleness is judged by reading the lock directory's mtime
+with `fs.stat`, which on EFS is served through the **NFS attribute cache**. A live
+holder refreshes every `stale`/2, but a waiter can read a cached mtime, conclude the
+lock is stale, and take it over while the holder is very much alive. So this layer is
+_mutual exclusion in the normal case_, not a proof. Where it matters, note that the
+failure mode of a bad takeover is whatever the code did before the lock existed — that
+is what makes adding it a strict improvement rather than a guarantee to build further
+assumptions on.
+
+**Anchor path matters.** proper-lockfile keys its module-level `locks{}` bookkeeping
+(refresh timer, release fn) by the **target path** passed to `lock()`, not by
+`lockfilePath`. Two locks in one process that pass the same target alias each other
+even with different lock names — which is why `withOccFileLock` locks the FILE rather
+than its directory, and why the content-write lock anchors on
+`{branchRoot}/.canopy-meta` instead of the provisioning lock's
+`path.dirname(branchRoot)`, and why the settings-workspace init lock anchors on its own
+`{workspaceRoot}/.settings-init` rather than `path.dirname(settingsRoot)` — which is
+`{workspaceRoot}`, the very target `ensureLocalSimulatedRemote` passes, and which settings
+init calls into while holding its lock. (Known consequence, not yet addressed: the
+provisioning locks for different branches all pass the shared content-branches directory
+and so already share one registry key.)
 
 ### 4. Generation markers for regenerating caches — `resource-generation.ts`
 
@@ -118,7 +142,7 @@ over anything the old code wrote; the window closes when the old processes drain
 
 | Resource (file under the workspace)                                               | Mutex (1)           | OCC (2)    | Lockfile (3)                                                                           | Marker (4)                                    | Notes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 | --------------------------------------------------------------------------------- | ------------------- | ---------- | -------------------------------------------------------------------------------------- | --------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Content entries (`content/**`)                                                    | ✔ content-ID keys   | —          | —                                                                                      | `content-index` bump on own writes            | Wrong-file writes prevented by the existence guard in `ContentStore.write()`; slug creates take a per-slug create key                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| Content entries (`content/**`)                                                    | ✔ content-ID keys   | —          | ✔ `.canopy-meta/content-write.lock`                                                    | `content-index` bump on own writes            | Wrong-file writes prevented by the existence guard in `ContentStore.write()`; slug creates take a per-slug create key. The lockfile is [SYNC-C1] cross-host exclusion against the worker's rebase loop, taken by `write`/`delete`/`renameEntry` (never by reads) — see "Content writes vs. the rebase loop" below                                                                                                                                                                                                                                                                                                                                                                        |
 | ContentId index (in-memory per store)                                             | rebuild dedup       | —          | —                                                                                      | ✔ reader protocol in `ContentStore.idIndex()` | Suspicious-lookup backstop; window E stays in-memory (never persisted)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | Branch registry (`branches.json` at baseRoot)                                     | regen dedup         | —          | —                                                                                      | ✔ `branch-registry`                           | Durable snapshot: eager regen in `invalidate()`, `get()` miss backstop                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | Schema cache (`.canopy-meta/schema-cache.json`)                                   | — (disk-only cache) | —          | —                                                                                      | ✔ `schema`                                    | Durable snapshot: mutating request re-reads immediately (same-host coherent); dev-only mtime walk for hand edits                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
@@ -128,6 +152,7 @@ over anything the old code wrote; the window closes when the old processes drain
 | Settings files (`{settingsRoot}/permissions.json`, `groups.json`)                 | ✔ path key          | ✔ advisory | ✔                                                                                      | —                                             | Authorization data, but git-committed on the settings branch: a merge can rewrite `version`, so OCC is defense only — the lockfile is the guarantee; commit+push stays outside the lock (authorization/settings-file-store.ts)                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
 | Collection meta (`content/**/.collection.json`)                                   | ✔ surrogate key     | —          | ✔ `.canopy-meta/schema`                                                                | `schema` bump after mutation                  | Adopter-visible git-committed file: deliberately NO OCC fields (rebases rewrite them; crash-leftover OCC temp files would enter `git add .` at publish). One coarse per-branch surrogate lock spans each full read-modify-write, incl. multi-file mutations; CLI migrate takes the same lock, but only inside branch clones (schema/schema-store.ts)                                                                                                                                                                                                                                                                                                                                     |
 | Workspace provisioning                                                            | —                   | —          | ✔ provisioning-lock                                                                    | —                                             | Parallel build workers provisioning the same clone                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| Settings workspace init (`{settingsRoot}`, clone + orphan checkout)               | ✔ single module key | —          | ✔ provisioning-lock at `{workspaceRoot}/.settings-init`                                | — (`skipIndexMarker`)                         | Two Lambda containers cold-starting together would otherwise both clone into one directory, and a loser arriving mid-clone could `rm -rf` a half-written `.git`. The loser now WAITS and finds the workspace done. Orthogonal to the lock: the lock-free rename guard that refuses `checkout --orphan` + `rm -rf .` on a populated workspace whose settings-branch name changed — see the History section (settings-workspace.ts)                                                                                                                                                                                                                                                        |
 | Branch purge (admin `POST /admin/branch-dirs/:dirName/purge`)                     | —                   | —          | ✔ provisioning-lock (zero-retry `tryAcquireProvisioningLock`) + ✔ branch.json lockfile | `branch-registry` invalidated after rename    | Double hold, both taken before the rename: the provisioning lock rejects (409, no retry) a genuinely in-flight provisioner; the branch.json lockfile — the SAME lock every metadata `save()` takes — closes the window where a concurrent repair-metadata `save()` resurrects branch.json mid-purge. Rename-only (`.trash-{dirName}-{STAMP}`), never deletes — see the trash-dir row below (api/admin-branch-health.ts, branch-health.ts)                                                                                                                                                                                                                                                |
 | Branch repair-metadata (admin `POST /admin/branch-dirs/:dirName/repair-metadata`) | —                   | —          | ✔ branch.json lockfile (archive-rename only)                                           | registry bumped by the subsequent `save()`    | `withOccFileLock` is NOT reentrant and `save()` takes it internally, so the lock is acquired only to rename the corrupt `branch.json` → `branch.json.corrupt-{STAMP}`, then released (exiting the callback) BEFORE `save()` runs and recreates defaults through its normal lock+OCC stack — calling `save()` while still holding would deadlock (api/admin-branch-health.ts)                                                                                                                                                                                                                                                                                                             |
 | Trashed branch dirs (`.trash-{dirName}-{STAMP}`)                                  | —                   | —          | —                                                                                      | —                                             | Reversible holding area for purge, not itself lock/OCC/marker-protected. Retention age comes ONLY from the STAMP embedded in the directory name, never mtime (`fs.rename` preserves the source dir's original mtime, so an mtime-based check would delete a months-stale orphan's trash on the first pass). Only the worker's `cleanupTrashedBranchDirs()` deletes, once per `syncGit()` cycle, sweeping stamps older than 30 days; purge itself never deletes (worker/cms-worker.ts)                                                                                                                                                                                                    |
@@ -146,6 +171,64 @@ write/delete/rename bump the marker directly via `recordOwnMutation()` ->
 markers entirely (`skipIndexMarker` on GitManager); their two mutable files follow the
 mutable-JSON recipe instead (see the table row and
 `authorization/settings-file-store.ts`).
+
+## Content writes vs. the rebase loop [SYNC-C1]
+
+The worker's `rebaseActiveBranches()` (worker/cms-worker.ts) and Lambda's `ContentStore`
+mutate the **same branch working tree** on shared EFS. Content files had only the
+in-process mutex, which does not cross that boundary, and the loop's "skip dirty
+branches" check is plain check-then-act. Its old comment claimed the residual window was
+safe because a racing save would make `git rebase` fail — true only for a save landing
+**before** the rebase starts. After that (a window spanning fetch, replay and N conflict
+rounds of git subprocesses on EFS) the save is destroyed two ways:
+
+- `git checkout --theirs <file>` overwrites the just-saved working-tree content with the
+  branch's committed version and stages it — **the rebase then succeeds and nothing logs
+  a failure at all**; and
+- `git rebase --abort` hard-resets the tree, discarding it.
+
+Either way the editor already received a 200. That is an acknowledged write rolled back
+with no error on either side — which is why "no writes to the wrong file" was never a
+sufficient statement of write-path safety.
+
+The fix is one server-enforced lock per branch root
+(`utils/content-write-lock.ts`, layer 3), used **asymmetrically**, because the worker
+retries every branch automatically each sync cycle (~5 min) while the editor is a person
+waiting on a save:
+
+- **The worker yields.** It acquires with zero retries
+  (`tryAcquireContentWriteLock`) _before_ the dirty check — so that check is itself
+  inside the lock — and holds it across the whole rebase, every conflict round, and any
+  `--abort`, releasing in a `finally` so a throw cannot strand it. On contention it logs,
+  records the branch in the cycle summary's `skippedLocked` (surfaced in
+  `worker-status.json` and the admin panel, alongside `skippedDirty`), and retries next
+  cycle. The refresh heartbeat is a timer on the worker's event loop and every git step
+  is an awaited subprocess, so it keeps firing for the length of the hold.
+- **Writers wait, briefly, then fail loudly.** `write`/`delete`/`renameEntry` wrap their
+  existing `withLock` critical section in the lock with a short bounded wait
+  (`DEFAULT_CONTENT_WRITE_LOCK_WAIT_MS`, 2s; retrying only on `ELOCKED`). A rebase holds
+  the lock far longer than any wait an interactive save can absorb, so the wait exists to
+  absorb handoff and short holds — everything longer becomes `BranchSyncingError` (a
+  `ContentConflictError` subclass, so every existing 409 mapping keeps working) whose
+  message says the branch is busy (syncing, or another save in flight) and to retry,
+  rather than blaming another editor. The message names both causes because the lock has
+  both: it is per-branch-root, so this is the **writer-vs-writer** budget as well as the
+  rebase one, and every write to a branch now serializes behind it where in-process
+  serialization used to be per-entry.
+- **Reads never take it.** An EFS round-trip on every read is not an acceptable price,
+  and a read racing a rebase gets an older or newer file, never a destroyed one.
+
+Acquisition order is always content lock → `withLock`, never the reverse. The lock
+anchors on `{branchRoot}/.canopy-meta` (git-excluded, so the marker can never dirty the
+tree or land in a publish commit) — deliberately a different proper-lockfile target from
+the provisioning lock, per the aliasing note in layer 3.
+
+**Residual (accepted):** the stale-takeover caveat in layer 3 applies here too — a
+waiter reading a cached mtime can take the lock from a live rebase. The result is
+exactly the pre-lock behavior for that one window, so this is a strict improvement and
+not a guarantee that an acknowledged write can never be rolled back. Not covered by this
+lock: schema mutations (`SchemaOps`, incl. `deleteCollection`) and asset writes, which
+touch the working tree through their own paths.
 
 ## Residual staleness windows (accepted, bounded)
 
@@ -169,8 +252,48 @@ Named A/B/C/E for continuity with the original analysis
   matters.
 
 All are bounded by per-request store lifetimes, throttled backstops, and the next
-mutation's bump. None cause _writes_ to the wrong file — write-path corruption is
-prevented independently (existence guard, ID locks, server-enforced locks).
+mutation's bump. None of them cause a write to land in the wrong _file_ — that is
+prevented independently (existence guard, ID locks, server-enforced locks, and the
+duplicate-ID guard below). Read that narrowly: "the right file" is not the same as
+"the write survives". Until [SYNC-C1] above, a correctly-targeted, already-acknowledged
+write could still be rolled back wholesale by the worker's rebase; the lock closes that,
+subject to the stale-takeover caveat noted there.
+
+## Duplicate content IDs vs. the write path [F1]
+
+A duplicate embedded content ID (rename-crash debris, or a merge landing two files that
+share one ID) is **quarantined, not fatal**: `ContentIdIndex.buildFromFilenames()` keeps
+one deterministic winner (string-MIN of the relative paths, so every host agrees) and
+drops the loser from the index, recording it for `branch-health` and the
+`repair-content-duplicates` admin action.
+
+Quarantine is an **index** decision and nothing more. It is tempting — and was, briefly,
+written down as fact — to describe the dropped file as inert until an admin repairs it.
+It is not: slugs resolve by directory scan (`ContentStore.buildPaths()`), which knows
+nothing about the quarantine, so the dropped file stays fully addressable by
+collection+slug and a stale editor tab can still save to it.
+
+That is a hazard specifically for `write()`, because its post-write index repair reads
+"the index puts this ID somewhere else" as "the slug changed" and `unlink`s that other
+path. With a duplicate, that other path is a **different document** — so the save
+silently deleted the kept file and returned 200. Now `write()` refuses first, with
+`DuplicateContentIdError` (a `ContentConflictError` subclass → 409 carrying its own
+message, naming both files and the repair action). Two independent detections, because
+neither alone is sufficient: the index's own quarantine record (catches a duplicate in
+another directory, and ID-addressed writes to a fresh third path, but needs a fresh
+index), and a disk check that the write's target **and** the indexed path both exist
+right now (freshness-independent, covers the ordinary slug-addressed save). A third,
+in-directory scan in the `existingId` existence guard refuses when two files there carry
+the ID, so that guard can no longer pass or 409 depending on `readdir()` order.
+
+`delete()` and `renameEntry()` are deliberately **not** blocked: each only ever touches
+the file the caller addressed (they look the entry up by path, and the dropped path is
+not in the index at all), so neither can lose the kept file — and leaving them open
+means a duplicate can still be cleaned up by hand without an admin.
+
+**The rule this generalizes to:** an index is a hint about where an ID lives, never
+authority to delete. Before removing a path you derived from the index rather than from
+the caller's own request, prove the ID identifies exactly one file.
 
 ## Recipes
 
@@ -202,12 +325,18 @@ churn — relying on layers 1+3 via a coarse per-branch surrogate lock at
 (`schema/schema-store.ts`'s `withSchemaLock`).
 
 **Bulk tree mutation** (anything git-like that rewrites many files): call
-`invalidateBranchContentCaches(branchRoot)` after the mutation completes.
+`invalidateBranchContentCaches(branchRoot)` after the mutation completes — and if it
+rewrites the working tree of a branch editors can write to (checkout/merge/rebase/reset),
+take the content-write lock around it too (`withContentWriteLock`, or
+`tryAcquireContentWriteLock` if your caller can retry later). Cache invalidation tells
+readers the tree changed; only the lock stops a concurrent save from being reverted by
+it.
 
 **Never do:** counters in marker files (lost-update prone); `writeFile({flag:'wx'})`
 for exclusive creates (not crash-atomic); trusting a post-rename read-back across
 hosts; locking on physical paths that a rename can invalidate; a fixed sleep as a
-cross-host correctness mechanism.
+cross-host correctness mechanism; deleting a file the caller did not address because
+an in-memory index says its ID moved (see [F1] above).
 
 ## Testing patterns
 
@@ -229,6 +358,11 @@ All in use today; copy them rather than inventing new ones:
   corruption against the pre-fix code (stash the fix, run, restore).
 
 ## History
+
+August 2026 (baseline review, [SYNC-C1]): content files gained cross-process write
+exclusion against the worker's rebase loop (`utils/content-write-lock.ts`) — see
+"Content writes vs. the rebase loop" above. Before it, content entries were the one
+mutable resource class relying on the in-process mutex alone.
 
 Designed across PR #94 (ContentId index marker) and the July 2026 EFS cross-process
 concurrency epic (PRs #111–#116: shared primitives, branch-registry GIT-M1,
@@ -254,21 +388,47 @@ name; a mismatch throws instead of letting `GitManager.initializeWorkspace` proc
 `checkout --orphan` + `rm -rf .` on a populated workspace (orphan branches share no
 history, so that sequence is not recoverable).
 
-**The safety here comes from the guard, not from a lock — and that is deliberate.**
-`ensureGitWorkspace` does hold a bespoke pair of locks (in-memory plus a file-based
-`O_CREAT|O_EXCL` one), local to settings-workspace.ts and not one of the four numbered
-layers above; it predates this change and is not yet cataloged in the table below. But
-that pair does **not** gate the destructive path: `acquireFileLock`'s return value is
-read only to decide whether to _release_ in the `finally`, and
-`GitManager.initializeWorkspace` is called unconditionally. A process that loses the
-lock proceeds into init anyway — the pre-existing concurrent-init design, which the code
-comment defends. The identity check is therefore run **lock-free on purpose**, precisely
-_because_ the un-locked process continues: gating the check on `acquired` would let that
-process wipe a populated workspace.
+**The rename refusal comes from the guard, not from a lock — and that is deliberate.**
+The guard runs **lock-free, before** any lock is acquired, and again **under** the lock
+before init. It is never gated on winning a race: a deployment whose resolved
+settings-branch name no longer matches the workspace on disk is misconfigured, not
+contended, so it must refuse immediately rather than queue behind a live provisioner
+(which can legitimately hold the lock for minutes on a slow EFS clone). The re-run under
+the lock exists because the lock-free sample can go stale while waiting — the previous
+holder may have created the workspace, or moved it onto _its_ settings branch, after we
+looked — and acting on that stale sample is exactly the destructive path.
 
-> ⚠️ `acquired` looks unused at a glance, and "align the code with the docs by gating the
-> guard on it" reads as an obvious tidy-up in review. It would remove the only real
-> protection against an unrecoverable wipe. See
-> [`.claude/future-tasks/settings-workspace-init-lock-uncatalogued.md`](../.claude/future-tasks/settings-workspace-init-lock-uncatalogued.md),
-> which also tracks cataloguing the bespoke pair and the open question of whether the
-> lock-free guard is sufficient on its own.
+> ⚠️ Do not "simplify" this by running the identity check only once, under the lock, or
+> by gating it on any "did I acquire it" flag. Both readings have been proposed before;
+> see
+> [`.claude/future-tasks/settings-workspace-init-lock-uncatalogued.md`](../.claude/future-tasks/resolved/settings-workspace-init-lock-uncatalogued.md)
+> for the history of that trap.
+
+**August 2026 (baseline review, B2): the settings-workspace init lock became a real
+lock.** It used to be a bespoke pair — an in-memory promise plus a file-based
+`O_CREAT|O_EXCL` marker with a fixed 30s mtime staleness window — and the file-based half
+synchronized nothing: its return value was read _only_ to decide whether to release in
+the `finally`, so a process that lost the race proceeded into
+`GitManager.initializeWorkspace` anyway, concurrently with the holder. Since
+`initializeWorkspace` is only _sequentially_ idempotent, two concurrent cold starts on an
+empty settings root both cloned into the same directory ("could not create work tree dir
+… File exists"), and a loser that arrived mid-clone could classify the half-written
+`.git` as corrupt and `rm -rf` it out from under the in-flight clone. The bespoke lock had
+two further defects: two waiters could both judge it stale and both `unlink` it (no
+inode/content identity check, so the second deletes a _fresh_ lock), and it was never
+refreshed, so an init slower than 30s — an ordinary EFS clone — had its lock stolen.
+
+It is now layer 3, `acquireProvisioningLock`, exactly as `branch-workspace.ts` uses for
+content clones: server-enforced acquisition, heartbeat-refreshed while the holder lives
+(so a slow clone is not mistaken for a crash), and patient jittered retries so the loser
+**waits** and then finds the workspace already initialized. That waiting is the design
+change — the old comment defended the loser proceeding; it no longer does.
+
+Its anchor path is deliberately its own dot-directory,
+`{workspaceRoot}/.settings-init` (`settingsInitLockTarget()`), for two reasons. It cannot
+live inside the settings root, because `acquireProvisioningLock` mkdir's its target and
+`git clone` refuses a destination with content in it. And per the aliasing note in layer
+3, it must not equal any other proper-lockfile target: `path.dirname(settingsRoot)` is
+`{workspaceRoot}`, which is precisely the target `ensureLocalSimulatedRemote` passes for
+`.remote-init.lock` — and settings init calls into that while holding this lock, so
+anchoring there would have two live locks sharing one registry key in one process.

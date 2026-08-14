@@ -68,12 +68,33 @@ export interface UseEntryManagerReturn {
   renameEntry: (path: string, newSlug: string) => Promise<void>
   loadEntry: (entry: EditorEntry) => Promise<FormValue>
   saveEntry: (entry: EditorEntry, value: FormValue) => Promise<FormValue>
+  /**
+   * The OCC version token currently held for `contentId` ON THE BRANCH BEING
+   * SHOWN, or undefined when none is known (never loaded/saved on this branch,
+   * or the server didn't send a version). Branch-qualified internally, exactly
+   * like the token lookup `saveEntry` performs, so callers can't accidentally
+   * read another branch's mtime.
+   *
+   * Exposed so useDraftManager can pin the server version a draft was based on
+   * and detect, before a save goes out, that the token has moved on since (the
+   * cross-session case: a draft restored from localStorage, then a fresh load
+   * that captured a NEWER token, which would otherwise sail through the
+   * server's conflict check and revert whoever wrote that newer version).
+   */
+  getEntryVersion: (contentId: string) => number | undefined
   collectionByPath: Map<LogicalPath, EditorCollection>
   // Entry create modal state
   createModalOpen: boolean
   createModalCollection: EditorCollection | null
   createModalError: string | null
   createModalCreating: boolean
+  /**
+   * Slugs already taken in `createModalCollection`, derived from the
+   * already-loaded `entries` list. Lets the create modal reject an obvious
+   * collision client-side with a clear message, before ever hitting the
+   * server's authoritative 409 guard (August 2026 baseline review).
+   */
+  createModalExistingSlugs: Set<string>
   handleCreateModalSubmit: (slug: string, entryTypeName: string) => Promise<void>
   closeCreateModal: () => void
 }
@@ -283,6 +304,19 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
     [entriesState, selectedPath],
   )
 
+  // Slugs already used within the collection currently open in the create
+  // modal. Collision is keyed on collectionPath + slug only (not entryType):
+  // ContentStore resolves an existing entry by slug alone within a
+  // collection, regardless of which entry type the create form has selected.
+  const createModalExistingSlugs = useMemo(() => {
+    if (!createModalCollection) return new Set<string>()
+    return new Set(
+      entriesState
+        .filter((e) => e.collectionPath === createModalCollection.path && e.slug)
+        .map((e) => e.slug as string),
+    )
+  }, [entriesState, createModalCollection])
+
   const loadEntry = async (entry: EditorEntry) => {
     if (!entry.collectionPath) {
       throw new Error('Entry missing collectionPath')
@@ -304,6 +338,12 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
     }
     return normalizeContentPayload(result.data)
   }
+
+  // Read side of the same branch-qualified token map `saveEntry` writes/reads.
+  // Deliberately keyed off the CURRENT branch (not a pinned one): callers use
+  // it to reason about the entry they are looking at right now.
+  const getEntryVersion = (contentId: string): number | undefined =>
+    entryVersionsRef.current.get(versionKey(options.branchName, contentId))
 
   const saveEntry = async (entry: EditorEntry, value: FormValue) => {
     if (!entry.collectionPath) {
@@ -411,9 +451,15 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
       const selectedType = createModalCollection.entryTypes?.find((et) => et.name === entryTypeName)
       const format = selectedType?.format || createModalCollection.format
 
+      // expectedVersion: null is the create-intent signal the server
+      // enforces authoritatively (see content-store.ts's write() OCC block
+      // and api/content.ts's writeContentHandler) -- "this slug must not
+      // already exist yet". Without it a create is indistinguishable from a
+      // blind update, which used to let a same-slug create silently
+      // overwrite existing content (August 2026 baseline review).
       const payload = isDataOnlyFormat(format)
-        ? { format: format as 'json' | 'yaml', data: {} }
-        : { format, data: {}, body: '' }
+        ? { format: format as 'json' | 'yaml', data: {}, expectedVersion: null }
+        : { format, data: {}, body: '', expectedVersion: null }
 
       // Use collection path (e.g., "content/posts") not name (e.g., "posts")
       const path = `${createModalCollection.path}/${slug}`
@@ -687,11 +733,13 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
     renameEntry,
     loadEntry,
     saveEntry,
+    getEntryVersion,
     collectionByPath: collectionByPath,
     createModalOpen,
     createModalCollection,
     createModalError,
     createModalCreating,
+    createModalExistingSlugs,
     handleCreateModalSubmit,
     closeCreateModal,
   }

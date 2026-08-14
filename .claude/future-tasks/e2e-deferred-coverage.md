@@ -50,7 +50,7 @@ prod-only guard behaviour generally. Overlaps [dual-build-ci.md](resolved/dual-b
 
 - **C10** crop step (canvas drag; crop math is unit-tested), **C11** MDX image
   dialog (blocked on
-  [markdownfield-mdxeditor-mount-flake.md](markdownfield-mdxeditor-mount-flake.md)),
+  [markdownfield-mdxeditor-mount-flake.md](resolved/markdownfield-mdxeditor-mount-flake.md)),
   **C12** SVG sanitize / sniff / size caps (pure server pipeline), **C9**
   admin-only asset delete, **D4** OCC 409 on concurrent settings save
   (see [settings-conflict-resolution-ux.md](settings-conflict-resolution-ux.md)),

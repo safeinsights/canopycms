@@ -7,7 +7,7 @@
 > — that file is deleted and its distinct framing folded in here.
 
 Found 2026-08-12 while adding CDK assertion tests for
-[[worker-log-timestamps]]: the new test passed locally, and then I checked
+[worker-log-timestamps](worker-log-timestamps.md): the new test passed locally, and then I checked
 whether CI would ever have run it. It would not.
 
 ## Problem
@@ -121,7 +121,7 @@ nothing checking it.
 
 **Failures are reported per package (`--no-bail`).** `pnpm -r run test` stops at
 the first failing package, and pnpm runs topologically with `canopycms` first —
-so a flake there (see [[markdownfield-mdxeditor-mount-flake]], which reproduced
+so a flake there (see [markdownfield-mdxeditor-mount-flake](markdownfield-mdxeditor-mount-flake.md), which reproduced
 twice during this work) would have masked the very deploy-template assertions
 this change exists to enforce. The root `test` script now passes `--no-bail`.
 Verified by planting a deliberately failing test in `canopycms`: without the
@@ -199,4 +199,4 @@ fixtures (~3s) even when `dist/` is current. Worth it to kill the
 
 ## Related
 
-[[worker-log-timestamps]] — the task whose new CDK test surfaced this.
+[worker-log-timestamps](worker-log-timestamps.md) — the task whose new CDK test surfaced this.

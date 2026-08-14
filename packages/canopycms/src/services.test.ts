@@ -41,8 +41,8 @@ function createMockGitInstance(overrides?: {
     add: vi.fn().mockResolvedValue(undefined),
     commit: vi.fn().mockResolvedValue(undefined),
     push: overrides?.push ?? vi.fn(),
-    // GitManager.push()/forcePush() route through raw() so --end-of-options can
-    // guard the positional refspec (SEC-H2); mock it here for those paths.
+    // GitManager.push() routes through raw() so --end-of-options can guard
+    // the positional refspec (SEC-H2); mock it here for that path.
     raw: overrides?.raw ?? vi.fn().mockResolvedValue(''),
     revparse: vi.fn().mockResolvedValue('main'),
     ...overrides?.extra,
@@ -722,5 +722,78 @@ describe('commitToSettingsBranch', () => {
     // push() now goes through raw(['push', ...]) to place --end-of-options
     // before the positional refspec (SEC-H2 guard).
     expect(rawMock).toHaveBeenCalledWith(expect.arrayContaining(['push', '--end-of-options']))
+  })
+
+  // The pull used to be wrapped in a blanket catch that logged EVERY failure as
+  // "normal for first commit". Combined with pullCurrentBranch merging a ref
+  // that cannot exist in a --single-branch clone, that meant the settings pull
+  // failed on every call and said so nowhere.
+  it('surfaces a real merge failure instead of logging it as "normal for first commit"', async () => {
+    const consoleSpy = mockConsole()
+    const mergeMock = vi
+      .fn()
+      .mockRejectedValue(new Error('fatal: refusing to merge unrelated histories'))
+    const mock = createMockGitInstance({
+      currentBranch: 'canopycms-settings-prod',
+      fetch: vi.fn().mockResolvedValue(undefined),
+      extra: {
+        merge: mergeMock,
+        revparse: vi.fn().mockResolvedValue('deadbeefdeadbeefdeadbeefdeadbeefdeadbeef'),
+        status: vi
+          .fn()
+          .mockResolvedValue({ files: [], conflicted: [], current: 'canopycms-settings-prod' }),
+      },
+    })
+    await installMockGit(mock)
+
+    const cfg = defineCanopyTestConfig({ schema: testSchema, mode: 'prod' })
+    const services = await createTestServices({ ...cfg, schema: testSchema })
+
+    const result = await services.commitToSettingsBranch({
+      branchRoot: '/tmp/repo',
+      files: 'permissions.json',
+      message: 'Update permissions',
+    })
+
+    expect(result.committed).toBe(false)
+    expect(result.error).toMatch(/unrelated histories/)
+    expect(consoleSpy.all().info.join('\n')).not.toMatch(/normal for the first settings commit/)
+  })
+
+  it('still treats "remote has no ref yet" as the benign first-commit case', async () => {
+    const consoleSpy = mockConsole()
+    const mergeMock = vi.fn().mockResolvedValue(undefined)
+    const mock = createMockGitInstance({
+      currentBranch: 'canopycms-settings-prod',
+      // No ref on the remote yet: git fetch fails, which GitManager turns into
+      // GitRemoteRefMissingError.
+      fetch: vi.fn().mockRejectedValue(new Error("fatal: couldn't find remote ref")),
+      extra: {
+        merge: mergeMock,
+        addConfig: vi.fn().mockResolvedValue(undefined),
+        listConfig: vi.fn().mockResolvedValue({
+          all: {
+            'canopycms.managed': 'true',
+            'user.name': 'Test Bot',
+            'user.email': 'bot@test.com',
+          },
+        }),
+      },
+    })
+    await installMockGit(mock)
+
+    const cfg = defineCanopyTestConfig({ schema: testSchema, mode: 'prod' })
+    const services = await createTestServices({ ...cfg, schema: testSchema })
+
+    const result = await services.commitToSettingsBranch({
+      branchRoot: '/tmp/repo',
+      files: 'permissions.json',
+      message: 'Update permissions',
+      createPR: false,
+    })
+
+    expect(result.committed).toBe(true)
+    expect(mergeMock).not.toHaveBeenCalled()
+    expect(consoleSpy.all().info.join('\n')).toMatch(/normal for the first settings commit/)
   })
 })

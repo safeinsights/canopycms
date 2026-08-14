@@ -51,4 +51,4 @@ The rows are also a curation call for whoever owns the program document.
 
 ## Related
 
-- [[production-readiness-program]] — the hub whose sequencing reads these tables.
+- [production-readiness-program](../production-readiness-program.md) — the hub whose sequencing reads these tables.

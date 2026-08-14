@@ -298,6 +298,36 @@ describe('applyTransform - decompression-bomb input cap', () => {
   })
 })
 
+describe('applyTransform - C3: q= is honoured even without f=', () => {
+  /** Gaussian noise so JPEG re-encode size is actually quality-sensitive (a flat color compresses to ~the same size at any quality). */
+  async function makeNoisyJpeg(width: number, height: number): Promise<Uint8Array> {
+    const buf = await sharp({
+      create: {
+        width,
+        height,
+        channels: 3,
+        background: { r: 128, g: 128, b: 128 },
+        noise: { type: 'gaussian', mean: 128, sigma: 40 },
+      },
+    })
+      .jpeg({ quality: 100 })
+      .toBuffer()
+    return new Uint8Array(buf)
+  }
+
+  it('a low q= produces a visibly smaller re-encode than a high q= when no f= is given', async () => {
+    const data = await makeNoisyJpeg(200, 200)
+    const low = await applyTransform({ data, ext: 'jpg' }, resize({ quality: 30 }))
+    const high = await applyTransform({ data, ext: 'jpg' }, resize({ quality: 95 }))
+    expect(low.ok).toBe(true)
+    expect(high.ok).toBe(true)
+    if (!low.ok || !high.ok) return
+    // Before the fix, q= was dropped on the no-f= path, so both re-encodes
+    // used sharp's default jpeg quality and came out the same size.
+    expect(low.data.byteLength).toBeLessThan(high.data.byteLength)
+  })
+})
+
 describe('applyTransform - output size cap', () => {
   it('rejects an encoded output that exceeds the 10 MiB cap', async () => {
     const data = await makePng(20, 20, [1, 1, 1])

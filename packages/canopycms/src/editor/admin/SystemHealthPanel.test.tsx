@@ -11,6 +11,7 @@ import { SystemHealthPanel } from './SystemHealthPanel'
 import type { AdminStatusData, AdminTasksData } from '../../api/admin'
 import type { Task } from '../../task-queue'
 import type { BranchHealthEntry } from '../../branch-health'
+import { unsafeAsContentId, unsafeAsPhysicalPath } from '../../paths/test-utils'
 
 // Mock the API client module (both useApiClient() and useSystemHealth() must
 // resolve to the same mock client instance) -- same pattern as
@@ -252,6 +253,25 @@ describe('SystemHealthPanel', () => {
         },
       },
     }
+    const healthyWithDuplicateIds: BranchHealthEntry = {
+      dirName: 'feature-dupes',
+      kind: 'healthy',
+      branch: {
+        name: 'feature-dupes',
+        status: 'editing',
+        access: {},
+        createdBy: 'user-1',
+        createdAt: '2026-01-01T00:00:00.000Z',
+        updatedAt: '2026-01-02T00:00:00.000Z',
+      },
+      duplicateContentIds: [
+        {
+          id: unsafeAsContentId('a1b2c3d4e5f6'),
+          keptPath: unsafeAsPhysicalPath('content/posts/one.md'),
+          droppedPaths: [unsafeAsPhysicalPath('content/notes/one.md')],
+        },
+      ],
+    }
     const corruptEntry: BranchHealthEntry = {
       dirName: 'broken-branch',
       kind: 'corrupt-metadata',
@@ -296,6 +316,7 @@ describe('SystemHealthPanel', () => {
             editingWithRebaseFailure,
             submittedWithStaleRebaseFailure,
             archivedWithStaleRebaseFailure,
+            healthyWithDuplicateIds,
             corruptEntry,
             corruptWithFreshLock,
             baseBranchCorrupt,
@@ -320,6 +341,19 @@ describe('SystemHealthPanel', () => {
       expect(screen.getAllByText('corrupt metadata').length).toBeGreaterThanOrEqual(1)
       expect(screen.getByText('orphan-young')).toBeTruthy()
       expect(screen.getByText('orphan-old')).toBeTruthy()
+    })
+
+    // The editor's 409 says an administrator must resolve the duplicate; this
+    // is the only place an administrator can see which branch is affected.
+    it('surfaces duplicate content IDs on a healthy branch, read-only', async () => {
+      renderPanel()
+      await userEvent.click(screen.getByText('Branches'))
+
+      await waitFor(() => expect(screen.getByText('feature-dupes')).toBeTruthy())
+      const badge = screen.getByTestId('duplicate-content-ids-feature-dupes')
+      expect(badge.textContent).toBe('1 duplicate ID')
+      // No repair control here: the action would sit beside Purge.
+      expect(screen.queryByTestId('repair-content-duplicates-feature-dupes')).toBeNull()
     })
 
     it('shows Mark merged only for submitted/approved branches with a PR, and confirms the prod verification gap', async () => {

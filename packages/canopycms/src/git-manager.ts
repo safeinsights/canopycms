@@ -14,7 +14,7 @@ import { invalidateBranchContentCaches } from './content-index-generation'
 import type { OperatingMode } from './operating-mode'
 import { createDebugLogger } from './utils/debug'
 import { getErrorMessage, isNotFoundError } from './utils/error'
-import { isNetworkRemoteUrl, resolveBaseBranch } from './utils/git'
+import { isMissingRemoteRefFailure, isNetworkRemoteUrl, resolveBaseBranch } from './utils/git'
 import { acquireProvisioningLock } from './utils/provisioning-lock'
 
 const log = createDebugLogger({ prefix: 'GitManager' })
@@ -194,6 +194,31 @@ export class GitConflictError extends Error {
   constructor(public readonly conflictedFiles: string[]) {
     super(`Git conflict in ${conflictedFiles.length} file(s): ${conflictedFiles.join(', ')}`)
     this.name = 'GitConflictError'
+  }
+}
+
+/**
+ * The branch has no ref on the remote yet, so there is nothing to pull.
+ *
+ * Distinguishing this from a real pull failure matters: it is the ONLY benign
+ * outcome of `pullCurrentBranch`, and callers that want to shrug it off (a
+ * settings branch's first-ever commit, see services.ts `commitToSettingsBranch`)
+ * must not shrug off merge failures with it. Everything else — a merge that
+ * cannot proceed, a corrupt workspace, an unreachable remote — is a genuine
+ * error the caller has to surface.
+ */
+export class GitRemoteRefMissingError extends Error {
+  constructor(
+    public readonly branch: string,
+    public readonly remote: string,
+    /**
+     * The underlying git failure. A separate field rather than `Error.cause`:
+     * the build targets ES2021, whose `Error` constructor takes no options bag.
+     */
+    public readonly gitError?: unknown,
+  ) {
+    super(`Remote '${remote}' has no ref for branch '${branch}' yet`)
+    this.name = 'GitRemoteRefMissingError'
   }
 }
 
@@ -492,8 +517,8 @@ export class GitManager {
    * --list` instead of `rev-parse --verify --quiet`: simple-git only fails a
    * task on stderr output, and `--quiet` suppresses exactly that).
    * `--end-of-options` guards the ref-name positionals the same way
-   * `push`/`forcePush` below do, since `branch` here can be a sanitized but
-   * otherwise caller-influenced string.
+   * `push` below does, since `branch` here can be a sanitized but otherwise
+   * caller-influenced string.
    *
    * A failure here therefore means the remote itself is unreadable and is
    * surfaced, NOT treated as "branch absent" — that would route
@@ -1138,9 +1163,36 @@ export class GitManager {
   private async pullCurrentBranchInner(): Promise<void> {
     const branches = await this.git.branch()
     const currentBranch = branches.current
-    await this.git.fetch(this.remote, currentBranch)
     try {
-      await this.git.merge([`${this.remote}/${currentBranch}`])
+      await this.git.fetch(this.remote, currentBranch)
+    } catch (err) {
+      // The only benign failure here: the branch has never been pushed, so the
+      // remote has no ref to fetch ("couldn't find remote ref"). Typed so
+      // callers can tell it apart from a genuine pull failure instead of
+      // catch-all-ing both (see services.ts commitToSettingsBranch).
+      //
+      // CLASSIFIED, not assumed. Wrapping every fetch failure in this type
+      // handed callers the one error that means "nothing to pull" for an
+      // unreachable remote, an auth denial or a corrupt object store too --
+      // and commitToSettingsBranch logs that as "normal for the first
+      // settings commit" and carries on. A type whose docstring promises a
+      // narrow condition must only be constructed for that condition.
+      if (!isMissingRemoteRefFailure(getErrorMessage(err))) throw err
+      throw new GitRemoteRefMissingError(currentBranch, this.remote, err)
+    }
+    // Merge the just-fetched tip (pinned to a SHA), not <remote>/<current>:
+    // this is the pullBaseInner constraint again, and it bites HARDER here.
+    // Workspaces are cloned --single-branch, and a settings workspace is
+    // cloned at the BASE branch and then checked out onto its orphan settings
+    // branch — so `<remote>/<current>` is a ref that can never exist, and
+    // merging it failed on every single call (making the settings pull a
+    // permanent no-op). FETCH_HEAD is pinned immediately after the fetch that
+    // populated it because it is a shared mutable file any other fetch in this
+    // clone can repoint. Third occurrence of this bug shape in this file — see
+    // pullBaseInner, rebaseOntoBaseInner, and the worker's rebase loop.
+    const fetchedTip = (await this.git.revparse(['FETCH_HEAD'])).trim()
+    try {
+      await this.git.merge([fetchedTip])
     } catch (err) {
       try {
         const status = await this.git.status()
@@ -1208,6 +1260,54 @@ export class GitManager {
     ])
   }
 
+  /**
+   * Check whether the local branch has commits the remote mirror doesn't
+   * have -- i.e. whether push() would actually move the remote ref forward.
+   *
+   * Exists so callers (submitBranch) can gate pushing on "is there anything
+   * new to send" rather than on "is the working tree dirty": committing
+   * cleans the tree, so a dirty-tree gate around commit+push skips the push
+   * entirely on a retry after a failed push, even though the just-created
+   * commit never reached the remote (see services.ts submitBranch).
+   *
+   * Workspaces are cloned `--single-branch`, so the remote-tracking ref for
+   * any branch other than the one cloned never exists locally -- same
+   * constraint pullBaseInner works around. This fetches the specific branch
+   * directly (bypassing the configured single-branch refspec, exactly like
+   * pullBaseInner) and pins the result to FETCH_HEAD's SHA immediately after
+   * the fetch that populated it, rather than trusting `<remote>/<branch>`:
+   * FETCH_HEAD is a shared mutable file that any other fetch in this clone
+   * can repoint before it's read.
+   *
+   * A branch that has never been pushed has no ref on the remote at all --
+   * `git fetch` then fails ("couldn't find remote ref"), which this treats
+   * as "ahead" (needs pushing) rather than an error.
+   */
+  async hasUnpushedCommits(branch?: string): Promise<boolean> {
+    // `--end-of-options` before every caller-influenced ref name, the same
+    // guard (and for the same reason) as push() above: names are sanitized
+    // upstream, but this file's stated rule is that the positional is guarded
+    // where it is passed, not where it was validated.
+    const target = branch ?? (await this.git.revparse(['--abbrev-ref', '--end-of-options', 'HEAD']))
+    const localSha = (await this.git.revparse(['--end-of-options', target])).trim()
+    let fetchedTip: string
+    try {
+      await this.git.raw(['fetch', '--end-of-options', this.remote, target])
+      fetchedTip = (await this.git.revparse(['--end-of-options', 'FETCH_HEAD'])).trim()
+    } catch {
+      // No ref on the remote yet -- the branch has never been pushed.
+      return true
+    }
+    if (fetchedTip === localSha) return false
+    // Commits reachable from the local tip but not from the remote's tip --
+    // robust to both the ordinary "local is ahead" case and a diverged
+    // mirror, unlike a bare SHA-inequality check.
+    const aheadCount = (
+      await this.git.raw(['rev-list', '--count', `${fetchedTip}..${localSha}`])
+    ).trim()
+    return aheadCount !== '0'
+  }
+
   async ensureAuthor(author: { name: string; email: string }): Promise<void> {
     const config = (await this.git.listConfig()) as ConfigListSummary
 
@@ -1272,16 +1372,6 @@ export class GitManager {
   async getUncommittedFiles(): Promise<string[]> {
     const status = await this.status()
     return status.files.map((f) => f.path)
-  }
-
-  /**
-   * Force push (use with caution - for PR updates only)
-   * Uses --force-with-lease for safer force pushes
-   */
-  async forcePush(branch?: string): Promise<void> {
-    const target = branch ?? (await this.git.revparse(['--abbrev-ref', 'HEAD']))
-    // See push() above for why raw() + --end-of-options is used here.
-    await this.git.raw(['push', '--force-with-lease', '--end-of-options', this.remote, target])
   }
 
   /**

@@ -1,15 +1,28 @@
-import { cleanup, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { userEvent } from '@testing-library/user-event'
 import React, { useState } from 'react'
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { FieldConfig } from '../config'
+import { primitiveFieldTypes } from '../config'
+import { validateEntryData } from '../validation/entry-validator'
 import type { FormValue } from './FormRenderer'
 import { FormRenderer } from './FormRenderer'
 import { TextField } from './fields/TextField'
 import { CanopyCMSProvider } from './theme'
 import type { MockApiClient } from '../api/__test__/mock-client'
 import { setupMockApiClient, createApiClientWrapper } from './hooks/__test__/test-utils'
+
+// Preload the chunk MarkdownField's React.lazy() imports (the 'markdown' and
+// 'mdx' cases both render MarkdownField). Without this the mount assertion
+// below also silently measures how long vitest takes to transform
+// @mdxeditor/editor, which made it fail under full-suite contention while
+// passing whenever this project ran alone. Static import puts the module in
+// vitest's registry during THIS file's import phase, so React.lazy resolves
+// from cache on the first microtask and the assertion measures only the
+// product. See fields/MarkdownField.test.tsx, which does the same for the
+// same reason.
+import '@mdxeditor/editor'
 
 // ImageField (the 'image' field case) reads the API client via context DI -
 // mock the factory module so createApiClientWrapper's ApiClientProvider and
@@ -372,6 +385,252 @@ describe('FormRenderer', () => {
         </CanopyCMSProvider>,
       )
       expect(screen.getByText('Image alt text is required')).toBeTruthy()
+    })
+  })
+
+  describe("'number' field type", () => {
+    it('renders NumberField, not the "Unsupported field" fallback', () => {
+      const fields: FieldConfig[] = [{ name: 'price', type: 'number', label: 'Price' }]
+      render(
+        <CanopyCMSProvider>
+          <FormRenderer fields={fields} value={{}} onChange={() => {}} />
+        </CanopyCMSProvider>,
+      )
+      expect(screen.getByLabelText('Price')).toBeTruthy()
+      expect(screen.queryByText(/Unsupported field/)).toBeNull()
+    })
+
+    it('updates form state when edited, and the value survives a save round-trip', async () => {
+      const user = userEvent.setup()
+      const fields: FieldConfig[] = [{ name: 'price', type: 'number', label: 'Price' }]
+      render(<StatefulForm fields={fields} initialValue={{ price: 5 }} />)
+
+      const input = screen.getByLabelText('Price') as HTMLInputElement
+      expect(input.value).toBe('5')
+      await user.clear(input)
+      await user.type(input, '42')
+
+      const state = JSON.parse(screen.getByTestId('form-state').textContent ?? '{}')
+      expect(state.price).toBe(42)
+    })
+
+    it('does not coerce an empty input to 0, and does not treat 0 as absent', async () => {
+      const user = userEvent.setup()
+      const fields: FieldConfig[] = [
+        { name: 'count', type: 'number', label: 'Count', required: true },
+      ]
+      render(<StatefulForm fields={fields} initialValue={{}} />)
+
+      const input = screen.getByLabelText('Count') as HTMLInputElement
+      await user.type(input, '0')
+      let state = JSON.parse(screen.getByTestId('form-state').textContent ?? '{}')
+      expect(state.count).toBe(0)
+      // 0 is a valid value for a required numeric field - not "empty".
+      expect(validateEntryData(fields, state)).toEqual([])
+
+      await user.clear(input)
+      state = JSON.parse(screen.getByTestId('form-state').textContent ?? '{}')
+      expect(state.count).toBeUndefined()
+      // An emptied input must read as "missing", not silently become 0.
+      expect(validateEntryData(fields, state)).toEqual([
+        { fieldPath: 'count', message: 'This field is required' },
+      ])
+    })
+
+    it('a required number field can be filled and saved (previously permanently unsaveable)', async () => {
+      const user = userEvent.setup()
+      const fields: FieldConfig[] = [
+        { name: 'price', type: 'number', label: 'Price', required: true },
+      ]
+      render(<StatefulForm fields={fields} initialValue={{}} />)
+
+      // Before any input, the required field correctly fails validation...
+      expect(validateEntryData(fields, {})).not.toEqual([])
+
+      // ...and the form actually provides a way to fill it in.
+      const input = screen.getByLabelText('Price')
+      await user.type(input, '19.99')
+
+      const state = JSON.parse(screen.getByTestId('form-state').textContent ?? '{}')
+      expect(validateEntryData(fields, state)).toEqual([])
+    })
+
+    it('handles the list: true variant like StringListField does for strings', () => {
+      const fields: FieldConfig[] = [
+        { name: 'scores', type: 'number', label: 'Scores', list: true },
+      ]
+      render(<StatefulForm fields={fields} initialValue={{ scores: [1, 2] }} />)
+
+      // TagsInput-based list field, same DOM contract as StringListField.
+      const input = document.querySelector('input[data-canopy-field="scores"]') as HTMLInputElement
+      expect(input).toBeTruthy()
+      expect(screen.getByText('1')).toBeTruthy()
+      expect(screen.getByText('2')).toBeTruthy()
+
+      fireEvent.change(input, { target: { value: '3' } })
+      fireEvent.keyDown(input, { key: 'Enter' })
+
+      const state = JSON.parse(screen.getByTestId('form-state').textContent ?? '{}')
+      expect(state.scores).toEqual([1, 2, 3])
+    })
+
+    it('customRenderers overrides the default control for a top-level number field', () => {
+      const fields: FieldConfig[] = [{ name: 'price', type: 'number', label: 'Price' }]
+      render(
+        <StatefulForm
+          fields={fields}
+          initialValue={{ price: 5 }}
+          customRenderers={{
+            number: ({ value }) => <div data-testid="custom-number">{String(value)}</div>,
+          }}
+        />,
+      )
+      expect(screen.getByTestId('custom-number').textContent).toBe('5')
+      expect(screen.queryByLabelText('Price')).toBeNull()
+    })
+  })
+
+  describe("'datetime' field type", () => {
+    it('renders a native datetime-local input, not the "Unsupported field" fallback', () => {
+      const fields: FieldConfig[] = [
+        { name: 'publishedAt', type: 'datetime', label: 'Published At' },
+      ]
+      render(
+        <CanopyCMSProvider>
+          <FormRenderer fields={fields} value={{}} onChange={() => {}} />
+        </CanopyCMSProvider>,
+      )
+      const input = screen.getByLabelText('Published At') as HTMLInputElement
+      expect(input.type).toBe('datetime-local')
+      expect(screen.queryByText(/Unsupported field/)).toBeNull()
+    })
+
+    it('updates form state when edited, and the value survives a save round-trip', () => {
+      const fields: FieldConfig[] = [
+        { name: 'publishedAt', type: 'datetime', label: 'Published At' },
+      ]
+      render(<StatefulForm fields={fields} initialValue={{}} />)
+
+      const input = screen.getByLabelText('Published At') as HTMLInputElement
+      fireEvent.change(input, { target: { value: '2024-06-15T04:30:00' } })
+
+      // The expectation is DERIVED from the same local wall-clock the input
+      // carries, never hardcoded. A datetime-local value is local time, so the
+      // ISO string it converts to depends on the runner's timezone: hardcoding
+      // one asserts the author's machine. The first version of this test did
+      // exactly that and passed locally (UTC-6) while failing in CI's UTC by
+      // precisely six hours -- which is also why a green local suite could not
+      // catch it. `new Date(y, monthIndex, ...)` constructs in local time, so
+      // this stays correct in every zone, including ones with a half-hour
+      // offset or a DST boundary.
+      const expectedIso = new Date(2024, 5, 15, 4, 30, 0).toISOString()
+
+      const state = JSON.parse(screen.getByTestId('form-state').textContent ?? '{}')
+      expect(state.publishedAt).toBe(expectedIso)
+    })
+
+    it('a required datetime field can be filled and saved (previously permanently unsaveable)', () => {
+      const fields: FieldConfig[] = [
+        { name: 'publishedAt', type: 'datetime', label: 'Published At', required: true },
+      ]
+      render(<StatefulForm fields={fields} initialValue={{}} />)
+
+      expect(validateEntryData(fields, {})).not.toEqual([])
+
+      const input = screen.getByLabelText('Published At') as HTMLInputElement
+      fireEvent.change(input, { target: { value: '2024-06-15T04:30:00' } })
+
+      const state = JSON.parse(screen.getByTestId('form-state').textContent ?? '{}')
+      expect(validateEntryData(fields, state)).toEqual([])
+    })
+  })
+
+  // Retargeted from the since-removed 'rich-text' type, which was only ever an
+  // alias for this one. Keeping the assertions here is deliberate: they are the
+  // only direct coverage that the markdown editor renders through FormRenderer.
+  describe("'markdown' field type", () => {
+    let mockClient: MockApiClient
+    let wrapper: ReturnType<typeof createApiClientWrapper>
+
+    beforeEach(async () => {
+      mockClient = await setupMockApiClient()
+      wrapper = createApiClientWrapper(mockClient)
+    })
+
+    it('renders the markdown editor (same component as "mdx"), not the "Unsupported field" fallback', () => {
+      const fields: FieldConfig[] = [{ name: 'body', type: 'markdown', label: 'Body' }]
+      const Wrapper = wrapper
+      render(
+        <CanopyCMSProvider>
+          <Wrapper>
+            <FormRenderer
+              fields={fields}
+              value={{ body: 'Existing content' }}
+              onChange={() => {}}
+            />
+          </Wrapper>
+        </CanopyCMSProvider>,
+      )
+      // Synchronous first render, before the MDXEditor chunk loads: the
+      // readonly fallback textarea shows the existing value (proving it
+      // round-trips from storage into the form), never the "Unsupported
+      // field" text.
+      expect(screen.getByPlaceholderText('Loading markdown editor...')).toBeTruthy()
+      expect(screen.getByDisplayValue('Existing content')).toBeTruthy()
+      expect(screen.queryByText(/Unsupported field/)).toBeNull()
+    })
+
+    it('mounts a real, editable control once the editor chunk loads (not stuck on the readonly fallback)', async () => {
+      const fields: FieldConfig[] = [{ name: 'body', type: 'markdown', label: 'Body' }]
+      const Wrapper = wrapper
+      render(
+        <CanopyCMSProvider>
+          <Wrapper>
+            <FormRenderer fields={fields} value={{ body: '' }} onChange={() => {}} />
+          </Wrapper>
+        </CanopyCMSProvider>,
+      )
+      await waitFor(() => expect(document.querySelector('[contenteditable="true"]')).toBeTruthy())
+    })
+
+    it('a required markdown field can be filled and saved', () => {
+      const fields: FieldConfig[] = [
+        { name: 'body', type: 'markdown', label: 'Body', required: true },
+      ]
+      expect(validateEntryData(fields, {})).not.toEqual([])
+      expect(validateEntryData(fields, { body: 'Hello world' })).toEqual([])
+    })
+  })
+
+  describe('primitive field type coverage (config <-> renderer drift guard)', () => {
+    let mockClient: MockApiClient
+    let wrapper: ReturnType<typeof createApiClientWrapper>
+
+    beforeEach(async () => {
+      mockClient = await setupMockApiClient()
+      wrapper = createApiClientWrapper(mockClient)
+    })
+
+    it('renders something other than the "Unsupported field" fallback for every primitiveFieldTypes entry', () => {
+      // Guards against config/types.ts's primitiveFieldTypes and this
+      // switch drifting apart again (the bug this file's new tests were
+      // written for: number/datetime, and the since-removed rich-text, fell
+      // through to the "Unsupported field" default, making required fields of
+      // those types permanently unsaveable).
+      const fields: FieldConfig[] = primitiveFieldTypes.map((type) => ({
+        name: `field_${type.replace(/[^a-zA-Z0-9]/g, '_')}`,
+        type,
+        label: `Field ${type}`,
+      }))
+      const Wrapper = wrapper
+      render(
+        <CanopyCMSProvider>
+          <Wrapper>
+            <FormRenderer fields={fields} value={{}} onChange={() => {}} />
+          </Wrapper>
+        </CanopyCMSProvider>,
+      )
+      expect(screen.queryByText(/Unsupported field/)).toBeNull()
     })
   })
 })

@@ -11,7 +11,7 @@ import {
   loadPathPermissions,
   type ContentAccessChecker,
 } from './authorization'
-import { GitManager, GitConflictError } from './git-manager'
+import { GitManager, GitRemoteRefMissingError } from './git-manager'
 import { BranchRegistry } from './branch-registry'
 import { SettingsWorkspaceManager } from './settings-workspace'
 import { getDefaultBranchBase, sanitizeBranchName } from './paths'
@@ -324,9 +324,21 @@ async function _createCanopyServicesInternal(
     })
     await git.checkoutBranch(options.context.branch.name)
     const status = await git.status()
+    // Commit and push are gated on two DIFFERENT questions. Committing
+    // cleans the working tree, so gating the push on "tree is dirty" (as a
+    // single combined check) makes a retry after a failed push a silent
+    // no-op: the earlier commit already cleaned the tree, so the retry sees
+    // nothing to commit, skips the whole block, and reports success even
+    // though the commit never reached the remote. Push instead whenever
+    // there's something new to send -- we just committed, or the local
+    // branch already had unpushed commits from an earlier failed attempt.
+    let committed = false
     if (status.files.length > 0) {
       await git.add('.')
       await git.commit(options.message ?? `Submit ${options.context.branch.name}`)
+      committed = true
+    }
+    if (committed || (await git.hasUnpushedCommits(options.context.branch.name))) {
       await git.push(options.context.branch.name)
     }
   }
@@ -379,9 +391,20 @@ async function _createCanopyServicesInternal(
       try {
         await git.pullCurrentBranch()
       } catch (err) {
-        if (err instanceof GitConflictError) throw err
-        // First push, no remote branch yet, or no changes to pull
-        console.info('No remote settings branch changes to pull (this is normal for first commit)')
+        // Only ONE outcome here is benign: the settings branch has never been
+        // pushed, so the remote has no ref to pull. Anything else — a
+        // GitConflictError, a merge that cannot proceed, a broken workspace —
+        // must surface (the outer catch turns it into an error result).
+        // A blanket catch here previously logged every failure as "normal for
+        // first commit", which is how pullCurrentBranch could stay broken on
+        // every call without anyone noticing: the settings branch then silently
+        // never converged with the remote, and each save reported
+        // `committed: true, pushed: false` from the push below, forever.
+        if (!(err instanceof GitRemoteRefMissingError)) throw err
+        console.info(
+          'CanopyCMS: settings branch has no remote ref yet, nothing to pull ' +
+            '(normal for the first settings commit)',
+        )
       }
 
       // Commit
@@ -405,6 +428,20 @@ async function _createCanopyServicesInternal(
 
       // Create or update PR — dual-path like content branches (api/github-sync.ts)
       if (options.createPR !== false) {
+        // Both permissions and groups are read live from the settings
+        // workspace (getSettingsBranchRoot) — never from this PR's base
+        // branch — so the change already took effect the moment it was
+        // committed and pushed above, before this PR even exists. Merging
+        // does not (re-)activate anything; it only records the change on
+        // `base` for review/audit history. Previously worded as "will be
+        // persisted when this PR is merged", which implied merging was what
+        // made the change durable/live — false for both settings files, and
+        // for groups specifically the read side didn't even look at this
+        // branch until that bug was fixed (see resolve-canopy-user.ts).
+        const settingsPRBody =
+          'Automated PR for permission and group changes. These changes already took ' +
+          'effect in the CMS when they were saved — merging this PR does not change ' +
+          "what's live; it only records the change here for review and audit history."
         // Direct path: githubService available (has internet)
         if (githubService) {
           let prUrl: string | undefined
@@ -417,7 +454,7 @@ async function _createCanopyServicesInternal(
               head: settingsBranch,
               base: config.defaultBaseBranch ?? 'main',
               title: 'Update permissions and groups',
-              body: 'Automated PR for permission and group changes. Changes are already active in the CMS and will be persisted when this PR is merged.',
+              body: settingsPRBody,
             })
             prUrl = result.url
           } catch (err) {
@@ -436,7 +473,7 @@ async function _createCanopyServicesInternal(
               branch: settingsBranch,
               baseBranch: config.defaultBaseBranch ?? 'main',
               title: 'Update permissions and groups',
-              body: 'Automated PR for permission and group changes. Changes are already active in the CMS and will be persisted when this PR is merged.',
+              body: settingsPRBody,
             },
           })
           return { committed: true, pushed: true, syncStatus: 'pending-sync' }

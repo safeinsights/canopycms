@@ -8,6 +8,10 @@
 
 import { CanopyConfigSchema } from './schemas/config'
 import { normalizePathValue } from './flatten'
+// Leaf module, NOT the `operating-mode` barrel: the barrel re-exports the
+// client-unsafe strategy (node:fs/node:path) and this file is reachable from
+// `canopycms/client` (the generated editor page imports the adopter's config).
+import { resolveOperatingMode } from '../operating-mode/mode-env'
 import type { CanopyConfig } from './types'
 
 /**
@@ -193,6 +197,15 @@ export const ensureNoGroupsInsideComplexFields = (fields: unknown): void => {
  * Performs Zod validation and normalizes paths. Field-shape validation for
  * entry schemas runs at `createEntrySchemaRegistry` time.
  *
+ * `mode` is resolved through `resolveOperatingMode` here rather than taken
+ * verbatim from the parsed config: one `canopycms.config.ts` is shared by
+ * local dev, the image build and the deployment, so the deployed value has to
+ * come from the environment. This is the single point every documented
+ * config-authoring path (`defineCanopyConfig`, `composeCanopyConfig`) funnels
+ * through, so the override cannot be bypassed by picking a different helper.
+ * The Zod schema still REQUIRES `mode` — the override replaces a declared
+ * value, it never supplies a missing one (SEC-C1).
+ *
  * @param config - Raw configuration input
  * @returns Validated and normalized CanopyConfig
  * @throws Error if validation fails
@@ -202,6 +215,7 @@ export const validateCanopyConfig = (config: unknown): CanopyConfig => {
   const normalized = {
     ...parsed,
     contentRoot: normalizePathValue(parsed.contentRoot ?? 'content'),
+    mode: resolveOperatingMode(parsed.mode),
   }
 
   return normalized as CanopyConfig

@@ -1,6 +1,6 @@
 import React from 'react'
 
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 
 import { SWRConfig } from 'swr'
@@ -92,6 +92,10 @@ afterEach(() => {
   cleanup()
   vi.restoreAllMocks()
   vi.unstubAllGlobals()
+  // Drafts persist under `canopycms:drafts:<branch>` and every test in this
+  // file uses branch "main", so without this a draft written by one test would
+  // be restored by the next one's mount.
+  window.localStorage.clear()
 })
 
 const okJson = (data: unknown, status = 200) =>
@@ -99,6 +103,22 @@ const okJson = (data: unknown, status = 200) =>
     status,
     headers: { 'Content-Type': 'application/json' },
   })
+
+/**
+ * Read the persisted draft map for a branch, tolerating BOTH the legacy bare
+ * `Record<contentId, FormValue>` shape and the current `{ v, drafts,
+ * baseVersions }` envelope, so the assertion is about which entries have
+ * drafts -- not about the serialization format.
+ */
+const readPersistedDrafts = (branch: string): Record<string, unknown> => {
+  const raw = window.localStorage.getItem(`canopycms:drafts:${branch}`)
+  if (!raw) return {}
+  const parsed: unknown = JSON.parse(raw)
+  if (parsed && typeof parsed === 'object' && 'drafts' in parsed) {
+    return (parsed as { drafts: Record<string, unknown> }).drafts
+  }
+  return parsed as Record<string, unknown>
+}
 
 describe('Editor integration', () => {
   it('loads an entry and persists changes via the content API', async () => {
@@ -277,6 +297,375 @@ describe('Editor integration', () => {
       format: 'json',
       data: { title: 'Modified title' },
     })
+  })
+
+  it('opening an entry without editing it manufactures no draft (nothing persisted, nothing "modified")', async () => {
+    // D4: the entry-load effect used to seed `drafts[contentId] = loaded` on
+    // every successful load, and useDraftManager persists every drafts change
+    // to localStorage. Merely BROWSING entries therefore wrote a pristine
+    // full-content snapshot per entry, which the next session restored as a
+    // dirty draft (a restored draft with no loadedValues entry counts as
+    // dirty) -- reporting phantom "N files modified", prompting on branch
+    // switch, and, worst, letting a stale snapshot be saved over a
+    // colleague's intervening work under a freshly captured OCC token.
+    const entry: EditorEntry = {
+      path: unsafeAsLogicalPath('content/posts/hello'),
+      contentId: unsafeAsContentId('def456ABC123'),
+      label: 'Hello',
+      status: 'entry',
+      schema: [{ name: 'title', type: 'string' }],
+      apiPath: '/api/canopycms/main/content/content/posts/hello',
+      collectionPath: unsafeAsLogicalPath('content/posts'),
+      collectionName: 'posts',
+      slug: 'hello',
+      format: 'json',
+      type: 'entry',
+    }
+
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url =
+        typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
+      if (url.endsWith('/api/canopycms/branches')) {
+        return Promise.resolve(
+          okJson({
+            ok: true,
+            status: 200,
+            data: {
+              branches: [
+                {
+                  name: 'main',
+                  status: 'editing',
+                  access: {},
+                  createdBy: 'user-1',
+                  createdAt: '2024-01-01',
+                  updatedAt: '2024-01-01',
+                  isProtected: false,
+                  readOnly: false,
+                  writeBlocked: false,
+                  submitBlocked: false,
+                },
+              ],
+              defaultBranch: 'main',
+            },
+          }),
+        )
+      }
+      if (url.includes('/schema') && !url.includes('/schema/')) {
+        return Promise.resolve(
+          okJson({
+            ok: true,
+            status: 200,
+            data: {
+              schema: {},
+              flatSchema: [
+                {
+                  type: 'entry-type',
+                  logicalPath: 'content/posts/post',
+                  name: 'post',
+                  parentPath: 'content/posts',
+                  format: 'json',
+                  schemaRef: 'postSchema',
+                },
+              ],
+              entrySchemas: { postSchema: [{ name: 'title', type: 'string' }] },
+            },
+          }),
+        )
+      }
+      if (url.includes('/entries')) {
+        return Promise.resolve(
+          okJson({
+            ok: true,
+            status: 200,
+            data: {
+              collections: [
+                {
+                  logicalPath: 'content/posts',
+                  contentId: 'abc123XYZ789',
+                  name: 'posts',
+                  type: 'collection',
+                  format: 'json',
+                  schema: entry.schema,
+                  order: [],
+                },
+              ],
+              entries: [
+                {
+                  logicalPath: entry.path,
+                  contentId: 'def456ABC123',
+                  collectionPath: entry.collectionPath,
+                  collectionName: entry.collectionName,
+                  slug: entry.slug,
+                  format: entry.format,
+                  entryType: 'post',
+                  physicalPath: '/content/posts.abc123XYZ789/post.hello.def456ABC123.json',
+                  exists: true,
+                },
+              ],
+              pagination: { hasMore: false, limit: 50 },
+            },
+          }),
+        )
+      }
+      if (url === entry.apiPath && (!init || !init.method || init.method === 'GET')) {
+        return Promise.resolve(
+          okJson({ ok: true, status: 200, data: { title: 'Loaded title', version: 100 } }),
+        )
+      }
+      return Promise.resolve(okJson({ ok: true, status: 200, data: {} }))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    renderWithProviders(
+      <Editor
+        entries={[entry]}
+        title="Test Editor"
+        branchName="main"
+        operatingMode="dev"
+        themeOptions={{}}
+      />,
+    )
+
+    // The entry loaded and renders from `loadedValues` alone -- no draft seed
+    // is needed for the form to show server content.
+    await waitFor(() => {
+      const el = screen.queryByRole('textbox', { name: /title/i }) as HTMLInputElement | null
+      expect(el).not.toBeNull()
+      expect(el?.value).toBe('Loaded title')
+    })
+
+    // Nothing was persisted for an entry the user only looked at.
+    await waitFor(() => {
+      expect(Object.keys(readPersistedDrafts('main'))).toEqual([])
+    })
+
+    // ...and the editor agrees there is nothing modified.
+    const saveButton = await screen.findByRole('button', { name: /save file/i })
+    expect(saveButton.hasAttribute('disabled')).toBe(true)
+  })
+
+  it('a branch switch during an in-flight entry load shows the NEW branch content and saves with its OCC token', async () => {
+    // D3: the entry-load effect keyed its skip gate, its in-flight dedup set
+    // and its state writes on the bare contentId, with no branch qualifier and
+    // no re-check of the current branch after the await. So the OLD branch's
+    // still-pending read settled into `loadedValues[contentId]`, which (a) made
+    // the gate suppress the NEW branch's load, leaving old-branch content on
+    // screen under the new branch, and (b) left the new branch's OCC token
+    // (keyed `${branch}:${contentId}`) unset, so the save went out with no
+    // expectedVersion at all -- a blind cross-branch overwrite that can never
+    // 409.
+    const entryPath = 'content/posts/hello'
+    const contentId = 'def456ABC123'
+    const mainRead = `/api/canopycms/main/content/${entryPath}`
+    const featureRead = `/api/canopycms/feature/content/${entryPath}`
+
+    const entry: EditorEntry = {
+      path: unsafeAsLogicalPath(entryPath),
+      contentId: unsafeAsContentId(contentId),
+      label: 'Hello',
+      status: 'entry',
+      schema: [{ name: 'title', type: 'string' }],
+      apiPath: mainRead,
+      collectionPath: unsafeAsLogicalPath('content/posts'),
+      collectionName: 'posts',
+      slug: 'hello',
+      format: 'json',
+      type: 'entry',
+    }
+
+    const branch = (name: string) => ({
+      name,
+      status: 'editing',
+      access: {},
+      createdBy: 'user-1',
+      createdAt: '2024-01-01',
+      updatedAt: '2024-01-01',
+      isProtected: false,
+      readOnly: false,
+      writeBlocked: false,
+      submitBlocked: false,
+    })
+
+    // The `main` read is held open so the branch switch lands while it is
+    // still in flight -- the exact window the race needs.
+    let releaseMainRead: () => void = () => {}
+    const mainReadReleased = new Promise<void>((resolve) => {
+      releaseMainRead = resolve
+    })
+
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url =
+        typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
+      if (url.endsWith('/api/canopycms/branches')) {
+        return Promise.resolve(
+          okJson({
+            ok: true,
+            status: 200,
+            data: { branches: [branch('main'), branch('feature')], defaultBranch: 'main' },
+          }),
+        )
+      }
+      if (url.includes('/schema') && !url.includes('/schema/')) {
+        return Promise.resolve(
+          okJson({
+            ok: true,
+            status: 200,
+            data: {
+              schema: {},
+              flatSchema: [
+                {
+                  type: 'entry-type',
+                  logicalPath: 'content/posts/post',
+                  name: 'post',
+                  parentPath: 'content/posts',
+                  format: 'json',
+                  schemaRef: 'postSchema',
+                },
+              ],
+              entrySchemas: { postSchema: [{ name: 'title', type: 'string' }] },
+            },
+          }),
+        )
+      }
+      if (url.includes('/entries')) {
+        return Promise.resolve(
+          okJson({
+            ok: true,
+            status: 200,
+            data: {
+              collections: [
+                {
+                  logicalPath: 'content/posts',
+                  contentId: 'abc123XYZ789',
+                  name: 'posts',
+                  type: 'collection',
+                  format: 'json',
+                  schema: entry.schema,
+                  order: [],
+                },
+              ],
+              entries: [
+                {
+                  logicalPath: entry.path,
+                  contentId,
+                  collectionPath: entry.collectionPath,
+                  collectionName: entry.collectionName,
+                  slug: entry.slug,
+                  format: entry.format,
+                  entryType: 'post',
+                  physicalPath: '/content/posts.abc123XYZ789/post.hello.def456ABC123.json',
+                  exists: true,
+                },
+              ],
+              pagination: { hasMore: false, limit: 50 },
+            },
+          }),
+        )
+      }
+      if (url === mainRead && (!init || !init.method || init.method === 'GET')) {
+        return mainReadReleased.then(() =>
+          okJson({ ok: true, status: 200, data: { title: 'MAIN title', version: 100 } }),
+        )
+      }
+      if (url === featureRead && (!init || !init.method || init.method === 'GET')) {
+        return Promise.resolve(
+          okJson({ ok: true, status: 200, data: { title: 'FEATURE title', version: 200 } }),
+        )
+      }
+      if (url.startsWith(featureRead) && init?.method === 'PUT') {
+        const body = JSON.parse(init.body as string)
+        return Promise.resolve(
+          okJson({ ok: true, status: 200, data: { ...body.data, version: 201 } }),
+        )
+      }
+      return Promise.resolve(okJson({ ok: true, status: 200, data: {} }))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    renderWithProviders(
+      <Editor
+        entries={[entry]}
+        title="Test Editor"
+        branchName="main"
+        operatingMode="dev"
+        themeOptions={{}}
+      />,
+    )
+
+    const readCalls = (target: string) =>
+      fetchMock.mock.calls.filter(([u, i]) => {
+        const calledUrl = typeof u === 'string' ? u : u instanceof URL ? u.toString() : u.url
+        const method = (i as RequestInit | undefined)?.method
+        return calledUrl === target && (!method || method === 'GET')
+      }).length
+
+    // main's read is in flight (and deliberately still unresolved).
+    await waitFor(() => expect(readCalls(mainRead)).toBeGreaterThan(0))
+
+    // Switch to `feature` while main's read is still pending.
+    fireEvent.click(screen.getByTestId('branch-dropdown-button'))
+    fireEvent.click(await screen.findByTestId('manage-branches-menu-item'))
+    fireEvent.click(await screen.findByTestId('switch-to-branch-button-feature'))
+
+    // Proof the switch landed (feature's own entries fetch went out)...
+    await waitFor(() => {
+      expect(
+        fetchMock.mock.calls.some(([u]) => {
+          const calledUrl = typeof u === 'string' ? u : u instanceof URL ? u.toString() : u.url
+          return calledUrl.includes('/canopycms/feature/entries')
+        }),
+      ).toBe(true)
+    })
+    // ...and feature's entry read is issued WHILE main's is still pending.
+    // This is the half of the fix that lives in the in-flight dedup set: with
+    // a bare-contentId key, main's pending load deduped feature's away
+    // entirely and this read never happened at all.
+    await waitFor(() => expect(readCalls(featureRead)).toBeGreaterThan(0))
+
+    // Only now let main's stale read settle, i.e. strictly after the switch.
+    releaseMainRead()
+
+    // The editor shows feature's content, not the late main response.
+    const input = await waitFor(() => {
+      const el = screen.queryByRole('textbox', { name: /title/i }) as HTMLInputElement | null
+      expect(el).not.toBeNull()
+      expect(el?.value).toBe('FEATURE title')
+      return el as HTMLInputElement
+    })
+
+    // ...and main's late response does not overwrite it a moment later. This
+    // is the other half of the fix (the re-check of the current branch after
+    // the await): without it feature's content renders first and is then
+    // silently replaced by main's. A macrotask boundary drains the whole
+    // promise chain behind main's fetch, so if the write were going to happen
+    // it has happened by here.
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+    expect((screen.getByRole('textbox', { name: /title/i }) as HTMLInputElement).value).toBe(
+      'FEATURE title',
+    )
+
+    // ...and a save on feature carries feature's OCC token, so a concurrent
+    // edit there would 409 instead of being blindly overwritten.
+    fireEvent.change(input, { target: { value: 'Edited on feature' } })
+    const saveButton = await waitFor(() => {
+      const btn = screen.getByRole('button', { name: /save file/i })
+      expect(btn.hasAttribute('disabled')).toBe(false)
+      return btn
+    })
+    fireEvent.click(saveButton)
+
+    const saveCall = await waitFor(() => {
+      const call = fetchMock.mock.calls.find(([u, i]) => {
+        const calledUrl = typeof u === 'string' ? u : u instanceof URL ? u.toString() : u.url
+        return calledUrl.startsWith(featureRead) && (i as RequestInit | undefined)?.method === 'PUT'
+      })
+      expect(call).toBeTruthy()
+      return call as [string, RequestInit]
+    })
+    const body = JSON.parse(saveCall[1].body as string)
+    expect(body.expectedVersion).toBe(200)
   })
 
   it('abandoning an in-flight entry load does not surface a stale failure notification, and the newly selected entry still loads correctly', async () => {
