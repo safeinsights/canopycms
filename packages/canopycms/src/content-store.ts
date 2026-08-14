@@ -586,7 +586,16 @@ export class ContentStore {
     absolutePath: string
     relativePath: PhysicalPath
     id?: string
-    entryTypeName?: string
+    /**
+     * Always populated for a valid schema item: the collection branch below
+     * always resolves a name (falling back to `'entry'` when the collection
+     * has no matching/default entry type config), and the entry-type branch
+     * delegates to it with its own name set explicitly. Only non-collection,
+     * non-entry-type schema items (impossible via the public API, which only
+     * ever resolves to one of those two) skip both branches, hitting the
+     * throw below instead of returning at all.
+     */
+    entryTypeName: string
     /**
      * True if this slug already had a file on disk (a directory-scan finding,
      * or `options.existingId` asserting one) -- i.e. this resolution is an
