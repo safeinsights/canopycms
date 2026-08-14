@@ -9,10 +9,10 @@ export default defineCanopyConfig({
   // and the base branch everyone lands on, so this is not a lockout -- it stops
   // one editor from wandering into another's in-progress work.
   //
-  // To serve published content to unauthenticated visitors on a
-  // `deployedAs: 'server'` site, scope the PATH default per level rather than
-  // opening branch access -- `defaultPathAccess: { read: 'allow' }` leaves edit
-  // and review denied. See README.md, "Public read on server deployments".
+  // To serve published content to unauthenticated visitors on a server-rendered
+  // deployment, scope the PATH default per level rather than opening branch
+  // access -- `defaultPathAccess: { read: 'allow' }` leaves edit and review
+  // denied. See README.md, "Public read on server deployments".
   defaultBranchAccess: 'deny',
   defaultPathAccess: 'deny',
   // Leave this as 'dev'. This file is loaded by `next dev`, by `next build`

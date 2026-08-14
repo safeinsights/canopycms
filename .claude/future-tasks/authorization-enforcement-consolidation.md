@@ -60,7 +60,7 @@ so a deployment can run without the check that binds tokens to expected origins.
 
 ## Related
 
-- [acl-defaults-and-dead-path-checker.md](acl-defaults-and-dead-path-checker.md)
+- [acl-defaults-and-dead-path-checker.md](resolved/acl-defaults-and-dead-path-checker.md)
   — the scaffolded `'allow'` default is what keeps these latent today
 - [list-permission-level.md](list-permission-level.md) — a new "list" level would
   add a sixth matcher unless this lands first
