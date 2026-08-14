@@ -31,7 +31,7 @@ etc.) resolves correctly through `read()`.
 
 `listEntries` reads files **raw off disk** and never resolves references at
 all (see the general finding in
-[listentries-acl-awareness.md](../listentries-acl-awareness.md) about
+[listentries-acl-awareness.md](listentries-acl-awareness.md) about
 `listEntries`'s read path). So any surface built off `listEntries` — a search
 index, a sitemap, an AI-content export — sees a shared block as either `null`
 or a bare reference ID, never the resolved data. This is the same underlying
