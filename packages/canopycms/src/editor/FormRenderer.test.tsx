@@ -13,6 +13,16 @@ import { CanopyCMSProvider } from './theme'
 import type { MockApiClient } from '../api/__test__/mock-client'
 import { setupMockApiClient, createApiClientWrapper } from './hooks/__test__/test-utils'
 
+// Preload the chunk MarkdownField's React.lazy() imports (the 'rich-text'
+// case renders MarkdownField). Without this the mount assertion below also
+// silently measures how long vitest takes to transform @mdxeditor/editor,
+// which made it fail under full-suite contention while passing whenever this
+// project ran alone. Static import puts the module in vitest's registry
+// during THIS file's import phase, so React.lazy resolves from cache on the
+// first microtask and the assertion measures only the product. See
+// fields/MarkdownField.test.tsx, which does the same for the same reason.
+import '@mdxeditor/editor'
+
 // ImageField (the 'image' field case) reads the API client via context DI -
 // mock the factory module so createApiClientWrapper's ApiClientProvider and
 // useUserContext's internal createApiClient() calls agree on one instance.
@@ -579,17 +589,8 @@ describe('FormRenderer', () => {
           </Wrapper>
         </CanopyCMSProvider>,
       )
-      // Explicit timeout: what this waits on is a REAL dynamic import of the
-      // MDXEditor chunk, whose cost scales with machine load, so testing-
-      // library's 1s default is a measurement of the host rather than of the
-      // product. It went red on a full-suite run (both vitest projects
-      // contending) while passing whenever this project ran alone. The
-      // assertion is unchanged - still "the real editor mounted, not the
-      // readonly fallback"; only the patience is.
-      await waitFor(() => expect(document.querySelector('[contenteditable="true"]')).toBeTruthy(), {
-        timeout: 15_000,
-      })
-    }, 20_000)
+      await waitFor(() => expect(document.querySelector('[contenteditable="true"]')).toBeTruthy())
+    })
 
     it('a required markdown field can be filled and saved', () => {
       const fields: FieldConfig[] = [

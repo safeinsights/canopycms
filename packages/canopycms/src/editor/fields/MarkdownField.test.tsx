@@ -7,6 +7,22 @@ import { setupMockApiClient, createApiClientWrapper } from '../hooks/__test__/te
 import { CanopyCMSProvider } from '../theme'
 import { MarkdownField } from './MarkdownField'
 
+// Preload the chunk MarkdownField's React.lazy() imports.
+//
+// The mount assertion below is about WHETHER the real editor mounts, not how
+// fast: without this it also silently measures how long vitest takes to
+// transform @mdxeditor/editor, because the lazy promise only settles once
+// that work is done. That made the test fail under full-suite contention
+// while passing whenever this project ran alone -- a real defect in the test,
+// not flakiness to paper over with a longer timeout.
+//
+// Importing the same specifier statically puts the module in vitest's
+// registry during THIS file's import phase, so React.lazy's import()
+// resolves from cache on the first microtask and the assertion measures only
+// the product. Same specifier as MarkdownField.tsx uses, deliberately -- a
+// different one would warm nothing.
+import '@mdxeditor/editor'
+
 vi.mock('../../api', async () => {
   const actual = await vi.importActual('../../api')
   return {
@@ -69,17 +85,10 @@ describe('MarkdownField', () => {
       </CanopyCMSProvider>,
     )
 
-    // Explicit timeout, same reason as FormRenderer.test.tsx's rich-text
-    // mount test: this waits on a real dynamic import of the MDXEditor chunk,
-    // so the 1s default measures machine load rather than the product. Red on
-    // a full-suite run (both vitest projects contending), green whenever this
-    // project ran alone.
-    await waitFor(() => expect(document.querySelector('[contenteditable="true"]')).toBeTruthy(), {
-      timeout: 15_000,
-    })
+    await waitFor(() => expect(document.querySelector('[contenteditable="true"]')).toBeTruthy())
     expect(screen.getByTestId('mdx-image-dialog')).toBeTruthy()
     // The custom InsertEntryLink toolbar button is on the same toolbar,
     // confirming the toolbar itself rendered (not just an editor shell).
     expect(screen.getByTestId('insert-entry-link-button')).toBeTruthy()
-  }, 20_000)
+  })
 })
