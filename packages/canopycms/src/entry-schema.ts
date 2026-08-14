@@ -1,3 +1,7 @@
+// The recommended SEO field names, shared with the read side (extractSeoFields) so the schema
+// this module emits and the fields that module looks for cannot drift apart.
+import { DEFAULT_SEO_FIELD_NAMES } from './static/seo'
+
 /** Structural constraint for fields that can be inferred by TypeFromEntrySchema. */
 type InferableField = {
   name: string
@@ -219,6 +223,139 @@ export const defineInlineFieldGroup = <
 >(
   group: T,
 ): T & { readonly type: 'group' } => ({ ...group, type: 'group' as const })
+
+/**
+ * The recommended SEO field group, ready to drop into any entry schema.
+ *
+ * Emits the seven fields `extractSeoFields()` reads by default (`metaTitle`,
+ * `metaDescription`, `ogImage`, `ogType`, `canonical`, `noindex`, `twitterCard`), so schema and
+ * read side agree with no configuration. Every field is `required: false` — SEO metadata is
+ * always optional, and an unset field must fall back rather than fail validation.
+ *
+ * **Flat by default.** The fields are stored flat in the content file (an inline group: a
+ * visual container in the editor that adds no data key). Pass `group: 'seo'` for the nested
+ * convention, which stores them under that key — and then pass the same `{ group: 'seo' }` to
+ * `extractSeoFields` / `entryToMetadata`.
+ *
+ * @example
+ * // Flat (recommended): frontmatter carries `metaTitle:` at the top level.
+ * const pageSchema = defineEntrySchema([
+ *   { name: 'title', type: 'string' },
+ *   defineSeoFieldGroup(),
+ * ])
+ * // TypeFromEntrySchema: { title: string; metaTitle?: string; metaDescription?: string; ... }
+ *
+ * @example
+ * // Nested: frontmatter carries `seo: { metaTitle: … }`.
+ * const pageSchema = defineEntrySchema([defineSeoFieldGroup({ group: 'seo' })])
+ * const metadata = entryToMetadata(data, { group: 'seo' })
+ */
+const SEO_GROUP_FIELDS = [
+  {
+    name: DEFAULT_SEO_FIELD_NAMES.title,
+    type: 'string',
+    label: 'Meta Title',
+    description: 'Overrides the page title in search results and social cards.',
+    required: false,
+  },
+  {
+    name: DEFAULT_SEO_FIELD_NAMES.description,
+    type: 'string',
+    label: 'Meta Description',
+    description: 'Summary shown under the title in search results.',
+    required: false,
+  },
+  {
+    name: DEFAULT_SEO_FIELD_NAMES.ogImage,
+    type: 'string',
+    label: 'Social Image URL',
+    description: 'Image for social cards. Site-relative or absolute.',
+    required: false,
+  },
+  {
+    name: DEFAULT_SEO_FIELD_NAMES.ogType,
+    type: 'select',
+    label: 'OpenGraph Type',
+    options: ['website', 'article', 'profile'],
+    required: false,
+  },
+  {
+    name: DEFAULT_SEO_FIELD_NAMES.canonical,
+    type: 'string',
+    label: 'Canonical URL',
+    description: 'Set only to point at a different canonical copy of this page.',
+    required: false,
+  },
+  {
+    name: DEFAULT_SEO_FIELD_NAMES.noindex,
+    type: 'boolean',
+    label: 'Hide from search engines',
+    description: 'Marks the page noindex AND drops it from the sitemap.',
+    required: false,
+  },
+  {
+    name: DEFAULT_SEO_FIELD_NAMES.twitterCard,
+    type: 'select',
+    label: 'Twitter Card',
+    options: ['summary', 'summary_large_image'],
+    required: false,
+  },
+] as const
+
+/** The seven recommended SEO fields, as a literal-typed field tuple. */
+export type SeoGroupFields = typeof SEO_GROUP_FIELDS
+
+interface SeoFieldGroupOptions {
+  /** Editor label for the group. Default 'SEO'. */
+  label?: string
+  /** Editor description for the group. */
+  description?: string
+}
+
+/** Flat (inline) SEO group: fields are stored at the top level of the content file. */
+export type InlineSeoFieldGroup = {
+  name: 'seo'
+  label: string
+  description?: string
+  fields: SeoGroupFields
+  type: 'group'
+}
+
+/** Nested SEO group: fields are stored under the group's own key in the content file. */
+export type NestedSeoFieldGroup<G extends string> = {
+  name: G
+  label: string
+  description?: string
+  fields: SeoGroupFields
+  type: 'object'
+}
+
+export function defineSeoFieldGroup(
+  opts?: SeoFieldGroupOptions & { group?: undefined },
+): InlineSeoFieldGroup
+export function defineSeoFieldGroup<const G extends string>(
+  opts: SeoFieldGroupOptions & {
+    /**
+     * Nest the fields under this data key instead of storing them flat. Must match the `group`
+     * option passed to `extractSeoFields` / `entryToMetadata`.
+     */
+    group: G
+  },
+): NestedSeoFieldGroup<G>
+export function defineSeoFieldGroup(
+  opts: SeoFieldGroupOptions & { group?: string } = {},
+): InlineSeoFieldGroup | NestedSeoFieldGroup<string> {
+  const base = {
+    label: opts.label ?? 'SEO',
+    ...(opts.description ? { description: opts.description } : {}),
+    fields: SEO_GROUP_FIELDS,
+  }
+  // 'object' nests the fields under `name`; 'group' is the inline (flat) container, whose name
+  // is an editor-only label anchor and contributes no key to the content file.
+  return opts.group
+    ? { ...base, name: opts.group, type: 'object' }
+    : { ...base, name: 'seo', type: 'group' }
+}
 
 /**
  * Define a reusable nested field group — a visual container in the editor that groups

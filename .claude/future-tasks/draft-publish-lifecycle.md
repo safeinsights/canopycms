@@ -29,8 +29,11 @@ trying to prevent: the page goes live.
 
 CanopyCMS itself has no schema-level, enforced concept of draft/published —
 "published" is purely a content-field convention today (per
-`static-export-sitemap.md`'s "What's available to build on"), not something
-the schema, the editor UI, or `read()`/`listEntries` understand or enforce.
+[static-export-sitemap.md](resolved/static-export-sitemap.md)'s "What's
+available to build on"), not something the schema, the editor UI, or
+`read()`/`listEntries` understand or enforce. The shipped sitemap helper
+deliberately did NOT invent one: it excludes on the SEO group's `noindex`
+flag plus an explicit `exclude` predicate, leaving this gap open.
 Every adopter is left to invent their own convention, and the KB's shows what
 happens when the convention exists only in docs and not in code: it silently
 rots.
