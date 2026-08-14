@@ -15,11 +15,17 @@ const SENTINEL_BASE = 'https://relative.invalid'
  * empty, or disallowed input.
  *
  * Design decisions (deliberate, not oversights):
- * - Protocol-relative input (`//evil.com/x`) is rejected outright rather
- *   than resolved onto the sentinel's `https:` scheme. In a CMS content
- *   field, `//host` is far more likely to be a paste error or an injection
- *   attempt than an intentional protocol-relative link, so we don't let it
- *   through as an absolute off-site URL.
+ * - Protocol-relative input is rejected rather than resolved onto the
+ *   sentinel's `https:` scheme. In a CMS content field, `//host` is far more
+ *   likely to be a paste error or an injection attempt than an intentional
+ *   protocol-relative link, so we don't let it through as an absolute
+ *   off-site URL. This is enforced by checking whether the input DECLARES a
+ *   scheme, not by matching a `//` prefix: WHATWG URL treats backslash as
+ *   equivalent to slash for special schemes, so `/\evil.com`, `\\evil.com`
+ *   and `\/evil.com` are all protocol-relative in effect. An earlier version
+ *   of this function checked `startsWith('//')` and let all three through as
+ *   `https://evil.com/` -- an open redirect out of the one function whose
+ *   job is to prevent exactly that.
  * - Fragment-only (`#section`) and query-only (`?q=1`) input resolves
  *   against the sentinel with pathname `/`; we strip that synthetic leading
  *   slash so the result stays a same-page reference (`#section`) instead of
@@ -42,14 +48,29 @@ const SENTINEL_BASE = 'https://relative.invalid'
 export function sanitizeHref(url: string, fallback = '#'): string {
   const trimmed = url.trim()
   if (trimmed === '') return fallback
-  // Reject protocol-relative references outright; see design decisions above.
-  if (trimmed.startsWith('//')) return fallback
 
   try {
     const parsed = new URL(trimmed, SENTINEL_BASE)
     if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
       return fallback
     }
+
+    // Reject protocol-relative references in EVERY spelling, by testing the
+    // property we actually care about rather than by enumerating syntax.
+    //
+    // A string-prefix check on '//' is not sufficient: WHATWG URL treats a
+    // backslash as equivalent to a forward slash for special schemes, so
+    // '/\evil.com', '\\evil.com' and '\/evil.com' are all protocol-relative
+    // in effect and each resolved to https://evil.com/ while sailing past a
+    // startsWith('//') guard. Tabs and newlines are stripped during parsing
+    // too, so the set of spellings is not one you can enumerate confidently.
+    //
+    // The property that actually distinguishes "the author asked for another
+    // origin" from "the parser inferred one" is whether the input DECLARES a
+    // scheme. If it does not and still resolved off the sentinel, it is
+    // protocol-relative however it was written.
+    const declaresScheme = /^[a-z][a-z0-9+.-]*:/i.test(trimmed)
+    if (parsed.origin !== SENTINEL_BASE && !declaresScheme) return fallback
 
     if (parsed.origin === SENTINEL_BASE) {
       // Input was relative: return it as a relative reference rather than
