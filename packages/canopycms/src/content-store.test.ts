@@ -17,8 +17,10 @@ import {
   ContentStore,
   ContentStoreError,
   ContentConflictError,
+  DuplicateContentIdError,
 } from './content-store'
 import { tryAcquireContentWriteLock } from './utils/content-write-lock'
+import { getErrorMessage } from './utils/error'
 import { generateId } from './id'
 import { unsafeAsLogicalPath, unsafeAsSlug } from './paths/test-utils'
 import { mockConsole } from './test-utils/console-spy'
@@ -2811,5 +2813,201 @@ describe('ContentStore duplicate content ID resilience (August 2026 baseline rev
     const duplicates = (await store.idIndex()).getDuplicateIds()
     expect(duplicates).toHaveLength(1)
     expect(duplicates[0].id).toBe(dupId)
+  })
+
+  // [F1] A quarantined duplicate is still fully addressable by
+  // collection+slug (buildPaths() resolves slugs by directory scan, which
+  // knows nothing about the ID index's quarantine), so a stale editor tab --
+  // or anyone who kept the URL -- can still issue a save against the losing
+  // file. These tests pin the invariant that makes that safe: a mutation
+  // must never remove or modify a file it did not address.
+  describe('mutations addressed to a quarantined (losing) duplicate', () => {
+    const KEPT_CONTENT = '---\ntitle: Kept\n---\nKept body\n'
+    const DROPPED_CONTENT = '---\ntitle: Dropped\n---\nDropped body\n'
+
+    /**
+     * Seeds a branch clone holding an unrelated entry plus a duplicate-ID
+     * pair, as a crash between renameEntry()'s link() and unlink() would
+     * leave. The two files carry DIFFERENT content so a test can tell which
+     * one a mutation touched. `post.kept-slug.<id>.md` sorts before
+     * `post.zzz-dropped-slug.<id>.md`, so the quarantine's string-MIN rule
+     * makes kept-slug the deterministic winner.
+     */
+    const seedDuplicatePair = async () => {
+      const root = await fs.mkdtemp(path.join(os.tmpdir(), 'canopycms-dupid-'))
+      const seedStore = await makeStore(root)
+      await seedStore.write(posts, unsafeAsSlug('one'), {
+        format: 'md',
+        data: { title: 'One' },
+        body: 'Body one',
+      })
+      const postsDir = path.dirname(
+        (await seedStore.resolveDocumentPath(posts, unsafeAsSlug('one'))).absolutePath,
+      )
+      const dupId = generateId()
+      const keptPath = path.join(postsDir, `post.kept-slug.${dupId}.md`)
+      const droppedPath = path.join(postsDir, `post.zzz-dropped-slug.${dupId}.md`)
+      await fs.writeFile(keptPath, KEPT_CONTENT, 'utf-8')
+      await fs.writeFile(droppedPath, DROPPED_CONTENT, 'utf-8')
+      // A fresh store models the process that first scans the debris.
+      const store = await makeStore(root)
+      return { root, store, postsDir, dupId, keptPath, droppedPath }
+    }
+
+    it('refuses a write to the losing slug instead of deleting the kept file', async () => {
+      const { store, dupId, keptPath, droppedPath } = await seedDuplicatePair()
+
+      const consoleSpy = mockConsole()
+      try {
+        const duplicates = (await store.idIndex()).getDuplicateIds()
+        expect(duplicates).toHaveLength(1)
+        expect(duplicates[0].keptPath).toContain('kept-slug')
+        expect(duplicates[0].droppedPaths).toEqual([expect.stringContaining('zzz-dropped-slug')])
+
+        // The save a stale client tab still addressed to the losing slug
+        // would issue. Its OCC token matches (that file's mtime never
+        // changed), so nothing else stops it.
+        const err = await store
+          .write(posts, unsafeAsSlug('zzz-dropped-slug'), {
+            format: 'md',
+            data: { title: 'Saved' },
+            body: 'Saved body',
+          })
+          .then(() => null)
+          .catch((e: unknown) => e)
+
+        expect(err).toBeInstanceOf(DuplicateContentIdError)
+        expect(err).toBeInstanceOf(ContentConflictError)
+        const message = getErrorMessage(err)
+        expect(message).toContain(dupId)
+        expect(message).toContain('kept-slug')
+        expect(message).toContain('zzz-dropped-slug')
+        expect(message).toContain('repair-content-duplicates')
+
+        // THE invariant: the write addressed the losing file, so the kept
+        // file must be byte-for-byte what it was. (Asserted on contents, not
+        // just existence -- a silent overwrite is the same bug as a delete.)
+        expect(await fs.readFile(keptPath, 'utf-8')).toBe(KEPT_CONTENT)
+        // And a refused write mutates nothing at all, including its target.
+        expect(await fs.readFile(droppedPath, 'utf-8')).toBe(DROPPED_CONTENT)
+
+        expect(consoleSpy).toHaveWarned(dupId)
+      } finally {
+        consoleSpy.restore()
+      }
+    })
+
+    it('refuses an ID-addressed write that would relocate the pair to a third slug', async () => {
+      const { store, postsDir, dupId, keptPath, droppedPath } = await seedDuplicatePair()
+
+      const consoleSpy = mockConsole()
+      try {
+        await store.idIndex()
+
+        const err = await store
+          .write(
+            posts,
+            unsafeAsSlug('third-slug'),
+            { format: 'md', data: { title: 'Saved' }, body: 'Saved body' },
+            undefined,
+            dupId,
+          )
+          .then(() => null)
+          .catch((e: unknown) => e)
+
+        expect(err).toBeInstanceOf(DuplicateContentIdError)
+        expect(await fs.readFile(keptPath, 'utf-8')).toBe(KEPT_CONTENT)
+        expect(await fs.readFile(droppedPath, 'utf-8')).toBe(DROPPED_CONTENT)
+        // No third file was created either -- the refusal is total.
+        const files = await fs.readdir(postsDir)
+        expect(files.filter((f) => f.includes(dupId)).sort()).toEqual([
+          `post.kept-slug.${dupId}.md`,
+          `post.zzz-dropped-slug.${dupId}.md`,
+        ])
+        expect(consoleSpy).toHaveWarned(dupId)
+      } finally {
+        consoleSpy.restore()
+      }
+    })
+
+    it('keeps the branch usable: the kept slug and unrelated entries stay writable', async () => {
+      const { store, dupId, keptPath, droppedPath } = await seedDuplicatePair()
+
+      const consoleSpy = mockConsole()
+      try {
+        // The visible half of the pair is the one editors actually see in
+        // listings, and it must keep working -- refusing it would reinstate
+        // the branch-wide brick the quarantine exists to prevent.
+        await expect(
+          store.write(posts, unsafeAsSlug('kept-slug'), {
+            format: 'md',
+            data: { title: 'Kept edited' },
+            body: 'Kept edited body',
+          }),
+        ).resolves.toBeDefined()
+        expect(await store.read(posts, unsafeAsSlug('kept-slug'))).toMatchObject({
+          data: { title: 'Kept edited' },
+        })
+        // Editing the winner does not touch the quarantined file.
+        expect(await fs.readFile(droppedPath, 'utf-8')).toBe(DROPPED_CONTENT)
+        expect(keptPath).toContain(dupId)
+
+        // Entries with no duplicate are unaffected.
+        await expect(
+          store.write(posts, unsafeAsSlug('two'), {
+            format: 'md',
+            data: { title: 'Two' },
+            body: 'Body two',
+          }),
+        ).resolves.toBeDefined()
+        expect(consoleSpy).toHaveWarned(dupId)
+      } finally {
+        consoleSpy.restore()
+      }
+    })
+
+    it('delete() removes only the losing file it addressed', async () => {
+      const { store, keptPath, droppedPath, dupId } = await seedDuplicatePair()
+
+      const consoleSpy = mockConsole()
+      try {
+        await store.idIndex()
+        // Deleting the file you addressed is exactly what was asked for, and
+        // it resolves the duplicate rather than perpetuating it.
+        await expect(store.delete(posts, unsafeAsSlug('zzz-dropped-slug'))).resolves.toBeUndefined()
+
+        await expect(fs.access(droppedPath)).rejects.toThrow()
+        expect(await fs.readFile(keptPath, 'utf-8')).toBe(KEPT_CONTENT)
+        expect(consoleSpy).toHaveWarned(dupId)
+      } finally {
+        consoleSpy.restore()
+      }
+    })
+
+    it('renameEntry() moves only the losing file it addressed', async () => {
+      const { store, postsDir, dupId, keptPath, droppedPath } = await seedDuplicatePair()
+
+      const consoleSpy = mockConsole()
+      try {
+        await store.idIndex()
+        await expect(
+          store.renameEntry(
+            posts,
+            unsafeAsSlug('zzz-dropped-slug'),
+            unsafeAsSlug('renamed-dropped'),
+          ),
+        ).resolves.toEqual({ newPath: 'content/posts/renamed-dropped' })
+
+        // The addressed file moved, contents intact; the kept file is untouched.
+        expect(
+          await fs.readFile(path.join(postsDir, `post.renamed-dropped.${dupId}.md`), 'utf-8'),
+        ).toBe(DROPPED_CONTENT)
+        await expect(fs.access(droppedPath)).rejects.toThrow()
+        expect(await fs.readFile(keptPath, 'utf-8')).toBe(KEPT_CONTENT)
+        expect(consoleSpy).toHaveWarned(dupId)
+      } finally {
+        consoleSpy.restore()
+      }
+    })
   })
 })

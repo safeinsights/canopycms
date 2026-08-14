@@ -6,6 +6,7 @@ import {
   ContentStore,
   ContentStoreError,
   ContentConflictError,
+  DuplicateContentIdError,
   getDefaultEntryType,
   type WriteInput,
 } from '../content-store'
@@ -491,6 +492,15 @@ const writeContentHandler = async (
       // that and says to retry -- checked first, since the generic branches
       // below would otherwise blame another editor.
       if (err instanceof BranchSyncingError) {
+        return { ok: false, status: 409, error: err.message }
+      }
+      // [F1] Also not an editor-vs-editor collision: this entry's content ID
+      // is on two files (ContentIdIndex's duplicate-ID quarantine), so the
+      // save was refused rather than allowed to mutate an ambiguous target.
+      // Surface its own message — the generic one below would tell the editor
+      // to reload and retry, which cannot help and would have them hammering
+      // a save that stays refused until an admin runs repair-content-duplicates.
+      if (err instanceof DuplicateContentIdError) {
         return { ok: false, status: 409, error: err.message }
       }
       // The early `exists` short-circuit above catches this in the common

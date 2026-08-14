@@ -52,6 +52,20 @@ vi.mock('../content-store', () => {
     ContentStoreError: class ContentStoreError extends Error {},
     ContentConflictError: MockContentConflictError,
     BranchSyncingError: class BranchSyncingError extends MockContentConflictError {},
+    // [F1] Same reasoning as BranchSyncingError above: a real
+    // ContentConflictError subclass, so the handler's `instanceof` chain
+    // behaves here the way it does in production. The constructor mirrors the
+    // real one's shape (id + paths -> a message naming the repair action) so
+    // the handler test can assert on a realistic message; the exact wording
+    // is asserted against the real class in content-store.test.ts.
+    DuplicateContentIdError: class DuplicateContentIdError extends MockContentConflictError {
+      constructor(contentId: string, paths: readonly string[]) {
+        super(
+          `Content ID ${contentId} is on more than one file (${paths.join(', ')}); ` +
+            `use the repair-content-duplicates action.`,
+        )
+      }
+    },
     getDefaultEntryType: (entries: Array<{ default?: boolean }> | undefined) =>
       entries && entries.length > 0 ? entries.find((e) => e.default) || entries[0] : undefined,
   }
@@ -409,6 +423,48 @@ describe('content api', () => {
       expect(res.status).toBe(409)
       if (!res.ok) {
         expect(res.error).toContain('already exists')
+        expect(res.error).not.toContain('modified by another editor')
+      }
+    })
+
+    it('[F1] surfaces the duplicate-content-ID refusal instead of the generic conflict message', async () => {
+      const ctx = allowedCtx()
+      const { ContentStore, DuplicateContentIdError } = await import('../content-store')
+
+      const duplicateError = new DuplicateContentIdError('a1b2c3d4e5f6', [
+        'content/posts/post.hello.a1b2c3d4e5f6.json',
+        'content/posts/post.other.a1b2c3d4e5f6.json',
+      ])
+      const mockStore = {
+        resolvePath: vi.fn().mockReturnValue({
+          schemaItem: { logicalPath: 'content/posts', type: 'collection', entries: [] },
+          slug: 'hello',
+        }),
+        resolveDocumentPath: vi.fn().mockReturnValue({ relativePath: 'content/posts/hello' }),
+        write: vi.fn().mockRejectedValue(duplicateError),
+        idIndex: vi.fn().mockResolvedValue({ findById: vi.fn().mockReturnValue(null) }),
+        documentExists: vi.fn().mockResolvedValue(true),
+        getExistingEntryType: vi.fn().mockResolvedValue(undefined),
+        countEntriesOfType: vi.fn().mockResolvedValue(0),
+      }
+      vi.mocked(ContentStore).mockImplementationOnce(function () {
+        return mockStore as unknown as InstanceType<typeof ContentStore>
+      })
+
+      const res = await writeContent(
+        ctx,
+        { user: { type: 'authenticated', userId: 'u1', groups: [] } },
+        { branch: unsafeAsBranchName('feature/x'), path: unsafeAsLogicalPath('posts/hello') },
+        { format: 'json', data: {}, expectedVersion: 123 },
+      )
+      expect(res.ok).toBe(false)
+      expect(res.status).toBe(409)
+      if (!res.ok) {
+        // The editor must be told what is actually wrong and who fixes it --
+        // "reload and retry" is advice that cannot work here.
+        expect(res.error).toBe(duplicateError.message)
+        expect(res.error).toContain('a1b2c3d4e5f6')
+        expect(res.error).toContain('repair-content-duplicates')
         expect(res.error).not.toContain('modified by another editor')
       }
     })

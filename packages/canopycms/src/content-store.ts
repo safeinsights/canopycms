@@ -141,6 +141,47 @@ export class BranchSyncingError extends ContentConflictError {
 }
 
 /**
+ * [F1] Thrown when a save's content ID is carried by MORE THAN ONE file in
+ * the branch's content tree -- the duplicate-ID state `ContentIdIndex`
+ * quarantines (see its "Duplicate-ID quarantine" section).
+ *
+ * Why refuse rather than write: with two files sharing one ID, "this entry"
+ * is ambiguous, and every way of proceeding is worse than stopping.
+ * Following the index would mutate (and, via the slug-change cleanup, DELETE)
+ * a file the caller never addressed -- the data-loss bug this class exists to
+ * prevent. Writing only the addressed file would succeed silently into a file
+ * that is invisible to every ID-based lookup (reads-by-id, references,
+ * listings all resolve to the OTHER copy) and that the repair action later
+ * archives away, so the editor's work would appear to evaporate with no error
+ * anywhere. Refusing mutates nothing under any interleaving, and says what is
+ * wrong and who can fix it.
+ *
+ * A `ContentConflictError` subclass so every existing 409 mapping keeps
+ * working; the distinct type exists so the API can surface THIS message
+ * rather than the generic "modified by another editor", which would send the
+ * editor into a reload-and-retry loop that cannot succeed.
+ */
+export class DuplicateContentIdError extends ContentConflictError {
+  readonly contentId: string
+  /** Every path known to carry `contentId`, repo-relative, sorted. */
+  readonly paths: readonly string[]
+
+  constructor(contentId: string, paths: readonly string[]) {
+    const sorted = Array.from(new Set(paths)).sort()
+    super(
+      `Content ID ${contentId} is on more than one file (${sorted
+        .map((p) => `"${p}"`)
+        .join(' and ')}), so this save was refused rather than risk overwriting or ` +
+        `deleting the wrong one. An admin can resolve it with the repair-content-duplicates ` +
+        `action for this branch.`,
+    )
+    this.name = 'DuplicateContentIdError'
+    this.contentId = contentId
+    this.paths = sorted
+  }
+}
+
+/**
  * Get the default entry type from a collection's entries array.
  * Returns the entry marked as default, or the first one, or undefined if no entries.
  */
@@ -399,24 +440,30 @@ export class ContentStore {
   }
 
   /**
-   * Find the file in `dir` whose filename embeds `id`.
-   * Returns its root-relative path, or null if no such file (or no such dir).
+   * Every file in `dir` whose filename embeds `id`, as root-relative paths
+   * (empty when there is no such file, or no such dir).
+   *
+   * [F1] Returns ALL matches, not the first: more than one match is a
+   * duplicate-ID pair, and callers must be able to tell that apart from a
+   * clean single hit rather than silently picking whichever one `readdir()`
+   * happened to yield first.
    */
-  private async findEntryPathById(dir: string, id: string): Promise<string | null> {
+  private async findEntryPathsById(dir: string, id: string): Promise<string[]> {
     let entries: Dirent[]
     try {
       entries = await fs.readdir(dir, { withFileTypes: true })
     } catch (err) {
-      if (isNodeError(err) && err.code === 'ENOENT') return null
+      if (isNodeError(err) && err.code === 'ENOENT') return []
       throw err
     }
+    const matches: string[] = []
     for (const entry of entries) {
       if (entry.isDirectory()) continue
       if (extractIdFromFilename(entry.name) === id) {
-        return path.relative(this.root, path.join(dir, entry.name))
+        matches.push(path.relative(this.root, path.join(dir, entry.name)))
       }
     }
-    return null
+    return matches.sort()
   }
 
   /**
@@ -888,6 +935,54 @@ export class ContentStore {
           }
           const { absolutePath, relativePath, id } = inLock
 
+          // [F1] Duplicate-ID guard. INVARIANT: a write must never remove or
+          // modify a file it did not address. The post-write index-repair
+          // step below deletes the ID's previously-indexed path when it
+          // differs from the one being written ("the slug changed"); that is
+          // only sound while an ID identifies exactly one file. When a
+          // duplicate-ID pair is on disk (ContentIdIndex's quarantine, from
+          // rename-crash debris or a merge) the quarantined file is still
+          // addressable by collection+slug -- buildPaths() resolves slugs by
+          // directory scan and knows nothing about the quarantine -- so a
+          // save to it used to resolve the index to the OTHER file and unlink
+          // that one: a different document, silently deleted, with the write
+          // reporting success. Refuse instead (see DuplicateContentIdError).
+          //
+          // Runs before any mutation, so a refusal leaves the tree exactly as
+          // it was. Two independent detections, because neither alone covers
+          // everything:
+          //   1. the index's own quarantine record -- catches a duplicate
+          //      whose other copy lives in a different directory, and the
+          //      ID-addressed (existingId) shape where the target is a fresh
+          //      third path; needs the index to have scanned the duplicate.
+          //   2. disk-verified ambiguity -- both the file we are about to
+          //      write AND the indexed location exist right now. This one
+          //      does not depend on index freshness at all, which is what
+          //      makes the common (slug-addressed) save safe even against an
+          //      index built before the duplicate landed.
+          // Neither fires for the ordinary slug-change save of a
+          // non-duplicated entry: there the indexed path exists but the
+          // target does not (it is about to be created), so the cleanup
+          // below still removes exactly the file the caller relocated.
+          if (id) {
+            const guardIndex = this._idIndex
+            const indexedPath = guardIndex.findById(id)?.relativePath ?? null
+            if (indexedPath && indexedPath !== relativePath) {
+              const quarantined = guardIndex.getDuplicateFor(id)
+              const bothOnDisk =
+                (await filePathExists(absolutePath)) &&
+                (await filePathExists(path.join(this.root, indexedPath)))
+              if (quarantined || bothOnDisk) {
+                throw new DuplicateContentIdError(id, [
+                  indexedPath,
+                  relativePath,
+                  ...(quarantined?.droppedPaths ?? []),
+                  ...(quarantined ? [quarantined.keptPath] : []),
+                ])
+              }
+            }
+          }
+
           await fs.mkdir(path.dirname(absolutePath), { recursive: true })
 
           // OCC: undefined means no opinion (skip entirely, back-compat blind
@@ -944,10 +1039,20 @@ export class ContentStore {
           // which the caller already handles by reloading), never
           // disagree->agree. Fail-closed, never fail-open.
           if (existingId && !(await filePathExists(absolutePath))) {
-            const actualRelPath = await this.findEntryPathById(
+            const actualRelPaths = await this.findEntryPathsById(
               path.dirname(absolutePath),
               existingId,
             )
+            // [F1] Two files in the target directory carry this ID -- a
+            // duplicate the index has not scanned yet (the guard above asks
+            // the index; this asks the directory). Which one a single-match
+            // scan returns is readdir-order-dependent, so it could 409 or
+            // pass at random, and passing meant the cleanup below unlinked
+            // one of two indistinguishable documents. Refuse deterministically.
+            if (actualRelPaths.length > 1) {
+              throw new DuplicateContentIdError(existingId, actualRelPaths)
+            }
+            const actualRelPath = actualRelPaths[0] ?? null
             const indexedRelPath = this._idIndex.findById(existingId)?.relativePath ?? null
             if (actualRelPath !== null && actualRelPath !== indexedRelPath) {
               throw new ContentConflictError()
@@ -976,7 +1081,12 @@ export class ContentStore {
             const existing = liveIndex.findById(id)
             if (existing) {
               if (existing.relativePath !== relativePath) {
-                // Slug changed — remember the orphaned old path to delete below
+                // Slug changed — remember the orphaned old path to delete
+                // below. Safe ONLY because the [F1] guard above has already
+                // established that this ID is not on two files: without it
+                // this line deletes a document the caller never addressed
+                // (see DuplicateContentIdError). Do not move, weaken or skip
+                // that guard while this unlink exists.
                 staleOldAbsPath = path.join(this.root, existing.relativePath)
                 liveIndex.updatePath(existing.id, relativePath)
               }

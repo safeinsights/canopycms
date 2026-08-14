@@ -80,7 +80,7 @@ jobs:
       # pnpm pack resolves workspace: protocol refs to real versions.
       #
       # `npm publish` (for OIDC trusted publishing auth + provenance) runs via
-      # `pnpm dlx npm@11.4.1` rather than a plain `npm` on PATH. Two reasons:
+      # `pnpm dlx npm@11.19.0` rather than a plain `npm` on PATH. Two reasons:
       #
       #   1. Integrity. This job holds `id-token: write` and its artifacts
       #      carry a provenance signature that downstream consumers trust.
@@ -90,7 +90,7 @@ jobs:
       #      npm package fails the job instead of silently running and then
       #      signing its own output. A bare `curl | tar` bootstrap has no such
       #      check.
-      #   2. Exact pin. `npm@11.4.1` here is the literal version dlx
+      #   2. Exact pin. `npm@11.19.0` here is the literal version dlx
       #      resolves and runs -- no separate "install -g npm@11" step that
       #      re-resolves a floating major after the fact.
       #
@@ -98,36 +98,49 @@ jobs:
       # writing has a broken module tree on the pinned Node version (missing
       # promise-retry -- a known npm self-install/packaging defect, see
       # npm/cli#9526) that would break a plain `npm publish`. It is not a
-      # provenance-support version requirement: provenance has worked since
-      # npm 9.5, well below what Node 22 already bundles.
+      # provenance-support version requirement -- provenance has worked since
+      # npm 9.5, well below what Node 22 bundles.
+      #
+      # There IS a version floor, and it is a different one: OIDC trusted
+      # publishing requires npm >= 11.5.0. This is worth spelling out because
+      # getting it wrong is silent until release day -- an earlier revision of
+      # this file pinned 11.4.1 on the reasoning above, which is about
+      # provenance and does not constrain the auth mechanism at all. That pin
+      # would have failed all five publishes on the next push to main. The
+      # previous `install -g npm@11` floated past the floor by accident, which
+      # is why v0.0.57-61 published successfully.
+      #
+      # 11.19.0 is what `npm@11` resolves to today, i.e. exactly what those
+      # working releases used -- now pinned rather than floated. When bumping,
+      # stay >= 11.5.0.
       - name: Publish canopycms
         run: |
           pnpm pack
-          pnpm dlx npm@11.4.1 publish canopycms-*.tgz --access public --provenance
+          pnpm dlx npm@11.19.0 publish canopycms-*.tgz --access public --provenance
         working-directory: packages/canopycms
 
       - name: Publish canopycms-next
         run: |
           pnpm pack
-          pnpm dlx npm@11.4.1 publish canopycms-next-*.tgz --access public --provenance
+          pnpm dlx npm@11.19.0 publish canopycms-next-*.tgz --access public --provenance
         working-directory: packages/canopycms-next
 
       - name: Publish canopycms-auth-clerk
         run: |
           pnpm pack
-          pnpm dlx npm@11.4.1 publish canopycms-auth-clerk-*.tgz --access public --provenance
+          pnpm dlx npm@11.19.0 publish canopycms-auth-clerk-*.tgz --access public --provenance
         working-directory: packages/canopycms-auth-clerk
 
       - name: Publish canopycms-auth-dev
         run: |
           pnpm pack
-          pnpm dlx npm@11.4.1 publish canopycms-auth-dev-*.tgz --access public --provenance
+          pnpm dlx npm@11.19.0 publish canopycms-auth-dev-*.tgz --access public --provenance
         working-directory: packages/canopycms-auth-dev
 
       - name: Publish canopycms-cdk
         run: |
           pnpm pack
-          pnpm dlx npm@11.4.1 publish canopycms-cdk-*.tgz --access public --provenance
+          pnpm dlx npm@11.19.0 publish canopycms-cdk-*.tgz --access public --provenance
         working-directory: packages/canopycms-cdk
 
       - name: Commit version bump

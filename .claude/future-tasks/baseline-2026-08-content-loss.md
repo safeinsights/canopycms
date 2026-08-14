@@ -15,7 +15,9 @@ pairs two versions, the question is whether each *individual* finding is struck.
 
 ---
 
-## 1. [P0] "Create entry" with an existing slug silently wipes that entry
+## ~~1. [P0] "Create entry" with an existing slug silently wipes that entry~~
+
+**RESOLVED (PR #215) — `expectedVersion: null` create-intent, enforced in `ContentStore.write` inside the per-entry lock against a fresh stat, so it holds even when the API layer's `documentExists` goes stale. The API adds an earlier 409 purely so the error names the collision.**
 
 `editor/components/EntryCreateModal.tsx:93-108`'s `validateSlug` checks format only — never
 collision, though the collection's entries are already loaded client-side. The payload is
@@ -77,7 +79,9 @@ its cases use a quiescent tree.
 
 ---
 
-## 3. [P1] A branch switch during a slow load writes old-branch content into the new branch
+## ~~3. [P1] A branch switch during a slow load writes old-branch content into the new branch~~
+
+**RESOLVED (PR #216) — branch-qualified in-flight key **plus** a branch re-check after the await; both halves probe-verified load-bearing (with either alone the bug still reproduces).**
 
 `editor/Editor.tsx`: the skip gate (`:441`), the in-flight dedup (`:447`) and the state writes
 (`:452-456`) are all keyed by **bare `contentId`** with no branch qualifier, and none of the
@@ -101,7 +105,9 @@ subsequent save carries `expectedVersion`.
 
 ---
 
-## 4. [P1] Opening an entry manufactures a persisted draft that can revert a colleague's work
+## ~~4. [P1] Opening an entry manufactures a persisted draft that can revert a colleague's work~~
+
+**RESOLVED (PR #216) — drafts are no longer seeded on load, `handleReload` gained the dirty-check + confirm its sibling already had, and drafts now persist a base version (known / unknown / absent) so a stale restore raises the conflict UX.**
 
 `Editor.tsx:453-456` seeds `drafts[contentId] = loaded` on every load — a **pristine** draft with
 zero edits — and `useDraftManager.ts:229-238` persists every drafts change to localStorage. The

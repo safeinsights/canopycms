@@ -14,7 +14,9 @@ Findings are struck ~~in place~~ as they resolve (see the note in
 
 ---
 
-## 1. [P1] Most schema-editor mutations return 400 against the paths the editor actually sends
+## ~~1. [P1] Most schema-editor mutations return 400 against the paths the editor actually sends~~
+
+**RESOLVED (PR #217) — one normalization at the `SchemaOps` boundary reusing `normalizeCollectionPath`, replacing the bespoke strip. Guarded by a table-driven test over all ten surfaces against a real `SchemaOps`; reverting turns 8 of 10 red, and the two that stay green are exactly the two the finding documented as already working.**
 
 Verified end to end: `branch-schema-cache.ts:312` calls `flattenSchema(schema, contentRootName)`,
 so production logical paths are content-root-prefixed (`content/posts`).
@@ -99,7 +101,9 @@ the `http/handler.ts` read-location change and observing the new test fail befor
 
 ---
 
-## 3. [P1] `sanitizeHref` returns `'#'` for every relative URL
+## ~~3. [P1] `sanitizeHref` returns `'#'` for every relative URL~~
+
+**RESOLVED (PR #213), with a follow-up: the composed-diff review found that fix introduced an **open redirect** — `startsWith('//')` misses backslash spellings (`/\evil.com`), which WHATWG URL treats as protocol-relative. Now guarded by whether the input declares a scheme.**
 
 `utils/sanitize-href.ts:20` calls `new URL(url)` with **no base**, so any relative reference
 throws and falls to the fallback. `sanitizeHref('/about')`, `('docs/guide')` and `('#section')`
@@ -131,7 +135,9 @@ query-only, `javascript:`, `data:`, `vbscript:`, protocol-relative, empty.
 
 ---
 
-## 4. [P1] `submitBranch` retried after a failed push never pushes, and reports success
+## ~~4. [P1] `submitBranch` retried after a failed push never pushes, and reports success~~
+
+**RESOLVED (PR #214) — commit and push are gated separately; push now fires when the branch is ahead of the mirror, determined via a `FETCH_HEAD` pin rather than a remote-tracking ref that cannot exist in a `--single-branch` clone.**
 
 `services.ts:326-331` puts the push **inside** the dirty-tree gate:
 
@@ -157,7 +163,9 @@ here; resolve the duplicate when this is fixed.
 
 ---
 
-## 5. [P1] `number`, `datetime` and `rich-text` are declared field types that cannot be edited
+## ~~5. [P1] `number`, `datetime` and `rich-text` are declared field types that cannot be edited~~
+
+**RESOLVED (PR #220) — all three implemented and `customRenderers` threaded through the public editor surface. The load-bearing guard is a test asserting **every** member of `primitiveFieldTypes` renders something other than the fallback, so config and renderer cannot drift apart again.**
 
 `config/types.ts:15-24` declares eight primitives; `editor/FormRenderer.tsx:228-458` implements
 five of them plus the composites. `number`, `datetime` and `rich-text` fall through to the

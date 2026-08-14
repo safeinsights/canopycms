@@ -15,7 +15,9 @@ Findings are struck ~~in place~~ as they resolve (see the note in
 
 # Part A — blocks production
 
-## A1. [P1] Nothing scaffolds or documents how a deployed Lambda reaches `mode: 'prod'`
+## ~~A1. [P1] Nothing scaffolds or documents how a deployed Lambda reaches `mode: 'prod'`~~
+
+**RESOLVED (PR #224) — runtime `CANOPY_MODE` override resolved inside `validateCanopyConfig`, which throws on an unrecognized value. Note the finding understated it: hand-editing the config (the assumed workaround) breaks the image build, so there was no working setting at all. Also covers the browser half via `NEXT_PUBLIC_CANOPY_MODE`, without which a deployed editor sends dev-auth headers at a Clerk-enforcing server.**
 
 `cli/cli.ts:123` is a literal `const mode = 'dev'`, baked into the generated
 `canopycms.config.ts` via `template-files/canopycms.config.ts.template:5`. There is **no runtime
@@ -85,7 +87,9 @@ Both `image-size` and `file-type` are called directly on uploaded bytes —
 asset *logic* around them was reviewed and is solid (strict staging-key validation, allowlist SVG
 sanitizer, fully allowlisted transform directives); the parsers underneath are the exposure.
 
-## A3. [P1] Settings-workspace git plumbing: the init lock does not synchronize, and the pull is a permanent no-op
+## ~~A3. [P1] Settings-workspace git plumbing: the init lock does not synchronize, and the pull is a permanent no-op~~
+
+**RESOLVED (PR #222) — bespoke lock replaced with `acquireProvisioningLock` on a dedicated `{workspaceRoot}/.settings-init` target (anchoring on `dirname(settingsRoot)` would have aliased `ensureLocalSimulatedRemote`'s lock in proper-lockfile's registry), and `pullCurrentBranchInner` now pins `FETCH_HEAD`. The rename guard stays lock-free and now runs twice, closing the TOCTOU this file had left open.**
 
 > **FIXED 2026-08-13.** Both defects reproduced as failing tests first, then fixed:
 > `pullCurrentBranchInner` now pins `FETCH_HEAD` to a SHA (and raises a typed
@@ -125,7 +129,9 @@ yet" from a real merge failure. Update `docs/concurrency.md` either way.
 clone checked out on a different branch. Today's tests (`git-manager.test.ts:1609-1657`) use full
 clones with `currentBranch === cloned branch`, which is why this shipped.
 
-## A4. [P1] A reviewer-approved branch can be destroyed by one unconfirmed click
+## ~~A4. [P1] A reviewer-approved branch can be destroyed by one unconfirmed click~~
+
+**RESOLVED (PR #221) — server guard extended to `submitted | approved`, plus the confirmation the reversible actions already had. Note the premise was checked and had gone stale: withdraw already accepts `approved`, so this removes the destructive escape while the legitimate one remains.**
 
 Compound: `api/branch.ts:599-606` blocks deletion for `status === 'submitted'` but **permits
 `approved`** — a branch whose PR a reviewer has already approved — while
@@ -145,7 +151,9 @@ notes `approved` has no non-destructive exit; deciding that question resolves th
 
 Each is confirmed and individually small.
 
-## B1. [P2] One duplicate content ID bricks every content operation on a branch
+## ~~B1. [P2] One duplicate content ID bricks every content operation on a branch~~
+
+**RESOLVED (PR #226) — the scan quarantines with a cross-host-deterministic tie-break instead of throwing, and `scanBranchHealth` surfaces it with a repair action. Follow-up from the composed-diff review: un-bricking the branch made a previously unreachable write path reachable, where a write to the quarantined slug deleted the **kept** file; writes on a duplicated ID are now refused with a 409 naming the repair action.**
 
 `content-id-index.ts:109` throws on the first duplicate embedded ID; `content-store.ts:258-262`
 wraps the rebuild in `try/finally` with **no `catch`**, so `loadedIndexGeneration` never advances
@@ -211,7 +219,9 @@ own semantics. Divergence here is a future authorization bug, not untidiness.
 
 **Fix direction:** one shared target-matcher so listing and enforcement cannot disagree.
 
-## B6. [P2] API error-status and decoding inconsistencies
+## ~~B6. [P2] API error-status and decoding inconsistencies~~
+
+**RESOLVED (PR #225) — unknown errors surface as 500 rather than 400, decoding happens exactly once in the router (with traversal defence re-asserted post-decode against both the `entries` and `content` routes), and an order-cleanup failure after a successful delete reports a warning rather than a false 500.**
 
 - Unknown exceptions (ENOSPC/EACCES/bugs) mapped to **400** instead of 500
   (`api/content.ts:465,607`; `api/entries.ts:399`), inconsistent with sibling read/delete handlers.
