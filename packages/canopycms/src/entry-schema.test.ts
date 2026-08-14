@@ -4,6 +4,7 @@ import {
   defineEntrySchema,
   defineInlineFieldGroup,
   defineNestedFieldGroup,
+  defineSeoFieldGroup,
   type EntryTypesFromRegistry,
   type TypeFromEntrySchema,
 } from './entry-schema'
@@ -340,6 +341,47 @@ describe('TypeFromEntrySchema', () => {
       expect(empty).toEqual({})
       expect(optionalContainers.map((f) => f.required)).toEqual([false, false])
     })
+  })
+})
+
+describe('defineSeoFieldGroup', () => {
+  // The recommended group is FLAT by default, so the SEO fields must land at the top level of
+  // the derived shape — the same convention extractSeoFields reads without configuration.
+  it('flattens into the parent shape, with every field optional', () => {
+    const schema = defineEntrySchema([{ name: 'title', type: 'string' }, defineSeoFieldGroup()])
+
+    type Content = TypeFromEntrySchema<typeof schema>
+
+    expectTypeOf<Content>().toEqualTypeOf<{
+      title: string
+      metaTitle?: string
+      metaDescription?: string
+      ogImage?: string
+      // select fields infer as string | number (TypeFromEntrySchema does not narrow options).
+      ogType?: string | number
+      canonical?: string
+      noindex?: boolean
+      twitterCard?: string | number
+    }>()
+
+    // An entry that sets no SEO fields at all is still a valid literal.
+    const bare: Content = { title: 'Hello' }
+    expect(bare.metaTitle).toBeUndefined()
+    // The group is one entry in the schema array; the flattening is purely type-level.
+    expect(schema).toHaveLength(2)
+  })
+
+  it('nests under the given key when `group` is passed', () => {
+    const schema = defineEntrySchema([
+      { name: 'title', type: 'string' },
+      defineSeoFieldGroup({ group: 'seo' }),
+    ])
+
+    type Content = TypeFromEntrySchema<typeof schema>
+
+    expectTypeOf<Content['seo']['metaTitle']>().toEqualTypeOf<string | undefined>()
+    expectTypeOf<Content['title']>().toEqualTypeOf<string>()
+    expect(schema[1]).toMatchObject({ name: 'seo', type: 'object' })
   })
 })
 

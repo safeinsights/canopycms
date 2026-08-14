@@ -1,10 +1,22 @@
 # Static-export sitemap helper
 
-**IN PROGRESS (2026-08-14, epic `integration-202608-b` / PR #235)** — this
-epic is implementing adopter request #10 (this file) now; don't
-double-build. #10a (SEO metadata, [static-export-seo-metadata.md](static-export-seo-metadata.md))
-is related but not confirmed in this epic's scope — check before assuming
-both land together.
+**RESOLVED (2026-08-14, epic `integration-202608-b`)** — shipped together with
+#10a ([static-export-seo-metadata.md](static-export-seo-metadata.md)) in one
+change, because the `noindex` flag has to suppress a page in both surfaces.
+Delivered: core `collectRoutableEntries` (`static/index.ts`) and
+`extractSeoFields`/`isNoindexEntry`/`resolveSeoUrl` (`static/seo.ts`); Next
+`generateContentSitemap` (`canopycms-next/src/static.ts`), bound on
+`NextCanopyContextResult`; reference usage in `apps/example1/app/sitemap.ts`.
+
+Resolutions of the open design questions below: `lastmod` defaults to
+`listEntries`'s `updatedAt` and is pluggable via a `lastModified` callback,
+with the mtime caveat documented rather than papered over; `noindex` is the
+exclusion mechanism plus an `exclude` predicate (no separate "published"
+convention — see [draft-publish-lifecycle.md](../draft-publish-lifecycle.md));
+`robots.txt` is explicitly out of scope; `changeFrequency` is not emitted for
+entries. The decision NOT taken from this file: enumeration includes every
+routable entry type with no allow-list, because an allow-list is precisely what
+shipped a production sitemap missing whole content types.
 
 NOTE: This was written in terms of static support, but should also support dev and prod server capabilities
 
