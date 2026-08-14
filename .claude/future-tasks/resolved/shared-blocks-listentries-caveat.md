@@ -1,5 +1,17 @@
 # Shared/referenced blocks mostly work — but `listEntries` never resolves them
 
+## RESOLVED (2026-08-14, branch `feat/block-registry-types-and-recipes`, `integration-202608-b` epic)
+
+Documented as scoped below: README gained a "Shared / Referenced Blocks" section (under
+Page Blocks) with the full recipe — a snippet-style entry type plus a one-field block
+template holding a `reference`, resolved automatically by `read()`/`readByUrlPath()` —
+and the `listEntries` caveat is called out prominently in **two** places: inline in that
+new section, and as a callout at the top of the "Listing Entries" section itself. One
+shared reference was wired into `apps/example1/app/schemas.ts` (a `snippet` entry type
+plus a `sharedCta` block template) with a real content example, and
+`apps/example1/app/components/PostView.tsx` renders it null-safely. See
+`docs/adopter-migration.md`'s "Unreleased" section for the adopter-facing entry.
+
 ## Priority: P2 [BOTH]
 
 From adopter request #16 in `../website/docs/canopycms-requests.md`
@@ -19,14 +31,14 @@ etc.) resolves correctly through `read()`.
 
 `listEntries` reads files **raw off disk** and never resolves references at
 all (see the general finding in
-[listentries-acl-awareness.md](listentries-acl-awareness.md) about
+[listentries-acl-awareness.md](../listentries-acl-awareness.md) about
 `listEntries`'s read path). So any surface built off `listEntries` — a search
 index, a sitemap, an AI-content export — sees a shared block as either `null`
 or a bare reference ID, never the resolved data. This is the same underlying
 gap `#17`'s search-document work
-([search-document-extraction-primitives.md](search-document-extraction-primitives.md))
+([search-document-extraction-primitives.md](../search-document-extraction-primitives.md))
 runs into, and the same one
-[resolved-references-url.md](resolved-references-url.md) is designed around.
+[resolved-references-url.md](../resolved-references-url.md) is designed around.
 
 ## Action
 

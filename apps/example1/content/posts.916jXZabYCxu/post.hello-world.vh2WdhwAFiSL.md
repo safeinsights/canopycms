@@ -14,6 +14,9 @@ blocks:
     value:
       title: Try CanopyCMS
       ctaText: Click me
+  - template: sharedCta
+    value:
+      snippet: bjWxMJ8aXnHo
 ---
 
 Some **MDX** content that mirrors the another example.

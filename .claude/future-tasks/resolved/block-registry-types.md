@@ -1,5 +1,18 @@
 # Block registry: ship the types, not a component
 
+## RESOLVED (2026-08-14, branch `feat/block-registry-types-and-recipes`, `integration-202608-b` epic)
+
+Shipped as decided below: `BlockValueOf<Blocks, N>` and `BlockComponentRegistry<Blocks,
+ExtraProps>` added to `entry-schema.ts` (exported off the `canopycms` root entry), with
+type-level tests (`entry-schema.test.ts`) proving exhaustiveness in both directions — a
+registry missing a template fails to compile, and one with an unknown extra key fails
+too. Documented in README under a new "Block Component Registries" subsection, including
+the one contained type assertion the dispatch loop needs (indexing a mapped registry by
+a discriminated union's own tag doesn't type-check without it — verified directly with
+`tsc` before writing it into docs). `apps/example1/app/components/PostView.tsx` now uses
+the registry pattern instead of the if-chain this file names below. See
+`docs/adopter-migration.md`'s "Unreleased" section for the adopter-facing entry.
+
 ## Priority: P3 [BOTH]
 
 From adopter request #13 in `../website/docs/canopycms-requests.md`
