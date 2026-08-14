@@ -579,8 +579,17 @@ describe('FormRenderer', () => {
           </Wrapper>
         </CanopyCMSProvider>,
       )
-      await waitFor(() => expect(document.querySelector('[contenteditable="true"]')).toBeTruthy())
-    })
+      // Explicit timeout: what this waits on is a REAL dynamic import of the
+      // MDXEditor chunk, whose cost scales with machine load, so testing-
+      // library's 1s default is a measurement of the host rather than of the
+      // product. It went red on a full-suite run (both vitest projects
+      // contending) while passing whenever this project ran alone. The
+      // assertion is unchanged - still "the real editor mounted, not the
+      // readonly fallback"; only the patience is.
+      await waitFor(() => expect(document.querySelector('[contenteditable="true"]')).toBeTruthy(), {
+        timeout: 15_000,
+      })
+    }, 20_000)
 
     it('a required markdown field can be filled and saved', () => {
       const fields: FieldConfig[] = [

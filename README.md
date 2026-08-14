@@ -1590,10 +1590,18 @@ import { sanitizeHref } from 'canopycms'
 | `"docs/guide"`                  | `"/docs/guide"` (relative)         |
 | `"#section"`                    | `"#section"` (same-page)           |
 | `"//evil.com/x"`                | `"#"` (protocol-relative, blocked) |
+| `"\\evil.com/x"`                | `"#"` (protocol-relative, blocked) |
+| `"not a url"`                   | `"/not%20a%20url"` (relative)      |
 | `"javascript:alert(1)"`         | `"#"` (blocked scheme)             |
 | `"data:text/html,<h1>bad</h1>"` | `"#"` (blocked scheme)             |
 | `"http://"`                     | `"#"` (invalid URL)                |
 | `""`                            | `"#"` (invalid URL)                |
+
+Note that any input **without a scheme** is treated as a site-relative path, so a
+string that isn't a URL at all (`"not a url"`) comes back as an escaped relative
+link rather than the fallback. That is the safe direction — it can only ever
+point at your own origin — but it means `sanitizeHref` is not a validity check:
+if you want to reject junk, validate the value before rendering it.
 
 Use `sanitizeHref` anywhere you render an `href` attribute with a value that comes from CMS content -- call-to-action links, navigation URLs, author website fields, etc. It constructs a fresh string from the parsed URL rather than passing the original input through, which also satisfies static analysis tools (e.g., CodeQL taint tracking).
 

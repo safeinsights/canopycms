@@ -421,7 +421,11 @@ describe('admin branch-health api', () => {
       expect(resolved.id).toBe(dupId)
       expect(resolved.keptPath).toBe(`content/posts/post.new-slug.${dupId}.json`)
       expect(resolved.archivedAs).toHaveLength(1)
-      expect(resolved.archivedAs[0]).toMatch(/^\.duplicate-content-id\.\d{8}T\d{6}Z\./)
+      // Repo-relative, not a bare basename: with duplicates in several
+      // collections the operator otherwise cannot tell which file went where.
+      expect(resolved.archivedAs[0]).toMatch(
+        /^content\/posts\/\.duplicate-content-id\.\d{8}T\d{6}Z\./,
+      )
 
       // The winner is untouched, still at its original name.
       await expect(
@@ -429,7 +433,12 @@ describe('admin branch-health api', () => {
       ).resolves.toBeTruthy()
       // The loser was renamed (archived), never deleted -- nothing evaporates.
       await expect(fs.stat(path.join(postsDir, `post.old-slug.${dupId}.json`))).rejects.toThrow()
-      await expect(fs.stat(path.join(postsDir, resolved.archivedAs[0]))).resolves.toBeTruthy()
+      // Resolved against the BRANCH ROOT, not the collection dir: the reported
+      // path is repo-relative, so it is directly usable to find the archived
+      // file (which is the whole point of reporting more than a basename).
+      await expect(
+        fs.stat(path.join(branchesRoot, 'dup-branch', resolved.archivedAs[0])),
+      ).resolves.toBeTruthy()
 
       // A rescan no longer reports the duplicate -- the dot-prefixed archive
       // name is skipped by every future ContentIdIndex scan.

@@ -14,7 +14,7 @@ import { invalidateBranchContentCaches } from './content-index-generation'
 import type { OperatingMode } from './operating-mode'
 import { createDebugLogger } from './utils/debug'
 import { getErrorMessage, isNotFoundError } from './utils/error'
-import { isNetworkRemoteUrl, resolveBaseBranch } from './utils/git'
+import { isMissingRemoteRefFailure, isNetworkRemoteUrl, resolveBaseBranch } from './utils/git'
 import { acquireProvisioningLock } from './utils/provisioning-lock'
 
 const log = createDebugLogger({ prefix: 'GitManager' })
@@ -1170,6 +1170,14 @@ export class GitManager {
       // remote has no ref to fetch ("couldn't find remote ref"). Typed so
       // callers can tell it apart from a genuine pull failure instead of
       // catch-all-ing both (see services.ts commitToSettingsBranch).
+      //
+      // CLASSIFIED, not assumed. Wrapping every fetch failure in this type
+      // handed callers the one error that means "nothing to pull" for an
+      // unreachable remote, an auth denial or a corrupt object store too --
+      // and commitToSettingsBranch logs that as "normal for the first
+      // settings commit" and carries on. A type whose docstring promises a
+      // narrow condition must only be constructed for that condition.
+      if (!isMissingRemoteRefFailure(getErrorMessage(err))) throw err
       throw new GitRemoteRefMissingError(currentBranch, this.remote, err)
     }
     // Merge the just-fetched tip (pinned to a SHA), not <remote>/<current>:
@@ -1276,12 +1284,16 @@ export class GitManager {
    * as "ahead" (needs pushing) rather than an error.
    */
   async hasUnpushedCommits(branch?: string): Promise<boolean> {
-    const target = branch ?? (await this.git.revparse(['--abbrev-ref', 'HEAD']))
-    const localSha = (await this.git.revparse([target])).trim()
+    // `--end-of-options` before every caller-influenced ref name, the same
+    // guard (and for the same reason) as push() above: names are sanitized
+    // upstream, but this file's stated rule is that the positional is guarded
+    // where it is passed, not where it was validated.
+    const target = branch ?? (await this.git.revparse(['--abbrev-ref', '--end-of-options', 'HEAD']))
+    const localSha = (await this.git.revparse(['--end-of-options', target])).trim()
     let fetchedTip: string
     try {
-      await this.git.fetch(this.remote, target)
-      fetchedTip = (await this.git.revparse(['FETCH_HEAD'])).trim()
+      await this.git.raw(['fetch', '--end-of-options', this.remote, target])
+      fetchedTip = (await this.git.revparse(['--end-of-options', 'FETCH_HEAD'])).trim()
     } catch {
       // No ref on the remote yet -- the branch has never been pushed.
       return true

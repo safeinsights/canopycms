@@ -69,10 +69,17 @@ describe('MarkdownField', () => {
       </CanopyCMSProvider>,
     )
 
-    await waitFor(() => expect(document.querySelector('[contenteditable="true"]')).toBeTruthy())
+    // Explicit timeout, same reason as FormRenderer.test.tsx's rich-text
+    // mount test: this waits on a real dynamic import of the MDXEditor chunk,
+    // so the 1s default measures machine load rather than the product. Red on
+    // a full-suite run (both vitest projects contending), green whenever this
+    // project ran alone.
+    await waitFor(() => expect(document.querySelector('[contenteditable="true"]')).toBeTruthy(), {
+      timeout: 15_000,
+    })
     expect(screen.getByTestId('mdx-image-dialog')).toBeTruthy()
     // The custom InsertEntryLink toolbar button is on the same toolbar,
     // confirming the toolbar itself rendered (not just an editor shell).
     expect(screen.getByTestId('insert-entry-link-button')).toBeTruthy()
-  })
+  }, 20_000)
 })

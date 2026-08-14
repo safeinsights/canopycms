@@ -210,7 +210,11 @@ waiting on a save:
   the lock far longer than any wait an interactive save can absorb, so the wait exists to
   absorb handoff and short holds — everything longer becomes `BranchSyncingError` (a
   `ContentConflictError` subclass, so every existing 409 mapping keeps working) whose
-  message says the branch is syncing and to retry, rather than blaming another editor.
+  message says the branch is busy (syncing, or another save in flight) and to retry,
+  rather than blaming another editor. The message names both causes because the lock has
+  both: it is per-branch-root, so this is the **writer-vs-writer** budget as well as the
+  rebase one, and every write to a branch now serializes behind it where in-process
+  serialization used to be per-entry.
 - **Reads never take it.** An EFS round-trip on every read is not an acceptable price,
   and a read racing a rebase gets an older or newer file, never a destroyed one.
 

@@ -625,8 +625,41 @@ describe('useBranchManager', () => {
         expect(result.current.branches).toHaveLength(2)
       })
 
+      // Resolves, not rejects: a dismissal is a normal outcome. The only
+      // caller (Editor.tsx) catches into console.error, so rejecting turned
+      // every Cancel click into a logged error.
       await act(async () => {
-        await expect(result.current.handleDelete('feature')).rejects.toThrow()
+        await expect(result.current.handleDelete('feature')).resolves.toBeUndefined()
+      })
+
+      expect(mockClient.branches.delete).not.toHaveBeenCalled()
+    })
+
+    // Mantine does not call onCancel for these, so a promise settled only by
+    // onCancel stayed pending forever and the caller's `await` never returned.
+    it('resolves when the confirmation is dismissed via Escape or the overlay', async () => {
+      const { modals } = await import('@mantine/modals')
+      vi.mocked(modals.openConfirmModal).mockImplementationOnce((options) => {
+        options.onClose?.()
+        return 'mock-modal-id'
+      })
+
+      mockClient.branches.list.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        data: { branches: mockBranches },
+      })
+
+      const { result } = renderHook(() => useBranchManager(defaultOptions), {
+        wrapper,
+      })
+
+      await waitFor(() => {
+        expect(result.current.branches).toHaveLength(2)
+      })
+
+      await act(async () => {
+        await expect(result.current.handleDelete('feature')).resolves.toBeUndefined()
       })
 
       expect(mockClient.branches.delete).not.toHaveBeenCalled()

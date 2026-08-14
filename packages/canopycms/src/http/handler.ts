@@ -9,6 +9,8 @@ import type { BranchContext } from '../types'
 import { loadBranchContext, BranchWorkspaceManager } from '../branch-workspace'
 import { BranchMetadataCorruptError } from '../branch-metadata'
 import { resolveCanopyUser } from '../resolve-canopy-user'
+import { authResultToCanopyUser } from '../user'
+import { isAdmin } from '../authorization'
 import { clientOperatingStrategy, operatingStrategy } from '../operating-mode'
 import { getErrorMessage, redactCredentials, sanitizeErrorMessage } from '../utils/error'
 // canopyLogError, not console.error: http/handler.ts is shared code and not
@@ -277,14 +279,48 @@ export function createCanopyRequestHandler(options: CanopyHandlerOptions): Canop
       canopyLogError(
         `CanopyCMS: Failed to resolve internal groups from the settings workspace: ${redactCredentials(message)}`,
       )
-      return jsonResponse(
-        {
-          ok: false,
-          status: 503,
-          error: `Settings workspace unavailable: ${sanitizeErrorMessage(message)}`,
-        },
-        503,
-      )
+
+      // Same trade as the base-branch degradation above, for the same
+      // reason: /admin is the recovery surface for exactly this failure
+      // (a renamed settings branch trips assertSettingsWorkspaceIdentity
+      // permanently until a human intervenes), so 503ing it too leaves an
+      // operator with no in-product way to see why anything is down.
+      //
+      // Safe because it can only REMOVE privilege, never grant it.
+      // `authResultToCanopyUser` merges internal groups ADDITIVELY, and
+      // path rules select on the user matching a target (never on the user
+      // LACKING a group), so dropping them can flip allowed -> denied and
+      // not the reverse. The one privilege that survives is bootstrap
+      // admin, which comes from CANOPY_BOOTSTRAP_ADMIN_IDS in the
+      // environment and does not touch the settings workspace at all.
+      //
+      // A non-bootstrap admin still gets the 503, deliberately: the admin
+      // guard would answer them 403, and "settings workspace unavailable"
+      // is the more actionable of the two.
+      const degradedUser = authResultToCanopyUser(authResult, apiCtx.services.bootstrapAdminIds)
+      if (pathSegments[0] === 'admin' && isAdmin(degradedUser.groups)) {
+        canopyLogError(
+          `CanopyCMS: Serving ${req.method} /admin for a bootstrap admin with group-based privileges UNRESOLVED (settings workspace unavailable) so the recovery endpoints stay reachable.`,
+        )
+        user = degradedUser
+      } else {
+        // Name the settings branch: the failure this most often means is a
+        // changed deploymentName pointing the deployment at a branch that
+        // isn't the one its workspace was cloned for, and the branch name
+        // is the part of that an operator can act on without CloudWatch
+        // (paths are redacted out of client-facing messages).
+        const settingsBranch = operatingStrategy(apiCtx.services.config.mode).getSettingsBranchName(
+          apiCtx.services.config,
+        )
+        return jsonResponse(
+          {
+            ok: false,
+            status: 503,
+            error: `Settings workspace unavailable (settings branch '${settingsBranch}'): ${sanitizeErrorMessage(message)}`,
+          },
+          503,
+        )
+      }
     }
 
     // API routes require authentication - reject anonymous users

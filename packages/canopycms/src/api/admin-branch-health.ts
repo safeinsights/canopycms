@@ -587,6 +587,12 @@ const repairContentDuplicatesHandler = async (
 
   const contentRootName = ctx.services.config.contentRoot || 'content'
 
+  // Declared out here so a rename that throws part-way through can still
+  // report what it DID do. A bare 500 left the operator with a branch in a
+  // third state -- neither the one the error implied nor the one they
+  // started from -- and a retry that would then see different duplicates.
+  const resolved: RepairedContentDuplicate[] = []
+
   try {
     return await withContentWriteLock(
       dirPath,
@@ -601,21 +607,31 @@ const repairContentDuplicatesHandler = async (
         }
 
         const stamp = formatTrashStamp(new Date())
-        const resolved: RepairedContentDuplicate[] = []
-        for (const dup of duplicates) {
-          const archivedAs: string[] = []
-          for (const droppedPath of dup.droppedPaths) {
-            const droppedAbs = path.join(dirPath, droppedPath)
-            const archivedName = `.duplicate-content-id.${stamp}.${path.basename(droppedPath)}`
-            await fs.rename(droppedAbs, path.join(path.dirname(droppedAbs), archivedName))
-            archivedAs.push(archivedName)
+        try {
+          for (const dup of duplicates) {
+            const archivedAs: string[] = []
+            for (const droppedPath of dup.droppedPaths) {
+              const droppedAbs = path.join(dirPath, droppedPath)
+              const archivedName = `.duplicate-content-id.${stamp}.${path.basename(droppedPath)}`
+              await fs.rename(droppedAbs, path.join(path.dirname(droppedAbs), archivedName))
+              // Repo-relative, not a bare basename: duplicates in several
+              // collections all archive to similar-looking names, and
+              // without the directory the operator cannot tell which file
+              // went where (nor find it again to recover it).
+              archivedAs.push(path.posix.join(path.dirname(droppedPath), archivedName))
+            }
+            resolved.push({ id: dup.id, keptPath: dup.keptPath, archivedAs })
           }
-          resolved.push({ id: dup.id, keptPath: dup.keptPath, archivedAs })
+        } finally {
+          // Publishes so other processes' ContentStores rebuild, and
+          // invalidates any ContentStore already registered on this root in
+          // THIS process. In a `finally` so it covers the PARTIAL path too:
+          // files have moved, so an index that still lists them is wrong
+          // whether or not the loop finished. `duplicates` is non-empty here
+          // and the loop pushes once per entry, so the success path always
+          // reaches this with `resolved` populated.
+          if (resolved.length > 0) await invalidateContentIndexesDurable(dirPath)
         }
-
-        // Publish so other processes' ContentStores rebuild, and invalidate
-        // any ContentStore already registered on this root in THIS process.
-        await invalidateContentIndexesDurable(dirPath)
 
         return { ok: true, status: 200, data: { resolved } }
       },
@@ -625,7 +641,14 @@ const repairContentDuplicatesHandler = async (
     if (err instanceof ContentWriteLockBusyError) {
       return { ok: false, status: 409, error: err.message }
     }
-    return { ok: false, status: 500, error: getErrorMessage(err) }
+    const completed = resolved.flatMap((r) => r.archivedAs)
+    return {
+      ok: false,
+      status: 500,
+      error: completed.length
+        ? `${getErrorMessage(err)} (partially repaired first - already archived: ${completed.join(', ')})`
+        : getErrorMessage(err),
+    }
   }
 }
 

@@ -384,23 +384,32 @@ export class SchemaOps {
    * strip the prefix itself (the only mutator that did); that bespoke strip
    * is gone now that every entry point normalises here instead.
    *
-   * Idempotent and prefix-only: strips one leading `"{contentRootName}/"` if
-   * present (exact string match against the full, possibly multi-segment,
-   * `contentRootName` — never `path.basename()`, which would break a
-   * multi-segment root like "cms/content"), otherwise returns the path
-   * unchanged. So both prefixed (production/editor) and unprefixed
-   * (existing store tests, adopters calling SchemaOps directly) input work,
-   * and normalising an already-normalised path is a no-op — safe to call
-   * from a method that receives a path some other method already
-   * normalised. Deliberately does NOT touch the bare root-collection
-   * sentinel (`collectionPath === this.contentRootName`, no trailing
-   * segment): that has no trailing "/" to match, so it passes through
-   * unchanged and the `=== this.contentRootName` checks in
+   * Prefix-only: strips ONE leading `"{contentRootName}/"` if present (exact
+   * string match against the full, possibly multi-segment, `contentRootName`
+   * — never `path.basename()`, which would break a multi-segment root like
+   * "cms/content"), otherwise returns the path unchanged. So both prefixed
+   * (production/editor) and unprefixed (existing store tests, adopters
+   * calling SchemaOps directly) input work. Deliberately does NOT touch the
+   * bare root-collection sentinel (`collectionPath === this.contentRootName`,
+   * no trailing segment): that has no trailing "/" to match, so it passes
+   * through unchanged and the `=== this.contentRootName` checks in
    * `updateCollectionInner`/`updateOrderInner` keep working.
    *
+   * CALL EXACTLY ONCE PER ENTRY POINT — it is NOT idempotent, and an earlier
+   * version of this comment claimed it was. A sub-collection literally named
+   * after the content root defeats the "already normalised" reasoning: with
+   * `contentRoot: 'content'`, "content/content/x" normalises to "content/x"
+   * and again to "x", and "content/content" normalises to "content", which
+   * the `=== this.contentRootName` checks above then treat as the ROOT
+   * collection — so a second call mutates a DIFFERENT collection rather than
+   * reporting not-found. Every entry point calls this exactly once today, so
+   * the ambiguity is unreachable; removing it needs the editor to send an
+   * unambiguously-scoped path, tracked in
+   * .claude/future-tasks/collection-path-content-root-ambiguity.md.
+   *
    * A future public method that accepts a logical collection path must call
-   * this first, the same way every existing one does — that is the
-   * "safe by construction" contract this boundary is meant to provide.
+   * this first, and only once, the same way every existing one does — that is
+   * the "safe by construction" contract this boundary is meant to provide.
    */
   private normalizeCollectionPath(collectionPath: LogicalPath): LogicalPath {
     return createLogicalPath(stripContentRootPrefix(collectionPath, this.contentRootName))
