@@ -120,6 +120,30 @@ export function isStaleLeaseRejection(message: string): boolean {
   return message.includes(REJECTED_MARKER) && message.includes(STALE_LEASE_REASON)
 }
 
+// git's message when `git fetch <remote> <branch>` names a ref the remote does
+// not have. Both spellings occur: modern git prints the lowercase form, older
+// versions and some transports capitalize it.
+const MISSING_REMOTE_REF_REASONS = ["couldn't find remote ref", "Couldn't find remote ref"]
+
+/**
+ * Whether a `git fetch <remote> <branch>` failure is specifically "that ref
+ * doesn't exist on the remote" -- the ONLY benign fetch outcome, meaning the
+ * branch has never been pushed.
+ *
+ * Narrow on purpose, and the narrowness is the whole point. This predicate
+ * exists because a bare `catch` around the fetch classified EVERY failure --
+ * unreachable remote, auth denial, permission error on the workspace, corrupt
+ * object store -- as "nothing to pull", which callers then logged as normal
+ * and proceeded past. Anything this does not recognize must reach the caller
+ * as the genuine error it is.
+ *
+ * Same locale caveat as the predicates above: the text is gettext-translated,
+ * so callers MUST run git with a locale-pinning env (`gitChildEnv`).
+ */
+export function isMissingRemoteRefFailure(message: string): boolean {
+  return MISSING_REMOTE_REF_REASONS.some((reason) => message.includes(reason))
+}
+
 /**
  * Detect the current HEAD branch name for a given repository root.
  * Returns the branch name, or the provided fallback (default 'main')

@@ -130,8 +130,10 @@ export class ContentConflictError extends Error {
  *
  * A `ContentConflictError` subclass so every existing 409 mapping keeps
  * working unchanged; the distinct type exists so the API can surface THIS
- * message ("the branch is syncing, retry") instead of the generic
- * "modified by another editor", which would be actively misleading.
+ * message ("the branch is busy, retry") instead of the generic "modified by
+ * another editor", which would be actively misleading. The default wording
+ * covers writer-vs-writer contention too, which this lock also produces --
+ * see ContentWriteLockBusyError.
  */
 export class BranchSyncingError extends ContentConflictError {
   constructor(message: string) {
@@ -169,11 +171,18 @@ export class DuplicateContentIdError extends ContentConflictError {
   constructor(contentId: string, paths: readonly string[]) {
     const sorted = Array.from(new Set(paths)).sort()
     super(
+      // Names the STATE, not an action. The repair-content-duplicates
+      // endpoint exists but nothing in the editor renders it, so telling an
+      // editor "an admin can run X" sent them to an admin who could neither
+      // run X nor see that the branch was affected. Say what is true; the
+      // admin panel's read-only duplicate list (SystemHealthPanel) is the
+      // diagnosis half, and the repair UI is tracked in
+      // .claude/future-tasks/duplicate-content-id-repair-ui.md.
       `Content ID ${contentId} is on more than one file (${sorted
         .map((p) => `"${p}"`)
         .join(' and ')}), so this save was refused rather than risk overwriting or ` +
-        `deleting the wrong one. An admin can resolve it with the repair-content-duplicates ` +
-        `action for this branch.`,
+        `deleting the wrong one. An administrator needs to resolve the duplicate on the ` +
+        `server before this entry can be saved.`,
     )
     this.name = 'DuplicateContentIdError'
     this.contentId = contentId

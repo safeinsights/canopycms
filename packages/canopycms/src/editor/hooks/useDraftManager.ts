@@ -55,8 +55,9 @@ interface PersistedDrafts {
   drafts: Record<string, FormValue>
   /**
    * contentId -> the server version the stored draft was based on. `null`
-   * means "unknown" and is treated as a conflict on save (see
-   * `isDraftBaseStale`).
+   * means "unknown" (see `draftBaseState`): not trusted as fresh, but not
+   * treated as known-stale either -- saving prompts once for an explicit
+   * overwrite rather than blocking the draft forever.
    */
   baseVersions: Record<string, number | null>
 }
@@ -67,9 +68,13 @@ interface PersistedDrafts {
  * LEGACY DECISION: a pre-v2 payload carries no base versions at all, and we
  * cannot reconstruct them -- the draft may predate any number of other
  * people's saves. Every legacy draft is therefore restored with base version
- * `null` ("unknown"), which surfaces the conflict UI on save instead of
+ * `null` ("unknown"), which surfaces a confirmation on save instead of
  * trusting it. Trusting it is the bug being fixed; silently DISCARDING it is a
- * quieter version of the same bug, so the draft is kept and the user is told.
+ * quieter version of the same bug, so the draft is kept and the user gets the
+ * decision. Nothing here re-stamps `null` (the reconcile effect only fills ids
+ * NOT already present), so the ONLY thing that clears it is that confirmation
+ * -- which is why blocking on it unconditionally, as an earlier version did,
+ * made a legacy draft unsaveable by any sequence of actions, forever.
  * This only affects drafts written before this change; everything written
  * after carries a real base version.
  */
@@ -428,28 +433,76 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
   }
 
   /**
-   * True when the selected entry's draft is based on a server version that is
-   * no longer the one we hold for it.
+   * How the selected entry's draft relates to the server version we hold.
    *
-   * This is the cross-session case the OCC token alone cannot catch: the draft
-   * was written against version N, the page was reloaded, the entry was
-   * re-read and captured version N+1, and a save would send N+1 -- passing the
-   * server's conflict check and reverting whoever wrote N+1. Comparing the
-   * draft's own base against the current token catches it BEFORE the write.
-   *
-   * `null` (unknown -- a draft restored from the pre-v2 storage format) counts
-   * as stale for the same reason: we cannot prove it isn't.
+   * - `ok`: nothing to object to (or nothing to compare against).
+   * - `stale`: the draft was written against version N, the page was
+   *   reloaded, the entry was re-read and captured version N+1, and a save
+   *   would send N+1 -- passing the server's conflict check and reverting
+   *   whoever wrote N+1. This is the cross-session case the OCC token alone
+   *   cannot catch, and the draft's own base is what catches it BEFORE the
+   *   write.
+   * - `unknown-base`: a draft restored from the pre-v2 storage format, which
+   *   recorded no base at all. Cannot be PROVEN fresh, but is not known
+   *   stale either, and the two must not be treated identically -- see
+   *   `handleSave`.
    */
-  const isDraftBaseStale = (): boolean => {
-    if (!currentId || drafts[currentId] === undefined) return false
+  type DraftBaseState = 'ok' | 'stale' | 'unknown-base'
+
+  const draftBaseState = (): DraftBaseState => {
+    if (!currentId || drafts[currentId] === undefined) return 'ok'
     const currentVersion = options.getEntryVersion?.(currentId)
     // No server version known for this entry at all -- nothing to compare
     // against, so this check has no opinion (the server's 409 still applies).
-    if (currentVersion === undefined) return false
+    if (currentVersion === undefined) return 'ok'
     const base = draftBaseVersionsRef.current[currentId]
-    if (base === undefined) return false
-    return base === null || base !== currentVersion
+    if (base === undefined) return 'ok'
+    if (base === null) return 'unknown-base'
+    return base !== currentVersion ? 'stale' : 'ok'
   }
+
+  /**
+   * One-time upgrade prompt for a draft carried across the pre-v2 -> v2
+   * storage change.
+   *
+   * `null` (unknown base) used to be treated exactly like a known-stale
+   * draft: blocked, with Reload and Discard the only exits -- both of which
+   * destroy the draft. And nothing ever re-stamped it, because the reconcile
+   * effect only fills ids NOT already in `bases` and `null` is present. So a
+   * legacy draft was visible, permanently unsaveable, and the only advice
+   * offered destroyed it: "kept" meant "kept and unusable".
+   *
+   * A bounded, one-time population deserves a decision, not a dead end. On
+   * confirm the base is re-stamped to the version currently held, so the
+   * draft rejoins the ordinary flow and this is never asked again -- and the
+   * server's own OCC check remains the backstop for the case where the
+   * answer was wrong.
+   */
+  const confirmUnknownBaseSave = (): Promise<boolean> =>
+    new Promise((resolve) => {
+      let decided = false
+      const settle = (value: boolean) => {
+        if (decided) return
+        decided = true
+        resolve(value)
+      }
+      modals.openConfirmModal({
+        title: 'Unsaved draft from an older editor version',
+        children:
+          'This draft was saved by an earlier version of the editor, which did not record ' +
+          'which version of the file it was based on. Saving it will overwrite the copy ' +
+          'currently on the server, including any changes made by someone else since. ' +
+          'Reload or Discard this file instead if you would rather not risk that.',
+        labels: { confirm: 'Save anyway', cancel: 'Cancel' },
+        confirmProps: { color: 'red' },
+        onConfirm: () => settle(true),
+        // onCancel alone is not enough: Mantine does not fire it when the
+        // modal is dismissed via Escape or the overlay, which would leave
+        // this promise pending forever. onClose fires for every dismissal.
+        onCancel: () => settle(false),
+        onClose: () => settle(false),
+      })
+    })
 
   const handleSave = async () => {
     if (!options.currentEntry || !effectiveValue || !currentId) return
@@ -457,9 +510,18 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
     // Conflict check first: a stale-based draft must not be schema-validated
     // into a green "Saved" -- and nagging about field errors is noise when the
     // save is not going out at all.
-    if (isDraftBaseStale()) {
+    const baseState = draftBaseState()
+    if (baseState === 'stale') {
       showConflictNotification()
       return
+    }
+    if (baseState === 'unknown-base') {
+      if (!(await confirmUnknownBaseSave())) return
+      // Re-stamp so the draft rejoins the ordinary flow: from here on its base
+      // is a real version and the normal stale check applies. Done BEFORE the
+      // write so a failed save doesn't re-prompt on every retry.
+      const currentVersion = options.getEntryVersion?.(currentId)
+      if (currentVersion !== undefined) draftBaseVersionsRef.current[currentId] = currentVersion
     }
 
     // Client-side pre-save validation (ED-H1): the same pure schema rules the

@@ -82,17 +82,35 @@ export const CONTENT_WRITE_LOCK_NAME = 'content-write.lock'
  * turn everything longer into a fast, explicit "retry" the editor can act on
  * rather than a request that hangs toward the Lambda timeout. The worker
  * revisits the branch next cycle, so the blocked state is transient.
+ *
+ * This is ALSO the writer-vs-writer budget, not only the rebase one. The lock
+ * is per-branch-root, so every write to one branch now serializes behind it
+ * where in-process serialization used to be per-entry -- bounded on Lambda
+ * (one invocation per container), but real under `next dev` and build-time
+ * provisioning across worker processes. The case to watch is a write whose
+ * in-lock path triggers a full `idIndex()` rescan of a large tree over EFS:
+ * that can plausibly exceed this budget and start 409ing unrelated saves.
+ * Making it configurable for prod tuning is tracked in
+ * .claude/future-tasks/content-write-lock-tuning-and-granularity.md.
  */
 export const DEFAULT_CONTENT_WRITE_LOCK_WAIT_MS = 2000
 
 /**
  * Thrown when the bounded wait expires with the branch's content lock still
- * held (in practice: the worker is mid-rebase on this branch). Retriable --
- * callers translate this into a 409 with a message that says so.
+ * held. Retriable -- callers translate this into a 409 with a message that
+ * says so.
+ *
+ * The message says "syncing OR another save" because BOTH produce it. The
+ * lock is taken by `write`/`delete`/`renameEntry` and by the admin
+ * repair-content-duplicates action as well as by the worker's rebase, so a
+ * message naming only the rebase was a confident claim about something that
+ * may not be happening. `api/content.ts` routes this error ahead of the
+ * generic conflict specifically so the editor sees this wording, which makes
+ * the wording load-bearing rather than cosmetic.
  */
 export class ContentWriteLockBusyError extends Error {
   constructor(
-    message = 'This branch is syncing with the base branch; the change was not saved. Try again in a moment.',
+    message = 'This branch is busy (syncing with the base branch, or another save is in flight); the change was not saved. Try again in a moment.',
   ) {
     super(message)
     this.name = 'ContentWriteLockBusyError'

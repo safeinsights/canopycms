@@ -18,12 +18,46 @@ import { BRANCHES_KEY, fetchBranches, useBranchesData } from './useBranchesData'
 import { sanitizeBranchName } from '../../paths/branch-name'
 
 /**
+ * Wire a confirm modal's exits so exactly ONE of {confirmed, dismissed} runs,
+ * whichever happens first.
+ *
+ * Neither Mantine callback is the "user declined" signal on its own, in
+ * opposite directions: `onCancel` does NOT fire for an Escape or overlay
+ * dismissal (so a caller waiting on it alone waits forever), while `onClose`
+ * fires for EVERY exit including a confirm -- Mantine closes the modal right
+ * after calling `onConfirm`, and does not await it, so a bare `onClose`
+ * handler would settle the caller's promise before the confirmed work had
+ * even run. Claiming the first exit resolves both.
+ */
+const confirmModalHandlers = (onConfirm: () => Promise<void>, onDismiss: () => void) => {
+  let settled = false
+  const claim = (): boolean => {
+    if (settled) return false
+    settled = true
+    return true
+  }
+  return {
+    onConfirm: () => {
+      // Not awaited by Mantine either way; the handlers below own their own
+      // error reporting, so nothing here can reject.
+      if (claim()) void onConfirm()
+    },
+    onCancel: () => {
+      if (claim()) onDismiss()
+    },
+    onClose: () => {
+      if (claim()) onDismiss()
+    },
+  }
+}
+
+/**
  * Helper function to show confirmation modal for branch submit action.
  */
 const showSubmitConfirmation = (
   branchName: string,
   onConfirm: () => Promise<void>,
-  onCancel: () => void,
+  onDismiss: () => void,
 ) => {
   modals.openConfirmModal({
     title: 'Submit Branch for Review',
@@ -34,8 +68,7 @@ const showSubmitConfirmation = (
     ),
     labels: { confirm: 'Submit Branch', cancel: 'Cancel' },
     confirmProps: { color: 'brand' },
-    onCancel,
-    onConfirm,
+    ...confirmModalHandlers(onConfirm, onDismiss),
   })
 }
 
@@ -45,7 +78,7 @@ const showSubmitConfirmation = (
 const showWithdrawConfirmation = (
   branchName: string,
   onConfirm: () => Promise<void>,
-  onCancel: () => void,
+  onDismiss: () => void,
 ) => {
   modals.openConfirmModal({
     title: 'Withdraw Branch from Review',
@@ -56,8 +89,7 @@ const showWithdrawConfirmation = (
     ),
     labels: { confirm: 'Withdraw Branch', cancel: 'Cancel' },
     confirmProps: { color: 'orange' },
-    onCancel,
-    onConfirm,
+    ...confirmModalHandlers(onConfirm, onDismiss),
   })
 }
 
@@ -77,7 +109,7 @@ const showWithdrawConfirmation = (
 const showDeleteConfirmation = (
   branchName: string,
   onConfirm: () => Promise<void>,
-  onCancel: () => void,
+  onDismiss: () => void,
 ) => {
   modals.openConfirmModal({
     title: 'Delete Branch',
@@ -94,8 +126,7 @@ const showDeleteConfirmation = (
     // modal opens, nothing dismisses it, and the branch never disappears --
     // which is exactly how the e2e suite caught this confirmation being added.
     confirmProps: { color: 'red', 'data-testid': 'confirm-delete-branch' },
-    onCancel,
-    onConfirm,
+    ...confirmModalHandlers(onConfirm, onDismiss),
   })
 }
 
@@ -376,7 +407,12 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
             options.setBusy(false)
           }
         },
-        () => reject(new Error('User cancelled submit')),
+        // Dismissal is not an error. Rejecting here meant clicking Cancel
+        // logged a console error at the only call site (Editor.tsx catches
+        // these into console.error), which is both noise and a trip hazard
+        // for the CI=1 stray-console gate. Settled once, by onCancel OR
+        // onClose, so an Escape/overlay dismissal can't leave this pending.
+        () => resolve(),
       )
     })
   }
@@ -405,7 +441,12 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
             options.setBusy(false)
           }
         },
-        () => reject(new Error('User cancelled withdraw')),
+        // Dismissal is not an error. Rejecting here meant clicking Cancel
+        // logged a console error at the only call site (Editor.tsx catches
+        // these into console.error), which is both noise and a trip hazard
+        // for the CI=1 stray-console gate. Settled once, by onCancel OR
+        // onClose, so an Escape/overlay dismissal can't leave this pending.
+        () => resolve(),
       )
     })
   }
@@ -428,7 +469,7 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
   }
 
   const handleDelete = async (branchNameToDelete: string) => {
-    return new Promise<void>((resolve, reject) => {
+    return new Promise<void>((resolve) => {
       showDeleteConfirmation(
         branchNameToDelete,
         async () => {
@@ -449,11 +490,16 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
             options.setBusy(false)
             // Resolve regardless of API success/failure, matching the
             // pre-confirmation behavior (errors were shown as a toast, not
-            // rethrown) -- only cancellation below rejects.
+            // rethrown). Cancellation resolves too -- see below.
             resolve()
           }
         },
-        () => reject(new Error('User cancelled delete')),
+        // Dismissal is not an error. Rejecting here meant clicking Cancel
+        // logged a console error at the only call site (Editor.tsx catches
+        // these into console.error), which is both noise and a trip hazard
+        // for the CI=1 stray-console gate. Settled once, by onCancel OR
+        // onClose, so an Escape/overlay dismissal can't leave this pending.
+        () => resolve(),
       )
     })
   }

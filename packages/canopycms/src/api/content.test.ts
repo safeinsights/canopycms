@@ -55,14 +55,15 @@ vi.mock('../content-store', () => {
     // [F1] Same reasoning as BranchSyncingError above: a real
     // ContentConflictError subclass, so the handler's `instanceof` chain
     // behaves here the way it does in production. The constructor mirrors the
-    // real one's shape (id + paths -> a message naming the repair action) so
-    // the handler test can assert on a realistic message; the exact wording
-    // is asserted against the real class in content-store.test.ts.
+    // real one's shape (id + paths -> a message naming the state that needs
+    // an administrator) so the handler test can assert on a realistic
+    // message; the exact wording is asserted against the real class in
+    // content-store.test.ts.
     DuplicateContentIdError: class DuplicateContentIdError extends MockContentConflictError {
       constructor(contentId: string, paths: readonly string[]) {
         super(
           `Content ID ${contentId} is on more than one file (${paths.join(', ')}); ` +
-            `use the repair-content-duplicates action.`,
+            `an administrator needs to resolve the duplicate on the server.`,
         )
       }
     },
@@ -464,8 +465,11 @@ describe('content api', () => {
         // "reload and retry" is advice that cannot work here.
         expect(res.error).toBe(duplicateError.message)
         expect(res.error).toContain('a1b2c3d4e5f6')
-        expect(res.error).toContain('repair-content-duplicates')
+        expect(res.error).toContain('administrator')
         expect(res.error).not.toContain('modified by another editor')
+        // Must NOT name an action the editor's admin cannot actually run:
+        // no UI triggers repair-content-duplicates.
+        expect(res.error).not.toContain('repair-content-duplicates')
       }
     })
   })

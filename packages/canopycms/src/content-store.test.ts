@@ -2882,7 +2882,11 @@ describe('ContentStore duplicate content ID resilience (August 2026 baseline rev
         expect(message).toContain(dupId)
         expect(message).toContain('kept-slug')
         expect(message).toContain('zzz-dropped-slug')
-        expect(message).toContain('repair-content-duplicates')
+        // Names the state and who resolves it, NOT an action name: nothing in
+        // the editor triggers repair-content-duplicates, so naming it sent
+        // the editor to an admin who could not run it.
+        expect(message).toContain('administrator')
+        expect(message).not.toContain('repair-content-duplicates')
 
         // THE invariant: the write addressed the losing file, so the kept
         // file must be byte-for-byte what it was. (Asserted on contents, not

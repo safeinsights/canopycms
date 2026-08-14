@@ -1,6 +1,34 @@
 # MarkdownField MDXEditor-mount unit test is flaky under full-suite load
 
-**Priority:** P3
+**RESOLVED 2026-08-14 (PR #233).** Kept as the record, because the diagnosis took
+three attempts and the two rejected ones are worth not re-walking.
+
+**Cause.** Both open guesses in "Likely cause" below were right, and were the same
+thing: the assertion waits on `React.lazy`'s **real dynamic import** of
+`@mdxeditor/editor`, under `waitFor`'s ~1000ms default. So it was measuring how
+long vitest takes to transform that module — a function of machine load and of how
+many other files the `editor` project is running — rather than whether the editor
+mounts. That is exactly why it reproduced only in full runs and never in isolation,
+and why the shortcut below (run the editor project alone) worked as a triage tool.
+
+**Fix.** Preload, don't wait longer. `MarkdownField.test.tsx` and
+`FormRenderer.test.tsx` now statically `import '@mdxeditor/editor'` — the same
+specifier `MarkdownField.tsx` lazy-loads — which puts the module in vitest's
+registry during each file's import phase, so the lazy promise resolves from cache
+on the first microtask. Vitest accounts that cost as import time, which no test
+timeout applies to.
+
+**Rejected first, recorded so it is not retried:** raising the `waitFor` timeout to
+15s. It made the suite green, but it only widens the window the measurement has to
+fit inside; the test still measures the host, and the next slower machine or bigger
+project moves the goalposts again.
+
+**Also worth knowing:** `FormRenderer.test.tsx`'s `'rich-text'` mount test had the
+identical defect from the identical cause, and was failing alongside this one. Two
+symptoms, one bug — this file's framing as a MarkdownField-specific flake was part
+of what kept the cause hidden.
+
+**Priority:** P3 (as filed)
 
 ## Symptom
 
@@ -33,7 +61,7 @@ mount. Verification runs on 2026-08-13: isolation 2/2 green; two full-package
 runs both green for this test (199/199 files) — which given the ~1-in-2 historical
 rate neither confirms nor refutes. A different flake did surface in one of those
 runs (`ECOMPROMISED` from proper-lockfile in `api-editing-workflow.test.ts`),
-which belongs to [proper-lockfile-hazards.md](proper-lockfile-hazards.md).
+which belongs to [proper-lockfile-hazards.md](../proper-lockfile-hazards.md).
 
 ## Repro
 
@@ -75,5 +103,5 @@ and triage misattribution, which the shortcut above is meant to absorb.
 
 ## Related
 
-- [git-manager-test-tmpdir-cleanup-race.md](git-manager-test-tmpdir-cleanup-race.md)
+- [git-manager-test-tmpdir-cleanup-race.md](../git-manager-test-tmpdir-cleanup-race.md)
   — the other known intermittent, same package, likely the cheaper of the two to fix

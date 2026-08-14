@@ -121,7 +121,7 @@ nothing checking it.
 
 **Failures are reported per package (`--no-bail`).** `pnpm -r run test` stops at
 the first failing package, and pnpm runs topologically with `canopycms` first —
-so a flake there (see [markdownfield-mdxeditor-mount-flake](../markdownfield-mdxeditor-mount-flake.md), which reproduced
+so a flake there (see [markdownfield-mdxeditor-mount-flake](markdownfield-mdxeditor-mount-flake.md), which reproduced
 twice during this work) would have masked the very deploy-template assertions
 this change exists to enforce. The root `test` script now passes `--no-bail`.
 Verified by planting a deliberately failing test in `canopycms`: without the

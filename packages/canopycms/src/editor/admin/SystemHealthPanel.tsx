@@ -703,6 +703,35 @@ function BranchHealthRow({
                 </ThemeIcon>
               </Tooltip>
             )}
+            {/*
+              DIAGNOSIS ONLY, DELIBERATELY NO BUTTON. Editors hitting a
+              duplicate get a 409 saying an administrator must resolve it;
+              without this, that administrator had no way to see which branch
+              was even affected. The repair endpoint exists, but putting its
+              trigger in this row would sit it beside Purge (which trashes the
+              whole branch directory) -- a misroute this row cannot afford.
+              The action UI is tracked in
+              .claude/future-tasks/duplicate-content-id-repair-ui.md.
+            */}
+            {!!entry.duplicateContentIds?.length && (
+              <Tooltip
+                label={entry.duplicateContentIds
+                  .map((d) => `${d.id}: kept ${d.keptPath}; also on ${d.droppedPaths.join(', ')}`)
+                  .join('\n')}
+                multiline
+                maw={420}
+                style={{ whiteSpace: 'pre-line' }}
+              >
+                <Badge
+                  color="orange"
+                  variant="light"
+                  data-testid={`duplicate-content-ids-${entry.dirName}`}
+                >
+                  {entry.duplicateContentIds.length} duplicate ID
+                  {entry.duplicateContentIds.length === 1 ? '' : 's'}
+                </Badge>
+              </Tooltip>
+            )}
           </Group>
         </Table.Td>
         <Table.Td>

@@ -1176,29 +1176,124 @@ describe('useDraftManager', () => {
       expect(result.current.drafts.abc123def456).toEqual({ title: 'Draft from last session' })
     })
 
-    it('treats a legacy draft with no recorded base version as unknown and shows the conflict UI', async () => {
-      // Pre-v2 storage format: a bare map, no base versions anywhere.
-      window.localStorage.setItem(
-        'canopycms:drafts:main',
-        JSON.stringify({ abc123def456: { title: 'Legacy draft' } }),
-      )
-      mockGetEntryVersion.mockReturnValue(200)
+    describe('legacy draft with no recorded base version (pre-v2 storage)', () => {
+      /** Pre-v2 storage format: a bare map, no base versions anywhere. */
+      const persistLegacyDraft = () => {
+        window.localStorage.setItem(
+          'canopycms:drafts:main',
+          JSON.stringify({ abc123def456: { title: 'Legacy draft' } }),
+        )
+        mockGetEntryVersion.mockReturnValue(200)
+      }
 
-      const { result } = renderHook(() => useDraftManager(versionedOptions))
-      await waitFor(() =>
-        expect(result.current.drafts.abc123def456).toEqual({ title: 'Legacy draft' }),
-      )
+      it('asks before overwriting rather than saving silently', async () => {
+        const { modals } = await import('@mantine/modals')
+        persistLegacyDraft()
+        const { result } = renderHook(() => useDraftManager(versionedOptions))
+        await waitFor(() =>
+          expect(result.current.drafts.abc123def456).toEqual({ title: 'Legacy draft' }),
+        )
 
-      await act(async () => {
-        await result.current.handleSave()
+        await act(async () => {
+          await result.current.handleSave()
+        })
+
+        expect(modals.openConfirmModal).toHaveBeenCalledWith(
+          expect.objectContaining({ title: 'Unsaved draft from an older editor version' }),
+        )
       })
 
-      const { notifications } = await import('@mantine/notifications')
-      expect(vi.mocked(notifications.show)).toHaveBeenCalledWith(
-        expect.objectContaining({ color: 'yellow' }),
-      )
-      expect(mockSaveEntry).not.toHaveBeenCalled()
-      expect(result.current.drafts.abc123def456).toEqual({ title: 'Legacy draft' })
+      // The defect: `null` was treated exactly like a known-stale base, and
+      // nothing ever re-stamps `null`, so the draft was visible and
+      // unsaveable by any sequence of actions - while the only advice given
+      // (Reload / Discard) destroyed it.
+      it('saves the draft once the overwrite is confirmed', async () => {
+        persistLegacyDraft()
+        const { result } = renderHook(() => useDraftManager(versionedOptions))
+        await waitFor(() =>
+          expect(result.current.drafts.abc123def456).toEqual({ title: 'Legacy draft' }),
+        )
+
+        await act(async () => {
+          await result.current.handleSave()
+        })
+
+        expect(mockSaveEntry).toHaveBeenCalled()
+      })
+
+      it('re-stamps the base on confirm so the next save is not asked again', async () => {
+        const { modals } = await import('@mantine/modals')
+        persistLegacyDraft()
+        const { result } = renderHook(() => useDraftManager(versionedOptions))
+        await waitFor(() =>
+          expect(result.current.drafts.abc123def456).toEqual({ title: 'Legacy draft' }),
+        )
+
+        await act(async () => {
+          await result.current.handleSave()
+        })
+        // A fresh edit after the save re-stamps from the current version, so
+        // the only way to prove the null was cleared is a second save on a
+        // draft that still exists. Re-create the draft and save again.
+        await act(async () => {
+          result.current.setDrafts({ abc123def456: { title: 'Edited after upgrade' } })
+        })
+        vi.mocked(modals.openConfirmModal).mockClear()
+        await act(async () => {
+          await result.current.handleSave()
+        })
+
+        expect(modals.openConfirmModal).not.toHaveBeenCalled()
+        expect(mockSaveEntry).toHaveBeenCalledTimes(2)
+      })
+
+      it('keeps the draft and does not save when the overwrite is declined', async () => {
+        const { modals } = await import('@mantine/modals')
+        persistLegacyDraft()
+        vi.mocked(modals.openConfirmModal).mockImplementationOnce(
+          (options: { onCancel?: () => void }) => {
+            options.onCancel?.()
+            return 'mock-modal-id'
+          },
+        )
+
+        const { result } = renderHook(() => useDraftManager(versionedOptions))
+        await waitFor(() =>
+          expect(result.current.drafts.abc123def456).toEqual({ title: 'Legacy draft' }),
+        )
+
+        await act(async () => {
+          await result.current.handleSave()
+        })
+
+        expect(mockSaveEntry).not.toHaveBeenCalled()
+        expect(result.current.drafts.abc123def456).toEqual({ title: 'Legacy draft' })
+      })
+
+      // Escape/overlay dismissal does not call onCancel in Mantine, so a
+      // promise settled only by onCancel would hang here forever and the
+      // Save button would never come back.
+      it('does not hang when the modal is dismissed without a button', async () => {
+        const { modals } = await import('@mantine/modals')
+        persistLegacyDraft()
+        vi.mocked(modals.openConfirmModal).mockImplementationOnce(
+          (options: { onClose?: () => void }) => {
+            options.onClose?.()
+            return 'mock-modal-id'
+          },
+        )
+
+        const { result } = renderHook(() => useDraftManager(versionedOptions))
+        await waitFor(() =>
+          expect(result.current.drafts.abc123def456).toEqual({ title: 'Legacy draft' }),
+        )
+
+        await act(async () => {
+          await result.current.handleSave()
+        })
+
+        expect(mockSaveEntry).not.toHaveBeenCalled()
+      })
     })
 
     it('saves normally when the restored draft base version still matches the server', async () => {

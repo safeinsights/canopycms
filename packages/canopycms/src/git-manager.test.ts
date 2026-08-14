@@ -1877,6 +1877,21 @@ describe('GitManager.pullCurrentBranch (single-branch clone on an orphan setting
 
     await expect(manager.pullCurrentBranch()).rejects.toBeInstanceOf(GitRemoteRefMissingError)
   })
+
+  // The counterpart to the test above, and the one that carries the weight:
+  // an UNREACHABLE remote is not "nothing to pull". Classifying it as
+  // GitRemoteRefMissingError made commitToSettingsBranch log it as normal for
+  // a first commit and proceed, which is the failure shape the type's own
+  // docstring rules out.
+  it('rejects with the underlying git error (NOT GitRemoteRefMissingError) when the remote is unreachable', async () => {
+    const { manager, remotePath } = await setupSettingsWorkspace()
+
+    // The ref exists as far as this clone knows; the remote itself is gone.
+    await fs.rm(remotePath, { recursive: true, force: true })
+
+    await expect(manager.pullCurrentBranch()).rejects.toThrow()
+    await expect(manager.pullCurrentBranch()).rejects.not.toBeInstanceOf(GitRemoteRefMissingError)
+  })
 }, 60_000)
 
 describe('GitManager content-index invalidation', () => {
