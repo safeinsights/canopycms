@@ -39,7 +39,7 @@ wires it up without ambiguity).
 
 ## Related
 
-[[worker-cloudwatch-logs]] — the worker's log group is the model to follow.
+[worker-cloudwatch-logs](worker-cloudwatch-logs.md) — the worker's log group is the model to follow.
 
 ## Resolution (2026-07-30, `fix/cdk-deploy-reaches-worker`, PR #176)
 

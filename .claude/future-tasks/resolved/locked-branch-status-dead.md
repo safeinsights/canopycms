@@ -4,7 +4,7 @@
 
 Decided delete rather than implement. `'submitted'` already means "locked while a
 reviewer looks at the PR", and that lock is now genuinely enforced (see
-[[submitted-branch-edit-locking]]), so a second status carrying the same meaning
+[submitted-branch-edit-locking](submitted-branch-edit-locking.md)), so a second status carrying the same meaning
 bought nothing. `'locked'` had zero writers, no endpoint and no UI affordance
 that could set it — the guard branch and three badge-colour maps were its only
 readers.
@@ -58,4 +58,4 @@ concept (`isProtected`/`submitBlocked`/`readOnly`) keyed off `defaultBaseBranch`
 — if that lands, it may subsume everything 'locked' was ever meant to do, making
 removal the natural choice. Coordinate before implementing.
 
-Relates to [[post-merge-sync-gaps]] (the review that found it).
+Relates to [post-merge-sync-gaps](post-merge-sync-gaps.md) (the review that found it).

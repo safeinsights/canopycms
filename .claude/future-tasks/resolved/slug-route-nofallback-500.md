@@ -84,4 +84,4 @@ rejects the request before the component runs.
 deploy-test repo, request any unknown path on the deployed CMS
 (https://<cf-domain>/does-not-exist) → 500 with NoFallbackError in the Lambda log;
 locally `CANOPY_BUILD=cms npm start` then `curl /nope`. Relates to
-[[server-mode-anonymous-read-500]] (both are "content-read edge cases surface as 500").
+[server-mode-anonymous-read-500](server-mode-anonymous-read-500.md) (both are "content-read edge cases surface as 500").

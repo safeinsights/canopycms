@@ -59,6 +59,6 @@ client-side (`BranchManager.tsx:600-615`). No destructive-exit asymmetry remains
 
 ## Related
 
-- [[submitted-branch-edit-locking]] (resolved) — established the status lock
-- [[locked-branch-status-dead]] (resolved) — the decide-or-delete precedent
-- [[content-lifecycle-scenarios]] — owns the broader workflow/UX question
+- [submitted-branch-edit-locking](resolved/submitted-branch-edit-locking.md) (resolved) — established the status lock
+- [locked-branch-status-dead](resolved/locked-branch-status-dead.md) (resolved) — the decide-or-delete precedent
+- [content-lifecycle-scenarios](content-lifecycle-scenarios.md) — owns the broader workflow/UX question

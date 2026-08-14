@@ -97,7 +97,7 @@ swept the CDK app); CDK `generateLaunchTemplateInsteadOfLaunchConfig` feature fl
 
 ## What the first real customer deploy still needs (open follow-ups)
 
-- **[[post-merge-sync-gaps]]** (P1) — after a content PR merges, the branch stays
+- **[post-merge-sync-gaps](post-merge-sync-gaps.md)** (P1) — after a content PR merges, the branch stays
   "submitted" (no auto merge-detection) and the editor's base-branch (`main`)
   workspace clone is stale, so editors see old content and fork new branches from
   stale main. Core to the multi-editor workflow.
@@ -107,9 +107,9 @@ swept the CDK app); CDK `generateLaunchTemplateInsteadOfLaunchConfig` feature fl
   deploy needs the worker's journald shipped to CloudWatch (add the agent in
   user-data, or grant SSM to the operating role). (resolved — see
   [worker-cloudwatch-logs.md](worker-cloudwatch-logs.md))
-- **[[server-mode-anonymous-read-500]]** + **[[slug-route-nofallback-500]]** (P2) —
+- **[server-mode-anonymous-read-500](server-mode-anonymous-read-500.md)** + **[slug-route-nofallback-500](slug-route-nofallback-500.md)** (P2) —
   content-read edge cases surface as 500 on the server build.
-- **[[canopycms-pack-needs-prepack]]** (P2) — `canopycms` and siblings need the same
+- **[canopycms-pack-needs-prepack](canopycms-pack-needs-prepack.md)** (P2) — `canopycms` and siblings need the same
   `prepack` guard `canopycms-cdk` got, so a local pack never ships stale `dist/`.
 - **Bot credentials** — the test used a fine-grained PAT scoped to the one repo
   (Contents + PR RW). GraphQL draft-conversion (withdraw/request-changes) was not

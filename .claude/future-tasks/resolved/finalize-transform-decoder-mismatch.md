@@ -65,4 +65,4 @@ deploy-test: upload a PNG with a valid header but corrupt body → finalize retu
 and the asset appears in the MediaLibrary with a broken thumbnail; `curl` its
 `/assets/t/f=webp,w=160/<hash>/<slug>.webp` → 422
 `{"error":"Transform failed: vipspng: libpng read error"}`. Relates to
-[[project-deployment-test-epic]] and [[asset-review-followups]].
+[cms-service-deployment-test.md](cms-service-deployment-test.md) and [asset-review-followups](../asset-review-followups.md).

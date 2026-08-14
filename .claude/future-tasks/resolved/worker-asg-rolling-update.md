@@ -1,7 +1,7 @@
 # Worker ASG has no update policy — deploys don't actually update the worker
 
 Found while planning the pre-merge sandbox verification of
-[[worker-cloudwatch-logs]] (PR #145, 2026-07-24): to exercise the new
+[worker-cloudwatch-logs](worker-cloudwatch-logs.md) (PR #145, 2026-07-24): to exercise the new
 user-data we had to manually terminate the instance, because a `cdk deploy`
 alone never would have.
 
@@ -52,7 +52,7 @@ Considerations:
 
 ## Related
 
-[[worker-cloudwatch-logs]] — the deploy-verification friction that surfaced
+[worker-cloudwatch-logs](worker-cloudwatch-logs.md) — the deploy-verification friction that surfaced
 this.
 
 ## Resolution (2026-07-30, `fix/cdk-deploy-reaches-worker`, PR #176)
