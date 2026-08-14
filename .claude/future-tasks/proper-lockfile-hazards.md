@@ -43,6 +43,18 @@ Exposure grows with hold duration: `GitManager`'s clone-time provisioning lock, 
 loop's content-write lock, and (since 2026-08-13) the settings-workspace init lock are all
 held for many seconds to minutes.
 
+**OBSERVED 2026-08-14 — this is no longer theoretical.** A full `pnpm -r run test` run
+crashed with an `ECOMPROMISED` "Unhandled Errors" block and exit 1, from `onCompromised`
+firing in an integration test under full-suite parallel load. Three subsequent runs (one
+isolated, two full-suite) were clean with identical pass counts, so it is load-dependent
+and non-deterministic — but it means the timer-throw path fires on an ordinary developer
+machine, with no EFS and no cross-host contention. Two consequences worth carrying into
+the fix: the failure surfaces as a **process-level crash separate from the pass/fail
+tally**, so any pipeline that reads only pass counts (or pipes the run through `tail`)
+reports a green suite for a crashed run; and if it fires this readily locally, the EFS
+hold-duration argument above understates the production exposure rather than overstating
+it.
+
 **Fix direction:** pass an `onCompromised` that logs (`workerLogError` / `canopyLogError`) and
 lets the holder finish, rather than throwing from a timer; decide per call site whether the
 in-flight operation should also be aborted. Would need an options passthrough on
