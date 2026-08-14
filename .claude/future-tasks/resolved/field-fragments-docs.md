@@ -1,5 +1,16 @@
 # Document reusable field fragments (works today, undocumented)
 
+## RESOLVED (2026-08-14, branch `feat/block-registry-types-and-recipes`, `integration-202608-b` epic)
+
+Documented as scoped below: README gained a "Reusable Field Fragments" section (under
+Page Blocks) covering both mechanisms — spreading a `const`-inferred field array, and
+nesting `defineInlineFieldGroup` inside a block template — plus a worked example of a
+per-use override (spread everything except the one field that differs, override just
+that field from the same underlying const). A 3-line `defineFieldFragment()`
+const-inference identity helper was added beside `defineBlockTemplate` for
+discoverability, with tests in `entry-schema.test.ts`. See
+`docs/adopter-migration.md`'s "Unreleased" section for the adopter-facing entry.
+
 ## Priority: P3 [BOTH]
 
 From adopter request #15 in `../website/docs/canopycms-requests.md`
