@@ -27,3 +27,7 @@ packages/canopycms/src/api/__test__/mock-client.ts
 **/Dockerfile.*.template
 **/deploy-*.yml.template
 **/dockerignore.template
+
+# See .gitignore: pnpm can create its store here, and an unignored store
+# fails `prettier --check .` (the pre-push hook) on 20MB of cached files.
+.pnpm-store/
