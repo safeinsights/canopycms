@@ -1,5 +1,11 @@
 # Static-export sitemap helper
 
+**IN PROGRESS (2026-08-14, epic `integration-202608-b` / PR #235)** — this
+epic is implementing adopter request #10 (this file) now; don't
+double-build. #10a (SEO metadata, [static-export-seo-metadata.md](static-export-seo-metadata.md))
+is related but not confirmed in this epic's scope — check before assuming
+both land together.
+
 NOTE: This was written in terms of static support, but should also support dev and prod server capabilities
 
 ## Problem
