@@ -211,7 +211,19 @@ export interface PathPermission {
 
 ### 8. Update Permission Checking Logic
 
-**File**: [packages/canopycms/src/path-permissions.ts](packages/canopycms/src/path-permissions.ts)
+**File**: `packages/canopycms/src/authorization/path.ts` (re-exported via
+`authorization/index.ts`).
+
+> **Path drift, corrected 2026-08-13:** this section used to name
+> `packages/canopycms/src/path-permissions.ts`, which no longer exists —
+> `checkPathAccess` moved during the `authorization/` module consolidation.
+> Two further drifts for whoever implements this: the proposed `EditorEntry`
+> shape below uses `id` and `collectionId`, but the real interface
+> (`editor/Editor.tsx:70-85`) uses `contentId`, `path` and `collectionPath`, so
+> the sketch needs remapping rather than copy-pasting. And note this feature
+> would add a **sixth** ACL matcher unless
+> [authorization-enforcement-consolidation.md](authorization-enforcement-consolidation.md)
+> lands first.
 
 Update `checkPathAccess` to handle `'list'` level:
 

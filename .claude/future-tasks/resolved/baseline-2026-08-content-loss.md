@@ -2,7 +2,7 @@
 
 Found by the August 2026 whole-codebase baseline review (5 independent Fable reviews at
 `integration-202607-a` @ `6770327c`, findings verified first-hand by the lead reviewer).
-Full traces: [REVIEW-REPORT-2026-08.md](../../REVIEW-REPORT-2026-08.md) findings 1, 2, 5, 6, 8.
+Full traces: [REVIEW-REPORT-2026-08.md](../../../REVIEW-REPORT-2026-08.md) findings 1, 2, 5, 6, 8.
 
 These four are grouped because they are **one failure mode, not four bugs**: an operation
 reports success and the user's content is then silently lost or reverted. None is caught by the
@@ -53,7 +53,7 @@ misleading comment is corrected, `docs/concurrency.md` documents the layer, the 
 and the stale-takeover caveat, and `worker/cms-worker-content-lock.test.ts` carries the
 regression (verified red against the pre-fix code first). Remaining gap tracked separately:
 schema and asset mutations are not under this lock — see
-[content-write-lock-coverage-gaps.md](content-write-lock-coverage-gaps.md).
+[content-write-lock-coverage-gaps.md](../content-write-lock-coverage-gaps.md).
 
 `worker/cms-worker.ts:2166-2171` skips dirty branches, then rebases. The comment at `:2162-2165`
 claims the residual TOCTOU is safe ("the rebase will fail and the catch block will abort

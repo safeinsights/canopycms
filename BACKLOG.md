@@ -2,6 +2,18 @@
 
 Prioritized work items for CanopyCMS development. See [AGENTS.md](AGENTS.md) for project goals and working agreements.
 
+> **Scope — which backlog is which** (added 2026-08-13 after a full audit).
+> This file is the **unranked feature roadmap**: capabilities we may want, with
+> no severity rubric. Defects, debt and deferred fixes live in
+> `.claude/future-tasks/` with P0–P3 severities, per-item files, and a CI guard
+> (`pnpm lint:tasks`). Roughly half the items below are completion records rather
+> than open work; several others are already tracked as task files, noted inline.
+> If you are looking for "what should I fix next", read
+> `.claude/future-tasks/index.md`, not this file.
+>
+> **Item numbering is load-bearing** — `api/entries.ts:249` cites "BACKLOG #19"
+> in a source comment. Do not renumber.
+
 ## Prioritized Backlog
 
 ### 1. Submission/review workflow
@@ -13,7 +25,7 @@ Prioritized work items for CanopyCMS development. See [AGENTS.md](AGENTS.md) for
 - PR submission uses Octokit with bot PAT; creates branch commits, pushes, and opens/updates PRs
 - Submission locks editing until withdrawn (draft PR), reviewer requests changes, or after rejection/merge
 - Consider [@simulacrum/github-api-simulator](https://www.npmjs.com/package/@simulacrum/github-api-simulator) for testing
-- Comment threads stored as `.canopycms/comments.json` inside branch clone (non-committed by default; pluggable storage if persistence beyond clone is needed)
+- Comment threads stored as `.canopy-meta/comments.json` inside branch clone (non-committed by default; pluggable storage if persistence beyond clone is needed) — path corrected 2026-08-13; the shipped location is `.canopy-meta/`, see `comment-store.ts:88`
 - Bot can mirror to PR comments if desired
 - Post-merge: close/delete remote branch, mark branch clone read-only or archived; keep minimal metadata for history
 - Show GitHub diff link to reviewers; basic status polling
@@ -61,7 +73,7 @@ Prioritized work items for CanopyCMS development. See [AGENTS.md](AGENTS.md) for
 
 ### 8. Asset adapters
 
-- `AssetStore` interface with methods: `list`, `upload`, `delete`, `getSignedUrl`
+- ~~`AssetStore` interface with methods: `list`, `upload`, `delete`, `getSignedUrl`~~ — **none of those four methods exist.** Corrected 2026-08-13: the shipped `AssetStore` (`assets/types.ts:47-77`) is `beginUpload` / `writeStaging` / `putOriginal` / `putPublicObject` / `putMetaIfAbsent` / `getMeta` / `listMeta` / `deleteMeta`. S3 and Local adapters both ship; **LFS is the only unbuilt adapter** (`assets/factory.ts:39-42` returns `undefined`)
 - S3 adapter with presigned uploads for production
 - LFS adapter surface
 - Local adapter for dev/tests
@@ -89,7 +101,8 @@ Prioritized work items for CanopyCMS development. See [AGENTS.md](AGENTS.md) for
 - Keyboard shortcuts for common actions
 - Figure out gray-matter usage (currently JSON heavy)
 - Type-smoke test: render Editor with minimal entry, run `tsc --noEmit` to catch API shape mismatches
-- TODO: Decide if `normalizeContentPayload` should merge top-level `body` when both nested `{ format, data, body }` and sibling `body` present
+- ~~TODO: Decide if `normalizeContentPayload` should merge top-level `body` when both nested `{ format, data, body }` and sibling `body` present~~ — settled; the source TODO is gone. `editor-utils.ts:76-95` implements it, with tests at `editor-utils.test.ts:136-153` (verified 2026-08-13)
+- Field renderers for `number`, `datetime` and `rich-text` landed 2026-08-13 (PR #220): `NumberField`, `DateTimeField`, `NumberListField`. They have **no e2e coverage** yet
 - TODO: Refine preview base defaults from config (allow overrides, better root entry handling, clarify trailing-slash behavior)
 
 ### 10. Sync and conflict surfacing
@@ -178,7 +191,11 @@ Prioritized work items for CanopyCMS development. See [AGENTS.md](AGENTS.md) for
 
 ### Test Environment Limitations
 
-4 skipped tests involve Mantine Button async onClick in jsdom:
+6 skipped tests repo-wide (count corrected 2026-08-13 — it said 4). The four
+Mantine Button async-onClick-in-jsdom ones are `ThreadCarousel.test.tsx:220,242`
+and `InlineCommentThread.test.tsx:145,272`; the other two are unrelated —
+`Editor.integration.test.tsx:1687` and `editor-config.test.ts:152`. The four
+below involve Mantine Button async onClick in jsdom:
 
 - "allows adding a reply"
 - "calls onResolve when resolve button is clicked"

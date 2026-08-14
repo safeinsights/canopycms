@@ -46,8 +46,8 @@ docs-site-proto) puts this code in front of the teams' live docs site.
 
 ## Related
 
-- [resolved/validate-entry-type-names.md](resolved/validate-entry-type-names.md) — the
+- [resolved/validate-entry-type-names.md](validate-entry-type-names.md) — the
   implementation and why the check lives at schema resolution rather than config time
-- [validate-collection-names.md](validate-collection-names.md) — the sibling
+- [validate-collection-names.md](../validate-collection-names.md) — the sibling
   `collections` check is still unvalidated; if it is added with the same throw
   semantics, it needs this same verification pass

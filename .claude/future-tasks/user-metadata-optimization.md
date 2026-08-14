@@ -133,7 +133,7 @@ export const PERMISSION_ROUTES = {
 } as const
 ```
 
-**Important:** Run `npm run generate:client` after adding the endpoint to regenerate the API client.
+**Important:** Run `pnpm generate:client` after adding the endpoint to regenerate the API client.
 
 #### Step 2: Create useBatchUserMetadata Hook
 
@@ -553,7 +553,7 @@ export { PERMISSION_ROUTES } from './permissions'
 
 #### Step 5: Regenerate API client
 
-Run `npm run generate:client` to update client with new namespaces.
+Run `pnpm generate:client` to update client with new namespaces.
 
 #### Step 6: Update all client calls
 

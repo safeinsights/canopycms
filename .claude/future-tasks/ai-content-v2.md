@@ -7,7 +7,11 @@ Also shipped since: `entryTransforms` + traversal-guarded `readSibling` + `conte
 ## Planned
 
 - **`llms.txt` / `llms-full.txt`** — emerging standard for LLM-friendly site metadata; generate alongside manifest.json
-- **HTTP caching headers** — ETag and Cache-Control based on content hash for smarter downstream caching on the route handler
+- **ETag support** — content-hash ETag on the route handler for conditional
+  requests. (Corrected 2026-08-13: this bullet used to say "ETag and
+  Cache-Control". `Cache-Control: public, max-age=60` has shipped in prod mode
+  since the feature's first commit `de931406` — see `ai/handler.ts:92,103` — so
+  only the ETag half is open.)
 - **Selective rebuild** — only regenerate changed entries in the build utility (currently regenerates everything)
 - **MCP server** — direct Claude Code tool integration for richer AI interactions beyond static markdown fetch
 - **Per-page markdown twins** — co-located `ai.tsx` templates as a complementary per-page approach (different use case from collection-level bundles)

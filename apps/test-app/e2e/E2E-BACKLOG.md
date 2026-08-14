@@ -1,5 +1,43 @@
 # E2E Test Backlog
 
+> **⚠️ LARGELY SUPERSEDED — audited 2026-08-13. Do not pick work from this file
+> without checking below.**
+>
+> This document predates the 2026-07-30 e2e coverage sweep (workstream C, +45
+> tests) and is unaware of it. It has **zero inbound references** anywhere in the
+> repo. Verified status of its items:
+>
+> - **Items 1–12 and 20: covered by real tests** — `entry-crud.spec.ts:22,95,170`,
+>   `field-types.spec.ts:56,118`, `draft-behavior.spec.ts:21,67`,
+>   `preview-bridge.spec.ts:21,58`, `comments.spec.ts:21,70`,
+>   `conflict-management.spec.ts:38`.
+> - **Item 13 (approve a submitted branch): now covered** —
+>   `branch-workflow.spec.ts:30` and `branch-state-badges.spec.ts:272`. Its own
+>   open question is answered too: there is no approve button in the editor UI;
+>   it is driven via an API fixture.
+> - **Item 19 (list field add/remove): now covered** — `field-types.spec.ts:161`.
+> - **Items 15 and 16 are not test gaps — the features don't exist.** There are no
+>   keyboard handlers and no search input in `EntryNavigator.tsx`. These belong in
+>   `BACKLOG.md` item 9 (feature roadmap), not here.
+> - **Items 17 and 18a are triple-tracked** — also in `COVERAGE-MATRIX.md` (E14,
+>   E9) and in `.claude/future-tasks/e2e-deferred-coverage.md`. Use those.
+> - **Item 14's premise was superseded** by the branch-switch redesign in
+>   #181/#196.
+> - There are **no items 6 or 7** (the numbering skips them), and item 18 is used
+>   twice.
+>
+> Other stale details: the fixtures list names 4 of the 12 files now in
+> `e2e/fixtures/`; line ~234 hardcodes `http://localhost:5174` despite the header
+> explaining `CANOPY_E2E_PORT`; the session instructions say `npx playwright test`
+> where this repo mandates `pnpm`. The number/datetime/rich-text renderers from
+> PR #220 have no e2e coverage and are not listed here.
+>
+> **Recommended home going forward:** `COVERAGE-MATRIX.md` (what is covered) plus
+> `.claude/future-tasks/e2e-deferred-coverage.md` (what is deliberately deferred,
+> and why) — both already indexed and guarded by `pnpm lint:tasks`. The one piece
+> of unique value here is the "Key gotchas learned so far" block, which should
+> move to `DEVELOPING.md` before this file is retired.
+
 ## Session Instructions (for Claude)
 
 Pick the first ⬜ item below and implement it end-to-end. Follow these steps:

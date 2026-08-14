@@ -35,7 +35,24 @@ This eliminates the duplicated traversal logic entirely, reduces the function to
 - `DeletionChecker` is the only remaining consumer of a hand-rolled traversal in `validation/`
 - `ReferenceValidator` and `EntryLinkValidator` already use `traverseFields`
 
-## Also: reconcile `_type` vs `template` block discriminator
+## ~~Also: reconcile `_type` vs `template` block discriminator~~ — RESOLVED
+
+**RESOLVED by PR #88 (`7d20cbfa`)**, verified 2026-08-13. A shared
+`resolveBlockItem()` now lives at `field-traversal.ts:60-81` and is called by
+**both** `traverseFields` (`:171`) and `deletion-checker.ts`'s `findIdInData`
+(`:192`), checking `template` first with an `_type` fallback, consistently in
+both places. `ai/json-to-markdown.ts:544` is a third independent call site whose
+own comment acknowledges both keys are legitimate — consistent with, not
+contradicting, the resolved behaviour.
+
+Only the primary ask below remains: route `findIdInData` through `traverseFields`
+itself. That duplication is real today — `deletion-checker.ts:120-210` is still a
+hand-rolled recursive traversal structurally parallel to `traverseFields`
+(`field-traversal.ts:110-189`).
+
+Historical text follows.
+
+### Original finding
 
 `ai/json-to-markdown.ts:376` uses `blockItem._type || blockItem.template` as the block type
 discriminator, suggesting `template` is a legitimate alternate key in some content. Both

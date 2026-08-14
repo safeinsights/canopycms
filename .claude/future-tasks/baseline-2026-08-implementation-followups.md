@@ -6,7 +6,7 @@ implementation session's own context is not durable — the repo is.
 
 Epic: `integration-202608-a`, branched from `integration-202607-a` @ `bfe76e1e`. See
 [REVIEW-REPORT-2026-08.md](../../REVIEW-REPORT-2026-08.md) for the findings themselves and
-[pr172-review-followups.md](pr172-review-followups.md) for the human review's nine.
+[pr172-review-followups.md](resolved/pr172-review-followups.md) for the human review's nine.
 
 Findings are struck ~~in place~~ as they resolve.
 
@@ -26,7 +26,17 @@ the change ran only its own targeted files and reported green; a different worke
 code found the failures. That is the shape this will keep taking — a pipeline change is
 invisible to whichever copies the author didn't happen to run.
 
-**Fix direction:** one shared fixture factory (`api/__test__/` already exists as a home) that every
+**Fix direction — CORRECTED 2026-08-13.** The original text below said to build a shared factory
+in `api/__test__/`. Do not: **a canonical one already exists.**
+`packages/canopycms/src/test-utils/api-test-helpers.ts:166` exports a `CanopyServices`-typed
+`createMockServices(options)` with per-test overrides, it already includes `getSettingsBranchRoot`
+(`:216`), and `schema/schema-store.test.ts:12` already uses it. The work is **migrating the four
+handler-pipeline suites onto it** — `http/handler.test.ts:86`, `http/handler-binary.test.ts:92`,
+`http/handler-context-retry.test.ts:42`, `api/assets.test.ts:788` — not authoring a factory.
+Note also that `api/__test__/` contains only `mock-client.ts`; `test-utils/` is the real home.
+Building a second factory next to the one that already solves this is the failure mode to avoid.
+
+Original text: one shared fixture factory that every
 handler-pipeline suite imports, with per-test overrides layered on top. The point is that adding a
 service to the pipeline should require **one** edit and then fail loudly everywhere until it is
 made — not four edits that can each be forgotten independently.
