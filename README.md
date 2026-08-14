@@ -1734,6 +1734,56 @@ editor: {
 }
 ```
 
+### Custom Field Renderers
+
+Every [field type](#field-types) ships with a default control. `customRenderers` replaces the control for one or more types, keyed by the field's `type`, without forking the editor:
+
+```tsx
+// app/edit/page.tsx
+'use client'
+import { NextCanopyEditorPage } from 'canopycms-next/client'
+import type { CustomFieldRenderers } from 'canopycms/client'
+import config from '../../canopycms.config'
+
+const customRenderers: CustomFieldRenderers = {
+  // Every field declared `type: 'number'` now renders this instead.
+  number: ({ value, onChange, id, field }) => (
+    <label htmlFor={id}>
+      {field.label ?? field.name}
+      <input
+        id={id}
+        type="range"
+        min={0}
+        max={100}
+        value={typeof value === 'number' ? value : 0}
+        onChange={(e) => onChange(Number(e.target.value))}
+      />
+    </label>
+  ),
+}
+
+const EditorPage = NextCanopyEditorPage(config.client(), customRenderers)
+export default function Page() {
+  return <EditorPage />
+}
+```
+
+Each renderer receives `CustomFieldRenderProps`:
+
+| Prop       | Description                                                                                         |
+| ---------- | --------------------------------------------------------------------------------------------------- |
+| `field`    | The full `FieldConfig`, so one renderer can vary on `label`, `required`, `options`, etc.            |
+| `value`    | Current value, typed `unknown` — narrow it yourself                                                 |
+| `onChange` | Call with the new value to update the draft                                                         |
+| `path`     | Canonical path to this field (e.g. `['blocks', 0, 'title']`), so nested and list instances differ   |
+| `id`       | The id the default control would have used — attach it to your input so labels and tests still work |
+
+Renderers apply **by field type, everywhere** — top-level fields, fields inside `object` and `block` templates, and each item of a `list: true` field. There is no per-field override; scope with `field.name` inside the renderer if you need one.
+
+**The value you pass to `onChange` must still satisfy the field's declared type.** CanopyCMS validates entries at the server write boundary with the same rules regardless of what rendered the input, so a renderer that stores a string into a `type: 'number'` field produces a `422` on save rather than a bad file. Custom rendering changes the control, not the schema contract.
+
+`customRenderers` is also accepted directly by `<CanopyEditor>` and `<Editor>` if you compose the editor yourself instead of using the page factory.
+
 ## Content Tree Builder
 
 `buildContentTree()` walks your schema and filesystem to produce a typed tree of all your content -- useful for navigation sidebars, sitemaps, search indexes, breadcrumbs, and similar use cases. It replaces hundreds of lines of manual filesystem-walking code.
