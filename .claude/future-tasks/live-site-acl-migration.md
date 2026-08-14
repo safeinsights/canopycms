@@ -40,20 +40,41 @@ branch passes the branch layer on its own, so public/authenticated reads of
 published content keep working under `'deny'` without exposing work branches.
 See README's "Public read on server deployments".
 
+## Hard prerequisite: both sites must upgrade first
+
+`docs-site-proto` pins `canopycms ^0.0.54`, `website` pins `^0.0.41`. The creator
+and base-branch grants that make `'deny'` usable are **not in either** — they are
+unreleased, on `fix/acl-defaults-and-creator-grant` off `integration-202608-b`.
+
+Flipping to `'deny'` on the pinned versions reproduces exactly the bug that was
+just fixed: the base branch unreachable for every non-admin, and every branch an
+editor creates inert for its own creator. **Do not flip either site before it is
+on a release containing the fix.** The path-layer change (step 2 below) is safe
+on the current pins; the branch-layer change is not.
+
 ## The part that is real work
 
 `{ read: 'allow' }` leaves `edit` at `'deny'`, and **with no path rules a
-non-admin editor can create a branch but edit nothing.** Each site needs a
-`permissions.json` granting `edit` to its editors group before the flip lands,
-or its editors are locked out on day one.
+non-admin editor can create a branch but edit nothing.** Each site needs an
+`edit` rule for its editors group before the flip lands, or its editors are
+locked out on day one.
+
+Note this is **not** a file to commit to the site repo. Both operating modes use
+a separate settings branch (`usesSeparateSettingsBranch()` is true for prod and
+dev), so `permissions.json` lives in the settings workspace, not the content
+repo — which is why neither site has one checked in. It is configured by an
+admin through the editor's **Permission Manager** UI
+(`editor/permission-manager/`, backed by `GET`/`PUT /permissions`), which writes
+to the settings branch.
 
 So the order per site is:
 
-1. Write and commit `permissions.json` with an `edit` rule for the editors group
-   (and any per-tree restrictions actually wanted).
-2. Flip `defaultPathAccess` to `{ read: 'allow' }`.
-3. Flip `defaultBranchAccess` to `'deny'`.
-4. Verify as a **non-admin** user, not just as a bootstrap admin — the admin
+1. Upgrade to a release containing the grants (see above).
+2. As an admin, add an `edit` rule for the editors group in the Permission
+   Manager, plus any per-tree restrictions actually wanted.
+3. Flip `defaultPathAccess` to `{ read: 'allow' }`.
+4. Flip `defaultBranchAccess` to `'deny'`.
+5. Verify as a **non-admin** user, not just as a bootstrap admin — the admin
    bypass hides every path-layer mistake. Check: base branch content loads,
    creating a branch works, editing on it works, Submit works.
 
