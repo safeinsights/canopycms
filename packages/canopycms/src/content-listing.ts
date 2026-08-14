@@ -88,12 +88,41 @@ export const readEntryData = async (
 }
 
 /**
- * Parse a filename: {type}.{slug}.{id}.{ext}
- * Returns { type, slug, id } or null if the filename doesn't match the pattern.
+ * Parse a Canopy content filename into its `{type}.{slug}.{id}.{ext}` parts.
+ *
+ * ## Filename grammar
+ *
+ * Every entry file on disk is named `{type}.{slug}.{id}.{ext}`:
+ * - `type` — the entry type name (a key in the collection's `entries` config).
+ * - `slug` — the entry's URL slug. May itself contain dots (e.g. a slug of
+ *   `getting.started.guide`), so the type and ID anchor the split: the ID is
+ *   always the second-to-last dot-separated segment, and the slug is
+ *   everything between the type and the ID. The returned `slug` is
+ *   lowercased.
+ * - `id` — a 12-character Base58 content ID (`generateId()`/`isValidId()`).
+ *   Base58 excludes the ambiguous characters `0`, `O`, `I`, `l` so IDs are
+ *   unambiguous when read aloud or hand-transcribed. A filename whose
+ *   would-be ID segment doesn't pass `isValidId` is rejected — the whole
+ *   parse returns `null`, even if the rest of the shape looks right.
+ * - `ext` — the format extension (`.md`, `.mdx`, `.json`, `.yaml`), stripped
+ *   before parsing and not part of the returned result.
+ *
+ * @param filename - The bare filename (no directory component).
+ * @param entryTypes - When provided, the parsed `type` segment must match one
+ *   of these entry types by name, or the parse is rejected (this is how
+ *   `listCollectionEntries` filters out files that don't belong to the
+ *   collection's configured entry types). Omit this argument to parse
+ *   structurally without validating the type against a known list — useful
+ *   for adopter code that needs to recover `{type, slug, id}` from a
+ *   filename without having a schema/entry-types list on hand (e.g. a
+ *   filesystem walk over content for tooling or diagnostics).
+ * @returns `{ type, slug, id }`, or `null` if `filename` doesn't match the
+ *   `{type}.{slug}.{id}.{ext}` shape (too few segments, no extension, an
+ *   invalid ID, or — when `entryTypes` is given — an unrecognized type).
  */
 export const parseTypedFilename = (
   filename: string,
-  entryTypes: readonly EntryTypeConfig[],
+  entryTypes?: readonly EntryTypeConfig[],
 ): { type: string; slug: Slug; id: ContentId } | null => {
   // Remove extension
   const lastDot = filename.lastIndexOf('.')
@@ -102,23 +131,23 @@ export const parseTypedFilename = (
 
   // Parse: {type}.{slug}.{id}
   const parts = nameWithoutExt.split('.')
-  if (parts.length >= 3) {
-    // Check if first part matches a known entry type
-    const potentialType = parts[0]
-    const matchingType = entryTypes.find((e) => e.name === potentialType)
-    if (matchingType) {
-      const id = parts[parts.length - 1]
-      if (!isValidId(id)) return null
-      const slug = parts.slice(1, -1).join('.').toLowerCase()
-      return {
-        type: potentialType,
-        slug: slug as Slug,
-        id: id as ContentId,
-      }
-    }
+  if (parts.length < 3) return null
+
+  const potentialType = parts[0]
+  // When a known-types list is supplied, the first segment must match one of
+  // them. Without it, any first segment is accepted as the type.
+  if (entryTypes && !entryTypes.some((e) => e.name === potentialType)) {
+    return null
   }
 
-  return null
+  const id = parts[parts.length - 1]
+  if (!isValidId(id)) return null
+  const slug = parts.slice(1, -1).join('.').toLowerCase()
+  return {
+    type: potentialType,
+    slug: slug as Slug,
+    id: id as ContentId,
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -162,6 +191,15 @@ export interface ListEntriesItem<T = Record<string, unknown>> {
   data: T
   /** Field definitions for this entry's type, when resolvable. */
   schema?: EntrySchema
+  /**
+   * Filesystem mtime (ISO 8601) of the entry file, from an unconditional `fs.stat`
+   * done while listing. Caveat: this is a checkout-time timestamp, not an editorial
+   * one — a fresh CI clone resets every file's mtime to checkout time, so treat this
+   * as "changed since last build" at best, not an authoritative last-edited date for
+   * a public-facing `<lastmod>`. Sourcing mtime from git commit history is a
+   * separate, not-yet-built improvement.
+   */
+  updatedAt?: string
 }
 
 export interface ListEntriesOptions<T = Record<string, unknown>> {
@@ -260,6 +298,7 @@ export async function listEntries<T = Record<string, unknown>>(
         format: entry.format,
         data,
         schema: collection.entries?.find((e) => e.name === entry.entryType)?.schema,
+        updatedAt: entry.updatedAt,
       }
 
       if (filter && !filter(item)) continue

@@ -3,12 +3,13 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 import os from 'node:os'
 
-import { buildContentTree, type ContentTreeNode } from './content-tree'
+import { buildContentTree, defaultBuildPath, type ContentTreeNode } from './content-tree'
 import type { CanopyBuildContext } from './context'
 import { flattenSchema } from './config/flatten'
 import { generateId } from './id'
 import type { RootCollectionConfig } from './config'
 import type { ContentId } from './paths/types'
+import type { LogicalPath } from './paths/types'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -1084,5 +1085,61 @@ describe('buildContentTree', () => {
       })
     void _typecheckOnly
     expect(true).toBe(true)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// defaultBuildPath (exported for adopters extending, not replacing, the default)
+// ---------------------------------------------------------------------------
+
+describe('defaultBuildPath', () => {
+  it('strips the content root prefix', () => {
+    expect(defaultBuildPath('content/docs/guides' as LogicalPath, 'content', 'entry')).toBe(
+      '/docs/guides',
+    )
+  })
+
+  it('collapses an entry index slug to its parent collection path', () => {
+    expect(defaultBuildPath('content/guides/index' as LogicalPath, 'content', 'entry')).toBe(
+      '/guides',
+    )
+  })
+
+  it('does not collapse a collection literally named index', () => {
+    expect(defaultBuildPath('content/index' as LogicalPath, 'content', 'collection')).toBe('/index')
+  })
+
+  it('collapses the root index entry to "/"', () => {
+    expect(defaultBuildPath('content/index' as LogicalPath, 'content', 'entry')).toBe('/')
+  })
+
+  it('lowercases the result unconditionally', () => {
+    expect(defaultBuildPath('content/API-Reference' as LogicalPath, 'content', 'entry')).toBe(
+      '/api-reference',
+    )
+  })
+
+  it('matches buildContentTree default output for the same inputs', async () => {
+    const contentDir = path.join(tempDir, 'content')
+    await fs.mkdir(contentDir)
+    const { dir: docsDir } = await createCollection(contentDir, 'docs')
+    await createEntry(docsDir, 'doc', 'index', 'md', { title: 'Docs Landing' })
+
+    const schema: RootCollectionConfig = {
+      collections: [
+        {
+          name: 'docs',
+          path: 'docs',
+          entries: [{ name: 'doc', format: 'md', schema: [] }],
+        },
+      ],
+    }
+    const flat = flattenSchema(schema, 'content')
+    const tree = await buildContentTree(tempDir, flat, 'content')
+
+    const docsNode = tree[0]
+    expect(docsNode.path).toBe(
+      defaultBuildPath('content/docs' as LogicalPath, 'content', 'collection'),
+    )
   })
 })
