@@ -1,17 +1,10 @@
 import type { CanopyUser } from './user'
 import type { CanopyServices } from './services'
-import type { ReadContentInput } from './content-reader'
+import type { ReadContentInput, ContentReadMeta } from './content-reader'
 import { isDeployedStatic, isBuildMode, STATIC_DEPLOY_USER } from './build-mode'
 import { createContentReader } from './content-reader'
 import { ContentStoreError } from './content-store'
-import {
-  createLogicalPath,
-  parseSlug,
-  resolveBranchPaths,
-  type ContentId,
-  type PhysicalPath,
-  type Slug,
-} from './paths'
+import { createLogicalPath, parseSlug, resolveBranchPaths, type Slug } from './paths'
 import { resolveUrlPathCandidates } from './url-path-resolver'
 import { loadOrCreateBranchContext } from './branch-workspace'
 import {
@@ -103,16 +96,7 @@ export interface CanopyBuildContext {
   }) => Promise<{
     data: T
     path: string
-    meta: {
-      physicalPath: PhysicalPath
-      /** The resolved entry type name (e.g. the `entries[].name` in the collection's config). */
-      entryType: string
-      /**
-       * The entry's 12-char Base58 content ID, when the resolved file carries one.
-       * Undefined only for legacy entry files predating embedded-ID filenames.
-       */
-      entryId?: ContentId
-    }
+    meta: ContentReadMeta
   }>
 
   /**
@@ -135,7 +119,9 @@ export interface CanopyBuildContext {
    *
    * `meta.entryType` and `meta.entryId` are also resolved for free (path resolution
    * already derives them) — useful for entry-type-based dispatch in a single
-   * catch-all route without a separate `listEntries` lookup or filename parse.
+   * catch-all route without a separate `listEntries` lookup or filename parse. See
+   * `ContentReadMeta` (content-reader.ts) before branching on `entryType` for a legacy
+   * file: `entryId === undefined` signals that `entryType` is a fallback, not a read.
    *
    * @example
    * ```ts
@@ -158,16 +144,7 @@ export interface CanopyBuildContext {
   ) => Promise<{
     data: T
     path: string
-    meta: {
-      physicalPath: PhysicalPath
-      /** The resolved entry type name (e.g. the `entries[].name` in the collection's config). */
-      entryType: string
-      /**
-       * The entry's 12-char Base58 content ID, when the resolved file carries one.
-       * Undefined only for legacy entry files predating embedded-ID filenames.
-       */
-      entryId?: ContentId
-    }
+    meta: ContentReadMeta
   } | null>
 
   /** Underlying services */

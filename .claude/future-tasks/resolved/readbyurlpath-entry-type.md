@@ -1,9 +1,10 @@
 # Return entryType from readByUrlPath
 
-**IN PROGRESS (2026-08-14, epic `integration-202608-b` / PR #235)** — this
-epic is implementing this now, and widening scope slightly to also return
-`entryId` alongside `entryType` (both are already resolved internally during
-URL matching, per the Implementation Notes below). Don't double-build.
+**RESOLVED (2026-08-14, epic `integration-202608-b` / PR #235, commit
+`4a8992fe`)** — shipped as proposed, and widened slightly: both `read()` and
+`readByUrlPath()` now return `entryId` alongside `entryType` in `meta` (both
+were already resolved internally during path resolution, per the
+Implementation Notes below).
 
 ## Summary
 

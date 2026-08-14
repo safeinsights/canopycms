@@ -1,11 +1,18 @@
 # Optional-property inference for schema fields (`subheading?: string`)
 
+## RESOLVED (2026-08-14, epic `integration-202608-b`, commit `8da62672`)
+
+Shipped as proposed: `InferContentShape`/`RequiredValue` now mark a field
+optional in the inferred type iff the schema field has an explicit
+`required: false` (`entry-schema.ts`'s mapped-type split, ~134-144); README's
+two previously-contradicting sections now agree (`README.md:1006,1224`); the
+inference is covered by `entry-schema.test.ts` (incl. the three-way
+`required: true` / `required: false` / omitted distinction).
+
 ## Priority: P1 [BOTH]
 
-From adopter request #14 in `../website/docs/canopycms-requests.md`, triaged
-during the 2026-08-14 go-live backlog re-baseline. **This epic
-(`integration-202608-b`, PR #235) is implementing this now** — don't
-double-build.
+From adopter request #14 in a private adopter site's feature-request tracker, triaged
+during the 2026-08-14 go-live backlog re-baseline.
 
 ## Problem
 
