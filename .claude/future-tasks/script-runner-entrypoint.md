@@ -17,7 +17,7 @@ exist.
 
 This is the shared prerequisite underneath several other items filed in this
 same re-baseline: the boot-block duplication noted in
-[search-document-extraction-primitives.md](search-document-extraction-primitives.md)
+[search-document-extraction-primitives.md](resolved/search-document-extraction-primitives.md)
 (`createCanopyServices` + `createCanopyContext` + `STATIC_DEPLOY_USER`, byte-
 similar in both sites' scripts), and the programmatic content-authoring gap in
 [content-authoring-api-id-generator.md](content-authoring-api-id-generator.md)
@@ -47,7 +47,7 @@ loader) that:
 
 - [content-authoring-api-id-generator.md](content-authoring-api-id-generator.md)
   — the concrete first consumer of this.
-- [search-document-extraction-primitives.md](search-document-extraction-primitives.md)
+- [search-document-extraction-primitives.md](resolved/search-document-extraction-primitives.md)
   — documents the boot-block pattern this would formalize.
 - `cli-sync-migrate-ignore-adopter-content-root.md` — the CLI's existing
   config-loading path this should reuse rather than duplicate.

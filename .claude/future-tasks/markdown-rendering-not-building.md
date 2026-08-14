@@ -47,6 +47,6 @@ field docs) explaining:
 
 ## Related
 
-- [search-document-extraction-primitives.md](search-document-extraction-primitives.md)
+- [search-document-extraction-primitives.md](resolved/search-document-extraction-primitives.md)
   — same shape of decision (ship the shared primitive underneath, not an
   opinionated top-level API).

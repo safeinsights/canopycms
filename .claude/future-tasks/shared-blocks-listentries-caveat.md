@@ -24,7 +24,7 @@ all (see the general finding in
 index, a sitemap, an AI-content export — sees a shared block as either `null`
 or a bare reference ID, never the resolved data. This is the same underlying
 gap `#17`'s search-document work
-([search-document-extraction-primitives.md](search-document-extraction-primitives.md))
+([search-document-extraction-primitives.md](resolved/search-document-extraction-primitives.md))
 runs into, and the same one
 [resolved-references-url.md](resolved-references-url.md) is designed around.
 
