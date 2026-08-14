@@ -108,10 +108,30 @@ export interface DuplicateContentId {
  * every host converges on the same winner. The loser(s) are excluded from
  * `idToLocation`/`pathToId`/`byCollection` entirely (as if not indexed) and
  * recorded in {@link getDuplicateIds} for admin-facing health reporting
- * (branch-health.ts) and repair (api/admin-branch-health.ts) -- the files
- * themselves are left untouched on disk until a human or the repair action
- * moves them. A branch with a quarantined duplicate is degraded (that one ID
- * pair is invisible to ID-based lookups) but not dead.
+ * (branch-health.ts) and repair (api/admin-branch-health.ts). A branch with a
+ * quarantined duplicate is degraded (that one ID pair is invisible to
+ * ID-based lookups) but not dead.
+ *
+ * ### What quarantine does NOT promise
+ *
+ * Quarantining is an INDEX decision: this scan never touches the filesystem,
+ * so nothing here moves or deletes the dropped file. It does not follow that
+ * the dropped file is inert until an admin repairs it, and an earlier version
+ * of this comment wrongly claimed exactly that ("left untouched on disk until
+ * a human or the repair action moves them"). Slugs are resolved by directory
+ * scan (`ContentStore.buildPaths()`), which knows nothing about this
+ * quarantine, so the dropped file stays fully addressable by
+ * collection+slug: a stale editor tab can still save, delete or rename it.
+ *
+ * The dangerous case was the save. `ContentStore.write()`'s index-repair step
+ * reads "the index says this ID lives somewhere else" as "the slug changed"
+ * and unlinks that other file -- which, with a duplicate, is a DIFFERENT
+ * document (the kept one). It silently deleted the winner while reporting
+ * success. `write()` now refuses such a save with `DuplicateContentIdError`
+ * instead (see its "[F1] duplicate-ID guard"). `delete()`/`renameEntry()`
+ * were never affected: they only ever touch the file the caller addressed,
+ * and are deliberately still allowed, so removing or moving the dropped file
+ * by hand remains possible without an admin.
  */
 export class ContentIdIndex {
   private idToLocation: Map<string, IdLocation> = new Map()
@@ -232,7 +252,8 @@ export class ContentIdIndex {
               `[ContentIdIndex] Duplicate content ID ${id}: "${kept}" and "${dropped}" both ` +
                 `embed this ID. Keeping "${kept}" for ID-based lookups (reads, references, ` +
                 `listings); "${dropped}" is excluded from those lookups for now but has NOT ` +
-                `been deleted -- it is still on disk at that path. An admin can resolve this via ` +
+                `been deleted -- it is still on disk at that path, and saves addressed to it are ` +
+                `refused until this is resolved. An admin can resolve this via ` +
                 `the repair-content-duplicates admin action for this branch, which archives ` +
                 `"${dropped}" with a dot-prefixed name so future scans stop flagging it. ` +
                 `Root: ${this.root}`,
@@ -264,21 +285,35 @@ export class ContentIdIndex {
    */
   getDuplicateIds(): DuplicateContentId[] {
     const result: DuplicateContentId[] = []
-    for (const [id, dropped] of this.duplicateIds) {
-      const kept = this.idToLocation.get(id)
-      // Defensive: unreachable in practice -- recordDuplicate() only ever
-      // runs alongside an insertLocation() for the same id (either just
-      // before, on the winner-displaced branch, or already present, on the
-      // loser branch), so a winner always exists once a duplicate is
-      // recorded.
-      if (!kept) continue
-      result.push({
-        id: id as ContentId,
-        keptPath: kept.relativePath,
-        droppedPaths: Array.from(dropped).sort() as PhysicalPath[],
-      })
+    for (const id of this.duplicateIds.keys()) {
+      const duplicate = this.getDuplicateFor(id)
+      if (duplicate) result.push(duplicate)
     }
     return result
+  }
+
+  /**
+   * The quarantine record for ONE id, or null when that id is not
+   * duplicated. The O(1) counterpart to {@link getDuplicateIds} for the
+   * write path, which has to ask this question on every save whose resolved
+   * path disagrees with the index (ContentStore.write()'s duplicate-ID
+   * guard) and must not pay for materializing the whole list.
+   */
+  getDuplicateFor(id: string): DuplicateContentId | null {
+    const dropped = this.duplicateIds.get(id)
+    if (!dropped) return null
+    const kept = this.idToLocation.get(id)
+    // Defensive: unreachable in practice -- recordDuplicate() only ever
+    // runs alongside an insertLocation() for the same id (either just
+    // before, on the winner-displaced branch, or already present, on the
+    // loser branch), so a winner always exists once a duplicate is
+    // recorded.
+    if (!kept) return null
+    return {
+      id: id as ContentId,
+      keptPath: kept.relativePath,
+      droppedPaths: Array.from(dropped).sort() as PhysicalPath[],
+    }
   }
 
   /**

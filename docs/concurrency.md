@@ -249,11 +249,47 @@ Named A/B/C/E for continuity with the original analysis
 
 All are bounded by per-request store lifetimes, throttled backstops, and the next
 mutation's bump. None of them cause a write to land in the wrong _file_ — that is
-prevented independently (existence guard, ID locks, server-enforced locks). Read that
-narrowly: "the right file" is not the same as "the write survives". Until [SYNC-C1]
-above, a correctly-targeted, already-acknowledged write could still be rolled back
-wholesale by the worker's rebase; the lock closes that, subject to the stale-takeover
-caveat noted there.
+prevented independently (existence guard, ID locks, server-enforced locks, and the
+duplicate-ID guard below). Read that narrowly: "the right file" is not the same as
+"the write survives". Until [SYNC-C1] above, a correctly-targeted, already-acknowledged
+write could still be rolled back wholesale by the worker's rebase; the lock closes that,
+subject to the stale-takeover caveat noted there.
+
+## Duplicate content IDs vs. the write path [F1]
+
+A duplicate embedded content ID (rename-crash debris, or a merge landing two files that
+share one ID) is **quarantined, not fatal**: `ContentIdIndex.buildFromFilenames()` keeps
+one deterministic winner (string-MIN of the relative paths, so every host agrees) and
+drops the loser from the index, recording it for `branch-health` and the
+`repair-content-duplicates` admin action.
+
+Quarantine is an **index** decision and nothing more. It is tempting — and was, briefly,
+written down as fact — to describe the dropped file as inert until an admin repairs it.
+It is not: slugs resolve by directory scan (`ContentStore.buildPaths()`), which knows
+nothing about the quarantine, so the dropped file stays fully addressable by
+collection+slug and a stale editor tab can still save to it.
+
+That is a hazard specifically for `write()`, because its post-write index repair reads
+"the index puts this ID somewhere else" as "the slug changed" and `unlink`s that other
+path. With a duplicate, that other path is a **different document** — so the save
+silently deleted the kept file and returned 200. Now `write()` refuses first, with
+`DuplicateContentIdError` (a `ContentConflictError` subclass → 409 carrying its own
+message, naming both files and the repair action). Two independent detections, because
+neither alone is sufficient: the index's own quarantine record (catches a duplicate in
+another directory, and ID-addressed writes to a fresh third path, but needs a fresh
+index), and a disk check that the write's target **and** the indexed path both exist
+right now (freshness-independent, covers the ordinary slug-addressed save). A third,
+in-directory scan in the `existingId` existence guard refuses when two files there carry
+the ID, so that guard can no longer pass or 409 depending on `readdir()` order.
+
+`delete()` and `renameEntry()` are deliberately **not** blocked: each only ever touches
+the file the caller addressed (they look the entry up by path, and the dropped path is
+not in the index at all), so neither can lose the kept file — and leaving them open
+means a duplicate can still be cleaned up by hand without an admin.
+
+**The rule this generalizes to:** an index is a hint about where an ID lives, never
+authority to delete. Before removing a path you derived from the index rather than from
+the caller's own request, prove the ID identifies exactly one file.
 
 ## Recipes
 
@@ -295,7 +331,8 @@ it.
 **Never do:** counters in marker files (lost-update prone); `writeFile({flag:'wx'})`
 for exclusive creates (not crash-atomic); trusting a post-rename read-back across
 hosts; locking on physical paths that a rename can invalidate; a fixed sleep as a
-cross-host correctness mechanism.
+cross-host correctness mechanism; deleting a file the caller did not address because
+an in-memory index says its ID moved (see [F1] above).
 
 ## Testing patterns
 

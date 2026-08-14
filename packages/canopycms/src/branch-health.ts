@@ -37,7 +37,9 @@ export interface BranchHealthEntry {
    * this branch's content tree (see content-id-index.ts's "Duplicate-ID
    * quarantine" section). The branch itself stays fully usable -- content
    * operations degrade only for the specific quarantined ID(s), which are
-   * excluded from ID-based lookups until repaired via the
+   * excluded from ID-based lookups, and whose entries refuse saves
+   * (`DuplicateContentIdError`, a 409 naming this repair action) rather than
+   * mutate an ambiguous target, until repaired via the
    * repair-content-duplicates admin action.
    */
   duplicateContentIds?: DuplicateContentId[]
