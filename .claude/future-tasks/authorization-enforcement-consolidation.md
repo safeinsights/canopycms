@@ -64,3 +64,10 @@ so a deployment can run without the check that binds tokens to expected origins.
   — the scaffolded `'allow'` default is what keeps these latent today
 - [list-permission-level.md](list-permission-level.md) — a new "list" level would
   add a sixth matcher unless this lands first
+- [listentries-acl-awareness.md](listentries-acl-awareness.md) — adopter
+  request #11 (typed listing with data) wants `listEntries` exposed beyond
+  build context, but `listEntries` has zero access checks today. Whichever
+  option that file picks should reuse this file's planned shared matcher
+  rather than adding a **sixth** divergent ACL check — and if this
+  consolidation lands first, that file's filtering option gets materially
+  cheaper
