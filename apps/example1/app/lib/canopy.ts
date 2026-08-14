@@ -1,5 +1,7 @@
 import {
   createNextCanopyContext,
+  entryToMetadata,
+  type GenerateContentSitemapOptions,
   type GenerateContentStaticParamsOptions,
   type NextCanopyContextResult,
 } from 'canopycms-next'
@@ -56,6 +58,25 @@ export const contentStaticParams = async (options?: GenerateContentStaticParamsO
   const context = await canopyContextPromise
   return context.generateContentStaticParams(options)
 }
+
+// Content sitemap — bound to the build context, so app/sitemap.ts never imports the admin context.
+// Enumerates EVERY routable entry type by default; `noindex` entries are dropped through the same
+// predicate entryToMetadata uses for robots.
+export const contentSitemap = async (options: GenerateContentSitemapOptions) => {
+  const context = await canopyContextPromise
+  return context.generateContentSitemap(options)
+}
+
+// Pure SEO mapping for generateMetadata. Re-exported here so page modules keep a single
+// CanopyCMS import; it touches no context.
+export { entryToMetadata }
+
+// The site origin every emitted URL (sitemap, canonical, OG) is resolved against. Inlined at build
+// time for a static export, so it must be set in the build environment.
+export const SITE_URL = (process.env.NEXT_PUBLIC_SITE_URL ?? 'http://localhost:3000').replace(
+  /\/+$/,
+  '',
+)
 
 // Advanced escape hatch: the build context bypasses all ACLs (synthetic admin) and throws if used at
 // request time on a production server. Prefer readByUrlPath/read/contentStaticParams above.

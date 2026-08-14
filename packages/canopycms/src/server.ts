@@ -131,6 +131,34 @@ export { collectStaticPaths } from './static'
 
 export type { StaticPathEntry, CollectStaticPathsOptions } from './static'
 
+/** Enumerate routable entries WITH their data — the input to sitemaps, feeds and search indexes. */
+export { collectRoutableEntries } from './static'
+
+export type { RoutableEntry, CollectRoutableEntriesOptions } from './static'
+
+/**
+ * SEO field extraction and URL shaping (framework-agnostic). `isNoindexEntry` is the single
+ * predicate behind both `robots: noindex` and sitemap exclusion.
+ */
+export {
+  DEFAULT_SEO_FIELD_NAMES,
+  extractSeoFields,
+  isNoindexEntry,
+  isAbsoluteUrl,
+  withTrailingSlash,
+  resolveSeoUrl,
+} from './static'
+
+export type {
+  SeoFields,
+  SeoFieldNames,
+  SeoFieldLocation,
+  SeoOgType,
+  SeoTwitterCard,
+  ExtractSeoFieldsOptions,
+  ResolveSeoUrlOptions,
+} from './static'
+
 /**
  * Start a chokidar-backed watcher that detects divergence between the dev
  * working tree and the resolved branch clone. Dev mode only.

@@ -1,5 +1,21 @@
 # Static-export SEO metadata helper
 
+**RESOLVED (2026-08-14, epic `integration-202608-b`)** — shipped alongside #10
+([static-export-sitemap.md](static-export-sitemap.md)) in one change. Delivered:
+`defineSeoFieldGroup()` (`entry-schema.ts`), core `extractSeoFields` /
+`isNoindexEntry` / `resolveSeoUrl` (`static/seo.ts`), Next `entryToMetadata`
+(`canopycms-next/src/static.ts`) bound on `NextCanopyContextResult`, and
+reference usage in `apps/example1/app/posts/[slug]/page.tsx`.
+
+Resolutions of the open design questions below: flat (inline) is the recommended
+convention and the default, with the nested one supported via a `group` option on
+BOTH ends; OG image URLs resolve against an explicit `siteUrl` (image dimensions
+not emitted); title templating via `titleTemplate`; JSON-LD remains a separate
+follow-up; i18n alternates out of scope. The coordination note ("exclude noindex
+pages from the sitemap") became the design's centre — `isNoindexEntry` is a single
+predicate feeding both `robots` and sitemap exclusion, which is why the two helpers
+had to ship together.
+
 NOTE: This was written in terms of static support, but should also support dev and prod server capabilities
 
 ## Problem

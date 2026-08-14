@@ -1475,9 +1475,107 @@ export const generateStaticParams = () =>
 >
 > **Advanced (framework-agnostic):** if you need to call the enumeration with a build context you already hold, the free helper `collectStaticParams(buildCtx, options)` from `canopycms-next` takes the build context directly. The bound `contentStaticParams` above is preferred for ordinary page code.
 >
-> Sitemap and SEO-metadata static-export helpers are coming separately.
+> **Schema-invalid entries fail the build.** During an actual production `next build`, `contentStaticParams` checks every entry against its schema and throws if any fail, listing each offending entry path. This typically means an abandoned create-scaffold -- an empty draft the editor's "+" button writes before you fill it in, then never finished or deleted. Finish or delete the entry in the editor and rebuild. `next dev` is unaffected, since in-progress scaffolds legitimately exist there while editing. The same guard runs during sitemap generation (below), so an app with no `generateStaticParams` at all still gets it.
+
+### Sitemap and SEO Metadata
+
+These two ship together, and the reason is the `noindex` flag: it has to suppress a page in **both** surfaces -- `robots: { index: false }` on the page and absence from the sitemap. Both read it through the same core predicate, so they cannot disagree about which pages are advertised.
+
+#### The recommended SEO field group
+
+`defineSeoFieldGroup()` adds the seven fields the metadata helpers read by default -- `metaTitle`, `metaDescription`, `ogImage`, `ogType`, `canonical`, `noindex`, `twitterCard` -- all optional:
+
+```typescript
+// app/schemas.ts
+import { defineEntrySchema, defineSeoFieldGroup } from 'canopycms'
+
+export const postSchema = defineEntrySchema([
+  { name: 'title', type: 'string' },
+  defineSeoFieldGroup(),
+])
+// TypeFromEntrySchema: { title: string; metaTitle?: string; metaDescription?: string; ... }
+```
+
+The fields are stored **flat** in the content file by default. For the nested convention, pass `defineSeoFieldGroup({ group: 'seo' })` -- and then pass the same `{ group: 'seo' }` to `entryToMetadata` / `extractSeoFields` so the read side looks in the same place.
+
+#### `sitemap.ts`
+
+`generateContentSitemap` is a bound helper on the `createNextCanopyContext` result, like `contentStaticParams`:
+
+```typescript
+// app/lib/canopy.ts
+export const contentSitemap = async (options: GenerateContentSitemapOptions) => {
+  const context = await canopyContextPromise
+  return context.generateContentSitemap(options)
+}
+```
+
+```typescript
+// app/sitemap.ts
+import type { MetadataRoute } from 'next'
+import { contentSitemap } from './lib/canopy'
+
+// Required for output: 'export' -- metadata routes must opt into static generation.
+export const dynamic = 'force-static'
+
+export default function sitemap(): Promise<MetadataRoute.Sitemap> {
+  return contentSitemap({
+    siteUrl: 'https://example.com',
+    trailingSlash: true,
+    exclude: (entry) => entry.entryType === 'author',
+    priority: (entry) => (entry.urlPath === '/' ? 1 : undefined),
+  })
+}
+```
+
+**Every routable entry type is included by default.** There is no list of sitemap-able entry types to keep in sync -- omitting a URL takes an explicit `exclude` predicate or a `noindex` flag on the entry. A sitemap built from a remembered list of entry types silently omits whichever type nobody added, ships green, and takes those pages out of search results with no warning.
+
+**Options:**
+
+| Option          | Type                                     | Default       | Description                                                                                                        |
+| --------------- | ---------------------------------------- | ------------- | ------------------------------------------------------------------------------------------------------------------ |
+| `siteUrl`       | `string`                                 | required      | Site origin. A sitemap must carry absolute URLs                                                                    |
+| `trailingSlash` | `boolean`                                | `false`       | Emit `/contact/` rather than `/contact`. **Set it to match your `next.config`** -- CanopyCMS cannot read that file |
+| `rootPath`      | `string`                                 | Content root  | Scope to a subtree (e.g. `'content/posts'`)                                                                        |
+| `exclude`       | `(entry) => boolean`                     | -             | Drop entries, on top of the non-optional `noindex` exclusion                                                       |
+| `lastModified`  | `(entry) => Date \| string \| undefined` | `updatedAt`   | `<lastmod>` per entry; return `undefined` to omit it                                                               |
+| `priority`      | `(entry) => number \| undefined`         | -             | `<priority>` per entry                                                                                             |
+| `extraUrls`     | `SitemapExtraUrl[]`                      | -             | URLs with no entry behind them (hand-written routes, feeds)                                                        |
+| `seo`           | `{ fields?, group? }`                    | flat defaults | Where the SEO fields live, when they aren't the defaults                                                           |
+
+> **`lastModified` is filesystem mtime by default.** `updatedAt` is the entry file's mtime, not an editorial timestamp -- a fresh CI clone resets it to checkout time, so on a clean build agent the default dates every URL to when the tree was cloned. Supply a real content date via the callback, or return `undefined` to omit `<lastmod>` rather than assert a date you cannot stand behind.
 >
-> **Schema-invalid entries fail the build.** During an actual production `next build`, `contentStaticParams` checks every entry against its schema and throws if any fail, listing each offending entry path. This typically means an abandoned create-scaffold -- an empty draft the editor's "+" button writes before you fill it in, then never finished or deleted. Finish or delete the entry in the editor and rebuild. `next dev` is unaffected, since in-progress scaffolds legitimately exist there while editing.
+> `changeFrequency` is not emitted for entries: a blanket value asserted for every URL carries no information, and search engines say they ignore it. Set it per-URL via `extraUrls` if you want it.
+>
+> **`robots.txt` is out of scope** -- it is a few static lines with no CMS content behind it. Write `app/robots.ts` yourself and point its `sitemap` field at this route.
+
+#### `generateMetadata`
+
+```typescript
+// app/posts/[slug]/page.tsx
+import { entryToMetadata, readByUrlPath } from '../../lib/canopy'
+
+export const generateMetadata = async ({ params }): Promise<Metadata> => {
+  const { slug } = await params
+  const result = await readByUrlPath<PostContent>(`/posts/${slug}`)
+  return entryToMetadata(result?.data, {
+    path: `/posts/${slug}`,
+    siteUrl: 'https://example.com',
+    siteName: 'Example',
+    fallbackTitle: result?.data.title,
+    defaultOgType: 'article',
+  })
+}
+```
+
+Returns `title`, `description`, `openGraph`, `twitter`, `alternates.canonical` and `robots`. Notes:
+
+- **Empty CMS fields count as unset.** CanopyCMS writes optional fields present-but-empty, so an untouched SEO group is `metaTitle: ''` on disk. It falls back to `fallbackTitle` rather than emitting a blank title.
+- **An absolute `canonical` passes through verbatim** -- that is how an entry points at a copy of itself hosted elsewhere. Only site-relative canonicals get the origin and trailing-slash treatment.
+- **`noindex: true`** emits `robots: { index: false, follow: false }` _and_ drops the entry from the sitemap. It does **not** stop the page being built: `contentStaticParams` still enumerates it, so the URL resolves for anyone holding the link.
+- Pass `titleTemplate` from your root layout for the `%s | Site` pattern.
+
+> **Advanced (framework-agnostic):** the free `generateContentSitemap(buildCtx, options)` and `entryToMetadata(data, options)` are exported from `canopycms-next` directly, and the neutral core -- `collectRoutableEntries`, `extractSeoFields`, `isNoindexEntry` -- from `canopycms/server`, for non-Next frameworks.
 
 ### Reading Content at Build Time
 

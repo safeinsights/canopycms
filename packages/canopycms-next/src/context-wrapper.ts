@@ -22,8 +22,16 @@ import {
 import type { CanopyConfig, AuthPlugin, CanopyUser, FieldConfig } from 'canopycms'
 import { assertAuthPluginAllowedForMode } from 'canopycms/auth'
 import { CachingAuthPlugin, FileBasedAuthCache } from 'canopycms/auth/cache'
+import type { Metadata, MetadataRoute } from 'next'
 import { createCanopyCatchAllHandler } from './adapter'
-import { collectStaticParams, type GenerateContentStaticParamsOptions } from './static'
+import {
+  collectStaticParams,
+  entryToMetadata,
+  generateContentSitemap,
+  type EntryToMetadataOptions,
+  type GenerateContentSitemapOptions,
+  type GenerateContentStaticParamsOptions,
+} from './static'
 
 let warnedStaticMode = false
 
@@ -167,6 +175,19 @@ export interface NextCanopyContextResult {
   generateContentStaticParams: (
     options?: GenerateContentStaticParamsOptions,
   ) => Promise<Array<Record<string, string | string[]>>>
+  /**
+   * Build `app/sitemap.ts`'s `MetadataRoute.Sitemap` from CanopyCMS content. Includes EVERY
+   * routable entry type by default and excludes `noindex` entries through the same predicate
+   * `entryToMetadata` uses for `robots`. Bound to the build context, so your `sitemap.ts` never
+   * imports the admin `getCanopyForBuild`.
+   */
+  generateContentSitemap: (options: GenerateContentSitemapOptions) => Promise<MetadataRoute.Sitemap>
+  /**
+   * Map an entry's SEO fields onto a Next `Metadata` for `generateMetadata`. Re-exposed here so a
+   * page module has one CanopyCMS import (your `lib/canopy.ts`) rather than two; it is a pure
+   * mapping and touches no context.
+   */
+  entryToMetadata: (entryData: unknown, options?: EntryToMetadataOptions) => Metadata
   /** API catch-all route handler */
   handler: ReturnType<typeof createCanopyCatchAllHandler>
   /** Underlying services (rarely needed directly) */
@@ -345,6 +366,14 @@ export async function createNextCanopyContext(
     return collectStaticParams(await getCanopyForBuild(), options)
   }
 
+  // Sitemap generation reads entry CONTENT (to apply the noindex predicate), so unlike
+  // generateContentStaticParams it is not enumeration-only — but sitemap.ts is build-only in a
+  // static export, and on a prod `server` deployment guardBuildContext throws if it is reached at
+  // request time. Binding it here keeps the admin context out of the route module either way.
+  const boundGenerateContentSitemap = async (options: GenerateContentSitemapOptions) => {
+    return generateContentSitemap(await getCanopyForBuild(), options)
+  }
+
   // Create API handler using same services
   const handler = createCanopyCatchAllHandler({
     ...options,
@@ -359,6 +388,8 @@ export async function createNextCanopyContext(
     readByUrlPath,
     read,
     generateContentStaticParams,
+    generateContentSitemap: boundGenerateContentSitemap,
+    entryToMetadata,
     handler,
     services,
   }
