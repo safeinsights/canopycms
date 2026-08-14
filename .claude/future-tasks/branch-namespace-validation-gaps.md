@@ -47,7 +47,7 @@ guarded by a property test over the character classes above.
 - [sanitized-branch-name-git-mismatch.md](sanitized-branch-name-git-mismatch.md)
   and [branch-metadata-name-sanitized-vs-raw.md](branch-metadata-name-sanitized-vs-raw.md)
   cover sanitized-vs-raw **round-tripping** — a different invariant from this one.
-- [acl-defaults-and-dead-path-checker.md](acl-defaults-and-dead-path-checker.md)
+- [acl-defaults-and-dead-path-checker.md](resolved/acl-defaults-and-dead-path-checker.md)
   — B2's escalation path runs through the scaffolded `'allow'` default.
 - `resolved/reserved-branch-route-names.md` — closed the sibling case where a
   branch name collided with a static top-level API namespace.
