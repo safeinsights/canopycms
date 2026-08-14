@@ -46,6 +46,36 @@ describe('sanitizeHref', () => {
     expect(sanitizeHref('//evil.com/x')).toBe('#')
   })
 
+  // Regression: an earlier version of this function rejected protocol-relative
+  // input with `trimmed.startsWith('//')`, which only catches the literal ASCII
+  // spelling. WHATWG URL treats a backslash as equivalent to a slash for
+  // special schemes, so every form below is protocol-relative in effect and
+  // each resolved to `https://evil.com/` -- an open redirect out of the one
+  // function whose job is to prevent that. Enumerating spellings is not a fix;
+  // the guard now tests whether the input declares a scheme at all.
+  it.each([
+    ['backslash after slash', '/\\evil.com'],
+    ['double backslash', '\\\\evil.com'],
+    ['backslash then slash', '\\/evil.com'],
+    ['tab inside', '/\t/evil.com'],
+    ['newline inside', '/\n/evil.com'],
+    ['carriage return inside', '/\r/evil.com'],
+    ['mixed slashes with path', '/\\evil.com/path?a=1'],
+  ])('never returns an off-site absolute URL for %s', (_label, input) => {
+    const result = sanitizeHref(input)
+    // The precise return value is not the contract -- "never off-site" is.
+    // Some spellings are legitimately salvageable as a same-origin path.
+    expect(result).not.toMatch(/^https?:\/\/evil\.com/)
+    expect(result === '#' || result.startsWith('/')).toBe(true)
+  })
+
+  it('still allows a genuinely absolute https URL to another origin', () => {
+    // The guard must reject INFERRED off-site origins, not declared ones --
+    // otherwise it would break the documented primary use (an author linking out).
+    expect(sanitizeHref('https://example.com/page')).toBe('https://example.com/page')
+    expect(sanitizeHref('http://example.com/page')).toBe('http://example.com/page')
+  })
+
   it('returns the fallback for an empty string', () => {
     expect(sanitizeHref('')).toBe('#')
   })
