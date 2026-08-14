@@ -26,6 +26,24 @@ what to tighten before a multi-editor production deployment.
 Relevant now: website v2 will be the first deployment with multiple editors who
 do not all trust each other by default.
 
+### ⚠️ This is not a one-line flip — sequence it behind the creator question
+
+Flipping the template to `'deny'` on its own would make **a newly created branch
+unusable by the person who just created it.** `canPerformWorkflowAction`
+(`authorization/branch.ts:79-102`) runs `checkBranchAccessWithDefault` **first**
+and returns false on failure, before creator status is ever considered — and on a
+branch with no ACL that check resolves to `defaultAccess === 'allow'`. So under
+`'deny'`, the creator of a fresh branch sees an enabled Submit/Withdraw in the UI
+and gets a 403 from the server. Verified reachable end-to-end; it is masked today
+only because every scaffolded project sets `'allow'`.
+
+That is the same defect tracked in
+[client-server-workflow-permission-divergence.md](client-server-workflow-permission-divergence.md).
+**Decide that one first** — specifically, whether the server should honor
+creator-ownership independently of `defaultBranchAccess` — and the template
+default then follows almost automatically. Doing it in the other order ships a
+fail-closed default that breaks the first-run experience.
+
 ## B4 — `services.checkPathAccess` is bound to an empty rule set
 
 `services.ts:236` binds `checkPathAccess` with an **empty rules array**. It

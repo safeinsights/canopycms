@@ -302,16 +302,8 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
             dataCanopyField={normalizeCanopyPath(path)}
           />,
         )
-      // 'rich-text' has no distinct behavior anywhere else in the codebase:
-      // validation/entry-validator.ts's STRING_FIELD_TYPES,
-      // validation/entry-link-validator.ts's entry-link scan, and
-      // ai/json-to-markdown.ts's rendering all treat 'rich-text',
-      // 'markdown', and 'mdx' identically. Rather than invent a separate
-      // rich-text UI for a type with no observed distinct semantics, reuse
-      // the markdown editor here too.
       case 'markdown':
       case 'mdx':
-      case 'rich-text':
         return wrapWithComments(
           <MarkdownField
             key={fieldKey(path)}

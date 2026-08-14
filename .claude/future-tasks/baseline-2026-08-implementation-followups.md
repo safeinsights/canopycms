@@ -43,7 +43,37 @@ made — not four edits that can each be forgotten independently.
 
 ---
 
-## 2. [P3] `rich-text` is redundant with `markdown`/`mdx` — decide whether the type should exist
+## ~~2. [P3] `rich-text` is redundant with `markdown`/`mdx` — decide whether the type should exist~~ — DECIDED AND DONE
+
+**RESOLVED 2026-08-14: deleted.** JP's call. Three facts made it easy, and all
+three had a shelf life:
+
+- **It was never released.** It lived only on `integration-202608-a`; published
+  `canopycms` was 0.0.60 and never had it. So removal was not a breaking change
+  — which it would have become the moment that branch drained to `main`.
+- **Nothing used it.** No `type: 'rich-text'` in either adopter repo
+  (`docs-site-proto`, `website`), the example app, the test app, or the fixtures.
+- **The implementing PR had already reached the same conclusion.** Its comment at
+  `FormRenderer.tsx` said `rich-text` "has no distinct behavior anywhere else in
+  the codebase" and reused the markdown editor rather than inventing a UI for it.
+
+The reasoning for deleting rather than keeping it as a documented alias: a type
+whose *name* promises a different authoring experience while delivering the
+markdown source editor is a trap for adopters, and keeping it as an alias would
+have burned the name — if a real rich-text type is ever wanted (HTML, portable
+text), it should get those semantics unencumbered by schemas already using it to
+mean `markdown`.
+
+Removed from `config/types.ts`'s `primitiveFieldTypes`,
+`entry-validator.ts`'s `STRING_FIELD_TYPES`, `entry-link-validator.ts`'s
+`markdownTypes`, `ai/json-to-markdown.ts`'s `bodyFieldTypes` and case arm, and
+`FormRenderer.tsx`'s case arm. `FormRenderer.test.tsx`'s `'rich-text'` block was
+**retargeted to `'markdown'` rather than deleted** — it turned out to be the only
+direct coverage that the markdown editor renders through `FormRenderer`. The
+`primitiveFieldTypes` drift guard in that file covers the union automatically
+from here.
+
+Historical description follows.
 
 Found while implementing the missing field renderers. `rich-text` is declared in
 `config/types.ts`'s `primitiveFieldTypes` and is now rendered (it reuses `MarkdownField`, so it is

@@ -17,7 +17,6 @@ export const primitiveFieldTypes = [
   'number',
   'boolean',
   'datetime',
-  'rich-text',
   'markdown',
   'mdx',
   'code',

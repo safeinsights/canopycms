@@ -216,7 +216,7 @@ describe('SchemaOps', () => {
       ],
       pageSchema: [
         { name: 'title', type: 'string', required: true },
-        { name: 'content', type: 'rich-text' },
+        { name: 'content', type: 'markdown' },
       ],
       authorSchema: [
         { name: 'name', type: 'string', required: true },

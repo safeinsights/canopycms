@@ -102,7 +102,7 @@ Prioritized work items for CanopyCMS development. See [AGENTS.md](AGENTS.md) for
 - Figure out gray-matter usage (currently JSON heavy)
 - Type-smoke test: render Editor with minimal entry, run `tsc --noEmit` to catch API shape mismatches
 - ~~TODO: Decide if `normalizeContentPayload` should merge top-level `body` when both nested `{ format, data, body }` and sibling `body` present~~ — settled; the source TODO is gone. `editor-utils.ts:76-95` implements it, with tests at `editor-utils.test.ts:136-153` (verified 2026-08-13)
-- Field renderers for `number`, `datetime` and `rich-text` landed 2026-08-13 (PR #220): `NumberField`, `DateTimeField`, `NumberListField`. They have **no e2e coverage** yet
+- Field renderers for `number` and `datetime` landed 2026-08-13 (PR #220): `NumberField`, `DateTimeField`, `NumberListField`. They have **no e2e coverage** yet. (`rich-text` landed in the same PR but was removed 2026-08-14 — it was only ever an alias for `markdown`; see the Resolved section of `.claude/future-tasks/index.md`)
 - TODO: Refine preview base defaults from config (allow overrides, better root entry handling, clarify trailing-slash behavior)
 
 ### 10. Sync and conflict surfacing

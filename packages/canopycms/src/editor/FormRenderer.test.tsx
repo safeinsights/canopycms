@@ -534,7 +534,10 @@ describe('FormRenderer', () => {
     })
   })
 
-  describe("'rich-text' field type", () => {
+  // Retargeted from the since-removed 'rich-text' type, which was only ever an
+  // alias for this one. Keeping the assertions here is deliberate: they are the
+  // only direct coverage that the markdown editor renders through FormRenderer.
+  describe("'markdown' field type", () => {
     let mockClient: MockApiClient
     let wrapper: ReturnType<typeof createApiClientWrapper>
 
@@ -543,8 +546,8 @@ describe('FormRenderer', () => {
       wrapper = createApiClientWrapper(mockClient)
     })
 
-    it('renders the markdown editor (same component as "markdown"/"mdx"), not the "Unsupported field" fallback', () => {
-      const fields: FieldConfig[] = [{ name: 'body', type: 'rich-text', label: 'Body' }]
+    it('renders the markdown editor (same component as "mdx"), not the "Unsupported field" fallback', () => {
+      const fields: FieldConfig[] = [{ name: 'body', type: 'markdown', label: 'Body' }]
       const Wrapper = wrapper
       render(
         <CanopyCMSProvider>
@@ -567,7 +570,7 @@ describe('FormRenderer', () => {
     })
 
     it('mounts a real, editable control once the editor chunk loads (not stuck on the readonly fallback)', async () => {
-      const fields: FieldConfig[] = [{ name: 'body', type: 'rich-text', label: 'Body' }]
+      const fields: FieldConfig[] = [{ name: 'body', type: 'markdown', label: 'Body' }]
       const Wrapper = wrapper
       render(
         <CanopyCMSProvider>
@@ -579,9 +582,9 @@ describe('FormRenderer', () => {
       await waitFor(() => expect(document.querySelector('[contenteditable="true"]')).toBeTruthy())
     })
 
-    it('a required rich-text field can be filled and saved (previously permanently unsaveable)', () => {
+    it('a required markdown field can be filled and saved', () => {
       const fields: FieldConfig[] = [
-        { name: 'body', type: 'rich-text', label: 'Body', required: true },
+        { name: 'body', type: 'markdown', label: 'Body', required: true },
       ]
       expect(validateEntryData(fields, {})).not.toEqual([])
       expect(validateEntryData(fields, { body: 'Hello world' })).toEqual([])
@@ -600,9 +603,9 @@ describe('FormRenderer', () => {
     it('renders something other than the "Unsupported field" fallback for every primitiveFieldTypes entry', () => {
       // Guards against config/types.ts's primitiveFieldTypes and this
       // switch drifting apart again (the bug this file's new tests were
-      // written for: number/datetime/rich-text fell through to the
-      // "Unsupported field" default, making required fields of those types
-      // permanently unsaveable).
+      // written for: number/datetime, and the since-removed rich-text, fell
+      // through to the "Unsupported field" default, making required fields of
+      // those types permanently unsaveable).
       const fields: FieldConfig[] = primitiveFieldTypes.map((type) => ({
         name: `field_${type.replace(/[^a-zA-Z0-9]/g, '_')}`,
         type,

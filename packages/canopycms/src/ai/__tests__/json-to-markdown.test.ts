@@ -99,16 +99,6 @@ describe('entryToMarkdown', () => {
   })
 
   describe('content field types', () => {
-    it('renders rich-text as block content', () => {
-      const entry = makeEntry({
-        fields: [{ name: 'content', type: 'rich-text', label: 'Content' }],
-        data: { content: '**Bold** and *italic*' },
-      })
-      const md = entryToMarkdown(entry)
-      expect(md).toContain('## Content')
-      expect(md).toContain('**Bold** and *italic*')
-    })
-
     it('renders markdown fields as block content', () => {
       const entry = makeEntry({
         fields: [{ name: 'notes', type: 'markdown', label: 'Notes' }],
@@ -703,14 +693,14 @@ describe('entryToMarkdown', () => {
         format: 'mdx',
         fields: [
           { name: 'title', type: 'string' },
-          { name: 'content', type: 'rich-text' },
+          { name: 'content', type: 'markdown' },
         ],
-        data: { title: 'Hello', content: 'Rich text content' },
+        data: { title: 'Hello', content: 'Body-like field content' },
         body: '# Hello\n\nMarkdown body.',
       })
       const md = entryToMarkdown(entry)
-      // rich-text field should not be rendered in metadata section
-      expect(md).not.toContain('Rich text content')
+      // body-like field should not be rendered in metadata section
+      expect(md).not.toContain('Body-like field content')
       // body should be present
       expect(md).toContain('# Hello\n\nMarkdown body.')
     })
