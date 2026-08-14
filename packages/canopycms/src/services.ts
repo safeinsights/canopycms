@@ -4,7 +4,6 @@ import { getConfigDefaults } from './config'
 import type { BranchContext } from './types'
 import type { CanopyUser } from './user'
 import {
-  createCheckPathAccess,
   createCheckBranchAccess,
   createCheckContentAccess,
   createContentAccessChecker,
@@ -86,7 +85,6 @@ export interface CanopyServices {
     context: BranchContext,
     user: CanopyUser,
   ) => ReturnType<ReturnType<typeof createCheckBranchAccess>>
-  checkPathAccess: ReturnType<typeof createCheckPathAccess>
   checkContentAccess: ReturnType<typeof createCheckContentAccess>
   /**
    * Build a batch content-access checker that loads permissions once and returns
@@ -230,10 +228,7 @@ async function _createCanopyServicesInternal(
   // Create per-branch schema cache (or use provided one for testing)
   const branchSchemaCache = options.branchSchemaCache ?? new BranchSchemaCache(config.mode)
 
-  const checkBranchAccess = createCheckBranchAccess(config.defaultBranchAccess ?? 'deny')
-  // Path permissions are loaded dynamically from the settings branch at request time.
-  // At the service level, we bind with empty rules for direct path checks.
-  const checkPathAccess = createCheckPathAccess([], config.defaultPathAccess ?? 'deny')
+  const checkBranchAccess = createCheckBranchAccess(config.defaultBranchAccess ?? 'deny', config)
   // Content access loads permissions dynamically from the settings branch (orphan git branch)
   const getSettingsBranchRoot =
     options.getSettingsBranchRoot ??
@@ -507,7 +502,6 @@ async function _createCanopyServicesInternal(
     entrySchemaRegistry: options.entrySchemaRegistry ?? {},
     branchSchemaCache,
     checkBranchAccess,
-    checkPathAccess,
     checkContentAccess,
     createContentAccessChecker: createContentAccessCheckerBound,
     createGitManagerFor,

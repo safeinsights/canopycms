@@ -48,13 +48,39 @@ describe('checkContentAccess', () => {
       branchContext,
       '/repo',
       unsafeAsPhysicalPath('content/pages/foo.md'),
-      { type: 'authenticated', userId: 'u1', groups: [] },
+      // Not the branch creator (branchContext.branch.createdBy is 'u1') -- the
+      // creator owns their own un-ACL'd branch and is covered separately below.
+      { type: 'authenticated', userId: 'u2', groups: [] },
       'edit',
     )
 
     expect(mockLoadPermissions).toHaveBeenCalledWith('/repo', 'dev')
     expect(res.allowed).toBe(false)
     expect(res.branch.reason).toBe('no_acl')
+  })
+
+  it('allows the branch creator on their own no-ACL branch under default deny', async () => {
+    // The content layer ANDs branch access into every check, so without the
+    // creator grant a freshly created branch is inert for the person who made
+    // it -- no reads, no writes -- not merely un-submittable.
+    const checkContent = createCheckContentAccess({
+      checkBranchAccess: createCheckBranchAccess('deny'),
+      loadPathPermissions: vi.fn().mockResolvedValue(pathRules),
+      defaultPathAccess: 'allow',
+      mode: 'dev',
+      getSettingsBranchRoot: () => Promise.resolve('/repo'),
+    })
+
+    const res = await checkContent(
+      branchContext,
+      '/repo',
+      unsafeAsPhysicalPath('content/pages/foo.md'),
+      { type: 'authenticated', userId: 'u1', groups: [] },
+      'edit',
+    )
+
+    expect(res.allowed).toBe(true)
+    expect(res.branch.reason).toBe('creator')
   })
 
   it('allows Reviewer override even if branch default deny', async () => {
