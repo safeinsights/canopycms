@@ -12,9 +12,9 @@ Wire-format conversion functions (`toWireEntryType`, `toWireCollection`, `toWire
 - `resolveSchemaRef()`, `toWireEntryType()`, `toWireCollection()`, `toWireFlatSchema()`
 - The `Registry` type alias
 
-## content-store.ts (793 lines)
+## content-store.ts (~~793~~ **1734 lines** as of 2026-08-13 — more than doubled)
 
-1. **Duplicated index-update logic** in the `write()` method (two nearly identical blocks for updating the content ID index)
+1. ~~**Duplicated index-update logic** in the `write()` method (two nearly identical blocks for updating the content ID index)~~ — **STALE, verified 2026-08-13.** Only **one** `liveIndex.add(...)`/`updatePath(...)` block remains in `write()` (~`:1091-1099`); the duplication was consolidated by other content-store work since this was filed. Note also that `resolveReferencesInData` is still a private instance method (~`:1594-1670`), but `reference-resolver.ts` (175 lines) is **not** the move target — it serves a different concern (ID→display-value resolution for the reference-field UI, not read-time data resolution).
 2. **`resolveReferencesInData`** private method (lines 693-758) could be extracted to `reference-resolver.ts`
 
 **Action**:

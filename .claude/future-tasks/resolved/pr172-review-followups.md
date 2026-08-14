@@ -116,7 +116,7 @@ verifies integrity, or `pnpm dlx npm@11.4.1`), and pin the second install too.
 API, documented as "safer", whose `--force-with-lease` is **inert in exactly the clone shape this
 system uses**, is a footgun aimed at the next person who needs a force push. Deleting it also
 closes the last open finding in
-[program-b-final-review-followups.md](resolved/program-b-final-review-followups.md) outright.
+[program-b-final-review-followups.md](program-b-final-review-followups.md) outright.
 
 Sequencing note: must land **after** the settings-workspace plumbing PR, which owns
 `git-manager.ts`.

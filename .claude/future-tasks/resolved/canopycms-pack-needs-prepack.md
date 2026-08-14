@@ -35,4 +35,4 @@ redundant build is harmless, a missing one is a shipped-stale-dist bug). Confirm
 Re-vendoring `canopycms-0.0.58.tgz` after only `pnpm pack` produced a tarball whose
 `dist/git-manager.js` lacked the just-committed `GIT_ENV_PASSTHROUGH` change;
 `grep GIT_ENV_PASSTHROUGH node_modules/canopycms/dist/git-manager.js` returned 0 until
-a `pnpm run build && pnpm pack` was done. Relates to [[project-deployment-test-epic]].
+a `pnpm run build && pnpm pack` was done. Relates to [cms-service-deployment-test.md](cms-service-deployment-test.md).

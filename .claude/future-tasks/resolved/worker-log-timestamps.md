@@ -24,7 +24,7 @@
 >   still better than the per-line fragmentation it replaces.
 
 Found while implementing worker CloudWatch log shipping
-([[worker-cloudwatch-logs]], 2026-07-24).
+([worker-cloudwatch-logs](worker-cloudwatch-logs.md), 2026-07-24).
 
 ## Problem
 
@@ -67,4 +67,4 @@ adopt).
 
 ## Related
 
-[[worker-cloudwatch-logs]] — the log-shipping mechanism this improves on.
+[worker-cloudwatch-logs](worker-cloudwatch-logs.md) — the log-shipping mechanism this improves on.

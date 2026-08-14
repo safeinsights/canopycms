@@ -41,7 +41,7 @@ health, not just the auth provider. That is a runbook line, not a code change.
 
 ## Action
 
-- Add to the prod failure-mode notes / runbooks (see [[program-g-operational-readiness]]):
+- Add to the prod failure-mode notes / runbooks (see [program-g-operational-readiness](program-g-operational-readiness.md)):
   **"Permission picker shows a group-load warning" → check settings-workspace
   and EFS health, not only the auth provider.**
 - Revisit the degrade-with-marker option only if EFS proves unreliable in
@@ -49,6 +49,6 @@ health, not just the auth provider. That is a runbook line, not a code change.
 
 ## Related
 
-- [[production-readiness-program]] — the launch program these failure modes feed.
-- [[permission-manager-internal-groups-unreachable]] (in `resolved/`) — the fix
+- [production-readiness-program](production-readiness-program.md) — the launch program these failure modes feed.
+- [permission-manager-internal-groups-unreachable](resolved/permission-manager-internal-groups-unreachable.md) (in `resolved/`) — the fix
   that introduced this coupling, with the full decision record.

@@ -902,7 +902,6 @@ Then place a `.collection.json` next to each collection's content. The directory
 | `datetime`  | Date and time picker                            | -                                                                                                                       |
 | `markdown`  | Markdown text editor                            | -                                                                                                                       |
 | `mdx`       | MDX editor with component support               | -                                                                                                                       |
-| `rich-text` | Rich text editor                                | -                                                                                                                       |
 | `image`     | Image upload/selection                          | -                                                                                                                       |
 | `code`      | Code editor with syntax highlighting            | -                                                                                                                       |
 | `select`    | Dropdown selection                              | `options: string[] \| {label, value}[]`                                                                                 |

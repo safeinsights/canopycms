@@ -11,7 +11,7 @@ Chosen over "exclude protected branches from the `allowed_by_acl` grant" because
 it keeps the fix at the write boundary — one guard on the way in, rather than a
 special case every reader of the ACL would have to remember.
 
-Resolved alongside [[submitted-branch-edit-locking]] as this file suggested, in
+Resolved alongside [submitted-branch-edit-locking](submitted-branch-edit-locking.md) as this file suggested, in
 the same authorization seam.
 
 ## Priority: P3

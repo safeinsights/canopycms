@@ -1,5 +1,24 @@
 # Future Task: Implement User Metadata Caching System
 
+> **SUPERSEDED IN PART — read this first (2026-08-13 audit).**
+>
+> This file's central open question, "Question 3: Library — use React Query/SWR
+> or build custom?", is **already settled by precedent**. The SWR epic
+> (`resolved/swr.md`, `resolved/editor-async-patterns.md`) made SWR the house
+> data-fetching pattern for editor hooks — but it only converted
+> branches/entries/comments. `editor/hooks/useUserMetadata.ts:18-71` was never
+> touched and is still plain `useState`/`useEffect`: one fetch per mount, no TTL,
+> no shared cache, no dedup.
+>
+> So do not re-litigate the library options below. The work is "follow the
+> pattern already used for branches/entries/comments", which collapses most of
+> the phased plan here into a single step — tracked as **Phase 0** in
+> [user-metadata-optimization.md](user-metadata-optimization.md), which is the
+> live task. That file's batch-endpoint work (N calls → 1) is a genuinely
+> separate problem from time-based caching and is what remains substantive.
+>
+> Kept as the design record for the TTL/invalidation discussion.
+
 ## Context
 
 The UserBadge component (implemented separately) displays user information (avatar, name, email) by fetching metadata via the auth plugin's `getUserMetadata(userId)` API. Currently, each render that needs user data makes an API call, which can result in many redundant requests.

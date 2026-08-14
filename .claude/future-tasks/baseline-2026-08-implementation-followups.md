@@ -6,7 +6,7 @@ implementation session's own context is not durable — the repo is.
 
 Epic: `integration-202608-a`, branched from `integration-202607-a` @ `bfe76e1e`. See
 [REVIEW-REPORT-2026-08.md](../../REVIEW-REPORT-2026-08.md) for the findings themselves and
-[pr172-review-followups.md](pr172-review-followups.md) for the human review's nine.
+[pr172-review-followups.md](resolved/pr172-review-followups.md) for the human review's nine.
 
 Findings are struck ~~in place~~ as they resolve.
 
@@ -26,14 +26,54 @@ the change ran only its own targeted files and reported green; a different worke
 code found the failures. That is the shape this will keep taking — a pipeline change is
 invisible to whichever copies the author didn't happen to run.
 
-**Fix direction:** one shared fixture factory (`api/__test__/` already exists as a home) that every
+**Fix direction — CORRECTED 2026-08-13.** The original text below said to build a shared factory
+in `api/__test__/`. Do not: **a canonical one already exists.**
+`packages/canopycms/src/test-utils/api-test-helpers.ts:166` exports a `CanopyServices`-typed
+`createMockServices(options)` with per-test overrides, it already includes `getSettingsBranchRoot`
+(`:216`), and `schema/schema-store.test.ts:12` already uses it. The work is **migrating the four
+handler-pipeline suites onto it** — `http/handler.test.ts:86`, `http/handler-binary.test.ts:92`,
+`http/handler-context-retry.test.ts:42`, `api/assets.test.ts:788` — not authoring a factory.
+Note also that `api/__test__/` contains only `mock-client.ts`; `test-utils/` is the real home.
+Building a second factory next to the one that already solves this is the failure mode to avoid.
+
+Original text: one shared fixture factory that every
 handler-pipeline suite imports, with per-test overrides layered on top. The point is that adding a
 service to the pipeline should require **one** edit and then fail loudly everywhere until it is
 made — not four edits that can each be forgotten independently.
 
 ---
 
-## 2. [P3] `rich-text` is redundant with `markdown`/`mdx` — decide whether the type should exist
+## ~~2. [P3] `rich-text` is redundant with `markdown`/`mdx` — decide whether the type should exist~~ — DECIDED AND DONE
+
+**RESOLVED 2026-08-14: deleted.** JP's call. Three facts made it easy, and all
+three had a shelf life:
+
+- **It was never released.** It lived only on `integration-202608-a`; published
+  `canopycms` was 0.0.60 and never had it. So removal was not a breaking change
+  — which it would have become the moment that branch drained to `main`.
+- **Nothing used it.** No `type: 'rich-text'` in either adopter repo
+  (`docs-site-proto`, `website`), the example app, the test app, or the fixtures.
+- **The implementing PR had already reached the same conclusion.** Its comment at
+  `FormRenderer.tsx` said `rich-text` "has no distinct behavior anywhere else in
+  the codebase" and reused the markdown editor rather than inventing a UI for it.
+
+The reasoning for deleting rather than keeping it as a documented alias: a type
+whose *name* promises a different authoring experience while delivering the
+markdown source editor is a trap for adopters, and keeping it as an alias would
+have burned the name — if a real rich-text type is ever wanted (HTML, portable
+text), it should get those semantics unencumbered by schemas already using it to
+mean `markdown`.
+
+Removed from `config/types.ts`'s `primitiveFieldTypes`,
+`entry-validator.ts`'s `STRING_FIELD_TYPES`, `entry-link-validator.ts`'s
+`markdownTypes`, `ai/json-to-markdown.ts`'s `bodyFieldTypes` and case arm, and
+`FormRenderer.tsx`'s case arm. `FormRenderer.test.tsx`'s `'rich-text'` block was
+**retargeted to `'markdown'` rather than deleted** — it turned out to be the only
+direct coverage that the markdown editor renders through `FormRenderer`. The
+`primitiveFieldTypes` drift guard in that file covers the union automatically
+from here.
+
+Historical description follows.
 
 Found while implementing the missing field renderers. `rich-text` is declared in
 `config/types.ts`'s `primitiveFieldTypes` and is now rendered (it reuses `MarkdownField`, so it is

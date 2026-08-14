@@ -3,7 +3,7 @@
 Found while implementing [SYNC-C1] (the cross-host content-write lock,
 `packages/canopycms/src/utils/content-write-lock.ts`), which closed the worker-rebase vs.
 `ContentStore` race — finding 2 of
-[baseline-2026-08-content-loss.md](baseline-2026-08-content-loss.md).
+[baseline-2026-08-content-loss.md](resolved/baseline-2026-08-content-loss.md).
 
 The lock is taken by `ContentStore.write`/`delete`/`renameEntry` and held by
 `CmsWorker.rebaseActiveBranches()` for the whole rebase. Three adjacent things were left out

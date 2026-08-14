@@ -8,7 +8,7 @@ logs shipping within ~75s of launch; scoped IAM sufficed (no CreateLogGroup
 denial); reboot persistence held (agent auto-restarted, fstab kept /mnt/efs,
 worker resumed sync cycles); log group `/canopycms/<stackName>/worker` with
 90-day retention. A spot reclaim during the deploy conveniently exercised
-the ASG-replacement path too — and confirmed [[worker-asg-rolling-update]]
+the ASG-replacement path too — and confirmed [worker-asg-rolling-update](worker-asg-rolling-update.md)
 (CFN alone never replaces the instance).
 
 ### What shipped
@@ -75,9 +75,9 @@ runtime component without shipped logs.
 
 ## Why it matters
 
-[[post-merge-sync-gaps]] Gap 2's root cause could not be confirmed on the live
+[post-merge-sync-gaps](post-merge-sync-gaps.md) Gap 2's root cause could not be confirmed on the live
 deploy precisely because of this gap ("Root cause to confirm on a host with shell
 access — this deploy's SSO role can't SSM in"). Any production incident involving
 the worker is currently undebuggable.
 
-Relates to [[project-deployment-test-epic]].
+Relates to [cms-service-deployment-test.md](cms-service-deployment-test.md).

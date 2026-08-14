@@ -5,7 +5,10 @@
 are done; the upstream root-cause chase is still open.
 
 - `packages/canopycms-next/package.json`'s `next` peer dependency is now
-  `^13.5.7 || ^14.2.25 || ^15.2.3 || >=16.0.0 <16.2.0 || >=16.3.0 <17.0.0` —
+  `^13.5.7 || ^14.2.25 || ^15.5.21 || >=16.0.0 <16.2.0 || >=16.3.0 <17.0.0` —
+  (the 15.x floor read `^15.2.3` when this was written; the security-bump pass in
+  `29958241` raised it. Verified current 2026-08-13 at
+  `packages/canopycms-next/package.json:56`.)
   narrowed from a bare `^16` specifically to exclude the confirmed-broken
   16.2.x line. `>=16.3.0` is deliberately still allowed: the regression is
   observed and bisected in 16.2.x only, and hasn't been re-verified as

@@ -4,7 +4,7 @@
 
 **Live verification pending**: the Gap 2 root cause was never confirmed on the
 live host (no shell access, worker logs unshipped — see
-[[worker-cloudwatch-logs]], PR #145). The pre-fix rebase loop nominally covered
+[worker-cloudwatch-logs](worker-cloudwatch-logs.md), PR #145). The pre-fix rebase loop nominally covered
 the base clone too, so the decisive evidence is the next deploy-test iteration:
 after a merge, the worker log must show the
 `Base branch workspace (main): fast-forwarded N commit(s)` line and the editor
@@ -116,4 +116,4 @@ deploy-test (canopycms/deploy-test) on the live stack: create branch, edit, subm
 merge the resulting PR on GitHub, wait one worker `syncGit` cycle (~5 min), reload
 `/edit` → branch still "SUBMITTED", `main` still shows old content; meanwhile
 `CANOPY_BUILD=static` build off GitHub main shows the new content. Relates to
-[[project-deployment-test-epic]].
+[cms-service-deployment-test.md](cms-service-deployment-test.md).

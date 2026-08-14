@@ -16,8 +16,24 @@ component were not touched by that merge — it ships with the assets/media epic
 ## Likely cause
 
 MDXEditor mounts asynchronously in jsdom; the assertion races the mount under
-heavier suite load. A `findBy*`/`waitFor` around the mount assertion (instead
-of a synchronous query) is the probable fix.
+heavier suite load. ~~A `findBy*`/`waitFor` around the mount assertion (instead
+of a synchronous query) is the probable fix.~~
+
+**DEAD END — corrected 2026-08-13.** That fix is already in place and always has
+been. `MarkdownField.test.tsx:72` wraps the mount assertion in
+`await waitFor(() => expect(document.querySelector('[contenteditable="true"]')).toBeTruthy())`,
+and `git log` on that file shows a single commit — `ae95da25`, the very commit
+this task cites as the flake's origin. So the `waitFor` was there from day one
+and the flake still recurred.
+
+Re-diagnose before spending effort. Better hypotheses: `waitFor`'s default
+~1000ms timeout losing under CPU contention (raise it, or use `findBy*` with an
+explicit timeout), or something in the lazy-import/Suspense chain upstream of the
+mount. Verification runs on 2026-08-13: isolation 2/2 green; two full-package
+runs both green for this test (199/199 files) — which given the ~1-in-2 historical
+rate neither confirms nor refutes. A different flake did surface in one of those
+runs (`ECOMPROMISED` from proper-lockfile in `api-editing-workflow.test.ts`),
+which belongs to [proper-lockfile-hazards.md](proper-lockfile-hazards.md).
 
 ## Repro
 

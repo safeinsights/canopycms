@@ -2,10 +2,10 @@
 
 Found by the August 2026 whole-codebase baseline review (5 independent Fable reviews at
 `integration-202607-a` @ `6770327c`).
-Full detail: [REVIEW-REPORT-2026-08.md](../../REVIEW-REPORT-2026-08.md).
+Full detail: [REVIEW-REPORT-2026-08.md](../../../REVIEW-REPORT-2026-08.md).
 
 Part A blocks the production-readiness program directly (see
-[production-readiness-program.md](production-readiness-program.md)). Part B is the verified
+[production-readiness-program.md](../production-readiness-program.md)). Part B is the verified
 remainder — real, individually small, none blocking.
 
 Findings are struck ~~in place~~ as they resolve (see the note in
@@ -97,7 +97,7 @@ sanitizer, fully allowlisted transform directives); the parsers underneath are t
 > to that type only, and the bespoke init lock was deleted in favour of
 > `acquireProvisioningLock` on a dedicated `{workspaceRoot}/.settings-init` target.
 > `docs/concurrency.md` updated and the lock catalogued; see
-> [resolved/settings-workspace-init-lock-uncatalogued.md](resolved/settings-workspace-init-lock-uncatalogued.md).
+> [resolved/settings-workspace-init-lock-uncatalogued.md](settings-workspace-init-lock-uncatalogued.md).
 
 Two defects in one subsystem; fix together.
 
@@ -107,7 +107,7 @@ wait or skip path, so concurrent cold starts genuinely race `git clone`/orphan-i
 can also both classify a lock stale and both `unlink` it (no inode identity check), and the lock
 mtime is never refreshed, so an init slower than 30s is stolen. `docs/concurrency.md:250-260`
 describes this as a concurrency control for initialization; it is not.
-(Overlaps [settings-workspace-init-lock-uncatalogued.md](resolved/settings-workspace-init-lock-uncatalogued.md),
+(Overlaps [settings-workspace-init-lock-uncatalogued.md](settings-workspace-init-lock-uncatalogued.md),
 which reached the same conclusion from the doc side. This review re-derived it independently.)
 
 **The settings pull has never worked** (`git-manager.ts:1138-1143`): `pullCurrentBranchInner`
@@ -142,7 +142,7 @@ and `mark-merged` impossible.
 
 **Fix direction:** both halves. Add the confirmation matching the existing submit/withdraw
 pattern, and extend the delete guard from `submitted` to `submitted | approved` — one literal in
-the same condition. Related: [approved-status-dead-end.md](approved-status-dead-end.md) already
+the same condition. Related: [approved-status-dead-end.md](../approved-status-dead-end.md) already
 notes `approved` has no non-destructive exit; deciding that question resolves this cleanly.
 
 ---

@@ -36,7 +36,7 @@ The content **root is itself a first-class collection** (`flatten.ts:122-157` pu
 
 ### Restructure trade-offs / latent gaps it leans on (real, but acceptable for a small static marketing site)
 - **URL = slug, single-segment only.** No vanity URLs (URL ≠ slug); no multi-segment paths for root pages (a future blog is its own `blog` collection → `/blog/<post>`). Renaming a slug changes the URL.
-- **`maxItems` is metadata-only — NOT enforced.** No check in `content-store.ts` `write()` or `api/content.ts`; no editor disable. So `site`/`home` "singletons" aren't actually capped. Independent latent gap (no existing future-task — consider filing one if the restructure is adopted).
+- ~~**`maxItems` is metadata-only — NOT enforced.** No check in `content-store.ts` `write()` or `api/content.ts`; no editor disable.~~ **STALE — corrected 2026-08-13.** `maxItems` **is** enforced server-side at the create boundary: `api/content.ts:360-373` (marked `SCH-H3`), landed in `e4097b0e` (PR #106, July 2026 baseline-review fix phase) — after this file was shelved on 2026-05-31. So `site`/`home` singletons are genuinely capped and this is no longer a latent gap. No task file was ever needed.
 - **Singletons are routable.** `readByUrlPath('/home')` structurally resolves the `home` entry, and `readByUrlPath` has **no** `entryType` filter (and its return `{data,path}` carries no `entryType` to post-filter on — see related `readbyurlpath-entry-type.md`). Harmless for static export (filter `contentStaticParams` by `entryType` ⇒ `/home`,`/site` simply aren't generated ⇒ 404 in static hosting), but bites under SSR/server mode.
 
 ### When to revisit `isUrlPath` (triggers)
@@ -129,7 +129,7 @@ No schema declares `isUrlPath` ⇒ `resolveEntryUrlPath` returns undefined, phas
 - `index-staleness-multiprocess.md` (P0) — the index-staleness pain that justifies "scan, not index" here.
 - `content-store-validation.md` (P1) — write-boundary validation context for the editor-time Save check.
 - `static-export-sitemap.md` / `static-export-seo-metadata.md` (P2) — sibling `static/` helpers that would also benefit from field-sourced `urlPath`.
-- **New gap surfaced (no file yet):** `maxItems` is metadata-only (not enforced in `content-store.write()` / API / editor). Consider filing if the root-collection restructure is adopted (singletons rely on it).
+- ~~**New gap surfaced (no file yet):** `maxItems` is metadata-only.~~ Closed — see the correction above; `api/content.ts:360-373` enforces it (`e4097b0e`, PR #106).
 
 ## Out of scope / follow-ups (when revived)
 Persistent index (only if scans slow); deep basePath+isUrlPath; widening collision error to pure structural-vs-structural; dedicated client-side isUrlPath field component (inline format hints / live availability); Playwright e2e if not done in the main pass.

@@ -64,7 +64,7 @@ function renderMarkdownEntry(
   const parts: string[] = []
 
   // Render frontmatter fields (excluding body-like fields and already-rendered fields)
-  const bodyFieldTypes = new Set(['rich-text', 'markdown', 'mdx'])
+  const bodyFieldTypes = new Set(['markdown', 'mdx'])
   const metadataFields = flattenGroupFields(entry.fields).filter(
     (f) => !bodyFieldTypes.has(f.type) && !skipFields.has(f.name),
   )
@@ -176,7 +176,6 @@ function renderField(
     case 'boolean':
       return `${heading} ${label}${descriptionLine}\n\n${value ? 'Yes' : 'No'}`
 
-    case 'rich-text':
     case 'markdown':
     case 'mdx':
       return `${heading} ${label}${descriptionLine}\n\n${String(value)}`
