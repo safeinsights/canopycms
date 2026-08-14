@@ -967,6 +967,83 @@ const docSchema = defineEntrySchema([
 
 Groups are reusable — define them once and include them in multiple schemas. Both helpers accept an optional `description` that appears as hint text in the editor.
 
+### Reusable Field Fragments
+
+Without a shared pattern for it, a common field cluster (a call-to-action's label + link, a preview object's title + image + description) tends to get retyped inline in every schema that needs it. That's not just repetition — in an audited real-world schema, one such cluster was spelled out eight times and a preview object three times, and the copies had already drifted apart on their `select` field's option lists. The drift was invisible in any one schema; it only showed up when content authored against one copy didn't validate against another.
+
+Two mechanisms compose a shared field cluster without any special CMS support — both already work today, because `defineEntrySchema` and `defineBlockTemplate` infer literal types from a `const` array regardless of where that array came from:
+
+**1. Spread a `const`-inferred field array into `fields`.** Define the cluster once, spread it into as many schemas as you need:
+
+```typescript
+import { defineEntrySchema, defineFieldFragment, type TypeFromEntrySchema } from 'canopycms'
+
+// defineFieldFragment is a 3-line const-inference identity helper — purely for
+// discoverability alongside defineInlineFieldGroup/defineNestedFieldGroup. A plain
+// `const ctaFields = [...] as const` spread works exactly the same way.
+const ctaFields = defineFieldFragment([
+  { name: 'ctaLabel', type: 'string', label: 'Button Label' },
+  { name: 'ctaHref', type: 'string', label: 'Button Link' },
+])
+
+const heroSchema = defineEntrySchema([{ name: 'headline', type: 'string' }, ...ctaFields])
+const bannerSchema = defineEntrySchema([{ name: 'message', type: 'string' }, ...ctaFields])
+
+type Hero = TypeFromEntrySchema<typeof heroSchema>
+// { headline: string; ctaLabel: string; ctaHref: string }
+```
+
+**Per-use overrides** fall out of the same mechanism: don't spread the one field that needs to differ, and provide your own version of it instead. This is exactly the case that pushes people toward copy-paste in the first place — one schema needs the shared field `required`, another needs a different `label`:
+
+```typescript
+const ctaLabelField = { name: 'ctaLabel', type: 'string', label: 'Button Label' } as const
+const ctaHrefField = { name: 'ctaHref', type: 'string', required: false } as const
+
+// Most schemas: spread both fields as-is.
+const heroSchema = defineEntrySchema([
+  { name: 'headline', type: 'string' },
+  ctaLabelField,
+  ctaHrefField,
+])
+
+// This one needs ctaHref required — compose from the same const, override just that key.
+const bannerSchema = defineEntrySchema([
+  { name: 'message', type: 'string' },
+  ctaLabelField,
+  { ...ctaHrefField, required: true },
+])
+```
+
+**2. Nest `defineInlineFieldGroup()` inside a block template.** Where the shared cluster should also appear visually grouped in the editor (a bordered "Call to Action" section rather than loose fields), nest an inline group inside a block template's `fields` instead of spreading a plain array. Inline groups are transparent all the way down the stack — the type derivation flattens them (see [Field Groups](#field-groups)), and so does data storage, validation, reference resolution, and the editor — so this works inside a block template exactly like it works inside a top-level schema:
+
+```typescript
+import { defineBlockTemplate, defineInlineFieldGroup, defineEntrySchema } from 'canopycms'
+
+const ctaGroup = defineInlineFieldGroup({
+  name: 'cta',
+  label: 'Call to Action',
+  fields: [
+    { name: 'ctaLabel', type: 'string', label: 'Button Label' },
+    { name: 'ctaHref', type: 'string', label: 'Button Link' },
+  ],
+})
+
+const heroBlock = defineBlockTemplate({
+  name: 'hero',
+  fields: [{ name: 'headline', type: 'string' }, ctaGroup],
+})
+const bannerBlock = defineBlockTemplate({
+  name: 'banner',
+  fields: [{ name: 'message', type: 'string' }, ctaGroup],
+})
+
+const pageSchema = defineEntrySchema([
+  { name: 'sections', type: 'block', templates: [heroBlock, bannerBlock] },
+])
+// Both templates' value shapes include { ctaLabel: string; ctaHref: string } flat —
+// no 'cta' key, and the editor renders it as one bordered group in each block.
+```
+
 ### Page Blocks (Flexible Content)
 
 A `block` field holds an ordered, repeatable list of heterogeneous section blocks discriminated by a `template` key — the "flexible content" / page-builder pattern. Each block in the list picks one of the field's templates, so a page entry becomes an array of typed sections that editors can add, remove, and reorder.
@@ -1101,6 +1178,56 @@ const schema = defineEntrySchema([
   },
 ])
 ```
+
+### Shared / Referenced Blocks
+
+A block template is just a schema, so a block field can hold a `reference` field like any other field — which makes a **shared content block** possible without any dedicated CMS feature: define the shared content as its own entry type (a small "snippet" collection), then give a block template a single `reference` field pointing at it. Editing the snippet once updates every page block that references it, instead of a find-every-page-and-paste-the-new-copy edit. In one audited real-world content set, the same call-to-action block was byte-duplicated across a dozen pages and had already drifted; every edit meant a dozen synchronized file changes.
+
+**The recipe:**
+
+```typescript
+import { defineBlockTemplate, defineEntrySchema } from 'canopycms'
+
+// 1. The shared content lives in its own entry type, like any other collection.
+const ctaSnippetSchema = defineEntrySchema([
+  { name: 'title', type: 'string', label: 'Title' },
+  { name: 'ctaText', type: 'string', label: 'Button Text' },
+])
+
+// 2. A one-field block template holds a reference to it. entryTypes scopes the picker to
+//    that entry type regardless of which collection it lives in.
+const sharedCtaBlock = defineBlockTemplate({
+  name: 'sharedCta',
+  label: 'Shared CTA',
+  fields: [
+    {
+      name: 'snippet',
+      type: 'reference',
+      label: 'CTA Snippet',
+      entryTypes: ['ctaSnippet'],
+      resolvedSchema: ctaSnippetSchema, // typed as the resolved snippet, not a bare id
+    },
+  ],
+})
+
+const pageSchema = defineEntrySchema([
+  { name: 'sections', type: 'block', templates: [sharedCtaBlock /* , ...other templates */] },
+])
+```
+
+Reading resolves it automatically — reference resolution inside block templates is not something you opt into separately. `read()` and `readByUrlPath()` already recurse into block templates and resolve any `reference` field they find there, the same as a top-level reference field:
+
+```typescript
+const { data } = await canopy.read<Page>({ entryPath: 'content/pages', slug: 'landing' })
+
+for (const section of data.sections) {
+  if (section.template === 'sharedCta' && section.value.snippet) {
+    // section.value.snippet is the full resolved entry — { title, ctaText, ... } — not an id
+  }
+}
+```
+
+> **Caveat — `listEntries()` never resolves references.** Everything above is a `read()`-time behavior. [`listEntries()`](#listing-entries) reads content files raw off disk and does not resolve `reference` fields at all, inside a block template or anywhere else. So any surface built from `listEntries()` — a search index, a sitemap, an AI-content export — sees a shared block's reference field as `null` or a bare id string, never the snippet's actual data. An adopter who builds a search index by walking `listEntries()` output over pages with shared blocks will silently get nothing for those blocks. If you need shared-block content in a `listEntries()`-derived surface, resolve the reference yourself with a follow-up `read()` call, or build that surface from `read()`/`readByUrlPath()` results instead of `listEntries()`.
 
 ## Content Identification & References
 
@@ -1295,6 +1422,61 @@ for (const block of page.blocks) {
       // block.value is narrowed to { title: string; ctaText: string }
       return <CtaSection title={block.value.title} ctaText={block.value.ctaText} />
   }
+}
+```
+
+#### Block Component Registries
+
+The `switch` above works, but it is easy to leave it with a `default: return null` clause "for forward compatibility" — which quietly turns a schema typo or a renamed template into a block that renders nothing, with a green build and green tests. A **mapped type keyed off the block union** makes the mapping exhaustive _by construction_: TypeScript refuses to compile if a template is missing its component, or if the registry has a key that doesn't match any template name. That is strictly stronger than a runtime test asserting the handled set matches the schema's declared templates, because it fails the build instead of failing at render time.
+
+`BlockValueOf<Blocks, N>` pulls one template's value shape out of the union. `BlockComponentRegistry<Blocks, ExtraProps>` builds the exhaustive component map from it — one `ComponentType<{ data: ... } & ExtraProps>` per template:
+
+```typescript
+import type { BlockComponentRegistry } from 'canopycms'
+import type { ComponentType } from 'react'
+
+type Blocks = Page['blocks'][number]
+
+const blockRegistry: BlockComponentRegistry<Blocks> = {
+  hero: ({ data }) => <HeroSection headline={data.headline} body={data.body} />,
+  cta: ({ data }) => <CtaSection title={data.title} ctaText={data.ctaText} />,
+  // Missing a key here, or adding one that isn't a template name, is a compile error.
+}
+```
+
+CanopyCMS does not ship a `renderBlocks()` helper — it would have to pick a key strategy, an unknown-template policy, and how extra props reach each component, and any one of those choices is wrong for someone. The registry is the whole primitive; reading it is a small loop you own:
+
+```typescript
+function renderBlocks(blocks: Blocks[]) {
+  return blocks.map((block, i) => {
+    // One contained assertion: `block.template` and `block.value` come from the same
+    // object, so the lookup and the data always agree at runtime — TypeScript just
+    // can't correlate a dynamic key lookup with a discriminated union's narrowing on
+    // its own. This is the one place that trust is spent; the registry above is what
+    // makes it safe to spend, because every key is guaranteed to exist.
+    const Component = blockRegistry[block.template] as ComponentType<{ data: typeof block.value }>
+    return <Component key={i} data={block.value} />
+  })
+}
+```
+
+Pass a second type argument to thread extra props — an index, a `fieldProps` callback for live-preview highlighting, whatever your renderer needs — into every component in the registry, and widen the assertion to match:
+
+```typescript
+type BlockProps = { index: number }
+
+const blockRegistry: BlockComponentRegistry<Blocks, BlockProps> = {
+  hero: ({ data, index }) => <HeroSection headline={data.headline} position={index} />,
+  cta: ({ data, index }) => <CtaSection title={data.title} position={index} />,
+}
+
+function renderBlocks(blocks: Blocks[]) {
+  return blocks.map((block, i) => {
+    const Component = blockRegistry[block.template] as ComponentType<
+      { data: typeof block.value } & BlockProps
+    >
+    return <Component key={i} data={block.value} index={i} />
+  })
 }
 ```
 
@@ -1984,6 +2166,8 @@ import { buildContentTree } from 'canopycms/server'
 ## Listing Entries
 
 `listEntries()` returns a flat array of every content entry in your site. It is designed for search indexing, sitemaps, and any other case where you need to iterate over all content without the tree hierarchy. (For `generateStaticParams`, prefer the bound `contentStaticParams` helper — see [Static Export with generateStaticParams](#static-export-with-generatestaticparams) — which enumerates routable paths without handing an admin context to your page module.)
+
+> **`listEntries()` does not resolve `reference` fields.** It reads content files raw off disk for speed across a whole site scan, so a `reference` field (top-level or inside a block template — see [Shared / Referenced Blocks](#shared--referenced-blocks)) comes back as a bare id string, or `null`. Only `read()`/`readByUrlPath()` resolve references. Building a search index or sitemap from `listEntries()` over content that leans on referenced/shared blocks will silently omit that referenced data — resolve it yourself with a follow-up `read()` call if your `listEntries()`-derived surface needs it.
 
 ### Basic Usage
 

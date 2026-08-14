@@ -46,10 +46,11 @@ unnecessary for entries that only needed it for links.
 
 ## Related
 
-- [shared-blocks-listentries-caveat.md](shared-blocks-listentries-caveat.md) —
+- [resolved/shared-blocks-listentries-caveat.md](resolved/shared-blocks-listentries-caveat.md) —
   the sibling gap: `listEntries` never resolves references at all. That one
   is about `listEntries`-derived surfaces (search, sitemap); this one is
   about `read()`-derived resolved references not carrying enough to link to.
+  RESOLVED (documented) — this file's own gap remains open.
 - [draft-publish-lifecycle.md](draft-publish-lifecycle.md) — a resolved
   reference to a draft entry needs the same "should this be visible" answer
   a URL-carrying resolution would need to respect.

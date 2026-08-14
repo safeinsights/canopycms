@@ -2,8 +2,11 @@ import { describe, expect, it, expectTypeOf } from 'vitest'
 import {
   defineBlockTemplate,
   defineEntrySchema,
+  defineFieldFragment,
   defineInlineFieldGroup,
   defineNestedFieldGroup,
+  type BlockComponentRegistry,
+  type BlockValueOf,
   type EntryTypesFromRegistry,
   type TypeFromEntrySchema,
 } from './entry-schema'
@@ -110,6 +113,69 @@ describe('TypeFromEntrySchema', () => {
       void pageSchema
       void landingSchema
     })
+  })
+
+  describe('BlockComponentRegistry / BlockValueOf', () => {
+    const heroBlock = defineBlockTemplate({
+      name: 'hero',
+      fields: [{ name: 'headline', type: 'string' }],
+    })
+    const ctaBlock = defineBlockTemplate({
+      name: 'cta',
+      fields: [{ name: 'label', type: 'string' }],
+    })
+    const pageSchema = defineEntrySchema([
+      { name: 'sections', type: 'block', templates: [heroBlock, ctaBlock] },
+    ])
+    type Sections = TypeFromEntrySchema<typeof pageSchema>['sections'][number]
+
+    it('BlockValueOf extracts one template value shape out of the union', () => {
+      expectTypeOf<BlockValueOf<Sections, 'hero'>>().toEqualTypeOf<{ headline: string }>()
+      expectTypeOf<BlockValueOf<Sections, 'cta'>>().toEqualTypeOf<{ label: string }>()
+    })
+
+    it('an exhaustive registry (one component per template) compiles', () => {
+      // Contextually typed against BlockComponentRegistry<Sections> — `data` in each
+      // component is inferred as that template's own value shape, narrowed by key.
+      const registry: BlockComponentRegistry<Sections> = {
+        hero: ({ data }) => data.headline,
+        cta: ({ data }) => data.label,
+      }
+
+      expect(Object.keys(registry).sort()).toEqual(['cta', 'hero'])
+    })
+
+    it('a registry missing a template key fails to compile', () => {
+      // @ts-expect-error - 'cta' is a required key; the registry only has 'hero'
+      const missingKey: BlockComponentRegistry<Sections> = {
+        hero: ({ data }) => data.headline,
+      }
+
+      expect(Object.keys(missingKey)).toEqual(['hero'])
+    })
+
+    it('a registry with an unknown extra key fails to compile', () => {
+      const withExtra: BlockComponentRegistry<Sections> = {
+        hero: ({ data }) => data.headline,
+        cta: ({ data }) => data.label,
+        // @ts-expect-error - 'unknown' is not a template name on Sections
+        unknown: () => null,
+      }
+
+      expect(Object.keys(withExtra)).toContain('unknown')
+    })
+
+    it('ExtraProps is threaded through every component in the registry', () => {
+      type ExtraProps = { index: number }
+      const registry: BlockComponentRegistry<Sections, ExtraProps> = {
+        hero: ({ data, index }) => `${index}:${data.headline}`,
+        cta: ({ data, index }) => `${index}:${data.label}`,
+      }
+
+      expect(Object.keys(registry).sort()).toEqual(['cta', 'hero'])
+    })
+
+    void pageSchema
   })
 
   describe('typed reference with resolvedSchema', () => {
@@ -456,6 +522,52 @@ describe('inline groups', () => {
     expect(group).toEqual({ name: 'hero', type: 'object', fields })
     expect(group.type).toBe('object')
     expect(group.fields).toBe(fields)
+  })
+})
+
+describe('defineFieldFragment', () => {
+  it('is an identity helper — returns the same field array, literal types intact', () => {
+    const ctaFields = defineFieldFragment([
+      { name: 'ctaLabel', type: 'string' },
+      { name: 'ctaHref', type: 'string' },
+    ])
+
+    expect(ctaFields).toEqual([
+      { name: 'ctaLabel', type: 'string' },
+      { name: 'ctaHref', type: 'string' },
+    ])
+  })
+
+  it('spreads into multiple schemas, preserving literal field names', () => {
+    const ctaLabelField = { name: 'ctaLabel', type: 'string' } as const
+    const ctaHrefField = { name: 'ctaHref', type: 'string', required: false } as const
+    const ctaFields = defineFieldFragment([ctaLabelField, ctaHrefField])
+
+    const heroSchema = defineEntrySchema([{ name: 'headline', type: 'string' }, ...ctaFields])
+    // Per-use override: this schema needs ctaHref required, unlike the shared fragment —
+    // compose from the same underlying field const, overriding just `required`.
+    const bannerSchema = defineEntrySchema([
+      { name: 'message', type: 'string' },
+      ctaLabelField,
+      { ...ctaHrefField, required: true },
+    ])
+
+    type Hero = TypeFromEntrySchema<typeof heroSchema>
+    type Banner = TypeFromEntrySchema<typeof bannerSchema>
+
+    expectTypeOf<Hero>().toEqualTypeOf<{
+      headline: string
+      ctaLabel: string
+      ctaHref?: string
+    }>()
+    expectTypeOf<Banner>().toEqualTypeOf<{
+      message: string
+      ctaLabel: string
+      ctaHref: string
+    }>()
+
+    void heroSchema
+    void bannerSchema
   })
 })
 
