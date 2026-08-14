@@ -484,6 +484,105 @@ describe('createContentReader', () => {
     expect(result.meta.entryId).toBe('abc123def456')
   })
 
+  it('PROBE: reports the collection default entry type for a legacy file, not the true type', async () => {
+    const root = await tmpDir()
+    const thingsDir = path.join(root, 'content/things')
+    await fs.mkdir(thingsDir, { recursive: true })
+    // Legacy filename shape: {slug}.{ext} (predates embedded type/id).
+    await fs.writeFile(
+      path.join(thingsDir, 'thing.json'),
+      JSON.stringify({ title: 'A thing' }, null, 2),
+      'utf8',
+    )
+
+    const schema = {
+      collections: [
+        {
+          name: 'things',
+          path: 'things',
+          entries: [
+            { name: 'alpha', default: true, format: 'json' as const, schema: [] },
+            { name: 'beta', format: 'json' as const, schema: [] },
+          ],
+        },
+      ],
+    }
+    const config = defineCanopyTestConfig({
+      defaultBranchAccess: 'allow',
+      defaultPathAccess: 'allow',
+      schema,
+    })
+    const branchContext = buildBranchContext(root)
+    const reader = createContentReader({
+      services: await createTestServices(
+        { ...config, schema },
+        { getSettingsBranchRoot: () => Promise.resolve(root) },
+      ),
+      allowCreateBranch: false,
+      getBranchContext: async () => branchContext,
+    })
+
+    const result = await reader.read({
+      entryPath: unsafeAsLogicalPath('content/things'),
+      slug: unsafeAsSlug('thing'),
+      user: ANONYMOUS_USER,
+    })
+
+    // The file could equally have been 'alpha' or 'beta' -- there is no way to tell from a
+    // legacy filename. `entryType` silently reports the collection's default entry type.
+    // `entryId` being undefined is the reader's signal that `entryType` is a guess, not a read.
+    expect(result.meta.entryType).toBe('alpha')
+    expect(result.meta.entryId).toBeUndefined()
+  })
+
+  it('PROBE: surfaces an on-disk type token that is not in the collection config', async () => {
+    const root = await tmpDir()
+    const postsDir = path.join(root, 'content/posts')
+    await fs.mkdir(postsDir, { recursive: true })
+    // A stray/hand-authored file whose embedded type ("foo") is not a configured entry type.
+    await fs.writeFile(
+      path.join(postsDir, 'foo.strayfile.abc123def456.md'),
+      '---\ntitle: Stray\n---\nBody.\n',
+      'utf8',
+    )
+
+    const schema = {
+      collections: [
+        {
+          name: 'posts',
+          path: 'posts',
+          entries: [{ name: 'post', format: 'md' as const, schema: [] }],
+        },
+      ],
+    }
+    const config = defineCanopyTestConfig({
+      defaultBranchAccess: 'allow',
+      defaultPathAccess: 'allow',
+      schema,
+    })
+    const branchContext = buildBranchContext(root)
+    const reader = createContentReader({
+      services: await createTestServices(
+        { ...config, schema },
+        { getSettingsBranchRoot: () => Promise.resolve(root) },
+      ),
+      allowCreateBranch: false,
+      getBranchContext: async () => branchContext,
+    })
+
+    const result = await reader.read({
+      entryPath: unsafeAsLogicalPath('content/posts'),
+      slug: unsafeAsSlug('strayfile'),
+      user: ANONYMOUS_USER,
+    })
+
+    // Confirms the on-disk type token is echoed back verbatim, even though it is not one of
+    // the collection's configured entry type names. `entryType` reflects the immutable
+    // filename token, not necessarily "a key in the collection's entries config".
+    expect(result.meta.entryType).toBe('foo')
+    expect(result.meta.entryId).toBe('abc123def456')
+  })
+
   it('checks permissions BEFORE reading file (security)', async () => {
     const root = await tmpDir()
     const pagesDir = path.join(root, 'content/pages')

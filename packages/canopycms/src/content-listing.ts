@@ -115,15 +115,26 @@ export const readEntryData = async (
  *   structurally without validating the type against a known list — useful
  *   for adopter code that needs to recover `{type, slug, id}` from a
  *   filename without having a schema/entry-types list on hand (e.g. a
- *   filesystem walk over content for tooling or diagnostics).
+ *   filesystem walk over content for tooling or diagnostics). Even without
+ *   `entryTypes`, a leading-dot filename (dotfile, editor swap/backup file)
+ *   is always rejected — an empty string is never a legal type, matching the
+ *   `filename.startsWith('.')` guard `extractEntryTypeFromFilename` in
+ *   `content-id-index.ts` already applies.
  * @returns `{ type, slug, id }`, or `null` if `filename` doesn't match the
- *   `{type}.{slug}.{id}.{ext}` shape (too few segments, no extension, an
- *   invalid ID, or — when `entryTypes` is given — an unrecognized type).
+ *   `{type}.{slug}.{id}.{ext}` shape (too few segments, no extension, a
+ *   leading dot, an invalid ID, or — when `entryTypes` is given — an
+ *   unrecognized type).
  */
 export const parseTypedFilename = (
   filename: string,
   entryTypes?: readonly EntryTypeConfig[],
 ): { type: string; slug: Slug; id: ContentId } | null => {
+  // Reject dotfiles outright (matching extractEntryTypeFromFilename's guard in
+  // content-id-index.ts): a leading dot can never be a legal entry type, and this
+  // is exactly the shape of the files a structural (no-entryTypes) parse would
+  // otherwise misparse -- e.g. '.hidden.file.aB3cD4eF5gH6.md' -> potentialType ''.
+  if (filename.startsWith('.')) return null
+
   // Remove extension
   const lastDot = filename.lastIndexOf('.')
   if (lastDot === -1) return null
@@ -135,7 +146,7 @@ export const parseTypedFilename = (
 
   const potentialType = parts[0]
   // When a known-types list is supplied, the first segment must match one of
-  // them. Without it, any first segment is accepted as the type.
+  // them. Without it, any non-empty first segment is accepted as the type.
   if (entryTypes && !entryTypes.some((e) => e.name === potentialType)) {
     return null
   }
