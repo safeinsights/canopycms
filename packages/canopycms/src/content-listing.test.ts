@@ -171,6 +171,33 @@ describe('parseTypedFilename', () => {
       const withoutTypes = parseTypedFilename('post.hello-world.vh2WdhwAFiSL.md')
       expect(withoutTypes).toEqual(withTypes)
     })
+
+    it('parses a normal filename with a real type segment', () => {
+      const result = parseTypedFilename('doc.getting-started.vh2WdhwAFiSL.mdx')
+      expect(result).toEqual({
+        type: 'doc',
+        slug: 'getting-started',
+        id: 'vh2WdhwAFiSL',
+      })
+    })
+
+    it('rejects a dotfile whose first segment would otherwise parse as an empty type', () => {
+      // Reported by review: without a type check, this used to parse as
+      // { type: '', slug: 'hidden.file', id: 'aB3cD4eF5gH6' } -- an empty
+      // string is never a legal entry type.
+      const result = parseTypedFilename('.hidden.file.aB3cD4eF5gH6.md')
+      expect(result).toBeNull()
+    })
+
+    it('rejects a filename with multiple leading dots', () => {
+      const result = parseTypedFilename('..thing.aB3cD4eF5gH6.md')
+      expect(result).toBeNull()
+    })
+  })
+
+  it('rejects a dotfile even when entryTypes is supplied (unchanged, byte-identical behavior)', () => {
+    const result = parseTypedFilename('.hidden.file.aB3cD4eF5gH6.md', entryTypes)
+    expect(result).toBeNull()
   })
 })
 
