@@ -1,8 +1,13 @@
 # Return entryType from readByUrlPath
 
+**IN PROGRESS (2026-08-14, epic `integration-202608-b` / PR #235)** — this
+epic is implementing this now, and widening scope slightly to also return
+`entryId` alongside `entryType` (both are already resolved internally during
+URL matching, per the Implementation Notes below). Don't double-build.
+
 ## Summary
 
-`readByUrlPath()` currently returns `{ data: T; path: string }`. Add `entryType: string` to the result so consumers can route based on content type without needing dedicated Next.js routes or separate `listEntries` lookups.
+`readByUrlPath()` currently returns `{ data: T; path: string }`. Add `entryType: string` (and `entryId: string`) to the result so consumers can route based on content type, or resolve/link by ID, without needing dedicated Next.js routes or separate `listEntries` lookups.
 
 ## Motivation
 

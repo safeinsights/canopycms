@@ -520,3 +520,85 @@ settings commits forever; only `refs/heads/main` is ever reset).
 **One inherited footgun removed:** `test.setTimeout(60000)` in three new tests
 *lowered* the budget below the config's 90s — the calls read as "extend" but
 shrink. The pattern came from older specs; those are left alone.
+
+## 2026-08-14 — [program] Direction confirmed: both sites deploy, KB first — hub sequencing vindicated
+
+Backlog re-baseline for the go-live epic, run on `chore/backlog-rebaseline-golive`
+off `integration-202608-b`. Established via a shared, separately-verified
+briefing (facts cross-checked against `../docs-site-proto` and `../website`
+directly, not re-derived here).
+
+**Confirmed direction.** Both `docs-site-proto` (KB) and `website` v2 get a
+deployed editor on AWS. **The KB goes first.** This closes the two open items
+the 2026-08-13 audit had flagged in `index.md`:
+
+- The hub's original goal statement and E→F workstream sequencing (docs-site
+  CMS deployment, then production + the second site) already assumed exactly
+  this direction. **The audit's "inverted premise" warning was itself the
+  error, not the hub** — no correction to the hub's sequencing was needed, only
+  a retraction of the warning. `index.md`'s preamble, sibling-repo version
+  line, and roughly two dozen `[MKT]`-only tags that assumed the KB stays
+  dev-mode forever were corrected in this session (several `[MKT]` rows had no
+  tag at all — `sanitized-branch-name-git-mismatch.md` and
+  `worker-base-branch-env-divergence.md` — now `[BOTH]`).
+- `program-log.md`'s staleness (last entry 2026-07-31, ~2 weeks and epic #211
+  behind) is closed by this entry.
+
+**Epic scope.** All go-live work lands on `integration-202608-b` (cut from
+`main` at `db4f8711`), standing draft PR #235. `main` is at **0.0.62** as of
+this session (auto-publishes a patch per push; never hardcode the target
+version — resolve it when needed).
+
+**Adopter-request triage (#10-#18 from `../website/docs/canopycms-requests.md`),
+verdicts recorded in dedicated task files under `.claude/future-tasks/` so they
+aren't re-derived by a future session:**
+
+- **#12 (leaf-slug static params) was already fully shipped**, and already
+  available on the website's own pinned 0.0.41 — zero work. Filed as
+  `resolved/leaf-slug-static-params-docs-gap.md`, a discoverability note, not
+  a feature.
+- **#18 (one blessed markdown renderer) is a deliberate no-build** —
+  `react-markdown` needs `'use client'` in an RSC tree (client-bundle cost for
+  every adopter), still can't cover the MDX half, and the divergence it's
+  trying to fix is site policy, not CMS policy. Reasoning recorded in
+  `markdown-rendering-not-building.md` so this isn't relitigated; the
+  actionable remainder (documenting the react-markdown-in-RSC trap) is tracked
+  there.
+- **#11 (typed listing with data) is security-gated, not just unbuilt.**
+  `listEntries` already returns the requested shape but has zero ACL
+  awareness (`context.ts:301-306` passes no user) — latent only because the
+  one route to it, `getCanopyForBuild()`, throws at request time. Three
+  options written up in `listentries-acl-awareness.md`, which now interacts
+  directly with `authorization-enforcement-consolidation.md`.
+- #13/#15/#16 are partial-to-working-but-undocumented; #17's requested API is
+  the wrong shape (the real duplication is a boot block + an unexported
+  markdown stripper + unexported title derivation, plus `parseTypedFilename`
+  sitting unreachable and `listEntries` dropping `updatedAt`); #14 is unbuilt,
+  breaking, and the docs already promise the fixed behavior, with a 2-line
+  in-repo blast radius.
+- **This epic is implementing now**: `parseTypedFilename` export,
+  `defaultBuildPath` export, `readByUrlPath` entryType+entryId, `listEntries`
+  updatedAt, #14, #10 (sitemap half only — #10a/SEO metadata not confirmed in
+  scope), #13 (types only), #15 (docs only), #16 (the caveat doc), and #17's
+  underlying primitives (not the `extractSearchDocuments` API itself, which is
+  not being built). See each item's task file for what's landing now vs. what
+  a future session should pick up.
+
+**Site-audit findings with no prior backlog file**, also filed this session:
+draft/publish as a first-class lifecycle (the KB's `draft` frontmatter field
+is a documented phantom — no schema field, no content sets it, three dead
+filters), a stable heading-ID + `extractToc()` contract (both sites built
+`rehype-heading-attrs.ts` independently; `website`'s `toc.ts` hand-mirrors
+rehype-slug's counter and desyncs on `#`/`####` in heading text), a
+`compileAndRenderCheck()` + `canopycms validate-content` CLI (porting the
+KB's incident-driven `scripts/validate-mdx.ts`), resolved references carrying
+a URL (removes the KB's second-`listEntries`-pass `getDocLinkIndex()`),
+trailing-slash router/href helpers, `defaultBuildPath`'s export, a
+programmatic content-authoring API + deterministic ID generator (the KB's
+`ingest-dataset.ts` bypasses schema validation and the ID index, and
+copy-pastes Canopy's Base58 alphabet), and a supported script-runner
+entrypoint (both sites carry `@ts-ignore`-scarred workarounds for lack of
+one).
+
+Full detail for every item above lives in its own file; see `index.md`'s
+P0–P3 tables and "Do next" list for links.
