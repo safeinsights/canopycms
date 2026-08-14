@@ -1,3 +1,5 @@
+import type { ComponentType } from 'react'
+
 /** Structural constraint for fields that can be inferred by TypeFromEntrySchema. */
 type InferableField = {
   name: string
@@ -288,3 +290,90 @@ export const defineBlockTemplate = <
 >(
   template: T,
 ): T => template
+
+/**
+ * Extract one template's value shape out of a block field's discriminated union.
+ *
+ * `Blocks` is the union itself — e.g. `Page['sections'][number]`, the element type of
+ * a `block` field as derived by `TypeFromEntrySchema` — not the surrounding array.
+ * `N` is one of that union's `template` literals.
+ *
+ * @example
+ * const heroBlock = defineBlockTemplate({
+ *   name: 'hero',
+ *   fields: [{ name: 'headline', type: 'string' }],
+ * })
+ * const pageSchema = defineEntrySchema([
+ *   { name: 'sections', type: 'block', templates: [heroBlock] },
+ * ])
+ * type Sections = TypeFromEntrySchema<typeof pageSchema>['sections'][number]
+ * type HeroValue = BlockValueOf<Sections, 'hero'> // { headline: string }
+ */
+export type BlockValueOf<
+  Blocks extends { template: string; value: unknown },
+  N extends Blocks['template'],
+> = Extract<Blocks, { template: N }>['value']
+
+/**
+ * A mapped type over a block field's template names, requiring exactly one component
+ * per template — no more, no fewer. This makes a block → component registry exhaustive
+ * *by construction*: adding a template to the schema without adding its component is a
+ * compile error, and a stray/renamed key in the registry is a compile error too. That is
+ * strictly stronger than a runtime "did I handle every template?" guard, since it fails
+ * the build instead of failing silently at render time.
+ *
+ * Deliberately a type, not a `renderBlocks()` helper — the type says nothing about key
+ * strategy, unknown-template handling, or how extra props reach each component, so it
+ * imposes no rendering shape. Adopters write their own small loop (see the README's
+ * "Block Component Registries" section for the recipe) and get exhaustiveness for free.
+ *
+ * @example
+ * const registry: BlockComponentRegistry<Sections> = {
+ *   hero: ({ data }) => <HeroSection {...data} />,
+ *   // TS error here if 'hero' is missing, or if a key doesn't match a template name.
+ * }
+ *
+ * // With extra props threaded to every block component:
+ * type Props = { index: number }
+ * const registryWithProps: BlockComponentRegistry<Sections, Props> = {
+ *   hero: ({ data, index }) => <HeroSection {...data} position={index} />,
+ * }
+ */
+export type BlockComponentRegistry<
+  Blocks extends { template: string; value: unknown },
+  ExtraProps extends object = object,
+> = {
+  [N in Blocks['template']]: ComponentType<{ data: BlockValueOf<Blocks, N> } & ExtraProps>
+}
+
+/**
+ * Const-inference identity helper for a reusable field fragment — a plain array of field
+ * configs (not a group, not a template) that you spread into multiple schemas' `fields`.
+ * Exists purely for discoverability: `defineEntrySchema` and `defineBlockTemplate` already
+ * infer literal types from a `const fields = [...] as const` array, so spreading it works
+ * without this helper too. Wrapping the definition site in `defineFieldFragment(...)` just
+ * makes the pattern easy to find (and to grep for) alongside `defineInlineFieldGroup` and
+ * `defineNestedFieldGroup`.
+ *
+ * Use this over a field group when you don't want the fields visually boxed together in
+ * the editor, or when different schemas need to override one field (e.g. a different
+ * `label` or `required`) — spread the fragment, then follow it with an object that
+ * overrides just the field(s) that differ for that schema.
+ *
+ * @example
+ * const ctaFields = defineFieldFragment([
+ *   { name: 'ctaLabel', type: 'string', label: 'Button Label' },
+ *   { name: 'ctaHref', type: 'string', label: 'Button Link' },
+ * ])
+ *
+ * const heroSchema = defineEntrySchema([
+ *   { name: 'headline', type: 'string' },
+ *   ...ctaFields,
+ * ])
+ * const bannerSchema = defineEntrySchema([
+ *   { name: 'message', type: 'string' },
+ *   ...ctaFields,
+ * ])
+ */
+export const defineFieldFragment = <const T extends readonly InferableField[]>(fields: T): T =>
+  fields
