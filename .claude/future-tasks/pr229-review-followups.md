@@ -109,8 +109,18 @@ change, not one buried in a review-fix batch.
   one." The `DEFAULT_CONTENT_WRITE_LOCK_WAIT_MS` doc now states it is also the
   writer-vs-writer budget; making it config-plumbed is tracked in
   [content-write-lock-tuning-and-granularity.md](content-write-lock-tuning-and-granularity.md).
-- **Review finding #17** — new adopter-facing API surface (`Editor.customRenderers`, a
-  second positional argument on `CanopyEditorPage`, and `CustomFieldRenderers` /
-  `CustomFieldRenderProps` exports from `client.ts`) is backwards-compatible but was not in
-  the PR body's table, and `AGENTS.md` asks for approval before widening adopter touchpoints.
-  **Needs JP's call**, not an engineering fix: keep as-is, or revert the widening.
+- **Review finding #17 — DECIDED 2026-08-14: keep.** The new adopter-facing surface
+  (`Editor.customRenderers`, a second positional argument on `CanopyEditorPage`, and the
+  `CustomFieldRenderers` / `CustomFieldRenderProps` exports from `client.ts`) stays. JP's
+  reasoning: two adopters, both ours, so a wrong call here is cheap and reversible, and the
+  surface is already built, threaded and tested.
+
+  Documenting it then exposed the real defect underneath, now fixed in the same PR:
+  `NextCanopyEditorPage` accepted only `config` and never forwarded a second argument, so
+  `NextCanopyEditorPage(clientConfig, customRenderers)` **silently ignored the renderers** —
+  and silently, because an extra argument at a call site is not a type error. Next is the
+  primary target and that wrapper is what the README's Quick Start scaffolds, so the
+  extension point was unreachable from the path every adopter actually uses. Worth keeping
+  as a pattern: an extension point reachable only from the internal entrypoint is the
+  repo's own named defect shape wearing a feature's clothes, and only writing the
+  documentation caught it.

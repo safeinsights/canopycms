@@ -145,5 +145,5 @@ and `resetWorkspace()` now also resets `.canopy-dev/.tasks` and
   (5.4m / 5.6m) — the PR #151 state-leak proof.
 - `pnpm typecheck` and `pnpm lint` clean across all 7 workspace projects.
 - `pnpm test`: 3145 passed, 1 failed — the pre-existing P3 MDXEditor mount flake
-  ([markdownfield-mdxeditor-mount-flake.md](../markdownfield-mdxeditor-mount-flake.md)),
+  ([markdownfield-mdxeditor-mount-flake.md](markdownfield-mdxeditor-mount-flake.md)),
   which passes in isolation. Nothing under `packages/` was modified.

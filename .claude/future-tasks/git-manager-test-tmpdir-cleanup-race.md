@@ -53,6 +53,6 @@ the same `afterEach` shape — the fix probably belongs in one shared helper.
 
 ## Related
 
-- [markdownfield-mdxeditor-mount-flake](markdownfield-mdxeditor-mount-flake.md) — the other known intermittent in this
+- [markdownfield-mdxeditor-mount-flake](resolved/markdownfield-mdxeditor-mount-flake.md) — the other known intermittent in this
   suite. Unrelated cause; listed together because both make a green CI run
   non-deterministic and both cost a re-run to diagnose.
