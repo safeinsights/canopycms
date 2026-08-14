@@ -29,7 +29,38 @@ import {
  * Cluster B deploy blockers: Lambda↔EFS egress (DEP-C1) and the CloudFront-only
  * Function URL (DEP-H2).
  */
+/**
+ * Memoized default synth.
+ *
+ * 33 of this file's tests call `synth()` with no arguments, i.e. they all
+ * assert against the *same* template. Each call was doing a full CDK synth of
+ * an identical stack, so the suite paid that cost 33 times over. That was
+ * merely wasteful under aws-cdk-lib 2.192; under 2.260+ a single synth got
+ * slow enough that whichever no-arg test ran first blew vitest's 5s default
+ * and failed the run -- so the timeout was the symptom and the redundant work
+ * was the cause.
+ *
+ * Caching is safe because `Template` is a read-only assertions facade: tests
+ * call `hasResourceProperties`/`findResources`/etc. and never mutate it.
+ * Calls WITH arguments are deliberately not cached -- `overrides` can carry
+ * construct instances, which are not soundly comparable as a cache key, and
+ * guessing at one is how a stale template would silently satisfy the wrong
+ * assertion.
+ */
+let defaultTemplate: Template | undefined
+
 function synth(withDistribution = false, overrides: Partial<CanopyCmsServiceProps> = {}): Template {
+  const isDefault = withDistribution === false && Object.keys(overrides).length === 0
+  if (isDefault && defaultTemplate) return defaultTemplate
+  const template = synthUncached(withDistribution, overrides)
+  if (isDefault) defaultTemplate = template
+  return template
+}
+
+function synthUncached(
+  withDistribution = false,
+  overrides: Partial<CanopyCmsServiceProps> = {},
+): Template {
   const app = new App()
   const stack = new Stack(app, 'TestStack', {
     env: { account: '123456789012', region: 'us-east-1' },
