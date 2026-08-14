@@ -8,6 +8,7 @@ import {
   createLogicalPath,
   parseSlug,
   resolveBranchPaths,
+  type ContentId,
   type PhysicalPath,
   type Slug,
 } from './paths'
@@ -99,7 +100,20 @@ export interface CanopyBuildContext {
     slug?: string
     branch?: string
     resolveReferences?: boolean
-  }) => Promise<{ data: T; path: string; meta: { physicalPath: PhysicalPath } }>
+  }) => Promise<{
+    data: T
+    path: string
+    meta: {
+      physicalPath: PhysicalPath
+      /** The resolved entry type name (e.g. the `entries[].name` in the collection's config). */
+      entryType: string
+      /**
+       * The entry's 12-char Base58 content ID, when the resolved file carries one.
+       * Undefined only for legacy entry files predating embedded-ID filenames.
+       */
+      entryId?: ContentId
+    }
+  }>
 
   /**
    * Read content by URL path, resolving the collection/entry split automatically.
@@ -119,6 +133,10 @@ export interface CanopyBuildContext {
    * in public output, as it reveals the deployment's filesystem layout (home dir / EFS
    * mount / branch name). Intended for build-time reads of colocated artifacts.
    *
+   * `meta.entryType` and `meta.entryId` are also resolved for free (path resolution
+   * already derives them) — useful for entry-type-based dispatch in a single
+   * catch-all route without a separate `listEntries` lookup or filename parse.
+   *
    * @example
    * ```ts
    * // URL /docs/guides/getting-started → reads content/docs/guides + slug "getting-started"
@@ -127,15 +145,30 @@ export interface CanopyBuildContext {
    * const result = await canopy.readByUrlPath<DocContent>('/docs/guides/getting-started')
    * if (result) {
    *   const { data, path } = result
-   *   // Read a sibling artifact colocated with the entry (server-only):
-   *   const profile = path.join(path.dirname(result.meta.physicalPath), 'profile.json')
+   *   switch (result.meta.entryType) {
+   *     case 'home': return <HomePage data={data} />
+   *     default: return <DocView data={data} />
+   *   }
    * }
    * ```
    */
   readByUrlPath: <T = unknown>(
     urlPath: string,
     options?: { branch?: string; resolveReferences?: boolean },
-  ) => Promise<{ data: T; path: string; meta: { physicalPath: PhysicalPath } } | null>
+  ) => Promise<{
+    data: T
+    path: string
+    meta: {
+      physicalPath: PhysicalPath
+      /** The resolved entry type name (e.g. the `entries[].name` in the collection's config). */
+      entryType: string
+      /**
+       * The entry's 12-char Base58 content ID, when the resolved file carries one.
+       * Undefined only for legacy entry files predating embedded-ID filenames.
+       */
+      entryId?: ContentId
+    }
+  } | null>
 
   /** Underlying services */
   services: CanopyServices
