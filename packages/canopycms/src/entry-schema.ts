@@ -30,14 +30,23 @@ type FlattenInlineGroups<Fields extends readonly InferableField[]> = Fields exte
     : [Head, ...FlattenInlineGroups<Rest>]
   : []
 
-type RequiredValue<F extends InferableField, V> = F['required'] extends false ? V | undefined : V
+/**
+ * Collapse an intersection of mapped types into one object type, preserving the `?`
+ * modifier (the mapped type is homomorphic over `keyof T`, so optionality survives).
+ * Without it, InferContentShape would surface as `{ a: string } & { b?: string }` —
+ * structurally equivalent, but it reads badly in editor tooltips and is not accepted
+ * by strict type-equality assertions.
+ */
+type Simplify<T> = { [K in keyof T]: T[K] }
 
-type ScalarValue<F extends InferableField, V> = RequiredValue<F, F['list'] extends true ? V[] : V>
+/**
+ * The value type of a field, WITHOUT any optionality. Optionality is carried solely by
+ * the `?` modifier that InferContentShape applies, never duplicated as `| undefined`.
+ */
+type ScalarValue<F extends InferableField, V> = F['list'] extends true ? V[] : V
 
-type ObjectValue<F extends InferableField & { fields: readonly InferableField[] }> = RequiredValue<
-  F,
+type ObjectValue<F extends InferableField & { fields: readonly InferableField[] }> =
   F['list'] extends true ? Array<InferContentShape<F['fields']>> : InferContentShape<F['fields']>
->
 
 /**
  * Distributes over each member of a block templates union to produce a discriminated union.
@@ -61,7 +70,7 @@ type BlockValue<
       fields: readonly InferableField[]
     }>
   },
-> = RequiredValue<F, Array<DistributeBlockTemplate<F['templates'][number]>>>
+> = Array<DistributeBlockTemplate<F['templates'][number]>>
 
 /**
  * Structural mirror of `ImageFieldValue` (config/types.ts). Kept inline
@@ -110,15 +119,29 @@ type FieldValue<F extends InferableField> = F extends {
  * - Objects become nested objects
  * - Blocks become arrays of tagged templates with their value shapes
  * - Lists become arrays of the scalar/object type
- * - Non-required fields include `undefined`
+ * - A field with an explicit `required: false` becomes an OPTIONAL property
+ *   (`subheading?: string`), so a literal may omit it entirely rather than spelling it
+ *   out as `undefined`. Reading it still yields `string | undefined`.
+ * - A field that OMITS `required` stays a REQUIRED property. `F['required']` infers as
+ *   `boolean | undefined` there, which does not extend `false`. This three-way
+ *   distinction (`true` / `false` / absent) is deliberate and pinned by tests — only an
+ *   explicit `required: false` opts a key into `?:`.
  * - Inline groups (type: 'group') are flattened — their fields contribute directly
  *   to the parent shape with no intermediate key.
  *
  * Works with any structurally compatible array; importing FieldConfig is not required.
  */
-type InferContentShape<Fields extends readonly InferableField[]> = {
-  [F in FlattenInlineGroups<Fields>[number] as F['name']]: FieldValue<F>
-}
+type InferContentShape<Fields extends readonly InferableField[]> = Simplify<
+  {
+    [F in FlattenInlineGroups<Fields>[number] as F['required'] extends false
+      ? never
+      : F['name']]: FieldValue<F>
+  } & {
+    [F in FlattenInlineGroups<Fields>[number] as F['required'] extends false
+      ? F['name']
+      : never]?: FieldValue<F>
+  }
+>
 
 /**
  * Helper to define entry schema field arrays with literal inference without sprinkling `as const`.
