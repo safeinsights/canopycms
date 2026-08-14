@@ -23,7 +23,7 @@ import type { ExternalGroupsResponse, InternalGroupsResponse, UpdateInternalGrou
 import type { UserInfoResponse } from '../user'
 import type { AddEntryTypeApiResponse, CreateCollectionApiResponse, DeleteCollectionApiResponse, GetCollectionApiResponse, GetSchemaApiResponse, InvalidateSchemaCacheApiResponse, RemoveEntryTypeApiResponse, UpdateCollectionApiResponse, UpdateEntryTypeApiResponse, UpdateOrderApiResponse, UpdateOrderBody } from '../schema'
 import type { CreateCollectionInput, CreateEntryTypeInput, UpdateCollectionInput, UpdateEntryTypeInput } from '../../schema/schema-store-types'
-import type { AdminDeleteTaskResponse, AdminRetryTaskResponse, AdminStatusResponse, AdminTasksResponse, BranchHealthResponse, PurgeBranchDirResponse, RepairBranchDirResponse } from '../admin'
+import type { AdminDeleteTaskResponse, AdminRetryTaskResponse, AdminStatusResponse, AdminTasksResponse, BranchHealthResponse, PurgeBranchDirResponse, RepairBranchDirResponse, RepairContentDuplicatesResponse } from '../admin'
 
 /**
  * Type utility to convert CanopyApiClient methods to Vitest mocks.
@@ -121,7 +121,8 @@ export function createMockApiClient(): MockApiClient {
   admin: {
     branchHealth: vi.fn().mockResolvedValue(mockSuccess({"entries":[],"generatedAt":"2024-01-01T00:00:00.000Z"})),
     purgeBranchDir: vi.fn().mockResolvedValue(mockSuccess({"trashedAs":".trash-example-branch-20240101T000000Z"})),
-    repairBranchDir: vi.fn().mockResolvedValue(mockSuccess({"branch":{"name":"example-branch","status":"editing","access":{},"createdBy":"admin","createdAt":"2024-01-01T00:00:00.000Z","updatedAt":"2024-01-01T00:00:00.000Z"},"archivedAs":"branch.json.corrupt-20240101T000000Z"})),
+    repairBranchDir: vi.fn().mockResolvedValue(mockSuccess({"branch":{"name":"example-branch","status":"editing","access":{},"createdBy":"admin","createdAt":"2024-01-01T00:00:00.000Z","updatedAt":"2024-01-01T00:00:00.000Z"},"archivedAs":"branch.json.corrupt-20240101T000000Z","reset":{"status":"editing","access":{},"createdBy":"admin"}})),
+    repairContentDuplicates: vi.fn().mockResolvedValue(mockSuccess({"resolved":[{"id":"a1b2c3d4e5f6","keptPath":"content/posts/dune.a1b2c3d4e5f6.json","archivedAs":[".duplicate-content-id.20240101T000000Z.post.dune-old.a1b2c3d4e5f6.json"]}]})),
     status: vi.fn().mockResolvedValue(mockSuccess({"generatedAt":"2024-01-01T00:00:00.000Z","mode":"prod","queue":{"pending":0,"processing":0,"completed":0,"failed":0,"corrupt":0},"worker":{"state":"absent"},"workerStatus":null})),
     listTasks: vi.fn().mockResolvedValue(mockSuccess({"tasks":[]})),
     retryTask: vi.fn().mockResolvedValue(mockSuccess({"newTaskId":"00000000-0000-0000-0000-000000000000"})),
@@ -440,7 +441,14 @@ export function mockPurgeBranchDirResponse(): PurgeBranchDirResponse {
  * Create a RepairBranchDirResponse for testing
  */
 export function mockRepairBranchDirResponse(): RepairBranchDirResponse {
-  return mockSuccess({"branch":{"name":"example-branch","status":"editing","access":{},"createdBy":"admin","createdAt":"2024-01-01T00:00:00.000Z","updatedAt":"2024-01-01T00:00:00.000Z"},"archivedAs":"branch.json.corrupt-20240101T000000Z"})
+  return mockSuccess({"branch":{"name":"example-branch","status":"editing","access":{},"createdBy":"admin","createdAt":"2024-01-01T00:00:00.000Z","updatedAt":"2024-01-01T00:00:00.000Z"},"archivedAs":"branch.json.corrupt-20240101T000000Z","reset":{"status":"editing","access":{},"createdBy":"admin"}})
+}
+
+/**
+ * Create a RepairContentDuplicatesResponse for testing
+ */
+export function mockRepairContentDuplicatesResponse(): RepairContentDuplicatesResponse {
+  return mockSuccess({"resolved":[{"id":"a1b2c3d4e5f6","keptPath":"content/posts/dune.a1b2c3d4e5f6.json","archivedAs":[".duplicate-content-id.20240101T000000Z.post.dune-old.a1b2c3d4e5f6.json"]}]})
 }
 
 /**

@@ -4,6 +4,7 @@ import type { Dirent } from 'node:fs'
 
 import type { BranchMetadata } from './types'
 import { BranchMetadataFileManager, BranchMetadataCorruptError } from './branch-metadata'
+import { ContentIdIndex, type DuplicateContentId } from './content-id-index'
 import { sanitizeBranchName } from './paths/branch-name'
 import { getErrorMessage, isNodeError, isNotFoundError } from './utils/error'
 
@@ -31,6 +32,15 @@ export interface BranchHealthEntry {
   isBaseBranch?: boolean
   /** healthy only */
   branch?: BranchMetadata
+  /**
+   * healthy only, and only when non-empty: duplicate content IDs found in
+   * this branch's content tree (see content-id-index.ts's "Duplicate-ID
+   * quarantine" section). The branch itself stays fully usable -- content
+   * operations degrade only for the specific quarantined ID(s), which are
+   * excluded from ID-based lookups until repaired via the
+   * repair-content-duplicates admin action.
+   */
+  duplicateContentIds?: DuplicateContentId[]
   /** corrupt-metadata only: message describing why the file failed to load. */
   parseError?: string
   /** corrupt-metadata only: branch.json's mtime, ISO. Omitted if branch.json itself couldn't be stat'd. */
@@ -99,6 +109,28 @@ async function readMetaMtime(branchRoot: string): Promise<string | undefined> {
 }
 
 /**
+ * Scan a healthy branch's content tree for duplicate-embedded-ID pairs (see
+ * content-id-index.ts's "Duplicate-ID quarantine" section). Never throws --
+ * one branch's unreadable/unusual content tree must not take down the whole
+ * health scan (same rationale as the corrupt-metadata handling below). Costs
+ * a full recursive readdir of the content tree, same class of cost as the
+ * lazy warm-up every ContentStore already pays on first access -- acceptable
+ * for an admin-triggered scan, not a hot path.
+ */
+async function scanDuplicateContentIds(
+  branchRoot: string,
+  contentRootName: string,
+): Promise<DuplicateContentId[]> {
+  try {
+    const idIndex = new ContentIdIndex(branchRoot)
+    await idIndex.buildFromFilenames(contentRootName)
+    return idIndex.getDuplicateIds()
+  } catch {
+    return []
+  }
+}
+
+/**
  * Scan every directory under `baseRoot` and classify it as healthy,
  * corrupt-metadata, or orphan. Never throws for a single bad directory --
  * one dir's unreadable/unparseable metadata must not take down the whole
@@ -109,10 +141,11 @@ async function readMetaMtime(branchRoot: string): Promise<string | undefined> {
  */
 export async function scanBranchHealth(
   baseRoot: string,
-  opts: { baseBranchName: string },
+  opts: { baseBranchName: string; contentRootName?: string },
 ): Promise<BranchHealthEntry[]> {
   const resolvedRoot = path.resolve(baseRoot)
   const sanitizedBaseBranchName = sanitizeBranchName(opts.baseBranchName)
+  const contentRootName = opts.contentRootName ?? 'content'
 
   let dirEntries: Dirent[]
   try {
@@ -178,11 +211,13 @@ export async function scanBranchHealth(
     }
 
     if (meta) {
+      const duplicateContentIds = await scanDuplicateContentIds(branchRoot, contentRootName)
       entries.push({
         dirName,
         kind: 'healthy',
         ...(isBaseBranch ? { isBaseBranch } : {}),
         branch: meta.branch,
+        ...(duplicateContentIds.length ? { duplicateContentIds } : {}),
       })
       continue
     }

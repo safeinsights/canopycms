@@ -3,6 +3,7 @@ import path from 'node:path'
 
 import { isValidId } from './id'
 import { isNotFoundError } from './utils/error'
+import { canopyLogWarn } from './utils/logger'
 import { type LogicalPath, type PhysicalPath, type Slug, type ContentId } from './paths'
 
 /** Logical path representing entries stored at the branch root (no parent collection). Rare in practice. */
@@ -28,6 +29,20 @@ export interface IdLocation {
   relativePath: PhysicalPath // e.g. 'content/posts/dune.a1b2c3d4e5f6.json'
   collection?: LogicalPath // e.g. 'content/posts' (for entries only) — always logical, never physical
   slug?: Slug // e.g. 'dune' (for entries only)
+}
+
+/**
+ * A group of on-disk filenames whose names embed the same content ID,
+ * discovered by {@link ContentIdIndex.buildFromFilenames}. See the class doc
+ * comment's "Duplicate-ID quarantine" section for how `keptPath` is chosen
+ * and why it is deterministic across hosts.
+ */
+export interface DuplicateContentId {
+  id: ContentId
+  /** The path retained in the index (the deterministic winner). Fully usable. */
+  keptPath: PhysicalPath
+  /** Paths quarantined out of the index. Still on disk, unreachable by ID until repaired. */
+  droppedPaths: PhysicalPath[]
 }
 
 /**
@@ -63,16 +78,52 @@ export interface IdLocation {
  *   (ID miss or index hit whose file is gone).
  *
  * **Race condition handling:**
- * - Multiple processes creating entries simultaneously: Each generates a unique ID,
- *   collisions detected during index build (fail fast)
+ * - Multiple processes creating entries simultaneously: each generates a unique ID,
+ *   so this cannot itself manufacture a duplicate-ID pair.
  * - ContentStore.write() refuses to recreate an entry file whose ID the
  *   directory listing places at a different slug (existence guard), so stale
- *   indexes cannot manufacture duplicate-ID files.
+ *   indexes cannot manufacture duplicate-ID files either. Together these two
+ *   guarantees mean buildFromFilenames() can only ever encounter a duplicate
+ *   ID that ALREADY existed on disk before the scan started (see below).
+ *
+ * ## Duplicate-ID quarantine (not fail-fast)
+ *
+ * A duplicate embedded ID can still land on disk from an external crash --
+ * e.g. ContentStore.renameEntry()'s `fs.link()` then `fs.unlink()` is not
+ * atomic, and a crash between the two steps leaves two filenames sharing one
+ * ID. Earlier versions of this class threw on the first such collision,
+ * which propagated out of every caller and (since ContentStore's rebuild has
+ * no catch around it) permanently bricked read-by-id, reference resolution,
+ * collection listing, and every write on the branch -- one bad pair took the
+ * whole branch down.
+ *
+ * `buildFromFilenames()` now quarantines a collision instead of throwing:
+ * the two (or more) candidates sharing an ID are resolved to a single
+ * deterministic winner -- the lexicographically-**smallest** relativePath,
+ * chosen purely by comparing the candidate strings, never by which one the
+ * scan happened to visit first. This is what makes the choice agree across
+ * hosts: two Lambdas (or a Lambda and the EC2 worker) scanning the same
+ * directory can observe entries in different `readdir()` orders, but the
+ * MIN of a fixed set of strings does not depend on visitation order, so
+ * every host converges on the same winner. The loser(s) are excluded from
+ * `idToLocation`/`pathToId`/`byCollection` entirely (as if not indexed) and
+ * recorded in {@link getDuplicateIds} for admin-facing health reporting
+ * (branch-health.ts) and repair (api/admin-branch-health.ts) -- the files
+ * themselves are left untouched on disk until a human or the repair action
+ * moves them. A branch with a quarantined duplicate is degraded (that one ID
+ * pair is invisible to ID-based lookups) but not dead.
  */
 export class ContentIdIndex {
   private idToLocation: Map<string, IdLocation> = new Map()
   private pathToId: Map<string, string> = new Map()
   private byCollection: Map<string, Set<string>> = new Map()
+  /**
+   * IDs discovered on more than one file during buildFromFilenames, keyed by
+   * id, mapping to every quarantined (losing) path seen for that id. Never
+   * populated by add()/remove()/updatePath(), which still throw on collision
+   * -- see those methods' doc comments.
+   */
+  private duplicateIds: Map<string, Set<string>> = new Map()
   private root: string
 
   constructor(root: string) {
@@ -80,11 +131,47 @@ export class ContentIdIndex {
   }
 
   /**
-   * Build index by scanning filenames recursively.
-   * Throws if duplicate IDs found (collision detection).
+   * Build index by scanning filenames recursively. Duplicate embedded IDs
+   * are quarantined, not thrown on -- see the class doc comment's
+   * "Duplicate-ID quarantine" section and {@link getDuplicateIds}.
    */
   async buildFromFilenames(startPath: string = ''): Promise<void> {
     await this.scanDirectory(startPath)
+  }
+
+  /** Insert a location into all three indexes. Caller must ensure no existing entry for this id. */
+  private insertLocation(id: string, location: IdLocation): void {
+    this.idToLocation.set(id, location)
+    this.pathToId.set(location.relativePath, id)
+    if (location.type === 'entry' && location.collection) {
+      if (!this.byCollection.has(location.collection)) {
+        this.byCollection.set(location.collection, new Set())
+      }
+      this.byCollection.get(location.collection)!.add(id)
+    }
+  }
+
+  /** Remove a location from all three indexes -- used when a lexicographically-earlier duplicate displaces it. */
+  private evictLocation(location: IdLocation): void {
+    this.idToLocation.delete(location.id)
+    this.pathToId.delete(location.relativePath)
+    if (location.type === 'entry' && location.collection) {
+      const idSet = this.byCollection.get(location.collection)
+      if (idSet) {
+        idSet.delete(location.id)
+        if (idSet.size === 0) this.byCollection.delete(location.collection)
+      }
+    }
+  }
+
+  /** Record a quarantined duplicate path for admin-facing health reporting (see getDuplicateIds). */
+  private recordDuplicate(id: string, droppedPath: string): void {
+    let dropped = this.duplicateIds.get(id)
+    if (!dropped) {
+      dropped = new Set()
+      this.duplicateIds.set(id, dropped)
+    }
+    dropped.add(droppedPath)
   }
 
   private async scanDirectory(relativePath: string): Promise<void> {
@@ -103,16 +190,6 @@ export class ContentIdIndex {
         const id = extractIdFromFilename(entry.name)
 
         if (id) {
-          // Collision detection
-          if (this.idToLocation.has(id)) {
-            const existing = this.idToLocation.get(id)!
-            throw new Error(
-              `ID collision detected: ${id}\n` +
-                `  File 1: ${existing.relativePath}\n` +
-                `  File 2: ${fullRelativePath}`,
-            )
-          }
-
           const location: IdLocation = {
             id, // already ContentId from extractIdFromFilename
             type: entry.isDirectory() ? 'collection' : 'entry',
@@ -128,16 +205,41 @@ export class ContentIdIndex {
             const collectionPath = toLogicalCollectionPath(physicalCollection)
             location.slug = slug
             location.collection = collectionPath
-
-            // Add to collection index
-            if (!this.byCollection.has(collectionPath)) {
-              this.byCollection.set(collectionPath, new Set())
-            }
-            this.byCollection.get(collectionPath)!.add(id)
           }
 
-          this.idToLocation.set(id, location)
-          this.pathToId.set(fullRelativePath, id)
+          const existing = this.idToLocation.get(id)
+          if (existing) {
+            // Duplicate embedded ID -- quarantine instead of throwing (see
+            // class doc comment). Deterministic winner: the
+            // lexicographically-smaller relativePath, decided purely by
+            // comparing the two strings so every host scanning the same
+            // directory picks the same winner regardless of readdir order.
+            const newWins = fullRelativePath < existing.relativePath
+            const kept = newWins ? fullRelativePath : existing.relativePath
+            const dropped = newWins ? existing.relativePath : fullRelativePath
+            if (newWins) {
+              this.evictLocation(existing)
+              this.recordDuplicate(id, existing.relativePath)
+              this.insertLocation(id, location)
+            } else {
+              this.recordDuplicate(id, fullRelativePath)
+            }
+            // Written for an operator who has never seen this code: name
+            // both files, say explicitly that the dropped one still exists
+            // (quarantine, not deletion), and point at the concrete recovery
+            // action rather than an internal method name.
+            canopyLogWarn(
+              `[ContentIdIndex] Duplicate content ID ${id}: "${kept}" and "${dropped}" both ` +
+                `embed this ID. Keeping "${kept}" for ID-based lookups (reads, references, ` +
+                `listings); "${dropped}" is excluded from those lookups for now but has NOT ` +
+                `been deleted -- it is still on disk at that path. An admin can resolve this via ` +
+                `the repair-content-duplicates admin action for this branch, which archives ` +
+                `"${dropped}" with a dot-prefixed name so future scans stop flagging it. ` +
+                `Root: ${this.root}`,
+            )
+          } else {
+            this.insertLocation(id, location)
+          }
         }
 
         // Recurse into directories
@@ -151,6 +253,32 @@ export class ContentIdIndex {
         throw err
       }
     }
+  }
+
+  /**
+   * IDs discovered on more than one file during the last buildFromFilenames
+   * scan. Empty unless the content tree currently has a duplicate-ID pair
+   * (see the class doc comment). Consumed by branch-health.ts's admin scan
+   * and by the repair-content-duplicates admin action
+   * (api/admin-branch-health.ts).
+   */
+  getDuplicateIds(): DuplicateContentId[] {
+    const result: DuplicateContentId[] = []
+    for (const [id, dropped] of this.duplicateIds) {
+      const kept = this.idToLocation.get(id)
+      // Defensive: unreachable in practice -- recordDuplicate() only ever
+      // runs alongside an insertLocation() for the same id (either just
+      // before, on the winner-displaced branch, or already present, on the
+      // loser branch), so a winner always exists once a duplicate is
+      // recorded.
+      if (!kept) continue
+      result.push({
+        id: id as ContentId,
+        keptPath: kept.relativePath,
+        droppedPaths: Array.from(dropped).sort() as PhysicalPath[],
+      })
+    }
+    return result
   }
 
   /**

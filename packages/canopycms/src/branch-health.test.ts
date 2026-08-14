@@ -6,6 +6,8 @@ import { describe, expect, it } from 'vitest'
 
 import { scanBranchHealth } from './branch-health'
 import { getBranchMetadataFileManager } from './branch-metadata'
+import { generateId } from './id'
+import { mockConsole } from './test-utils/console-spy'
 
 const tmpDir = async () => fs.mkdtemp(path.join(os.tmpdir(), 'canopycms-branch-health-'))
 
@@ -74,6 +76,94 @@ describe('scanBranchHealth', () => {
     expect(feature?.kind).toBe('healthy')
     expect(feature?.isBaseBranch).toBeUndefined()
     expect(feature?.branch?.name).toBe('feature-x')
+  })
+
+  it('omits duplicateContentIds for a healthy branch with no duplicates', async () => {
+    const root = await tmpDir()
+    await createHealthyBranch(root, 'clean-branch')
+    await fs.mkdir(path.join(root, 'clean-branch', 'content', 'posts'), { recursive: true })
+    await fs.writeFile(
+      path.join(root, 'clean-branch', 'content', 'posts', `post.hello.${generateId()}.json`),
+      '{}',
+      'utf-8',
+    )
+
+    const entries = await scanBranchHealth(root, { baseBranchName: 'main' })
+    expect(entries[0].kind).toBe('healthy')
+    expect(entries[0].duplicateContentIds).toBeUndefined()
+  })
+
+  it('classifies a healthy branch with a duplicate content ID, reporting it without downgrading kind (the branch stays usable)', async () => {
+    const root = await tmpDir()
+    await createHealthyBranch(root, 'dup-branch')
+    const postsDir = path.join(root, 'dup-branch', 'content', 'posts')
+    await fs.mkdir(postsDir, { recursive: true })
+    const dupId = generateId()
+    // Matches renameEntry()'s documented crash window: fs.link() succeeded,
+    // the crash landed before fs.unlink() removed the old name.
+    await fs.writeFile(path.join(postsDir, `post.old-slug.${dupId}.json`), '{}', 'utf-8')
+    await fs.writeFile(path.join(postsDir, `post.new-slug.${dupId}.json`), '{}', 'utf-8')
+
+    // The scan warns on quarantine, which is the POINT -- an operator has to
+    // learn a duplicate exists. Swallow and assert it rather than let it leak
+    // as incidental console noise (CI fails hard on unswallowed output; see
+    // vitest.config.ts's onConsoleLog, which only bites when process.env.CI
+    // is set, so a green local run does not prove this).
+    const consoleSpy = mockConsole()
+    let entries: Awaited<ReturnType<typeof scanBranchHealth>>
+    try {
+      entries = await scanBranchHealth(root, { baseBranchName: 'main' })
+      expect(consoleSpy).toHaveWarned(dupId)
+    } finally {
+      consoleSpy.restore()
+    }
+    expect(entries).toHaveLength(1)
+    // Still 'healthy' -- a content-tree duplicate degrades content operations
+    // for that one ID, it does not make branch.json (or the branch) corrupt.
+    expect(entries[0].kind).toBe('healthy')
+    expect(entries[0].branch?.name).toBe('dup-branch')
+    expect(entries[0].duplicateContentIds).toHaveLength(1)
+    expect(entries[0].duplicateContentIds?.[0]).toMatchObject({
+      id: dupId,
+      keptPath: `content/posts/post.new-slug.${dupId}.json`,
+      droppedPaths: [`content/posts/post.old-slug.${dupId}.json`],
+    })
+  })
+
+  it('respects a non-default contentRootName when scanning for duplicate content IDs', async () => {
+    const root = await tmpDir()
+    await createHealthyBranch(root, 'custom-root-branch')
+    const postsDir = path.join(root, 'custom-root-branch', 'my-content', 'posts')
+    await fs.mkdir(postsDir, { recursive: true })
+    const dupId = generateId()
+    await fs.writeFile(path.join(postsDir, `post.a.${dupId}.json`), '{}', 'utf-8')
+    await fs.writeFile(path.join(postsDir, `post.b.${dupId}.json`), '{}', 'utf-8')
+
+    // Default contentRootName ('content') never sees 'my-content' -- no signal,
+    // and therefore no warning either: the scan cannot warn about a duplicate
+    // it never looked for. Asserting silence here is the other half of the
+    // contentRootName contract.
+    const quietSpy = mockConsole()
+    let withDefault: Awaited<ReturnType<typeof scanBranchHealth>>
+    try {
+      withDefault = await scanBranchHealth(root, { baseBranchName: 'main' })
+    } finally {
+      quietSpy.restore()
+    }
+    expect(withDefault[0].duplicateContentIds).toBeUndefined()
+
+    const consoleSpy = mockConsole()
+    let withCustomRoot: Awaited<ReturnType<typeof scanBranchHealth>>
+    try {
+      withCustomRoot = await scanBranchHealth(root, {
+        baseBranchName: 'main',
+        contentRootName: 'my-content',
+      })
+      expect(consoleSpy).toHaveWarned(dupId)
+    } finally {
+      consoleSpy.restore()
+    }
+    expect(withCustomRoot[0].duplicateContentIds).toHaveLength(1)
   })
 
   it('classifies a directory with invalid-JSON branch.json as corrupt-metadata', async () => {
