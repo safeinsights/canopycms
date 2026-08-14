@@ -484,4 +484,37 @@ describe('readByUrlPath', () => {
       expect(parsePhysicalPath(result!.meta.physicalPath).ok).toBe(true)
     })
   })
+
+  describe('meta.entryType / meta.entryId', () => {
+    it('resolves the entry type and content ID for a direct entry match', async () => {
+      const docsDir = path.join(root, 'content/docs')
+      await fs.mkdir(docsDir, { recursive: true })
+      // Real Canopy filenames embed the entry type and content ID: {type}.{slug}.{id}.{ext}
+      await fs.writeFile(
+        path.join(docsDir, 'doc.overview.RRMDbToFJNTf.json'),
+        JSON.stringify({ title: 'Overview' }),
+      )
+
+      const ctx = await createContext()
+      const result = await ctx.readByUrlPath<{ title: string }>('/docs/overview')
+      expect(result).not.toBeNull()
+      expect(result!.meta.entryType).toBe('doc')
+      expect(result!.meta.entryId).toBe('RRMDbToFJNTf')
+    })
+
+    it('resolves the entry type and content ID for an index-entry fallback', async () => {
+      const guidesDir = path.join(root, 'content/docs/guides')
+      await fs.mkdir(guidesDir, { recursive: true })
+      await fs.writeFile(
+        path.join(guidesDir, 'guide.index.aB3cD4eF5gH6.md'),
+        matter.stringify('Welcome', { title: 'Guides Index' }),
+      )
+
+      const ctx = await createContext()
+      const result = await ctx.readByUrlPath<{ title: string }>('/docs/guides')
+      expect(result).not.toBeNull()
+      expect(result!.meta.entryType).toBe('guide')
+      expect(result!.meta.entryId).toBe('aB3cD4eF5gH6')
+    })
+  })
 })

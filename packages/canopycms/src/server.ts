@@ -85,10 +85,29 @@ export type {
   DefaultEntryTypes,
 } from './content-tree'
 
+/**
+ * `buildContentTree`'s default URL path builder: strips the `{contentRootName}/`
+ * prefix, collapses an entry's `index` slug to its parent collection's path, and
+ * lowercases the result. Call it from inside a custom `buildPath` to extend the
+ * default rather than reimplement it — `buildContentTree`'s `buildPath` option
+ * replaces the default outright, it does not compose with it.
+ */
+export { defaultBuildPath } from './content-tree'
+
 /** List all content entries as a flat array. */
 export { listEntries } from './content-listing'
 
 export type { ListEntriesItem, ListEntriesOptions } from './content-listing'
+
+/**
+ * Parse a content filename of the form `{type}.{slug}.{id}.{ext}` into its
+ * `{ type, slug, id }` parts. `id` must be a valid 12-character Base58 content ID
+ * (excludes the ambiguous characters `0`, `O`, `I`, `l`) or the parse fails.
+ * Pass `entryTypes` to also require `type` to match a known entry-type name;
+ * omit it to parse the filename shape without that check. See the source JSDoc
+ * for the full filename grammar.
+ */
+export { parseTypedFilename } from './content-listing'
 
 /**
  * Resolve a canopy entry-link to its URL. Pair with the field-walker variants

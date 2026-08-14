@@ -433,6 +433,57 @@ describe('createContentReader', () => {
     expect(result.data.body).toContain('Some **markdown** content.')
   })
 
+  it('populates meta.entryType and meta.entryId from the resolved entry file', async () => {
+    const root = await tmpDir()
+    const postsDir = path.join(root, 'content/posts')
+    await fs.mkdir(postsDir, { recursive: true })
+    // Typed filename: {type}.{slug}.{id}.{ext}
+    await fs.writeFile(
+      path.join(postsDir, 'post.hello.abc123def456.md'),
+      '---\ntitle: Hello World\n---\nBody.\n',
+      'utf8',
+    )
+
+    const schema = {
+      collections: [
+        {
+          name: 'posts',
+          path: 'posts',
+          entries: [
+            {
+              name: 'post',
+              format: 'md' as const,
+              schema: [{ name: 'title', type: 'string' as const }],
+            },
+          ],
+        },
+      ],
+    }
+    const config = defineCanopyTestConfig({
+      defaultBranchAccess: 'allow',
+      defaultPathAccess: 'allow',
+      schema,
+    })
+    const branchContext = buildBranchContext(root)
+    const reader = createContentReader({
+      services: await createTestServices(
+        { ...config, schema },
+        { getSettingsBranchRoot: () => Promise.resolve(root) },
+      ),
+      allowCreateBranch: false,
+      getBranchContext: async () => branchContext,
+    })
+
+    const result = await reader.read<{ title: string }>({
+      entryPath: unsafeAsLogicalPath('content/posts'),
+      slug: unsafeAsSlug('hello'),
+      user: ANONYMOUS_USER,
+    })
+
+    expect(result.meta.entryType).toBe('post')
+    expect(result.meta.entryId).toBe('abc123def456')
+  })
+
   it('checks permissions BEFORE reading file (security)', async () => {
     const root = await tmpDir()
     const pagesDir = path.join(root, 'content/pages')

@@ -147,7 +147,20 @@ export interface BuildContentTreeOptions<T = unknown, TEntryTypes = DefaultEntry
    * or entry reads beneath the rejected node).
    */
   filter?: (node: ContentTreeNode<T>) => boolean
-  /** Custom URL path builder. Default: strips content root prefix, collapses index entries to parent path, lowercases. */
+  /**
+   * Custom URL path builder. Replaces the default entirely — it is not composed
+   * with it. To extend rather than replace the default behavior, call the exported
+   * `defaultBuildPath(logicalPath, contentRootName, kind)` from inside your
+   * function and post-process its result (see `canopycms/server`).
+   *
+   * Default behavior (`defaultBuildPath`):
+   * - Strips the `{contentRootName}/` prefix from `logicalPath`.
+   * - For entries: collapses an `index` slug to its parent collection's path
+   *   (`content/guides/index` → `/guides`, not `/guides/index`); a collection
+   *   literally named `index` is unaffected (only entries collapse).
+   * - Lowercases the entire result.
+   * - Prepends `/`; the content root's own index collapses to `/`.
+   */
   buildPath?: (logicalPath: LogicalPath, kind: 'collection' | 'entry') => string
   /**
    * Custom sort for children at each level.
@@ -184,8 +197,13 @@ const groupByParent = (flat: FlatSchemaItem[]): Map<string | undefined, Collecti
  *
  * Index entries (slug 'index') are collapsed to their parent collection path,
  * matching the URL convention used by readByUrlPath and listEntries.
+ *
+ * Exported (also re-exported from `canopycms/server`) so adopters who want to
+ * EXTEND this behavior rather than replace it can call it from inside their own
+ * `buildPath` and post-process the result, instead of reimplementing the
+ * content-root-strip / index-collapse / lowercase logic verbatim.
  */
-const defaultBuildPath = (
+export const defaultBuildPath = (
   logicalPath: LogicalPath,
   contentRootName: string,
   kind: 'collection' | 'entry',
