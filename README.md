@@ -1217,7 +1217,36 @@ const postSchema = defineEntrySchema([
 type Post = TypeFromEntrySchema<typeof postSchema>
 ```
 
-The type inference covers all field types: `string` and `markdown` fields become `string`, `number` becomes `number`, `boolean` becomes `boolean`, `object` fields become nested objects, `list: true` wraps the value in an array, and `required: false` adds `| undefined`.
+The type inference covers all field types: `string` and `markdown` fields become `string`, `number` becomes `number`, `boolean` becomes `boolean`, `object` fields become nested objects, and `list: true` wraps the value in an array.
+
+#### Optional Fields
+
+A field with an explicit `required: false` becomes an **optional property** (`subheading?: string`), not a required property typed `string | undefined`:
+
+```typescript
+const heroSchema = defineEntrySchema([
+  { name: 'heading', type: 'string' },
+  { name: 'subheading', type: 'string', required: false },
+])
+
+// { heading: string; subheading?: string }
+type Hero = TypeFromEntrySchema<typeof heroSchema>
+
+// So a literal can simply omit the field — no `subheading: undefined` filler:
+const hero: Hero = { heading: 'Welcome' }
+```
+
+Reading is unchanged: `hero.subheading` is still `string | undefined`. What changes is construction — you no longer have to spell out every unset field, and adding a new optional field to a schema does not break existing hand-written literals.
+
+Only an **explicit** `required: false` does this. A field that omits `required` entirely stays a required property, matching the runtime validator's default:
+
+| Field declaration                                | Inferred property |
+| ------------------------------------------------ | ----------------- |
+| `{ name: 'a', type: 'string', required: true }`  | `a: string`       |
+| `{ name: 'a', type: 'string' }`                  | `a: string`       |
+| `{ name: 'a', type: 'string', required: false }` | `a?: string`      |
+
+The rule applies at every level — top-level fields, fields nested inside `object` fields, and fields inside block templates. If your project sets `exactOptionalPropertyTypes: true`, note that explicitly assigning `undefined` to an optional key (`hero.subheading = undefined`) is an error under that flag; assign nothing, or widen the field's type yourself.
 
 #### Typed Block Discriminated Unions
 

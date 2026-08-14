@@ -86,7 +86,7 @@ describe('TypeFromEntrySchema', () => {
       // Discriminated union narrows per template in both schemas
       expectTypeOf<Extract<PageBlock, { template: 'hero' }>['value']>().toEqualTypeOf<{
         headline: string
-        subheading: string | undefined
+        subheading?: string
       }>()
       expectTypeOf<Extract<PageBlock, { template: 'cta' }>['value']>().toEqualTypeOf<{
         label: string
@@ -94,7 +94,7 @@ describe('TypeFromEntrySchema', () => {
       }>()
       expectTypeOf<Extract<LandingBlock, { template: 'hero' }>['value']>().toEqualTypeOf<{
         headline: string
-        subheading: string | undefined
+        subheading?: string
       }>()
 
       // The helper is an identity — it returns the template object unchanged
@@ -224,6 +224,121 @@ describe('TypeFromEntrySchema', () => {
       }>()
 
       void schema
+    })
+  })
+
+  describe('required-ness to property optionality', () => {
+    // Three-way distinction, deliberately: ONLY an explicit `required: false` produces
+    // an optional (`?:`) property. `required: true` and an OMITTED `required` both
+    // produce a plain required property, because an omitted `required` infers
+    // `boolean | undefined`, which does not extend `false`. Widening the omitted case
+    // into optional would break every schema that relies on the default — this test
+    // exists so that can never happen silently.
+    const schema = defineEntrySchema([
+      { name: 'explicitlyRequired', type: 'string', required: true },
+      { name: 'explicitlyOptional', type: 'string', required: false },
+      { name: 'requiredOmitted', type: 'string' },
+    ])
+
+    type Content = TypeFromEntrySchema<typeof schema>
+
+    it('maps required: true, required: false, and an omitted required distinctly', () => {
+      expectTypeOf<Content>().toEqualTypeOf<{
+        explicitlyRequired: string
+        requiredOmitted: string
+        explicitlyOptional?: string
+      }>()
+
+      // Genuinely optional, NOT required-with-undefined (the pre-0.0.63 shape).
+      expectTypeOf<Content>().not.toEqualTypeOf<{
+        explicitlyRequired: string
+        requiredOmitted: string
+        explicitlyOptional: string | undefined
+      }>()
+
+      // Reading is unchanged: the optional key still reads as `string | undefined`.
+      expectTypeOf<Content['explicitlyOptional']>().toEqualTypeOf<string | undefined>()
+
+      expect(schema).toHaveLength(3)
+    })
+
+    it('a literal may omit the required: false field, but not the other two', () => {
+      const complete: Content = {
+        explicitlyRequired: 'a',
+        requiredOmitted: 'b',
+        explicitlyOptional: 'c',
+      }
+      const omittingOptional: Content = { explicitlyRequired: 'a', requiredOmitted: 'b' }
+
+      // @ts-expect-error - a field that omits `required` stays a required property
+      const missingOmitted: Content = { explicitlyRequired: 'a', explicitlyOptional: 'c' }
+      // @ts-expect-error - `required: true` stays a required property
+      const missingRequired: Content = { requiredOmitted: 'b' }
+
+      expect(complete.explicitlyOptional).toBe('c')
+      expect(omittingOptional.explicitlyOptional).toBeUndefined()
+      expect(missingOmitted.explicitlyRequired).toBe('a')
+      expect(missingRequired.requiredOmitted).toBe('b')
+    })
+
+    it('applies the same rule inside nested objects and block templates', () => {
+      const nestedSchema = defineEntrySchema([
+        {
+          name: 'meta',
+          type: 'object',
+          fields: [
+            { name: 'kicker', type: 'string' },
+            { name: 'note', type: 'string', required: false },
+          ],
+        },
+        {
+          name: 'sections',
+          type: 'block',
+          templates: [
+            {
+              name: 'hero',
+              fields: [
+                { name: 'heading', type: 'string' },
+                { name: 'sub', type: 'string', required: false },
+              ],
+            },
+          ],
+        },
+      ])
+
+      type Nested = TypeFromEntrySchema<typeof nestedSchema>
+
+      expectTypeOf<Nested['meta']>().toEqualTypeOf<{ kicker: string; note?: string }>()
+      expectTypeOf<Nested['sections'][number]['value']>().toEqualTypeOf<{
+        heading: string
+        sub?: string
+      }>()
+
+      expect(nestedSchema).toHaveLength(2)
+    })
+
+    it('a whole field marked required: false becomes an optional key at the top level', () => {
+      const optionalContainers = defineEntrySchema([
+        { name: 'tags', type: 'string', list: true, required: false },
+        {
+          name: 'seo',
+          type: 'object',
+          required: false,
+          fields: [{ name: 'metaTitle', type: 'string' }],
+        },
+      ])
+
+      type Optional = TypeFromEntrySchema<typeof optionalContainers>
+
+      expectTypeOf<Optional>().toEqualTypeOf<{
+        tags?: string[]
+        seo?: { metaTitle: string }
+      }>()
+
+      // An empty literal satisfies a schema whose every field is `required: false`.
+      const empty: Optional = {}
+      expect(empty).toEqual({})
+      expect(optionalContainers.map((f) => f.required)).toEqual([false, false])
     })
   })
 })
