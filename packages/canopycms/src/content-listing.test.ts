@@ -145,6 +145,33 @@ describe('parseTypedFilename', () => {
       id: 'aB3cD4eF5gH6',
     })
   })
+
+  describe('without entryTypes (public adopter usage)', () => {
+    it('parses any type token when entryTypes is omitted', () => {
+      const result = parseTypedFilename('unknown.slug.vh2WdhwAFiSL.md')
+      expect(result).toEqual({
+        type: 'unknown',
+        slug: 'slug',
+        id: 'vh2WdhwAFiSL',
+      })
+    })
+
+    it('still rejects an invalid content ID', () => {
+      const result = parseTypedFilename('post.slug.INVALID!!!.md')
+      expect(result).toBeNull()
+    })
+
+    it('still rejects too few parts', () => {
+      const result = parseTypedFilename('post.md')
+      expect(result).toBeNull()
+    })
+
+    it('matches the entryTypes-provided result for a known type', () => {
+      const withTypes = parseTypedFilename('post.hello-world.vh2WdhwAFiSL.md', entryTypes)
+      const withoutTypes = parseTypedFilename('post.hello-world.vh2WdhwAFiSL.md')
+      expect(withoutTypes).toEqual(withTypes)
+    })
+  })
 })
 
 // ---------------------------------------------------------------------------
@@ -546,6 +573,32 @@ describe('listEntries', () => {
     expect(entries[0].entryId).toBeDefined()
     expect(entries[0].entryId).toHaveLength(12)
     expect(entries[0].collectionId).toBe(collectionId)
+  })
+
+  it('includes updatedAt sourced from the entry file mtime', async () => {
+    const contentDir = path.join(tempDir, 'content')
+    await fs.mkdir(contentDir)
+
+    const { dir: postsDir } = await createCollection(contentDir, 'posts')
+    const entryId = await createEntry(postsDir, 'post', 'hello', 'md', { title: 'Hello' })
+    const filePath = path.join(postsDir, `post.hello.${entryId}.md`)
+    const stats = await fs.stat(filePath)
+
+    const schema: RootCollectionConfig = {
+      collections: [
+        {
+          name: 'posts',
+          path: 'posts',
+          entries: [{ name: 'post', format: 'md', schema: [] }],
+        },
+      ],
+    }
+    const flat = flattenSchema(schema, 'content')
+
+    const entries = await listEntries(tempDir, flat, 'content')
+
+    expect(entries).toHaveLength(1)
+    expect(entries[0].updatedAt).toBe(stats.mtime.toISOString())
   })
 
   it('urlPath collapses index entries to parent collection path', async () => {
