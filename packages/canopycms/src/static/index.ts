@@ -8,10 +8,27 @@ import { validateEntryData, type EntryFieldError } from '../validation/entry-val
  * (no Next.js types) so that any framework adapter — e.g. canopycms-next — can map them to its own
  * static-generation shapes (generateStaticParams, sitemap, metadata).
  *
- * Sitemap (`collectPublishedEntries`) and SEO metadata (`extractSeoFields`) helpers are tracked as
- * follow-up work; see .claude/future-tasks/static-export-sitemap.md and
- * .claude/future-tasks/static-export-seo-metadata.md.
+ * - `collectStaticPaths` — routable paths only, for `generateStaticParams`.
+ * - `collectRoutableEntries` — the same enumeration with each entry's `data` and `updatedAt`
+ *   carried through, for surfaces that must inspect content (sitemap, feeds, search index).
+ * - `./seo` — `extractSeoFields` / `isNoindexEntry` / URL shaping, re-exported below.
  */
+
+export {
+  DEFAULT_SEO_FIELD_NAMES,
+  extractSeoFields,
+  isNoindexEntry,
+  isAbsoluteUrl,
+  withTrailingSlash,
+  resolveSeoUrl,
+  type SeoFields,
+  type SeoFieldNames,
+  type SeoFieldLocation,
+  type SeoOgType,
+  type SeoTwitterCard,
+  type ExtractSeoFieldsOptions,
+  type ResolveSeoUrlOptions,
+} from './seo'
 
 /** A routable content entry, reduced to what static path generation needs. */
 export interface StaticPathEntry {
@@ -31,6 +48,27 @@ export interface StaticPathEntry {
   entryType: string
 }
 
+/**
+ * A routable content entry with its content attached — everything `StaticPathEntry` carries,
+ * plus the entry `data` and its `updatedAt`.
+ *
+ * This is what surfaces that must look INSIDE an entry need (sitemap, feeds, index grids),
+ * as opposed to `generateStaticParams`, which only needs the path.
+ */
+export interface RoutableEntry<T = Record<string, unknown>> extends StaticPathEntry {
+  /** Raw entry data (frontmatter merged with the body field for md/mdx), as `listEntries` returns it. */
+  data: T
+  /**
+   * Filesystem mtime (ISO 8601) of the entry file.
+   *
+   * Caveat, and read it before wiring this to a sitemap `<lastmod>`: this is a checkout-time
+   * timestamp, not an editorial one. A fresh CI clone (or a fresh branch-clone checkout) resets
+   * every file's mtime, so there it says "when this tree was checked out", not "when this content
+   * was last edited". Treat it as "changed since the last build" at best.
+   */
+  updatedAt?: string
+}
+
 export interface CollectStaticPathsOptions {
   /**
    * Scope to a collection logical path (e.g. 'content/posts'). Defaults to the whole content root.
@@ -39,6 +77,74 @@ export interface CollectStaticPathsOptions {
   rootPath?: string
   /** Keep only entries matching this predicate (e.g. drop the root index, or filter by entryType). */
   filter?: (entry: StaticPathEntry) => boolean
+}
+
+export interface CollectRoutableEntriesOptions<T = Record<string, unknown>> {
+  /**
+   * Scope to a collection logical path (e.g. 'content/posts'). Defaults to the whole content root.
+   * Skips loading entries outside this scope.
+   */
+  rootPath?: string
+  /** Keep only entries matching this predicate. Runs after `data` is attached, so it can read content. */
+  filter?: (entry: RoutableEntry<T>) => boolean
+}
+
+/**
+ * Shared enumeration behind `collectStaticPaths` and `collectRoutableEntries`.
+ *
+ * `phaseLabel` only names the phase in the build-guard error, but it is threaded through rather
+ * than fixed so the message points at the surface that actually failed.
+ */
+async function enumerateRoutableEntries<T>(
+  ctx: Pick<CanopyBuildContext, 'listEntries'>,
+  rootPath: string | undefined,
+  phaseLabel: string,
+): Promise<RoutableEntry<T>[]> {
+  const entries = await ctx.listEntries<T>({ rootPath })
+  // Build-time only: `next dev` runs generateStaticParams against the live working tree, where
+  // fresh create-scaffolds legitimately exist mid-edit. Only fail the actual production build —
+  // an abandoned schema-invalid scaffold shipping into a static build silently drops that page's
+  // route (or worse, renders broken), which is worse than a red build.
+  if (isBuildMode()) assertBuildEntriesValid(entries, phaseLabel)
+  return entries.map((entry) => ({
+    urlPath: entry.urlPath,
+    segments: entry.urlPath === '/' ? [] : entry.urlPath.replace(/^\//, '').split('/'),
+    slug: entry.slug,
+    entryType: entry.entryType,
+    data: entry.data,
+    ...(entry.updatedAt ? { updatedAt: entry.updatedAt } : {}),
+  }))
+}
+
+/**
+ * Enumerate routable content entries WITH their data — the input to any surface that must read
+ * inside an entry to decide what to publish (sitemap, RSS, search index, index grids).
+ *
+ * Identical enumeration to `collectStaticPaths` (same single `listEntries` pass, same build-time
+ * schema-validity guard); it simply keeps `data` and `updatedAt` instead of discarding them.
+ *
+ * **Enumerates every entry type by default.** There is no allow-list of "publishable" types, and
+ * that is deliberate: a sitemap built from a hand-maintained list of entry types silently omits
+ * whichever type nobody remembered to add, and nothing fails. Narrow the result with `filter`
+ * when you actually mean to — omission should be a decision, not an oversight.
+ *
+ * `noindex` is NOT applied here: an entry that must not be advertised must still be built. Apply
+ * `isNoindexEntry` at the advertising surface (as `generateContentSitemap` does).
+ *
+ * @example
+ * const entries = await collectRoutableEntries(await getCanopyForBuild())
+ * const published = entries.filter((e) => !isNoindexEntry(e.data))
+ */
+export async function collectRoutableEntries<T = Record<string, unknown>>(
+  ctx: Pick<CanopyBuildContext, 'listEntries'>,
+  options: CollectRoutableEntriesOptions<T> = {},
+): Promise<RoutableEntry<T>[]> {
+  const entries = await enumerateRoutableEntries<T>(
+    ctx,
+    options.rootPath,
+    'routable entry enumeration',
+  )
+  return options.filter ? entries.filter(options.filter) : entries
 }
 
 /**
@@ -58,17 +164,14 @@ export async function collectStaticPaths(
   ctx: Pick<CanopyBuildContext, 'listEntries'>,
   options: CollectStaticPathsOptions = {},
 ): Promise<StaticPathEntry[]> {
-  const entries = await ctx.listEntries({ rootPath: options.rootPath })
-  // Build-time only: `next dev` runs generateStaticParams against the live working tree, where
-  // fresh create-scaffolds legitimately exist mid-edit. Only fail the actual production build —
-  // an abandoned schema-invalid scaffold shipping into a static build silently drops that page's
-  // route (or worse, renders broken), which is worse than a red build.
-  if (isBuildMode()) assertBuildEntriesValid(entries, 'static path enumeration')
-  const mapped: StaticPathEntry[] = entries.map((entry) => ({
-    urlPath: entry.urlPath,
-    segments: entry.urlPath === '/' ? [] : entry.urlPath.replace(/^\//, '').split('/'),
-    slug: entry.slug,
-    entryType: entry.entryType,
+  const entries = await enumerateRoutableEntries(ctx, options.rootPath, 'static path enumeration')
+  // Drop data/updatedAt: generateStaticParams needs paths only, and returning entry content from
+  // a path-enumeration helper invites page code to read content from the admin build context.
+  const mapped: StaticPathEntry[] = entries.map(({ urlPath, segments, slug, entryType }) => ({
+    urlPath,
+    segments,
+    slug,
+    entryType,
   }))
   return options.filter ? mapped.filter(options.filter) : mapped
 }
@@ -84,6 +187,14 @@ export interface InvalidBuildEntry {
   entryPath: string
   errors: EntryFieldError[]
 }
+
+/**
+ * What the build-time validity scan needs off a listing item. `data` is `unknown` rather than
+ * `ListEntriesItem['data']` so a caller that listed with an entry-shape generic (e.g.
+ * `collectRoutableEntries<PostContent>`) can still be scanned — the scan re-guards the value
+ * anyway, since on-disk data is never trusted.
+ */
+type BuildScanItem = Pick<ListEntriesItem, 'entryPath' | 'schema'> & { data: unknown }
 
 /**
  * Deep-walk a plain data value (objects and arrays only — the shapes YAML/JSON parsing can
@@ -131,9 +242,7 @@ function normalizeDatesDeep(value: unknown): unknown {
  * Items whose `schema` couldn't be resolved (unknown entry type) are skipped here — that's a
  * different failure class, handled elsewhere.
  */
-export function findInvalidEntries(
-  items: readonly Pick<ListEntriesItem, 'entryPath' | 'schema' | 'data'>[],
-): InvalidBuildEntry[] {
+export function findInvalidEntries(items: readonly BuildScanItem[]): InvalidBuildEntry[] {
   const invalid: InvalidBuildEntry[] = []
   for (const item of items) {
     if (!item.schema) continue
@@ -153,10 +262,7 @@ export function findInvalidEntries(
  * disappears from a static build is a worse failure mode than a red build. Lists every
  * offending entry so one build catches every abandoned scaffold, not just the first.
  */
-export function assertBuildEntriesValid(
-  items: readonly Pick<ListEntriesItem, 'entryPath' | 'schema' | 'data'>[],
-  phaseLabel: string,
-): void {
+export function assertBuildEntriesValid(items: readonly BuildScanItem[], phaseLabel: string): void {
   const invalid = findInvalidEntries(items)
   if (invalid.length === 0) return
 

@@ -1,5 +1,6 @@
 import { describe, expect, it, vi, afterEach } from 'vitest'
 import {
+  collectRoutableEntries,
   collectStaticPaths,
   findInvalidEntries,
   assertBuildEntriesValid,
@@ -108,6 +109,116 @@ describe('collectStaticPaths', () => {
       const result = await collectStaticPaths(ctx)
       expect(result).toHaveLength(1)
     })
+  })
+})
+
+describe('collectRoutableEntries', () => {
+  it('carries data and updatedAt through alongside the path descriptors', async () => {
+    const ctx = fakeCtx([
+      {
+        urlPath: '/posts/hello',
+        slug: 'hello' as never,
+        entryType: 'post',
+        data: { title: 'Hello' },
+        updatedAt: '2026-01-02T03:04:05.000Z',
+      },
+    ])
+
+    const [entry] = await collectRoutableEntries(ctx)
+
+    expect(entry).toEqual({
+      urlPath: '/posts/hello',
+      segments: ['posts', 'hello'],
+      slug: 'hello',
+      entryType: 'post',
+      data: { title: 'Hello' },
+      updatedAt: '2026-01-02T03:04:05.000Z',
+    })
+  })
+
+  it('omits updatedAt when the listing has none, rather than emitting undefined', async () => {
+    const ctx = fakeCtx([
+      { urlPath: '/posts/a', slug: 'a' as never, entryType: 'post', data: { title: 'A' } },
+    ])
+
+    const [entry] = await collectRoutableEntries(ctx)
+
+    expect('updatedAt' in entry).toBe(false)
+  })
+
+  // The regression guard for the production bug this helper exists to prevent: a sitemap built
+  // from a hand-maintained list of entry types shipped with whole content types missing.
+  it('enumerates EVERY entry type by default — omission must be an explicit opt-out', async () => {
+    const ctx = fakeCtx([
+      { urlPath: '/', slug: 'index' as never, entryType: 'home', data: {} },
+      { urlPath: '/about', slug: 'about' as never, entryType: 'page', data: {} },
+      { urlPath: '/blog/a', slug: 'a' as never, entryType: 'article', data: {} },
+      { urlPath: '/case-studies/b', slug: 'b' as never, entryType: 'caseStudy', data: {} },
+      { urlPath: '/people/c', slug: 'c' as never, entryType: 'person', data: {} },
+    ])
+
+    const entries = await collectRoutableEntries(ctx)
+
+    expect(entries.map((e) => e.entryType).sort()).toEqual([
+      'article',
+      'caseStudy',
+      'home',
+      'page',
+      'person',
+    ])
+  })
+
+  it('does NOT drop noindex entries — they must still be built', async () => {
+    const ctx = fakeCtx([
+      { urlPath: '/stub', slug: 'stub' as never, entryType: 'page', data: { noindex: true } },
+    ])
+
+    expect(await collectRoutableEntries(ctx)).toHaveLength(1)
+  })
+
+  it('applies a filter that reads entry data', async () => {
+    const ctx = fakeCtx([
+      { urlPath: '/a', slug: 'a' as never, entryType: 'page', data: { published: true } },
+      { urlPath: '/b', slug: 'b' as never, entryType: 'page', data: { published: false } },
+    ])
+
+    const entries = await collectRoutableEntries<{ published: boolean }>(ctx, {
+      filter: (e) => e.data.published,
+    })
+
+    expect(entries.map((e) => e.urlPath)).toEqual(['/a'])
+  })
+
+  it('passes rootPath through to listEntries', async () => {
+    const capture: { rootPath?: string } = {}
+    const ctx = fakeCtx([], capture)
+
+    await collectRoutableEntries(ctx, { rootPath: 'content/posts' })
+
+    expect(capture.rootPath).toBe('content/posts')
+  })
+
+  // Inherited from the shared enumeration: sitemap generation is now another place a
+  // schema-invalid entry can turn a build red.
+  it('applies the same build-time schema-validity guard as collectStaticPaths', async () => {
+    vi.stubEnv('CANOPY_BUILD_MODE', 'true')
+    try {
+      const ctx = fakeCtx([
+        {
+          urlPath: '/posts/draft',
+          slug: 'draft' as never,
+          entryType: 'post',
+          entryPath: 'content/posts/draft' as never,
+          format: 'json',
+          schema: [{ name: 'title', type: 'string', required: true }] as EntrySchema,
+          data: {},
+        },
+      ])
+
+      await expect(collectRoutableEntries(ctx)).rejects.toThrow('CanopyCMS static build:')
+    } finally {
+      vi.unstubAllEnvs()
+    }
   })
 })
 

@@ -128,7 +128,7 @@ No schema declares `isUrlPath` ⇒ `resolveEntryUrlPath` returns undefined, phas
 - `readbyurlpath-collection-url-support.md` (P2) — `listEntries` `urlPath` (shipped) + root `/` handling in `readByUrlPath`.
 - `index-staleness-multiprocess.md` (P0) — the index-staleness pain that justifies "scan, not index" here.
 - `content-store-validation.md` (P1) — write-boundary validation context for the editor-time Save check.
-- `static-export-sitemap.md` / `static-export-seo-metadata.md` (P2) — sibling `static/` helpers that would also benefit from field-sourced `urlPath`.
+- [static-export-sitemap.md](resolved/static-export-sitemap.md) / [static-export-seo-metadata.md](resolved/static-export-seo-metadata.md) — RESOLVED 2026-08-14: sibling `static/` helpers (`collectRoutableEntries`, `generateContentSitemap`, `entryToMetadata`) that would still benefit from field-sourced `urlPath`.
 - ~~**New gap surfaced (no file yet):** `maxItems` is metadata-only.~~ Closed — see the correction above; `api/content.ts:360-373` enforces it (`e4097b0e`, PR #106).
 
 ## Out of scope / follow-ups (when revived)

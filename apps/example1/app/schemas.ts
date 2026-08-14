@@ -4,21 +4,15 @@ import {
   defineEntrySchema,
   defineInlineFieldGroup,
   defineNestedFieldGroup,
+  defineSeoFieldGroup,
 } from 'canopycms'
 import { createEntrySchemaRegistry } from 'canopycms/server'
 
-// Shared inline field group: fields are stored flat in the content file.
-// TypeFromEntrySchema on a schema that includes this group will have
-// { metaTitle: string, metaDescription: string } merged into the top-level shape.
-const seoGroup = defineInlineFieldGroup({
-  name: 'seo',
-  label: 'SEO',
-  description: 'Search engine optimization settings',
-  fields: [
-    { name: 'metaTitle', type: 'string', label: 'Meta Title' },
-    { name: 'metaDescription', type: 'string', label: 'Meta Description' },
-  ],
-})
+// The recommended SEO group, shipped by CanopyCMS: metaTitle / metaDescription / ogImage /
+// ogType / canonical / noindex / twitterCard, all optional. Flat by default, so
+// TypeFromEntrySchema merges them into the top-level shape and entryToMetadata reads them with
+// no configuration. `noindex` drives BOTH robots and sitemap exclusion (see app/sitemap.ts).
+const seoGroup = defineSeoFieldGroup()
 
 // Shared inline field group for navigation metadata.
 const navGroup = defineInlineFieldGroup({
