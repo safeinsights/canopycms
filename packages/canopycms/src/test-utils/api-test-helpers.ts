@@ -193,7 +193,6 @@ export function createMockServices(options: MockServicesOptions = {}): CanopySer
       } as any),
     checkBranchAccess:
       options.checkBranchAccess ?? vi.fn().mockReturnValue({ allowed: true, reason: 'allowed' }),
-    checkPathAccess: options.checkPathAccess ?? (undefined as any),
     checkContentAccess:
       options.checkContentAccess ??
       vi.fn().mockResolvedValue({ allowed: true, branch: {}, path: {} }),

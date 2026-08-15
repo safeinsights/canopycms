@@ -48,7 +48,6 @@ const minimalServices = () => ({
     mode: 'dev' as const,
   },
   checkBranchAccess: vi.fn().mockReturnValue({ allowed: true, reason: '' }),
-  checkPathAccess: vi.fn().mockReturnValue({ allowed: true }),
   checkContentAccess: vi.fn().mockReturnValue({ allowed: true, branch: {}, path: {} }),
   pathPermissions: [],
   createGitManagerFor: vi.fn(),

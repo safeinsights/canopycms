@@ -22,7 +22,7 @@ export type PermissionPath = string & { readonly __brand: 'PermissionPath' }
  */
 export interface BranchAccessResult {
   allowed: boolean
-  reason: 'privileged' | 'allowed_by_acl' | 'denied_by_acl' | 'no_acl'
+  reason: 'privileged' | 'base_branch' | 'creator' | 'allowed_by_acl' | 'denied_by_acl' | 'no_acl'
 }
 
 /**

@@ -1355,6 +1355,17 @@ Access control uses three layers that all must pass. These are implemented in th
 
 Per-branch ACLs control who can access a branch. Branches can be restricted to specific users or groups. Admins and reviewers always have access. Implemented in the `branch.ts` submodule.
 
+**Precedence**, highest first: admins/reviewers → a `managerOrAdminAllowed` lockdown → an explicit user/group ACL → and, only when the branch has no ACL at all, the branch's creator, then `defaultBranchAccess`, then the protected base branch.
+
+**Two grants make fail-closed `defaultBranchAccess: 'deny'` workable.** Without them `'deny'` is not a strict default but a broken one, because branch access is ANDed into every content check by `createContentAccessChecker` — so a denial at this layer makes a branch inert, not merely un-submittable:
+
+- **Creator of an un-ACL'd branch.** The create form sends no ACL, so without this every freshly created branch would be unusable by the person who just created it. It also aligns this layer with the three places that already grant on creator-ownership independently (`listBranchesHandler`, `canDeleteBranch`, `canModifyBranchAccess`) — otherwise a creator could delete their branch and rewrite its ACL but not read a file on it.
+- **The protected base branch.** It takes no ACL by design (`updateBranchAccessHandler` rejects one, since an entry there feeds `allowed_by_acl` and would confer Withdraw rights), and its `createdBy` is the system, so no other grant could ever reach it — yet it is where every user lands. Applied for anonymous users too, which is what lets a public-read `deployedAs: 'server'` site run `'deny'` with `defaultPathAccess: { read: 'allow' }` instead of opening branch access wholesale.
+
+Both are scoped to branches with **no ACL**, so writing an explicit ACL still restricts the branch — including against its own creator, which is how an admin locks down a branch someone else created. The base-branch grant in particular is applied as a fallback where the bare default would otherwise decide, never as a short-circuit ahead of the ACL: short-circuiting would replace `allowed_by_acl` with `base_branch` and silently strip Withdraw rights from ACL-listed users.
+
+Neither grant widens anything separately gated: `canPerformWorkflowAction` disables its system-branch grant on the same `isProtectedBranch` flag (so the base branch stays unsubmittable), `getBranchWriteProtection().readOnly` still blocks prod writes to it, path permissions still decide what content is readable, and the HTTP handler 401s anonymous callers before authorization runs at all.
+
 ### Layer 2: Path Permissions
 
 Glob patterns (e.g., `content/posts/**`) restrict who can edit specific content paths. First matching rule wins. Only admins bypass path rules. Implemented in the `path.ts` submodule.
@@ -2383,6 +2394,14 @@ Defense in depth. Branch access controls who can see a branch. Path permissions 
 ### Why scope `defaultPathAccess` by permission level?
 
 Before this, `defaultPathAccess` applied a single verdict to every permission level, so a deployment that wanted public read either had to deny everything by default (forcing an explicit read-only rule for every public path) or allow everything by default (accidentally opening edit and review too). The object form (`{ read: 'allow' }`) lets a `deployedAs: 'server'` site express "public read, everything else still requires a rule" as one config value. Unspecified levels fail closed to `deny` rather than inheriting a specified sibling level, so scoping read access can never accidentally loosen edit or review by omission.
+
+### Why does `canopycms init` scaffold `defaultBranchAccess: 'deny'`?
+
+Because the schema already defaulted to `'deny'` and the template said `'allow'`, so "secure by default" was true of the package and false of every project the CLI generated — the divergence was an accident of the template, not a decision.
+
+The flip was blocked on `'deny'` being unusable rather than merely strict: it made a freshly created branch inert for its own creator, and made the protected base branch — which takes no ACL and has no creator — unreachable for every non-admin, with no way to configure around it. The two grants documented under [Layer 1](#layer-1-branch-access) fix that, and only then does the default mean something an adopter would actually want: "branches you neither created nor were invited to."
+
+The frictionless first run that `'allow'` appeared to provide was never coming from `'allow'`. The template does not set `defaultPathAccess` at all, so scaffolded projects were already fail-closed on the path layer; what makes a fresh `canopycms init` project work is `canopycms-auth-dev` auto-setting `CANOPY_BOOTSTRAP_ADMIN_IDS`, and admins bypass both layers. `'allow'` therefore only ever took effect for non-admin editors — precisely the multi-editor case it should not have covered. The template now states both defaults explicitly rather than leaving the path layer invisible.
 
 ### Why is `mode` required, and why an allowlist (not a denylist) for auth plugin trust?
 

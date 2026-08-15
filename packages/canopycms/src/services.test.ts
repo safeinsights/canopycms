@@ -6,7 +6,6 @@ import { authResultToCanopyUser } from './user'
 import { RESERVED_GROUPS, isAdmin, isReviewer } from './authorization'
 import type { AuthenticationResult } from './auth/types'
 import type { InternalGroup } from './authorization'
-import { unsafeAsPhysicalPath } from './paths/test-utils'
 import { mockConsole } from './test-utils/console-spy'
 
 vi.mock('simple-git', () => ({
@@ -87,32 +86,36 @@ describe('createCanopyServices', () => {
 
     const services = await createTestServices({ ...cfg, schema: testSchema })
 
-    // Path permissions are now loaded from JSON file at runtime, not from config
-    // Service creates checkPathAccess with empty rules (default deny)
-    const pathResult = services.checkPathAccess({
-      relativePath: unsafeAsPhysicalPath('content/any/file.md'),
-      user: { type: 'authenticated', userId: 'user-1', groups: [] },
-      level: 'read',
-    })
-    expect(pathResult.allowed).toBe(false) // No rules = default deny
-    expect(pathResult.reason).toBe('no_rule_match')
-
-    const branchAllowed = services.checkBranchAccess(
-      {
-        baseRoot: '/tmp/base',
-        branchRoot: '/tmp/base/feature-x',
-        branch: {
-          name: 'feature/x',
-          status: 'editing',
-          access: {},
-          createdBy: 'u1',
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-        },
+    const workBranch = {
+      baseRoot: '/tmp/base',
+      branchRoot: '/tmp/base/feature-x',
+      branch: {
+        name: 'feature/x',
+        status: 'editing' as const,
+        access: {},
+        createdBy: 'u1',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
       },
-      { type: 'authenticated', userId: 'u1', groups: [] },
-    )
-    expect(branchAllowed.allowed).toBe(false) // default deny, no ACL
+    }
+
+    // A third party gets the bare default on a no-ACL branch.
+    const otherUser = services.checkBranchAccess(workBranch, {
+      type: 'authenticated',
+      userId: 'u2',
+      groups: [],
+    })
+    expect(otherUser.allowed).toBe(false) // default deny, no ACL
+
+    // ...but the creator owns their own branch, or 'deny' would make every
+    // freshly created branch inert for the person who just created it.
+    const creator = services.checkBranchAccess(workBranch, {
+      type: 'authenticated',
+      userId: 'u1',
+      groups: [],
+    })
+    expect(creator.allowed).toBe(true)
+    expect(creator.reason).toBe('creator')
   })
 
   it('creates git manager using defaults', async () => {

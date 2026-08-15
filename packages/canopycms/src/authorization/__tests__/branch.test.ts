@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import { checkBranchAccessWithDefault, canPerformWorkflowAction, RESERVED_GROUPS } from '../'
 import type { BranchContext } from '../../types'
+import { ANONYMOUS_USER } from '../../user'
 
 const baseContext: BranchContext = {
   baseRoot: '/tmp/base',
@@ -110,6 +111,97 @@ describe('branch access', () => {
   })
 })
 
+describe('branch access: creator grant', () => {
+  const creator = { type: 'authenticated' as const, userId: 'user-1', groups: [] }
+
+  it('allows the creator of a no-ACL branch under default deny', () => {
+    const res = checkBranchAccessWithDefault(baseContext, creator, 'deny')
+    expect(res.allowed).toBe(true)
+    expect(res.reason).toBe('creator')
+  })
+
+  it('does NOT override an explicit allowlist that omits the creator', () => {
+    // This is how an admin locks down a branch someone else created
+    // (role-permissions.test.ts covers the end-to-end case). Granting creator
+    // ahead of the ACL would make that lockdown silently ineffective.
+    const res = checkBranchAccessWithDefault(
+      {
+        ...baseContext,
+        branch: { ...baseContext.branch, access: { allowedUsers: ['user-2'] } },
+      },
+      creator,
+      'deny',
+    )
+    expect(res.allowed).toBe(false)
+    expect(res.reason).toBe('denied_by_acl')
+  })
+
+  it('still denies the creator when managerOrAdminAllowed locks the branch down', () => {
+    const res = checkBranchAccessWithDefault(
+      {
+        ...baseContext,
+        branch: { ...baseContext.branch, access: { managerOrAdminAllowed: true } },
+      },
+      creator,
+      'deny',
+    )
+    expect(res.allowed).toBe(false)
+    expect(res.reason).toBe('denied_by_acl')
+  })
+
+  it('does not grant a non-creator', () => {
+    const res = checkBranchAccessWithDefault(
+      baseContext,
+      { type: 'authenticated', userId: 'user-2', groups: [] },
+      'deny',
+    )
+    expect(res.allowed).toBe(false)
+    expect(res.reason).toBe('no_acl')
+  })
+})
+
+describe('branch access: protected base branch grant', () => {
+  // The base branch takes no ACL (updateBranchAccessHandler rejects one) and is
+  // createdBy 'canopycms-system', so nobody is its creator. Without this grant
+  // it is unreachable under 'deny' with no way to configure around it.
+  const baseBranchContext: BranchContext = {
+    ...baseContext,
+    branch: { ...baseContext.branch, name: 'main', createdBy: 'canopycms-system' },
+  }
+
+  it('allows any authenticated user under default deny', () => {
+    const res = checkBranchAccessWithDefault(
+      baseBranchContext,
+      { type: 'authenticated', userId: 'nobody', groups: [] },
+      'deny',
+      { isProtectedBranch: true },
+    )
+    expect(res.allowed).toBe(true)
+    expect(res.reason).toBe('base_branch')
+  })
+
+  it('allows anonymous under default deny, so public-read sites can run deny', () => {
+    const res = checkBranchAccessWithDefault(baseBranchContext, ANONYMOUS_USER, 'deny', {
+      isProtectedBranch: true,
+    })
+    expect(res.allowed).toBe(true)
+    expect(res.reason).toBe('base_branch')
+  })
+
+  it('does not confer workflow actions on the base branch', () => {
+    // The access layer says yes, but Submit/Withdraw must still be denied:
+    // isProtectedBranch disables canPerformWorkflowAction's system-branch grant.
+    expect(
+      canPerformWorkflowAction(
+        baseBranchContext,
+        { type: 'authenticated', userId: 'nobody', groups: [] },
+        'deny',
+        { isProtectedBranch: true },
+      ),
+    ).toBe(false)
+  })
+})
+
 describe('canPerformWorkflowAction', () => {
   const regularUser = {
     type: 'authenticated' as const,
@@ -142,6 +234,16 @@ describe('canPerformWorkflowAction', () => {
         branch: { ...baseContext.branch, createdBy: 'user-2', access: {} },
       }
       expect(canPerformWorkflowAction(context, regularUser, 'deny')).toBe(false)
+    })
+
+    it('allows the creator of a no-ACL branch under default deny', () => {
+      // The reachable case behind the client/server divergence: the create form
+      // sends no ACL, so under 'deny' the creator saw an enabled Submit and a 403.
+      const context: BranchContext = {
+        ...baseContext,
+        branch: { ...baseContext.branch, createdBy: 'user-1', access: {} },
+      }
+      expect(canPerformWorkflowAction(context, regularUser, 'deny')).toBe(true)
     })
   })
 

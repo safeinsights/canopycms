@@ -1,7 +1,7 @@
 import { defineCanopyConfig } from 'canopycms'
 
 export default defineCanopyConfig({
-  defaultBranchAccess: 'allow',
+  defaultBranchAccess: 'deny',
   mode: 'dev',
   sourceRoot: 'apps/example1',
   gitBotAuthorName: 'CanopyCMS Example Bot',
