@@ -37,7 +37,7 @@ The content **root is itself a first-class collection** (`flatten.ts:122-157` pu
 ### Restructure trade-offs / latent gaps it leans on (real, but acceptable for a small static marketing site)
 - **URL = slug, single-segment only.** No vanity URLs (URL ≠ slug); no multi-segment paths for root pages (a future blog is its own `blog` collection → `/blog/<post>`). Renaming a slug changes the URL.
 - ~~**`maxItems` is metadata-only — NOT enforced.** No check in `content-store.ts` `write()` or `api/content.ts`; no editor disable.~~ **STALE — corrected 2026-08-13.** `maxItems` **is** enforced server-side at the create boundary: `api/content.ts:360-373` (marked `SCH-H3`), landed in `e4097b0e` (PR #106, July 2026 baseline-review fix phase) — after this file was shelved on 2026-05-31. So `site`/`home` singletons are genuinely capped and this is no longer a latent gap. No task file was ever needed.
-- **Singletons are routable.** `readByUrlPath('/home')` structurally resolves the `home` entry, and `readByUrlPath` has **no** `entryType` filter (and its return `{data,path}` carries no `entryType` to post-filter on — see related `readbyurlpath-entry-type.md`). Harmless for static export (filter `contentStaticParams` by `entryType` ⇒ `/home`,`/site` simply aren't generated ⇒ 404 in static hosting), but bites under SSR/server mode.
+- **Singletons are routable.** `readByUrlPath('/home')` structurally resolves the `home` entry, and `readByUrlPath` has **no** `entryType` filter. **STALE — corrected 2026-08-14.** Its return now carries `meta.entryType` to post-filter on (see resolved: [readbyurlpath-entry-type.md](resolved/readbyurlpath-entry-type.md)). Harmless for static export (filter `contentStaticParams` by `entryType` ⇒ `/home`,`/site` simply aren't generated ⇒ 404 in static hosting), but bites under SSR/server mode unless the caller now applies that filter itself.
 
 ### When to revisit `isUrlPath` (triggers)
 Build it when an adopter genuinely needs any of: **vanity URLs** (URL ≠ slug), **multi-segment URLs decoupled from file layout**, **URL stability across slug/file moves**, or **keeping pages in a named/organized collection while still routing at root**. Until then, root-collection covers it.
@@ -124,11 +124,11 @@ No schema declares `isUrlPath` ⇒ `resolveEntryUrlPath` returns undefined, phas
 
 ## Related future tasks
 - `url-mapping-system.md` (P2) — the **heavier alternative**: collection-level URL templates (`/blog/{field:publishDate|year}/{slug}`), date-based URLs, bidirectional registry. `isUrlPath` is the lighter per-entry declarative cousin; if both ever ship, reconcile (a marker for simple cases, templates for systematic patterns).
-- `readbyurlpath-entry-type.md` (P2) — return `entryType` from `readByUrlPath`; needed to cleanly filter routable singletons at request time (the restructure's SSR gotcha).
+- [readbyurlpath-entry-type.md](resolved/readbyurlpath-entry-type.md) — RESOLVED 2026-08-14: `readByUrlPath` now returns `entryType`, closing the SSR gotcha above.
 - `readbyurlpath-collection-url-support.md` (P2) — `listEntries` `urlPath` (shipped) + root `/` handling in `readByUrlPath`.
 - `index-staleness-multiprocess.md` (P0) — the index-staleness pain that justifies "scan, not index" here.
 - `content-store-validation.md` (P1) — write-boundary validation context for the editor-time Save check.
-- `static-export-sitemap.md` / `static-export-seo-metadata.md` (P2) — sibling `static/` helpers that would also benefit from field-sourced `urlPath`.
+- [static-export-sitemap.md](resolved/static-export-sitemap.md) / [static-export-seo-metadata.md](resolved/static-export-seo-metadata.md) — RESOLVED 2026-08-14: sibling `static/` helpers (`collectRoutableEntries`, `generateContentSitemap`, `entryToMetadata`) that would still benefit from field-sourced `urlPath`.
 - ~~**New gap surfaced (no file yet):** `maxItems` is metadata-only.~~ Closed — see the correction above; `api/content.ts:360-373` enforces it (`e4097b0e`, PR #106).
 
 ## Out of scope / follow-ups (when revived)

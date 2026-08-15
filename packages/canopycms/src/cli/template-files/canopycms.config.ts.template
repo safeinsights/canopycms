@@ -1,7 +1,24 @@
 import { defineCanopyConfig } from 'canopycms'
 
 export default defineCanopyConfig({
-  defaultBranchAccess: 'allow',
+  // Access defaults are fail-closed. Both layers are checked on every content
+  // read or write, and BOTH must allow it.
+  //
+  // 'deny' means "branches you neither created nor were invited to". You still
+  // get your own branches (the creator of an un-ACL'd branch always has access)
+  // and the base branch everyone lands on, so this is not a lockout -- it stops
+  // one editor from wandering into another's in-progress work.
+  //
+  // The PATH layer defaults to public read rather than 'deny': without this, a
+  // non-admin visitor (including the dev-auth default user this scaffold uses
+  // out of the box) gets "Forbidden: path access denied" on every route the
+  // moment you run `npm run dev`. Edit and review stay closed -- this is not
+  // a security walk-back, just the posture README.md's "Public read on
+  // server deployments" section recommends, applied from the start so the
+  // first run isn't a wall. Tighten to 'deny' yourself if you don't want
+  // public read (e.g. an internal-only site).
+  defaultBranchAccess: 'deny',
+  defaultPathAccess: { read: 'allow' },
   // Leave this as 'dev'. This file is loaded by `next dev`, by `next build`
   // inside the deployment image, and by the deployed server -- and the first
   // two must be 'dev' (a prod-mode build read would look for a branch

@@ -91,6 +91,19 @@ describe('canopycms init', () => {
     expect(config).toContain('CANOPY_MODE')
   })
 
+  it('scaffolds a fail-closed branch default with public read, not a wall on first run', async () => {
+    await init(defaultOpts(tmpDir))
+
+    const config = await fs.readFile(path.join(tmpDir, 'canopycms.config.ts'), 'utf-8')
+    // Branch access stays fail-closed -- the actual divergence this default corrected.
+    expect(config).toContain("defaultBranchAccess: 'deny'")
+    // Path access scaffolds public read (edit/review still closed via the branch layer and the
+    // per-path default's own closed sublevels), NOT a bare 'deny': `canopycms init` -> `npm run
+    // dev` must not 403 the scaffolding developer (including the dev-auth default user) on
+    // every route before they have touched a line of config.
+    expect(config).toContain("defaultPathAccess: { read: 'allow' }")
+  })
+
   it('generates API route with correct handler pattern', async () => {
     await init(defaultOpts(tmpDir))
 

@@ -636,21 +636,21 @@ Available schemas: author, home, doc
 
 ### `defineCanopyConfig` Options
 
-| Option                | Type                                             | Required | Default     | Description                                                                                                                                                                                                                                                                                                                      |
-| --------------------- | ------------------------------------------------ | -------- | ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `gitBotAuthorName`    | `string`                                         | Yes      | -           | Name used for git commits made by CanopyCMS                                                                                                                                                                                                                                                                                      |
-| `gitBotAuthorEmail`   | `string`                                         | Yes      | -           | Email used for git commits made by CanopyCMS                                                                                                                                                                                                                                                                                     |
-| `mode`                | `'dev' \| 'prod'`                                | **Yes**  | -           | Operating mode (see below). No default — a deploy that omits `mode` fails config validation at startup with a clear error, rather than silently running insecure dev auth semantics in production.                                                                                                                               |
-| `contentRoot`         | `string`                                         | No       | `'content'` | Root directory for content files relative to project root                                                                                                                                                                                                                                                                        |
-| `defaultBaseBranch`   | `string`                                         | No       | `'main'`    | Git branch used as the fork point for CMS content branches (typically `main`). This branch can never be submitted for review, and in `prod` mode it's read-only in the editor — see [Submitting for Review](#submitting-for-review).                                                                                             |
-| `defaultActiveBranch` | `string`                                         | No       | (see below) | Which workspace the dev server serves content from and which branch the editor opens by default. In dev mode, auto-detected from the current git branch. In prod mode, falls back to `defaultBaseBranch`                                                                                                                         |
-| `defaultBranchAccess` | `'allow' \| 'deny'`                              | No       | `'deny'`    | Default access policy for new branches                                                                                                                                                                                                                                                                                           |
-| `defaultPathAccess`   | `'allow' \| 'deny' \| { read?, edit?, review? }` | No       | `'deny'`    | Default access policy for content paths when no permission rule matches. The object form scopes the default per permission level (e.g. `{ read: 'allow' }` for public read without opening edit/review). An unspecified level resolves to `'deny'`. See [Public read on server deployments](#public-read-on-server-deployments). |
-| `deployedAs`          | `'server' \| 'static'`                           | No       | `'server'`  | Deployment shape. `'static'`: site is pre-built with no live editor; all CMS API requests return 401 and `authPlugin` is not required. `'server'`: normal server-rendered deployment with auth enforced.                                                                                                                         |
-| `media`               | `MediaConfig`                                    | No       | -           | Asset storage configuration (local, s3, or lfs)                                                                                                                                                                                                                                                                                  |
-| `editor`              | `EditorConfig`                                   | No       | -           | Editor UI customization options                                                                                                                                                                                                                                                                                                  |
-| `dev`                 | `DevConfig`                                      | No       | -           | Dev-mode-only behavior. `dev.contentSync: 'off' \| 'warn'` (default `'warn'`) controls how the dev server detects/reports working-tree edits vs. the served branch clone (see [Local Development Sync](#local-development-sync)). Ignored when `mode !== 'dev'`.                                                                 |
-| `validateEntry`       | `ValidateEntryHook`                              | No       | -           | Save-time validation hook, run server-side before the entry file is written. Return `level: 'error'` issues to reject the save, or `'warning'` issues to surface alongside it. See [Save-Time Validation](#save-time-validation-validateentry).                                                                                  |
+| Option                | Type                                             | Required | Default     | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| --------------------- | ------------------------------------------------ | -------- | ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `gitBotAuthorName`    | `string`                                         | Yes      | -           | Name used for git commits made by CanopyCMS                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| `gitBotAuthorEmail`   | `string`                                         | Yes      | -           | Email used for git commits made by CanopyCMS                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| `mode`                | `'dev' \| 'prod'`                                | **Yes**  | -           | Operating mode (see below). No default — a deploy that omits `mode` fails config validation at startup with a clear error, rather than silently running insecure dev auth semantics in production.                                                                                                                                                                                                                                                                           |
+| `contentRoot`         | `string`                                         | No       | `'content'` | Root directory for content files relative to project root                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| `defaultBaseBranch`   | `string`                                         | No       | `'main'`    | Git branch used as the fork point for CMS content branches (typically `main`). This branch can never be submitted for review, and in `prod` mode it's read-only in the editor — see [Submitting for Review](#submitting-for-review).                                                                                                                                                                                                                                         |
+| `defaultActiveBranch` | `string`                                         | No       | (see below) | Which workspace the dev server serves content from and which branch the editor opens by default. In dev mode, auto-detected from the current git branch. In prod mode, falls back to `defaultBaseBranch`                                                                                                                                                                                                                                                                     |
+| `defaultBranchAccess` | `'allow' \| 'deny'`                              | No       | `'deny'`    | Fallback access policy for a branch with no ACL — what `canopycms init` scaffolds. Three grants are exempt from it: admins/reviewers, the creator of an un-ACL'd branch, and the protected base branch (which takes no ACL and is where every user lands). So `'deny'` means "branches you neither created nor were invited to", not a lockout. An explicit ACL outranks the creator and base-branch grants, which is how an admin locks down a branch someone else created. |
+| `defaultPathAccess`   | `'allow' \| 'deny' \| { read?, edit?, review? }` | No       | `'deny'`    | Default access policy for content paths when no permission rule matches. The object form scopes the default per permission level (e.g. `{ read: 'allow' }` for public read without opening edit/review). An unspecified level resolves to `'deny'`. See [Public read on server deployments](#public-read-on-server-deployments).                                                                                                                                             |
+| `deployedAs`          | `'server' \| 'static'`                           | No       | `'server'`  | Deployment shape. `'static'`: site is pre-built with no live editor; all CMS API requests return 401 and `authPlugin` is not required. `'server'`: normal server-rendered deployment with auth enforced.                                                                                                                                                                                                                                                                     |
+| `media`               | `MediaConfig`                                    | No       | -           | Asset storage configuration (local, s3, or lfs)                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| `editor`              | `EditorConfig`                                   | No       | -           | Editor UI customization options                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| `dev`                 | `DevConfig`                                      | No       | -           | Dev-mode-only behavior. `dev.contentSync: 'off' \| 'warn'` (default `'warn'`) controls how the dev server detects/reports working-tree edits vs. the served branch clone (see [Local Development Sync](#local-development-sync)). Ignored when `mode !== 'dev'`.                                                                                                                                                                                                             |
+| `validateEntry`       | `ValidateEntryHook`                              | No       | -           | Save-time validation hook, run server-side before the entry file is written. Return `level: 'error'` issues to reject the save, or `'warning'` issues to surface alongside it. See [Save-Time Validation](#save-time-validation-validateentry).                                                                                                                                                                                                                              |
 
 **Note**: Schemas are declared in TypeScript with `defineEntrySchema`, registered with `createEntrySchemaRegistry`, and referenced from `.collection.json` files alongside your content. See the [Schema Registry and References](#schema-registry-and-references) section for details.
 
@@ -967,6 +967,83 @@ const docSchema = defineEntrySchema([
 
 Groups are reusable — define them once and include them in multiple schemas. Both helpers accept an optional `description` that appears as hint text in the editor.
 
+### Reusable Field Fragments
+
+Without a shared pattern for it, a common field cluster (a call-to-action's label + link, a preview object's title + image + description) tends to get retyped inline in every schema that needs it. That's not just repetition — in an audited real-world schema, one such cluster was spelled out eight times and a preview object three times, and the copies had already drifted apart on their `select` field's option lists. The drift was invisible in any one schema; it only showed up when content authored against one copy didn't validate against another.
+
+Two mechanisms compose a shared field cluster without any special CMS support — both already work today, because `defineEntrySchema` and `defineBlockTemplate` infer literal types from a `const` array regardless of where that array came from:
+
+**1. Spread a `const`-inferred field array into `fields`.** Define the cluster once, spread it into as many schemas as you need:
+
+```typescript
+import { defineEntrySchema, defineFieldFragment, type TypeFromEntrySchema } from 'canopycms'
+
+// defineFieldFragment is a 3-line const-inference identity helper — purely for
+// discoverability alongside defineInlineFieldGroup/defineNestedFieldGroup. A plain
+// `const ctaFields = [...] as const` spread works exactly the same way.
+const ctaFields = defineFieldFragment([
+  { name: 'ctaLabel', type: 'string', label: 'Button Label' },
+  { name: 'ctaHref', type: 'string', label: 'Button Link' },
+])
+
+const heroSchema = defineEntrySchema([{ name: 'headline', type: 'string' }, ...ctaFields])
+const bannerSchema = defineEntrySchema([{ name: 'message', type: 'string' }, ...ctaFields])
+
+type Hero = TypeFromEntrySchema<typeof heroSchema>
+// { headline: string; ctaLabel: string; ctaHref: string }
+```
+
+**Per-use overrides** fall out of the same mechanism: don't spread the one field that needs to differ, and provide your own version of it instead. This is exactly the case that pushes people toward copy-paste in the first place — one schema needs the shared field `required`, another needs a different `label`:
+
+```typescript
+const ctaLabelField = { name: 'ctaLabel', type: 'string', label: 'Button Label' } as const
+const ctaHrefField = { name: 'ctaHref', type: 'string', required: false } as const
+
+// Most schemas: spread both fields as-is.
+const heroSchema = defineEntrySchema([
+  { name: 'headline', type: 'string' },
+  ctaLabelField,
+  ctaHrefField,
+])
+
+// This one needs ctaHref required — compose from the same const, override just that key.
+const bannerSchema = defineEntrySchema([
+  { name: 'message', type: 'string' },
+  ctaLabelField,
+  { ...ctaHrefField, required: true },
+])
+```
+
+**2. Nest `defineInlineFieldGroup()` inside a block template.** Where the shared cluster should also appear visually grouped in the editor (a bordered "Call to Action" section rather than loose fields), nest an inline group inside a block template's `fields` instead of spreading a plain array. Inline groups are transparent all the way down the stack — the type derivation flattens them (see [Field Groups](#field-groups)), and so does data storage, validation, reference resolution, and the editor — so this works inside a block template exactly like it works inside a top-level schema:
+
+```typescript
+import { defineBlockTemplate, defineInlineFieldGroup, defineEntrySchema } from 'canopycms'
+
+const ctaGroup = defineInlineFieldGroup({
+  name: 'cta',
+  label: 'Call to Action',
+  fields: [
+    { name: 'ctaLabel', type: 'string', label: 'Button Label' },
+    { name: 'ctaHref', type: 'string', label: 'Button Link' },
+  ],
+})
+
+const heroBlock = defineBlockTemplate({
+  name: 'hero',
+  fields: [{ name: 'headline', type: 'string' }, ctaGroup],
+})
+const bannerBlock = defineBlockTemplate({
+  name: 'banner',
+  fields: [{ name: 'message', type: 'string' }, ctaGroup],
+})
+
+const pageSchema = defineEntrySchema([
+  { name: 'sections', type: 'block', templates: [heroBlock, bannerBlock] },
+])
+// Both templates' value shapes include { ctaLabel: string; ctaHref: string } flat —
+// no 'cta' key, and the editor renders it as one bordered group in each block.
+```
+
 ### Page Blocks (Flexible Content)
 
 A `block` field holds an ordered, repeatable list of heterogeneous section blocks discriminated by a `template` key — the "flexible content" / page-builder pattern. Each block in the list picks one of the field's templates, so a page entry becomes an array of typed sections that editors can add, remove, and reorder.
@@ -1102,6 +1179,56 @@ const schema = defineEntrySchema([
 ])
 ```
 
+### Shared / Referenced Blocks
+
+A block template is just a schema, so a block field can hold a `reference` field like any other field — which makes a **shared content block** possible without any dedicated CMS feature: define the shared content as its own entry type (a small "snippet" collection), then give a block template a single `reference` field pointing at it. Editing the snippet once updates every page block that references it, instead of a find-every-page-and-paste-the-new-copy edit. In one audited real-world content set, the same call-to-action block was byte-duplicated across a dozen pages and had already drifted; every edit meant a dozen synchronized file changes.
+
+**The recipe:**
+
+```typescript
+import { defineBlockTemplate, defineEntrySchema } from 'canopycms'
+
+// 1. The shared content lives in its own entry type, like any other collection.
+const ctaSnippetSchema = defineEntrySchema([
+  { name: 'title', type: 'string', label: 'Title' },
+  { name: 'ctaText', type: 'string', label: 'Button Text' },
+])
+
+// 2. A one-field block template holds a reference to it. entryTypes scopes the picker to
+//    that entry type regardless of which collection it lives in.
+const sharedCtaBlock = defineBlockTemplate({
+  name: 'sharedCta',
+  label: 'Shared CTA',
+  fields: [
+    {
+      name: 'snippet',
+      type: 'reference',
+      label: 'CTA Snippet',
+      entryTypes: ['ctaSnippet'],
+      resolvedSchema: ctaSnippetSchema, // typed as the resolved snippet, not a bare id
+    },
+  ],
+})
+
+const pageSchema = defineEntrySchema([
+  { name: 'sections', type: 'block', templates: [sharedCtaBlock /* , ...other templates */] },
+])
+```
+
+Reading resolves it automatically — reference resolution inside block templates is not something you opt into separately. `read()` and `readByUrlPath()` already recurse into block templates and resolve any `reference` field they find there, the same as a top-level reference field:
+
+```typescript
+const { data } = await canopy.read<Page>({ entryPath: 'content/pages', slug: 'landing' })
+
+for (const section of data.sections) {
+  if (section.template === 'sharedCta' && section.value.snippet) {
+    // section.value.snippet is the full resolved entry — { title, ctaText, ... } — not an id
+  }
+}
+```
+
+> **Caveat — `listEntries()` never resolves references.** Everything above is a `read()`-time behavior. [`listEntries()`](#listing-entries) reads content files raw off disk and does not resolve `reference` fields at all, inside a block template or anywhere else. So any surface built from `listEntries()` — a search index, a sitemap, an AI-content export — sees a shared block's reference field as `null` or a bare id string, never the snippet's actual data. An adopter who builds a search index by walking `listEntries()` output over pages with shared blocks will silently get nothing for those blocks. If you need shared-block content in a `listEntries()`-derived surface, resolve the reference yourself with a follow-up `read()` call, or build that surface from `read()`/`readByUrlPath()` results instead of `listEntries()`.
+
 ## Content Identification & References
 
 ### UUID-Based IDs
@@ -1217,7 +1344,38 @@ const postSchema = defineEntrySchema([
 type Post = TypeFromEntrySchema<typeof postSchema>
 ```
 
-The type inference covers all field types: `string` and `markdown` fields become `string`, `number` becomes `number`, `boolean` becomes `boolean`, `object` fields become nested objects, `list: true` wraps the value in an array, and `required: false` adds `| undefined`.
+The type inference covers all field types: `string` and `markdown` fields become `string`, `number` becomes `number`, `boolean` becomes `boolean`, `object` fields become nested objects, and `list: true` wraps the value in an array.
+
+#### Optional Fields
+
+A field with an explicit `required: false` becomes an **optional property** (`subheading?: string`), not a required property typed `string | undefined`:
+
+```typescript
+const heroSchema = defineEntrySchema([
+  { name: 'heading', type: 'string' },
+  { name: 'subheading', type: 'string', required: false },
+])
+
+// { heading: string; subheading?: string }
+type Hero = TypeFromEntrySchema<typeof heroSchema>
+
+// So a literal can simply omit the field — no `subheading: undefined` filler:
+const hero: Hero = { heading: 'Welcome' }
+```
+
+Reading is unchanged: `hero.subheading` is still `string | undefined`. What changes is construction — you no longer have to spell out every unset field, and adding a new optional field to a schema does not break existing hand-written literals.
+
+Only an **explicit** `required: false` does this. A field that omits `required` entirely stays a required property — that is the type-level default, chosen so a schema author must opt in to optionality rather than getting it silently. Note this is stricter than the runtime validator, whose default is the opposite: `validateEntryData` only enforces fields with `required: true`, so an omitted `required` is _not_ enforced at runtime either. A field with no `required` is therefore typed as present but validated as absent-tolerant — pass `required: false` explicitly if you want the two to agree.
+
+| Field declaration                                | Inferred property |
+| ------------------------------------------------ | ----------------- |
+| `{ name: 'a', type: 'string', required: true }`  | `a: string`       |
+| `{ name: 'a', type: 'string' }`                  | `a: string`       |
+| `{ name: 'a', type: 'string', required: false }` | `a?: string`      |
+
+The rule applies at every level — top-level fields, fields nested inside `object` fields, and fields inside block templates. If your project sets `exactOptionalPropertyTypes: true`, note that explicitly assigning `undefined` to an optional key (`hero.subheading = undefined`) is an error under that flag; assign nothing, or widen the field's type yourself.
+
+**`exactOptionalPropertyTypes: true` also requires `skipLibCheck: true`** (the Next.js default) to compile against this package at all today. With `skipLibCheck: false`, a `reference` field's `resolvedSchema` type inference hits a pre-existing library-internal type error unrelated to the assignment-level advice above. If your project sets `skipLibCheck: false` alongside `exactOptionalPropertyTypes: true`, you will hit this before you write a line against the schema — there is no workaround short of `skipLibCheck: true` today.
 
 #### Typed Block Discriminated Unions
 
@@ -1266,6 +1424,72 @@ for (const block of page.blocks) {
       // block.value is narrowed to { title: string; ctaText: string }
       return <CtaSection title={block.value.title} ctaText={block.value.ctaText} />
   }
+}
+```
+
+#### Block Component Registries
+
+The `switch` above works, but it is easy to leave it with a `default: return null` clause "for forward compatibility" — which quietly turns a schema typo or a renamed template into a block that renders nothing, with a green build and green tests. A **mapped type keyed off the block union** makes the mapping exhaustive _by construction_: TypeScript refuses to compile if a template is missing its component, or if the registry has a key that doesn't match any template name. (The missing-key direction is airtight in every form; the stray-key direction relies on TypeScript's excess-property check, which is literal-only — assigning a pre-typed or aliased object with an extra key through a variable is not caught. Every example on this page constructs the registry as an object literal, which is the normal way to write one, so the check applies.) That is strictly stronger than a runtime test asserting the handled set matches the schema's declared templates, because it fails the build instead of failing at render time.
+
+`BlockValueOf<Blocks, N>` pulls one template's value shape out of the union. `BlockComponentRegistry<Blocks, ExtraProps>` builds the exhaustive component map from it — one `ComponentType<{ data: ... } & ExtraProps>` per template:
+
+```typescript
+import type { BlockComponentRegistry } from 'canopycms'
+import type { ComponentType } from 'react'
+
+type Blocks = Page['blocks'][number]
+
+const blockRegistry: BlockComponentRegistry<Blocks> = {
+  hero: ({ data }) => <HeroSection headline={data.headline} body={data.body} />,
+  cta: ({ data }) => <CtaSection title={data.title} ctaText={data.ctaText} />,
+  // Missing a key here, or adding one that isn't a template name, is a compile error.
+}
+```
+
+CanopyCMS does not ship a `renderBlocks()` helper — it would have to pick a key strategy, an unknown-template policy, and how extra props reach each component, and any one of those choices is wrong for someone. The registry is the whole primitive; reading it is a small loop you own:
+
+```typescript
+function renderBlocks(blocks: Blocks[]) {
+  return blocks.map((block, i) => {
+    // One contained assertion: `block.template` and `block.value` come from the same
+    // object, so the lookup and the data always agree at runtime — TypeScript just
+    // can't correlate a dynamic key lookup with a discriminated union's narrowing on
+    // its own. This is the one place that trust is spent; the registry above is what
+    // makes it safe to spend for every template the SCHEMA currently declares.
+    const Component = blockRegistry[block.template] as
+      | ComponentType<{ data: typeof block.value }>
+      | undefined
+    // Compile-time exhaustiveness covers the schema, not data at rest. A content file
+    // can still carry a `template` name that used to exist and was since renamed or
+    // removed -- the build-time schema-validity guard catches that for a production
+    // static export, but request-time rendering (a dev server, or an on-demand render
+    // of content saved after the last build) reads content with no such guard, so a
+    // stale name reaches this lookup as `undefined`. Without this check, React throws
+    // "Element type is invalid" and takes the page down.
+    if (!Component) return null
+    return <Component key={i} data={block.value} />
+  })
+}
+```
+
+Pass a second type argument to thread extra props — an index, a `fieldProps` callback for live-preview highlighting, whatever your renderer needs — into every component in the registry, and widen the assertion to match:
+
+```typescript
+type BlockProps = { index: number }
+
+const blockRegistry: BlockComponentRegistry<Blocks, BlockProps> = {
+  hero: ({ data, index }) => <HeroSection headline={data.headline} position={index} />,
+  cta: ({ data, index }) => <CtaSection title={data.title} position={index} />,
+}
+
+function renderBlocks(blocks: Blocks[]) {
+  return blocks.map((block, i) => {
+    const Component = blockRegistry[block.template] as
+      | ComponentType<{ data: typeof block.value } & BlockProps>
+      | undefined
+    if (!Component) return null // see the schema-vs-data-at-rest note above
+    return <Component key={i} data={block.value} index={i} />
+  })
 }
 ```
 
@@ -1446,9 +1670,125 @@ export const generateStaticParams = () =>
 >
 > **Advanced (framework-agnostic):** if you need to call the enumeration with a build context you already hold, the free helper `collectStaticParams(buildCtx, options)` from `canopycms-next` takes the build context directly. The bound `contentStaticParams` above is preferred for ordinary page code.
 >
-> Sitemap and SEO-metadata static-export helpers are coming separately.
+> **Schema-invalid entries fail the build.** During an actual production `next build`, `contentStaticParams` checks every entry against its schema and throws if any fail, listing each offending entry path. This typically means an abandoned create-scaffold -- an empty draft the editor's "+" button writes before you fill it in, then never finished or deleted. Finish or delete the entry in the editor and rebuild. `next dev` is unaffected, since in-progress scaffolds legitimately exist there while editing. The same guard runs during sitemap generation (below), so an app with no `generateStaticParams` at all still gets it.
 >
-> **Schema-invalid entries fail the build.** During an actual production `next build`, `contentStaticParams` checks every entry against its schema and throws if any fail, listing each offending entry path. This typically means an abandoned create-scaffold -- an empty draft the editor's "+" button writes before you fill it in, then never finished or deleted. Finish or delete the entry in the editor and rebuild. `next dev` is unaffected, since in-progress scaffolds legitimately exist there while editing.
+> **A file CanopyCMS can't parse into an entry fails the build too.** Content files are named `{type}.{slug}.{id}.{ext}`; a `.md`/`.mdx`/`.json`/`.yaml` file inside a collection directory that doesn't match that shape -- most often a schema rename that left a stale file behind, or an entry type declared in one collection but not another -- is a production `next build` error listing the offending file, for the same reason as the schema-invalid case above: silently dropping a page out of the build is worse than a red build. Outside an actual production build (`next dev`, the admin UI) it's skipped instead, since in-progress renames legitimately leave such a file around while editing.
+
+### Sitemap and SEO Metadata
+
+These two ship together, and the reason is the `noindex` flag: it has to suppress a page in **both** surfaces -- `robots: { index: false }` on the page and absence from the sitemap. Both read it through the same core predicate, so they cannot disagree about which pages are advertised.
+
+#### The recommended SEO field group
+
+`defineSeoFieldGroup()` adds the seven fields the metadata helpers read by default -- `metaTitle`, `metaDescription`, `ogImage`, `ogType`, `canonical`, `noindex`, `twitterCard` -- all optional:
+
+```typescript
+// app/schemas.ts
+import { defineEntrySchema, defineSeoFieldGroup } from 'canopycms'
+
+export const postSchema = defineEntrySchema([
+  { name: 'title', type: 'string' },
+  defineSeoFieldGroup(),
+])
+// TypeFromEntrySchema: { title: string; metaTitle?: string; metaDescription?: string; ... }
+```
+
+The fields are stored **flat** in the content file by default. For the nested convention, pass `defineSeoFieldGroup({ group: 'seo' })` -- and then pass the same `{ group: 'seo' }` to `entryToMetadata` / `extractSeoFields` so the read side looks in the same place.
+
+**Set it once, not per call.** `generateContentSitemap`'s `noindex` exclusion and `entryToMetadata`'s field extraction both need to agree on where the SEO fields live, or a page can end up `noindex` while the sitemap still advertises its URL (or the reverse) because one call site forgot the `group`/`fields` override the other one has. Pass `seo` to `createNextCanopyContext` instead of repeating it on every `contentSitemap`/`entryToMetadata` call -- both bound helpers pick it up automatically, and a per-call `seo`/`group`/`fields` still overrides it for just that call:
+
+```typescript
+// app/lib/canopy.ts
+const canopyContextPromise = createNextCanopyContext({
+  config: config.server,
+  authPlugin,
+  entrySchemaRegistry,
+  seo: { group: 'seo' }, // shared by contentSitemap and entryToMetadata below
+})
+```
+
+#### `sitemap.ts`
+
+`generateContentSitemap` is a bound helper on the `createNextCanopyContext` result, like `contentStaticParams`:
+
+```typescript
+// app/lib/canopy.ts
+export const contentSitemap = async (options: GenerateContentSitemapOptions) => {
+  const context = await canopyContextPromise
+  return context.generateContentSitemap(options)
+}
+```
+
+```typescript
+// app/sitemap.ts
+import type { MetadataRoute } from 'next'
+import { contentSitemap } from './lib/canopy'
+
+// Required for output: 'export' -- metadata routes must opt into static generation.
+export const dynamic = 'force-static'
+
+export default function sitemap(): Promise<MetadataRoute.Sitemap> {
+  return contentSitemap({
+    siteUrl: 'https://example.com',
+    trailingSlash: true,
+    exclude: (entry) => entry.entryType === 'author',
+    priority: (entry) => (entry.urlPath === '/' ? 1 : undefined),
+  })
+}
+```
+
+**Every routable entry type is included by default.** There is no list of sitemap-able entry types to keep in sync -- omitting a URL takes an explicit `exclude` predicate or a `noindex` flag on the entry. A sitemap built from a remembered list of entry types silently omits whichever type nobody added, ships green, and takes those pages out of search results with no warning.
+
+**The mirror failure: a type with no route.** "Every entry type by default" only holds if every entry type actually has a page serving its `urlPath` shape. An entry type that exists for embedding elsewhere -- content addressed by a `reference` field inside a block, never visited directly -- is schema-routable but has no route for it, so leaving it unexcluded advertises a URL that 404s. The tell is the same either way: ask whether some route in your app actually serves that `urlPath` shape, not whether the schema happens to allow it. Exclude any entry type without one, same as `author` above.
+
+**Options:**
+
+| Option          | Type                                     | Default       | Description                                                                                                                           |
+| --------------- | ---------------------------------------- | ------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| `siteUrl`       | `string`                                 | required      | Site origin. A sitemap must carry absolute URLs -- **enforced**: throws if this isn't an absolute URL (e.g. missing scheme, or empty) |
+| `trailingSlash` | `boolean`                                | `false`       | Emit `/contact/` rather than `/contact`. **Set it to match your `next.config`** -- CanopyCMS cannot read that file                    |
+| `rootPath`      | `string`                                 | Content root  | Scope to a subtree (e.g. `'content/posts'`)                                                                                           |
+| `exclude`       | `(entry) => boolean`                     | -             | Drop entries, on top of the non-optional `noindex` exclusion                                                                          |
+| `lastModified`  | `(entry) => Date \| string \| undefined` | `updatedAt`   | `<lastmod>` per entry; return `undefined` to omit it                                                                                  |
+| `priority`      | `(entry) => number \| undefined`         | -             | `<priority>` per entry                                                                                                                |
+| `extraUrls`     | `SitemapExtraUrl[]`                      | -             | URLs with no entry behind them (hand-written routes, feeds)                                                                           |
+| `seo`           | `{ fields?, group? }`                    | flat defaults | Where the SEO fields live, when they aren't the defaults                                                                              |
+
+> **`lastModified` is filesystem mtime by default.** `updatedAt` is the entry file's mtime, not an editorial timestamp -- a fresh CI clone resets it to checkout time, so on a clean build agent the default dates every URL to when the tree was cloned. Supply a real content date via the callback, or return `undefined` to omit `<lastmod>` rather than assert a date you cannot stand behind.
+>
+> `changeFrequency` is not emitted for entries: a blanket value asserted for every URL carries no information, and search engines say they ignore it. Set it per-URL via `extraUrls` if you want it.
+>
+> **`robots.txt` is out of scope** -- it is a few static lines with no CMS content behind it. Write `app/robots.ts` yourself and point its `sitemap` field at this route.
+>
+> **Colliding URLs are deduped, not silently doubled.** Two entries resolving to the same `<loc>` -- an index entry collapsing onto a sibling's path, or two `urlPath`s that only differ by case (`urlPath` is always lowercased) -- is not fatal to a crawler, but it almost always means two entries are unintentionally sharing one URL. `generateContentSitemap` keeps the first and drops the rest, and warns on the duplicate so you notice instead of shipping a sitemap with fewer URLs than you expect.
+
+#### `generateMetadata`
+
+```typescript
+// app/posts/[slug]/page.tsx
+import { entryToMetadata, readByUrlPath } from '../../lib/canopy'
+
+export const generateMetadata = async ({ params }): Promise<Metadata> => {
+  const { slug } = await params
+  const result = await readByUrlPath<PostContent>(`/posts/${slug}`)
+  return entryToMetadata(result?.data, {
+    path: `/posts/${slug}`,
+    siteUrl: 'https://example.com',
+    siteName: 'Example',
+    fallbackTitle: result?.data.title,
+    defaultOgType: 'article',
+  })
+}
+```
+
+Returns `title`, `description`, `openGraph`, `twitter`, `alternates.canonical` and `robots`. Notes:
+
+- **Empty CMS fields count as unset.** CanopyCMS writes optional fields present-but-empty, so an untouched SEO group is `metaTitle: ''` on disk. It falls back to `fallbackTitle` rather than emitting a blank title.
+- **An absolute `canonical` passes through verbatim** -- that is how an entry points at a copy of itself hosted elsewhere. Only site-relative canonicals get the origin and trailing-slash treatment.
+- **`noindex: true`** emits `robots: { index: false, follow: false }` _and_ drops the entry from the sitemap. It does **not** stop the page being built: `contentStaticParams` still enumerates it, so the URL resolves for anyone holding the link.
+- Pass `titleTemplate` from your root layout for the `%s | Site` pattern.
+
+> **Advanced (framework-agnostic):** the free `generateContentSitemap(buildCtx, options)` and `entryToMetadata(data, options)` are exported from `canopycms-next` directly, and the neutral core -- `collectRoutableEntries`, `extractSeoFields`, `isNoindexEntry` -- from `canopycms/server`, for non-Next frameworks.
 
 ### Reading Content at Build Time
 
@@ -1956,6 +2296,10 @@ import { buildContentTree } from 'canopycms/server'
 
 `listEntries()` returns a flat array of every content entry in your site. It is designed for search indexing, sitemaps, and any other case where you need to iterate over all content without the tree hierarchy. (For `generateStaticParams`, prefer the bound `contentStaticParams` helper — see [Static Export with generateStaticParams](#static-export-with-generatestaticparams) — which enumerates routable paths without handing an admin context to your page module.)
 
+> **`listEntries()` does not resolve `reference` fields.** It reads content files raw off disk for speed across a whole site scan, so a `reference` field (top-level or inside a block template — see [Shared / Referenced Blocks](#shared--referenced-blocks)) comes back as a bare id string, or `null`. Only `read()`/`readByUrlPath()` resolve references. Building a search index or sitemap from `listEntries()` over content that leans on referenced/shared blocks will silently omit that referenced data — resolve it yourself with a follow-up `read()` call if your `listEntries()`-derived surface needs it.
+>
+> **An unparseable content file fails a production build.** Content files are named `{type}.{slug}.{id}.{ext}`; during an actual production `next build`, a `.md`/`.mdx`/`.json`/`.yaml` file in a collection directory that doesn't match that shape throws instead of being silently dropped from the result — the same "a page that vanishes from the build is worse than a red build" reasoning as the schema-invalid-entry guard above. Outside a production build it's still just skipped (logged only with `CANOPYCMS_DEBUG=true`), since in-progress renames legitimately leave such a file around while editing.
+
 ### Basic Usage
 
 `listEntries()` is available on both the request-scoped context (`getCanopy()`) and the advanced build context (`getCanopyForBuild()`); use the latter for build scripts or whole-collection scans that run outside a request:
@@ -1975,18 +2319,19 @@ Each entry includes `urlPath` -- a URL-ready string with index entries collapsed
 
 ### Each Entry Includes
 
-| Field            | Type       | Description                                                                                                        |
-| ---------------- | ---------- | ------------------------------------------------------------------------------------------------------------------ |
-| `pathSegments`   | `string[]` | URL path segments (e.g., `['researchers', 'guides', 'glossary']`)                                                  |
-| `urlPath`        | `string`   | URL-ready path with index entries collapsed (e.g., `'/guides'` instead of `'/guides/index'`; `'/'` for root index) |
-| `slug`           | `string`   | Entry slug within its collection                                                                                   |
-| `entryPath`      | `string`   | Full CMS logical path                                                                                              |
-| `entryId`        | `string`   | 12-char Base58 content ID from the filename                                                                        |
-| `collectionId`   | `string?`  | Collection content ID (if present)                                                                                 |
-| `collectionPath` | `string`   | Logical path of the parent collection                                                                              |
-| `entryType`      | `string`   | Entry type name                                                                                                    |
-| `format`         | `string`   | Content format (`json`, `md`, or `mdx`)                                                                            |
-| `data`           | `T`        | Entry data (frontmatter + body for md/mdx, JSON fields for json)                                                   |
+| Field            | Type       | Description                                                                                                                                                                                                       |
+| ---------------- | ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `pathSegments`   | `string[]` | URL path segments (e.g., `['researchers', 'guides', 'glossary']`)                                                                                                                                                 |
+| `urlPath`        | `string`   | URL-ready path with index entries collapsed (e.g., `'/guides'` instead of `'/guides/index'`; `'/'` for root index)                                                                                                |
+| `slug`           | `string`   | Entry slug within its collection                                                                                                                                                                                  |
+| `entryPath`      | `string`   | Full CMS logical path                                                                                                                                                                                             |
+| `entryId`        | `string`   | 12-char Base58 content ID from the filename                                                                                                                                                                       |
+| `collectionId`   | `string?`  | Collection content ID (if present)                                                                                                                                                                                |
+| `collectionPath` | `string`   | Logical path of the parent collection                                                                                                                                                                             |
+| `entryType`      | `string`   | Entry type name                                                                                                                                                                                                   |
+| `format`         | `string`   | Content format (`json`, `md`, or `mdx`)                                                                                                                                                                           |
+| `data`           | `T`        | Entry data (frontmatter + body for md/mdx, JSON fields for json)                                                                                                                                                  |
+| `updatedAt`      | `string?`  | ISO 8601 timestamp, populated on every result. This is the file's filesystem mtime, not an editorial "last changed" date -- treat it as "changed since the last build," not an authoritative last-modified value. |
 
 For md/mdx entries, `data.body` contains the raw markdown content.
 
@@ -2093,27 +2438,39 @@ Access control uses three layers:
 2. **Path permissions**: Glob patterns restrict who can edit specific content paths
 3. **Reserved groups**: `admins` (full access) and `reviewers` (review branches, approve PRs)
 
+Every content read and write must pass **both** layer 1 and layer 2.
+
+**Branch access precedence**, highest first — admins/reviewers; an explicit `managerOrAdminAllowed` lockdown; an explicit user/group ACL; and finally, only when the branch has no ACL at all, the branch's creator, then `defaultBranchAccess`, and then the protected base branch.
+
+Two exemptions are what make the fail-closed `defaultBranchAccess: 'deny'` default workable rather than a lockout:
+
+- **The creator of an un-ACL'd branch always has access to it.** Otherwise a user could create a branch, delete it, and rewrite its ACL, but not read a single file on it.
+- **The protected base branch always passes this layer.** It takes no ACL by design (an entry there would confer Withdraw rights on it) and its creator is the system, so nothing else could ever grant it — and it is where every user lands by default. Its contents are still governed by path permissions, submitting it is still impossible, and in prod it is still read-only.
+
+Because both exemptions are scoped to branches with **no ACL**, writing an explicit ACL still restricts the branch — including against its own creator, which is how an admin locks down a branch someone else created.
+
 **Bootstrap admin groups**: When using `getCanopy()`, users with IDs matching the `bootstrapAdminIds` configuration automatically receive the `admins` group membership, even before groups are set up in the repository. This makes initial setup easier.
 
 **Build mode bypass**: During `next build`, all permission checks are bypassed to allow static generation of all content, regardless of auth configuration. In page modules, drive `generateStaticParams` with the bound `contentStaticParams` helper and resolve content with the phase-selecting `read`/`readByUrlPath` (both from `lib/canopy.ts`) so you avoid request-scope errors without importing an admin context.
 
 #### Public read on server deployments
 
-By default `defaultPathAccess` is `'deny'`, so an anonymous or unauthenticated request on a `server` deployment gets no content at all. To let unauthenticated visitors read published content while keeping edit/review locked down, scope the path default per permission level — and note that every content read must pass **both** the branch layer and the path layer, so the branch default has to open up too:
+By default `defaultPathAccess` is `'deny'`, so an anonymous or unauthenticated request on a `server` deployment gets no content at all. To let unauthenticated visitors read published content while keeping edit/review locked down, scope the path default per permission level. Every content read must pass **both** the branch layer and the path layer, but you do **not** need to open branch access to do this — anonymous public pages resolve against the protected base branch, which always passes the branch layer:
 
 ```typescript
 // canopycms.config.ts
 export default defineCanopyConfig({
   // ...
-  defaultBranchAccess: 'allow', // reads check branch access first; the base branch has no ACL, so it follows this default
+  defaultBranchAccess: 'deny', // work branches stay private; the base branch is exempt
   defaultPathAccess: { read: 'allow' }, // edit/review still resolve to 'deny'
 })
 ```
 
-Two things to weigh before enabling this:
+One thing to weigh before enabling this:
 
-- **`defaultBranchAccess: 'allow'` is not read-scoped.** It is the fallback for _any_ branch with no ACL, so un-ACL'd work branches also become accessible to other signed-in users (writes are still gated per-path). If that matters, set explicit ACLs on work branches.
 - **`{ read: 'allow' }` inverts deny-by-default for reads.** Any content path with **no matching rule** becomes publicly readable, and a rule that only targets `edit` does not restrict reading (an unmatched `read` still falls through to the allow default). To keep a subtree private, add an explicit rule whose `read` target denies it — don't rely on the absence of a rule.
+
+Keep `defaultBranchAccess` at `'deny'` here. It is not read-scoped — it is the fallback for _any_ branch with no ACL, so setting it to `'allow'` to enable public read would also expose un-ACL'd **work** branches to every signed-in user. The base branch that serves your public pages is exempt from it regardless, so `'allow'` buys you nothing on this path.
 
 A `FORBIDDEN` denial from a server-component read via `readByUrlPath` renders as `null`, so your page's existing `if (!result) return notFound()` produces an ordinary 404 -- not a 500, and without revealing that the content exists but is restricted. The denial reason is still emitted to the debug log (`CANOPYCMS_DEBUG=true`) for troubleshooting.
 

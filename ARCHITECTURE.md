@@ -1333,7 +1333,19 @@ The guard is deliberately **prod-only** rather than firing on all server deploym
 
 A page in a `[...slug]`/`[slug]` route needs to resolve content correctly in two different phases: filesystem-direct (working tree) during the build, and branch-aware (the editor's branch-clone preview) at request time in dev. Hand-picking the right context at each call site is error-prone.
 
-To remove that burden, the Next.js adapter also returns phase-selecting `read()` and `readByUrlPath()` functions. These pick the context automatically: at build time (`isBuildMode()`) they use the build context; at request time they use the branch-aware, ACL-enforced runtime context from `getCanopy()`. Page code calls one function and is correct in both phases by construction, without ever touching the admin build context directly.
+To remove that burden, the Next.js adapter also returns phase-selecting `read()`, `readByUrlPath()` and `listEntries()` functions. These pick the context automatically: at build time (`isBuildMode()`) they use the build context; at request time they use the branch-aware, ACL-enforced runtime context from `getCanopy()`. Page code calls one function and is correct in both phases by construction, without ever touching the admin build context directly.
+
+`listEntries()` is the batch counterpart: it returns every entry under `rootPath` in a single filesystem pass, each with its `urlPath`, `slug`, `entryType`, `data` and `schema`. It exists so adopters stop writing "enumerate the routable paths, then read each one" — an N+1 over the content tree whose hand-built URLs are a recurring source of silent misses on multi-segment slugs. The `urlPath` it returns round-trips through `readByUrlPath` by construction.
+
+Note it takes no `branch` option, unlike `read`/`readByUrlPath`: it always lists `defaultActiveBranch ?? defaultBaseBranch ?? 'main'`. In dev that tracks the git HEAD through `refreshActiveBranch()`; in prod that refresh is a no-op, so it always reads the base branch.
+
+### Batch Reads Enforce Path ACLs
+
+`listEntries()` and `buildContentTree()` are the two content reads that return **many** entries at once. On the request-scoped context they enforce path permissions per entry, the same `read` level the single-entry reader checks: entries the current user cannot read are omitted from the result, and — for the tree — from the `meta.indexEntry` passed to a collection's `extract` callback, which emits no node of its own. Collections left with no visible children are pruned. On the build context and on `static` deployments nothing is filtered, since both run as the synthetic admin.
+
+Enforcement reuses `createContentAccessChecker` (`authorization/content.ts`), the same batch primitive the entries API uses: it resolves the request-constant work — branch access, the settings/permissions root, and the rule set — exactly once per request and returns a **synchronous** per-path check, so the per-entry cost is an admin short-circuit or one glob match per configured rule, with no additional I/O. The checker is built lazily and skipped entirely at build time, where it would otherwise add a `getSettingsBranchRoot()` round trip (EFS, in prod) to every listing for a user who bypasses ACLs anyway.
+
+This matters because `getCanopy()` is the context adopters are told to use for request-time content, and it is documented as ACL-enforcing. Before this, its two batch reads took no user at all — so a listing could disclose full entry `data` for paths the same user could not have fetched through `read()`.
 
 ## The Permission Model
 
@@ -1342,6 +1354,17 @@ Access control uses three layers that all must pass. These are implemented in th
 ### Layer 1: Branch Access
 
 Per-branch ACLs control who can access a branch. Branches can be restricted to specific users or groups. Admins and reviewers always have access. Implemented in the `branch.ts` submodule.
+
+**Precedence**, highest first: admins/reviewers → a `managerOrAdminAllowed` lockdown → an explicit user/group ACL → and, only when the branch has no ACL at all, the branch's creator, then `defaultBranchAccess`, then the protected base branch.
+
+**Two grants make fail-closed `defaultBranchAccess: 'deny'` workable.** Without them `'deny'` is not a strict default but a broken one, because branch access is ANDed into every content check by `createContentAccessChecker` — so a denial at this layer makes a branch inert, not merely un-submittable:
+
+- **Creator of an un-ACL'd branch.** The create form sends no ACL, so without this every freshly created branch would be unusable by the person who just created it. It also aligns this layer with the three places that already grant on creator-ownership independently (`listBranchesHandler`, `canDeleteBranch`, `canModifyBranchAccess`) — otherwise a creator could delete their branch and rewrite its ACL but not read a file on it.
+- **The protected base branch.** It takes no ACL by design (`updateBranchAccessHandler` rejects one, since an entry there feeds `allowed_by_acl` and would confer Withdraw rights), and its `createdBy` is the system, so no other grant could ever reach it — yet it is where every user lands. Applied for anonymous users too, which is what lets a public-read `deployedAs: 'server'` site run `'deny'` with `defaultPathAccess: { read: 'allow' }` instead of opening branch access wholesale.
+
+Both are scoped to branches with **no ACL**, so writing an explicit ACL still restricts the branch — including against its own creator, which is how an admin locks down a branch someone else created. The base-branch grant in particular is applied as a fallback where the bare default would otherwise decide, never as a short-circuit ahead of the ACL: short-circuiting would replace `allowed_by_acl` with `base_branch` and silently strip Withdraw rights from ACL-listed users.
+
+Neither grant widens anything separately gated: `canPerformWorkflowAction` disables its system-branch grant on the same `isProtectedBranch` flag (so the base branch stays unsubmittable), `getBranchWriteProtection().readOnly` still blocks prod writes to it, path permissions still decide what content is readable, and the HTTP handler 401s anonymous callers before authorization runs at all.
 
 ### Layer 2: Path Permissions
 
@@ -1352,6 +1375,8 @@ Glob patterns (e.g., `content/posts/**`) restrict who can edit specific content 
 ### Layer 3: Content Access
 
 Combines branch and path checks into a single decision. Returns detailed denial reasons for debugging. The `checkContentAccess` function in `content.ts` is the main entry point for most authorization checks.
+
+For listing endpoints that check many paths in one request, `createContentAccessChecker` in the same module is the batch form: it hoists the branch check, the permissions-root resolution and the rule load out of the loop and returns a synchronous per-path checker. Use it — not a loop over `checkContentAccess` — anywhere a single request evaluates more than a handful of paths. Its callers today are the entries API, reference resolution, and the request-scoped `listEntries`/`buildContentTree`.
 
 **Per-request batch checking**: Resolving content access involves request-constant work — verifying branch access, resolving the settings-branch root, and loading the permission rules. When a single request authorizes many paths (for example, listing entries across dozens of collections), repeating that setup per path is wasteful: an entry-listing endpoint that re-loaded permissions and re-resolved the settings root once per entry took tens of seconds for a branch with many collections. The `createContentAccessChecker` factory (exposed on `CanopyServices`) does the request-constant work once and returns a synchronous per-path checker, so each authorization decision is a cheap in-memory rule match. The single-call `checkContentAccess` API is unchanged and now delegates to this batch primitive.
 
@@ -1620,6 +1645,27 @@ Merge detection is automatic. Once a branch is `submitted` or `approved` and has
 If the PR is closed on GitHub **without** merging, the worker records `pullRequestState: 'closed'` but leaves the branch's status untouched — a closed PR isn't necessarily terminal (it can be reopened), so an admin decides the next step rather than the worker guessing. The editor surfaces this as a red "closed" PR badge and disables request-changes (which assumes an open, convertible-to-draft PR); withdraw stays available as the recovery path back to `editing`.
 
 A `markAsMerged` API endpoint still exists, now as a manual/ops fallback rather than the primary path — useful when the worker isn't running or an admin wants to force-resolve a branch immediately instead of waiting for the next poll cycle. It accepts a branch in either `submitted` or `approved` status (matching the automatic path, which archives from either), so the manual fallback can reach anything the worker's poll could reach — including the case where the worker is down, or the PR was merged and then deleted from GitHub before a poll cycle ran. It verifies the merge via the GitHub API and builds its update through the same shared helper as the automatic path, so both produce identical archived-branch metadata.
+
+### Publish State Is Branch-Only
+
+There is **no per-entry draft or published field**, and there will not be one. Publish state is a property of the _branch_, not the entry:
+
+| State                      | How it is expressed                              | Public?                                                                                                                   |
+| -------------------------- | ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------- |
+| Not published              | The entry lives on an unmerged branch            | No — not built, no URL                                                                                                    |
+| Published                  | The entry's branch has merged to the base branch | Yes                                                                                                                       |
+| Published but unadvertised | Merged, with the SEO `noindex` field set         | Yes — built and reachable by direct link, but absent from sitemap, RSS and index grids, and served with `robots: noindex` |
+
+Two consequences follow, and both are load-bearing:
+
+- **`noindex` is not a hiding mechanism.** It means "don't index", not "don't exist" — the page is built and its URL resolves for anyone holding the link. If content must not be publicly reachable at all, it must not be merged.
+- **Enumeration helpers must not invent a publish filter.** `collectStaticPaths` and `collectRoutableEntries` apply no publish filtering at all — not even on `noindex` — because everything they can enumerate is by definition already published, since it merged (see [Static-Export Helpers](#static-export-helpers) below). `noindex` exclusion happens only on the surfaces that _advertise_ an entry, namely the sitemap helper, not on enumeration itself.
+
+**How to unpublish:** delete the entry on a branch and merge that branch. This is recoverable — `git revert` restores the file byte-for-byte including its content ID. Note that `validation/deletion-checker.ts` blocks deleting an entry that other entries still reference, so inbound links must be fixed first; that guard is the reason a soft "archived" state would save no work.
+
+**The corollary:** don't merge unfinished content. Work in progress stays on its branch, which means content branches may legitimately be long-lived — see [content-lifecycle-scenarios.md](.claude/future-tasks/content-lifecycle-scenarios.md) for the staleness and recovery guardrails that implies.
+
+Decided 2026-08-14; rationale and the rejected alternatives are recorded in [draft-publish-lifecycle.md](.claude/future-tasks/draft-publish-lifecycle.md).
 
 ## Branch Synchronization and Conflict Detection
 
@@ -2186,6 +2232,8 @@ The core exposes `collectStaticPaths()`, which reads routable entries via the bu
 
 Crucially, these structures contain **no framework-specific types**. They are plain data that any framework adapter can map onto its own static-generation shape. The helper supports scoping to a collection subtree and filtering by predicate (for example, dropping the root index or keeping only one entry type).
 
+It applies **no publish filtering**, deliberately: publish state is branch-only, so everything a build can enumerate has already merged and is by definition published (see [Publish State Is Branch-Only](#publish-state-is-branch-only)). The one per-entry exclusion any static helper applies is the SEO `noindex` field, and only on surfaces that _advertise_ an entry — the sitemap, not path enumeration.
+
 ### Thin Framework Adapter
 
 The `canopycms-next` package provides `collectStaticParams()`, a framework-agnostic free helper built on the core's `collectStaticPaths()`. It maps the neutral descriptors into the array Next.js's `generateStaticParams` expects, supporting both catch-all routes (param value is the `segments` array) and single-segment routes (param value is the entry `slug`, paired with a collection scope). A `basePath` option supports catch-all routes nested under a URL prefix (e.g. `app/docs/[[...slug]]`): entries are scoped to that prefix and `segments` are made relative to it, so the params match the route.
@@ -2346,6 +2394,14 @@ Defense in depth. Branch access controls who can see a branch. Path permissions 
 ### Why scope `defaultPathAccess` by permission level?
 
 Before this, `defaultPathAccess` applied a single verdict to every permission level, so a deployment that wanted public read either had to deny everything by default (forcing an explicit read-only rule for every public path) or allow everything by default (accidentally opening edit and review too). The object form (`{ read: 'allow' }`) lets a `deployedAs: 'server'` site express "public read, everything else still requires a rule" as one config value. Unspecified levels fail closed to `deny` rather than inheriting a specified sibling level, so scoping read access can never accidentally loosen edit or review by omission.
+
+### Why does `canopycms init` scaffold `defaultBranchAccess: 'deny'`?
+
+Because the schema already defaulted to `'deny'` and the template said `'allow'`, so "secure by default" was true of the package and false of every project the CLI generated — the divergence was an accident of the template, not a decision.
+
+The flip was blocked on `'deny'` being unusable rather than merely strict: it made a freshly created branch inert for its own creator, and made the protected base branch — which takes no ACL and has no creator — unreachable for every non-admin, with no way to configure around it. The two grants documented under [Layer 1](#layer-1-branch-access) fix that, and only then does the default mean something an adopter would actually want: "branches you neither created nor were invited to."
+
+The frictionless first run that `'allow'` appeared to provide was never coming from `'allow'`. The template does not set `defaultPathAccess` at all, so scaffolded projects were already fail-closed on the path layer; what makes a fresh `canopycms init` project work is `canopycms-auth-dev` auto-setting `CANOPY_BOOTSTRAP_ADMIN_IDS`, and admins bypass both layers. `'allow'` therefore only ever took effect for non-admin editors — precisely the multi-editor case it should not have covered. The template now states both defaults explicitly rather than leaving the path layer invisible.
 
 ### Why is `mode` required, and why an allowlist (not a denylist) for auth plugin trust?
 

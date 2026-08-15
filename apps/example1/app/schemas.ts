@@ -4,21 +4,15 @@ import {
   defineEntrySchema,
   defineInlineFieldGroup,
   defineNestedFieldGroup,
+  defineSeoFieldGroup,
 } from 'canopycms'
 import { createEntrySchemaRegistry } from 'canopycms/server'
 
-// Shared inline field group: fields are stored flat in the content file.
-// TypeFromEntrySchema on a schema that includes this group will have
-// { metaTitle: string, metaDescription: string } merged into the top-level shape.
-const seoGroup = defineInlineFieldGroup({
-  name: 'seo',
-  label: 'SEO',
-  description: 'Search engine optimization settings',
-  fields: [
-    { name: 'metaTitle', type: 'string', label: 'Meta Title' },
-    { name: 'metaDescription', type: 'string', label: 'Meta Description' },
-  ],
-})
+// The recommended SEO group, shipped by CanopyCMS: metaTitle / metaDescription / ogImage /
+// ogType / canonical / noindex / twitterCard, all optional. Flat by default, so
+// TypeFromEntrySchema merges them into the top-level shape and entryToMetadata reads them with
+// no configuration. `noindex` drives BOTH robots and sitemap exclusion (see app/sitemap.ts).
+const seoGroup = defineSeoFieldGroup()
 
 // Shared inline field group for navigation metadata.
 const navGroup = defineInlineFieldGroup({
@@ -57,6 +51,29 @@ const ctaBlock = defineBlockTemplate({
   fields: [
     { name: 'title', type: 'string' },
     { name: 'ctaText', type: 'string' },
+  ],
+})
+
+// Shared/referenced block recipe (see README's "Shared / Referenced Blocks"): the actual
+// content lives once, in its own entry type below; the block template just holds a
+// reference to it, scoped by entryTypes so it isn't tied to any one collection. Editing
+// the snippet entry updates every page block that references it.
+export const snippetSchema = defineEntrySchema([
+  { name: 'title', type: 'string', label: 'Title' },
+  { name: 'ctaText', type: 'string', label: 'Button Text' },
+])
+
+const sharedCtaBlock = defineBlockTemplate({
+  name: 'sharedCta',
+  label: 'Shared CTA',
+  fields: [
+    {
+      name: 'snippet',
+      type: 'reference',
+      label: 'CTA Snippet',
+      entryTypes: ['snippet'],
+      resolvedSchema: snippetSchema,
+    },
   ],
 })
 
@@ -121,7 +138,7 @@ export const postSchema = defineEntrySchema([
   { name: 'body', type: 'markdown', label: 'Body', isBody: true },
   // Ordered, repeatable list of heterogeneous section blocks. The shared templates above are
   // reused here (and could be embedded in other schemas the same way).
-  { name: 'blocks', type: 'block', templates: [heroBlock, ctaBlock] },
+  { name: 'blocks', type: 'block', templates: [heroBlock, ctaBlock, sharedCtaBlock] },
 ])
 
 export const docSchema = defineEntrySchema([
@@ -143,6 +160,7 @@ export const entrySchemaRegistry = createEntrySchemaRegistry({
   author: authorSchema,
   doc: docSchema,
   home: homeSchema,
+  snippet: snippetSchema,
 })
 
 // Typed entry-type map — pass as the second generic to `canopy.buildContentTree<NavFields, EntryTypes>`
@@ -154,3 +172,4 @@ export type HomeContent = EntryTypes['home']
 export type AuthorContent = EntryTypes['author']
 export type PostContent = EntryTypes['post'] & { slug: string }
 export type DocContent = EntryTypes['doc'] & { slug: string }
+export type SnippetContent = EntryTypes['snippet']

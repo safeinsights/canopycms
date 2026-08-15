@@ -18,9 +18,18 @@ ARCHITECTURE.md section) covering:
   branch when the schema changes underneath it (rebase? migration? validation
   failure surfacing)? The `migrate` CLI + schema markers exist; the workflow
   story does not.
-- **Long-lived vs short-lived branches**: current assumption is short-lived;
-  state it and design the guardrails that keep branches short (staleness
-  surfacing, nudges, auto-archival policy).
+- **Long-lived vs short-lived branches**: **reframed 2026-08-14.** The original
+  framing was "assume short-lived, design guardrails that keep branches short."
+  Two things changed that. (1) The branch-only publish decision
+  ([draft-publish-lifecycle.md](draft-publish-lifecycle.md)) makes a long-lived
+  branch the *supported* answer for in-progress content — a half-written article
+  is simply an open branch, since there is no per-entry draft state. (2) Per JP:
+  assume some branches will be long-lived regardless, **because human reviewers
+  forget about them.** So design for staleness *surfacing and recovery* — how a
+  forgotten branch becomes visible, how it rebases without accumulating
+  conflict debt, how it is retired — rather than for prevention. Auto-archival
+  policy still applies, but as a backstop for the forgotten case, not as a way
+  to enforce short branches.
 - **Synchronization**: upstream merges now fast-forward the base workspace and
   auto-archive merged branches (PR #144); what remains is the conflict story for
   in-flight branches when upstream moves (surfacing, resolution UX).

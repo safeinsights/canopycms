@@ -1,6 +1,12 @@
 import { loadBranchContext, loadOrCreateBranchContext } from './branch-workspace'
 import { ContentStore, ContentStoreError } from './content-store'
-import { resolveBranchPaths, type LogicalPath, type PhysicalPath, type Slug } from './paths'
+import {
+  resolveBranchPaths,
+  type ContentId,
+  type LogicalPath,
+  type PhysicalPath,
+  type Slug,
+} from './paths'
 import { trimSlashes } from './paths/normalize'
 import { type OperatingMode } from './operating-mode'
 import type { CanopyServices } from './services'
@@ -32,11 +38,55 @@ export interface ReadContentInput {
   resolveEntryLinks?: boolean
 }
 
+/**
+ * Structural metadata surfaced alongside a resolved content read. Shared by
+ * `ContentReader['read']` here and by `CanopyBuildContext`'s `read`/`readByUrlPath`
+ * (context.ts), which both wrap this same reader.
+ */
+export interface ContentReadMeta {
+  /**
+   * Absolute filesystem path to the resolved entry file. It is **server-only**
+   * -- do not serialize it to the client or embed it in public output, as it
+   * reveals the deployment's filesystem layout (home dir / EFS mount / branch
+   * name).
+   */
+  physicalPath: PhysicalPath
+  /**
+   * The resolved entry type name, read from the entry's own filename
+   * (`{type}.{slug}.{id}.{ext}`) -- immutable once the file is created, and
+   * NOT re-validated against the collection's current `entries` config on
+   * every read. It is therefore usually, but not guaranteed to be, a key in
+   * the collection's `entries` config: it can diverge if an entry type was
+   * renamed or removed from the schema after files using the old name were
+   * created, or if the file was hand-authored with an unrecognized type
+   * token.
+   *
+   * For a legacy entry file predating embedded-type filenames (`{slug}.{ext}`),
+   * there is no type recorded on disk at all -- `entryType` silently falls
+   * back to the collection's DEFAULT entry type, which may or may not be what
+   * the file actually is. `entryId` being `undefined` (below) is the signal
+   * that this happened: when `entryId` is `undefined`, `entryType` is
+   * inferred rather than read.
+   */
+  entryType: string
+  /**
+   * The entry's 12-char Base58 content ID, when the resolved file carries one.
+   * Undefined only for legacy entry files predating embedded-ID filenames
+   * (`{slug}.{ext}` rather than `{type}.{slug}.{id}.{ext}`) -- see the
+   * `entryType` caveat above for what that implies about it.
+   */
+  entryId?: ContentId
+}
+
 export interface ContentReader {
   read: <T = unknown>(
     input: ReadContentInput,
     message?: string,
-  ) => Promise<{ data: T; path: string; meta: { physicalPath: PhysicalPath } }>
+  ) => Promise<{
+    data: T
+    path: string
+    meta: ContentReadMeta
+  }>
 }
 
 /**
@@ -166,10 +216,23 @@ export const createContentReader = (options: ContentReaderOptions): ContentReade
     // for server-side colocated-artifact reads (e.g. a sibling profile.json). Already
     // computed here for permission checks; just carried through.
     let physicalPath: PhysicalPath
+    // Entry type + content ID are already resolved as part of path resolution
+    // (buildPaths() derives both from the schema item / filename) — surfaced on
+    // read() / readByUrlPath() so callers can route or key by them without a
+    // separate listEntries lookup or filename parse.
+    let entryType: string
+    let entryId: ContentId | undefined
     try {
       const resolved = await store.resolveDocumentPath(entryPath, slug ?? '')
       relativePath = resolved.relativePath
       physicalPath = resolved.absolutePath as PhysicalPath
+      // resolveDocumentPath() always sets entryTypeName for a valid schema item
+      // (collection entries fall back to 'entry'; entry-type items delegate to
+      // their parent collection with their own name), so no further fallback
+      // is needed here — id is the one field that can be legitimately absent,
+      // for legacy entry files without an embedded ID (see ContentReadMeta).
+      entryType = resolved.entryTypeName
+      entryId = resolved.id as ContentId | undefined
     } catch (err) {
       const message = err instanceof ContentStoreError ? err.message : 'Invalid content request'
       const code = err instanceof ContentStoreError ? err.code : 'VALIDATION'
@@ -211,7 +274,7 @@ export const createContentReader = (options: ContentReaderOptions): ContentReade
       const doc = await store.read(entryPath, slug ?? '', {
         resolveReferences: input.resolveReferences ?? true,
       })
-      return { doc, store, physicalPath }
+      return { doc, store, physicalPath, entryType, entryId }
     } catch (err: unknown) {
       if (isNotFoundError(err)) return null
       throw err
@@ -228,7 +291,7 @@ export const createContentReader = (options: ContentReaderOptions): ContentReade
       const defaultMessage = `Content not found for ${entryPath}${slug ? `/${slug}` : ''} on branch ${branchName}`
       throw new ContentStoreError(message ?? defaultMessage, 'NOT_FOUND')
     }
-    const { doc, store, physicalPath } = result
+    const { doc, store, physicalPath, entryType, entryId } = result
 
     // For md/mdx format, merge the body into the data so callers get a complete object.
     // The field name comes from the schema's isBody flag (defaults to 'body').
@@ -250,7 +313,7 @@ export const createContentReader = (options: ContentReaderOptions): ContentReade
       slug,
       branch: branchName,
     })
-    return { data, path, meta: { physicalPath } }
+    return { data, path, meta: { physicalPath, entryType, entryId } }
   }
 
   return { read }

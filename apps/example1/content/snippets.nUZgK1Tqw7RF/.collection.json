@@ -1,0 +1,12 @@
+{
+  "name": "snippets",
+  "label": "Snippets",
+  "entries": [
+    {
+      "name": "snippet",
+      "format": "json",
+      "schema": "snippet"
+    }
+  ],
+  "order": ["bjWxMJ8aXnHo"]
+}

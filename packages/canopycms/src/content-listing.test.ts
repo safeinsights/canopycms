@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import os from 'node:os'
@@ -144,6 +144,60 @@ describe('parseTypedFilename', () => {
       slug: 'getting.started',
       id: 'aB3cD4eF5gH6',
     })
+  })
+
+  describe('without entryTypes (public adopter usage)', () => {
+    it('parses any type token when entryTypes is omitted', () => {
+      const result = parseTypedFilename('unknown.slug.vh2WdhwAFiSL.md')
+      expect(result).toEqual({
+        type: 'unknown',
+        slug: 'slug',
+        id: 'vh2WdhwAFiSL',
+      })
+    })
+
+    it('still rejects an invalid content ID', () => {
+      const result = parseTypedFilename('post.slug.INVALID!!!.md')
+      expect(result).toBeNull()
+    })
+
+    it('still rejects too few parts', () => {
+      const result = parseTypedFilename('post.md')
+      expect(result).toBeNull()
+    })
+
+    it('matches the entryTypes-provided result for a known type', () => {
+      const withTypes = parseTypedFilename('post.hello-world.vh2WdhwAFiSL.md', entryTypes)
+      const withoutTypes = parseTypedFilename('post.hello-world.vh2WdhwAFiSL.md')
+      expect(withoutTypes).toEqual(withTypes)
+    })
+
+    it('parses a normal filename with a real type segment', () => {
+      const result = parseTypedFilename('doc.getting-started.vh2WdhwAFiSL.mdx')
+      expect(result).toEqual({
+        type: 'doc',
+        slug: 'getting-started',
+        id: 'vh2WdhwAFiSL',
+      })
+    })
+
+    it('rejects a dotfile whose first segment would otherwise parse as an empty type', () => {
+      // Reported by review: without a type check, this used to parse as
+      // { type: '', slug: 'hidden.file', id: 'aB3cD4eF5gH6' } -- an empty
+      // string is never a legal entry type.
+      const result = parseTypedFilename('.hidden.file.aB3cD4eF5gH6.md')
+      expect(result).toBeNull()
+    })
+
+    it('rejects a filename with multiple leading dots', () => {
+      const result = parseTypedFilename('..thing.aB3cD4eF5gH6.md')
+      expect(result).toBeNull()
+    })
+  })
+
+  it('rejects a dotfile even when entryTypes is supplied (unchanged, byte-identical behavior)', () => {
+    const result = parseTypedFilename('.hidden.file.aB3cD4eF5gH6.md', entryTypes)
+    expect(result).toBeNull()
   })
 })
 
@@ -548,6 +602,32 @@ describe('listEntries', () => {
     expect(entries[0].collectionId).toBe(collectionId)
   })
 
+  it('includes updatedAt sourced from the entry file mtime', async () => {
+    const contentDir = path.join(tempDir, 'content')
+    await fs.mkdir(contentDir)
+
+    const { dir: postsDir } = await createCollection(contentDir, 'posts')
+    const entryId = await createEntry(postsDir, 'post', 'hello', 'md', { title: 'Hello' })
+    const filePath = path.join(postsDir, `post.hello.${entryId}.md`)
+    const stats = await fs.stat(filePath)
+
+    const schema: RootCollectionConfig = {
+      collections: [
+        {
+          name: 'posts',
+          path: 'posts',
+          entries: [{ name: 'post', format: 'md', schema: [] }],
+        },
+      ],
+    }
+    const flat = flattenSchema(schema, 'content')
+
+    const entries = await listEntries(tempDir, flat, 'content')
+
+    expect(entries).toHaveLength(1)
+    expect(entries[0].updatedAt).toBe(stats.mtime.toISOString())
+  })
+
   it('urlPath collapses index entries to parent collection path', async () => {
     const contentDir = path.join(tempDir, 'content')
     await fs.mkdir(contentDir)
@@ -686,5 +766,220 @@ describe('listEntries', () => {
 
     expect(postEntry?.schema).toEqual(postSchema)
     expect(pageEntry?.schema).toEqual(pageSchema)
+  })
+
+  // ---------------------------------------------------------------------------
+  // Unparseable-filename files: silent outside build mode, a hard failure inside it.
+  //
+  // Regression: a content-extension file whose name doesn't match
+  // {type}.{slug}.{id}.{ext} (e.g. a schema rename left behind a stale file, or an entry type
+  // declared in one collection but not another) was silently dropped from listEntries — no
+  // output at all outside CANOPYCMS_DEBUG=true — so the page vanished from a `next build` and
+  // the sitemap with zero signal. See static/index.ts's assertBuildEntriesValid for the sibling
+  // guard this mirrors for schema-invalid (but parseable) entries.
+  // ---------------------------------------------------------------------------
+  describe('unparseable-filename files', () => {
+    afterEach(() => {
+      vi.unstubAllEnvs()
+    })
+
+    it('is silently skipped outside build mode (existing behavior preserved)', async () => {
+      const contentDir = path.join(tempDir, 'content')
+      await fs.mkdir(contentDir)
+
+      const { dir: postsDir } = await createCollection(contentDir, 'posts')
+      await createEntry(postsDir, 'post', 'hello', 'md', { title: 'Hello' })
+      // A stray file: has a recognized content extension but not {type}.{slug}.{id}.{ext}
+      // (no known entry type as its first segment).
+      await fs.writeFile(path.join(postsDir, 'article.lost-page.4fBqT78gcaLd.md'), '# Lost')
+
+      const schema: RootCollectionConfig = {
+        collections: [
+          { name: 'posts', path: 'posts', entries: [{ name: 'post', format: 'md', schema: [] }] },
+        ],
+      }
+      const flat = flattenSchema(schema, 'content')
+
+      const entries = await listEntries(tempDir, flat, 'content')
+
+      expect(entries).toHaveLength(1)
+      expect(entries[0].slug).toBe('hello')
+    })
+
+    it('throws in build mode (CANOPY_BUILD_MODE=true) instead of silently dropping the page', async () => {
+      vi.stubEnv('CANOPY_BUILD_MODE', 'true')
+
+      const contentDir = path.join(tempDir, 'content')
+      await fs.mkdir(contentDir)
+
+      const { dir: postsDir } = await createCollection(contentDir, 'posts')
+      await createEntry(postsDir, 'post', 'hello', 'md', { title: 'Hello' })
+      await fs.writeFile(path.join(postsDir, 'article.lost-page.4fBqT78gcaLd.md'), '# Lost')
+
+      const schema: RootCollectionConfig = {
+        collections: [
+          { name: 'posts', path: 'posts', entries: [{ name: 'post', format: 'md', schema: [] }] },
+        ],
+      }
+      const flat = flattenSchema(schema, 'content')
+
+      await expect(listEntries(tempDir, flat, 'content')).rejects.toThrow(
+        /look like malformed content entries.*article\.lost-page\.4fBqT78gcaLd\.md/s,
+      )
+    })
+
+    it('does not throw in build mode when every file parses', async () => {
+      vi.stubEnv('CANOPY_BUILD_MODE', 'true')
+
+      const contentDir = path.join(tempDir, 'content')
+      await fs.mkdir(contentDir)
+
+      const { dir: postsDir } = await createCollection(contentDir, 'posts')
+      await createEntry(postsDir, 'post', 'hello', 'md', { title: 'Hello' })
+
+      const schema: RootCollectionConfig = {
+        collections: [
+          { name: 'posts', path: 'posts', entries: [{ name: 'post', format: 'md', schema: [] }] },
+        ],
+      }
+      const flat = flattenSchema(schema, 'content')
+
+      const entries = await listEntries(tempDir, flat, 'content')
+      expect(entries).toHaveLength(1)
+    })
+
+    it('does not throw in build mode for a bare README.md dropped in a collection directory', async () => {
+      // README.md has only 2 dot-separated segments -- it could never have parsed as
+      // {type}.{slug}.{id}.{ext} (which needs 4+), so it was never entry-shaped to begin with.
+      vi.stubEnv('CANOPY_BUILD_MODE', 'true')
+
+      const contentDir = path.join(tempDir, 'content')
+      await fs.mkdir(contentDir)
+
+      const { dir: postsDir } = await createCollection(contentDir, 'posts')
+      await createEntry(postsDir, 'post', 'hello', 'md', { title: 'Hello' })
+      await fs.writeFile(path.join(postsDir, 'README.md'), '# Not an entry')
+
+      const schema: RootCollectionConfig = {
+        collections: [
+          { name: 'posts', path: 'posts', entries: [{ name: 'post', format: 'md', schema: [] }] },
+        ],
+      }
+      const flat = flattenSchema(schema, 'content')
+
+      const entries = await listEntries(tempDir, flat, 'content')
+      expect(entries).toHaveLength(1)
+      expect(entries[0].slug).toBe('hello')
+    })
+
+    it('does not throw in build mode for a colocated sibling artifact ({contentId}.suffix.ext)', async () => {
+      // A sibling artifact named per the entryTransforms/readSibling convention documented in
+      // the README (e.g. `${contentId}.profile.json`) has only 3 dot-separated segments -- one
+      // short of the 4 a real entry needs -- so it is never mistaken for a malformed entry.
+      vi.stubEnv('CANOPY_BUILD_MODE', 'true')
+
+      const contentDir = path.join(tempDir, 'content')
+      await fs.mkdir(contentDir)
+
+      const { dir: authorsDir } = await createCollection(contentDir, 'authors')
+      const entryId = await createEntry(authorsDir, 'author', 'jane-doe', 'json', {
+        name: 'Jane Doe',
+      })
+      await fs.writeFile(
+        path.join(authorsDir, `${entryId}.profile.json`),
+        JSON.stringify({ bio: 'A sibling artifact, not an entry.' }),
+      )
+
+      const schema: RootCollectionConfig = {
+        collections: [
+          {
+            name: 'authors',
+            path: 'authors',
+            entries: [{ name: 'author', format: 'json', schema: [] }],
+          },
+        ],
+      }
+      const flat = flattenSchema(schema, 'content')
+
+      const entries = await listEntries(tempDir, flat, 'content')
+      expect(entries).toHaveLength(1)
+      expect(entries[0].slug).toBe('jane-doe')
+    })
+
+    it('still throws in build mode for a dotfile with a 4+ segment shape (excluded regardless)', async () => {
+      // Belt-and-suspenders case: a dot-prefixed name is always skipped outright, even when it
+      // has enough segments to otherwise look like a malformed entry.
+      vi.stubEnv('CANOPY_BUILD_MODE', 'true')
+
+      const contentDir = path.join(tempDir, 'content')
+      await fs.mkdir(contentDir)
+
+      const { dir: postsDir } = await createCollection(contentDir, 'posts')
+      await createEntry(postsDir, 'post', 'hello', 'md', { title: 'Hello' })
+      await fs.writeFile(path.join(postsDir, '.article.lost-page.4fBqT78gcaLd.md'), '# Lost')
+
+      const schema: RootCollectionConfig = {
+        collections: [
+          { name: 'posts', path: 'posts', entries: [{ name: 'post', format: 'md', schema: [] }] },
+        ],
+      }
+      const flat = flattenSchema(schema, 'content')
+
+      const entries = await listEntries(tempDir, flat, 'content')
+      expect(entries).toHaveLength(1)
+    })
+
+    it('throws in build mode for a 3-segment file that lost its ID segment ({type}.{slug}.{ext})', async () => {
+      // The likeliest way a file loses its parse is losing its ID segment entirely -- a
+      // hand-created file, a bad rename, a merge. `post.hello-world.md` has only 3
+      // dot-separated segments (one short of the 4-segment cutoff the guard used to require),
+      // so it used to be silently dropped exactly like README.md -- except this file's first
+      // segment ("post") IS a real entry type in this collection, so it was almost certainly
+      // meant to be an entry, not an unrelated file that happens to share the extension.
+      vi.stubEnv('CANOPY_BUILD_MODE', 'true')
+
+      const contentDir = path.join(tempDir, 'content')
+      await fs.mkdir(contentDir)
+
+      const { dir: postsDir } = await createCollection(contentDir, 'posts')
+      await createEntry(postsDir, 'post', 'hello', 'md', { title: 'Hello' })
+      await fs.writeFile(path.join(postsDir, 'post.hello-world.md'), '# Lost my ID')
+
+      const schema: RootCollectionConfig = {
+        collections: [
+          { name: 'posts', path: 'posts', entries: [{ name: 'post', format: 'md', schema: [] }] },
+        ],
+      }
+      const flat = flattenSchema(schema, 'content')
+
+      await expect(listEntries(tempDir, flat, 'content')).rejects.toThrow(
+        /look like malformed content entries.*post\.hello-world\.md/s,
+      )
+    })
+
+    it('does not throw in build mode for a 3-segment file whose first segment is NOT a known entry type', async () => {
+      // Confirms the new 3-segment check is scoped to known entry types, not "any 3-segment
+      // file" -- otherwise it would swallow the README.md / sibling-artifact cases this guard
+      // must never flag.
+      vi.stubEnv('CANOPY_BUILD_MODE', 'true')
+
+      const contentDir = path.join(tempDir, 'content')
+      await fs.mkdir(contentDir)
+
+      const { dir: postsDir } = await createCollection(contentDir, 'posts')
+      await createEntry(postsDir, 'post', 'hello', 'md', { title: 'Hello' })
+      await fs.writeFile(path.join(postsDir, 'unrelated.notice.md'), '# Not an entry type')
+
+      const schema: RootCollectionConfig = {
+        collections: [
+          { name: 'posts', path: 'posts', entries: [{ name: 'post', format: 'md', schema: [] }] },
+        ],
+      }
+      const flat = flattenSchema(schema, 'content')
+
+      const entries = await listEntries(tempDir, flat, 'content')
+      expect(entries).toHaveLength(1)
+      expect(entries[0].slug).toBe('hello')
+    })
   })
 })

@@ -89,7 +89,12 @@ export interface ContentTreeExtractMeta<TEntryTypes = DefaultEntryTypes> {
   }[keyof TEntryTypes & string]
 }
 import type { LogicalPath, ContentId, Slug } from './paths/types'
-import { listCollectionEntries, sortByOrder, type CollectionListItem } from './content-listing'
+import {
+  listCollectionEntries,
+  sortByOrder,
+  type CollectionListItem,
+  type ContentVisibilityOptions,
+} from './content-listing'
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -147,7 +152,20 @@ export interface BuildContentTreeOptions<T = unknown, TEntryTypes = DefaultEntry
    * or entry reads beneath the rejected node).
    */
   filter?: (node: ContentTreeNode<T>) => boolean
-  /** Custom URL path builder. Default: strips content root prefix, collapses index entries to parent path, lowercases. */
+  /**
+   * Custom URL path builder. Replaces the default entirely — it is not composed
+   * with it. To extend rather than replace the default behavior, call the exported
+   * `defaultBuildPath(logicalPath, contentRootName, kind)` from inside your
+   * function and post-process its result (see `canopycms/server`).
+   *
+   * Default behavior (`defaultBuildPath`):
+   * - Strips the `{contentRootName}/` prefix from `logicalPath`.
+   * - For entries: collapses an `index` slug to its parent collection's path
+   *   (`content/guides/index` → `/guides`, not `/guides/index`); a collection
+   *   literally named `index` is unaffected (only entries collapse).
+   * - Lowercases the entire result.
+   * - Prepends `/`; the content root's own index collapses to `/`.
+   */
   buildPath?: (logicalPath: LogicalPath, kind: 'collection' | 'entry') => string
   /**
    * Custom sort for children at each level.
@@ -184,8 +202,13 @@ const groupByParent = (flat: FlatSchemaItem[]): Map<string | undefined, Collecti
  *
  * Index entries (slug 'index') are collapsed to their parent collection path,
  * matching the URL convention used by readByUrlPath and listEntries.
+ *
+ * Exported (also re-exported from `canopycms/server`) so adopters who want to
+ * EXTEND this behavior rather than replace it can call it from inside their own
+ * `buildPath` and post-process the result, instead of reimplementing the
+ * content-root-strip / index-collapse / lowercase logic verbatim.
  */
-const defaultBuildPath = (
+export const defaultBuildPath = (
   logicalPath: LogicalPath,
   contentRootName: string,
   kind: 'collection' | 'entry',
@@ -216,12 +239,14 @@ const defaultBuildPath = (
  * @param flatSchema - Flattened schema items (from flattenSchema)
  * @param contentRootName - The content root name (e.g. "content")
  * @param options - Tree-building options
+ * @param visibility - Internal path-ACL predicate; see `ContentVisibilityOptions`
  */
 export async function buildContentTree<T = unknown, TEntryTypes = DefaultEntryTypes>(
   branchRoot: string,
   flatSchema: FlatSchemaItem[],
   contentRootName: string,
   options?: BuildContentTreeOptions<T, TEntryTypes>,
+  visibility?: ContentVisibilityOptions,
 ): Promise<ContentTreeNode<T>[]> {
   const childrenByParent = groupByParent(flatSchema)
   const extract = options?.extract
@@ -230,6 +255,20 @@ export async function buildContentTree<T = unknown, TEntryTypes = DefaultEntryTy
     options?.buildPath ?? ((lp: LogicalPath, kind) => defaultBuildPath(lp, contentRootName, kind))
   const customSort = options?.sort
   const maxDepth = options?.maxDepth
+
+  /**
+   * Every entry read in this tree goes through here, so a denied entry is invisible to
+   * BOTH the entry nodes and the `indexEntry` surfaced to a collection's `extract` —
+   * the latter would otherwise hand a denied index entry's full `data` to the caller
+   * even though no node for it is ever emitted.
+   */
+  const shouldInclude = visibility?.shouldInclude
+  const listVisibleEntries = async (
+    collection: CollectionSchemaItem,
+  ): Promise<CollectionListItem[]> => {
+    const entries = await listCollectionEntries(branchRoot, collection)
+    return shouldInclude ? entries.filter((e) => shouldInclude(e.physicalPath)) : entries
+  }
 
   // Find the starting collection(s)
   const rootPath = options?.rootPath ?? contentRootName
@@ -276,7 +315,7 @@ export async function buildContentTree<T = unknown, TEntryTypes = DefaultEntryTy
     // if `filter` rejects this collection, returning early short-circuits all
     // descendant I/O — preserving the pre-existing "filter prunes whole subtree"
     // optimization that the directory-as-page reorder would otherwise lose.
-    const entries = await listCollectionEntries(branchRoot, collection)
+    const entries = await listVisibleEntries(collection)
 
     // Surface the 'index' entry (when present) to extract via meta.
     // 'index' is the same magic slug Canopy uses in defaultBuildPath to collapse
@@ -335,7 +374,7 @@ export async function buildContentTree<T = unknown, TEntryTypes = DefaultEntryTy
   // Also get entries directly in the root collection
   const [collectionNodes, rootEntries] = await Promise.all([
     Promise.all(topLevelCollections.map((child) => buildNode(child, 1))),
-    listCollectionEntries(branchRoot, rootCollection),
+    listVisibleEntries(rootCollection),
   ])
 
   const rootEntryNodes: ContentTreeNode<T>[] = []

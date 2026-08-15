@@ -60,7 +60,16 @@ so a deployment can run without the check that binds tokens to expected origins.
 
 ## Related
 
-- [acl-defaults-and-dead-path-checker.md](acl-defaults-and-dead-path-checker.md)
+- [acl-defaults-and-dead-path-checker.md](resolved/acl-defaults-and-dead-path-checker.md)
   — the scaffolded `'allow'` default is what keeps these latent today
 - [list-permission-level.md](list-permission-level.md) — a new "list" level would
   add a sixth matcher unless this lands first
+- [listentries-acl-awareness.md](resolved/listentries-acl-awareness.md) —
+  RESOLVED 2026-08-14. The runtime `listEntries`/`buildContentTree` now enforce
+  path ACLs via `createContentAccessChecker`, which routes through matcher #1
+  (`authorization/path.ts`). That added **no** sixth matcher, but it did add two
+  more callers of matcher #1 — migrate them with the rest when the shared
+  matcher lands
+  rather than adding a **sixth** divergent ACL check — and if this
+  consolidation lands first, that file's filtering option gets materially
+  cheaper

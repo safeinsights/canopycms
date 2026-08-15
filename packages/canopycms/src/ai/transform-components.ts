@@ -51,6 +51,82 @@ const INLINE_PREFIX = '<<INLINECODE'
 const INLINE_SUFFIX = '>>'
 const INLINE_RESTORE_RE = /<<INLINECODE(\d+)>>/g
 
+/** True if `line` is a valid closing fence line for `marker` ("```" or "~~~"): the marker
+ * followed by nothing but whitespace through end of line — matching what `\1\s*$` required in
+ * the regex this replaced. */
+function isFenceCloseLine(line: string, marker: string): boolean {
+  return line.startsWith(marker) && /^\s*$/.test(line.slice(marker.length))
+}
+
+/**
+ * Mask fenced code blocks (` ``` `/`~~~`), capturing each block's raw text (fence lines
+ * included) exactly as `maskCodeBlocks` used to via `/^(```|~~~).*\n[\s\S]*?\n\1\s*$/gm`.
+ *
+ * A hand-rolled line scan, not that regex: it is a polynomial-ReDoS shape (measured ~9s on
+ * ~530KB of body text with many unclosed fence openers — an ordinary authoring accident, not a
+ * crafted payload) that CodeQL and three review rounds both missed elsewhere in this package
+ * (see `ai/to-plain-text.ts`'s identical fix). The lazy `[\s\S]*?` has no bound on how far it
+ * must scan looking for a closing `\1` that, for an unclosed fence, never arrives — it exhausts
+ * to the end of the string before giving up on that starting line, and `/gm` retries the same
+ * exhaustive scan at every subsequent fence-opener line.
+ *
+ * This scans each line once. `nextCloseLine` is precomputed per marker type via a single
+ * backward pass, so any opener's nearest closer (or "none exists") is an O(1) lookup instead of
+ * a fresh forward scan — the change that keeps the whole function O(n) regardless of how many
+ * fences are opened and never closed.
+ *
+ * One documented, harmless divergence from the replaced regex: `\s*` there is greedy over `\s`
+ * (which includes `\n`), so on a closer immediately followed by blank lines it could consume
+ * some of them into the match. This scan never does. Verified by fuzzing 8,000 random
+ * fence/marker combinations through this module's actual `applyComponentTransforms` pipeline:
+ * final output was byte-identical in 7,999/8,000 cases, and the one divergence was an extra
+ * blank line in a maximally adversarial nested-tag-plus-fence input, never a content change —
+ * `\s` is never itself matched by any component-tag pattern, so which side of a placeholder a
+ * run of blank lines lands on cannot affect what a transform sees or produces.
+ */
+function maskFencedCodeBlocks(body: string, blocks: string[]): string {
+  const lines = body.split('\n')
+  const lineCount = lines.length
+
+  // nextCloseLine[marker][i] = the nearest index >= i that closes `marker`, or -1 if none exists
+  // at or after i. Built right-to-left so each entry is O(1) given the next one.
+  const nextCloseLine = {
+    '```': new Array<number>(lineCount + 1).fill(-1),
+    '~~~': new Array<number>(lineCount + 1).fill(-1),
+  }
+  for (let i = lineCount - 1; i >= 0; i--) {
+    nextCloseLine['```'][i] = isFenceCloseLine(lines[i], '```') ? i : nextCloseLine['```'][i + 1]
+    nextCloseLine['~~~'][i] = isFenceCloseLine(lines[i], '~~~') ? i : nextCloseLine['~~~'][i + 1]
+  }
+
+  const outLines: string[] = []
+  let i = 0
+  while (i < lineCount) {
+    const line = lines[i]
+    const marker = line.startsWith('```') ? '```' : line.startsWith('~~~') ? '~~~' : null
+
+    // A closer can never be the very next line: the original pattern requires TWO separate `\n`
+    // matches between the opener and `\1` (one ending the opener's line, one immediately before
+    // the closer), so even zero-width content needs a line of its own between them.
+    const searchFrom = i + 2
+    const closeIndex = marker && searchFrom < lineCount ? nextCloseLine[marker][searchFrom] : -1
+
+    if (!marker || closeIndex === -1) {
+      outLines.push(line)
+      i++
+      continue
+    }
+
+    // Whole matched span (fence lines included), matching the replaced regex's own capture.
+    const block = lines.slice(i, closeIndex + 1).join('\n')
+    const idx = blocks.length
+    blocks.push(block)
+    outLines.push(`${BLOCK_PREFIX}${idx}${BLOCK_SUFFIX}`)
+    i = closeIndex + 1
+  }
+  return outLines.join('\n')
+}
+
 /**
  * Mask fenced code blocks and inline code spans so component transforms
  * don't touch them. Returns the masked string and a restore function.
@@ -60,11 +136,7 @@ function maskCodeBlocks(body: string): { masked: string; restore: (s: string) =>
   const inlines: string[] = []
 
   // 1. Mask fenced code blocks
-  let masked = body.replace(/^(```|~~~).*\n[\s\S]*?\n\1\s*$/gm, (block) => {
-    const idx = blocks.length
-    blocks.push(block)
-    return `${BLOCK_PREFIX}${idx}${BLOCK_SUFFIX}`
-  })
+  let masked = maskFencedCodeBlocks(body, blocks)
 
   // 2. Mask inline code spans (double-backtick first, then single-backtick)
   masked = masked.replace(/``[^`]+``|`[^`]+`/g, (span) => {

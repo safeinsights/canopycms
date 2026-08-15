@@ -3,6 +3,13 @@ export * from './config'
 export * from './entry-schema'
 export * from './types'
 export * from './user'
+// Title-derivation fallback chain (schema isTitle field -> data.title/name ->
+// entry-type label -> humanized slug -> "Untitled"). Client-safe (its only
+// import is `FieldConfig`/`InlineGroupFieldConfig` types, erased at compile
+// time, so no runtime dependency at all) — re-exported here as well as from
+// 'canopycms/server' so client-side list/preview UI can compute the same
+// display title as build scripts without a second implementation.
+export { resolveEntryTitle } from './utils/title-field'
 // AI content config helper — client-safe (no node: imports).
 // Server-only AI features (handler, generator) are in 'canopycms/ai'.
 export { defineAIContentConfig } from './ai/types'

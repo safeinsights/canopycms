@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createTestServices } from './config-test'
 import { createCanopyContext } from './context'
 import { STATIC_DEPLOY_USER } from './build-mode'
+import { RESERVED_GROUPS } from './authorization/helpers'
 import { parsePhysicalPath } from './paths'
 import type { BranchContext } from './types'
 
@@ -163,6 +164,196 @@ describe('createCanopyContext - build context', () => {
     // Default-branch reads must target the freshly detected branch
     const result = await ctx.read<{ title: string }>({ entryPath: 'content/docs', slug: 'intro' })
     expect(result.path).toBe('/docs/intro?branch=flipped')
+  })
+})
+
+describe('listEntries / buildContentTree path ACLs', () => {
+  let root: string
+
+  beforeEach(async () => {
+    root = await tmpDir()
+    testBranchContext = buildBranchContext(root)
+    vi.unstubAllEnvs()
+  })
+
+  afterEach(async () => {
+    vi.unstubAllEnvs()
+    await fs.rm(root, { recursive: true, force: true })
+  })
+
+  const REGULAR_USER = {
+    type: 'authenticated' as const,
+    userId: 'regular-user',
+    name: 'Regular User',
+    email: 'user@example.com',
+    groups: [],
+  }
+
+  /**
+   * Two entries in the same collection plus a nested index entry, so a single fixture
+   * covers the flat listing, the tree's entry nodes, and the tree's `meta.indexEntry`.
+   */
+  const writeContent = async () => {
+    const docsDir = path.join(root, 'content/docs')
+    const guidesDir = path.join(root, 'content/docs/guides')
+    await fs.mkdir(guidesDir, { recursive: true })
+    await fs.writeFile(
+      path.join(docsDir, 'doc.public.RRMDbToFJNTf.json'),
+      JSON.stringify({ title: 'Public' }),
+    )
+    await fs.writeFile(
+      path.join(docsDir, 'doc.secret.aB3cD4eF5gH6.json'),
+      JSON.stringify({ title: 'Secret' }),
+    )
+    await fs.writeFile(
+      path.join(guidesDir, 'guide.index.cD5eF6gH7jK8.md'),
+      matter.stringify('Guides landing', { title: 'Guides Index' }),
+    )
+  }
+
+  /** Deny `read` on the secret doc and on the nested guides collection, for everyone but 'other'. */
+  const writePermissions = async () => {
+    await fs.writeFile(
+      path.join(root, 'permissions.json'),
+      JSON.stringify({
+        updatedAt: new Date().toISOString(),
+        updatedBy: 'tester',
+        pathPermissions: [
+          {
+            path: 'content/docs/doc.secret.aB3cD4eF5gH6.json',
+            read: { allowedUsers: ['other'] },
+          },
+          { path: 'content/docs/guides/**', read: { allowedUsers: ['other'] } },
+        ],
+      }),
+    )
+  }
+
+  const createServices = async () =>
+    createTestServices(
+      { defaultBranchAccess: 'allow', defaultPathAccess: 'allow', schema: testSchema },
+      { getSettingsBranchRoot: () => Promise.resolve(root) },
+    )
+
+  it('omits entries the request user cannot read from listEntries', async () => {
+    await writeContent()
+    await writePermissions()
+
+    const ctx = await createCanopyContext({
+      services: await createServices(),
+      extractUser: async () => REGULAR_USER,
+    }).getContext()
+
+    const items = await ctx.listEntries()
+    const slugs = items.map((i) => i.slug)
+    expect(slugs).toContain('public')
+    expect(slugs).not.toContain('secret')
+    // The denied entry's data must not leak through `data` either.
+    expect(JSON.stringify(items)).not.toContain('Secret')
+  })
+
+  it('omits denied entries from buildContentTree, including via meta.indexEntry', async () => {
+    await writeContent()
+    await writePermissions()
+
+    const ctx = await createCanopyContext({
+      services: await createServices(),
+      extractUser: async () => REGULAR_USER,
+    }).getContext()
+
+    // The index entry of a denied collection is surfaced to `extract` as meta.indexEntry
+    // even though no node is emitted for it — so assert on what extract actually sees.
+    const seenIndexTitles: unknown[] = []
+    const tree = await ctx.buildContentTree({
+      extract: (data, meta) => {
+        if (meta.kind === 'collection' && meta.indexEntry) {
+          seenIndexTitles.push((meta.indexEntry.data as { title?: string }).title)
+        }
+        return data
+      },
+    })
+
+    const flatten = (nodes: typeof tree): typeof tree =>
+      nodes.flatMap((n) => [n, ...flatten(n.children ?? [])])
+    const slugs = flatten(tree).map((n) => n.entry?.slug)
+    expect(slugs).toContain('public')
+    expect(slugs).not.toContain('secret')
+    expect(seenIndexTitles).not.toContain('Guides Index')
+  })
+
+  it('does not filter for an admin user', async () => {
+    await writeContent()
+    await writePermissions()
+
+    const ctx = await createCanopyContext({
+      services: await createServices(),
+      extractUser: async () => ({ ...REGULAR_USER, groups: [RESERVED_GROUPS.ADMINS] }),
+    }).getContext()
+
+    const slugs = (await ctx.listEntries()).map((i) => i.slug)
+    expect(slugs).toEqual(expect.arrayContaining(['public', 'secret']))
+  })
+
+  it('builds no access checker at build time (no settings-branch round trip)', async () => {
+    await writeContent()
+    await writePermissions()
+
+    const services = await createServices()
+    const checkerSpy = vi.spyOn(services, 'createContentAccessChecker')
+
+    // isBuildMode() reads this env var; the build context runs as a synthetic admin, so
+    // filtering would be a no-op — but building the checker would add a
+    // getSettingsBranchRoot() call (an EFS round trip in prod) to every build-time listing.
+    vi.stubEnv('CANOPY_BUILD_MODE', 'true')
+
+    const ctx = await createCanopyContext({
+      services,
+      extractUser: async () => STATIC_DEPLOY_USER,
+    }).getContext()
+
+    const slugs = (await ctx.listEntries()).map((i) => i.slug)
+    expect(slugs).toEqual(expect.arrayContaining(['public', 'secret']))
+    expect(checkerSpy).not.toHaveBeenCalled()
+  })
+
+  it('builds no access checker for the synthetic admin outside build mode (createBuildCanopy path)', async () => {
+    await writeContent()
+    await writePermissions()
+
+    const services = await createServices()
+    const checkerSpy = vi.spyOn(services, 'createContentAccessChecker')
+
+    // Neither isDeployedStatic nor isBuildMode() is true here -- this is the shape of a
+    // standalone script calling createBuildCanopy() directly (build-canopy.ts), which
+    // extracts STATIC_DEPLOY_USER without going through either of those two guards.
+    // createContentAccessChecker would still grant that user everything, so it should be
+    // skipped the same way -- otherwise every such script pays a getSettingsBranchRoot()
+    // round trip (a settings-branch git workspace clone in prod/dev) for a no-op filter.
+    const ctx = await createCanopyContext({
+      services,
+      extractUser: async () => STATIC_DEPLOY_USER,
+    }).getContext()
+
+    const slugs = (await ctx.listEntries()).map((i) => i.slug)
+    expect(slugs).toEqual(expect.arrayContaining(['public', 'secret']))
+    expect(checkerSpy).not.toHaveBeenCalled()
+  })
+
+  it('propagates a failing access checker instead of returning an unfiltered listing', async () => {
+    await writeContent()
+
+    const services = await createServices()
+    services.createContentAccessChecker = vi
+      .fn()
+      .mockRejectedValue(new Error('settings branch unavailable'))
+
+    const ctx = await createCanopyContext({
+      services,
+      extractUser: async () => REGULAR_USER,
+    }).getContext()
+
+    await expect(ctx.listEntries()).rejects.toThrow('settings branch unavailable')
+    await expect(ctx.buildContentTree()).rejects.toThrow('settings branch unavailable')
   })
 })
 
@@ -482,6 +673,39 @@ describe('readByUrlPath', () => {
       const result = await ctx.readByUrlPath<{ title: string }>('/docs/overview')
       expect(result).not.toBeNull()
       expect(parsePhysicalPath(result!.meta.physicalPath).ok).toBe(true)
+    })
+  })
+
+  describe('meta.entryType / meta.entryId', () => {
+    it('resolves the entry type and content ID for a direct entry match', async () => {
+      const docsDir = path.join(root, 'content/docs')
+      await fs.mkdir(docsDir, { recursive: true })
+      // Real Canopy filenames embed the entry type and content ID: {type}.{slug}.{id}.{ext}
+      await fs.writeFile(
+        path.join(docsDir, 'doc.overview.RRMDbToFJNTf.json'),
+        JSON.stringify({ title: 'Overview' }),
+      )
+
+      const ctx = await createContext()
+      const result = await ctx.readByUrlPath<{ title: string }>('/docs/overview')
+      expect(result).not.toBeNull()
+      expect(result!.meta.entryType).toBe('doc')
+      expect(result!.meta.entryId).toBe('RRMDbToFJNTf')
+    })
+
+    it('resolves the entry type and content ID for an index-entry fallback', async () => {
+      const guidesDir = path.join(root, 'content/docs/guides')
+      await fs.mkdir(guidesDir, { recursive: true })
+      await fs.writeFile(
+        path.join(guidesDir, 'guide.index.aB3cD4eF5gH6.md'),
+        matter.stringify('Welcome', { title: 'Guides Index' }),
+      )
+
+      const ctx = await createContext()
+      const result = await ctx.readByUrlPath<{ title: string }>('/docs/guides')
+      expect(result).not.toBeNull()
+      expect(result!.meta.entryType).toBe('guide')
+      expect(result!.meta.entryId).toBe('aB3cD4eF5gH6')
     })
   })
 })

@@ -50,4 +50,4 @@ These are independent; pick them off opportunistically.
 
 - [authorization-enforcement-consolidation.md](authorization-enforcement-consolidation.md)
 - [branch-namespace-validation-gaps.md](branch-namespace-validation-gaps.md)
-- [acl-defaults-and-dead-path-checker.md](acl-defaults-and-dead-path-checker.md)
+- [acl-defaults-and-dead-path-checker.md](resolved/acl-defaults-and-dead-path-checker.md)

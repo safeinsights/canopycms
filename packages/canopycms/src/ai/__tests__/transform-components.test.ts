@@ -256,6 +256,24 @@ describe('applyComponentTransforms', () => {
       expect(result).toContain('`<Callout>Keep me</Callout>`')
     })
 
+    it('does not degrade on many unclosed fence openers (js/polynomial-redos)', () => {
+      // The former fence regex (`/^(```|~~~).*\n[\s\S]*?\n\1\s*$/gm`) has no bound on how far
+      // its lazy `[\s\S]*?` must scan looking for a closing backreference that, for an unclosed
+      // fence, never arrives -- quadratic in the number of unclosed openers. Measured at ~9s for
+      // 32,000 unclosed openers (~530KB); the linear line-scan replacement is well under 1s. See
+      // the identical fix and measurement in ai/to-plain-text.ts.
+      const transforms: ComponentTransforms = {
+        Callout: (_, children) => `> ${children.trim()}`,
+      }
+      const adversarial = Array.from({ length: 32_000 }, (_, i) => '```js\n' + `line ${i}`).join(
+        '\n',
+      )
+      const started = performance.now()
+      const result = applyComponentTransforms(adversarial, transforms)
+      expect(result).toContain('line 0')
+      expect(performance.now() - started).toBeLessThan(1000)
+    })
+
     it('does not transform self-closing tags inside inline code', () => {
       const transforms: ComponentTransforms = {
         Spacer: () => '',

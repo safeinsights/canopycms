@@ -21,6 +21,7 @@ import { createDebugLogger } from './utils/debug'
 import { isValidId } from './id'
 import type { LogicalPath, PhysicalPath, Slug, ContentId } from './paths/types'
 import { ContentStoreError } from './content-store'
+import { isBuildMode } from './build-mode'
 
 const log = createDebugLogger({ prefix: 'ContentListing' })
 
@@ -88,13 +89,64 @@ export const readEntryData = async (
 }
 
 /**
- * Parse a filename: {type}.{slug}.{id}.{ext}
- * Returns { type, slug, id } or null if the filename doesn't match the pattern.
+ * Parse a Canopy content filename into its `{type}.{slug}.{id}.{ext}` parts.
+ *
+ * ## Filename grammar
+ *
+ * Every entry file on disk is named `{type}.{slug}.{id}.{ext}`:
+ * - `type` — the entry type name (a key in the collection's `entries` config).
+ * - `slug` — the entry's URL slug. May itself contain dots (e.g. a slug of
+ *   `getting.started.guide`), so the type and ID anchor the split: the ID is
+ *   always the second-to-last dot-separated segment, and the slug is
+ *   everything between the type and the ID. The returned `slug` is
+ *   lowercased.
+ * - `id` — a 12-character Base58 content ID (`generateId()`/`isValidId()`).
+ *   Base58 excludes the ambiguous characters `0`, `O`, `I`, `l` so IDs are
+ *   unambiguous when read aloud or hand-transcribed. A filename whose
+ *   would-be ID segment doesn't pass `isValidId` is rejected — the whole
+ *   parse returns `null`, even if the rest of the shape looks right.
+ * - `ext` — the format extension (`.md`, `.mdx`, `.json`, `.yaml`), stripped
+ *   before parsing and not part of the returned result.
+ *
+ * @param filename - The bare filename (no directory component). **This precondition is
+ *   not enforced.** The parser splits purely on `.`, so a `/` or `\` you pass in is not
+ *   rejected and is not treated as special — it becomes part of whichever segment it
+ *   falls in, most often the `type` segment (e.g. `'foo/bar.slug.<validId>.md'` parses
+ *   to `type: 'foo/bar'`). Strip any directory component yourself (e.g.
+ *   `path.basename(filePath)`) before calling this — every internal caller already does.
+ * @param entryTypes - When provided, the parsed `type` segment must match one
+ *   of these entry types by name, or the parse is rejected (this is how
+ *   `listCollectionEntries` filters out files that don't belong to the
+ *   collection's configured entry types). Omit this argument to parse
+ *   structurally without validating the type against a known list — useful
+ *   for adopter code that needs to recover `{type, slug, id}` from a
+ *   filename without having a schema/entry-types list on hand (e.g. a
+ *   filesystem walk over content for tooling or diagnostics). Even without
+ *   `entryTypes`, a leading-dot filename (dotfile, editor swap/backup file)
+ *   is always rejected — an empty string is never a legal type, matching the
+ *   `filename.startsWith('.')` guard `extractEntryTypeFromFilename` in
+ *   `content-id-index.ts` already applies.
+ * @returns `{ type, slug, id }`, or `null` if `filename` doesn't match the
+ *   `{type}.{slug}.{id}.{ext}` shape (too few segments, no extension, a
+ *   leading dot, an invalid ID, or — when `entryTypes` is given — an
+ *   unrecognized type). `id` is validated (`isValidId`) and safe to trust. **`slug` is
+ *   not** — it is the raw dot-joined middle segment(s), lowercased, cast to the branded
+ *   `Slug` type without running `parseSlug`'s validation. A filename with an
+ *   unconventional slug segment (e.g. containing a space) still parses and still
+ *   receives the `Slug` brand. Callers that need a validated slug must run the result
+ *   through `parseSlug` themselves; this function's contract is "split the filename
+ *   grammar apart," not "validate every part."
  */
 export const parseTypedFilename = (
   filename: string,
-  entryTypes: readonly EntryTypeConfig[],
+  entryTypes?: readonly EntryTypeConfig[],
 ): { type: string; slug: Slug; id: ContentId } | null => {
+  // Reject dotfiles outright (matching extractEntryTypeFromFilename's guard in
+  // content-id-index.ts): a leading dot can never be a legal entry type, and this
+  // is exactly the shape of the files a structural (no-entryTypes) parse would
+  // otherwise misparse -- e.g. '.hidden.file.aB3cD4eF5gH6.md' -> potentialType ''.
+  if (filename.startsWith('.')) return null
+
   // Remove extension
   const lastDot = filename.lastIndexOf('.')
   if (lastDot === -1) return null
@@ -102,23 +154,23 @@ export const parseTypedFilename = (
 
   // Parse: {type}.{slug}.{id}
   const parts = nameWithoutExt.split('.')
-  if (parts.length >= 3) {
-    // Check if first part matches a known entry type
-    const potentialType = parts[0]
-    const matchingType = entryTypes.find((e) => e.name === potentialType)
-    if (matchingType) {
-      const id = parts[parts.length - 1]
-      if (!isValidId(id)) return null
-      const slug = parts.slice(1, -1).join('.').toLowerCase()
-      return {
-        type: potentialType,
-        slug: slug as Slug,
-        id: id as ContentId,
-      }
-    }
+  if (parts.length < 3) return null
+
+  const potentialType = parts[0]
+  // When a known-types list is supplied, the first segment must match one of
+  // them. Without it, any non-empty first segment is accepted as the type.
+  if (entryTypes && !entryTypes.some((e) => e.name === potentialType)) {
+    return null
   }
 
-  return null
+  const id = parts[parts.length - 1]
+  if (!isValidId(id)) return null
+  const slug = parts.slice(1, -1).join('.').toLowerCase()
+  return {
+    type: potentialType,
+    slug: slug as Slug,
+    id: id as ContentId,
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -162,6 +214,15 @@ export interface ListEntriesItem<T = Record<string, unknown>> {
   data: T
   /** Field definitions for this entry's type, when resolvable. */
   schema?: EntrySchema
+  /**
+   * Filesystem mtime (ISO 8601) of the entry file, from an unconditional `fs.stat`
+   * done while listing. Caveat: this is a checkout-time timestamp, not an editorial
+   * one — a fresh CI clone resets every file's mtime to checkout time, so treat this
+   * as "changed since last build" at best, not an authoritative last-edited date for
+   * a public-facing `<lastmod>`. Sourcing mtime from git commit history is a
+   * separate, not-yet-built improvement.
+   */
+  updatedAt?: string
 }
 
 export interface ListEntriesOptions<T = Record<string, unknown>> {
@@ -187,21 +248,58 @@ export interface ListEntriesOptions<T = Record<string, unknown>> {
 }
 
 /**
+ * Server-only path-ACL predicate, applied to raw entries before any of their data
+ * reaches a caller.
+ *
+ * Deliberately NOT part of `ListEntriesOptions`/`BuildContentTreeOptions`: those are
+ * adopter-facing, and adopter code must not be able to supply, widen, or override the
+ * access check. `context.ts` is the only intended producer — it builds the predicate
+ * from `services.createContentAccessChecker` for the request-scoped user, and omits it
+ * entirely at build time / on static deployments (synthetic admin, no ACLs).
+ *
+ * Omitting it preserves the pre-existing unfiltered behavior exactly, which is what
+ * build-time callers want.
+ */
+export interface ContentVisibilityOptions {
+  /** Return false to drop an entry. Receives the entry's branch-root-relative physical path. */
+  shouldInclude?: (physicalPath: PhysicalPath) => boolean
+}
+
+/**
  * List all content entries as a flat array.
  *
  * Walks the schema to discover collections, reads entries from each,
  * and returns a flat list suitable for generateStaticParams, search indexing, sitemaps, etc.
  *
+ * Build-time-only failure: a file with a recognized content extension (`.md`/`.mdx`/`.json`/
+ * `.yaml`) sitting in a collection directory that *looks like an attempted entry* (see
+ * `looksLikeMalformedEntry` below) but doesn't match `{type}.{slug}.{id}.{ext}` is, by default,
+ * silently dropped (see `listCollectionEntries`'s debug-gated warning). That is exactly the
+ * silent-page-loss failure mode static generation must not have — a schema rename without a
+ * matching file rename, or an entry type declared in one collection but not another, would
+ * otherwise vanish a page with zero build output. So when `isBuildMode()` is true, any such file
+ * turns the listing into a thrown error instead (see `findInvalidEntries`/`assertBuildEntriesValid`
+ * in `static/index.ts` for the sibling schema-validity guard this mirrors). Outside build mode
+ * (admin UI, content tree, `next dev`) the file is still just skipped, since a fresh scaffold or
+ * mid-rename file legitimately exists there.
+ *
+ * A file that was never entry-shaped to begin with — a `README.md`, or a colocated sibling
+ * artifact named `{contentId}.suffix.ext` per the `entryTransforms`/`readSibling` convention
+ * documented in the README — is not this guard's failure mode and never throws, in or out of
+ * build mode. See `looksLikeMalformedEntry` for the exact shape test.
+ *
  * @param branchRoot - Absolute path to the branch workspace root
  * @param flatSchema - Flattened schema items (from flattenSchema)
  * @param contentRootName - The content root name (e.g. "content")
  * @param options - Listing options (extract, filter, rootPath, sort)
+ * @param visibility - Internal path-ACL predicate; see `ContentVisibilityOptions`
  */
 export async function listEntries<T = Record<string, unknown>>(
   branchRoot: string,
   flatSchema: FlatSchemaItem[],
   contentRootName: string,
   options?: ListEntriesOptions<T>,
+  visibility?: ContentVisibilityOptions,
 ): Promise<ListEntriesItem<T>[]> {
   const rootPath = options?.rootPath ?? contentRootName
   const extract = options?.extract
@@ -216,13 +314,42 @@ export async function listEntries<T = Record<string, unknown>>(
       (item.logicalPath === rootPath || item.logicalPath.startsWith(`${rootPath}/`)),
   )
 
-  // List entries from all collections in parallel
+  // List entries from all collections in parallel.
+  // The visibility predicate is applied here, before the map below, so a denied entry's
+  // data never reaches `extract` (let alone the returned items).
+  const shouldInclude = visibility?.shouldInclude
+  const skippedFiles: SkippedListingFile[] = []
   const collectionResults = await Promise.all(
     collections.map(async (collection) => {
-      const entries = await listCollectionEntries(branchRoot, collection)
-      return entries.map((entry) => ({ entry, collection }))
+      const entries = await listCollectionEntries(branchRoot, collection, (file) =>
+        skippedFiles.push(file),
+      )
+      const visible = shouldInclude ? entries.filter((e) => shouldInclude(e.physicalPath)) : entries
+      return visible.map((entry) => ({ entry, collection }))
     }),
   )
+
+  // Build-time only: fail loudly rather than silently shipping a build with a page missing. See
+  // the build-time-only-failure note in this function's own doc comment above. Only files that
+  // structurally look like a malformed entry reach `skippedFiles` at all -- see
+  // `looksLikeMalformedEntry` and `listCollectionEntries`.
+  if (isBuildMode() && skippedFiles.length > 0) {
+    const lines = skippedFiles.map(
+      ({ filename, collectionPath }) => `  - ${collectionPath}/${filename}`,
+    )
+    throw new Error(
+      `CanopyCMS static build: found ${skippedFiles.length} file(s) that look like malformed ` +
+        `content entries inside a content collection:\n${lines.join('\n')}\n` +
+        'Expected {type}.{slug}.{id}.{ext} with a known entry type (a name declared in that ' +
+        "collection's entries config) and a valid 12-char Base58 ID. This usually means a schema " +
+        'rename without a matching file rename, an entry type declared in one collection but not ' +
+        'another, or a stray file placed directly in a collection directory. If this is meant to ' +
+        "be a colocated sibling artifact (e.g. an entry's contentId-prefixed data file read via " +
+        'an entryTransforms readSibling call), keep its name to three or fewer dot-separated ' +
+        'segments (id.suffix.ext) so it is never mistaken for an entry attempt. Otherwise rename ' +
+        'or move the file, or fix the schema, then rebuild.',
+    )
+  }
 
   // Flatten and map to ListEntriesItem
   const contentPrefix = contentRootName ? `${contentRootName}/` : ''
@@ -260,6 +387,7 @@ export async function listEntries<T = Record<string, unknown>>(
         format: entry.format,
         data,
         schema: collection.entries?.find((e) => e.name === entry.entryType)?.schema,
+        updatedAt: entry.updatedAt,
       }
 
       if (filter && !filter(item)) continue
@@ -312,13 +440,69 @@ export const sortByOrder = <T extends { contentId?: ContentId }>(
   })
 }
 
+/** A content-extension file inside a collection directory whose filename didn't parse. */
+export interface SkippedListingFile {
+  /** The bare filename, e.g. `article.lost-page.4fBqT78gcaLd.md`. */
+  filename: string
+  /** The collection's logical path. */
+  collectionPath: LogicalPath
+}
+
+/**
+ * True when a content-extension filename structurally resembles an attempted entry — as opposed
+ * to a file that was never entry-shaped to begin with.
+ *
+ * A successfully-parsed entry always has at least 4 dot-separated segments: `type` (1+),
+ * `slug` (1+, since `parseTypedFilename` always takes at least the one segment between type and
+ * id), `id` (1), `ext` (1). So a file with 4+ segments that still failed to parse is malformed
+ * on its face — a wrong-length or invalid-Base58 ID, most often (`post.hello-world.BADID.md`).
+ *
+ * That segment-count test alone missed the MORE common accident: losing the ID segment
+ * entirely. `post.hello-world.md` (3 segments) fails `parseTypedFilename` exactly like the
+ * 4-segment case does, but a bare 3-or-fewer-segment cutoff would treat it as never having been
+ * entry-shaped and drop it silently — the page just vanishes with a green build. So a 3-segment
+ * file whose FIRST segment matches a real entry type name in this collection is ALSO treated as
+ * malformed: `parseTypedFilename` requires type+slug+id (3 segments) after stripping the
+ * extension, so a 3-total-segment filename already has only 2 left over — it could only have
+ * been attempting `type.slug` with no id, or `type.id` with no slug, either way a lost segment,
+ * not a coincidence. This still leaves the two motivating "was never an entry" cases alone: a
+ * bare `README.md` (2 segments, and "README" is essentially never a configured entry type name)
+ * and an entry's colocated sibling artifact named `{contentId}.suffix.ext` per the
+ * `entryTransforms`/`readSibling` convention documented in the README (3 segments, e.g.
+ * `5NVkkrB1MJUv.profile.json` — a content ID is never itself an entry type name, so the same
+ * "first segment matches a known type" test correctly leaves it unflagged).
+ *
+ * Dot-prefixed (hidden files, editor swap/backup files) and underscore-prefixed (a common
+ * adopter convention for "not an entry") names are excluded outright regardless of segment
+ * count, matching `parseTypedFilename`'s own dotfile rejection.
+ */
+const looksLikeMalformedEntry = (
+  filename: string,
+  entryTypes: readonly EntryTypeConfig[],
+): boolean => {
+  if (filename.startsWith('.') || filename.startsWith('_')) return false
+  const segments = filename.split('.')
+  if (segments.length >= 4) return true
+  return segments.length === 3 && entryTypes.some((e) => e.name === segments[0])
+}
+
 /**
  * List all entries in a collection directory.
  * Reads each entry's data (frontmatter or JSON).
+ *
+ * @param onSkip - Called for every file that has a recognized content extension, doesn't match
+ *   the `{type}.{slug}.{id}.{ext}` grammar (see `parseTypedFilename`), AND structurally looks
+ *   like an attempted entry (see `looksLikeMalformedEntry`). A file that was never entry-shaped
+ *   (too few dot-separated segments to ever be a valid entry — a `README.md`, a colocated
+ *   sibling artifact) is always silently dropped with a debug-gated `log.warn`, never passed to
+ *   `onSkip`. Optional and purely a diagnostic hook — existing callers that omit it keep the
+ *   exact prior behavior. `listEntries` below uses this to turn the skip into a hard build-time
+ *   failure instead of a silent one.
  */
 export const listCollectionEntries = async (
   root: string,
   collection: FlatSchemaItem,
+  onSkip?: (file: SkippedListingFile) => void,
 ): Promise<CollectionListItem[]> => {
   if (collection.type !== 'collection' || !collection.entries) {
     return []
@@ -372,6 +556,9 @@ export const listCollectionEntries = async (
           'listCollectionEntries',
           `Skipping file with unrecognized filename format: ${file.name} (expected {type}.{slug}.{id}.{ext} with a known entry type and valid 12-char Base58 ID)`,
         )
+        if (looksLikeMalformedEntry(file.name, entryTypes)) {
+          onSkip?.({ filename: file.name, collectionPath: collection.logicalPath })
+        }
         return null
       }
 

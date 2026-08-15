@@ -2,11 +2,17 @@ import { describe, expect, it, expectTypeOf } from 'vitest'
 import {
   defineBlockTemplate,
   defineEntrySchema,
+  defineFieldFragment,
   defineInlineFieldGroup,
   defineNestedFieldGroup,
+  defineSeoFieldGroup,
+  type BlockComponentRegistry,
+  type BlockValueOf,
   type EntryTypesFromRegistry,
   type TypeFromEntrySchema,
 } from './entry-schema'
+import { validateEntryData } from './validation/entry-validator'
+import type { EntrySchema } from './config/types'
 
 describe('TypeFromEntrySchema', () => {
   describe('block discriminated union', () => {
@@ -86,7 +92,7 @@ describe('TypeFromEntrySchema', () => {
       // Discriminated union narrows per template in both schemas
       expectTypeOf<Extract<PageBlock, { template: 'hero' }>['value']>().toEqualTypeOf<{
         headline: string
-        subheading: string | undefined
+        subheading?: string
       }>()
       expectTypeOf<Extract<PageBlock, { template: 'cta' }>['value']>().toEqualTypeOf<{
         label: string
@@ -94,7 +100,7 @@ describe('TypeFromEntrySchema', () => {
       }>()
       expectTypeOf<Extract<LandingBlock, { template: 'hero' }>['value']>().toEqualTypeOf<{
         headline: string
-        subheading: string | undefined
+        subheading?: string
       }>()
 
       // The helper is an identity — it returns the template object unchanged
@@ -110,6 +116,69 @@ describe('TypeFromEntrySchema', () => {
       void pageSchema
       void landingSchema
     })
+  })
+
+  describe('BlockComponentRegistry / BlockValueOf', () => {
+    const heroBlock = defineBlockTemplate({
+      name: 'hero',
+      fields: [{ name: 'headline', type: 'string' }],
+    })
+    const ctaBlock = defineBlockTemplate({
+      name: 'cta',
+      fields: [{ name: 'label', type: 'string' }],
+    })
+    const pageSchema = defineEntrySchema([
+      { name: 'sections', type: 'block', templates: [heroBlock, ctaBlock] },
+    ])
+    type Sections = TypeFromEntrySchema<typeof pageSchema>['sections'][number]
+
+    it('BlockValueOf extracts one template value shape out of the union', () => {
+      expectTypeOf<BlockValueOf<Sections, 'hero'>>().toEqualTypeOf<{ headline: string }>()
+      expectTypeOf<BlockValueOf<Sections, 'cta'>>().toEqualTypeOf<{ label: string }>()
+    })
+
+    it('an exhaustive registry (one component per template) compiles', () => {
+      // Contextually typed against BlockComponentRegistry<Sections> — `data` in each
+      // component is inferred as that template's own value shape, narrowed by key.
+      const registry: BlockComponentRegistry<Sections> = {
+        hero: ({ data }) => data.headline,
+        cta: ({ data }) => data.label,
+      }
+
+      expect(Object.keys(registry).sort()).toEqual(['cta', 'hero'])
+    })
+
+    it('a registry missing a template key fails to compile', () => {
+      // @ts-expect-error - 'cta' is a required key; the registry only has 'hero'
+      const missingKey: BlockComponentRegistry<Sections> = {
+        hero: ({ data }) => data.headline,
+      }
+
+      expect(Object.keys(missingKey)).toEqual(['hero'])
+    })
+
+    it('a registry with an unknown extra key fails to compile', () => {
+      const withExtra: BlockComponentRegistry<Sections> = {
+        hero: ({ data }) => data.headline,
+        cta: ({ data }) => data.label,
+        // @ts-expect-error - 'unknown' is not a template name on Sections
+        unknown: () => null,
+      }
+
+      expect(Object.keys(withExtra)).toContain('unknown')
+    })
+
+    it('ExtraProps is threaded through every component in the registry', () => {
+      type ExtraProps = { index: number }
+      const registry: BlockComponentRegistry<Sections, ExtraProps> = {
+        hero: ({ data, index }) => `${index}:${data.headline}`,
+        cta: ({ data, index }) => `${index}:${data.label}`,
+      }
+
+      expect(Object.keys(registry).sort()).toEqual(['cta', 'hero'])
+    })
+
+    void pageSchema
   })
 
   describe('typed reference with resolvedSchema', () => {
@@ -226,6 +295,182 @@ describe('TypeFromEntrySchema', () => {
       void schema
     })
   })
+
+  describe('required-ness to property optionality', () => {
+    // Three-way distinction, deliberately: ONLY an explicit `required: false` produces
+    // an optional (`?:`) property. `required: true` and an OMITTED `required` both
+    // produce a plain required property, because an omitted `required` infers
+    // `boolean | undefined`, which does not extend `false`. Widening the omitted case
+    // into optional would break every schema that relies on the default — this test
+    // exists so that can never happen silently.
+    const schema = defineEntrySchema([
+      { name: 'explicitlyRequired', type: 'string', required: true },
+      { name: 'explicitlyOptional', type: 'string', required: false },
+      { name: 'requiredOmitted', type: 'string' },
+    ])
+
+    type Content = TypeFromEntrySchema<typeof schema>
+
+    it('maps required: true, required: false, and an omitted required distinctly', () => {
+      expectTypeOf<Content>().toEqualTypeOf<{
+        explicitlyRequired: string
+        requiredOmitted: string
+        explicitlyOptional?: string
+      }>()
+
+      // Genuinely optional, NOT required-with-undefined (the pre-0.0.63 shape).
+      expectTypeOf<Content>().not.toEqualTypeOf<{
+        explicitlyRequired: string
+        requiredOmitted: string
+        explicitlyOptional: string | undefined
+      }>()
+
+      // Reading is unchanged: the optional key still reads as `string | undefined`.
+      expectTypeOf<Content['explicitlyOptional']>().toEqualTypeOf<string | undefined>()
+
+      expect(schema).toHaveLength(3)
+    })
+
+    it('a literal may omit the required: false field, but not the other two', () => {
+      const complete: Content = {
+        explicitlyRequired: 'a',
+        requiredOmitted: 'b',
+        explicitlyOptional: 'c',
+      }
+      const omittingOptional: Content = { explicitlyRequired: 'a', requiredOmitted: 'b' }
+
+      // @ts-expect-error - a field that omits `required` stays a required property
+      const missingOmitted: Content = { explicitlyRequired: 'a', explicitlyOptional: 'c' }
+      // @ts-expect-error - `required: true` stays a required property
+      const missingRequired: Content = { requiredOmitted: 'b' }
+
+      expect(complete.explicitlyOptional).toBe('c')
+      expect(omittingOptional.explicitlyOptional).toBeUndefined()
+      expect(missingOmitted.explicitlyRequired).toBe('a')
+      expect(missingRequired.requiredOmitted).toBe('b')
+    })
+
+    it('applies the same rule inside nested objects and block templates', () => {
+      const nestedSchema = defineEntrySchema([
+        {
+          name: 'meta',
+          type: 'object',
+          fields: [
+            { name: 'kicker', type: 'string' },
+            { name: 'note', type: 'string', required: false },
+          ],
+        },
+        {
+          name: 'sections',
+          type: 'block',
+          templates: [
+            {
+              name: 'hero',
+              fields: [
+                { name: 'heading', type: 'string' },
+                { name: 'sub', type: 'string', required: false },
+              ],
+            },
+          ],
+        },
+      ])
+
+      type Nested = TypeFromEntrySchema<typeof nestedSchema>
+
+      expectTypeOf<Nested['meta']>().toEqualTypeOf<{ kicker: string; note?: string }>()
+      expectTypeOf<Nested['sections'][number]['value']>().toEqualTypeOf<{
+        heading: string
+        sub?: string
+      }>()
+
+      expect(nestedSchema).toHaveLength(2)
+    })
+
+    it('a whole field marked required: false becomes an optional key at the top level', () => {
+      const optionalContainers = defineEntrySchema([
+        { name: 'tags', type: 'string', list: true, required: false },
+        {
+          name: 'seo',
+          type: 'object',
+          required: false,
+          fields: [{ name: 'metaTitle', type: 'string' }],
+        },
+      ])
+
+      type Optional = TypeFromEntrySchema<typeof optionalContainers>
+
+      expectTypeOf<Optional>().toEqualTypeOf<{
+        tags?: string[]
+        seo?: { metaTitle: string }
+      }>()
+
+      // An empty literal satisfies a schema whose every field is `required: false`.
+      const empty: Optional = {}
+      expect(empty).toEqual({})
+      expect(optionalContainers.map((f) => f.required)).toEqual([false, false])
+    })
+  })
+})
+
+describe('defineSeoFieldGroup', () => {
+  // The recommended group is FLAT by default, so the SEO fields must land at the top level of
+  // the derived shape — the same convention extractSeoFields reads without configuration.
+  it('flattens into the parent shape, with every field optional', () => {
+    const schema = defineEntrySchema([{ name: 'title', type: 'string' }, defineSeoFieldGroup()])
+
+    type Content = TypeFromEntrySchema<typeof schema>
+
+    expectTypeOf<Content>().toEqualTypeOf<{
+      title: string
+      metaTitle?: string
+      metaDescription?: string
+      ogImage?: string
+      // select fields infer as string | number (TypeFromEntrySchema does not narrow options).
+      ogType?: string | number
+      canonical?: string
+      noindex?: boolean
+      twitterCard?: string | number
+    }>()
+
+    // An entry that sets no SEO fields at all is still a valid literal.
+    const bare: Content = { title: 'Hello' }
+    expect(bare.metaTitle).toBeUndefined()
+    // The group is one entry in the schema array; the flattening is purely type-level.
+    expect(schema).toHaveLength(2)
+  })
+
+  it('nests under the given key when `group` is passed, with the wrapper key itself optional', () => {
+    const schema = defineEntrySchema([
+      { name: 'title', type: 'string' },
+      defineSeoFieldGroup({ group: 'seo' }),
+    ])
+
+    type Content = TypeFromEntrySchema<typeof schema>
+
+    expectTypeOf<Content['title']>().toEqualTypeOf<string>()
+    // Regression test: the `seo` wrapper key itself must type as optional, matching the runtime
+    // validator (validateEntryData only enforces fields with `required: true`) — an earlier
+    // version typed the wrapper as required while the runtime treated it as optional, so
+    // type-safe `data.seo.metaTitle` access could crash on real content with no `seo:` key.
+    expectTypeOf<Content>().toEqualTypeOf<{
+      title: string
+      seo?: {
+        metaTitle?: string
+        metaDescription?: string
+        ogImage?: string
+        ogType?: string | number
+        canonical?: string
+        noindex?: boolean
+        twitterCard?: string | number
+      }
+    }>()
+    expect(schema[1]).toMatchObject({ name: 'seo', type: 'object', required: false })
+
+    // An entry that omits `seo:` entirely is both a valid literal and passes validation.
+    const bare: Content = { title: 'Hello' }
+    expect(bare.seo).toBeUndefined()
+    expect(validateEntryData(schema as EntrySchema, bare)).toEqual([])
+  })
 })
 
 describe('inline groups', () => {
@@ -341,6 +586,52 @@ describe('inline groups', () => {
     expect(group).toEqual({ name: 'hero', type: 'object', fields })
     expect(group.type).toBe('object')
     expect(group.fields).toBe(fields)
+  })
+})
+
+describe('defineFieldFragment', () => {
+  it('is an identity helper — returns the same field array, literal types intact', () => {
+    const ctaFields = defineFieldFragment([
+      { name: 'ctaLabel', type: 'string' },
+      { name: 'ctaHref', type: 'string' },
+    ])
+
+    expect(ctaFields).toEqual([
+      { name: 'ctaLabel', type: 'string' },
+      { name: 'ctaHref', type: 'string' },
+    ])
+  })
+
+  it('spreads into multiple schemas, preserving literal field names', () => {
+    const ctaLabelField = { name: 'ctaLabel', type: 'string' } as const
+    const ctaHrefField = { name: 'ctaHref', type: 'string', required: false } as const
+    const ctaFields = defineFieldFragment([ctaLabelField, ctaHrefField])
+
+    const heroSchema = defineEntrySchema([{ name: 'headline', type: 'string' }, ...ctaFields])
+    // Per-use override: this schema needs ctaHref required, unlike the shared fragment —
+    // compose from the same underlying field const, overriding just `required`.
+    const bannerSchema = defineEntrySchema([
+      { name: 'message', type: 'string' },
+      ctaLabelField,
+      { ...ctaHrefField, required: true },
+    ])
+
+    type Hero = TypeFromEntrySchema<typeof heroSchema>
+    type Banner = TypeFromEntrySchema<typeof bannerSchema>
+
+    expectTypeOf<Hero>().toEqualTypeOf<{
+      headline: string
+      ctaLabel: string
+      ctaHref?: string
+    }>()
+    expectTypeOf<Banner>().toEqualTypeOf<{
+      message: string
+      ctaLabel: string
+      ctaHref: string
+    }>()
+
+    void heroSchema
+    void bannerSchema
   })
 })
 

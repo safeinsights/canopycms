@@ -6,7 +6,13 @@ import { defineCanopyConfig } from 'canopycms'
 const isStaticBuild = process.env.CANOPY_BUILD === 'static'
 
 export default defineCanopyConfig({
-  defaultBranchAccess: 'allow',
+  // Deliberately 'deny' alongside the public read below: this pairing is the
+  // regression test for the protected-base-branch grant. Anonymous `/` reads
+  // resolve against the base branch, which takes no ACL and has no creator, so
+  // without that grant this fixture's dual-build.test.ts would 404/500 on `/`.
+  // It is also the posture we want adopters to copy -- public read WITHOUT
+  // opening every un-ACL'd work branch to other signed-in users.
+  defaultBranchAccess: 'deny',
   // Anonymous reads must succeed on the CMS/server build so this fixture's
   // dual-build.test.ts can hit `/` on a running `next start` and see the
   // same content the static export baked in at build time -- see README.md's
