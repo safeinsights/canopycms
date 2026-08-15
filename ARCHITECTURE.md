@@ -1621,6 +1621,27 @@ If the PR is closed on GitHub **without** merging, the worker records `pullReque
 
 A `markAsMerged` API endpoint still exists, now as a manual/ops fallback rather than the primary path — useful when the worker isn't running or an admin wants to force-resolve a branch immediately instead of waiting for the next poll cycle. It accepts a branch in either `submitted` or `approved` status (matching the automatic path, which archives from either), so the manual fallback can reach anything the worker's poll could reach — including the case where the worker is down, or the PR was merged and then deleted from GitHub before a poll cycle ran. It verifies the merge via the GitHub API and builds its update through the same shared helper as the automatic path, so both produce identical archived-branch metadata.
 
+### Publish State Is Branch-Only
+
+There is **no per-entry draft or published field**, and there will not be one. Publish state is a property of the _branch_, not the entry:
+
+| State                      | How it is expressed                              | Public?                                                                                                                   |
+| -------------------------- | ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------- |
+| Not published              | The entry lives on an unmerged branch            | No — not built, no URL                                                                                                    |
+| Published                  | The entry's branch has merged to the base branch | Yes                                                                                                                       |
+| Published but unadvertised | Merged, with the SEO `noindex` field set         | Yes — built and reachable by direct link, but absent from sitemap, RSS and index grids, and served with `robots: noindex` |
+
+Two consequences follow, and both are load-bearing:
+
+- **`noindex` is not a hiding mechanism.** It means "don't index", not "don't exist" — the page is built and its URL resolves for anyone holding the link. If content must not be publicly reachable at all, it must not be merged.
+- **Enumeration helpers must not invent a publish filter.** `collectStaticPaths`, and the sitemap helper when it lands, filter on `noindex` only. Everything they can enumerate is by definition already published, because it merged.
+
+**How to unpublish:** delete the entry on a branch and merge that branch. This is recoverable — `git revert` restores the file byte-for-byte including its content ID. Note that `validation/deletion-checker.ts` blocks deleting an entry that other entries still reference, so inbound links must be fixed first; that guard is the reason a soft "archived" state would save no work.
+
+**The corollary:** don't merge unfinished content. Work in progress stays on its branch, which means content branches may legitimately be long-lived — see [content-lifecycle-scenarios.md](.claude/future-tasks/content-lifecycle-scenarios.md) for the staleness and recovery guardrails that implies.
+
+Decided 2026-08-14; rationale and the rejected alternatives are recorded in [draft-publish-lifecycle.md](.claude/future-tasks/draft-publish-lifecycle.md).
+
 ## Branch Synchronization and Conflict Detection
 
 When the base branch (typically `main`) receives new commits from merged PRs, active editing branches can fall behind. The worker daemon periodically rebases these branches to incorporate upstream changes, and surfaces conflicts to editors through a non-blocking notification system.
@@ -2185,6 +2206,8 @@ The core exposes `collectStaticPaths()`, which reads routable entries via the bu
 - the entry type name.
 
 Crucially, these structures contain **no framework-specific types**. They are plain data that any framework adapter can map onto its own static-generation shape. The helper supports scoping to a collection subtree and filtering by predicate (for example, dropping the root index or keeping only one entry type).
+
+It applies **no publish filtering**, deliberately: publish state is branch-only, so everything a build can enumerate has already merged and is by definition published (see [Publish State Is Branch-Only](#publish-state-is-branch-only)). The one per-entry exclusion any static helper applies is the SEO `noindex` field, and only on surfaces that _advertise_ an entry — the sitemap, not path enumeration.
 
 ### Thin Framework Adapter
 
