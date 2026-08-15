@@ -209,3 +209,23 @@ describe('URL shaping', () => {
     expect(resolveSeoUrl('contact')).toBe('/contact')
   })
 })
+
+describe('siteUrl trailing-slash stripping is linear (js/polynomial-redos)', () => {
+  it('strips trailing slashes identically to the regex it replaced', () => {
+    expect(resolveSeoUrl('/a', { siteUrl: 'https://x.com' })).toBe('https://x.com/a')
+    expect(resolveSeoUrl('/a', { siteUrl: 'https://x.com/' })).toBe('https://x.com/a')
+    expect(resolveSeoUrl('/a', { siteUrl: 'https://x.com///' })).toBe('https://x.com/a')
+    // interior slashes are untouched -- only the tail is trimmed
+    expect(resolveSeoUrl('/a', { siteUrl: 'https://x.com/base//' })).toBe('https://x.com/base/a')
+  })
+
+  it('does not degrade on a slash-heavy siteUrl that does not end in a slash', () => {
+    // The replaced `/\/+$/` was quadratic here: the engine retried the quantifier from every
+    // position before failing the end anchor. Measured at ~2.4s for this input; the character
+    // scan is ~0.01ms. A generous ceiling still fails loudly if a regex is reintroduced.
+    const adversarial = `https://x.com${'/'.repeat(40000)}a`
+    const started = performance.now()
+    expect(resolveSeoUrl('/p', { siteUrl: adversarial })).toBe(`${adversarial}/p`)
+    expect(performance.now() - started).toBeLessThan(250)
+  })
+})

@@ -170,6 +170,22 @@ export function isAbsoluteUrl(url: string): boolean {
  * `/blog?page=2/` (a literal trailing slash inside the query string, which is not what "serve
  * with a trailing slash" means and breaks the URL).
  */
+/**
+ * Strip trailing slashes without a regex.
+ *
+ * The obvious `replace(/\/+$/, '')` is a polynomial-ReDoS shape (CodeQL
+ * `js/polynomial-redos`, flagged high): on a value that is mostly slashes but does not end in
+ * one, the engine retries `\/+` from every position and the match cost is quadratic in the
+ * input length. `siteUrl` is adopter-supplied and can reach here from config or an env var, so
+ * it counts as uncontrolled. A character scan is linear and needs no reasoning about
+ * backtracking.
+ */
+function stripTrailingSlashes(value: string): string {
+  let end = value.length
+  while (end > 0 && value.charCodeAt(end - 1) === 47 /* '/' */) end--
+  return value.slice(0, end)
+}
+
 export function withTrailingSlash(path: string): string {
   const splitIndex = path.search(/[?#]/)
   const base = splitIndex === -1 ? path : path.slice(0, splitIndex)
@@ -212,6 +228,6 @@ export function resolveSeoUrl(pathOrUrl: string, opts: ResolveSeoUrlOptions = {}
     : pathOrUrl.startsWith('/')
       ? pathOrUrl
       : `/${pathOrUrl}`
-  const origin = opts.siteUrl?.replace(/\/+$/, '')
+  const origin = opts.siteUrl === undefined ? undefined : stripTrailingSlashes(opts.siteUrl)
   return origin ? origin + normalized : normalized
 }
