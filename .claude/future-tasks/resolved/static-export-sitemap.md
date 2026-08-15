@@ -47,7 +47,7 @@ Framework-agnostic core + thin Next adapter:
   `{ urlPath, lastModified?, entryType, data }[]`. Excludes `noindex` entries, includes `maxItems:1`
   singletons, supports `opts.exclude` (urlPath predicate/globs). **No publish-field option.** An
   earlier draft of this file proposed `opts.publishedField` (default `published`; absent ⇒ published);
-  that was a second publish convention — of *opposite polarity* to the one `docs-site-proto` had
+  that was a second publish convention — of *opposite polarity* to the one the knowledge base site had
   already invented, and enforced by neither — and was removed by the branch-only decision. Do not
   reintroduce it.
 - Next adapter (`canopycms-next`): `generateContentSitemap(getCanopyForBuild, { baseUrl, ...opts })` →

@@ -32,10 +32,9 @@ fields correctly infer as optional.
 
 ## Blast radius
 
-Small in-repo: two lines, `entry-schema.test.ts:89,97`. Neither adopter
-(`docs-site-proto`, `website`) sets `exactOptionalPropertyTypes`, so the
-narrower breaking surface (optional key present vs. `| undefined`) doesn't
-apply to either today.
+Small in-repo: two lines, `entry-schema.test.ts:89,97`. Neither adopter site
+sets `exactOptionalPropertyTypes`, so the narrower breaking surface (optional
+key present vs. `| undefined`) doesn't apply to either today.
 
 ## Acceptance
 

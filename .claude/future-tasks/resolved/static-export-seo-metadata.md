@@ -28,9 +28,9 @@ field-group convention — so each adopter invents field names (the example app 
 **Raised stakes (2026-08-14).** The branch-only decision in
 [draft-publish-lifecycle.md](../draft-publish-lifecycle.md) makes `noindex` the **sole per-entry
 visibility lever** in the product. This is therefore not just an ergonomics helper — it owns the only
-control an adopter has over whether a merged entry is advertised. `../website` has already forked a
-local copy (`src/lib/seo.ts`, with `extractSeoFields` + `DEFAULT_SEO_FIELD_NAMES`) and routes four
-surfaces through it; that fork should be deleted in favour of the package version once this ships.
+control an adopter has over whether a merged entry is advertised. The marketing site has already
+forked a local copy (its own `extractSeoFields` + `DEFAULT_SEO_FIELD_NAMES` equivalents) and routes
+four surfaces through it; that fork should be deleted in favour of the package version once this ships.
 
 ## What's available to build on
 

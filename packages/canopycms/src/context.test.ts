@@ -316,6 +316,29 @@ describe('listEntries / buildContentTree path ACLs', () => {
     expect(checkerSpy).not.toHaveBeenCalled()
   })
 
+  it('builds no access checker for the synthetic admin outside build mode (createBuildCanopy path)', async () => {
+    await writeContent()
+    await writePermissions()
+
+    const services = await createServices()
+    const checkerSpy = vi.spyOn(services, 'createContentAccessChecker')
+
+    // Neither isDeployedStatic nor isBuildMode() is true here -- this is the shape of a
+    // standalone script calling createBuildCanopy() directly (build-canopy.ts), which
+    // extracts STATIC_DEPLOY_USER without going through either of those two guards.
+    // createContentAccessChecker would still grant that user everything, so it should be
+    // skipped the same way -- otherwise every such script pays a getSettingsBranchRoot()
+    // round trip (a settings-branch git workspace clone in prod/dev) for a no-op filter.
+    const ctx = await createCanopyContext({
+      services,
+      extractUser: async () => STATIC_DEPLOY_USER,
+    }).getContext()
+
+    const slugs = (await ctx.listEntries()).map((i) => i.slug)
+    expect(slugs).toEqual(expect.arrayContaining(['public', 'secret']))
+    expect(checkerSpy).not.toHaveBeenCalled()
+  })
+
   it('propagates a failing access checker instead of returning an unfiltered listing', async () => {
     await writeContent()
 

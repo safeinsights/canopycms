@@ -14,7 +14,7 @@ plus a `sharedCta` block template) with a real content example, and
 
 ## Priority: P2 [BOTH]
 
-From adopter request #16 in `../website/docs/canopycms-requests.md`
+From adopter request #16, an adopter's own requests list
 ("shared/referenced blocks"), triaged during the 2026-08-14 go-live backlog
 re-baseline. **This epic (`integration-202608-b`, PR #235) is addressing the
 caveat below now** — don't double-build.

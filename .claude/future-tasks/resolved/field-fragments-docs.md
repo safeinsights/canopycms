@@ -13,7 +13,7 @@ discoverability, with tests in `entry-schema.test.ts`. See
 
 ## Priority: P3 [BOTH]
 
-From adopter request #15 in `../website/docs/canopycms-requests.md`
+From adopter request #15, an adopter's own requests list
 ("reusable field fragments"), triaged during the 2026-08-14 go-live backlog
 re-baseline. **This epic (`integration-202608-b`, PR #235) is documenting this
 now** — don't double-build.
