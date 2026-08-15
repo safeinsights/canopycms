@@ -1333,7 +1333,19 @@ The guard is deliberately **prod-only** rather than firing on all server deploym
 
 A page in a `[...slug]`/`[slug]` route needs to resolve content correctly in two different phases: filesystem-direct (working tree) during the build, and branch-aware (the editor's branch-clone preview) at request time in dev. Hand-picking the right context at each call site is error-prone.
 
-To remove that burden, the Next.js adapter also returns phase-selecting `read()` and `readByUrlPath()` functions. These pick the context automatically: at build time (`isBuildMode()`) they use the build context; at request time they use the branch-aware, ACL-enforced runtime context from `getCanopy()`. Page code calls one function and is correct in both phases by construction, without ever touching the admin build context directly.
+To remove that burden, the Next.js adapter also returns phase-selecting `read()`, `readByUrlPath()` and `listEntries()` functions. These pick the context automatically: at build time (`isBuildMode()`) they use the build context; at request time they use the branch-aware, ACL-enforced runtime context from `getCanopy()`. Page code calls one function and is correct in both phases by construction, without ever touching the admin build context directly.
+
+`listEntries()` is the batch counterpart: it returns every entry under `rootPath` in a single filesystem pass, each with its `urlPath`, `slug`, `entryType`, `data` and `schema`. It exists so adopters stop writing "enumerate the routable paths, then read each one" — an N+1 over the content tree whose hand-built URLs are a recurring source of silent misses on multi-segment slugs. The `urlPath` it returns round-trips through `readByUrlPath` by construction.
+
+Note it takes no `branch` option, unlike `read`/`readByUrlPath`: it always lists `defaultActiveBranch ?? defaultBaseBranch ?? 'main'`. In dev that tracks the git HEAD through `refreshActiveBranch()`; in prod that refresh is a no-op, so it always reads the base branch.
+
+### Batch Reads Enforce Path ACLs
+
+`listEntries()` and `buildContentTree()` are the two content reads that return **many** entries at once. On the request-scoped context they enforce path permissions per entry, the same `read` level the single-entry reader checks: entries the current user cannot read are omitted from the result, and — for the tree — from the `meta.indexEntry` passed to a collection's `extract` callback, which emits no node of its own. Collections left with no visible children are pruned. On the build context and on `static` deployments nothing is filtered, since both run as the synthetic admin.
+
+Enforcement reuses `createContentAccessChecker` (`authorization/content.ts`), the same batch primitive the entries API uses: it resolves the request-constant work — branch access, the settings/permissions root, and the rule set — exactly once per request and returns a **synchronous** per-path check, so the per-entry cost is an admin short-circuit or one glob match per configured rule, with no additional I/O. The checker is built lazily and skipped entirely at build time, where it would otherwise add a `getSettingsBranchRoot()` round trip (EFS, in prod) to every listing for a user who bypasses ACLs anyway.
+
+This matters because `getCanopy()` is the context adopters are told to use for request-time content, and it is documented as ACL-enforcing. Before this, its two batch reads took no user at all — so a listing could disclose full entry `data` for paths the same user could not have fetched through `read()`.
 
 ## The Permission Model
 
@@ -1352,6 +1364,8 @@ Glob patterns (e.g., `content/posts/**`) restrict who can edit specific content 
 ### Layer 3: Content Access
 
 Combines branch and path checks into a single decision. Returns detailed denial reasons for debugging. The `checkContentAccess` function in `content.ts` is the main entry point for most authorization checks.
+
+For listing endpoints that check many paths in one request, `createContentAccessChecker` in the same module is the batch form: it hoists the branch check, the permissions-root resolution and the rule load out of the loop and returns a synchronous per-path checker. Use it — not a loop over `checkContentAccess` — anywhere a single request evaluates more than a handful of paths. Its callers today are the entries API, reference resolution, and the request-scoped `listEntries`/`buildContentTree`.
 
 **Per-request batch checking**: Resolving content access involves request-constant work — verifying branch access, resolving the settings-branch root, and loading the permission rules. When a single request authorizes many paths (for example, listing entries across dozens of collections), repeating that setup per path is wasteful: an entry-listing endpoint that re-loaded permissions and re-resolved the settings root once per entry took tens of seconds for a branch with many collections. The `createContentAccessChecker` factory (exposed on `CanopyServices`) does the request-constant work once and returns a synchronous per-path checker, so each authorization decision is a cheap in-memory rule match. The single-call `checkContentAccess` API is unchanged and now delegates to this batch primitive.
 

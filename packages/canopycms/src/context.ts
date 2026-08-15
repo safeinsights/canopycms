@@ -15,6 +15,7 @@ import {
 } from './content-tree'
 import {
   listEntries as listEntriesImpl,
+  type ContentVisibilityOptions,
   type ListEntriesOptions,
   type ListEntriesItem,
 } from './content-listing'
@@ -69,12 +70,28 @@ export interface CanopyBuildContext {
    * Supply TEntryTypes (a map of entry type name → data shape, typically
    * derived via `TypeFromEntrySchema<typeof yourSchema>`) to get narrowed
    * access to `meta.indexEntry.data` inside the `extract` callback.
+   *
+   * Path ACLs: on the request-scoped context (`getCanopy()`), entries the current user
+   * cannot `read` are omitted — from the emitted nodes AND from the `meta.indexEntry`
+   * handed to `extract`. Collections whose children are all filtered out are pruned.
+   * On the build context, and on static deployments, nothing is filtered (synthetic admin).
    */
   buildContentTree: <T = unknown, TEntryTypes = DefaultEntryTypes>(
     options?: BuildContentTreeOptions<T, TEntryTypes>,
   ) => Promise<ContentTreeNode<T>[]>
 
-  /** List all content entries as a flat array. */
+  /**
+   * List all content entries as a flat array.
+   *
+   * Path ACLs: on the request-scoped context (`getCanopy()`), entries the current user
+   * cannot `read` are omitted before `extract` runs. On the build context, and on static
+   * deployments, nothing is filtered (synthetic admin).
+   *
+   * Branch: unlike `read`/`readByUrlPath`, this takes no `branch` option — it always lists
+   * `defaultActiveBranch ?? defaultBaseBranch ?? 'main'`. In `dev` that tracks the git HEAD
+   * via `refreshActiveBranch()`; in `prod` that refresh is a no-op, so this always reads the
+   * base branch. See `.claude/future-tasks/context-listing-branch-pinning.md`.
+   */
   listEntries: <T = Record<string, unknown>>(
     options?: ListEntriesOptions<T>,
   ) => Promise<ListEntriesItem<T>[]>
@@ -289,13 +306,52 @@ export function createCanopyContext(options: CanopyContextOptions) {
         services.entrySchemaRegistry,
         contentRootName,
       )
-      return { branchRoot, flatSchema, contentRootName }
+      return { branchContext, branchRoot, flatSchema, contentRootName }
     }
     const resolveSchemaContext = () => {
       if (!schemaContextPromise) {
         schemaContextPromise = resolveSchemaContextImpl()
       }
       return schemaContextPromise
+    }
+
+    /**
+     * Path-ACL predicate for the batch reads (listEntries / buildContentTree). Memoized
+     * per getContext call, like the schema context above.
+     *
+     * These two are the only content reads on this context that did NOT enforce path
+     * permissions: `read`/`readByUrlPath` go through the content reader, which checks per
+     * entry, while the listing primitives took no user at all. Since `CanopyContext` is the
+     * request-scoped, ACL-enforcing context that page code is told to use, an unfiltered
+     * listing there disclosed full entry `data` for paths the user cannot `read()` directly.
+     *
+     * `services.createContentAccessChecker` is the existing batch primitive (api/entries.ts
+     * uses the same one): it resolves the request-constant work — branch access, the
+     * settings/permissions root, and the rule set — exactly once, and returns a synchronous
+     * per-path check. So the per-entry cost here is an admin short-circuit or a minimatch
+     * per configured rule, with no additional I/O.
+     *
+     * Returns an empty object (no predicate → unfiltered, today's behavior) at build time
+     * and on static deployments. That short-circuit is load-bearing, not just an
+     * optimization: those callers run as the synthetic admin STATIC_DEPLOY_USER, for whom
+     * the predicate is a no-op anyway, and building it would add a getSettingsBranchRoot()
+     * call — an EFS round trip in prod — to every build-time listing.
+     *
+     * Deliberately NOT wrapped in a try/catch: createContentAccessChecker is fail-loud by
+     * contract, and swallowing here would silently serve an unfiltered listing.
+     */
+    let visibilityPromise: Promise<ContentVisibilityOptions> | null = null
+    const resolveVisibilityImpl = async (): Promise<ContentVisibilityOptions> => {
+      if (isDeployedStatic(services.config) || isBuildMode()) return {}
+      const { branchContext, branchRoot } = await resolveSchemaContext()
+      const checkAccess = await services.createContentAccessChecker(branchContext, branchRoot, user)
+      return { shouldInclude: (physicalPath) => checkAccess(physicalPath, 'read').allowed }
+    }
+    const resolveVisibility = () => {
+      if (!visibilityPromise) {
+        visibilityPromise = resolveVisibilityImpl()
+      }
+      return visibilityPromise
     }
 
     const buildContentTree: CanopyContext['buildContentTree'] = async <
@@ -305,14 +361,26 @@ export function createCanopyContext(options: CanopyContextOptions) {
       options?: BuildContentTreeOptions<T, TEntryTypes>,
     ) => {
       const { branchRoot, flatSchema, contentRootName } = await resolveSchemaContext()
-      return buildContentTreeImpl<T, TEntryTypes>(branchRoot, flatSchema, contentRootName, options)
+      return buildContentTreeImpl<T, TEntryTypes>(
+        branchRoot,
+        flatSchema,
+        contentRootName,
+        options,
+        await resolveVisibility(),
+      )
     }
 
     const listEntries: CanopyContext['listEntries'] = async <T = Record<string, unknown>>(
       options?: ListEntriesOptions<T>,
     ) => {
       const { branchRoot, flatSchema, contentRootName } = await resolveSchemaContext()
-      return listEntriesImpl<T>(branchRoot, flatSchema, contentRootName, options)
+      return listEntriesImpl<T>(
+        branchRoot,
+        flatSchema,
+        contentRootName,
+        options,
+        await resolveVisibility(),
+      )
     }
 
     return {
