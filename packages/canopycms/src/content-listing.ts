@@ -272,15 +272,21 @@ export interface ContentVisibilityOptions {
  * and returns a flat list suitable for generateStaticParams, search indexing, sitemaps, etc.
  *
  * Build-time-only failure: a file with a recognized content extension (`.md`/`.mdx`/`.json`/
- * `.yaml`) sitting in a collection directory but not matching `{type}.{slug}.{id}.{ext}` is, by
- * default, silently dropped (see `listCollectionEntries`'s debug-gated warning). That is exactly
- * the silent-page-loss failure mode static generation must not have — a schema rename without a
+ * `.yaml`) sitting in a collection directory that *looks like an attempted entry* (see
+ * `looksLikeMalformedEntry` below) but doesn't match `{type}.{slug}.{id}.{ext}` is, by default,
+ * silently dropped (see `listCollectionEntries`'s debug-gated warning). That is exactly the
+ * silent-page-loss failure mode static generation must not have — a schema rename without a
  * matching file rename, or an entry type declared in one collection but not another, would
  * otherwise vanish a page with zero build output. So when `isBuildMode()` is true, any such file
  * turns the listing into a thrown error instead (see `findInvalidEntries`/`assertBuildEntriesValid`
  * in `static/index.ts` for the sibling schema-validity guard this mirrors). Outside build mode
  * (admin UI, content tree, `next dev`) the file is still just skipped, since a fresh scaffold or
  * mid-rename file legitimately exists there.
+ *
+ * A file that was never entry-shaped to begin with — a `README.md`, or a colocated sibling
+ * artifact named `{contentId}.suffix.ext` per the `entryTransforms`/`readSibling` convention
+ * documented in the README — is not this guard's failure mode and never throws, in or out of
+ * build mode. See `looksLikeMalformedEntry` for the exact shape test.
  *
  * @param branchRoot - Absolute path to the branch workspace root
  * @param flatSchema - Flattened schema items (from flattenSchema)
@@ -324,19 +330,24 @@ export async function listEntries<T = Record<string, unknown>>(
   )
 
   // Build-time only: fail loudly rather than silently shipping a build with a page missing. See
-  // the build-time-only-failure note in this function's own doc comment above.
+  // the build-time-only-failure note in this function's own doc comment above. Only files that
+  // structurally look like a malformed entry reach `skippedFiles` at all -- see
+  // `looksLikeMalformedEntry` and `listCollectionEntries`.
   if (isBuildMode() && skippedFiles.length > 0) {
     const lines = skippedFiles.map(
       ({ filename, collectionPath }) => `  - ${collectionPath}/${filename}`,
     )
     throw new Error(
-      `CanopyCMS static build: found ${skippedFiles.length} file(s) with an unrecognized filename ` +
-        `format inside a content collection:\n${lines.join('\n')}\n` +
+      `CanopyCMS static build: found ${skippedFiles.length} file(s) that look like malformed ` +
+        `content entries inside a content collection:\n${lines.join('\n')}\n` +
         'Expected {type}.{slug}.{id}.{ext} with a known entry type (a name declared in that ' +
         "collection's entries config) and a valid 12-char Base58 ID. This usually means a schema " +
         'rename without a matching file rename, an entry type declared in one collection but not ' +
-        'another, or a stray file placed directly in a collection directory. Rename or move the ' +
-        'file, or fix the schema, then rebuild.',
+        'another, or a stray file placed directly in a collection directory. If this is meant to ' +
+        "be a colocated sibling artifact (e.g. an entry's contentId-prefixed data file read via " +
+        'an entryTransforms readSibling call), keep its name to three or fewer dot-separated ' +
+        'segments (id.suffix.ext) so it is never mistaken for an entry attempt. Otherwise rename ' +
+        'or move the file, or fix the schema, then rebuild.',
     )
   }
 
@@ -438,14 +449,39 @@ export interface SkippedListingFile {
 }
 
 /**
+ * True when a content-extension filename structurally resembles an attempted entry — as opposed
+ * to a file that was never entry-shaped to begin with.
+ *
+ * A successfully-parsed entry always has at least 4 dot-separated segments: `type` (1+),
+ * `slug` (1+, since `parseTypedFilename` always takes at least the one segment between type and
+ * id), `id` (1), `ext` (1). So a file with 3 or fewer dot-separated segments could never have
+ * parsed as an entry regardless of its content — it isn't a malformed entry, it's a different
+ * kind of file that happens to share a recognized extension. The two motivating cases: a bare
+ * `README.md` (2 segments) and an entry's colocated sibling artifact named
+ * `{contentId}.suffix.ext` per the `entryTransforms`/`readSibling` convention documented in the
+ * README (3 segments, e.g. `5NVkkrB1MJUv.profile.json`).
+ *
+ * Dot-prefixed (hidden files, editor swap/backup files) and underscore-prefixed (a common
+ * adopter convention for "not an entry") names are excluded outright regardless of segment
+ * count, matching `parseTypedFilename`'s own dotfile rejection.
+ */
+const looksLikeMalformedEntry = (filename: string): boolean => {
+  if (filename.startsWith('.') || filename.startsWith('_')) return false
+  return filename.split('.').length >= 4
+}
+
+/**
  * List all entries in a collection directory.
  * Reads each entry's data (frontmatter or JSON).
  *
- * @param onSkip - Called for every file that has a recognized content extension but whose name
- *   doesn't match the `{type}.{slug}.{id}.{ext}` grammar (see `parseTypedFilename`). Optional and
- *   purely a diagnostic hook — existing callers that omit it keep the exact prior behavior (the
- *   file is silently dropped from the result, with a debug-gated `log.warn`). `listEntries` below
- *   uses this to turn the skip into a hard build-time failure instead of a silent one.
+ * @param onSkip - Called for every file that has a recognized content extension, doesn't match
+ *   the `{type}.{slug}.{id}.{ext}` grammar (see `parseTypedFilename`), AND structurally looks
+ *   like an attempted entry (see `looksLikeMalformedEntry`). A file that was never entry-shaped
+ *   (too few dot-separated segments to ever be a valid entry — a `README.md`, a colocated
+ *   sibling artifact) is always silently dropped with a debug-gated `log.warn`, never passed to
+ *   `onSkip`. Optional and purely a diagnostic hook — existing callers that omit it keep the
+ *   exact prior behavior. `listEntries` below uses this to turn the skip into a hard build-time
+ *   failure instead of a silent one.
  */
 export const listCollectionEntries = async (
   root: string,
@@ -504,7 +540,9 @@ export const listCollectionEntries = async (
           'listCollectionEntries',
           `Skipping file with unrecognized filename format: ${file.name} (expected {type}.{slug}.{id}.{ext} with a known entry type and valid 12-char Base58 ID)`,
         )
-        onSkip?.({ filename: file.name, collectionPath: collection.logicalPath })
+        if (looksLikeMalformedEntry(file.name)) {
+          onSkip?.({ filename: file.name, collectionPath: collection.logicalPath })
+        }
         return null
       }
 

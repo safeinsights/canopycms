@@ -824,7 +824,7 @@ describe('listEntries', () => {
       const flat = flattenSchema(schema, 'content')
 
       await expect(listEntries(tempDir, flat, 'content')).rejects.toThrow(
-        /unrecognized filename format.*article\.lost-page\.4fBqT78gcaLd\.md/s,
+        /look like malformed content entries.*article\.lost-page\.4fBqT78gcaLd\.md/s,
       )
     })
 
@@ -836,6 +836,87 @@ describe('listEntries', () => {
 
       const { dir: postsDir } = await createCollection(contentDir, 'posts')
       await createEntry(postsDir, 'post', 'hello', 'md', { title: 'Hello' })
+
+      const schema: RootCollectionConfig = {
+        collections: [
+          { name: 'posts', path: 'posts', entries: [{ name: 'post', format: 'md', schema: [] }] },
+        ],
+      }
+      const flat = flattenSchema(schema, 'content')
+
+      const entries = await listEntries(tempDir, flat, 'content')
+      expect(entries).toHaveLength(1)
+    })
+
+    it('does not throw in build mode for a bare README.md dropped in a collection directory', async () => {
+      // README.md has only 2 dot-separated segments -- it could never have parsed as
+      // {type}.{slug}.{id}.{ext} (which needs 4+), so it was never entry-shaped to begin with.
+      vi.stubEnv('CANOPY_BUILD_MODE', 'true')
+
+      const contentDir = path.join(tempDir, 'content')
+      await fs.mkdir(contentDir)
+
+      const { dir: postsDir } = await createCollection(contentDir, 'posts')
+      await createEntry(postsDir, 'post', 'hello', 'md', { title: 'Hello' })
+      await fs.writeFile(path.join(postsDir, 'README.md'), '# Not an entry')
+
+      const schema: RootCollectionConfig = {
+        collections: [
+          { name: 'posts', path: 'posts', entries: [{ name: 'post', format: 'md', schema: [] }] },
+        ],
+      }
+      const flat = flattenSchema(schema, 'content')
+
+      const entries = await listEntries(tempDir, flat, 'content')
+      expect(entries).toHaveLength(1)
+      expect(entries[0].slug).toBe('hello')
+    })
+
+    it('does not throw in build mode for a colocated sibling artifact ({contentId}.suffix.ext)', async () => {
+      // A sibling artifact named per the entryTransforms/readSibling convention documented in
+      // the README (e.g. `${contentId}.profile.json`) has only 3 dot-separated segments -- one
+      // short of the 4 a real entry needs -- so it is never mistaken for a malformed entry.
+      vi.stubEnv('CANOPY_BUILD_MODE', 'true')
+
+      const contentDir = path.join(tempDir, 'content')
+      await fs.mkdir(contentDir)
+
+      const { dir: authorsDir } = await createCollection(contentDir, 'authors')
+      const entryId = await createEntry(authorsDir, 'author', 'jane-doe', 'json', {
+        name: 'Jane Doe',
+      })
+      await fs.writeFile(
+        path.join(authorsDir, `${entryId}.profile.json`),
+        JSON.stringify({ bio: 'A sibling artifact, not an entry.' }),
+      )
+
+      const schema: RootCollectionConfig = {
+        collections: [
+          {
+            name: 'authors',
+            path: 'authors',
+            entries: [{ name: 'author', format: 'json', schema: [] }],
+          },
+        ],
+      }
+      const flat = flattenSchema(schema, 'content')
+
+      const entries = await listEntries(tempDir, flat, 'content')
+      expect(entries).toHaveLength(1)
+      expect(entries[0].slug).toBe('jane-doe')
+    })
+
+    it('still throws in build mode for a dotfile with a 4+ segment shape (excluded regardless)', async () => {
+      // Belt-and-suspenders case: a dot-prefixed name is always skipped outright, even when it
+      // has enough segments to otherwise look like a malformed entry.
+      vi.stubEnv('CANOPY_BUILD_MODE', 'true')
+
+      const contentDir = path.join(tempDir, 'content')
+      await fs.mkdir(contentDir)
+
+      const { dir: postsDir } = await createCollection(contentDir, 'posts')
+      await createEntry(postsDir, 'post', 'hello', 'md', { title: 'Hello' })
+      await fs.writeFile(path.join(postsDir, '.article.lost-page.4fBqT78gcaLd.md'), '# Lost')
 
       const schema: RootCollectionConfig = {
         collections: [
