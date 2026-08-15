@@ -105,16 +105,24 @@ Three tests, because the decision above has three distinct failure modes:
 ## Related — and what the decision above means for each
 
 - [listentries-acl-awareness.md](resolved/listentries-acl-awareness.md) — the listing
-  half, already enforced. **The decision widens the gap between them:** listing returns a
-  bare ID for *every* reference (it never resolves at all), while reading will now return
-  title+URL for a denied one. So a denied reference is about to carry *more* information
-  through `read()` than a permitted one does through `listEntries()`. That is defensible
-  — the two APIs answer different questions — but it should be a deliberate stance, not a
-  surprise, and it is worth one sentence in the docs.
+  half, already enforced. **No security interaction, despite appearances.** An earlier
+  draft of this file claimed the decision let a *denied* reference carry more information
+  through `read()` than a *permitted* one does through `listEntries()`. That compared
+  across two APIs answering different questions, and it is not a meaningful ordering.
+  Within each API the behaviour is monotonic and correct: `read()` gives full data when
+  permitted and title+URL when denied; `listEntries()` gives a bare ID to everyone,
+  because it does not resolve references at all — not because of any access decision.
+  **Nobody gains by being denied**, which is the only property that would matter.
+
+  What is real is a shape inconsistency an adopter will notice: navigation built from
+  `listEntries` must resolve titles itself, while the same field arrives resolved through
+  `read`. That predates this decision and is documented as the shared-blocks caveat below.
 - [resolved/shared-blocks-listentries-caveat.md](resolved/shared-blocks-listentries-caveat.md)
-  — the same asymmetry from the other side. If `listEntries` ever gains reference
-  resolution, it inherits this decision wholesale and must ask the same phase-dependent
-  question.
+  — the same shape inconsistency from the other side, and **the one forward constraint
+  worth carrying**: if `listEntries` ever gains reference resolution, it inherits this
+  decision wholesale, including the phase-dependent question — "is B public?" at build,
+  "can this reader see B?" at request. Implementing it with the request-time question
+  only would pass every test and leak in a static build.
 - [authorization-enforcement-consolidation.md](authorization-enforcement-consolidation.md)
   — reuse `createContentAccessChecker`; do not add a sixth matcher. **The static case
   needs care here:** "evaluate against anonymous" must go through the same matcher with
