@@ -1898,6 +1898,52 @@ describe('my integration test', () => {
 })
 ```
 
+### Testing Authorization Defaults (`defaultBranchAccess` / `defaultPathAccess`)
+
+`createTestWorkspace()` defaults to a permissive `defaultBranchAccess: 'allow'` /
+`defaultPathAccess: 'allow'` workspace (see `test-workspace.ts`'s
+`defineCanopyTestConfig` call). That means most of the integration suite never
+exercises the fail-closed defaults that `canopycms init` actually scaffolds --
+a regression in the `'deny'` path could ship with every other suite green. Override
+the defaults via `createTestWorkspace`'s config overrides when a test needs to
+cover them:
+
+```typescript
+workspace = await createTestWorkspace(
+  { schema: BLOG_SCHEMA, defaultBranchAccess: 'deny', defaultPathAccess: 'allow' },
+  { internalGroups: TEST_INTERNAL_GROUPS },
+)
+```
+
+See `__integration__/permissions/default-deny-branch-access.test.ts` for the full
+pattern, including seeding `internalGroups` so the `admin`/`reviewer` personas hold
+their reserved-group membership (an auth provider's external groups get reserved
+IDs like `Admins` stripped for security, so those personas need it granted
+internally).
+
+**Gotcha: admins bypass BOTH the branch and path layers.** `isAdmin(user)`
+short-circuits in `authorization/branch.ts` and `authorization/path.ts`, so an
+authorization test written against the `admin` persona proves nothing about
+`'deny'` defaults -- it passes identically whether the defaults are `'allow'` or
+`'deny'`. Use the `editor` persona from `__integration__/test-utils/multi-user.ts`
+(`createMockAuthPlugin('editor')`) instead. The same trap applies outside tests:
+`canopycms-auth-dev` auto-sets `CANOPY_BOOTSTRAP_ADMIN_IDS`, so the default dev user
+is an admin and manually clicking around a local dev site won't surface an
+access-rule regression either.
+
+**Gotcha: assert exact status codes, not `.not.toBe(403)`.** A loose exclusion like
+that passes on a 404 from a wrong route just as readily as on a correct 200/403. A
+test in `default-deny-branch-access.test.ts` did exactly this -- it posted to
+`/:branch/status` instead of `/:branch/submit`, 404'd, and passed both with and
+without the fix it was meant to cover. Assert the specific status you expect
+(`expect(res.status).toBe(200)`).
+
+**When adding an authorization grant, verify the negative:** temporarily remove the
+grant and confirm the new test actually fails before restoring it. Restore from a
+scratchpad copy of the file (`cp /path/to/scratchpad-copy.ts src/path/to/file.ts`),
+never `git checkout -- <file>` -- that discards any other uncommitted work in the
+file, not just your temporary edit.
+
 ### Working with Async Services
 
 **createCanopyServices is now async** because it loads `.collection.json` meta files from the filesystem. This affects how you create and use services in tests.
