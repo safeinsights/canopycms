@@ -2,7 +2,7 @@
 
 ## RESOLVED (2026-08-14) — option 1 shipped: enforcement, not deferral
 
-From adopter request #11 in `../website/docs/canopycms-requests.md` ("typed
+From adopter request #11, an adopter's own requests list ("typed
 listing with data"), triaged during the 2026-08-14 go-live backlog re-baseline.
 JP decided the open question the same day; implemented on
 `fix/listing-acl-enforcement` off `integration-202608-b`.
@@ -77,9 +77,9 @@ shape, which option 2 would have declared incompatible with index pages.
 ## Adopter-side note
 
 The multi-segment bug reported alongside request #11 (`'/blog/' + lastSegment`
-resolving to a nonexistent URL) was **already fixed** in `../website` before
-this landed — `src/lib/canopy-helpers.ts` now has a single `listEntriesOfType`
-using the full segment join. What request #11 buys them now is the N+1 and a
+resolving to a nonexistent URL) was **already fixed** on the marketing site
+before this landed — its own content-listing helper now joins the full
+segment path in one place. What request #11 buys them now is the N+1 and a
 `urlPath` that round-trips by construction.
 
 ## Related

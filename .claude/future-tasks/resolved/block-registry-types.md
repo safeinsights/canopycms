@@ -15,7 +15,7 @@ the registry pattern instead of the if-chain this file names below. See
 
 ## Priority: P3 [BOTH]
 
-From adopter request #13 in `../website/docs/canopycms-requests.md`
+From adopter request #13, an adopter's own requests list
 ("block→component registry"), triaged during the 2026-08-14 go-live backlog
 re-baseline. **This epic (`integration-202608-b`, PR #235) is implementing this
 now** — don't double-build.
@@ -25,15 +25,15 @@ now** — don't double-build.
 `defineBlockTemplate` ships (`entry-schema.ts:258-267`), and
 `TypeFromEntrySchema` already derives the discriminated union from it
 (`entry-schema.ts:50-64`). The 21-case `switch` the original request describes
-no longer exists in `website`: `PageSections.tsx:52` now uses an exhaustive
-mapped type keyed off that union instead.
+no longer exists on the marketing site: one of its section-rendering
+components now uses an exhaustive mapped type keyed off that union instead.
 
 ## The actual gap
 
 That mapped-type pattern is real, works, and is **undocumented and unshipped**
 as a package capability — an adopter has to independently rediscover
 `TypeFromEntrySchema` + a mapped `Record<Block['_type'], Component>` to arrive
-where `website` already did. Meanwhile `apps/example1/app/components/PostView.tsx:54-105`
+where the marketing site already did. Meanwhile `apps/example1/app/components/PostView.tsx:54-105`
 — our own reference app — still demonstrates the bad if-chain pattern the
 request is trying to get away from, which sends the wrong signal to anyone
 reading it as a model.

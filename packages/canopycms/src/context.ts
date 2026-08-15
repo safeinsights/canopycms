@@ -331,18 +331,31 @@ export function createCanopyContext(options: CanopyContextOptions) {
      * per-path check. So the per-entry cost here is an admin short-circuit or a minimatch
      * per configured rule, with no additional I/O.
      *
-     * Returns an empty object (no predicate → unfiltered, today's behavior) at build time
-     * and on static deployments. That short-circuit is load-bearing, not just an
-     * optimization: those callers run as the synthetic admin STATIC_DEPLOY_USER, for whom
-     * the predicate is a no-op anyway, and building it would add a getSettingsBranchRoot()
-     * call — an EFS round trip in prod — to every build-time listing.
+     * Returns an empty object (no predicate → unfiltered, today's behavior) at build time,
+     * on static deployments, and for the synthetic admin user. All three short-circuits are
+     * load-bearing, not just an optimization: `createContentAccessChecker` grants that user
+     * unconditional access (path checks bypass entirely for an Admins-group user, see
+     * authorization/path.ts), so the predicate would always be a no-op — but building it
+     * still costs a getSettingsBranchRoot() call, which in modes with a separate settings
+     * branch (prod and dev) means provisioning/cloning that branch's git workspace. That is
+     * an EFS round trip in prod, and it is exactly the unwanted cost for `createBuildCanopy`
+     * (see build-canopy.ts): a standalone script's whole point is running outside a request
+     * or Next.js build phase, so neither of the other two guards fires for it, and without
+     * this one every such script paid for a settings-workspace clone it never needed and,
+     * in an environment where that workspace cannot be provisioned, would hard-fail on.
+     *
+     * Compared by reference to the exported STATIC_DEPLOY_USER singleton (not by group
+     * membership) so this stays scoped to the synthetic build/admin identity specifically —
+     * a real authenticated admin hitting `getCanopy()` at request time still goes through
+     * the real check, same as any other user.
      *
      * Deliberately NOT wrapped in a try/catch: createContentAccessChecker is fail-loud by
      * contract, and swallowing here would silently serve an unfiltered listing.
      */
     let visibilityPromise: Promise<ContentVisibilityOptions> | null = null
     const resolveVisibilityImpl = async (): Promise<ContentVisibilityOptions> => {
-      if (isDeployedStatic(services.config) || isBuildMode()) return {}
+      if (isDeployedStatic(services.config) || isBuildMode() || user === STATIC_DEPLOY_USER)
+        return {}
       const { branchContext, branchRoot } = await resolveSchemaContext()
       const checkAccess = await services.createContentAccessChecker(branchContext, branchRoot, user)
       return { shouldInclude: (physicalPath) => checkAccess(physicalPath, 'read').allowed }

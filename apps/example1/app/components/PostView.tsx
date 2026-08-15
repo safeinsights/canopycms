@@ -96,11 +96,18 @@ const renderBlock = (block: Blocks, extra: BlockExtraProps) => {
   // One contained assertion: `block.template` and `block.value` come from the same
   // object, so the lookup and the data always agree at runtime — TypeScript just can't
   // correlate a dynamic key lookup with a discriminated union's narrowing on its own.
-  // What the registry above still guarantees at compile time is that every template
-  // has exactly one component, so this lookup can never come back undefined.
-  const Component = blockRegistry[block.template] as ComponentType<
-    { data: typeof block.value } & BlockExtraProps
-  >
+  // The registry above guarantees every CURRENT schema template has exactly one
+  // component, but that is a compile-time guarantee about the schema, not about data
+  // at rest. A content file can carry a `template` name that used to exist and was
+  // since renamed or removed — the schema-validity guard at build time catches that
+  // for a production static export, but request-time rendering (next dev, and any
+  // on-demand render of content saved after the last build) reads content without
+  // running that guard, so the stale name reaches this lookup as `undefined`. Guard
+  // it explicitly rather than letting React throw "Element type is invalid".
+  const Component = blockRegistry[block.template] as
+    | ComponentType<{ data: typeof block.value } & BlockExtraProps>
+    | undefined
+  if (!Component) return null
   return <Component data={block.value} {...extra} />
 }
 

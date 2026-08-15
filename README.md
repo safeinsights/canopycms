@@ -1453,8 +1453,18 @@ function renderBlocks(blocks: Blocks[]) {
     // object, so the lookup and the data always agree at runtime — TypeScript just
     // can't correlate a dynamic key lookup with a discriminated union's narrowing on
     // its own. This is the one place that trust is spent; the registry above is what
-    // makes it safe to spend, because every key is guaranteed to exist.
-    const Component = blockRegistry[block.template] as ComponentType<{ data: typeof block.value }>
+    // makes it safe to spend for every template the SCHEMA currently declares.
+    const Component = blockRegistry[block.template] as
+      | ComponentType<{ data: typeof block.value }>
+      | undefined
+    // Compile-time exhaustiveness covers the schema, not data at rest. A content file
+    // can still carry a `template` name that used to exist and was since renamed or
+    // removed -- the build-time schema-validity guard catches that for a production
+    // static export, but request-time rendering (a dev server, or an on-demand render
+    // of content saved after the last build) reads content with no such guard, so a
+    // stale name reaches this lookup as `undefined`. Without this check, React throws
+    // "Element type is invalid" and takes the page down.
+    if (!Component) return null
     return <Component key={i} data={block.value} />
   })
 }
@@ -1472,9 +1482,10 @@ const blockRegistry: BlockComponentRegistry<Blocks, BlockProps> = {
 
 function renderBlocks(blocks: Blocks[]) {
   return blocks.map((block, i) => {
-    const Component = blockRegistry[block.template] as ComponentType<
-      { data: typeof block.value } & BlockProps
-    >
+    const Component = blockRegistry[block.template] as
+      | ComponentType<{ data: typeof block.value } & BlockProps>
+      | undefined
+    if (!Component) return null // see the schema-vs-data-at-rest note above
     return <Component key={i} data={block.value} index={i} />
   })
 }
@@ -1711,6 +1722,8 @@ export default function sitemap(): Promise<MetadataRoute.Sitemap> {
 ```
 
 **Every routable entry type is included by default.** There is no list of sitemap-able entry types to keep in sync -- omitting a URL takes an explicit `exclude` predicate or a `noindex` flag on the entry. A sitemap built from a remembered list of entry types silently omits whichever type nobody added, ships green, and takes those pages out of search results with no warning.
+
+**The mirror failure: a type with no route.** "Every entry type by default" only holds if every entry type actually has a page serving its `urlPath` shape. An entry type that exists for embedding elsewhere -- content addressed by a `reference` field inside a block, never visited directly -- is schema-routable but has no route for it, so leaving it unexcluded advertises a URL that 404s. The tell is the same either way: ask whether some route in your app actually serves that `urlPath` shape, not whether the schema happens to allow it. Exclude any entry type without one, same as `author` above.
 
 **Options:**
 

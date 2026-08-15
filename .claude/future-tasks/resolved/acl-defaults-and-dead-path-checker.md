@@ -84,7 +84,7 @@ restated.
 
 ## Still open
 
-- **Live-site migration** — `docs-site-proto` and `website` both still run
+- **Live-site migration** — both adopter sites still run
   `defaultBranchAccess: 'allow'` **and** unscoped `defaultPathAccess: 'allow'`
   (read *and* edit *and* review). That is the larger exposure and it lives in
   those repos, not this one. Tracked in
