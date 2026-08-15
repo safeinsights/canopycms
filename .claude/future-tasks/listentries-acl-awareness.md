@@ -45,11 +45,14 @@ not just a convenience gap.
    static-generation call sites (sitemap, search index, static params), not a
    new runtime API. Cheapest option; ships nothing new.
 3. **Expose it unfiltered on `NextCanopyContextResult`, with a loud doc
-   warning.** Fastest to build, but hands out full entry data (including any
-   unpublished/draft content per `content-lifecycle-scenarios.md` and
-   `draft-publish-lifecycle.md`) to anyone who can reach the page. Not
-   recommended without option 1's filtering, or a narrower "published only,
-   metadata only" carve-out.
+   warning.** Fastest to build, but hands out full entry data to anyone who can
+   reach the page. Note the exposure is **branch content**, not draft-flagged
+   entries: publish state is branch-only
+   ([draft-publish-lifecycle.md](draft-publish-lifecycle.md)), so on an unmerged
+   branch *every* entry is unpublished-by-definition and a request-time reader
+   on that branch sees all of it. That makes the concern sharper, not weaker —
+   there is no per-entry flag to fall back on. Not recommended without option
+   1's filtering, or a narrower "metadata only" carve-out.
 
 Option 1 is the only one that's actually correct for a request-time API; 2 is
 the pragmatic no-op; 3 should not ship alone.

@@ -51,6 +51,10 @@ unnecessary for entries that only needed it for links.
   is about `listEntries`-derived surfaces (search, sitemap); this one is
   about `read()`-derived resolved references not carrying enough to link to.
   RESOLVED (documented) — this file's own gap remains open.
-- [draft-publish-lifecycle.md](draft-publish-lifecycle.md) — a resolved
-  reference to a draft entry needs the same "should this be visible" answer
-  a URL-carrying resolution would need to respect.
+- [draft-publish-lifecycle.md](draft-publish-lifecycle.md) — this used to read
+  "a resolved reference to a draft entry needs the same 'should this be
+  visible' answer." That question **dissolved** when publish state was decided
+  branch-only (2026-08-14): there are no draft entries, and within a branch
+  every entry is equally visible. The residual concern is `noindex`, which
+  affects whether an entry is *advertised*, not whether a reference to it
+  resolves.
