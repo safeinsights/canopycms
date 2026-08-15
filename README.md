@@ -1365,7 +1365,7 @@ const hero: Hero = { heading: 'Welcome' }
 
 Reading is unchanged: `hero.subheading` is still `string | undefined`. What changes is construction — you no longer have to spell out every unset field, and adding a new optional field to a schema does not break existing hand-written literals.
 
-Only an **explicit** `required: false` does this. A field that omits `required` entirely stays a required property, matching the runtime validator's default:
+Only an **explicit** `required: false` does this. A field that omits `required` entirely stays a required property — that is the type-level default, chosen so a schema author must opt in to optionality rather than getting it silently. Note this is stricter than the runtime validator, whose default is the opposite: `validateEntryData` only enforces fields with `required: true`, so an omitted `required` is _not_ enforced at runtime either. A field with no `required` is therefore typed as present but validated as absent-tolerant — pass `required: false` explicitly if you want the two to agree.
 
 | Field declaration                                | Inferred property |
 | ------------------------------------------------ | ----------------- |
@@ -1374,6 +1374,8 @@ Only an **explicit** `required: false` does this. A field that omits `required` 
 | `{ name: 'a', type: 'string', required: false }` | `a?: string`      |
 
 The rule applies at every level — top-level fields, fields nested inside `object` fields, and fields inside block templates. If your project sets `exactOptionalPropertyTypes: true`, note that explicitly assigning `undefined` to an optional key (`hero.subheading = undefined`) is an error under that flag; assign nothing, or widen the field's type yourself.
+
+**`exactOptionalPropertyTypes: true` also requires `skipLibCheck: true`** (the Next.js default) to compile against this package at all today. With `skipLibCheck: false`, a `reference` field's `resolvedSchema` type inference hits a pre-existing library-internal type error unrelated to the assignment-level advice above. If your project sets `skipLibCheck: false` alongside `exactOptionalPropertyTypes: true`, you will hit this before you write a line against the schema — there is no workaround short of `skipLibCheck: true` today.
 
 #### Typed Block Discriminated Unions
 
@@ -1427,7 +1429,7 @@ for (const block of page.blocks) {
 
 #### Block Component Registries
 
-The `switch` above works, but it is easy to leave it with a `default: return null` clause "for forward compatibility" — which quietly turns a schema typo or a renamed template into a block that renders nothing, with a green build and green tests. A **mapped type keyed off the block union** makes the mapping exhaustive _by construction_: TypeScript refuses to compile if a template is missing its component, or if the registry has a key that doesn't match any template name. That is strictly stronger than a runtime test asserting the handled set matches the schema's declared templates, because it fails the build instead of failing at render time.
+The `switch` above works, but it is easy to leave it with a `default: return null` clause "for forward compatibility" — which quietly turns a schema typo or a renamed template into a block that renders nothing, with a green build and green tests. A **mapped type keyed off the block union** makes the mapping exhaustive _by construction_: TypeScript refuses to compile if a template is missing its component, or if the registry has a key that doesn't match any template name. (The missing-key direction is airtight in every form; the stray-key direction relies on TypeScript's excess-property check, which is literal-only — assigning a pre-typed or aliased object with an extra key through a variable is not caught. Every example on this page constructs the registry as an object literal, which is the normal way to write one, so the check applies.) That is strictly stronger than a runtime test asserting the handled set matches the schema's declared templates, because it fails the build instead of failing at render time.
 
 `BlockValueOf<Blocks, N>` pulls one template's value shape out of the union. `BlockComponentRegistry<Blocks, ExtraProps>` builds the exhaustive component map from it — one `ComponentType<{ data: ... } & ExtraProps>` per template:
 
@@ -2299,18 +2301,19 @@ Each entry includes `urlPath` -- a URL-ready string with index entries collapsed
 
 ### Each Entry Includes
 
-| Field            | Type       | Description                                                                                                        |
-| ---------------- | ---------- | ------------------------------------------------------------------------------------------------------------------ |
-| `pathSegments`   | `string[]` | URL path segments (e.g., `['researchers', 'guides', 'glossary']`)                                                  |
-| `urlPath`        | `string`   | URL-ready path with index entries collapsed (e.g., `'/guides'` instead of `'/guides/index'`; `'/'` for root index) |
-| `slug`           | `string`   | Entry slug within its collection                                                                                   |
-| `entryPath`      | `string`   | Full CMS logical path                                                                                              |
-| `entryId`        | `string`   | 12-char Base58 content ID from the filename                                                                        |
-| `collectionId`   | `string?`  | Collection content ID (if present)                                                                                 |
-| `collectionPath` | `string`   | Logical path of the parent collection                                                                              |
-| `entryType`      | `string`   | Entry type name                                                                                                    |
-| `format`         | `string`   | Content format (`json`, `md`, or `mdx`)                                                                            |
-| `data`           | `T`        | Entry data (frontmatter + body for md/mdx, JSON fields for json)                                                   |
+| Field            | Type       | Description                                                                                                                                                                                                       |
+| ---------------- | ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `pathSegments`   | `string[]` | URL path segments (e.g., `['researchers', 'guides', 'glossary']`)                                                                                                                                                 |
+| `urlPath`        | `string`   | URL-ready path with index entries collapsed (e.g., `'/guides'` instead of `'/guides/index'`; `'/'` for root index)                                                                                                |
+| `slug`           | `string`   | Entry slug within its collection                                                                                                                                                                                  |
+| `entryPath`      | `string`   | Full CMS logical path                                                                                                                                                                                             |
+| `entryId`        | `string`   | 12-char Base58 content ID from the filename                                                                                                                                                                       |
+| `collectionId`   | `string?`  | Collection content ID (if present)                                                                                                                                                                                |
+| `collectionPath` | `string`   | Logical path of the parent collection                                                                                                                                                                             |
+| `entryType`      | `string`   | Entry type name                                                                                                                                                                                                   |
+| `format`         | `string`   | Content format (`json`, `md`, or `mdx`)                                                                                                                                                                           |
+| `data`           | `T`        | Entry data (frontmatter + body for md/mdx, JSON fields for json)                                                                                                                                                  |
+| `updatedAt`      | `string?`  | ISO 8601 timestamp, populated on every result. This is the file's filesystem mtime, not an editorial "last changed" date -- treat it as "changed since the last build," not an authoritative last-modified value. |
 
 For md/mdx entries, `data.body` contains the raw markdown content.
 

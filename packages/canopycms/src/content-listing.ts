@@ -107,7 +107,12 @@ export const readEntryData = async (
  * - `ext` — the format extension (`.md`, `.mdx`, `.json`, `.yaml`), stripped
  *   before parsing and not part of the returned result.
  *
- * @param filename - The bare filename (no directory component).
+ * @param filename - The bare filename (no directory component). **This precondition is
+ *   not enforced.** The parser splits purely on `.`, so a `/` or `\` you pass in is not
+ *   rejected and is not treated as special — it becomes part of whichever segment it
+ *   falls in, most often the `type` segment (e.g. `'foo/bar.slug.<validId>.md'` parses
+ *   to `type: 'foo/bar'`). Strip any directory component yourself (e.g.
+ *   `path.basename(filePath)`) before calling this — every internal caller already does.
  * @param entryTypes - When provided, the parsed `type` segment must match one
  *   of these entry types by name, or the parse is rejected (this is how
  *   `listCollectionEntries` filters out files that don't belong to the
@@ -123,7 +128,13 @@ export const readEntryData = async (
  * @returns `{ type, slug, id }`, or `null` if `filename` doesn't match the
  *   `{type}.{slug}.{id}.{ext}` shape (too few segments, no extension, a
  *   leading dot, an invalid ID, or — when `entryTypes` is given — an
- *   unrecognized type).
+ *   unrecognized type). `id` is validated (`isValidId`) and safe to trust. **`slug` is
+ *   not** — it is the raw dot-joined middle segment(s), lowercased, cast to the branded
+ *   `Slug` type without running `parseSlug`'s validation. A filename with an
+ *   unconventional slug segment (e.g. containing a space) still parses and still
+ *   receives the `Slug` brand. Callers that need a validated slug must run the result
+ *   through `parseSlug` themselves; this function's contract is "split the filename
+ *   grammar apart," not "validate every part."
  */
 export const parseTypedFilename = (
   filename: string,
