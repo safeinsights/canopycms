@@ -10,6 +10,8 @@
  * the read side cannot drift.
  */
 
+import { neutralizeImplicitOffOrigin } from '../utils/sanitize-href'
+
 /** og:type values covered by the recommended group. */
 export type SeoOgType = 'website' | 'article' | 'profile'
 
@@ -152,11 +154,40 @@ export function isNoindexEntry(entryData: unknown, opts: SeoFieldLocation = {}):
 }
 
 /**
- * An off-site URL: either scheme-qualified (`https://…`) or protocol-relative (`//cdn…`).
- * Both name a host we don't control, so neither may be rewritten against the site origin.
+ * An off-site URL: either scheme-qualified (`https://…`) or LITERAL protocol-relative
+ * (`//cdn…`). Both name a host we don't control, so neither may be rewritten against the site
+ * origin — `resolveSeoUrl` passes a `true` result through verbatim.
+ *
+ * Deliberately narrower than "resolves off-origin": a WHATWG-backslash-equivalent spelling
+ * (`/\evil.com`, `\\evil.com`, `\/evil.com` — see `utils/sanitize-href.ts`'s
+ * `isImplicitlyOffOrigin`) also resolves off-origin in a browser, but is NOT recognized here as
+ * an intentional off-site pointer the way a literal `//cdn…` is. `resolveSeoUrl` handles that
+ * case separately, by neutralizing (`neutralizeImplicitOffOrigin`) rather than passing through: a
+ * `false` result here isn't a guarantee the value is a safe site-relative path on its own, only
+ * that it isn't a *declared* off-site one.
  */
 export function isAbsoluteUrl(url: string): boolean {
   return /^[a-z][a-z0-9+.-]*:\/\//i.test(url) || url.startsWith('//')
+}
+
+/**
+ * Strip trailing slashes without a regex.
+ *
+ * The obvious `replace(/\/+$/, '')` is a polynomial-ReDoS shape (CodeQL
+ * `js/polynomial-redos`, flagged high): on a value that is mostly slashes but does not end in
+ * one, the engine retries `\/+` from every position and the match cost is quadratic in the
+ * input length. `siteUrl` is adopter-supplied and can reach here from config or an env var, so
+ * it counts as uncontrolled. A character scan is linear and needs no reasoning about
+ * backtracking.
+ *
+ * Exported (from `canopycms/server`) so adopter code normalizing its own site-origin env var —
+ * e.g. a `SITE_URL` constant built from `NEXT_PUBLIC_SITE_URL` — has a package-provided linear
+ * way to do it instead of reaching for the same regex this function replaced.
+ */
+export function stripTrailingSlashes(value: string): string {
+  let end = value.length
+  while (end > 0 && value.charCodeAt(end - 1) === 47 /* '/' */) end--
+  return value.slice(0, end)
 }
 
 /**
@@ -170,22 +201,6 @@ export function isAbsoluteUrl(url: string): boolean {
  * `/blog?page=2/` (a literal trailing slash inside the query string, which is not what "serve
  * with a trailing slash" means and breaks the URL).
  */
-/**
- * Strip trailing slashes without a regex.
- *
- * The obvious `replace(/\/+$/, '')` is a polynomial-ReDoS shape (CodeQL
- * `js/polynomial-redos`, flagged high): on a value that is mostly slashes but does not end in
- * one, the engine retries `\/+` from every position and the match cost is quadratic in the
- * input length. `siteUrl` is adopter-supplied and can reach here from config or an env var, so
- * it counts as uncontrolled. A character scan is linear and needs no reasoning about
- * backtracking.
- */
-function stripTrailingSlashes(value: string): string {
-  let end = value.length
-  while (end > 0 && value.charCodeAt(end - 1) === 47 /* '/' */) end--
-  return value.slice(0, end)
-}
-
 export function withTrailingSlash(path: string): string {
   const splitIndex = path.search(/[?#]/)
   const base = splitIndex === -1 ? path : path.slice(0, splitIndex)
@@ -220,14 +235,19 @@ export interface ResolveSeoUrlOptions {
  *
  * With no `siteUrl`, a site-relative path is returned still relative (normalized), which is
  * what you want when the framework resolves relative metadata URLs itself.
+ *
+ * A NOT-absolute value is also run through `neutralizeImplicitOffOrigin` before normalization,
+ * so a WHATWG-backslash-equivalent spelling that `isAbsoluteUrl` correctly declines to call
+ * "absolute" (see its doc) can't still be read by a browser as protocol-relative once emitted.
  */
 export function resolveSeoUrl(pathOrUrl: string, opts: ResolveSeoUrlOptions = {}): string {
   if (isAbsoluteUrl(pathOrUrl)) return pathOrUrl
+  const safePathOrUrl = neutralizeImplicitOffOrigin(pathOrUrl)
   const normalized = opts.trailingSlash
-    ? withTrailingSlash(pathOrUrl)
-    : pathOrUrl.startsWith('/')
-      ? pathOrUrl
-      : `/${pathOrUrl}`
+    ? withTrailingSlash(safePathOrUrl)
+    : safePathOrUrl.startsWith('/')
+      ? safePathOrUrl
+      : `/${safePathOrUrl}`
   const origin = opts.siteUrl === undefined ? undefined : stripTrailingSlashes(opts.siteUrl)
   return origin ? origin + normalized : normalized
 }

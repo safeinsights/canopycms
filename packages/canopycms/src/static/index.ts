@@ -21,6 +21,7 @@ export {
   isAbsoluteUrl,
   withTrailingSlash,
   resolveSeoUrl,
+  stripTrailingSlashes,
   type SeoFields,
   type SeoFieldNames,
   type SeoFieldLocation,

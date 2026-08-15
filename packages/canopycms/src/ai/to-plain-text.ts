@@ -65,8 +65,89 @@ const INLINE_RESTORE_RE = /<@I(\d+)@>/g
 /** JSX attribute content: skips quoted strings so a `>` inside `title="a > b"` doesn't end the tag early. */
 const ATTR_CONTENT = `(?:[^<>"']|"[^"]*"|'[^']*')*`
 
-/** Matches an opening, closing, or self-closing JSX/HTML tag, or a fragment (`<>`/`</>`). */
-const TAG_RE = new RegExp(`<\\/?([A-Za-z][\\w.-]*)?(?:\\s${ATTR_CONTENT})?\\s*\\/?>`, 'g')
+/**
+ * Matches an opening, closing, or self-closing JSX/HTML tag, or a fragment (`<>`/`</>`).
+ *
+ * No trailing `\s*` before the final `\/?>`: `ATTR_CONTENT`'s `[^<>"']` alternative already
+ * matches whitespace, so a trailing `\s*` on top of it lets the engine split any whitespace run
+ * between the two in every possible proportion. On an unterminated tag (no closing `>` in the
+ * input) followed by a long whitespace run, that ambiguity is polynomial-ReDoS shaped (CodeQL
+ * `js/polynomial-redos`): matching cost is quadratic in the run length before the engine gives up
+ * and backtracks to try the next start position. Measured on a 128 KB whitespace tail: ~26s with
+ * the redundant `\s*`, ~1ms without it. `ATTR_CONTENT` already absorbs the trailing whitespace on
+ * its own, so removing the `\s*` changes no matched output.
+ */
+const TAG_RE = new RegExp(`<\\/?([A-Za-z][\\w.-]*)?(?:\\s${ATTR_CONTENT})?\\/?>`, 'g')
+
+/** True if `line` is a valid closing fence line for `marker` ("```" or "~~~"): the marker
+ * followed by nothing but whitespace through end of line — matching what `\1\s*$` required in
+ * the regex this replaced. */
+function isFenceCloseLine(line: string, marker: string): boolean {
+  return line.startsWith(marker) && /^\s*$/.test(line.slice(marker.length))
+}
+
+/**
+ * Mask fenced code blocks (` ``` `/`~~~`), capturing each block's *content* so `restore`
+ * re-inserts plain text — no fence markers, no language tag.
+ *
+ * A hand-rolled line scan, not `/^(```|~~~).*\n([\s\S]*?)\n\1\s*$/gm`: that regex is a second
+ * polynomial-ReDoS shape (measured ~9s on ~530KB of body text with many unclosed fence openers,
+ * a plausible authoring accident — the same trigger class as `TAG_RE` above, in the same
+ * function). The lazy `[\s\S]*?` has no bound on how far it must scan looking for a closing
+ * `\1` that, for an unclosed fence, never arrives — it exhausts to the end of the string before
+ * giving up on that starting line, and `/gm` retries the same exhaustive scan at every
+ * subsequent fence-opener line, which is quadratic in the number of unclosed openers.
+ *
+ * This scans each line once. `nextCloseLine` is precomputed per marker type via a single
+ * backward pass, so any opener's nearest closer (or "none exists") is an O(1) lookup rather than
+ * a fresh forward scan — the change that makes the whole function O(n) regardless of how many
+ * fences are opened and never closed.
+ */
+function maskFencedCodeBlocks(body: string, blocks: string[]): string {
+  const lines = body.split('\n')
+  const lineCount = lines.length
+
+  // nextCloseLine[marker][i] = the nearest index >= i that closes `marker`, or -1 if none exists
+  // at or after i. Built right-to-left so each entry is O(1) given the next one.
+  const nextCloseLine = {
+    '```': new Array<number>(lineCount + 1).fill(-1),
+    '~~~': new Array<number>(lineCount + 1).fill(-1),
+  }
+  for (let i = lineCount - 1; i >= 0; i--) {
+    nextCloseLine['```'][i] = isFenceCloseLine(lines[i], '```') ? i : nextCloseLine['```'][i + 1]
+    nextCloseLine['~~~'][i] = isFenceCloseLine(lines[i], '~~~') ? i : nextCloseLine['~~~'][i + 1]
+  }
+
+  const outLines: string[] = []
+  let i = 0
+  while (i < lineCount) {
+    const line = lines[i]
+    const marker = line.startsWith('```') ? '```' : line.startsWith('~~~') ? '~~~' : null
+
+    // A closer can never be the very next line: the original pattern requires TWO separate `\n`
+    // matches between the opener and `\1` (one ending the opener's line, one immediately before
+    // the closer), so even zero-width content needs a line of its own between them.
+    const searchFrom = i + 2
+    const closeIndex = marker && searchFrom < lineCount ? nextCloseLine[marker][searchFrom] : -1
+
+    if (!marker || closeIndex === -1) {
+      outLines.push(line)
+      i++
+      continue
+    }
+
+    const content = lines.slice(i + 1, closeIndex).join('\n')
+    const idx = blocks.length
+    blocks.push(content)
+    // Matches the replaced regex's `\n${...}\n` callback wrapping: the placeholder becomes its
+    // own blank-line-delimited chunk. (Any resulting difference in surrounding blank-line COUNT
+    // is immaterial -- collapseWhitespace normalizes runs of 3+ newlines down to one blank line
+    // before this ever reaches a caller.)
+    outLines.push('', `${BLOCK_PREFIX}${idx}${BLOCK_SUFFIX}`, '')
+    i = closeIndex + 1
+  }
+  return outLines.join('\n')
+}
 
 /**
  * Mask fenced code blocks and inline code spans, capturing their *content*
@@ -77,14 +158,7 @@ function maskCode(body: string): { masked: string; restore: (s: string) => strin
   const blocks: string[] = []
   const inlines: string[] = []
 
-  let masked = body.replace(
-    /^(```|~~~).*\n([\s\S]*?)\n\1\s*$/gm,
-    (_match, _fence: string, content: string) => {
-      const idx = blocks.length
-      blocks.push(content)
-      return `\n${BLOCK_PREFIX}${idx}${BLOCK_SUFFIX}\n`
-    },
-  )
+  let masked = maskFencedCodeBlocks(body, blocks)
 
   masked = masked.replace(
     /``(.+?)``|`([^`]+)`/g,

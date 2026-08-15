@@ -174,6 +174,7 @@ export {
   isAbsoluteUrl,
   withTrailingSlash,
   resolveSeoUrl,
+  stripTrailingSlashes,
 } from './static'
 
 export type {

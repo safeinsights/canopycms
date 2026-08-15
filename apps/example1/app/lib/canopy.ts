@@ -5,6 +5,7 @@ import {
   type GenerateContentStaticParamsOptions,
   type NextCanopyContextResult,
 } from 'canopycms-next'
+import { stripTrailingSlashes } from 'canopycms/server'
 import { createClerkAuthPlugin } from 'canopycms-auth-clerk'
 import { createDevAuthPlugin } from 'canopycms-auth-dev'
 import config from '../../canopycms.config'
@@ -87,9 +88,12 @@ export const entryToMetadata = async (entryData: unknown, options?: EntryToMetad
 // NEXT_PUBLIC_SITE_URL fails loudly instead of silently baking a localhost sitemap into what ships.
 // (`isAbsoluteUrl` in generateContentSitemap will not catch this for you: 'http://localhost:3000'
 // is syntactically a perfectly valid absolute URL, just the wrong one.)
-export const SITE_URL = (process.env.NEXT_PUBLIC_SITE_URL ?? 'http://localhost:3000').replace(
-  /\/+$/,
-  '',
+//
+// stripTrailingSlashes (not a `replace(/\/+$/, '')`) -- that regex is a polynomial-ReDoS shape
+// CodeQL flagged in this same package (see static/seo.ts), fixed there with a linear scan that
+// canopycms/server exports for exactly this kind of adopter-side origin normalization.
+export const SITE_URL = stripTrailingSlashes(
+  process.env.NEXT_PUBLIC_SITE_URL ?? 'http://localhost:3000',
 )
 
 // Advanced escape hatch: the build context bypasses all ACLs (synthetic admin) and throws if used at

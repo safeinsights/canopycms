@@ -224,6 +224,40 @@ describe('toPlainText', () => {
     })
   })
 
+  describe('tag stripping is linear (js/polynomial-redos)', () => {
+    it('does not degrade on an unterminated tag followed by a long whitespace run', () => {
+      // The former TAG_RE had a redundant `\s*` after ATTR_CONTENT (which already matches
+      // whitespace), so an unterminated `<Tag` followed by a whitespace-dominated tail let the
+      // engine split the run between the two in every proportion -- quadratic in the run length.
+      // Measured at ~26s for this input with the redundant `\s*`; the fixed regex is ~1ms.
+      // A generous ceiling still fails loudly if the redundant `\s*` is reintroduced.
+      const adversarial = '<Callout\n' + '\n'.repeat(128 * 1024) + 'text'
+      const started = performance.now()
+      const result = toPlainText(adversarial)
+      expect(result).toContain('text')
+      expect(performance.now() - started).toBeLessThan(1000)
+    })
+  })
+
+  describe('fenced-code masking is linear (js/polynomial-redos)', () => {
+    it('does not degrade on many unclosed fence openers', () => {
+      // The former fence regex (`/^(```|~~~).*\n([\s\S]*?)\n\1\s*$/gm`) has no bound on how far
+      // its lazy `[\s\S]*?` must scan looking for a closing backreference that, for an unclosed
+      // fence, never arrives -- it exhausts to end-of-string before giving up on that starting
+      // line, and /gm retries the same exhaustive scan at every subsequent opener. Measured at
+      // ~9s for 32,000 unclosed openers (~530KB); the linear line-scan replacement is <10ms.
+      // An ordinary authoring accident (a doc with many code snippets and one forgotten closing
+      // fence) triggers the same shape, just at a smaller scale.
+      const adversarial = Array.from({ length: 32_000 }, (_, i) => '```js\n' + `line ${i}`).join(
+        '\n',
+      )
+      const started = performance.now()
+      const result = toPlainText(adversarial)
+      expect(result).toContain('line 0')
+      expect(performance.now() - started).toBeLessThan(1000)
+    })
+  })
+
   describe('realistic combined document', () => {
     it('handles frontmatter + heading + prose + component + code + link together', () => {
       const input = [

@@ -4,6 +4,68 @@
 const SENTINEL_BASE = 'https://relative.invalid'
 
 /**
+ * Whether `url` declares an explicit scheme (`https:`, `mailto:`, `javascript:`, ...).
+ *
+ * This is the property that actually distinguishes "the author asked for another origin" from
+ * "the parser inferred one" -- see `sanitizeHref`'s doc for why a `startsWith('//')` /
+ * `startsWith('scheme://')` check is not sufficient on its own (WHATWG URL treats backslash as
+ * equivalent to forward slash for special schemes, so `/\evil.com`, `\\evil.com` and `\/evil.com`
+ * are all protocol-relative in effect despite declaring no scheme). Exported so every "is this
+ * URL off-site" check in the package shares one answer instead of re-deriving it -- see
+ * `isImplicitlyOffOrigin` below and `static/seo.ts`'s `isAbsoluteUrl`.
+ */
+export function declaresScheme(url: string): boolean {
+  return /^[a-z][a-z0-9+.-]*:/i.test(url.trim())
+}
+
+/**
+ * Whether `url`, resolved as a URL reference against a fixed sentinel origin, lands on a
+ * DIFFERENT origin than the sentinel WITHOUT itself declaring a scheme.
+ *
+ * True for a literal protocol-relative reference (`//host`) and for every WHATWG
+ * backslash-equivalent spelling that a browser resolves the same way (`/\host`, `\\host`,
+ * `\/host`, and combinations with stripped whitespace/control characters) -- these all read as
+ * "site-relative" to a naive string check but actually redefine the authority. False for a
+ * normal site-relative path (`/about`, `docs/guide`) and for a scheme-qualified absolute URL
+ * (`declaresScheme` already identifies those as intentionally off-site on their own).
+ *
+ * Callers that want to treat a LITERAL `//host` as an intentionally-supported off-site pointer
+ * (e.g. `static/seo.ts`'s `isAbsoluteUrl`, for a CDN-hosted `ogImage`) should check that
+ * separately and only fall back to this function to catch the spellings that slip past a
+ * `startsWith('//')` check.
+ */
+export function isImplicitlyOffOrigin(url: string): boolean {
+  if (declaresScheme(url)) return false
+  try {
+    return new URL(url, SENTINEL_BASE).origin !== SENTINEL_BASE
+  } catch {
+    return false
+  }
+}
+
+/**
+ * If `url` `isImplicitlyOffOrigin`, discard the authority it spoofed and return just the
+ * path/search/hash it resolved to -- e.g. `/\evil.com/x` (which parses to origin
+ * `https://evil.com`) becomes `/x`. Otherwise return `url` unchanged.
+ *
+ * This re-parses with the SAME sentinel technique rather than pattern-matching leading
+ * slash/backslash characters: WHATWG URL also strips tabs, newlines, and carriage returns during
+ * parsing (wherever they appear, not just at the edges), so `/\t/evil.com` is exactly as
+ * off-origin as `/\evil.com` despite having no leading backslash-or-slash run for a regex to
+ * find. Re-parsing gets this right for free instead of re-deriving the quirk a second time.
+ *
+ * Useful for a caller that wants to keep emitting SOME value for an implicitly-off-origin input
+ * rather than rejecting it outright (`sanitizeHref` rejects to a fallback instead; see
+ * `static/seo.ts`'s `resolveSeoUrl`, which has no fallback concept and must always return a
+ * same-origin string).
+ */
+export function neutralizeImplicitOffOrigin(url: string): string {
+  if (!isImplicitlyOffOrigin(url)) return url
+  const parsed = new URL(url, SENTINEL_BASE)
+  return parsed.pathname + parsed.search + parsed.hash
+}
+
+/**
  * Sanitize an untrusted URL for use in `href` attributes.
  *
  * Handles both absolute URLs (`https://example.com`) and relative
@@ -69,8 +131,7 @@ export function sanitizeHref(url: string, fallback = '#'): string {
     // origin" from "the parser inferred one" is whether the input DECLARES a
     // scheme. If it does not and still resolved off the sentinel, it is
     // protocol-relative however it was written.
-    const declaresScheme = /^[a-z][a-z0-9+.-]*:/i.test(trimmed)
-    if (parsed.origin !== SENTINEL_BASE && !declaresScheme) return fallback
+    if (parsed.origin !== SENTINEL_BASE && !declaresScheme(trimmed)) return fallback
 
     if (parsed.origin === SENTINEL_BASE) {
       // Input was relative: return it as a relative reference rather than

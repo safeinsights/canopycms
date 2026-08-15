@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { sanitizeHref } from './sanitize-href'
+import { declaresScheme, isImplicitlyOffOrigin, sanitizeHref } from './sanitize-href'
 
 describe('sanitizeHref', () => {
   it('allows absolute http: URLs', () => {
@@ -94,5 +94,43 @@ describe('sanitizeHref', () => {
 
   it('does not use the custom fallback for allowed input', () => {
     expect(sanitizeHref('/about', '/safe')).toBe('/about')
+  })
+})
+
+describe('declaresScheme', () => {
+  it('is true for scheme-qualified input, including non-http schemes', () => {
+    expect(declaresScheme('https://example.com')).toBe(true)
+    expect(declaresScheme('mailto:a@example.com')).toBe(true)
+    expect(declaresScheme('javascript:alert(1)')).toBe(true)
+  })
+
+  it('is false for relative and protocol-relative input', () => {
+    expect(declaresScheme('/about')).toBe(false)
+    expect(declaresScheme('docs/guide')).toBe(false)
+    expect(declaresScheme('//evil.com')).toBe(false)
+    expect(declaresScheme('/\\evil.com')).toBe(false)
+  })
+})
+
+describe('isImplicitlyOffOrigin', () => {
+  it('is true for a literal protocol-relative URL', () => {
+    expect(isImplicitlyOffOrigin('//evil.com/x')).toBe(true)
+  })
+
+  // Same spellings as sanitizeHref's regression suite above -- exported so any caller in the
+  // package (not just sanitizeHref) can detect these without re-deriving the WHATWG quirk.
+  it('is true for every WHATWG-backslash-equivalent spelling', () => {
+    expect(isImplicitlyOffOrigin('/\\evil.com')).toBe(true)
+    expect(isImplicitlyOffOrigin('\\\\evil.com')).toBe(true)
+    expect(isImplicitlyOffOrigin('\\/evil.com')).toBe(true)
+  })
+
+  it('is false for a scheme-qualified URL (declaresScheme already covers it)', () => {
+    expect(isImplicitlyOffOrigin('https://example.com')).toBe(false)
+  })
+
+  it('is false for a genuine site-relative path', () => {
+    expect(isImplicitlyOffOrigin('/about')).toBe(false)
+    expect(isImplicitlyOffOrigin('docs/guide')).toBe(false)
   })
 })

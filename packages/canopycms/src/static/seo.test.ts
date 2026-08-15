@@ -208,6 +208,58 @@ describe('URL shaping', () => {
     expect(resolveSeoUrl('/contact', { trailingSlash: true })).toBe('/contact/')
     expect(resolveSeoUrl('contact')).toBe('/contact')
   })
+
+  // Regression: isAbsoluteUrl's own `startsWith('//')` check is the exact predicate
+  // `utils/sanitize-href.ts` documents removing from `sanitizeHref` two weeks earlier, because
+  // WHATWG URL treats backslash as equivalent to forward slash for special schemes, so
+  // `/\evil.com`, `\\evil.com` and `\/evil.com` are all protocol-relative in effect despite
+  // declaring no scheme and not starting with a literal `//`.
+  it('does not call a WHATWG-backslash-equivalent spelling "absolute"', () => {
+    expect(isAbsoluteUrl('/\\evil.com')).toBe(false)
+    expect(isAbsoluteUrl('\\\\evil.com')).toBe(false)
+    expect(isAbsoluteUrl('\\/evil.com')).toBe(false)
+  })
+
+  describe('resolveSeoUrl never resolves a backslash-equivalent spelling off-site', () => {
+    // With no siteUrl, `canonical`/`ogImage` are documented to stay relative and let the
+    // framework's metadataBase resolve them -- exactly the path where a value that merely
+    // "looks" root-relative but is actually protocol-relative in a browser would otherwise reach
+    // `<link rel="canonical">` / `og:image` pointing at an attacker-controlled origin.
+    it.each([
+      ['backslash after slash', '/\\evil.com'],
+      ['double backslash', '\\\\evil.com'],
+      ['backslash then slash', '\\/evil.com'],
+      ['tab inside', '/\t/evil.com'],
+      ['mixed slashes with path', '/\\evil.com/path?a=1'],
+    ])('%s stays on the current origin with no siteUrl', (_label, input) => {
+      const result = resolveSeoUrl(input)
+      expect(result).not.toMatch(/^https?:\/\//)
+      // Resolved the way a browser resolves a relative href: must land on the PAGE's own
+      // origin, never on evil.com.
+      expect(new URL(result, 'https://mysite.example/page').origin).toBe('https://mysite.example')
+    })
+
+    it.each([
+      ['backslash after slash', '/\\evil.com'],
+      ['double backslash', '\\\\evil.com'],
+      ['backslash then slash', '\\/evil.com'],
+    ])("%s stays on siteUrl's origin when siteUrl is given", (_label, input) => {
+      const result = resolveSeoUrl(input, { siteUrl: 'https://example.com' })
+      expect(new URL(result).origin).toBe('https://example.com')
+    })
+
+    it('does not touch a genuine site-relative path', () => {
+      expect(resolveSeoUrl('/contact', { siteUrl: 'https://example.com' })).toBe(
+        'https://example.com/contact',
+      )
+    })
+
+    it('still passes a literal protocol-relative URL through verbatim (unaffected)', () => {
+      expect(resolveSeoUrl('//cdn.example.com/a.png', { siteUrl: 'https://example.com' })).toBe(
+        '//cdn.example.com/a.png',
+      )
+    })
+  })
 })
 
 describe('siteUrl trailing-slash stripping is linear (js/polynomial-redos)', () => {

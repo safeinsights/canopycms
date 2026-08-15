@@ -312,15 +312,25 @@ entry at all. The most concrete case: a colocated sibling artifact read via an `
 a production build for using a documented feature.
 
 The guard now only fires on a file that structurally _could_ have parsed as an entry: 4 or more
-dot-separated segments (matching the four grammar positions `type`, `slug`, `id`, `ext`). A file
-with fewer segments could never have matched the grammar regardless of its content, so it isn't
-this guard's failure mode — it's silently skipped, same as before this guard existed. Concretely:
-a bare `README.md` (2 segments) and an `{contentId}.suffix.ext` sibling artifact (3 segments,
-e.g. `5NVkkrB1MJUv.profile.json`) both build clean now. A file that still looks like an attempted
-entry — wrong type, invalid ID, or genuinely 4+ segments — still fails the build with an error
+dot-separated segments (matching the four grammar positions `type`, `slug`, `id`, `ext`), OR
+exactly 3 segments whose first segment names a real entry type in that collection. A file with
+fewer segments — or a 3-segment file whose first segment ISN'T a known entry type — could never
+have matched the grammar regardless of its content, so it isn't this guard's failure mode — it's
+silently skipped, same as before this guard existed. Concretely: a bare `README.md` (2 segments)
+and an `{contentId}.suffix.ext` sibling artifact (3 segments, e.g. `5NVkkrB1MJUv.profile.json`,
+whose first segment is a content ID, never a configured entry type) both build clean. A file that
+still looks like an attempted entry — wrong type, invalid ID, genuinely 4+ segments, or a real
+entry type name with no ID at all (`post.hello-world.md`, the likeliest real accident: a hand
+edit or a bad rename that dropped the ID segment entirely) — still fails the build with an error
 naming the file. Dot-prefixed and underscore-prefixed filenames are now always skipped outright,
 regardless of segment count, on the theory that both are established "not an entry" conventions
 (hidden/editor-swap files, and an adopter's own draft/private-file marker respectively).
+
+_Correction, same release:_ the first version of this narrowing only checked segment count, which
+missed the 3-segment ID-loss case above — a lost-ID file built clean with the page silently gone,
+the exact failure this guard exists to prevent. Fixed before this reached a tagged release, so
+there is nothing to migrate away from; noted here because the "now deletable" entry below still
+applies unchanged.
 
 The thrown error message is also more actionable: when a file trips the guard, it now suggests
 that a colocated sibling artifact accidentally landed in 4+ segment territory and names the
@@ -334,6 +344,42 @@ begin with, so relocating it may have silently broken the `entryTransforms` call
 
 **Now deletable.** Any workaround that relocated or renamed a colocated sibling artifact solely
 to avoid tripping the build guard.
+
+### `canopycms init` scaffolds `defaultBranchAccess: 'deny'` and public read by default
+
+**What changed.** The generated `canopycms.config.ts.template` used to write
+`defaultBranchAccess: 'allow'`, which no longer matches the package's fail-closed schema default
+(`'deny'`) — a freshly scaffolded project silently ran with a WIDER access posture than the
+package itself considers safe, purely because the generator hadn't been updated alongside the
+schema. That divergence is now closed: the template scaffolds `defaultBranchAccess: 'deny'`,
+matching the schema.
+
+Flipping the branch default alone would have made `canopycms init` -> `npm run dev` 403 every
+route for the developer running it, including the dev-auth default user — because
+`defaultPathAccess` (a separate layer; both must allow a read) has its own fail-closed default
+and the template previously relied on the branch layer's now-corrected `'allow'` to paper over
+it. So the template also now scaffolds `defaultPathAccess: { read: 'allow' }` — public read,
+with edit and review still closed — the posture [README's "Public read on server
+deployments"](../README.md#public-read-on-server-deployments) section recommends and
+`apps/example1`'s own config already uses. This is not a security walk-back: only `read` opens,
+and it opens on the PATH layer only — the branch layer still defaults closed, and an anonymous
+request must still pass both layers.
+
+**To adopt.** If you scaffolded your project before this change and never wrote
+`defaultBranchAccess`/`defaultPathAccess` yourself, your config still says whatever it said —
+this only changes what NEW `canopycms init` runs write, not existing files. Two cases to check
+in your own `canopycms.config.ts`:
+
+- You relied on the old scaffold's `defaultBranchAccess: 'allow'` and never overrode it: you were
+  already running wider-than-recommended branch access; consider tightening to `'deny'`
+  (creators and the base branch still resolve, so this is rarely a functional lockout — see the
+  key's own doc comment for what stays reachable).
+- You copied the scaffold, kept `defaultPathAccess: { read: 'allow' }`, and later deleted that
+  line thinking it was just an example: you have silently inherited the fully closed default on
+  every path level, including `read` — anonymous/public routes will 403 until you restore it (or
+  deliberately want that closed posture).
+
+**Now deletable.** Nothing — this only affects newly generated files.
 
 ### `parseTypedFilename` exported from `canopycms/server` (#1)
 
