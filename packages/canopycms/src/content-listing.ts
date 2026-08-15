@@ -454,20 +454,36 @@ export interface SkippedListingFile {
  *
  * A successfully-parsed entry always has at least 4 dot-separated segments: `type` (1+),
  * `slug` (1+, since `parseTypedFilename` always takes at least the one segment between type and
- * id), `id` (1), `ext` (1). So a file with 3 or fewer dot-separated segments could never have
- * parsed as an entry regardless of its content — it isn't a malformed entry, it's a different
- * kind of file that happens to share a recognized extension. The two motivating cases: a bare
- * `README.md` (2 segments) and an entry's colocated sibling artifact named
- * `{contentId}.suffix.ext` per the `entryTransforms`/`readSibling` convention documented in the
- * README (3 segments, e.g. `5NVkkrB1MJUv.profile.json`).
+ * id), `id` (1), `ext` (1). So a file with 4+ segments that still failed to parse is malformed
+ * on its face — a wrong-length or invalid-Base58 ID, most often (`post.hello-world.BADID.md`).
+ *
+ * That segment-count test alone missed the MORE common accident: losing the ID segment
+ * entirely. `post.hello-world.md` (3 segments) fails `parseTypedFilename` exactly like the
+ * 4-segment case does, but a bare 3-or-fewer-segment cutoff would treat it as never having been
+ * entry-shaped and drop it silently — the page just vanishes with a green build. So a 3-segment
+ * file whose FIRST segment matches a real entry type name in this collection is ALSO treated as
+ * malformed: `parseTypedFilename` requires type+slug+id (3 segments) after stripping the
+ * extension, so a 3-total-segment filename already has only 2 left over — it could only have
+ * been attempting `type.slug` with no id, or `type.id` with no slug, either way a lost segment,
+ * not a coincidence. This still leaves the two motivating "was never an entry" cases alone: a
+ * bare `README.md` (2 segments, and "README" is essentially never a configured entry type name)
+ * and an entry's colocated sibling artifact named `{contentId}.suffix.ext` per the
+ * `entryTransforms`/`readSibling` convention documented in the README (3 segments, e.g.
+ * `5NVkkrB1MJUv.profile.json` — a content ID is never itself an entry type name, so the same
+ * "first segment matches a known type" test correctly leaves it unflagged).
  *
  * Dot-prefixed (hidden files, editor swap/backup files) and underscore-prefixed (a common
  * adopter convention for "not an entry") names are excluded outright regardless of segment
  * count, matching `parseTypedFilename`'s own dotfile rejection.
  */
-const looksLikeMalformedEntry = (filename: string): boolean => {
+const looksLikeMalformedEntry = (
+  filename: string,
+  entryTypes: readonly EntryTypeConfig[],
+): boolean => {
   if (filename.startsWith('.') || filename.startsWith('_')) return false
-  return filename.split('.').length >= 4
+  const segments = filename.split('.')
+  if (segments.length >= 4) return true
+  return segments.length === 3 && entryTypes.some((e) => e.name === segments[0])
 }
 
 /**
@@ -540,7 +556,7 @@ export const listCollectionEntries = async (
           'listCollectionEntries',
           `Skipping file with unrecognized filename format: ${file.name} (expected {type}.{slug}.{id}.{ext} with a known entry type and valid 12-char Base58 ID)`,
         )
-        if (looksLikeMalformedEntry(file.name)) {
+        if (looksLikeMalformedEntry(file.name, entryTypes)) {
           onSkip?.({ filename: file.name, collectionPath: collection.logicalPath })
         }
         return null

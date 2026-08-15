@@ -928,5 +928,58 @@ describe('listEntries', () => {
       const entries = await listEntries(tempDir, flat, 'content')
       expect(entries).toHaveLength(1)
     })
+
+    it('throws in build mode for a 3-segment file that lost its ID segment ({type}.{slug}.{ext})', async () => {
+      // The likeliest way a file loses its parse is losing its ID segment entirely -- a
+      // hand-created file, a bad rename, a merge. `post.hello-world.md` has only 3
+      // dot-separated segments (one short of the 4-segment cutoff the guard used to require),
+      // so it used to be silently dropped exactly like README.md -- except this file's first
+      // segment ("post") IS a real entry type in this collection, so it was almost certainly
+      // meant to be an entry, not an unrelated file that happens to share the extension.
+      vi.stubEnv('CANOPY_BUILD_MODE', 'true')
+
+      const contentDir = path.join(tempDir, 'content')
+      await fs.mkdir(contentDir)
+
+      const { dir: postsDir } = await createCollection(contentDir, 'posts')
+      await createEntry(postsDir, 'post', 'hello', 'md', { title: 'Hello' })
+      await fs.writeFile(path.join(postsDir, 'post.hello-world.md'), '# Lost my ID')
+
+      const schema: RootCollectionConfig = {
+        collections: [
+          { name: 'posts', path: 'posts', entries: [{ name: 'post', format: 'md', schema: [] }] },
+        ],
+      }
+      const flat = flattenSchema(schema, 'content')
+
+      await expect(listEntries(tempDir, flat, 'content')).rejects.toThrow(
+        /look like malformed content entries.*post\.hello-world\.md/s,
+      )
+    })
+
+    it('does not throw in build mode for a 3-segment file whose first segment is NOT a known entry type', async () => {
+      // Confirms the new 3-segment check is scoped to known entry types, not "any 3-segment
+      // file" -- otherwise it would swallow the README.md / sibling-artifact cases this guard
+      // must never flag.
+      vi.stubEnv('CANOPY_BUILD_MODE', 'true')
+
+      const contentDir = path.join(tempDir, 'content')
+      await fs.mkdir(contentDir)
+
+      const { dir: postsDir } = await createCollection(contentDir, 'posts')
+      await createEntry(postsDir, 'post', 'hello', 'md', { title: 'Hello' })
+      await fs.writeFile(path.join(postsDir, 'unrelated.notice.md'), '# Not an entry type')
+
+      const schema: RootCollectionConfig = {
+        collections: [
+          { name: 'posts', path: 'posts', entries: [{ name: 'post', format: 'md', schema: [] }] },
+        ],
+      }
+      const flat = flattenSchema(schema, 'content')
+
+      const entries = await listEntries(tempDir, flat, 'content')
+      expect(entries).toHaveLength(1)
+      expect(entries[0].slug).toBe('hello')
+    })
   })
 })
