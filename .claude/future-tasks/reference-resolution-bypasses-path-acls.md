@@ -47,32 +47,83 @@ tree paths now use — so this does not add a sixth ACL matcher (see
 [authorization-enforcement-consolidation.md](authorization-enforcement-consolidation.md),
 which counts the existing divergence).
 
-The real design question is **what a denied reference should resolve to**, and it should
-be decided deliberately rather than fallen into:
+### DECIDED 2026-08-15 by JP: a denied reference resolves to **title + URL, tagged**
 
-- **Unresolved (bare ID)** — matches what `listEntries` already returns for every
-  reference, so adopter code that handles the listing case already handles this. Leaks
-  the existence of the ID, which the referring entry already contained.
-- **Null / omitted** — cleanest for rendering, but a renderer expecting a resolved object
-  may crash, and it is indistinguishable from a broken reference.
-- **Partial (title/URL only)** — probably what a navigation or "related content" UI
-  actually wants, but it is a third shape to specify, type and test.
+The options considered were a bare ID, null/omitted, or a partial value. Partial wins,
+and the reasoning is specific to what CanopyCMS is for: **mostly-public static sites.**
 
-Also decide whether resolution failure should be visible to the *author* of the
-referring entry, who may not understand why their reference renders empty.
+The motivating case is a public page linking to restricted content. An anonymous reader
+of that page still needs to see *what they are being linked to* — clicking through to a
+sign-in page is a fine outcome; a link that renders as nothing is not. A bare ID cannot
+be rendered, and null is indistinguishable from a broken reference.
+
+Two refinements on top of the bare decision:
+
+**Tag the partial.** A partial value that is shape-indistinguishable from a full one
+makes a renderer reading `data.body` receive `undefined` and emit a half-empty card with
+no explanation — the silent-nothing failure mode this backlog keeps rediscovering. Carry
+an explicit marker (`restricted: true` or equivalent) so a renderer can deliberately show
+a lock, a sign-in prompt, or skip the block. That marker also answers the open question
+about author visibility: the editor can surface "this reference resolves to a restricted
+entry" from the same signal.
+
+The primitives already exist: `resolveEntryTitle` (`utils/title-field.ts:60`, exported
+from `canopycms/server` and the root entry since the go-live epic) and `computeEntryUrl`
+(`utils/entry-url.ts:23`).
+
+**The static case asks a different question, and it is the more dangerous one.** A static
+build resolves as `STATIC_DEPLOY_USER` — full admin (`canopycms-next/src/context-wrapper.ts:388`).
+So on a static export no ACL fires at build, and a public page referencing restricted
+content embeds that content **in full, into public HTML**. For the deployment shape this
+package mostly serves, the exposure is not "a denied reader sees too little" but "the
+build bakes restricted content into a public artifact and nothing ever checks."
+
+Therefore the check cannot be "can *this reader* see B?", because at build time the
+reader is an admin. For a static build it must be "**is B public?**" — path access
+evaluated against anonymous, not against the build identity. Same partial shape, a
+different question asked, selected by phase. Getting this wrong in the obvious direction
+(checking the build user) produces a system that looks correct in tests and leaks in
+production.
 
 ## Verification this needs
 
-A test with two users and a path rule denying one of them the referenced entry, asserting
-the denied user's `read()` of the referring entry does not contain the referenced entry's
-field values. The existing reference-resolution tests all run as a permissive user, which
-is why this was never caught.
+Three tests, because the decision above has three distinct failure modes:
 
-## Related
+1. **Server mode, denied reader.** Two users and a path rule denying one of them the
+   referenced entry; assert the denied user's `read()` of the referring entry carries
+   title, URL and the restricted marker — and none of the referenced entry's other field
+   values. The existing reference-resolution tests all run as a permissive user, which is
+   why this was never caught.
+2. **Static build, non-public referenced entry.** Assert the emitted HTML contains the
+   title and link but not the restricted body. This is the test that would catch the
+   check being wired to the build user instead of anonymous — and it has to assert on
+   build *output*, because at that layer everything resolves.
+3. **The unrestricted path is unchanged.** A public reference still resolves fully; the
+   marker is absent. Otherwise this quietly becomes a breaking change for every existing
+   adopter.
+
+## Related — and what the decision above means for each
 
 - [listentries-acl-awareness.md](resolved/listentries-acl-awareness.md) — the listing
-  half, now enforced; this is the same question one layer over
+  half, already enforced. **The decision widens the gap between them:** listing returns a
+  bare ID for *every* reference (it never resolves at all), while reading will now return
+  title+URL for a denied one. So a denied reference is about to carry *more* information
+  through `read()` than a permitted one does through `listEntries()`. That is defensible
+  — the two APIs answer different questions — but it should be a deliberate stance, not a
+  surprise, and it is worth one sentence in the docs.
+- [resolved/shared-blocks-listentries-caveat.md](resolved/shared-blocks-listentries-caveat.md)
+  — the same asymmetry from the other side. If `listEntries` ever gains reference
+  resolution, it inherits this decision wholesale and must ask the same phase-dependent
+  question.
 - [authorization-enforcement-consolidation.md](authorization-enforcement-consolidation.md)
-  — reuse an existing matcher, do not add another
+  — reuse `createContentAccessChecker`; do not add a sixth matcher. **The static case
+  needs care here:** "evaluate against anonymous" must go through the same matcher with
+  an anonymous principal, not a separate is-this-public code path, or the count goes to
+  six after all.
 - [draft-publish-lifecycle.md](draft-publish-lifecycle.md) — why there is no fallback
+  signal. **The decision softens this:** a tagged partial *is* graceful degradation, so
+  the absence of a per-entry publish flag stops being the only thing standing between a
+  denied reader and a blank render. It does not remove the reason this file is P1 — the
+  full-data leak is still a leak — but it means the fix does not depend on a draft
+  concept ever existing.
   signal
