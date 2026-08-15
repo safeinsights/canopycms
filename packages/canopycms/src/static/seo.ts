@@ -164,13 +164,22 @@ export function isAbsoluteUrl(url: string): boolean {
  *
  * Leaves the root (`/`) and file-like paths (a last segment containing a dot, e.g.
  * `/blog/rss.xml`) alone, and never doubles an existing slash.
+ *
+ * A query string and/or fragment (`?page=2`, `#section`) is split off BEFORE the slash decision
+ * and placement, then reattached after — so `/blog?page=2` becomes `/blog/?page=2`, never
+ * `/blog?page=2/` (a literal trailing slash inside the query string, which is not what "serve
+ * with a trailing slash" means and breaks the URL).
  */
 export function withTrailingSlash(path: string): string {
-  const withLeading = path.startsWith('/') ? path : `/${path}`
-  if (withLeading === '/' || withLeading.endsWith('/')) return withLeading
+  const splitIndex = path.search(/[?#]/)
+  const base = splitIndex === -1 ? path : path.slice(0, splitIndex)
+  const suffix = splitIndex === -1 ? '' : path.slice(splitIndex)
+
+  const withLeading = base.startsWith('/') ? base : `/${base}`
+  if (withLeading === '/' || withLeading.endsWith('/')) return withLeading + suffix
   const lastSegment = withLeading.slice(withLeading.lastIndexOf('/') + 1)
-  if (lastSegment.includes('.')) return withLeading
-  return `${withLeading}/`
+  if (lastSegment.includes('.')) return withLeading + suffix
+  return `${withLeading}/${suffix}`
 }
 
 export interface ResolveSeoUrlOptions {

@@ -3,6 +3,7 @@ import {
   collectRoutableEntries,
   collectStaticPaths,
   extractSeoFields,
+  isAbsoluteUrl,
   isNoindexEntry,
   resolveSeoUrl,
   type CanopyBuildContext,
@@ -64,7 +65,13 @@ export async function collectStaticParams(
   const { paramName = 'slug', shape = 'catch-all', basePath, ...collectOptions } = options
   let entries = await collectStaticPaths(buildCtx, collectOptions)
 
-  if (basePath) {
+  // basePath only means something for the catch-all shape: it rewrites `segments` relative to the
+  // route's URL prefix, and 'single' shape never reads `segments` (it emits `entry.slug`). Applying
+  // the prefix FILTER unconditionally — as this once did — silently dropped every entry outside the
+  // prefix for 'single' too, contradicting this option's own doc above ("no effect with shape:
+  // 'single'") and meaning unbuilt pages for anyone who set basePath alongside 'single'. Scope with
+  // `rootPath` for 'single' instead.
+  if (basePath && shape !== 'single') {
     // Make segments relative to a nested route's base prefix (e.g. '/docs' for app/docs/[[...slug]]).
     // urlPath is always lowercased (see content-listing), so lowercase the prefix to match.
     const prefix = (basePath.endsWith('/') ? basePath.slice(0, -1) : basePath).toLowerCase()
@@ -97,7 +104,11 @@ export interface SitemapExtraUrl {
 }
 
 export interface GenerateContentSitemapOptions {
-  /** Site origin, e.g. `https://example.com`. Required: a sitemap must carry absolute URLs. */
+  /**
+   * Site origin, e.g. `https://example.com`. Required: a sitemap must carry absolute URLs, or
+   * search engines reject the whole file. Enforced — `generateContentSitemap` throws if this
+   * isn't an absolute URL (no scheme, or empty).
+   */
   siteUrl: string
   /**
    * Emit site-relative URLs with a trailing slash (`/contact/` rather than `/contact`).
@@ -162,6 +173,18 @@ export async function generateContentSitemap(
   options: GenerateContentSitemapOptions,
 ): Promise<MetadataRoute.Sitemap> {
   const { siteUrl, trailingSlash, rootPath, seo, exclude, lastModified, priority } = options
+
+  // A sitemap with a non-absolute <loc> is invalid — search engines reject the WHOLE file, not
+  // just the bad entry, and the build stays green because nothing here threw. 'example.com' (no
+  // scheme) and '' both pass through resolveSeoUrl unmodified today; catch them here instead.
+  if (!isAbsoluteUrl(siteUrl)) {
+    throw new Error(
+      `CanopyCMS: generateContentSitemap requires an absolute siteUrl (e.g. "https://example.com"), ` +
+        `got ${JSON.stringify(siteUrl)}. A sitemap whose <loc> values aren't absolute URLs is invalid ` +
+        'and search engines silently reject the entire file.',
+    )
+  }
+
   const urlOpts = { siteUrl, trailingSlash }
 
   const entries = await collectRoutableEntries(buildCtx, { rootPath })
@@ -189,9 +212,36 @@ export async function generateContentSitemap(
   }
 
   const root = resolveSeoUrl('/', urlOpts)
-  return items.sort((a, b) =>
+  return dedupeSitemapItems(items).sort((a, b) =>
     a.url === root ? -1 : b.url === root ? 1 : a.url.localeCompare(b.url),
   )
+}
+
+/**
+ * Drop duplicate `<loc>` entries, keeping the first occurrence and warning about each collision.
+ *
+ * A duplicate URL isn't fatal to a crawler, but it usually means two entries (or an entry and an
+ * `extraUrls` path) are unintentionally sharing one URL — an index entry collapsing onto a
+ * sibling's path, or two `urlPath`s that only differ by case (`urlPath` is lowercased — see
+ * `content-listing.ts`). Warning rather than silently deduping turns that into a build-time signal
+ * an adopter can act on instead of a sitemap that just quietly has fewer URLs than expected.
+ */
+function dedupeSitemapItems(items: SitemapItem[]): SitemapItem[] {
+  const seen = new Set<string>()
+  const result: SitemapItem[] = []
+  for (const item of items) {
+    if (seen.has(item.url)) {
+      console.warn(
+        `CanopyCMS: generateContentSitemap found more than one entry resolving to the same sitemap ` +
+          `URL ${JSON.stringify(item.url)}. Keeping the first and dropping the rest — this usually means ` +
+          'two entries (or an entry and an extraUrls path) are unintentionally sharing one URL.',
+      )
+      continue
+    }
+    seen.add(item.url)
+    result.push(item)
+  }
+  return result
 }
 
 // ---------------------------------------------------------------------------

@@ -1,6 +1,6 @@
 import {
   createNextCanopyContext,
-  entryToMetadata,
+  type EntryToMetadataOptions,
   type GenerateContentSitemapOptions,
   type GenerateContentStaticParamsOptions,
   type NextCanopyContextResult,
@@ -67,12 +67,26 @@ export const contentSitemap = async (options: GenerateContentSitemapOptions) => 
   return context.generateContentSitemap(options)
 }
 
-// Pure SEO mapping for generateMetadata. Re-exported here so page modules keep a single
-// CanopyCMS import; it touches no context.
-export { entryToMetadata }
+// SEO mapping for generateMetadata, bound to this context — see createNextCanopyContext's `seo`
+// option. Sharing one binding with contentSitemap above (rather than importing canopycms-next's
+// unbound entryToMetadata directly) is what keeps the sitemap's noindex exclusion and this page's
+// robots meta reading the SAME field location: set `seo` once above and both agree by
+// construction, instead of each call site needing to repeat (and possibly forget) it.
+export const entryToMetadata = async (entryData: unknown, options?: EntryToMetadataOptions) => {
+  const context = await canopyContextPromise
+  return context.entryToMetadata(entryData, options)
+}
 
 // The site origin every emitted URL (sitemap, canonical, OG) is resolved against. Inlined at build
 // time for a static export, so it must be set in the build environment.
+//
+// The 'http://localhost:3000' fallback is DEV-ONLY / example-app-only: this app's canopycms.config
+// is pinned to `mode: 'dev'` and its own `next build` in CI is a smoke test, not a real deploy, so
+// a missing env var here must not fail the build. A real adopter shipping a production site should
+// NOT keep a fallback like this — omit it (leave SITE_URL required) so a production build missing
+// NEXT_PUBLIC_SITE_URL fails loudly instead of silently baking a localhost sitemap into what ships.
+// (`isAbsoluteUrl` in generateContentSitemap will not catch this for you: 'http://localhost:3000'
+// is syntactically a perfectly valid absolute URL, just the wrong one.)
 export const SITE_URL = (process.env.NEXT_PUBLIC_SITE_URL ?? 'http://localhost:3000').replace(
   /\/+$/,
   '',
