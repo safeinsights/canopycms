@@ -21,6 +21,7 @@ import { createDebugLogger } from './utils/debug'
 import { isValidId } from './id'
 import type { LogicalPath, PhysicalPath, Slug, ContentId } from './paths/types'
 import { ContentStoreError } from './content-store'
+import { isBuildMode } from './build-mode'
 
 const log = createDebugLogger({ prefix: 'ContentListing' })
 
@@ -270,6 +271,17 @@ export interface ContentVisibilityOptions {
  * Walks the schema to discover collections, reads entries from each,
  * and returns a flat list suitable for generateStaticParams, search indexing, sitemaps, etc.
  *
+ * Build-time-only failure: a file with a recognized content extension (`.md`/`.mdx`/`.json`/
+ * `.yaml`) sitting in a collection directory but not matching `{type}.{slug}.{id}.{ext}` is, by
+ * default, silently dropped (see `listCollectionEntries`'s debug-gated warning). That is exactly
+ * the silent-page-loss failure mode static generation must not have — a schema rename without a
+ * matching file rename, or an entry type declared in one collection but not another, would
+ * otherwise vanish a page with zero build output. So when `isBuildMode()` is true, any such file
+ * turns the listing into a thrown error instead (see `findInvalidEntries`/`assertBuildEntriesValid`
+ * in `static/index.ts` for the sibling schema-validity guard this mirrors). Outside build mode
+ * (admin UI, content tree, `next dev`) the file is still just skipped, since a fresh scaffold or
+ * mid-rename file legitimately exists there.
+ *
  * @param branchRoot - Absolute path to the branch workspace root
  * @param flatSchema - Flattened schema items (from flattenSchema)
  * @param contentRootName - The content root name (e.g. "content")
@@ -300,13 +312,33 @@ export async function listEntries<T = Record<string, unknown>>(
   // The visibility predicate is applied here, before the map below, so a denied entry's
   // data never reaches `extract` (let alone the returned items).
   const shouldInclude = visibility?.shouldInclude
+  const skippedFiles: SkippedListingFile[] = []
   const collectionResults = await Promise.all(
     collections.map(async (collection) => {
-      const entries = await listCollectionEntries(branchRoot, collection)
+      const entries = await listCollectionEntries(branchRoot, collection, (file) =>
+        skippedFiles.push(file),
+      )
       const visible = shouldInclude ? entries.filter((e) => shouldInclude(e.physicalPath)) : entries
       return visible.map((entry) => ({ entry, collection }))
     }),
   )
+
+  // Build-time only: fail loudly rather than silently shipping a build with a page missing. See
+  // the build-time-only-failure note in this function's own doc comment above.
+  if (isBuildMode() && skippedFiles.length > 0) {
+    const lines = skippedFiles.map(
+      ({ filename, collectionPath }) => `  - ${collectionPath}/${filename}`,
+    )
+    throw new Error(
+      `CanopyCMS static build: found ${skippedFiles.length} file(s) with an unrecognized filename ` +
+        `format inside a content collection:\n${lines.join('\n')}\n` +
+        'Expected {type}.{slug}.{id}.{ext} with a known entry type (a name declared in that ' +
+        "collection's entries config) and a valid 12-char Base58 ID. This usually means a schema " +
+        'rename without a matching file rename, an entry type declared in one collection but not ' +
+        'another, or a stray file placed directly in a collection directory. Rename or move the ' +
+        'file, or fix the schema, then rebuild.',
+    )
+  }
 
   // Flatten and map to ListEntriesItem
   const contentPrefix = contentRootName ? `${contentRootName}/` : ''
@@ -397,13 +429,28 @@ export const sortByOrder = <T extends { contentId?: ContentId }>(
   })
 }
 
+/** A content-extension file inside a collection directory whose filename didn't parse. */
+export interface SkippedListingFile {
+  /** The bare filename, e.g. `article.lost-page.4fBqT78gcaLd.md`. */
+  filename: string
+  /** The collection's logical path. */
+  collectionPath: LogicalPath
+}
+
 /**
  * List all entries in a collection directory.
  * Reads each entry's data (frontmatter or JSON).
+ *
+ * @param onSkip - Called for every file that has a recognized content extension but whose name
+ *   doesn't match the `{type}.{slug}.{id}.{ext}` grammar (see `parseTypedFilename`). Optional and
+ *   purely a diagnostic hook — existing callers that omit it keep the exact prior behavior (the
+ *   file is silently dropped from the result, with a debug-gated `log.warn`). `listEntries` below
+ *   uses this to turn the skip into a hard build-time failure instead of a silent one.
  */
 export const listCollectionEntries = async (
   root: string,
   collection: FlatSchemaItem,
+  onSkip?: (file: SkippedListingFile) => void,
 ): Promise<CollectionListItem[]> => {
   if (collection.type !== 'collection' || !collection.entries) {
     return []
@@ -457,6 +504,7 @@ export const listCollectionEntries = async (
           'listCollectionEntries',
           `Skipping file with unrecognized filename format: ${file.name} (expected {type}.{slug}.{id}.{ext} with a known entry type and valid 12-char Base58 ID)`,
         )
+        onSkip?.({ filename: file.name, collectionPath: collection.logicalPath })
         return null
       }
 

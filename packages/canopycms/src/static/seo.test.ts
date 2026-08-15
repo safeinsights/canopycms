@@ -172,6 +172,19 @@ describe('URL shaping', () => {
     expect(withTrailingSlash('/blog/rss.xml')).toBe('/blog/rss.xml')
   })
 
+  // Regression: the slash was appended after the raw string, so a query string or fragment ended
+  // up with a slash INSIDE it ('/blog?page=2' -> '/blog?page=2/') instead of before it.
+  it('withTrailingSlash places the slash before a query string or fragment, not after it', () => {
+    expect(withTrailingSlash('/blog?page=2')).toBe('/blog/?page=2')
+    expect(withTrailingSlash('/blog#section')).toBe('/blog/#section')
+    expect(withTrailingSlash('/blog?page=2#section')).toBe('/blog/?page=2#section')
+    // File-like paths still take no slash — the query/fragment split must not change that check.
+    expect(withTrailingSlash('/blog/rss.xml?utm=1')).toBe('/blog/rss.xml?utm=1')
+    // Already-slashed / root cases carry the suffix through unchanged.
+    expect(withTrailingSlash('/blog/?page=2')).toBe('/blog/?page=2')
+    expect(withTrailingSlash('/?ref=home')).toBe('/?ref=home')
+  })
+
   it('prefixes site-relative paths with the origin, stripping its trailing slashes', () => {
     expect(resolveSeoUrl('/contact', { siteUrl: 'https://example.com/' })).toBe(
       'https://example.com/contact',

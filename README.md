@@ -1671,6 +1671,8 @@ export const generateStaticParams = () =>
 > **Advanced (framework-agnostic):** if you need to call the enumeration with a build context you already hold, the free helper `collectStaticParams(buildCtx, options)` from `canopycms-next` takes the build context directly. The bound `contentStaticParams` above is preferred for ordinary page code.
 >
 > **Schema-invalid entries fail the build.** During an actual production `next build`, `contentStaticParams` checks every entry against its schema and throws if any fail, listing each offending entry path. This typically means an abandoned create-scaffold -- an empty draft the editor's "+" button writes before you fill it in, then never finished or deleted. Finish or delete the entry in the editor and rebuild. `next dev` is unaffected, since in-progress scaffolds legitimately exist there while editing. The same guard runs during sitemap generation (below), so an app with no `generateStaticParams` at all still gets it.
+>
+> **A file CanopyCMS can't parse into an entry fails the build too.** Content files are named `{type}.{slug}.{id}.{ext}`; a `.md`/`.mdx`/`.json`/`.yaml` file inside a collection directory that doesn't match that shape -- most often a schema rename that left a stale file behind, or an entry type declared in one collection but not another -- is a production `next build` error listing the offending file, for the same reason as the schema-invalid case above: silently dropping a page out of the build is worse than a red build. Outside an actual production build (`next dev`, the admin UI) it's skipped instead, since in-progress renames legitimately leave such a file around while editing.
 
 ### Sitemap and SEO Metadata
 
@@ -1692,6 +1694,18 @@ export const postSchema = defineEntrySchema([
 ```
 
 The fields are stored **flat** in the content file by default. For the nested convention, pass `defineSeoFieldGroup({ group: 'seo' })` -- and then pass the same `{ group: 'seo' }` to `entryToMetadata` / `extractSeoFields` so the read side looks in the same place.
+
+**Set it once, not per call.** `generateContentSitemap`'s `noindex` exclusion and `entryToMetadata`'s field extraction both need to agree on where the SEO fields live, or a page can end up `noindex` while the sitemap still advertises its URL (or the reverse) because one call site forgot the `group`/`fields` override the other one has. Pass `seo` to `createNextCanopyContext` instead of repeating it on every `contentSitemap`/`entryToMetadata` call -- both bound helpers pick it up automatically, and a per-call `seo`/`group`/`fields` still overrides it for just that call:
+
+```typescript
+// app/lib/canopy.ts
+const canopyContextPromise = createNextCanopyContext({
+  config: config.server,
+  authPlugin,
+  entrySchemaRegistry,
+  seo: { group: 'seo' }, // shared by contentSitemap and entryToMetadata below
+})
+```
 
 #### `sitemap.ts`
 
@@ -1729,22 +1743,24 @@ export default function sitemap(): Promise<MetadataRoute.Sitemap> {
 
 **Options:**
 
-| Option          | Type                                     | Default       | Description                                                                                                        |
-| --------------- | ---------------------------------------- | ------------- | ------------------------------------------------------------------------------------------------------------------ |
-| `siteUrl`       | `string`                                 | required      | Site origin. A sitemap must carry absolute URLs                                                                    |
-| `trailingSlash` | `boolean`                                | `false`       | Emit `/contact/` rather than `/contact`. **Set it to match your `next.config`** -- CanopyCMS cannot read that file |
-| `rootPath`      | `string`                                 | Content root  | Scope to a subtree (e.g. `'content/posts'`)                                                                        |
-| `exclude`       | `(entry) => boolean`                     | -             | Drop entries, on top of the non-optional `noindex` exclusion                                                       |
-| `lastModified`  | `(entry) => Date \| string \| undefined` | `updatedAt`   | `<lastmod>` per entry; return `undefined` to omit it                                                               |
-| `priority`      | `(entry) => number \| undefined`         | -             | `<priority>` per entry                                                                                             |
-| `extraUrls`     | `SitemapExtraUrl[]`                      | -             | URLs with no entry behind them (hand-written routes, feeds)                                                        |
-| `seo`           | `{ fields?, group? }`                    | flat defaults | Where the SEO fields live, when they aren't the defaults                                                           |
+| Option          | Type                                     | Default       | Description                                                                                                                           |
+| --------------- | ---------------------------------------- | ------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| `siteUrl`       | `string`                                 | required      | Site origin. A sitemap must carry absolute URLs -- **enforced**: throws if this isn't an absolute URL (e.g. missing scheme, or empty) |
+| `trailingSlash` | `boolean`                                | `false`       | Emit `/contact/` rather than `/contact`. **Set it to match your `next.config`** -- CanopyCMS cannot read that file                    |
+| `rootPath`      | `string`                                 | Content root  | Scope to a subtree (e.g. `'content/posts'`)                                                                                           |
+| `exclude`       | `(entry) => boolean`                     | -             | Drop entries, on top of the non-optional `noindex` exclusion                                                                          |
+| `lastModified`  | `(entry) => Date \| string \| undefined` | `updatedAt`   | `<lastmod>` per entry; return `undefined` to omit it                                                                                  |
+| `priority`      | `(entry) => number \| undefined`         | -             | `<priority>` per entry                                                                                                                |
+| `extraUrls`     | `SitemapExtraUrl[]`                      | -             | URLs with no entry behind them (hand-written routes, feeds)                                                                           |
+| `seo`           | `{ fields?, group? }`                    | flat defaults | Where the SEO fields live, when they aren't the defaults                                                                              |
 
 > **`lastModified` is filesystem mtime by default.** `updatedAt` is the entry file's mtime, not an editorial timestamp -- a fresh CI clone resets it to checkout time, so on a clean build agent the default dates every URL to when the tree was cloned. Supply a real content date via the callback, or return `undefined` to omit `<lastmod>` rather than assert a date you cannot stand behind.
 >
 > `changeFrequency` is not emitted for entries: a blanket value asserted for every URL carries no information, and search engines say they ignore it. Set it per-URL via `extraUrls` if you want it.
 >
 > **`robots.txt` is out of scope** -- it is a few static lines with no CMS content behind it. Write `app/robots.ts` yourself and point its `sitemap` field at this route.
+>
+> **Colliding URLs are deduped, not silently doubled.** Two entries resolving to the same `<loc>` -- an index entry collapsing onto a sibling's path, or two `urlPath`s that only differ by case (`urlPath` is always lowercased) -- is not fatal to a crawler, but it almost always means two entries are unintentionally sharing one URL. `generateContentSitemap` keeps the first and drops the rest, and warns on the duplicate so you notice instead of shipping a sitemap with fewer URLs than you expect.
 
 #### `generateMetadata`
 
@@ -2281,6 +2297,8 @@ import { buildContentTree } from 'canopycms/server'
 `listEntries()` returns a flat array of every content entry in your site. It is designed for search indexing, sitemaps, and any other case where you need to iterate over all content without the tree hierarchy. (For `generateStaticParams`, prefer the bound `contentStaticParams` helper — see [Static Export with generateStaticParams](#static-export-with-generatestaticparams) — which enumerates routable paths without handing an admin context to your page module.)
 
 > **`listEntries()` does not resolve `reference` fields.** It reads content files raw off disk for speed across a whole site scan, so a `reference` field (top-level or inside a block template — see [Shared / Referenced Blocks](#shared--referenced-blocks)) comes back as a bare id string, or `null`. Only `read()`/`readByUrlPath()` resolve references. Building a search index or sitemap from `listEntries()` over content that leans on referenced/shared blocks will silently omit that referenced data — resolve it yourself with a follow-up `read()` call if your `listEntries()`-derived surface needs it.
+>
+> **An unparseable content file fails a production build.** Content files are named `{type}.{slug}.{id}.{ext}`; during an actual production `next build`, a `.md`/`.mdx`/`.json`/`.yaml` file in a collection directory that doesn't match that shape throws instead of being silently dropped from the result — the same "a page that vanishes from the build is worse than a red build" reasoning as the schema-invalid-entry guard above. Outside a production build it's still just skipped (logged only with `CANOPYCMS_DEBUG=true`), since in-progress renames legitimately leave such a file around while editing.
 
 ### Basic Usage
 

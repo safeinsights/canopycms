@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import os from 'node:os'
@@ -766,5 +766,86 @@ describe('listEntries', () => {
 
     expect(postEntry?.schema).toEqual(postSchema)
     expect(pageEntry?.schema).toEqual(pageSchema)
+  })
+
+  // ---------------------------------------------------------------------------
+  // Unparseable-filename files: silent outside build mode, a hard failure inside it.
+  //
+  // Regression: a content-extension file whose name doesn't match
+  // {type}.{slug}.{id}.{ext} (e.g. a schema rename left behind a stale file, or an entry type
+  // declared in one collection but not another) was silently dropped from listEntries — no
+  // output at all outside CANOPYCMS_DEBUG=true — so the page vanished from a `next build` and
+  // the sitemap with zero signal. See static/index.ts's assertBuildEntriesValid for the sibling
+  // guard this mirrors for schema-invalid (but parseable) entries.
+  // ---------------------------------------------------------------------------
+  describe('unparseable-filename files', () => {
+    afterEach(() => {
+      vi.unstubAllEnvs()
+    })
+
+    it('is silently skipped outside build mode (existing behavior preserved)', async () => {
+      const contentDir = path.join(tempDir, 'content')
+      await fs.mkdir(contentDir)
+
+      const { dir: postsDir } = await createCollection(contentDir, 'posts')
+      await createEntry(postsDir, 'post', 'hello', 'md', { title: 'Hello' })
+      // A stray file: has a recognized content extension but not {type}.{slug}.{id}.{ext}
+      // (no known entry type as its first segment).
+      await fs.writeFile(path.join(postsDir, 'article.lost-page.4fBqT78gcaLd.md'), '# Lost')
+
+      const schema: RootCollectionConfig = {
+        collections: [
+          { name: 'posts', path: 'posts', entries: [{ name: 'post', format: 'md', schema: [] }] },
+        ],
+      }
+      const flat = flattenSchema(schema, 'content')
+
+      const entries = await listEntries(tempDir, flat, 'content')
+
+      expect(entries).toHaveLength(1)
+      expect(entries[0].slug).toBe('hello')
+    })
+
+    it('throws in build mode (CANOPY_BUILD_MODE=true) instead of silently dropping the page', async () => {
+      vi.stubEnv('CANOPY_BUILD_MODE', 'true')
+
+      const contentDir = path.join(tempDir, 'content')
+      await fs.mkdir(contentDir)
+
+      const { dir: postsDir } = await createCollection(contentDir, 'posts')
+      await createEntry(postsDir, 'post', 'hello', 'md', { title: 'Hello' })
+      await fs.writeFile(path.join(postsDir, 'article.lost-page.4fBqT78gcaLd.md'), '# Lost')
+
+      const schema: RootCollectionConfig = {
+        collections: [
+          { name: 'posts', path: 'posts', entries: [{ name: 'post', format: 'md', schema: [] }] },
+        ],
+      }
+      const flat = flattenSchema(schema, 'content')
+
+      await expect(listEntries(tempDir, flat, 'content')).rejects.toThrow(
+        /unrecognized filename format.*article\.lost-page\.4fBqT78gcaLd\.md/s,
+      )
+    })
+
+    it('does not throw in build mode when every file parses', async () => {
+      vi.stubEnv('CANOPY_BUILD_MODE', 'true')
+
+      const contentDir = path.join(tempDir, 'content')
+      await fs.mkdir(contentDir)
+
+      const { dir: postsDir } = await createCollection(contentDir, 'posts')
+      await createEntry(postsDir, 'post', 'hello', 'md', { title: 'Hello' })
+
+      const schema: RootCollectionConfig = {
+        collections: [
+          { name: 'posts', path: 'posts', entries: [{ name: 'post', format: 'md', schema: [] }] },
+        ],
+      }
+      const flat = flattenSchema(schema, 'content')
+
+      const entries = await listEntries(tempDir, flat, 'content')
+      expect(entries).toHaveLength(1)
+    })
   })
 })

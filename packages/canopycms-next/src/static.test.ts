@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import type { CanopyBuildContext } from 'canopycms/server'
 import { collectStaticParams, entryToMetadata, generateContentSitemap } from './static'
 
@@ -74,6 +74,22 @@ describe('collectStaticParams', () => {
     const params = await collectStaticParams(ctx, { basePath: '/Docs' })
 
     expect(params).toEqual([{ slug: ['guides'] }])
+  })
+
+  it("basePath has no effect with shape: 'single', matching its own doc (regression)", async () => {
+    // Before the fix, basePath's prefix FILTER ran regardless of shape, so a stale/wrong basePath
+    // silently dropped every entry outside the prefix even for 'single' — which only ever reads
+    // `entry.slug`, never `segments`. That contradicted this option's doc ("no effect with
+    // shape: 'single'") and meant unbuilt pages. Scope 'single' with rootPath instead.
+    const ctx = fakeBuildCtx([
+      { urlPath: '/posts/a', slug: 'a', entryType: 'post' },
+      { urlPath: '/docs/b', slug: 'b', entryType: 'doc' },
+    ])
+
+    const params = await collectStaticParams(ctx, { shape: 'single', basePath: '/docs' })
+
+    // Both entries are still emitted — basePath did not filter out '/posts/a'.
+    expect(params).toEqual([{ slug: 'a' }, { slug: 'b' }])
   })
 })
 
@@ -175,14 +191,47 @@ describe('generateContentSitemap', () => {
     expect(sitemap[1]).toMatchObject({ changeFrequency: 'daily', priority: 0.8 })
   })
 
-  it('honors a nested SEO group when reading noindex', async () => {
+  it('honors a nested SEO group when reading noindex — and forgetting it is a real hazard', async () => {
     const ctx = fakeBuildCtx([
       { urlPath: '/hidden', slug: 'hidden', entryType: 'page', data: { seo: { noindex: true } } },
     ])
 
     expect(await generateContentSitemap(ctx, { siteUrl: SITE, seo: { group: 'seo' } })).toEqual([])
-    // Without the group option the flag is invisible — proof the option is doing the work.
+    // Without the `seo` option, the noindex flag is invisible to THIS call — a hidden entry ships
+    // in the sitemap. `generateContentSitemap` and `entryToMetadata` each take their own `seo`/
+    // `fields`/`group` per call, so an adopter who sets it on one and forgets the other gets a page
+    // that says noindex while the sitemap still advertises its URL. That's what
+    // `createNextCanopyContext({ seo })` + its bound helpers (see context-wrapper.ts) exist to
+    // prevent — see context-wrapper-seo.test.ts for the two surfaces sharing one default.
     expect(await generateContentSitemap(ctx, { siteUrl: SITE })).toHaveLength(1)
+  })
+
+  it('throws when siteUrl is not absolute (a non-absolute <loc> invalidates the whole sitemap)', async () => {
+    const ctx = fakeBuildCtx([{ urlPath: '/a', slug: 'a', entryType: 'page' }])
+
+    await expect(generateContentSitemap(ctx, { siteUrl: 'example.com' })).rejects.toThrow(
+      /absolute siteUrl.*"example\.com"/s,
+    )
+    await expect(generateContentSitemap(ctx, { siteUrl: '' })).rejects.toThrow(/absolute siteUrl/)
+  })
+
+  it('dedupes a colliding URL, keeping the first entry and warning', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      // An index entry ('/guides/index' -> '/guides') collides with a sibling entry whose slug is
+      // literally 'guides' in the parent collection — both resolve to the same urlPath.
+      const ctx = fakeBuildCtx([
+        { urlPath: '/guides', slug: 'index', entryType: 'doc' },
+        { urlPath: '/guides', slug: 'guides', entryType: 'page' },
+      ])
+
+      const sitemap = await generateContentSitemap(ctx, { siteUrl: SITE })
+
+      expect(sitemap.map((u) => u.url)).toEqual([`${SITE}/guides`])
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining(`${SITE}/guides`))
+    } finally {
+      warnSpy.mockRestore()
+    }
   })
 })
 
