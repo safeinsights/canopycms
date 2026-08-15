@@ -1659,7 +1659,7 @@ There is **no per-entry draft or published field**, and there will not be one. P
 Two consequences follow, and both are load-bearing:
 
 - **`noindex` is not a hiding mechanism.** It means "don't index", not "don't exist" — the page is built and its URL resolves for anyone holding the link. If content must not be publicly reachable at all, it must not be merged.
-- **Enumeration helpers must not invent a publish filter.** `collectStaticPaths`, and the sitemap helper when it lands, filter on `noindex` only. Everything they can enumerate is by definition already published, because it merged.
+- **Enumeration helpers must not invent a publish filter.** `collectStaticPaths` and `collectRoutableEntries` apply no publish filtering at all — not even on `noindex` — because everything they can enumerate is by definition already published, since it merged (see [Static-Export Helpers](#static-export-helpers) below). `noindex` exclusion happens only on the surfaces that _advertise_ an entry, namely the sitemap helper, not on enumeration itself.
 
 **How to unpublish:** delete the entry on a branch and merge that branch. This is recoverable — `git revert` restores the file byte-for-byte including its content ID. Note that `validation/deletion-checker.ts` blocks deleting an entry that other entries still reference, so inbound links must be fixed first; that guard is the reason a soft "archived" state would save no work.
 

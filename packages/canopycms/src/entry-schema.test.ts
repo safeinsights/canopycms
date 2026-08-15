@@ -11,6 +11,8 @@ import {
   type EntryTypesFromRegistry,
   type TypeFromEntrySchema,
 } from './entry-schema'
+import { validateEntryData } from './validation/entry-validator'
+import type { EntrySchema } from './config/types'
 
 describe('TypeFromEntrySchema', () => {
   describe('block discriminated union', () => {
@@ -437,7 +439,7 @@ describe('defineSeoFieldGroup', () => {
     expect(schema).toHaveLength(2)
   })
 
-  it('nests under the given key when `group` is passed', () => {
+  it('nests under the given key when `group` is passed, with the wrapper key itself optional', () => {
     const schema = defineEntrySchema([
       { name: 'title', type: 'string' },
       defineSeoFieldGroup({ group: 'seo' }),
@@ -445,9 +447,29 @@ describe('defineSeoFieldGroup', () => {
 
     type Content = TypeFromEntrySchema<typeof schema>
 
-    expectTypeOf<Content['seo']['metaTitle']>().toEqualTypeOf<string | undefined>()
     expectTypeOf<Content['title']>().toEqualTypeOf<string>()
-    expect(schema[1]).toMatchObject({ name: 'seo', type: 'object' })
+    // Regression test: the `seo` wrapper key itself must type as optional, matching the runtime
+    // validator (validateEntryData only enforces fields with `required: true`) — an earlier
+    // version typed the wrapper as required while the runtime treated it as optional, so
+    // type-safe `data.seo.metaTitle` access could crash on real content with no `seo:` key.
+    expectTypeOf<Content>().toEqualTypeOf<{
+      title: string
+      seo?: {
+        metaTitle?: string
+        metaDescription?: string
+        ogImage?: string
+        ogType?: string | number
+        canonical?: string
+        noindex?: boolean
+        twitterCard?: string | number
+      }
+    }>()
+    expect(schema[1]).toMatchObject({ name: 'seo', type: 'object', required: false })
+
+    // An entry that omits `seo:` entirely is both a valid literal and passes validation.
+    const bare: Content = { title: 'Hello' }
+    expect(bare.seo).toBeUndefined()
+    expect(validateEntryData(schema as EntrySchema, bare)).toEqual([])
   })
 })
 

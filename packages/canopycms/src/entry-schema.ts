@@ -250,6 +250,8 @@ export const defineInlineFieldGroup = <
  * // Nested: frontmatter carries `seo: { metaTitle: … }`.
  * const pageSchema = defineEntrySchema([defineSeoFieldGroup({ group: 'seo' })])
  * const metadata = entryToMetadata(data, { group: 'seo' })
+ * // TypeFromEntrySchema: { seo?: { metaTitle?: string; ... } } — the wrapper key itself is
+ * // optional too, so an entry that sets no SEO fields at all can omit `seo` entirely.
  */
 const SEO_GROUP_FIELDS = [
   {
@@ -329,6 +331,12 @@ export type NestedSeoFieldGroup<G extends string> = {
   description?: string
   fields: SeoGroupFields
   type: 'object'
+  /**
+   * The wrapper object itself is optional — an entry that sets no SEO fields at all omits the
+   * `seo` key entirely, matching the runtime validator (`entry-validator.ts`), which only
+   * enforces fields with `required: true`.
+   */
+  required: false
 }
 
 export function defineSeoFieldGroup(
@@ -354,8 +362,8 @@ export function defineSeoFieldGroup(
   // 'object' nests the fields under `name`; 'group' is the inline (flat) container, whose name
   // is an editor-only label anchor and contributes no key to the content file.
   return opts.group
-    ? { ...base, name: opts.group, type: 'object' }
-    : { ...base, name: 'seo', type: 'group' }
+    ? { ...base, name: opts.group, type: 'object' as const, required: false as const }
+    : { ...base, name: 'seo', type: 'group' as const }
 }
 
 /**
