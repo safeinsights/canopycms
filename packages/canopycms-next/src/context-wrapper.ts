@@ -167,6 +167,25 @@ export interface NextCanopyContextResult {
   /** Phase-selecting `read` (build context at build, runtime context at request) — counterpart to readByUrlPath. */
   read: CanopyContext['read']
   /**
+   * Phase-selecting `listEntries` — every entry under `rootPath` in a single filesystem
+   * pass, each with its `urlPath`, `slug`, `entryType`, `data` and `schema`. Use it instead
+   * of "enumerate paths, then read each one", which is an N+1 over the content tree and
+   * invites URL-reconstruction bugs; the returned `urlPath` round-trips through
+   * `readByUrlPath` by construction, including for multi-segment paths.
+   *
+   * ```ts
+   * const articles = await listEntries<ArticleContent>({
+   *   filter: (e) => e.entryType === 'article',
+   * })
+   * ```
+   *
+   * At build time this reads filesystem-direct; at request time it uses the branch-aware,
+   * **ACL-enforced** runtime context, so entries the current user cannot read are omitted.
+   * Note it takes no `branch` option — see `CanopyContext['listEntries']` for the
+   * base-branch pinning caveat in prod.
+   */
+  listEntries: CanopyContext['listEntries']
+  /**
    * Build the array Next's `generateStaticParams` expects from CanopyCMS content. Enumeration-only
    * (reads the set of routable paths, never entry content) and closes over the build context, so your
    * page module never imports the admin `getCanopyForBuild`. Use `{ rootPath, shape: 'single' }` for a
@@ -359,6 +378,12 @@ export async function createNextCanopyContext(
     const ctx = isBuildMode() ? await getCanopyForBuild() : await getCanopy()
     return ctx.read<T>(input)
   }
+  const listEntries: CanopyContext['listEntries'] = async <T = Record<string, unknown>>(
+    opts?: ListEntriesOptions<T>,
+  ) => {
+    const ctx = isBuildMode() ? await getCanopyForBuild() : await getCanopy()
+    return ctx.listEntries<T>(opts)
+  }
 
   // Enumeration-only static-params helper, bound to the (guarded) build context so page modules don't
   // import the admin context just to list paths. generateStaticParams is build-only, so this is safe.
@@ -387,6 +412,7 @@ export async function createNextCanopyContext(
     getCanopyForBuild,
     readByUrlPath,
     read,
+    listEntries,
     generateContentStaticParams,
     generateContentSitemap: boundGenerateContentSitemap,
     entryToMetadata,

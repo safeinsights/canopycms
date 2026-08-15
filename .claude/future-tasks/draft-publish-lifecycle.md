@@ -142,7 +142,7 @@ forget about them.** The guardrails to design are therefore staleness
   its publish-filter option was removed by this decision.
 - [static-export-seo-metadata.md](resolved/static-export-seo-metadata.md) — owns
   `noindex`, which this decision makes the *sole* per-entry visibility lever.
-- [listentries-acl-awareness.md](listentries-acl-awareness.md) — its
+- [listentries-acl-awareness.md](resolved/listentries-acl-awareness.md) — its
   unpublished-data concern is about *branch* content, not draft-flagged entries.
 - [resolved-references-url.md](resolved-references-url.md) — its "is this
   visible" question dissolves: within a branch, everything is equally visible.
