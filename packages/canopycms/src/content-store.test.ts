@@ -19,6 +19,7 @@ import {
   ContentConflictError,
   createReferenceResolveCache,
   DuplicateContentIdError,
+  UrlPathConflictError,
 } from './content-store'
 import { tryAcquireContentWriteLock } from './utils/content-write-lock'
 import { getErrorMessage } from './utils/error'
@@ -3418,5 +3419,178 @@ Body text here.
     expect(await fs.readFile(created.absolutePath, 'utf8')).toBe(
       `${JSON.stringify({ title: 'Two' }, null, 2)}\n`,
     )
+  })
+})
+
+// ---------------------------------------------------------------------------
+// [URL] Contested-URL guard at the write boundary
+// ---------------------------------------------------------------------------
+//
+// The write-boundary half of "no two entries may claim the same urlPath"; the build-time half is
+// `assertNoDuplicateUrlPaths` in static/index.ts. The load-bearing distinction these pin is that
+// the guard keys on the URL, NOT on the name: an entry beside a same-named collection is only
+// contested once that collection has an index entry.
+describe('contested-URL guard', () => {
+  const schema = {
+    collections: [
+      {
+        name: 'docs',
+        path: 'docs',
+        entries: [
+          {
+            name: 'doc',
+            format: 'json' as const,
+            default: true,
+            schema: [{ name: 'title', type: 'string' as const }],
+          },
+        ],
+        collections: [
+          {
+            name: 'guides',
+            path: 'docs/guides',
+            entries: [
+              {
+                name: 'guide',
+                format: 'json' as const,
+                default: true,
+                schema: [{ name: 'title', type: 'string' as const }],
+              },
+            ],
+          },
+        ],
+      },
+    ],
+  } as const
+
+  const setup = async () => {
+    const root = await tmpDir()
+    const config = defineCanopyTestConfig({ schema })
+    const store = new ContentStore(root, flattenSchema(schema, config.contentRoot))
+    return { root, store }
+  }
+
+  const docs = unsafeAsLogicalPath('content/docs')
+  const guides = unsafeAsLogicalPath('content/docs/guides')
+
+  it('ALLOWS an entry beside a same-named collection that has no index entry', async () => {
+    // The legitimate shape: a landing page plus a folder of children. Nothing is contested, and a
+    // name-based rule would wrongly forbid this.
+    const { store } = await setup()
+    await store.write(guides, unsafeAsSlug('getting-started'), {
+      format: 'json',
+      data: { title: 'Getting Started' },
+    })
+
+    await expect(
+      store.write(docs, unsafeAsSlug('guides'), { format: 'json', data: { title: 'Guides' } }),
+    ).resolves.toBeDefined()
+  })
+
+  it('REFUSES an entry whose URL a sibling collection index already holds', async () => {
+    const { store } = await setup()
+    await store.write(guides, unsafeAsSlug('index'), {
+      format: 'json',
+      data: { title: 'Guides Landing' },
+    })
+
+    await expect(
+      store.write(docs, unsafeAsSlug('guides'), { format: 'json', data: { title: 'Guides' } }),
+    ).rejects.toThrow(/share a URL with the index entry/)
+  })
+
+  it('REFUSES an index entry whose URL a parent entry already holds (the other direction)', async () => {
+    const { store } = await setup()
+    await store.write(docs, unsafeAsSlug('guides'), {
+      format: 'json',
+      data: { title: 'Guides' },
+    })
+
+    await expect(
+      store.write(guides, unsafeAsSlug('index'), { format: 'json', data: { title: 'Landing' } }),
+    ).rejects.toThrow(/share a URL with the "guides" entry in the parent/)
+  })
+
+  it('throws UrlPathConflictError, so the API maps it to the existing 409', async () => {
+    const { store } = await setup()
+    await store.write(guides, unsafeAsSlug('index'), { format: 'json', data: { title: 'L' } })
+
+    const err = await store
+      .write(docs, unsafeAsSlug('guides'), { format: 'json', data: { title: 'G' } })
+      .then(
+        () => null,
+        (e: unknown) => e,
+      )
+    expect(err).toBeInstanceOf(UrlPathConflictError)
+    expect(err).toBeInstanceOf(ContentConflictError)
+  })
+
+  it('does not block an ordinary SAVE of an entry already in a contested pair', async () => {
+    // Blocking the edit would trap the author in an entry they can no longer fix. The guard is
+    // create/rename only; a pre-existing collision is the build guard's business.
+    const { root, store } = await setup()
+    await store.write(docs, unsafeAsSlug('guides'), { format: 'json', data: { title: 'Guides' } })
+    // Land the collision directly on disk, the way a git merge would.
+    const guidesDir = path.join(root, 'content/docs/guides')
+    await fs.mkdir(guidesDir, { recursive: true })
+    await fs.writeFile(
+      path.join(guidesDir, `guide.index.${generateId()}.json`),
+      JSON.stringify({ title: 'Landing' }),
+    )
+
+    await expect(
+      store.write(docs, unsafeAsSlug('guides'), { format: 'json', data: { title: 'Edited' } }),
+    ).resolves.toBeDefined()
+  })
+
+  it('REFUSES a rename onto a contested URL, in both directions', async () => {
+    const { store } = await setup()
+    await store.write(guides, unsafeAsSlug('index'), { format: 'json', data: { title: 'L' } })
+    await store.write(docs, unsafeAsSlug('overview'), { format: 'json', data: { title: 'O' } })
+
+    // Renaming a plain entry ONTO the collection's URL.
+    await expect(
+      store.renameEntry(docs, unsafeAsSlug('overview'), unsafeAsSlug('guides')),
+    ).rejects.toThrow(/share a URL with the index entry/)
+  })
+
+  it('REFUSES renaming an entry TO `index` when the parent holds that URL', async () => {
+    // How an existing collection acquires a landing page — so the rename path needs the check
+    // just as much as create does.
+    const { store } = await setup()
+    await store.write(docs, unsafeAsSlug('guides'), { format: 'json', data: { title: 'G' } })
+    await store.write(guides, unsafeAsSlug('landing'), { format: 'json', data: { title: 'L' } })
+
+    await expect(
+      store.renameEntry(guides, unsafeAsSlug('landing'), unsafeAsSlug('index')),
+    ).rejects.toThrow(/share a URL with the "guides" entry in the parent/)
+  })
+
+  it('ALLOWS a root index entry, which claims "/" and cannot be contested from above', async () => {
+    const rootSchema = {
+      collections: [
+        {
+          name: 'root',
+          path: '',
+          entries: [
+            {
+              name: 'page',
+              format: 'json' as const,
+              default: true,
+              schema: [{ name: 'title', type: 'string' as const }],
+            },
+          ],
+        },
+      ],
+    } as const
+    const root = await tmpDir()
+    const config = defineCanopyTestConfig({ schema: rootSchema })
+    const store = new ContentStore(root, flattenSchema(rootSchema, config.contentRoot))
+
+    await expect(
+      store.write(unsafeAsLogicalPath('content'), unsafeAsSlug('index'), {
+        format: 'json',
+        data: { title: 'Home' },
+      }),
+    ).resolves.toBeDefined()
   })
 })

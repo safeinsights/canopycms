@@ -2,7 +2,7 @@
 
 **Status:** Open. **Priority: P2.** Found 2026-08-21 while checking the write boundary's existing
 slug-uniqueness guarantees for
-[url-collision-authoring-guard.md](url-collision-authoring-guard.md). Pre-existing; unrelated to
+[url-collision-authoring-guard.md](resolved/url-collision-authoring-guard.md). Pre-existing; unrelated to
 the change that surfaced it.
 
 ## Problem
@@ -64,7 +64,7 @@ reject two collection items resolving to one logical path, which is the actual m
 
 ## Related
 
-- [url-collision-authoring-guard.md](url-collision-authoring-guard.md) — the same class of missing
+- [url-collision-authoring-guard.md](resolved/url-collision-authoring-guard.md) — the same class of missing
   write-boundary check, on the entry-vs-collection axis.
 - [url-resolver-index-entry-extra-url.md](resolved/url-resolver-index-entry-extra-url.md) — added
   the build-time duplicate-`urlPath` guard that partially covers this.

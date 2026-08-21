@@ -503,6 +503,34 @@ there — filter it until this is fixed.
 - **Nothing on the `pathFor` side if you were not already working around this.** It is a new option
   for an existing gap, not a replacement for a supported API.
 
+### The CMS now refuses to author a contested URL
+
+_The write-boundary half of the previous entry._
+
+**What changed.** Creating or renaming an entry (or renaming a collection) is refused when it
+would give a second entry a URL another entry already holds. Previously only a production build
+caught this, after the fact.
+
+Refused in two shapes, both of which leave exactly one of the pair unreachable:
+
+- an entry whose slug matches a sibling collection **that has an index entry** — both compute the
+  same URL;
+- an index entry added to a collection whose **parent** already holds an entry with that
+  collection's name — the same collision from the other side.
+
+**Deliberately not refused:** an entry beside a same-named sibling collection that has _no_ index
+entry. That is a landing page plus a folder of children, nothing is contested, and it keeps
+working. The guard keys on the URL, never on the name.
+
+It is also create/rename **only**. An ordinary save of an entry already in a contested pair still
+succeeds — blocking it would trap you in an entry you could no longer fix. Pre-existing collisions
+(from a merge, a retrofit, or a direct commit) are the build guard's business, and it still runs.
+
+**To adopt.** Nothing. The refusal surfaces as a 409 with a message naming the other entry.
+
+**Now deletable.** Nothing — this closes a gap rather than replacing local code. If you added your
+own editor-side check for this after hitting it, it is now redundant.
+
 <!--
 Template for each entry — copy, don't improvise:
 

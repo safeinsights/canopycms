@@ -217,7 +217,7 @@ This was a reverse-only change that made the resolver agree with them, so no res
 value changed. The stale "they disagree" premise in `content-store.ts`'s comment was updated.
 
 **Deferred, with its own file:**
-[url-collision-authoring-guard.md](../url-collision-authoring-guard.md) — the same invariant
+[url-collision-authoring-guard.md](url-collision-authoring-guard.md) — the same invariant
 enforced at the write boundary, so the state cannot be authored through the CMS at all. Entry-vs-entry
 slug uniqueness is already enforced there across entry types; entry-vs-sibling-collection is the one
 remaining hole.
