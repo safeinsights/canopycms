@@ -13,41 +13,114 @@ on:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}
-  # Stable releases keep the existing cancel-on-superseding-push behaviour.
-  # Prerelease runs must not be cancelled: a run killed part-way through the
-  # five publishes would move the `int` tag for some packages and not others,
-  # leaving adopters on a mismatched set.
-  cancel-in-progress: ${{ github.event_name == 'push' }}
+  # NEVER cancel a publish, on either channel. Queue instead.
+  #
+  # A run killed part-way through the five publishes moves the dist-tag for
+  # some packages and not others, leaving adopters on a mismatched set -- and
+  # peer dependencies between these packages are EXACT pins, so a mismatch is
+  # an install-time ERESOLVE, not a subtle incompatibility.
+  #
+  # On the stable channel it is worse than a mismatched set. The version-bump
+  # commit lands only AFTER all five publishes, so a cancellation leaves npm
+  # holding a version main does not know about; every later run then re-derives
+  # that same version and dies on "cannot publish over previously published
+  # version", wedging the release train until a human intervenes. (The bump is
+  # now registry-floored as well, so that specific wedge self-heals -- but not
+  # cancelling is what stops it happening in the first place.)
+  cancel-in-progress: false
 
 jobs:
   publish:
     name: Build & Publish
     runs-on: ubuntu-latest
     if: github.event_name == 'push'
-    # Only run after CI passes (CI also runs on push to main)
     permissions:
       contents: write
       id-token: write
+      # List this commit's CI workflow runs, for the gate below. That is the
+      # `actions` scope, not `checks` -- workflow runs and check runs are
+      # different APIs, and `checks: read` would not authorize it.
+      actions: read
 
     steps:
+      # THE CI GATE.
+      #
+      # This step replaces a comment that claimed "Only run after CI passes"
+      # while no such mechanism existed: CI and publish are separate workflows
+      # that both trigger on push to main and run CONCURRENTLY, and the repo's
+      # rulesets require a PR review but NOT any status check -- verified
+      # against live config -- so a red or still-running commit could merge and
+      # publish. `npm publish` then shipped it to `latest` with provenance,
+      # and publish.yml runs `build` only, never the test suite.
+      #
+      # The failure this actually guards is merge skew: two PRs that each pass
+      # CI alone can combine into a red main, and no PR ever tested that
+      # combination. Branch protection cannot catch it; only a check on the
+      # merge commit can.
+      #
+      # Deliberately an in-job wait rather than a `workflow_run` trigger. npm
+      # trusted publishing is bound to this workflow FILENAME and validates the
+      # calling workflow, and `workflow_run` additionally changes the checkout
+      # context (it defaults to the default branch rather than the triggering
+      # SHA -- an easy way to publish the wrong commit). This touches neither.
+      #
+      # Prereleases are unaffected: they run through the `prerelease` job on
+      # `workflow_dispatch`, which never reaches this job.
+      - name: Wait for CI to pass on this commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ github.sha }}
+          # CI can take a few minutes; fail loudly rather than hang forever if
+          # it never reports at all (e.g. a cancelled run, or a paths filter
+          # that skipped every job).
+          TIMEOUT_SECONDS: '1800'
+        run: |
+          set -euo pipefail
+          echo "Waiting for the CI workflow to conclude on $SHA"
+          deadline=$(( $(date +%s) + TIMEOUT_SECONDS ))
+          while :; do
+            # The CI workflow's own run for this exact commit.
+            conclusion=$(gh api \
+              "repos/${GITHUB_REPOSITORY}/actions/workflows/ci.yml/runs?head_sha=${SHA}&per_page=1" \
+              --jq '.workflow_runs[0].conclusion // empty' || true)
+            status=$(gh api \
+              "repos/${GITHUB_REPOSITORY}/actions/workflows/ci.yml/runs?head_sha=${SHA}&per_page=1" \
+              --jq '.workflow_runs[0].status // empty' || true)
+
+            if [ "$status" = "completed" ]; then
+              if [ "$conclusion" = "success" ]; then
+                echo "CI succeeded on $SHA - publishing."
+                break
+              fi
+              echo "::error::CI concluded '$conclusion' on $SHA. Refusing to publish."
+              exit 1
+            fi
+
+            if [ "$(date +%s)" -ge "$deadline" ]; then
+              echo "::error::Timed out after ${TIMEOUT_SECONDS}s waiting for CI on $SHA (last status: '${status:-none}'). Refusing to publish."
+              exit 1
+            fi
+            sleep 15
+          done
+
       # Mint a short-lived token for the dedicated release app. Its bypass of the
       # "changes must go through a PR" rule is gated by RELEASE_BOT_PRIVATE_KEY,
       # which only exists in this repo — unlike the generic GITHUB_TOKEN, which
       # cannot be granted bypass at all.
       - name: Generate release-bot app token
         id: app-token
-        uses: actions/create-github-app-token@v2
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2
         with:
           app-id: ${{ vars.RELEASE_BOT_APP_ID }}
           private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           token: ${{ steps.app-token.outputs.token }}
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version-file: '.nvmrc'
           cache: 'pnpm'
@@ -60,10 +133,27 @@ jobs:
         run: pnpm run generate:client
         working-directory: packages/canopycms
 
+      # Floored on the REGISTRY, not just the committed version. The bump
+      # commit lands only after all five publishes, so an interrupted run
+      # leaves npm ahead of main -- after which bumping from the committed
+      # value re-derives an already-published version and every subsequent run
+      # dies on "cannot publish over previously published version", forever.
+      # Taking max(committed, registry) makes that state self-healing.
+      #
+      # `|| true` plus the empty check: a brand-new package that has never been
+      # published has no registry version, which is not an error.
       - name: Bump version
         id: bump
         run: |
-          NEW_VERSION=$(node scripts/bump-version.mjs)
+          set -euo pipefail
+          PUBLISHED=$(npm view canopycms version 2>/dev/null || true)
+          if [ -n "$PUBLISHED" ]; then
+            echo "Registry has canopycms@$PUBLISHED"
+            NEW_VERSION=$(node scripts/bump-version.mjs --min "$PUBLISHED")
+          else
+            echo "No published canopycms version found; bumping from the repo"
+            NEW_VERSION=$(node scripts/bump-version.mjs)
+          fi
           echo "version=$NEW_VERSION" >> "$GITHUB_OUTPUT"
           echo "Bumped to $NEW_VERSION"
 
