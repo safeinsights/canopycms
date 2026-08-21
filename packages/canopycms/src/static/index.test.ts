@@ -816,6 +816,29 @@ describe('assertNoDuplicateUrlPaths', () => {
     ).not.toThrow()
   })
 
+  it('says "enumerated more than once" when the claimants are the same entry', () => {
+    // Two sibling collections sharing a name resolve to ONE directory, so its entries are
+    // listed once per sibling and both entryPaths are identical. "Rename or remove one of the
+    // colliding entries" is unfollowable there — there is only one file.
+    let thrown: unknown
+    try {
+      assertNoDuplicateUrlPaths(
+        [item('/docs/a', 'content/docs/a'), item('/docs/a', 'content/docs/a')],
+        'test phase',
+      )
+    } catch (err) {
+      thrown = err
+    }
+
+    const message = (thrown as Error).message
+    expect(message).toContain('enumerated more than once')
+    expect(message).toContain('sibling collections sharing one name')
+    expect(message).toContain('2x content/docs/a')
+    // The summary header always says "claimed by more than one entry"; what must NOT appear is
+    // the per-line `— claimed by a, b` form and its unfollowable remedy.
+    expect(message).not.toContain('— claimed by')
+  })
+
   it('throws one error naming every contested URL and its claimants', () => {
     let thrown: unknown
     try {

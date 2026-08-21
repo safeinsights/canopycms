@@ -163,6 +163,29 @@ two of them again introduced by the round-1 fix:
    collection route, loses that landing page at upgrade with no error and no guard trip. Now
    called out explicitly in the migration guide's "To adopt" as the one case to check.
 
+**Round 3** (adversarial pass on the round-2 fix). The one real logic rewrite in that commit —
+`defaultBuildPath`'s index test, replacing a chained `endsWith('/index')` ternary with
+last-segment splitting on an EXPORTED, adopter-callable function — was proven equivalent across a
+280-combination matrix (34 paths x 4 content roots x 2 kinds), with every difference being the
+intended case-variant collapse. Clean. But the pattern held in weaker form — the fix's *claims*
+outran the fix:
+
+7. **`buildEntryPath`'s content-root strip was still wrong for ROOT-level entries.** Its
+   `stripRoot` had only the `${contentRoot}/` prefix branch, not the `val === contentRoot`
+   equality branch `computeEntryUrl` has — so a root entry's `collectionPath` (which IS the
+   content root) was never stripped, and `readByUrlPath('/')` reported `path: '/content'`, a path
+   that resolves to nothing. Round 2 had fixed the index-slug half of this builder and declared
+   it "the same decision as computeEntryUrl"; only the slug predicate was shared, and the strip
+   sub-rule still diverged. Fixed, and pinned through the real `readByUrlPath('/')`.
+8. The migration guide said the scaffolded `lib/canopy.ts` names the wrappers
+   `contentStaticParams` and `contentSitemap`. The CLI template exports the first and NOT the
+   second — `contentSitemap` exists only in the example app. Written, ironically, in the sentence
+   that vindicated `contentStaticParams` against the same accusation.
+9. The "honest inventory" of sites sharing `isIndexSlug` said five; it is six
+   (`canopycms-next`'s `collectStaticParams` was omitted). Corrected.
+10. The round-2 self-collision error message was pinned by no test — reverting that hunk failed
+    nothing. Now covered.
+
 Also hardened: the duplicate-URL error advised "rename or remove one of the colliding entries",
 which is unfollowable for the self-collision case (two sibling collections sharing a name make
 ONE entry enumerate twice, so both `entryPath`s are identical and there is only one file). It now

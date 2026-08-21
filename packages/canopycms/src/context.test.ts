@@ -494,7 +494,12 @@ describe('readByUrlPath', () => {
           },
         ],
       })
-      expect((await ctx.readByUrlPath<{ title: string }>('/'))!.data.title).toBe('Home')
+      const rootIndex = await ctx.readByUrlPath<{ title: string }>('/')
+      expect(rootIndex!.data.title).toBe('Home')
+      // A root entry's collectionPath IS the content root, which the `${contentRoot}/` prefix
+      // strip does not cover — without the equality branch this reported '/content', a path
+      // that resolves to nothing.
+      expect(rootIndex!.path).toBe('/?branch=main')
       expect(await ctx.readByUrlPath('/index')).toBeNull()
     })
 

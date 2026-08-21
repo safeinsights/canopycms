@@ -185,8 +185,16 @@ export const createContentReader = (options: ContentReaderOptions): ContentReade
 
   // Build preview paths using simple path construction
   const contentRoot = trimSlashes(services.config.contentRoot ?? 'content')
+  // The `val === contentRoot` branch matters as much as the prefix one: a root-level entry's
+  // collectionPath IS the content root, which does not start with `${contentRoot}/`, so without
+  // it the root index reported `path: '/content'` (and a root entry `/content/about`) -- paths
+  // that resolve to nothing. `computeEntryUrl` has always had both branches; this had one.
   const stripRoot = (val: string) =>
-    contentRoot && val.startsWith(`${contentRoot}/`) ? val.slice(contentRoot.length + 1) : val
+    !contentRoot || val === contentRoot
+      ? ''
+      : val.startsWith(`${contentRoot}/`)
+        ? val.slice(contentRoot.length + 1)
+        : val
 
   const buildEntryPath = (opts: {
     collectionPath: LogicalPath
@@ -205,7 +213,9 @@ export const createContentReader = (options: ContentReaderOptions): ContentReade
     // An index entry's URL is its COLLECTION's path. Without this collapse `path` handed back
     // `/docs/index` for an entry that answers only at `/docs` -- `resolveUrlPathCandidates`
     // deliberately does not resolve the former, so a caller linking `path` linked to a 404.
-    // Same decision as computeEntryUrl/listEntries/buildPreviewSrc, through the same predicate.
+    // Same index decision as computeEntryUrl/listEntries/buildPreviewSrc, through the same
+    // predicate. NOTE this builder still keeps its own content-root strip and its own encoding
+    // rather than delegating wholesale -- see .claude/future-tasks/default-build-path-url-rule-copy.md.
     const encodedSlug = isIndexSlug(opts.slug) ? '' : encodeSlug(opts.slug)
     const url = encodedSlug ? `${trimmed}/${encodedSlug}` : trimmed || '/'
     return appendBranch(url)

@@ -390,8 +390,9 @@ advertised and now resolves to a **different** entry (that collection's own inde
 parent's — the previous answer was a bug). And if a build starts failing on a contested URL, the
 error names every colliding entry; rename or remove one of each pair. Note the build only fails if
 it enumerates through Canopy's own helpers — `collectStaticPaths` / `collectRoutableEntries`,
-or the bound wrappers over them that `createNextCanopyContext` returns (the scaffolded
-`lib/canopy.ts` names them `contentStaticParams` and `contentSitemap`). A hand-rolled
+or the bound wrappers over them that `createNextCanopyContext` returns (`generateContentStaticParams`
+and `generateContentSitemap` — the scaffolded `lib/canopy.ts` re-exports the first as
+`contentStaticParams`; if you wired the sitemap yourself, it is whatever you named it). A hand-rolled
 `generateStaticParams` over `listEntries` does not fail; call `findDuplicateUrlPaths` yourself
 there.
 To check before upgrading:

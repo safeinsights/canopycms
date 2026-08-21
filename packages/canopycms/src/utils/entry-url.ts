@@ -10,10 +10,11 @@ import { trimSlashes } from '../paths/normalize'
 /**
  * Is this slug the collection-index slug?
  *
- * The shared home for that decision. Every site that collapses an index slug routes through
- * here — `computeEntryUrl` below, `content-tree.ts`'s `defaultBuildPath`, the reverse
- * `resolveUrlPathCandidates`, `content-reader.ts`'s `buildEntryPath`, and the editor's
- * `buildPreviewSrc`. (`content-tree.ts`'s `indexEntry` lookup still does its own
+ * The shared home for that decision. Six sites route through here: `computeEntryUrl` below,
+ * `content-tree.ts`'s `defaultBuildPath`, `content-reader.ts`'s `buildEntryPath` and the
+ * editor's `buildPreviewSrc` (the four forward-rule implementations), the reverse
+ * `resolveUrlPathCandidates`, and `canopycms-next`'s `collectStaticParams`, which skips index
+ * entries for a single-segment route. Re-exported from `canopycms/server` for adopters. (`content-tree.ts`'s `indexEntry` lookup still does its own
  * `slug === 'index'`; it is fed slugs already lowercased by the listing, so it is safe rather
  * than shared.) Slug matching is case-insensitive throughout
  * CanopyCMS (`parseSlug` lowercases, and `ContentStore` resolves slugs by a lowercased
