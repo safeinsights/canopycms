@@ -1399,8 +1399,10 @@ Two cases fall back to `string` rather than a union, deliberately:
   them; an options array annotated as the runtime type — `const options: SelectOption[]`
   — has no literals left to infer.
 - **There are no options to infer.** A `select` with no `options`, or with
-  `options: []`. Both are rejected at startup by config validation with a clear message,
-  so the inferred type stays usable instead of collapsing to `never`.
+  `options: []`. Both are rejected with a clear message by `createEntrySchemaRegistry`
+  — not by `defineCanopyConfig` — so a schema you never register through the registry is
+  only ever checked at the type level. Either way the inferred type stays usable instead
+  of collapsing to `never`.
 
 One caveat when reading existing content: the validator treats an empty string as "not
 filled in" for any field that is not explicitly `required: true`, so a select can hold

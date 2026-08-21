@@ -412,6 +412,29 @@ describe('TypeFromEntrySchema', () => {
       ])
     })
 
+    it('accepts a shared `as const` options array, reused across schemas', () => {
+      // This is what pins `readonly` on InferableField['options']. A mutable constraint
+      // would NOT collapse the union (const inference keeps the literals either way) —
+      // it would reject this call outright with TS4104, because a `readonly` tuple is
+      // not assignable to a mutable array. Declaring options once and sharing them is
+      // the natural way to reuse an option list, so that break would be a loud one.
+      const STATUSES = ['draft', 'published'] as const
+
+      const postSchema = defineEntrySchema([{ name: 'status', type: 'select', options: STATUSES }])
+      const pageSchema = defineEntrySchema([{ name: 'state', type: 'select', options: STATUSES }])
+
+      expectTypeOf<TypeFromEntrySchema<typeof postSchema>['status']>().toEqualTypeOf<
+        'draft' | 'published'
+      >()
+      expectTypeOf<TypeFromEntrySchema<typeof pageSchema>['state']>().toEqualTypeOf<
+        'draft' | 'published'
+      >()
+
+      expect(postSchema[0].options).toBe(STATUSES)
+
+      void pageSchema
+    })
+
     it('degrades to string when there is no literal option list to infer', () => {
       // No `options` key at all, and an empty one — both are schema mistakes that
       // validateCanopyConfig rejects at runtime. Neither should type as `never`.

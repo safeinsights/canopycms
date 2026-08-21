@@ -18,9 +18,15 @@ type InferableField = {
    * what makes a select field's type its own options rather than a bare `string`.
    *
    * MUST stay `readonly` even though `SelectFieldConfig.options` (config/types.ts) is a
-   * mutable `SelectOption[]`: a mutable array type in a `const` type parameter's
-   * constraint switches OFF const inference at that position, which would widen the
-   * options tuple to `string[]` and silently collapse the union back to `string`.
+   * mutable `SelectOption[]` — but NOT for the reason you might assume. A mutable
+   * constraint does not defeat `const` inference here: verified against this repo's tsc,
+   * `<const T>` still infers `['a', 'b']` with the literals intact under a mutable
+   * constraint, so the union would survive. The real failure is louder. An adopter who
+   * declares the option list separately and shares it across schemas writes
+   * `as const`, producing a `readonly` tuple — and a `readonly` array is not assignable
+   * to a mutable one (TS4104), so every such schema would stop compiling at the
+   * definition site. `readonly` here accepts both the inline literal and the shared
+   * `as const` array.
    */
   options?: readonly (string | { label: string; value: string })[]
   /** For reference fields: the target collection's schema (from defineEntrySchema) to infer resolved types. */
@@ -90,9 +96,12 @@ type SelectOptionValue<O> = O extends { value: infer V extends string }
  * deliberately NOT in this union.
  *
  * Degrades to `string` when there is nothing to infer: no `options` key at all, or an
- * empty one (`options: []`, which `validateCanopyConfig` rejects at runtime anyway).
- * Returning `never` there would type the field as unsatisfiable over a schema mistake
- * that already has its own clear runtime error.
+ * empty one. Both are schema mistakes that `ensureSelectFieldsHaveOptions`
+ * (config/validation.ts) rejects — but note it runs from `createEntrySchemaRegistry`,
+ * NOT from `validateCanopyConfig`, so a schema that is only ever fed to
+ * `TypeFromEntrySchema` and never registered gets no runtime rejection at all.
+ * Returning `never` here would type such a field as unsatisfiable, which is a worse
+ * error than the bare `string` this falls back to.
  */
 type SelectValue<F extends InferableField> = F extends {
   options: infer O extends readonly unknown[]

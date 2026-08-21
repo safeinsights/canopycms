@@ -37,7 +37,18 @@ supersedes an earlier one's workaround entirely.
 
 ## Unreleased
 
-### `select` fields now infer their own options (#23) — **breaking (type-level)**
+_Entries land here as changes merge._
+
+**Promoting them is a manual step, and it is easy to miss.** `main` auto-publishes a patch
+on every push, so an entry written here is usually released within hours — while the heading
+still says "Unreleased". When you next touch this file, check `npm view canopycms version`
+and move anything already published down into `## Released` under its version heading,
+demoting each entry from `###` to `####`. An adopter reading "Unreleased" about a feature
+they already have installed cannot tell whether they are missing something.
+
+### `select` fields now infer their own options — **breaking (type-level)**
+
+_Adopter request log item 23._
 
 **What changed.** `TypeFromEntrySchema` used to infer every `select` field as
 `string | number`. It now infers the literal union of that field's own `options`:
@@ -68,8 +79,11 @@ Two things determine whether you get the narrow type:
   back to `string`. That fallback is deliberate, not an error — but if you expected a
   union and got `string`, this is why.
 - **A `select` with no `options`, or with `options: []`, also falls back to `string`.**
-  Both are schema mistakes that `validateCanopyConfig` rejects at startup with a clear
-  message; the inferred type stays usable rather than collapsing to `never`.
+  Both are schema mistakes, rejected with a clear message by
+  `ensureSelectFieldsHaveOptions` — which runs from `createEntrySchemaRegistry`, not
+  from `validateCanopyConfig`. So a schema you only ever feed to `TypeFromEntrySchema`
+  and never register gets no runtime rejection at all. Either way the inferred type
+  stays usable rather than collapsing to `never`.
 
 **`''` is deliberately not in the union.** The validator accepts an empty string as
 "not filled in" for any field that is not explicitly `required: true`, so a select can
@@ -89,8 +103,17 @@ _Broken (act on these):_
   fine — the union is assignable to `string`. The reverse is not: assigning a plain
   `string` **into** a schema-derived select value is now an error. Derive the type from
   the schema instead of re-declaring it.
+- **A custom field type that uses the property name `options` for something other than
+  select options.** `options` is now a reserved, typed key on the schema field shape
+  (alongside `fields`, `templates`, `entryTypes` and `collections`), so a custom field
+  declaring e.g. `options: [1, 2, 3]` stops compiling, even though the runtime still
+  accepts it — custom field configs are validated with a passthrough schema. Rename the
+  property on your custom field; there is no way to keep the name and the shape.
 - **Anything that relied on the `number` half.** A `typeof value === 'number'` branch on
-  a select value is now flagged as unreachable, correctly — it never ran.
+  a select value now narrows to `never` — correctly, since it never ran. Note this is
+  silent: TypeScript reports nothing for a `typeof` check that cannot match, so grep for
+  these rather than expecting the compiler to list them. (An `===` comparison against a
+  non-option string _does_ error, with "no overlap".)
 
 **Now deletable.** Any local shim that re-narrows a schema-derived select value back to
 the app's own union before use — typically a helper or an inline cast that takes the
@@ -99,13 +122,6 @@ just asserts `as 'a' | 'b'`), and returns the narrow type. That allowlist was a 
 copy of the schema's `options`, free to drift from it silently; the schema is now the
 single source. Also deletable: `typeof v === 'string'` guards that existed only to
 strip the impossible `number`.
-
-**Promoting them is a manual step, and it is easy to miss.** `main` auto-publishes a patch
-on every push, so an entry written here is usually released within hours — while the heading
-still says "Unreleased". When you next touch this file, check `npm view canopycms version`
-and move anything already published down into `## Released` under its version heading,
-demoting each entry from `###` to `####`. An adopter reading "Unreleased" about a feature
-they already have installed cannot tell whether they are missing something.
 
 <!--
 Template for each entry — copy, don't improvise:
