@@ -17,6 +17,15 @@
     "**/*.test.tsx",
     "**/__tests__/**",
     "src/__integration__/**",
+    // Workspace-internal only, and deliberately so: these sources import vitest
+    // (a devDependency) at module scope, console-spy.ts runs expect.extend() as
+    // an import side effect, and it declares a global `declare module 'vitest'`
+    // augmentation. Building them would put all three into the published
+    // package. The matching half of this decision is that "./test-utils" is
+    // absent from package.json's publishConfig.exports while remaining in the
+    // dev exports map, so sibling packages can still import it — don't remove
+    // this line without also re-reading that. scripts/check-esm-imports.mjs
+    // enforces the pairing (its `devOnly` subpath mode).
     "src/test-utils/**",
     "**/*.stories.tsx"
   ]
