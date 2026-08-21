@@ -44,11 +44,16 @@ Lambda (VPC, no internet)               EC2 Worker (t4g.nano spot)
 
 - **No NAT Gateway** — Lambda has no internet access, saving ~$32/month
 - **Secrets stay on the worker** — Lambda only has public keys and config. The worker
-  also never persists the GitHub bot token on the shared filesystem: `remote.git` is
+  does not leave the GitHub bot token on the shared filesystem: `remote.git` is
   cloned under a staging name and renamed into place only after the token-bearing
   `remote.origin.url` is removed and verified gone, and an existing `remote.git` is
   re-checked (and scrubbed) on every worker start, so a token left by an older build
-  self-heals
+  self-heals. Stated precisely, this is a bounded window rather than "never": the
+  initial bare clone does write the token into the _staging_ copy's config until the
+  scrub runs moments later, and a crash in that gap leaves it there until the next
+  worker boot deletes the staging directory. What is eliminated is unbounded
+  persistence under the real `remote.git` name. Closing the window entirely needs a
+  credential helper instead of a token-bearing clone URL
 - **Same app, two builds** — The adopter's Next.js app builds as both a static export (public site) and a standalone server (CMS Lambda)
 - **Preview works** — The CMS Lambda renders the same React components as the public site, so the editor's preview iframe shows accurate previews
 
@@ -310,7 +315,7 @@ deploy at synth — before anything is changed in the account.
 | Name                                        | Kind      | Required                                     |
 | ------------------------------------------- | --------- | -------------------------------------------- |
 | `AWS_DEPLOY_ROLE_ARN`                       | secret    | yes                                          |
-| `GITHUB_TOKEN_SECRET_ARN`                   | secret    | yes                                          |
+| `CANOPY_GITHUB_TOKEN_SECRET_ARN`            | secret    | yes (see note below)                         |
 | `CLERK_SECRET_KEY_SECRET_ARN`               | secret    | yes                                          |
 | `CLERK_JWT_KEY`                             | secret    | yes                                          |
 | `AWS_REGION`                                | variable  | yes                                          |
@@ -318,6 +323,12 @@ deploy at synth — before anything is changed in the account.
 | `CANOPY_BOOTSTRAP_ADMIN_IDS`                | variable  | no                                           |
 | `CANOPYCMS_DEPLOYMENT_NAME`                 | variable  | no (defaults to `prod`)                      |
 | `CMS_DOMAIN_NAME`, `CMS_HOSTED_ZONE_DOMAIN` | variables | no (enables CloudFront + Route53)            |
+
+> **Why `CANOPY_GITHUB_TOKEN_SECRET_ARN` and not `GITHUB_TOKEN_SECRET_ARN`?** GitHub
+> reserves the `GITHUB_` prefix and rejects any Actions secret or variable whose name
+> starts with it, so the obvious name cannot be created. The generated workflow maps this
+> secret onto an unprefixed `GITHUB_TOKEN_SECRET_ARN` environment variable, which is what
+> the CDK app reads — only the _secret_ name needs the prefix.
 
 > **CloudFront requires a us-east-1 certificate.** When `CMS_DOMAIN_NAME` is set,
 > `CanopyCmsDistribution` creates an ACM certificate in the **stack's own region**, and

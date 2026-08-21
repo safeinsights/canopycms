@@ -8,7 +8,7 @@ import {
   type CanopyRequest,
   type CanopyResponse,
 } from 'canopycms/http'
-import { getErrorMessage, sanitizeErrorMessage } from 'canopycms/utils/error'
+import { getErrorMessage, redactCredentials, sanitizeErrorMessage } from 'canopycms/utils/error'
 
 /**
  * Options for creating a Canopy Next.js handler.
@@ -147,7 +147,15 @@ export const createCanopyCatchAllHandler = (options: CanopyNextOptions) => {
       // can never escape as Next's generic unhandled-error 500, which would
       // break the uniform { ok, status, error } envelope the editor expects.
       const message = getErrorMessage(err)
-      console.error('CanopyCMS: Unhandled error in Next.js catch-all handler:', message)
+      // Redacted before logging, not just before responding. The HTTP body was
+      // already sanitized, but this line went to the server log verbatim -- and
+      // a git failure message can embed a token-bearing clone URL, which is the
+      // one thing that must not reach a log aggregator. Every failure surface
+      // in the worker already redacts; this was the outlier.
+      console.error(
+        'CanopyCMS: Unhandled error in Next.js catch-all handler:',
+        redactCredentials(message),
+      )
       return toNextResponse({
         status: 500,
         body: { ok: false, status: 500, error: sanitizeErrorMessage(message) },

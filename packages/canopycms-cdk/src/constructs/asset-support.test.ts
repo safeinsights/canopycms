@@ -261,6 +261,34 @@ describe('AssetSupport - standalone mode (creates its own bucket)', () => {
   })
 })
 
+describe('AssetSupport - transform origin read timeout', () => {
+  it('passes readTimeout explicitly rather than relying on CloudFront’s default', () => {
+    // CloudFront's 30s default happens to equal TRANSFORM_LAMBDA_TIMEOUT today,
+    // so an accidental match would look correct while raising the Lambda's
+    // timeout alone silently started 504ing the slow transforms the raise was
+    // meant to allow. The CMS origin has this assertion; this one did not.
+    const stack = makeStack()
+    const assetSupport = new AssetSupport(stack, 'Assets', { ...BASE_PROPS })
+    const template = synthWithDistribution(assetSupport, stack)
+
+    const dists = template.findResources('AWS::CloudFront::Distribution')
+    // Only CUSTOM origins have a read timeout at all -- the S3 primary of the
+    // transform behavior's origin group has no CustomOriginConfig, so filter to
+    // the ones that can carry the property before asserting on it.
+    const customOrigins = Object.values(dists).flatMap((d) =>
+      (
+        (d.Properties.DistributionConfig.Origins ?? []) as {
+          CustomOriginConfig?: { OriginReadTimeout?: number }
+        }[]
+      ).filter((o) => o.CustomOriginConfig !== undefined),
+    )
+    expect(customOrigins.length).toBeGreaterThan(0)
+    for (const origin of customOrigins) {
+      expect(origin.CustomOriginConfig?.OriginReadTimeout).toBe(30)
+    }
+  })
+})
+
 describe('AssetSupport - bounding the anonymous transform path', () => {
   it('caps the transform Lambda with a reserved-concurrency limit', () => {
     const stack = makeStack()
@@ -490,27 +518,26 @@ describe('deployable-bundle guard', () => {
 
 describe('cms-stack template: the media block names a real API', () => {
   // The scaffold's "uncomment to enable media" block previously named
-  // `assetSupport.cloudFrontBehaviors`, which does not exist, and omitted the
+  // a member that did not exist, and omitted the
   // REQUIRED `editorOrigins` prop -- so an adopter who followed the template's
   // own instructions hit two type errors plus a nonexistent property, then had
   // to reverse-engineer the construct's real API. Template text cannot be
   // type-checked while it is commented out, so assert the API surface it
   // references actually exists.
-  const templatePath = path.join(
-    __dirname,
-    '..',
-    '..',
-    '..',
-    'canopycms',
-    'src',
-    'cli',
-    'template-files',
-    'cms-stack.ts.template',
-  )
+  // BOTH copies of this block. The scaffold template and the checked-in
+  // example stack teach the same thing, and a fix applied to only one is how
+  // the dead-API version survived: the template was corrected while
+  // examples/aws-deployment/ went on instructing adopters to wire a member
+  // that does not exist.
+  const repoRoot = path.join(__dirname, '..', '..', '..', '..')
+  const MEDIA_BLOCK_SOURCES = [
+    path.join(repoRoot, 'packages/canopycms/src/cli/template-files/cms-stack.ts.template'),
+    path.join(repoRoot, 'examples/aws-deployment/infrastructure/lib/cms-stack.ts'),
+  ]
 
-  it('references only members AssetSupport actually has', () => {
-    const template = readFileSync(templatePath, 'utf-8')
-    const referenced = [...template.matchAll(/assetSupport\.([A-Za-z_$][\w$]*)/g)].map((m) => m[1])
+  it.each(MEDIA_BLOCK_SOURCES)('%s references only members AssetSupport actually has', (file) => {
+    const source = readFileSync(file, 'utf-8')
+    const referenced = [...source.matchAll(/assetSupport\.([A-Za-z_$][\w$]*)/g)].map((m) => m[1])
     expect(referenced.length).toBeGreaterThan(0)
 
     const stack = makeStack()
@@ -519,15 +546,14 @@ describe('cms-stack template: the media block names a real API', () => {
       expect(
         member in assetSupport ||
           member in (Object.getPrototypeOf(assetSupport) as Record<string, unknown>),
-        `cms-stack.ts.template references assetSupport.${member}, which AssetSupport does not have`,
+        `${file} references assetSupport.${member}, which AssetSupport does not have`,
       ).toBe(true)
     }
   })
 
-  it('passes the required editorOrigins prop in its example', () => {
-    const template = readFileSync(templatePath, 'utf-8')
-    const constructorCall = /new AssetSupport\(/.test(template)
-    expect(constructorCall).toBe(true)
-    expect(template).toContain('editorOrigins')
+  it.each(MEDIA_BLOCK_SOURCES)('%s passes the required editorOrigins prop', (file) => {
+    const source = readFileSync(file, 'utf-8')
+    expect(/new AssetSupport\(/.test(source)).toBe(true)
+    expect(source).toContain('editorOrigins')
   })
 })
