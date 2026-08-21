@@ -6,6 +6,7 @@ import os from 'node:os'
 import type { ContentId } from './paths/types'
 
 import { sortByOrder, parseTypedFilename, listEntries } from './content-listing'
+import { ContentIdIndex } from './content-id-index'
 import { ContentStore } from './content-store'
 import { flattenSchema } from './config/flatten'
 import { generateId } from './id'
@@ -1243,7 +1244,7 @@ describe('listEntries', () => {
       }
     })
 
-    it('builds no ContentStore at all when resolution is off', async () => {
+    it('scans no ContentId index and reads nothing extra when resolution is off', async () => {
       const { postsDir, snippetId, schema } = await createSnippetAndPosts(referenceField)
       await createEntry(postsDir, 'post', 'hello', 'json', {
         title: 'Hello',
@@ -1251,12 +1252,61 @@ describe('listEntries', () => {
       })
 
       const readSpy = vi.spyOn(ContentStore.prototype, 'read')
+      // The index scan, not the read, is the cost that must stay off the default path:
+      // `collectStaticPaths` and `build/generate-ai-content.ts` both list without ever
+      // touching a reference field, and neither should pay for a full content-tree walk.
+      const buildSpy = vi.spyOn(ContentIdIndex.prototype, 'buildFromFilenames')
       try {
         await listEntries(tempDir, flattenSchema(schema, 'content'), 'content')
         expect(readSpy).not.toHaveBeenCalled()
+        expect(buildSpy).not.toHaveBeenCalled()
       } finally {
         readSpy.mockRestore()
+        buildSpy.mockRestore()
       }
+    })
+
+    it('gives each referencing entry its own copy, so one caller cannot mutate another', async () => {
+      const { postsDir, snippetId, schema } = await createSnippetAndPosts(referenceField)
+      await createEntry(postsDir, 'post', 'a', 'json', { title: 'A', snippet: snippetId })
+      await createEntry(postsDir, 'post', 'b', 'json', { title: 'B', snippet: snippetId })
+
+      const entries = await listEntries(tempDir, flattenSchema(schema, 'content'), 'content', {
+        resolveReferences: true,
+      })
+
+      const a = entries.find((e) => e.slug === 'a')!.data.snippet as Record<string, unknown>
+      const b = entries.find((e) => e.slug === 'b')!.data.snippet as Record<string, unknown>
+      expect(a).not.toBe(b)
+
+      // The batch cache must stay a pure performance optimization. Sharing one object across
+      // every referencing entry would make an `extract` that trims a body for a search index
+      // silently rewrite it for all its siblings -- a class of corruption the uncached path
+      // cannot produce, since it reparses per occurrence.
+      a.title = 'mutated via entry a'
+      expect(b.title).toBe('Sign up today')
+    })
+
+    it('gives each element of a list: true array its own copy', async () => {
+      const { postsDir, snippetId, schema } = await createSnippetAndPosts({
+        ...referenceField,
+        list: true,
+      })
+      await createEntry(postsDir, 'post', 'hello', 'json', {
+        title: 'Hello',
+        snippet: [snippetId, snippetId],
+      })
+
+      const entries = await listEntries(tempDir, flattenSchema(schema, 'content'), 'content', {
+        resolveReferences: true,
+      })
+
+      const refs = entries.find((e) => e.slug === 'hello')!.data.snippet as Array<
+        Record<string, unknown>
+      >
+      expect(refs[0]).not.toBe(refs[1])
+      refs[0].title = 'mutated'
+      expect(refs[1].title).toBe('Sign up today')
     })
   })
 })

@@ -2462,7 +2462,7 @@ const entries = await canopy.listEntries({ resolveReferences: true })
 
 **What it costs.** Resolution needs the content ID index, so an opted-in call adds one index scan plus one read per _distinct_ referenced entry — not per referencing entry. All the resolution in one call shares a cache, so a block referenced from 40 pages is read once, not 40 times. With the option off, none of that machinery is built.
 
-**Two caveats.** Path permissions are not applied to the resolved _targets_, matching `read()` — a reference can resolve to an entry the current user could not open directly. (The entries being listed are still permission-filtered as always, and an entry that is filtered out is never resolved.) And within a single call, a given id resolves once and every occurrence shares that answer, so one listing is internally consistent rather than deciding per entry.
+**Two caveats.** Path permissions are not applied to the resolved _targets_, matching `read()` — a reference can resolve to an entry the current user could not open directly. (The entries being listed are still permission-filtered as always, and an entry that is filtered out is never resolved.) And within a single call, a given id is looked up once and every occurrence shares that answer, so one listing is internally consistent rather than deciding per entry — though each occurrence still gets its own copy of the resolved object, so nothing you do to one entry's resolved reference can affect another's.
 
 ### Options Reference
 

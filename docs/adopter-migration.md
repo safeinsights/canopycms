@@ -156,7 +156,8 @@ targets — matching `read()` exactly, so a reference can resolve to an entry th
 could not `read()` directly; the entries being listed are still ACL-filtered as always, and a
 filtered-out entry is never resolved at all. And within one call, a given id resolves once and
 every occurrence shares that answer, so a batch is internally consistent rather than
-re-deciding per page.
+re-deciding per page. Each occurrence still gets its own copy of the resolved object,
+so the shared lookup cannot turn into shared mutable state between entries.
 
 The admin entries API (`GET /:branch/entries`) deliberately does not resolve: it is a paginated
 table that never reads inside a reference, and resolution there would run before pagination on

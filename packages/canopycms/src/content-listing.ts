@@ -307,6 +307,10 @@ export type CollectionSchemaItem = Extract<FlatSchemaItem, { type: 'collection' 
 /**
  * Build the `ContentStore` + shared cache that a batch listing resolves references through.
  *
+ * Unrelated to the `ReferenceResolver` class in reference-resolver.ts despite the adjacent
+ * name — that one resolves an id to a human-readable *display label* for the editor UI. This
+ * resolves a reference to the referenced entry's *data* for server-side listings.
+ *
  * Constructed lazily by each listing surface, and ONLY when the caller opted in — a store
  * builds a ContentId index on first use, which is a full scan of the content tree, and the
  * default (`resolveReferences` off) must stay a pure filesystem walk with no index at all.

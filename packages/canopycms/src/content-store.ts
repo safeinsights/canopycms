@@ -269,6 +269,11 @@ const STALE_LOOKUP = Symbol('stale-index-lookup')
  * inside a `Promise.all` collapse onto one read rather than each starting their own —
  * the same in-flight dedup `ContentStore.indexBuild` uses for index rebuilds.
  *
+ * What is cached is the READ, not the object handed out: every occurrence receives its own
+ * deep copy, so a caller mutating one resolved reference cannot rewrite it for the other 39
+ * entries pointing at the same target. See `resolveSingleReference` for why that matters and
+ * why it does not undo the saving.
+ *
  * ## Lifetime and invalidation
  *
  * There is no invalidation, and that is the design: a cache lives inside a single
@@ -1763,6 +1768,16 @@ export class ContentStore {
    * Resolve a single reference ID to full entry data, memoized when a batch cache is
    * supplied. Without a cache this is a straight pass-through to the uncached path, so
    * `read()` behaves exactly as it always has.
+   *
+   * Every occurrence gets its OWN deep copy, even on a cache hit. Without that, the memo
+   * would hand one shared object to all 40 entries referencing the same block — a mutation
+   * in one caller's `extract` (truncating a body for a search index, deleting a field) would
+   * silently rewrite it for every sibling, and both `list: true` elements of `[id, id]` would
+   * be the same instance. Uncached resolution has no such hazard, because each pass reparses
+   * the file into a fresh object graph; the copy is what keeps the cache a pure performance
+   * optimization instead of a semantic change. It is also nowhere near the cost it replaces:
+   * cloning a small already-parsed object is far cheaper than the filesystem read plus
+   * JSON/frontmatter parse the memo avoids, so the batch win survives essentially intact.
    */
   private resolveSingleReference(
     id: string,
@@ -1770,15 +1785,18 @@ export class ContentStore {
     cache?: ReferenceResolveCache,
   ): Promise<Record<string, unknown> | null> {
     if (!cache) return this.resolveSingleReferenceUncached(id, idIndex)
-    const hit = cache.get(id)
-    if (hit) return hit
-    // Store the in-flight promise, and do it with no `await` in between: the whole point is
-    // that concurrent lookups from one Promise.all batch find it and collapse onto a single
-    // read. Memoizing the promise also keeps the self-healing retry below shared rather than
-    // repeated — see ReferenceResolveCache for why misses are cached too.
-    const pending = this.resolveSingleReferenceUncached(id, idIndex)
-    cache.set(id, pending)
-    return pending
+    let pending = cache.get(id)
+    if (!pending) {
+      // Store the in-flight promise, and do it with no `await` in between: the whole point is
+      // that concurrent lookups from one Promise.all batch find it and collapse onto a single
+      // read. Memoizing the promise also keeps the self-healing retry below shared rather than
+      // repeated — see ReferenceResolveCache for why misses are cached too.
+      pending = this.resolveSingleReferenceUncached(id, idIndex)
+      cache.set(id, pending)
+    }
+    // The cached promise always has this handler attached, so it is never an unhandled
+    // rejection; entry data is plain parsed JSON/YAML/frontmatter, so it is always cloneable.
+    return pending.then((resolved) => (resolved === null ? null : structuredClone(resolved)))
   }
 
   /**
