@@ -1367,6 +1367,50 @@ type Post = TypeFromEntrySchema<typeof postSchema>
 
 The type inference covers all field types: `string` and `markdown` fields become `string`, `number` becomes `number`, `boolean` becomes `boolean`, `object` fields become nested objects, and `list: true` wraps the value in an array.
 
+#### Select Fields
+
+A `select` field infers the **literal union of its own `options`**, not a bare `string`:
+
+```typescript
+const postSchema = defineEntrySchema([
+  { name: 'status', type: 'select', options: ['draft', 'published'] },
+  {
+    name: 'tier',
+    type: 'select',
+    options: [
+      { label: 'Free', value: 'free' },
+      { label: 'Paid', value: 'paid' },
+    ],
+  },
+])
+
+// { status: 'draft' | 'published'; tier: 'free' | 'paid' }
+type Post = TypeFromEntrySchema<typeof postSchema>
+```
+
+Both option forms work, including one array that mixes them. A bare string option
+contributes itself; a `{ label, value }` option contributes its **`value`** — so
+comparing against the label is a compile error, which is usually the bug you wanted
+caught. With `list: true` you get an array of the union.
+
+Two cases fall back to `string` rather than a union, deliberately:
+
+- **The options are no longer literals.** `defineEntrySchema` (or `as const`) preserves
+  them; an options array annotated as the runtime type — `const options: SelectOption[]`
+  — has no literals left to infer.
+- **There are no options to infer.** A `select` with no `options`, or with
+  `options: []`. Both are rejected with a clear message by `createEntrySchemaRegistry`
+  — not by `defineCanopyConfig` — so a schema you never register through the registry is
+  only ever checked at the type level. Either way the inferred type stays usable instead
+  of collapsing to `never`.
+
+One caveat when reading existing content: the validator treats an empty string as "not
+filled in" for any field that is not explicitly `required: true`, so a select can hold
+`''` on disk. `''` is **not** in the inferred union — like the rest of
+`TypeFromEntrySchema`, it describes the shape your schema declares rather than
+everything the validator tolerates. If you need to branch on a cleared select, add `''`
+to that field's `options` so it becomes a declared state.
+
 #### Optional Fields
 
 A field with an explicit `required: false` becomes an **optional property** (`subheading?: string`), not a required property typed `string | undefined`:

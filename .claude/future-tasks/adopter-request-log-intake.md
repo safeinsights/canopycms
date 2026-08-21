@@ -40,7 +40,7 @@ left alone.
 | 27 | Non-list `object` field can be entered but never cleared | Confirmed | Open, small |
 | 28 | `object` fields drop comment support | **Partially true** — see below | Open, small |
 | 26 | `generate-ai-content` never prunes previous output | Confirmed | Open, small-medium |
-| 23 | `select` infers `string \| number` | Confirmed, and the literal-union fix is **verified reachable** | Open, small |
+| 23 | `select` infers `string \| number` | Confirmed, and the literal-union fix is **verified reachable** | Fixed on this branch |
 | 29 | Unknown keys never reported | Confirmed; cheaper than they framed it | Open, medium |
 | 16 | `listEntries()` never resolves `reference` fields | Confirmed; blast radius **differs** from their account | Open, medium |
 | 20 | Reference app teaches index singletons the hard way | Confirmed but **narrower** than framed | Open, deferred |

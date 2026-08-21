@@ -13,6 +13,22 @@ type InferableField = {
   isBody?: boolean
   fields?: readonly InferableField[]
   templates?: ReadonlyArray<{ name: string; fields: readonly InferableField[] }>
+  /**
+   * For select fields: the option list. Inferring the literal union of these values is
+   * what makes a select field's type its own options rather than a bare `string`.
+   *
+   * MUST stay `readonly` even though `SelectFieldConfig.options` (config/types.ts) is a
+   * mutable `SelectOption[]` — but NOT for the reason you might assume. A mutable
+   * constraint does not defeat `const` inference here: verified against this repo's tsc,
+   * `<const T>` still infers `['a', 'b']` with the literals intact under a mutable
+   * constraint, so the union would survive. The real failure is louder. An adopter who
+   * declares the option list separately and shares it across schemas writes
+   * `as const`, producing a `readonly` tuple — and a `readonly` array is not assignable
+   * to a mutable one (TS4104), so every such schema would stop compiling at the
+   * definition site. `readonly` here accepts both the inline literal and the shared
+   * `as const` array.
+   */
+  options?: readonly (string | { label: string; value: string })[]
   /** For reference fields: the target collection's schema (from defineEntrySchema) to infer resolved types. */
   resolvedSchema?: readonly InferableField[]
   /** For reference fields: filter by entry type name (e.g., ['partner']). */
@@ -49,6 +65,51 @@ type Simplify<T> = { [K in keyof T]: T[K] }
  * the `?` modifier that InferContentShape applies, never duplicated as `| undefined`.
  */
 type ScalarValue<F extends InferableField, V> = F['list'] extends true ? V[] : V
+
+/**
+ * The value one `select` option contributes to the field's value union. A bare string
+ * option contributes itself; a `{ label, value }` option contributes its `value`, not
+ * the whole object. Mixed arrays of both forms work because this distributes.
+ *
+ * Falls back to `string` for an option whose literal type is gone — an options array
+ * annotated as `SelectOption[]` rather than inferred by `defineEntrySchema` widens to
+ * `string | { label: string; value: string }`, and both arms then land on `string`.
+ */
+type SelectOptionValue<O> = O extends { value: infer V extends string }
+  ? V
+  : O extends string
+    ? O
+    : string
+
+/**
+ * The value type of a `select` field: the literal union of its OWN `options`.
+ *
+ * A select value is always a string — `SelectOption` (config/types.ts) carries
+ * `value: string` in both arms, `normalizeOptions` (editor/FormRenderer.tsx) emits
+ * strings, and `validateEntryData` (validation/entry-validator.ts) rejects anything
+ * that is not one. This type says WHICH strings.
+ *
+ * Like the rest of InferContentShape, this models the SCHEMA'S declared shape, not
+ * every byte the validator will tolerate on disk — the same stance that types a field
+ * omitting `required` as a required property. Notably the validator also accepts `''`
+ * as "not filled in" for any field that is not explicitly `required: true`, and `''` is
+ * deliberately NOT in this union.
+ *
+ * Degrades to `string` when there is nothing to infer: no `options` key at all, or an
+ * empty one. Both are schema mistakes that `ensureSelectFieldsHaveOptions`
+ * (config/validation.ts) rejects — but note it runs from `createEntrySchemaRegistry`,
+ * NOT from `validateCanopyConfig`, so a schema that is only ever fed to
+ * `TypeFromEntrySchema` and never registered gets no runtime rejection at all.
+ * Returning `never` here would type such a field as unsatisfiable, which is a worse
+ * error than the bare `string` this falls back to.
+ */
+type SelectValue<F extends InferableField> = F extends {
+  options: infer O extends readonly unknown[]
+}
+  ? [O[number]] extends [never]
+    ? string
+    : SelectOptionValue<O[number]>
+  : string
 
 type ObjectValue<F extends InferableField & { fields: readonly InferableField[] }> =
   F['list'] extends true ? Array<InferContentShape<F['fields']>> : InferContentShape<F['fields']>
@@ -104,7 +165,7 @@ type FieldValue<F extends InferableField> = F extends {
         }
       >
     : F extends { type: 'select' }
-      ? ScalarValue<F, string | number>
+      ? ScalarValue<F, SelectValue<F>>
       : F extends { type: 'reference'; resolvedSchema: infer S }
         ? ScalarValue<F, InferContentShape<Extract<S, readonly InferableField[]>> | null>
         : F extends { type: 'reference' }
