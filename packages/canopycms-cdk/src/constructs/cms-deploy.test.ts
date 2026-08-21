@@ -748,6 +748,11 @@ describe('CanopyCmsService: worker boot cannot fail silently', () => {
     const agentIdx = all.indexOf('dnf install -y amazon-cloudwatch-agent')
 
     expect(trapIdx).toBeGreaterThanOrEqual(0)
+    // Asserted explicitly: without it, a reworded start command would make
+    // indexOf return -1 and the `disarmIdx > workerStartIdx` check below pass
+    // vacuously.
+    expect(workerStartIdx).toBeGreaterThanOrEqual(0)
+    expect(agentIdx).toBeGreaterThanOrEqual(0)
     expect(disarmIdx).toBeGreaterThan(trapIdx)
     // Disarmed only AFTER the worker is running, and BEFORE the agent install.
     expect(disarmIdx).toBeGreaterThan(workerStartIdx)

@@ -684,11 +684,20 @@ export class CmsWorker {
       try {
         const url = (await git.raw(['config', '--get', 'remote.origin.url'])).trim()
         return url === '' ? null : url
-      } catch (err: unknown) {
-        // Exit code 1 is git's documented "key not found" for `--get`.
-        const message = getErrorMessage(err)
-        const isKeyAbsent = /exit code=1\b/.test(message) || message.trim() === ''
-        return isKeyAbsent ? null : 'unreadable'
+      } catch {
+        // ANY throw is 'unreadable', never 'absent'. The genuinely-absent case
+        // does not reach here at all -- simple-git resolves with '' (verified
+        // against 3.36: it only treats a task as failed when stderr is
+        // non-empty, and a missing key writes nothing to stderr). So a throw
+        // means something actually went wrong, and mapping that to "no token
+        // here" would be the one fail-OPEN reading available.
+        //
+        // An earlier version tried to classify git's exit-1 "key not found"
+        // from the message text. That was dead code -- simple-git's GitError
+        // message is raw stdout+stderr with no exit-code text -- and its
+        // empty-message fallback mapped a hypothetical throw to 'absent',
+        // which is exactly the direction this must not fail.
+        return 'unreadable'
       }
     }
 
@@ -2416,11 +2425,29 @@ export class CmsWorker {
           // first, which is the only record an operator would have.
           if (await isRebaseInProgress(branchPath)) {
             const preAbort = await branchGit.status().catch(() => null)
-            // Plain-modified tracked files, excluding the conflicted paths the
-            // interrupted rebase itself produced.
+            // Keyed on the WORKING-TREE column only. The two porcelain columns
+            // mean different things here, and conflating them produces a false
+            // data-loss report on essentially every conflict-wedged recovery
+            // (verified against real git, mid-rebase):
+            //
+            //   `M ` index=M, wd=' '  -- the interrupted replay's own cleanly
+            //                            merged files, already STAGED. These
+            //                            are committed history and survive the
+            //                            abort untouched. Not collateral.
+            //   ` M` index=' ', wd=M  -- a working-tree modification nothing
+            //                            staged: an editor's save landing while
+            //                            the worker was down. The abort
+            //                            discards exactly these.
+            //   `??`                  -- untracked; the abort leaves them.
+            //
+            // KNOWN GAP, stated rather than hidden: a save onto one of the
+            // rebase's own conflicted paths (the "saved over conflict-marker
+            // content" case) is excluded below, because the file reads `UU`
+            // whether or not an editor touched it -- status alone cannot tell
+            // the two apart. Those discards go unlogged.
             const collateral = (preAbort?.files ?? [])
               .filter((f) => !preAbort?.conflicted.includes(f.path))
-              .filter((f) => f.index !== '?' && f.working_dir !== '?')
+              .filter((f) => f.working_dir !== ' ' && f.working_dir !== '?')
               .map((f) => f.path)
             if (collateral.length > 0) {
               workerLogWarn(
@@ -2436,15 +2463,18 @@ export class CmsWorker {
             } catch (abortErr: unknown) {
               // Leave it for the next cycle rather than pressing on: every step
               // below assumes a clean tree.
-              workerLogWarn(
-                `  Skipping ${branchDir}: could not abort its interrupted rebase: ${getErrorMessage(abortErr)}`,
+              const reason = redactCredentials(
+                `could not abort interrupted rebase: ${getErrorMessage(abortErr)}`,
               )
-              failed.push({
-                branch: branchDir,
-                error: redactCredentials(
-                  `could not abort interrupted rebase: ${getErrorMessage(abortErr)}`,
-                ),
-              })
+              workerLogWarn(`  Skipping ${branchDir}: ${reason}`)
+              failed.push({ branch: branchDir, error: reason })
+              // Record on branch metadata too, like the other two failure exits
+              // (`!completed` and the outer catch). Without this a persistently
+              // un-abortable wedge appeared in worker-status.json but never set
+              // a `syncFailureReason`, so the admin branch panel showed nothing
+              // -- and this is precisely the state that needs an operator,
+              // since it is the one the next cycle cannot fix by itself.
+              await this.recordRebaseFailure(branchPath, branchDir, reason)
               continue
             }
           }

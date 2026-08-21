@@ -59,6 +59,28 @@ function compareVersions(a, b) {
 }
 
 const [firstArg, secondArg] = process.argv.slice(2)
+
+// Reject anything that is not a recognised flag or a plain version BEFORE
+// writing to six package.json files. Previously any unrecognised first token
+// took the explicit-version branch verbatim: `--mim 0.0.70` wrote
+// `"version": "--mim"` across the workspace and exited 0, and the failure only
+// surfaced later at `npm publish`. Transposed args (`0.0.64 --min`) silently
+// applied the explicit version with no bump.
+if (firstArg !== undefined && firstArg !== '--min' && firstArg.startsWith('-')) {
+  throw new Error(
+    `Unknown option ${JSON.stringify(firstArg)}. Usage: [<version> | --min <version>]`,
+  )
+}
+if (firstArg === '--min' && secondArg === undefined) {
+  throw new Error('--min requires a version argument')
+}
+if (firstArg !== undefined && firstArg !== '--min' && secondArg !== undefined) {
+  throw new Error(
+    `Unexpected extra argument ${JSON.stringify(secondArg)} after an explicit version. ` +
+      `Did you mean: --min ${firstArg}?`,
+  )
+}
+
 let newVersion
 if (firstArg === '--min') {
   // Bump from whichever is newer: what the repo committed, or what the
@@ -68,6 +90,8 @@ if (firstArg === '--min') {
   const [major, minor, patch] = compareVersions(floor, committed) > 0 ? floor : committed
   newVersion = `${major}.${minor}.${patch + 1}`
 } else if (firstArg) {
+  // Validated, not trusted: this value is written into every package.json.
+  parseVersion(firstArg, 'the explicit version argument')
   newVersion = firstArg
 } else {
   const [major, minor, patch] = parseVersion(corePkg.version, 'the committed version')
