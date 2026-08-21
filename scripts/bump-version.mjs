@@ -45,10 +45,19 @@ const corePkg = JSON.parse(readFileSync(corePkgPath, 'utf8'))
 // semver, so accepting it here would only move the failure to `npm publish`.
 const CORE_VERSION = String.raw`(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)`
 const STRICT_VERSION_RE = new RegExp(`^${CORE_VERSION}$`)
-// Semver's optional `-prerelease` and `+build`. The prerelease publish path
-// needs this: `prerelease-version.mjs` emits `X.Y.Z-int.N`.
+// Semver's optional `-prerelease` and `+build`, following the spec's identifier
+// rules rather than a loose character class: dot-separated identifiers, none
+// empty, and a NUMERIC prerelease identifier may not carry a leading zero.
+// (`1.2.3-int.007` and `1.2.3-int..1` are invalid semver, and npm rejects
+// them -- the same reason the numeric core above rejects `01.2.3`. A looser
+// pattern let those through to be written into six manifests and fail later at
+// `npm publish`.) Build metadata has no leading-zero rule.
+const PRERELEASE_ID = String.raw`(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*)`
+const BUILD_ID = String.raw`[0-9A-Za-z-]+`
 const EXPLICIT_VERSION_RE = new RegExp(
-  `^${CORE_VERSION}(?:-[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?$`,
+  `^${CORE_VERSION}` +
+    String.raw`(?:-${PRERELEASE_ID}(?:\.${PRERELEASE_ID})*)?` +
+    String.raw`(?:\+${BUILD_ID}(?:\.${BUILD_ID})*)?$`,
 )
 
 /**
@@ -102,6 +111,12 @@ const [firstArg, secondArg] = process.argv.slice(2)
 // `"version": "--mim"` across the workspace and exited 0, and the failure only
 // surfaced later at `npm publish`. Transposed args (`0.0.64 --min`) silently
 // applied the explicit version with no bump.
+// `''` is treated as "no argument", matching the shell reality that an unset
+// variable expands to nothing -- but say so, since the check below reads as
+// though every defined value is validated.
+if (firstArg === '') {
+  throw new Error('Empty version argument. Pass a version, `--min <version>`, or nothing at all.')
+}
 if (firstArg !== undefined && firstArg !== '--min' && firstArg.startsWith('-')) {
   throw new Error(
     `Unknown option ${JSON.stringify(firstArg)}. Usage: [<version> | --min <version>]`,
