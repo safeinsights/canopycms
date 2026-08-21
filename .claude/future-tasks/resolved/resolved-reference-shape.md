@@ -30,8 +30,10 @@ resolve references at all and so made the shape question consequential.
 **`urlPath` on every resolved reference, unconditionally.** Computed by the existing
 `computeEntryUrl` (`utils/entry-url.ts`) from the `location.collection`/`location.slug` the
 resolver already holds — no extra I/O. Deliberately the forward collection+slug → URL rule,
-NOT `url-path-resolver.ts`'s reverse URL → entry direction, which has its own open
-disagreement about how many URLs an index entry answers at (see
+NOT `url-path-resolver.ts`'s reverse URL → entry direction, which at the time had its own
+disagreement about how many URLs an index entry answers at — since resolved (2026-08-21), so
+the two now agree; the direction remains deliberate because this is the surface that DEFINES an
+entry's URL (see
 [url-resolver-index-entry-extra-url.md](url-resolver-index-entry-extra-url.md)).
 
 `listEntries`' own inline `urlPath` computation was replaced with the same call, so a listed

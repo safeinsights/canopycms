@@ -361,7 +361,9 @@ resolver disagreed: it tried "last segment is the slug" first, so the same entry
 + await readByUrlPath('/guides/index')  // null
 ```
 
-The round-trip guarantee is now exclusive: `item.urlPath` reaches the entry and nothing else does.
+The round-trip guarantee is now exclusive for index entries: `item.urlPath` reaches the entry, and
+no `.../index` spelling does, in any case (`/x/Index` and `/x/INDEX` return null too). Ordinary
+entries are unchanged — their final slug segment stays case-insensitive.
 A collection literally _named_ `index` is unaffected and in fact fixed — `/docs/index` now resolves
 to that collection's own index entry instead of being shadowed by its parent's.
 
@@ -373,23 +375,32 @@ case (URL paths are lowercased). An entry beside a sibling collection with **no*
 untouched — a landing page plus a folder of children is a legitimate shape and nothing about it
 is contested.
 
-**To adopt.** Nothing, if your content has no contested URLs — the resolver change only removes
-URLs that were never advertised. If a build starts failing, the error names every colliding entry;
-rename or remove one of each pair. To check before upgrading:
+**To adopt.** Usually nothing: the resolver change removes URLs no API ever advertised. Two
+exceptions worth checking. If you have a collection literally _named_ `index`, `/x/index` was
+advertised and now resolves to a **different** entry (that collection's own index, rather than its
+parent's — the previous answer was a bug). And if a build starts failing on a contested URL, the
+error names every colliding entry; rename or remove one of each pair. Note the build only fails if
+it enumerates through the package helpers (`contentStaticParams`, `collectStaticPaths`,
+`generateContentSitemap`) — a hand-rolled `generateStaticParams` over `listEntries` does not.
+To check before upgrading:
 
 ```ts
-import { collectRoutableEntries, findDuplicateUrlPaths } from 'canopycms/server'
+import { findDuplicateUrlPaths } from 'canopycms/server'
 
-const duplicates = findDuplicateUrlPaths(await collectRoutableEntries(await getCanopyForBuild()))
+const canopy = await getCanopyForBuild()
+const duplicates = findDuplicateUrlPaths(await canopy.listEntries())
 ```
+
+Scan `listEntries()`, not `collectRoutableEntries()` — the latter reduces each entry to what static
+generation needs and drops the `entryPath` that names the offenders.
 
 **Now deletable.**
 
 - **A route-level guard whose only job is to reject a `.../index` URL.** The shape is a check at
   the top of a `[slug]` route — usually on `entryType`, sometimes on the slug itself — that exists
   because the collection's index entry resolved through a template meant for its children and
-  rendered with every field undefined. That URL is now a 404 on its own. Delete the check; keep
-  any `entryType` narrowing you rely on for real type safety.
+  rendered with every field undefined. That URL is now a 404 on its own, in every case spelling.
+  Delete the check; keep any `entryType` narrowing you rely on for real type safety.
 - **A hand-rolled duplicate-URL integrity test.** The shape is a test that enumerates content and
   asserts no two entries share a URL, written because nothing in the package checked. The build
   now enforces it; if you want the assertion kept locally, call `findDuplicateUrlPaths` instead of

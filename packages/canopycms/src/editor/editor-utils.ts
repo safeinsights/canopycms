@@ -5,6 +5,7 @@ import type { EditorEntry, EditorCollection } from './Editor'
 import type { TreeNodeData } from '@mantine/core'
 // Import directly from normalize to avoid pulling in server-only branch.ts
 import { normalizeCollectionPath } from '../paths/normalize'
+import { isIndexSlug } from '../utils/entry-url'
 import { isDataOnlyFormat } from '../utils/format'
 export { normalizeCollectionPath }
 
@@ -12,6 +13,20 @@ export interface PreviewContext {
   branchName?: string
   previewBaseByCollection?: Record<string, string>
 }
+
+/**
+ * The slug portion of a preview URL, or '' for an index entry.
+ *
+ * An index entry's URL is its COLLECTION's path -- the same collapse `computeEntryUrl`,
+ * `listEntries` and `defaultBuildPath` apply. Without it this builder pointed the preview iframe
+ * at `/x/index`, which `resolveUrlPathCandidates` deliberately refuses to resolve, so the host
+ * app answered the editor's own preview with notFound().
+ *
+ * Kept separate from `computeEntryUrl` rather than delegating wholesale because this builder must
+ * percent-encode each segment and must NOT lowercase (a preview base is adopter-supplied and
+ * case-sensitive). Only the index decision is shared -- which is the part that drifted.
+ */
+const encodePreviewSlug = (slug?: string): string => (isIndexSlug(slug) ? '' : encodeSlug(slug))
 
 export const encodeSlug = (value?: string): string =>
   (value ?? '')
@@ -62,13 +77,13 @@ export const buildPreviewSrc = (
     const collectionPath = entry.collectionPath
       ? normalizeCollectionPath(entry.collectionPath, contentRoot)
       : ''
-    const encoded = encodeSlug(entry.slug)
+    const encoded = encodePreviewSlug(entry.slug)
     const segments = [collectionPath, encoded].filter(Boolean)
     const url = segments.length > 0 ? `/${segments.join('/')}` : '/'
     return appendBranch(url)
   }
   const trimmed = base.endsWith('/') ? base.slice(0, -1) : base
-  const encoded = encodeSlug(entry.slug)
+  const encoded = encodePreviewSlug(entry.slug)
   const url = encoded ? `${trimmed}/${encoded}` : trimmed || '/'
   return appendBranch(url)
 }

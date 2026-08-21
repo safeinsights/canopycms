@@ -150,8 +150,11 @@ export {
 
 export type { EntryLinkUrlResolver } from './entry-link-resolver'
 
-/** Compute the canonical URL for an entry given its logical path + slug. */
-export { computeEntryUrl } from './utils/entry-url'
+/**
+ * Compute the canonical URL for an entry given its logical path + slug, and the shared
+ * "is this the collection-index slug?" predicate that decides whether it collapses.
+ */
+export { computeEntryUrl, isIndexSlug } from './utils/entry-url'
 
 /** Collect static paths for `generateStaticParams` / sitemap emission. */
 export { collectStaticPaths } from './static'

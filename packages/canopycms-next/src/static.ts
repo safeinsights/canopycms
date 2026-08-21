@@ -4,6 +4,7 @@ import {
   collectStaticPaths,
   extractSeoFields,
   isAbsoluteUrl,
+  isIndexSlug,
   isNoindexEntry,
   resolveSeoUrl,
   type CanopyBuildContext,
@@ -42,6 +43,10 @@ export interface GenerateContentStaticParamsOptions extends CollectStaticPathsOp
    * route's base (e.g. `'/docs'`). Entries are scoped to that prefix and `segments` are made relative
    * to it, so the params match the route. Without it, segments are the full URL path. Applies to
    * catch-all shapes (it rewrites `segments`); it has no effect with `shape: 'single'`.
+   *
+   * Note that `shape: 'single'` also SKIPS collection index entries, whose URL is the
+   * collection's own path rather than a single slug segment. Render those from the collection's
+   * route (e.g. `app/posts/page.tsx`), not from `[slug]`.
    */
   basePath?: string
 }
@@ -83,9 +88,19 @@ export async function collectStaticParams(
       })
   }
 
-  return entries.map((entry) =>
-    shape === 'single' ? { [paramName]: entry.slug } : { [paramName]: entry.segments },
-  )
+  if (shape === 'single') {
+    // Drop index entries. Their URL is the COLLECTION's path (`/posts`, not `/posts/index`), a
+    // shape a single-segment `[slug]` route cannot represent — that page belongs to the
+    // collection's own route. Emitting one produced a param whose URL `readByUrlPath` refuses to
+    // resolve, so Next prerendered a guaranteed notFound (and an `output: export` build can fail
+    // outright). Catch-all is unaffected: it reads the already-collapsed `segments`, which for an
+    // index entry are the collection's.
+    return entries
+      .filter((entry) => !isIndexSlug(entry.slug))
+      .map((entry) => ({ [paramName]: entry.slug }))
+  }
+
+  return entries.map((entry) => ({ [paramName]: entry.segments }))
 }
 
 // ---------------------------------------------------------------------------

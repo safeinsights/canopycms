@@ -123,10 +123,40 @@ direct-entry candidate fired first and returned the PARENT's index entry instead
 document, silently. Verified red before the fix (`/docs/index` returned `'Docs Home'` rather than
 the `index` collection's own entry) and green after. This is why the index fallback had to survive.
 
+**What three independent (Fable) reviews changed before merge.** Worth recording, because two of
+the three defects were introduced BY the fix rather than found in the original code:
+
+1. **The skip was case-sensitive.** `slug !== 'index'` closed `/x/index` and left `/x/Index` and
+   `/x/INDEX` resolving the very phantom it existed to hide — verified end-to-end. This resolver is
+   the ONE consumer that sees a raw, un-normalized URL segment (`parseSlug` and ContentStore's
+   directory scan both lowercase downstream), so a strict compare was wrong here specifically.
+   Fixed by routing the decision through a new shared `isIndexSlug` in `utils/entry-url.ts`, which
+   `computeEntryUrl` now uses too — so this became one fewer copy of the rule, not one more.
+2. **The editor's own live preview broke.** `editor/editor-utils.ts`'s `buildPreviewSrc` was an
+   uncatalogued FOURTH copy of the forward URL rule, and the only one that did not collapse an
+   index slug — so it pointed the preview iframe at `/x/index`, which this change had just made a
+   404. Sharpened by the migration guide telling adopters to delete their route-level `.../index`
+   gates. Fixed via the same shared predicate.
+3. **`collectStaticParams({ shape: 'single' })` emitted a dead param.** It emits `entry.slug`, so a
+   collection index entry produced `slug: 'index'` → `/posts/index` → now null → a prerendered
+   guaranteed-notFound (and a possible hard failure under `output: export`). Index entries are now
+   skipped for that shape; catch-all is unaffected, since it reads the already-collapsed segments.
+
+Also corrected in review: the published "check your own content" sample did not compile
+(`collectRoutableEntries` returns `RoutableEntry`, which drops the `entryPath` that
+`findDuplicateUrlPaths` needs — it takes `listEntries()` output), and several doc sentences
+overclaimed exclusivity. Empirically settled while fixing them: collection path segments are
+case-SENSITIVE (`/DOCS/overview` → null) and only the final slug segment is case-insensitive
+(`/docs/OVERVIEW` → resolves), so after fix 1 an index entry really does answer at exactly one URL.
+
 **One correction to the analysis above.** The concern that changing `index` URL semantics would
 propagate into resolved references (which gained a `urlPath` in #245, after this was filed) does
-not apply. `computeEntryUrl` never emits a trailing `/index`, and neither does `defaultBuildPath`
-for `kind: 'entry'` — every forward surface already agreed that an index entry has exactly one URL.
+not apply. `computeEntryUrl` never emits a trailing `/index` for a normalized slug, and neither
+does `defaultBuildPath` for `kind: 'entry'` — the forward surfaces already agreed that an index
+entry has exactly one URL. (Reviewer's caveat, now closed: `computeEntryUrl`'s own compare was
+strict too, so a git-delivered file slugged `INDEX` would have produced `/x/index`. Harmless in
+practice, since every pipeline caller feeds it slugs already lowercased at parse time — but it is
+now routed through `isIndexSlug` as well, so the latent version is gone.)
 This was a reverse-only change that made the resolver agree with them, so no resolved reference's
 value changed. The stale "they disagree" premise in `content-store.ts`'s comment was updated.
 

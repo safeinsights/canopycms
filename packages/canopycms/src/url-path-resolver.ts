@@ -1,4 +1,5 @@
 import { trimSlashes } from './paths/normalize'
+import { isIndexSlug } from './utils/entry-url'
 
 /**
  * Resolves a URL path to candidate entryPath/slug pairs for content lookup.
@@ -33,16 +34,21 @@ export function resolveUrlPathCandidates(
 
   // Try 1: last segment is the entry slug, rest is the collection path.
   //
-  // Skipped when that slug is literally 'index'. An index entry's one URL is its collapsed
+  // Skipped when that slug is an index slug. An index entry's one URL is its collapsed
   // collection path, so matching it here would answer at a second URL enumeration never emits.
   // `index` is not a contrived segment either — it is the slug the index convention requires on
   // disk, so the collision was structural rather than accidental.
+  //
+  // Compared case-INSENSITIVELY, through the shared `isIndexSlug`. This function is the one
+  // consumer that sees a raw, un-normalized URL segment — everything downstream lowercases
+  // (`parseSlug`, and ContentStore's directory scan) — so a strict compare here closed
+  // `/x/index` while leaving `/x/Index` and `/x/INDEX` resolving the very entry it exists to hide.
   const slug = segments[segments.length - 1]
   const collectionSegments = segments.slice(0, -1)
   const entryPath =
     collectionSegments.length > 0 ? `${contentRoot}/${collectionSegments.join('/')}` : contentRoot
 
-  if (slug !== 'index') {
+  if (!isIndexSlug(slug)) {
     candidates.push({ entryPath, slug })
   }
 

@@ -270,19 +270,19 @@ Both methods return `{ data, path }`. `read` throws if the content is missing; `
 Canopy uses an **index entry convention** for collection landing pages, similar to `index.html` in a web server:
 
 - An entry with slug `index` (filename `{type}.index.{id}.{ext}`) acts as the landing page for its collection
-- The URL for an index entry is the **collection's URL**, not `{collection}/index`. For example, an entry at `content/guides/index` has URL `/guides`, not `/guides/index` — and `readByUrlPath('/guides/index')` returns `null`, since that is not a second URL for it
+- The URL for an index entry is the **collection's URL**, not `{collection}/index`. For example, an entry at `content/guides/index` has URL `/guides`, not `/guides/index` — and `readByUrlPath('/guides/index')` returns `null` (as do `/guides/Index` and `/guides/INDEX`), since those are not second URLs for it
 - `readByUrlPath('/')` resolves to the content root's index entry (if one exists)
 - Not all collections need an index entry — some are just organizational groupings
 
 This convention is applied consistently across the API:
 
-| API                | Index handling                                                                                                                                                                                                                                          |
-| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `listEntries`      | Each item includes a `urlPath` field with index collapsing applied. `pathSegments` retains the raw structure for consumers that need it.                                                                                                                |
-| `readByUrlPath`    | Automatically tries `slug: 'index'` as a fallback when the direct entry doesn't match. Works for all paths including `/`. A path ending in a literal `index` skips the direct-entry attempt, so an index entry is reachable only at its collapsed path. |
-| `buildContentTree` | Default `buildPath` collapses index entries so tree node paths match the URLs consumers would use.                                                                                                                                                      |
+| API                | Index handling                                                                                                                                                                                                                                                             |
+| ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `listEntries`      | Each item includes a `urlPath` field with index collapsing applied. `pathSegments` retains the raw structure for consumers that need it.                                                                                                                                   |
+| `readByUrlPath`    | Automatically tries `slug: 'index'` as a fallback when the direct entry doesn't match. Works for all paths including `/`. A path whose last segment is an index slug (any case) skips the direct-entry attempt, so an index entry is reachable only at its collapsed path. |
+| `buildContentTree` | Default `buildPath` collapses index entries so tree node paths match the URLs consumers would use.                                                                                                                                                                         |
 
-The round-trip property holds in both directions: for every item from `listEntries`, `readByUrlPath(item.urlPath)` resolves to the same entry, and no other URL does.
+The round-trip property holds in both directions: for every item from `listEntries`, `readByUrlPath(item.urlPath)` resolves to the same entry, and for an index entry no other URL does. (Ordinary entries keep case-insensitive matching on the final slug segment.)
 
 Two different entries can still compute the same `urlPath` — an entry whose slug matches a sibling collection that also has an `index` entry, or two slugs differing only by case. Only one of them can be served, so a production build fails and names them. `findDuplicateUrlPaths` (exported from `canopycms/server`) runs the same scan on demand.
 

@@ -95,6 +95,17 @@ describe('resolveUrlPathCandidates', () => {
       ])
     })
 
+    it('is case-insensitive — /x/Index and /x/INDEX are the same phantom', () => {
+      // This function is the ONE consumer that sees a raw URL segment; parseSlug and
+      // ContentStore both lowercase downstream, so a strict compare closed `/x/index` while
+      // leaving every case variant resolving the index entry it exists to hide.
+      for (const variant of ['Index', 'INDEX', 'InDeX']) {
+        expect(resolveUrlPathCandidates(`/docs/guides/${variant}`, 'content')).toEqual([
+          { entryPath: `content/docs/guides/${variant}`, slug: 'index' },
+        ])
+      }
+    })
+
     it('only applies to the LAST segment', () => {
       // `index` earlier in the path is an ordinary collection name and changes nothing.
       expect(resolveUrlPathCandidates('/index/overview', 'content')).toEqual([

@@ -475,6 +475,13 @@ export function findDuplicateUrlPaths(items: readonly UrlScanItem[]): DuplicateU
  * precisely what a contested URL produces — `generateStaticParams` emits the path once, one entry
  * renders, and the other never appears anywhere with no error to notice.
  *
+ * Runs on the RAW listing, before the caller's `filter`, and that will produce the first "why is
+ * my build red, that entry isn't even routed?" question — so: a contested `urlPath` is a real
+ * collision at RESOLUTION time regardless of routing. `readByUrlPath` picks one of the two
+ * whatever any `generateStaticParams` filter says, so the un-routed entry is not innocent; it is
+ * shadowing (or being shadowed by) the routed one at the same URL. `rootPath` narrows the scan
+ * because it narrows what was loaded at all; `filter` deliberately does not.
+ *
  * Related but not redundant: `canopycms-next`'s `dedupeSitemapItems` warns on the same collision
  * at the sitemap. It stays, because it also covers entry-vs-`extraUrls` collisions (adopter-supplied
  * paths this content enumeration never sees) and non-build-mode calls, where this guard is silent.

@@ -445,6 +445,35 @@ describe('readByUrlPath', () => {
       expect(await ctx.readByUrlPath('/docs/guides/index')).toBeNull()
     })
 
+    it('does not resolve it at a CASE VARIANT of the literal /index URL either', async () => {
+      // Slug matching is case-insensitive end to end (parseSlug lowercases, and ContentStore
+      // resolves slugs by a lowercased directory scan), so closing only the exact-lowercase
+      // spelling would leave the phantom reachable at /docs/guides/Index. Asserted through the
+      // real read path, not just the candidate builder, because that is where the normalization
+      // that made the strict compare wrong actually happens.
+      const guidesDir = path.join(root, 'content/docs/guides')
+      await fs.mkdir(guidesDir, { recursive: true })
+      await fs.writeFile(
+        path.join(guidesDir, 'index.md'),
+        matter.stringify('Welcome to guides', { title: 'Guides Index' }),
+      )
+
+      const ctx = await createContext()
+      for (const variant of ['Index', 'INDEX', 'InDeX']) {
+        expect(await ctx.readByUrlPath(`/docs/guides/${variant}`)).toBeNull()
+      }
+      // An ordinary slug stays case-insensitive — this is not a general tightening. (Only the
+      // SLUG is; collection path segments are matched case-sensitively, which is why this varies
+      // the last segment only.)
+      await fs.writeFile(
+        path.join(root, 'content/docs/overview.json'),
+        JSON.stringify({ title: 'Overview' }),
+      )
+      expect((await ctx.readByUrlPath<{ title: string }>('/docs/Overview'))!.data.title).toBe(
+        'Overview',
+      )
+    })
+
     it('does not resolve the root index entry at /index', async () => {
       await fs.mkdir(path.join(root, 'content'), { recursive: true })
       await fs.writeFile(path.join(root, 'content/index.json'), JSON.stringify({ title: 'Home' }))

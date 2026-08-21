@@ -1692,30 +1692,34 @@ Returns `null` when no content matches the path, or when the current user is not
 Index entries (entries with slug `"index"`) represent the default content for a collection URL. All three content APIs -- `readByUrlPath`, `listEntries`, and `buildContentTree` -- treat index entries consistently:
 
 - **`readByUrlPath('/guides')`** resolves to the index entry in the `guides` collection
-- **`readByUrlPath('/guides/index')`** returns `null` -- an index entry has exactly one URL, and it is `/guides`
+- **`readByUrlPath('/guides/index')`** returns `null` -- an index entry has exactly one URL, and it is `/guides`. Case variants (`/guides/Index`, `/guides/INDEX`) are `null` too
 - **`readByUrlPath('/')`** resolves to the index entry at the content root
 - **`listEntries()`** returns `urlPath: '/guides'` (not `'/guides/index'`) for index entries, and `urlPath: '/'` for a root index entry
 - **`buildContentTree()`** generates `path: '/guides'` (not `'/guides/index'`) for index entries by default
 
-This means `entry.urlPath` from `listEntries()` is round-trip safe: `readByUrlPath(entry.urlPath)` always resolves back to the same entry -- and exclusively so, since no other URL reaches it.
+This means `entry.urlPath` from `listEntries()` is round-trip safe: `readByUrlPath(entry.urlPath)` always resolves back to the same entry. For an index entry that is now the _only_ URL that reaches it, in any case spelling. (For an ordinary entry the final slug segment stays case-insensitive, so `/docs/OVERVIEW` still resolves `/docs/overview` -- collection path segments do not.)
 
 ### One URL, one entry
 
 Each entry gets exactly one `urlPath`, but nothing stops two _different_ entries computing the same one. When that happens only one of them can be served and the other silently has no route at all, so a **production build** fails with the contested URLs and their claimants listed. (`next dev` and the admin UI are unaffected -- mid-edit trees are allowed to be temporarily broken.)
 
-The two ways to get there:
+The usual causes:
 
 - An entry whose slug matches a sibling collection **that also has an `index` entry** -- the index collapses onto the collection's path, which is the entry's path too. An entry beside a sibling collection with no index entry is fine: a landing page plus a folder of children is a normal shape, and nothing is contested.
 - Two slugs differing only by case, since URL paths are lowercased.
+- Two entries with the same slug in one collection. The write boundary refuses this, but content also arrives by merge, by PR, and by retrofit onto an existing repo.
 
 To check your own content, `findDuplicateUrlPaths` (exported from `canopycms/server`) is the same scan the build runs:
 
 ```typescript
-import { collectRoutableEntries, findDuplicateUrlPaths } from 'canopycms/server'
+import { findDuplicateUrlPaths } from 'canopycms/server'
 
-const duplicates = findDuplicateUrlPaths(await collectRoutableEntries(await getCanopyForBuild()))
+const canopy = await getCanopyForBuild()
+const duplicates = findDuplicateUrlPaths(await canopy.listEntries())
 // [{ urlPath: '/docs/guides', entryPaths: ['content/docs/guides', 'content/docs/guides/index'] }]
 ```
+
+Scan `listEntries()` rather than `collectRoutableEntries()` — the latter reduces each entry to what static generation needs and drops `entryPath`, which is what names the offenders.
 
 ### Static Export with generateStaticParams
 
@@ -1872,7 +1876,9 @@ export default function sitemap(): Promise<MetadataRoute.Sitemap> {
 >
 > **`robots.txt` is out of scope** -- it is a few static lines with no CMS content behind it. Write `app/robots.ts` yourself and point its `sitemap` field at this route.
 >
-> **Colliding URLs are deduped, not silently doubled.** Two entries resolving to the same `<loc>` -- an index entry collapsing onto a sibling's path, or two `urlPath`s that only differ by case (`urlPath` is always lowercased) -- is not fatal to a crawler, but it almost always means two entries are unintentionally sharing one URL. `generateContentSitemap` keeps the first and drops the rest, and warns on the duplicate so you notice instead of shipping a sitemap with fewer URLs than you expect.
+> **Colliding URLs are deduped, not silently doubled.** Two entries resolving to the same `<loc>` is not fatal to a crawler, but it almost always means two entries are unintentionally sharing one URL. `generateContentSitemap` keeps the first and drops the rest, and warns on the duplicate so you notice instead of shipping a sitemap with fewer URLs than you expect.
+>
+> In a **production build** the entry-vs-entry case no longer gets this far: enumeration fails the build first (see [One URL, one entry](#one-url-one-entry)). This dedupe still covers the cases that guard cannot see -- a collision involving an `extraUrls` path, which you supply here and which never appears in the content enumeration -- and any call outside a production build.
 
 #### `generateMetadata`
 
