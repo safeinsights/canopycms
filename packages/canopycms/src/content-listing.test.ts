@@ -1287,6 +1287,106 @@ describe('listEntries', () => {
       expect(b.title).toBe('Sign up today')
     })
 
+    it('resolves an md-format target to the same shape however the listing is scoped', async () => {
+      // Regression: gray-matter caches parsed files process-globally by content and returns the
+      // SAME `data` instance every time, so `readEntryData` merging the body into that object in
+      // place poisoned it for everyone. A listing that happened to include the snippet's own
+      // collection therefore injected `body` into the frontmatter that `ContentStore.read()`
+      // later saw, and the same snippet resolved WITH `body` on a whole-site listing and
+      // WITHOUT it on one scoped past that collection. Every other test here uses a `json`
+      // target, which reparses fresh and cannot show this.
+      const contentDir = path.join(tempDir, 'content')
+      await fs.mkdir(contentDir)
+
+      const { dir: snippetsDir } = await createCollection(contentDir, 'snippets')
+      const snippetId = await createEntry(
+        snippetsDir,
+        'ctaSnippet',
+        'signup',
+        'md',
+        { title: 'Sign up today' },
+        'THE SNIPPET BODY',
+      )
+      const { dir: postsDir } = await createCollection(contentDir, 'posts')
+      await createEntry(postsDir, 'post', 'hello', 'md', { title: 'Hello', snippet: snippetId })
+
+      const schema: RootCollectionConfig = {
+        collections: [
+          {
+            name: 'snippets',
+            path: 'snippets',
+            entries: [
+              { name: 'ctaSnippet', format: 'md', schema: [{ name: 'title', type: 'string' }] },
+            ],
+          },
+          {
+            name: 'posts',
+            path: 'posts',
+            entries: [
+              {
+                name: 'post',
+                format: 'md',
+                schema: [
+                  { name: 'title', type: 'string' },
+                  { name: 'snippet', type: 'reference', entryTypes: ['ctaSnippet'] },
+                ],
+              },
+            ],
+          },
+        ],
+      }
+      const flat = flattenSchema(schema, 'content')
+
+      // Scoped past the snippets collection: nothing else parses that file first.
+      const scoped = await listEntries(tempDir, flat, 'content', {
+        rootPath: 'content/posts',
+        resolveReferences: true,
+      })
+      const scopedRef = scoped[0].data.snippet as Record<string, unknown>
+
+      // Whole site: the snippets collection is listed too, so the same file is parsed first.
+      const full = await listEntries(tempDir, flat, 'content', { resolveReferences: true })
+      const fullRef = full.find((e) => e.entryType === 'post')!.data.snippet as Record<
+        string,
+        unknown
+      >
+
+      expect(Object.keys(scopedRef).sort()).toEqual(Object.keys(fullRef).sort())
+      expect(scopedRef).toMatchObject({ slug: 'signup', title: 'Sign up today' })
+      // Frontmatter only, both ways — `read()` carries an md body on `doc.body`, and a resolved
+      // reference spreads `doc.data`. The point of the assertion is that it does not DEPEND on
+      // scoping; see the future-tasks note on whether the body should be folded in at all.
+      expect(scopedRef).not.toHaveProperty('body')
+      expect(fullRef).not.toHaveProperty('body')
+    })
+
+    it('does not let a listing leak an md body into a later listing of the same entry', async () => {
+      // The same poisoning seen from the listing side rather than the resolution side: an md
+      // entry's own listed `data` legitimately carries `body`, but that must not survive into a
+      // freshly parsed copy of the same file.
+      const contentDir = path.join(tempDir, 'content')
+      await fs.mkdir(contentDir)
+      const { dir: postsDir } = await createCollection(contentDir, 'posts')
+      await createEntry(postsDir, 'post', 'hello', 'md', { title: 'Hello' }, 'BODY TEXT')
+
+      const schema: RootCollectionConfig = {
+        collections: [
+          { name: 'posts', path: 'posts', entries: [{ name: 'post', format: 'md', schema: [] }] },
+        ],
+      }
+      const flat = flattenSchema(schema, 'content')
+
+      const first = await listEntries(tempDir, flat, 'content')
+      expect(first[0].data.body).toBe('BODY TEXT')
+
+      // A second pass must see identical data — not frontmatter that has accumulated a `body`
+      // key from the first pass and then had it overwritten, which happens to look the same
+      // here but means the shared cache is being mutated.
+      const second = await listEntries(tempDir, flat, 'content')
+      expect(second[0].data).toEqual(first[0].data)
+      expect(second[0].data).not.toBe(first[0].data)
+    })
+
     it('gives each element of a list: true array its own copy', async () => {
       const { postsDir, snippetId, schema } = await createSnippetAndPosts({
         ...referenceField,

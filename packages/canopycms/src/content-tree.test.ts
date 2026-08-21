@@ -1,9 +1,10 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import os from 'node:os'
 
 import { buildContentTree, defaultBuildPath, type ContentTreeNode } from './content-tree'
+import { ContentStore } from './content-store'
 import type { CanopyBuildContext } from './context'
 import { flattenSchema } from './config/flatten'
 import { generateId } from './id'
@@ -1176,6 +1177,70 @@ describe('buildContentTree', () => {
       // The index entry reaches `extract` through a different path than the entry nodes;
       // resolving at the shared listVisibleEntries choke point is what covers both.
       expect(indexEntrySnippet).toMatchObject({ slug: 'signup', title: 'Sign up today' })
+    })
+
+    it('reads a block shared across collections once for the whole tree', async () => {
+      // The store and cache are built once in buildContentTree's outer scope rather than per
+      // collection, which is the only reason a block referenced from several collections costs
+      // one read for the entire recursive walk. Both other tree tests reference from a single
+      // collection, so neither would notice the cache being moved inside listVisibleEntries.
+      const contentDir = path.join(tempDir, 'content')
+      await fs.mkdir(contentDir)
+
+      const { dir: snippetsDir } = await createCollection(contentDir, 'snippets')
+      const snippetId = await createEntry(snippetsDir, 'ctaSnippet', 'signup', 'json', {
+        title: 'Sign up today',
+      })
+
+      const snippetEntries = [
+        {
+          name: 'ctaSnippet',
+          format: 'json' as const,
+          schema: [{ name: 'title', type: 'string' as const }],
+        },
+      ]
+      const docEntries = [
+        {
+          name: 'doc',
+          format: 'json' as const,
+          schema: [
+            { name: 'title', type: 'string' as const },
+            { name: 'snippet', type: 'reference' as const, entryTypes: ['ctaSnippet'] },
+          ],
+        },
+      ]
+
+      // Two sibling collections, each with an entry pointing at the same snippet.
+      for (const name of ['guides', 'articles']) {
+        const { dir } = await createCollection(contentDir, name)
+        await createEntry(dir, 'doc', `${name}-entry`, 'json', { title: name, snippet: snippetId })
+      }
+
+      const schema: RootCollectionConfig = {
+        collections: [
+          { name: 'snippets', path: 'snippets', entries: snippetEntries },
+          { name: 'guides', path: 'guides', entries: docEntries },
+          { name: 'articles', path: 'articles', entries: docEntries },
+        ],
+      }
+      const flat = flattenSchema(schema, 'content')
+
+      const readSpy = vi.spyOn(ContentStore.prototype, 'read')
+      try {
+        const tree = await buildContentTree<{ snippet: unknown }>(tempDir, flat, 'content', {
+          resolveReferences: true,
+          extract: (data) => ({ snippet: data.snippet }),
+        })
+
+        for (const collection of ['guides', 'articles']) {
+          const node = tree.find((n) => n.logicalPath === `content/${collection}`)!
+          const entry = node.children!.find((n) => n.kind === 'entry')!
+          expect(entry.fields!.snippet).toMatchObject({ title: 'Sign up today' })
+        }
+        expect(readSpy).toHaveBeenCalledTimes(1)
+      } finally {
+        readSpy.mockRestore()
+      }
     })
   })
 })

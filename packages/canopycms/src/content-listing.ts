@@ -81,7 +81,17 @@ export const readEntryData = async (
       return asRecord(yamlParse(raw))
     }
     const parsed = matter(raw)
-    const data = (parsed.data as Record<string, unknown>) ?? {}
+    // Copy before writing the body in. gray-matter keeps a PROCESS-GLOBAL cache keyed by file
+    // content and hands every caller the same `data` object instance, so mutating it in place
+    // wrote the body into a shared object that later, unrelated `matter()` calls then saw as
+    // frontmatter. Concretely, before this copy: listing a collection that contains an md entry
+    // poisoned the cache, and a subsequent reference resolution to that same entry — which goes
+    // through `ContentStore.read()`, whose md branch calls `matter()` again — returned the body
+    // as a frontmatter field. So a resolved md snippet came back WITH `body` on a whole-site
+    // listing and WITHOUT it on one scoped past its own collection: the same entry, two shapes,
+    // decided by unrelated scoping. Regression coverage lives with the reference-resolution
+    // tests in content-listing.test.ts.
+    const data = { ...((parsed.data as Record<string, unknown>) ?? {}) }
     if (parsed.content) {
       data[bodyFieldName] = parsed.content
     }

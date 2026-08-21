@@ -1773,11 +1773,31 @@ export class ContentStore {
    * would hand one shared object to all 40 entries referencing the same block — a mutation
    * in one caller's `extract` (truncating a body for a search index, deleting a field) would
    * silently rewrite it for every sibling, and both `list: true` elements of `[id, id]` would
-   * be the same instance. Uncached resolution has no such hazard, because each pass reparses
-   * the file into a fresh object graph; the copy is what keeps the cache a pure performance
-   * optimization instead of a semantic change. It is also nowhere near the cost it replaces:
-   * cloning a small already-parsed object is far cheaper than the filesystem read plus
-   * JSON/frontmatter parse the memo avoids, so the batch win survives essentially intact.
+   * be the same instance. The copy is what keeps the cache a pure performance optimization
+   * instead of a semantic change.
+   *
+   * Note the uncached path is NOT the clean baseline it looks like. For a json/yaml target it
+   * genuinely reparses fresh per occurrence, but for md/mdx gray-matter serves `data` from a
+   * process-global content-keyed cache, so `resolveSingleReferenceOnce`'s top-level spread
+   * severs exactly one level and NESTED frontmatter objects alias across occurrences, calls and
+   * requests. That is pre-existing `read()` behavior and out of scope here — deliberately, since
+   * touching it would change `read()` — but it means the cached path is the safer of the two,
+   * not a relaxation of a guarantee the uncached one provides. See
+   * `.claude/future-tasks/graymatter-cache-shared-frontmatter.md`.
+   *
+   * What the copy costs, measured rather than assumed (2000 occurrences of one target, local
+   * disk, so every read hits the page cache — the friendliest possible case for NOT caching):
+   * a snippet-sized target is ~63x cheaper to clone than to re-read-and-parse, while a 265KB
+   * JSON target is ~0.8x, i.e. cloning is marginally SLOWER than reparsing it. So the win is
+   * large in the case this exists for and roughly a wash at the pathological end, never a
+   * blow-up. Two things keep the bad end narrow: an md/mdx target resolves to its FRONTMATTER
+   * only (`read()` puts the body on `doc.body`, which is not spread in
+   * `resolveSingleReferenceOnce`), so body size is irrelevant no matter how long the document
+   * — only a genuinely huge JSON/YAML target reaches the wash. And in the deployment this
+   * targets, content lives on EFS/NFS where the syscall the memo removes dominates parse and
+   * clone alike, which the local-disk numbers above understate badly. Correctness is the
+   * reason for the copy regardless; the numbers are here so nobody has to re-derive them
+   * before touching this.
    */
   private resolveSingleReference(
     id: string,
@@ -1795,7 +1815,9 @@ export class ContentStore {
       cache.set(id, pending)
     }
     // The cached promise always has this handler attached, so it is never an unhandled
-    // rejection; entry data is plain parsed JSON/YAML/frontmatter, so it is always cloneable.
+    // rejection; entry data is plain parsed JSON/YAML/frontmatter, so it is always cloneable
+    // (verified against real parser output incl. `!!timestamp` Dates — the sole shape not
+    // preserved exactly is a `!!binary` Buffer, which clones to a plain Uint8Array).
     return pending.then((resolved) => (resolved === null ? null : structuredClone(resolved)))
   }
 
