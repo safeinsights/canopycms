@@ -43,7 +43,12 @@ Lambda (VPC, no internet)               EC2 Worker (t4g.nano spot)
 **Why this architecture?**
 
 - **No NAT Gateway** — Lambda has no internet access, saving ~$32/month
-- **Secrets stay on the worker** — Lambda only has public keys and config
+- **Secrets stay on the worker** — Lambda only has public keys and config. The worker
+  also never persists the GitHub bot token on the shared filesystem: `remote.git` is
+  cloned under a staging name and renamed into place only after the token-bearing
+  `remote.origin.url` is removed and verified gone, and an existing `remote.git` is
+  re-checked (and scrubbed) on every worker start, so a token left by an older build
+  self-heals
 - **Same app, two builds** — The adopter's Next.js app builds as both a static export (public site) and a standalone server (CMS Lambda)
 - **Preview works** — The CMS Lambda renders the same React components as the public site, so the editor's preview iframe shows accurate previews
 
@@ -52,7 +57,7 @@ Lambda (VPC, no internet)               EC2 Worker (t4g.nano spot)
 - AWS account with CDK bootstrapped
 - GitHub repo with your site content
 - Clerk account (or plan to use dev auth for testing)
-- Node.js 20+
+- Node.js 22+
 - A `next` version within `canopycms-next`'s peer dependency range (see [README Requirements](../README.md#requirements)) — in particular, avoid `16.2.x`: it fork-bombs `next dev --turbopack` on any app that imports CSS (including the CanopyCMS editor's Mantine styles), which you'll hit locally before you ever get to Step 3
 
 ## Step 1: Add CanopyCMS to Your App

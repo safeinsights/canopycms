@@ -1170,6 +1170,87 @@ describe('CmsWorker.ensureRemoteGit() empty-remote guard', () => {
     await internals.ensureRemoteGit()
     expect(await fileExists(remoteGitPath())).toBe(true)
   })
+
+  // -------------------------------------------------------------------------
+  // The GitHub bot token must never persist in remote.git's config on EFS.
+  //
+  // `git clone https://x-access-token:<token>@github.com/...` records that URL
+  // verbatim as remote.origin.url. remote.git lives on shared EFS, so a token
+  // left there falsifies the deployment's security model ("If Lambda is
+  // compromised ... cannot push to GitHub" / "Secrets stay on the worker"): a
+  // compromised Lambda could read it off EFS and exfiltrate it by writing it
+  // into branch content the worker then pushes.
+  // -------------------------------------------------------------------------
+  const readOriginUrl = async (gitDir: string): Promise<string | null> => {
+    try {
+      // simple-git resolves with '' (rather than throwing) when the key is
+      // absent, so empty must be read as absent -- see scrubPersistedRemote.
+      const url = (
+        await simpleGit({ baseDir: gitDir }).raw(['config', '--get', 'remote.origin.url'])
+      ).trim()
+      return url === '' ? null : url
+    } catch {
+      return null
+    }
+  }
+
+  const TOKEN = 'ghp_supersecrettoken123'
+
+  it('leaves no remote.origin.url in a freshly cloned remote.git', async () => {
+    // The fixture URL is a local path rather than a tokenized https URL (no
+    // network in tests), but the property under test is the same one that
+    // makes a token safe: after ensureRemoteGit, the config records NO remote
+    // URL at all, so there is nothing for a token to be embedded in.
+    await pushInitialCommitToFixture('seed-token')
+
+    await (makeGuardWorker() as unknown as RemoteGitInternals).ensureRemoteGit()
+
+    expect(await readOriginUrl(remoteGitPath())).toBeNull()
+  })
+
+  it('scrubs a token an earlier run persisted, instead of fast-returning past it', async () => {
+    // The historic-leak case: a pre-fix worker (or a clone interrupted between
+    // `git clone` and the scrub) left the token in the config. The old
+    // already-exists path returned without ever re-checking, so a token that
+    // survived once survived forever.
+    await pushInitialCommitToFixture('seed-legacy')
+    await simpleGit().clone(fixtureRemote, remoteGitPath(), ['--bare'])
+    const poisonedUrl = `https://x-access-token:${TOKEN}@github.com/test-owner/test-repo.git`
+    await simpleGit({ baseDir: remoteGitPath() }).raw(['config', 'remote.origin.url', poisonedUrl])
+    expect(await readOriginUrl(remoteGitPath())).toBe(poisonedUrl)
+
+    await (makeGuardWorker() as unknown as RemoteGitInternals).ensureRemoteGit()
+
+    expect(await readOriginUrl(remoteGitPath())).toBeNull()
+    // And the repo itself is preserved -- scrubbing must not be a deletion.
+    expect(await fileExists(remoteGitPath())).toBe(true)
+  })
+
+  it('never publishes remote.git under its real name when the clone fails', async () => {
+    // Cloning into a staging path and renaming only after the scrub is what
+    // guarantees remote.git never exists in a token-bearing state. On failure
+    // neither the staging dir nor remote.git may be left behind.
+    const worker = makeGuardWorker() // fixture is empty -> guard rejects
+
+    await expect((worker as unknown as RemoteGitInternals).ensureRemoteGit()).rejects.toThrow()
+
+    expect(await fileExists(remoteGitPath())).toBe(false)
+    expect(await fileExists(`${remoteGitPath()}.cloning`)).toBe(false)
+  })
+
+  it('recovers from a staging directory left behind by a crashed clone', async () => {
+    await pushInitialCommitToFixture('seed-staging')
+    // A SIGKILL between `git clone` and the rename leaves this behind.
+    const staging = `${remoteGitPath()}.cloning`
+    await fs.mkdir(staging, { recursive: true })
+    await fs.writeFile(path.join(staging, 'junk'), 'partial clone debris')
+
+    await (makeGuardWorker() as unknown as RemoteGitInternals).ensureRemoteGit()
+
+    expect(await fileExists(remoteGitPath())).toBe(true)
+    expect(await fileExists(staging)).toBe(false)
+    expect(await readOriginUrl(remoteGitPath())).toBeNull()
+  })
 })
 
 // ---------------------------------------------------------------------------
