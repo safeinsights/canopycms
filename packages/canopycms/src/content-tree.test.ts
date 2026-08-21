@@ -1086,6 +1086,98 @@ describe('buildContentTree', () => {
     void _typecheckOnly
     expect(true).toBe(true)
   })
+
+  // -------------------------------------------------------------------------
+  // resolveReferences (adopter request #16)
+  // -------------------------------------------------------------------------
+
+  describe('resolveReferences', () => {
+    /**
+     * A `snippets` collection with one shared entry, and a `docs` collection whose `doc`
+     * type references it. `docs` gets an `index` entry too, so the same run covers the
+     * `meta.indexEntry` handed to a collection's `extract` as well as the entry nodes.
+     */
+    async function createReferencingTree() {
+      const contentDir = path.join(tempDir, 'content')
+      await fs.mkdir(contentDir)
+
+      const { dir: snippetsDir } = await createCollection(contentDir, 'snippets')
+      const snippetId = await createEntry(snippetsDir, 'ctaSnippet', 'signup', 'json', {
+        title: 'Sign up today',
+      })
+
+      const { dir: docsDir } = await createCollection(contentDir, 'docs')
+      await createEntry(docsDir, 'doc', 'index', 'json', { title: 'Docs', snippet: snippetId })
+      await createEntry(docsDir, 'doc', 'guide', 'json', { title: 'Guide', snippet: snippetId })
+
+      const schema: RootCollectionConfig = {
+        collections: [
+          {
+            name: 'snippets',
+            path: 'snippets',
+            entries: [
+              {
+                name: 'ctaSnippet',
+                format: 'json',
+                schema: [{ name: 'title', type: 'string' }],
+              },
+            ],
+          },
+          {
+            name: 'docs',
+            path: 'docs',
+            entries: [
+              {
+                name: 'doc',
+                format: 'json',
+                schema: [
+                  { name: 'title', type: 'string' },
+                  { name: 'snippet', type: 'reference', entryTypes: ['ctaSnippet'] },
+                ],
+              },
+            ],
+          },
+        ],
+      }
+
+      return { snippetId, flat: flattenSchema(schema, 'content') }
+    }
+
+    it('leaves references as bare ids by default', async () => {
+      const { snippetId, flat } = await createReferencingTree()
+
+      const tree = await buildContentTree<{ snippet: unknown }>(tempDir, flat, 'content', {
+        extract: (data) => ({ snippet: data.snippet }),
+      })
+
+      const docs = tree.find((n) => n.logicalPath === 'content/docs')!
+      const guide = docs.children!.find((n) => n.logicalPath === 'content/docs/guide')!
+      expect(guide.fields!.snippet).toBe(snippetId)
+    })
+
+    it('resolves references in both entry nodes and meta.indexEntry when opted in', async () => {
+      const { flat } = await createReferencingTree()
+
+      let indexEntrySnippet: unknown
+      const tree = await buildContentTree<{ snippet: unknown }>(tempDir, flat, 'content', {
+        resolveReferences: true,
+        extract: (data, meta) => {
+          if (meta.kind === 'collection' && meta.logicalPath === 'content/docs') {
+            const indexData = meta.indexEntry?.data as Record<string, unknown> | undefined
+            indexEntrySnippet = indexData?.snippet
+          }
+          return { snippet: data.snippet }
+        },
+      })
+
+      const docs = tree.find((n) => n.logicalPath === 'content/docs')!
+      const guide = docs.children!.find((n) => n.logicalPath === 'content/docs/guide')!
+      expect(guide.fields!.snippet).toMatchObject({ slug: 'signup', title: 'Sign up today' })
+      // The index entry reaches `extract` through a different path than the entry nodes;
+      // resolving at the shared listVisibleEntries choke point is what covers both.
+      expect(indexEntrySnippet).toMatchObject({ slug: 'signup', title: 'Sign up today' })
+    })
+  })
 })
 
 // ---------------------------------------------------------------------------

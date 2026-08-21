@@ -6,9 +6,10 @@ import os from 'node:os'
 import type { ContentId } from './paths/types'
 
 import { sortByOrder, parseTypedFilename, listEntries } from './content-listing'
+import { ContentStore } from './content-store'
 import { flattenSchema } from './config/flatten'
 import { generateId } from './id'
-import type { EntryTypeConfig, RootCollectionConfig } from './config'
+import type { EntryTypeConfig, FieldConfig, RootCollectionConfig } from './config'
 
 // ---------------------------------------------------------------------------
 // sortByOrder
@@ -980,6 +981,282 @@ describe('listEntries', () => {
       const entries = await listEntries(tempDir, flat, 'content')
       expect(entries).toHaveLength(1)
       expect(entries[0].slug).toBe('hello')
+    })
+  })
+
+  // -------------------------------------------------------------------------
+  // resolveReferences (adopter request #16)
+  // -------------------------------------------------------------------------
+
+  describe('resolveReferences', () => {
+    /**
+     * A `snippets` collection holding one shared entry, plus a `posts` collection whose
+     * `post` type carries `refField`. Returns the snippet's content ID so a test can write
+     * it into a post's frontmatter as a reference value.
+     */
+    async function createSnippetAndPosts(refField: FieldConfig) {
+      const contentDir = path.join(tempDir, 'content')
+      await fs.mkdir(contentDir)
+
+      const { dir: snippetsDir } = await createCollection(contentDir, 'snippets')
+      const snippetId = await createEntry(snippetsDir, 'ctaSnippet', 'signup', 'json', {
+        title: 'Sign up today',
+        ctaText: 'Get started',
+      })
+
+      const { dir: postsDir } = await createCollection(contentDir, 'posts')
+
+      const schema: RootCollectionConfig = {
+        collections: [
+          {
+            name: 'snippets',
+            path: 'snippets',
+            entries: [
+              {
+                name: 'ctaSnippet',
+                format: 'json',
+                schema: [
+                  { name: 'title', type: 'string' },
+                  { name: 'ctaText', type: 'string' },
+                ],
+              },
+            ],
+          },
+          {
+            name: 'posts',
+            path: 'posts',
+            entries: [
+              {
+                name: 'post',
+                format: 'json',
+                schema: [{ name: 'title', type: 'string' }, refField],
+              },
+            ],
+          },
+        ],
+      }
+
+      return { contentDir, postsDir, snippetId, schema }
+    }
+
+    const referenceField: FieldConfig = {
+      name: 'snippet',
+      type: 'reference',
+      entryTypes: ['ctaSnippet'],
+    }
+
+    it('leaves a reference field as its bare id string by default', async () => {
+      const { postsDir, snippetId, schema } = await createSnippetAndPosts(referenceField)
+      await createEntry(postsDir, 'post', 'hello', 'json', {
+        title: 'Hello',
+        snippet: snippetId,
+      })
+
+      const entries = await listEntries(tempDir, flattenSchema(schema, 'content'), 'content')
+
+      const post = entries.find((e) => e.slug === 'hello')!
+      expect(post.data.snippet).toBe(snippetId)
+    })
+
+    it('resolves a reference field to the referenced entry data when opted in', async () => {
+      const { postsDir, snippetId, schema } = await createSnippetAndPosts(referenceField)
+      await createEntry(postsDir, 'post', 'hello', 'json', {
+        title: 'Hello',
+        snippet: snippetId,
+      })
+
+      const entries = await listEntries(tempDir, flattenSchema(schema, 'content'), 'content', {
+        resolveReferences: true,
+      })
+
+      const post = entries.find((e) => e.slug === 'hello')!
+      expect(post.data.snippet).toMatchObject({
+        id: snippetId,
+        slug: 'signup',
+        title: 'Sign up today',
+        ctaText: 'Get started',
+      })
+    })
+
+    it('resolves a reference nested inside a block template', async () => {
+      const { postsDir, snippetId, schema } = await createSnippetAndPosts({
+        name: 'blocks',
+        type: 'block',
+        templates: [{ name: 'sharedCta', fields: [referenceField] }],
+      })
+      await createEntry(postsDir, 'post', 'hello', 'json', {
+        title: 'Hello',
+        blocks: [{ template: 'sharedCta', value: { snippet: snippetId } }],
+      })
+
+      const entries = await listEntries(tempDir, flattenSchema(schema, 'content'), 'content', {
+        resolveReferences: true,
+      })
+
+      const blocks = entries.find((e) => e.slug === 'hello')!.data.blocks as Array<{
+        value: { snippet: Record<string, unknown> }
+      }>
+      expect(blocks[0].value.snippet).toMatchObject({ title: 'Sign up today' })
+    })
+
+    it('resolves references nested inside object fields and inline groups', async () => {
+      const { postsDir, snippetId, schema } = await createSnippetAndPosts({
+        name: 'meta',
+        type: 'object',
+        fields: [{ name: 'inner', type: 'group', fields: [referenceField] }],
+      })
+      await createEntry(postsDir, 'post', 'hello', 'json', {
+        title: 'Hello',
+        meta: { snippet: snippetId },
+      })
+
+      const entries = await listEntries(tempDir, flattenSchema(schema, 'content'), 'content', {
+        resolveReferences: true,
+      })
+
+      const meta = entries.find((e) => e.slug === 'hello')!.data.meta as {
+        snippet: Record<string, unknown>
+      }
+      expect(meta.snippet).toMatchObject({ title: 'Sign up today' })
+    })
+
+    it('resolves every element of a list: true reference array', async () => {
+      const { postsDir, snippetId, schema } = await createSnippetAndPosts({
+        ...referenceField,
+        list: true,
+      })
+      await createEntry(postsDir, 'post', 'hello', 'json', {
+        title: 'Hello',
+        snippet: [snippetId, snippetId],
+      })
+
+      const entries = await listEntries(tempDir, flattenSchema(schema, 'content'), 'content', {
+        resolveReferences: true,
+      })
+
+      const refs = entries.find((e) => e.slug === 'hello')!.data.snippet as Array<
+        Record<string, unknown>
+      >
+      expect(refs).toHaveLength(2)
+      expect(refs[0]).toMatchObject({ title: 'Sign up today' })
+      expect(refs[1]).toMatchObject({ title: 'Sign up today' })
+    })
+
+    it('resolves a dangling reference to null rather than throwing', async () => {
+      const { postsDir, schema } = await createSnippetAndPosts(referenceField)
+      await createEntry(postsDir, 'post', 'hello', 'json', {
+        title: 'Hello',
+        snippet: generateId(),
+      })
+
+      const entries = await listEntries(tempDir, flattenSchema(schema, 'content'), 'content', {
+        resolveReferences: true,
+      })
+
+      expect(entries.find((e) => e.slug === 'hello')!.data.snippet).toBeNull()
+    })
+
+    it('hands resolved data to extract and filter, not the raw id', async () => {
+      const { postsDir, snippetId, schema } = await createSnippetAndPosts(referenceField)
+      await createEntry(postsDir, 'post', 'hello', 'json', {
+        title: 'Hello',
+        snippet: snippetId,
+      })
+
+      const seenByFilter: unknown[] = []
+      const entries = await listEntries<{ ctaText: unknown }>(
+        tempDir,
+        flattenSchema(schema, 'content'),
+        'content',
+        {
+          resolveReferences: true,
+          extract: (raw) => ({
+            ctaText: (raw.snippet as Record<string, unknown> | null)?.ctaText,
+          }),
+          filter: (item) => {
+            seenByFilter.push(item.data.ctaText)
+            return true
+          },
+        },
+      )
+
+      // The snippets collection has no reference field of its own, so its own entry
+      // extracts to undefined; the post is the one that matters here.
+      expect(entries.map((e) => e.data.ctaText)).toContain('Get started')
+      expect(seenByFilter).toContain('Get started')
+    })
+
+    it('reads a shared reference once per batch, not once per referencing entry', async () => {
+      const { postsDir, snippetId, schema } = await createSnippetAndPosts(referenceField)
+      for (const slug of ['a', 'b', 'c', 'd', 'e']) {
+        await createEntry(postsDir, 'post', slug, 'json', { title: slug, snippet: snippetId })
+      }
+
+      const readSpy = vi.spyOn(ContentStore.prototype, 'read')
+      try {
+        const entries = await listEntries(tempDir, flattenSchema(schema, 'content'), 'content', {
+          resolveReferences: true,
+        })
+
+        // All five posts resolved...
+        const posts = entries.filter((e) => e.entryType === 'post')
+        expect(posts).toHaveLength(5)
+        for (const post of posts) {
+          expect(post.data.snippet).toMatchObject({ title: 'Sign up today' })
+        }
+        // ...off a single read of the shared snippet. Without the per-batch cache this
+        // is 5, and a real search-index build over thousands of entries scales with it.
+        expect(readSpy).toHaveBeenCalledTimes(1)
+      } finally {
+        readSpy.mockRestore()
+      }
+    })
+
+    it('never resolves references for an entry the visibility predicate denies', async () => {
+      const { postsDir, snippetId, schema } = await createSnippetAndPosts(referenceField)
+      await createEntry(postsDir, 'post', 'denied', 'json', {
+        title: 'Denied',
+        snippet: snippetId,
+      })
+
+      const readSpy = vi.spyOn(ContentStore.prototype, 'read')
+      try {
+        const entries = await listEntries(tempDir, flattenSchema(schema, 'content'), 'content', {
+          resolveReferences: true,
+        })
+        expect(entries.some((e) => e.slug === 'denied')).toBe(true)
+        readSpy.mockClear()
+
+        const filtered = await listEntries(
+          tempDir,
+          flattenSchema(schema, 'content'),
+          'content',
+          { resolveReferences: true },
+          { shouldInclude: (physicalPath) => !physicalPath.includes('post.denied.') },
+        )
+
+        expect(filtered.some((e) => e.slug === 'denied')).toBe(false)
+        // A denied entry's references cost nothing and leak nothing.
+        expect(readSpy).not.toHaveBeenCalled()
+      } finally {
+        readSpy.mockRestore()
+      }
+    })
+
+    it('builds no ContentStore at all when resolution is off', async () => {
+      const { postsDir, snippetId, schema } = await createSnippetAndPosts(referenceField)
+      await createEntry(postsDir, 'post', 'hello', 'json', {
+        title: 'Hello',
+        snippet: snippetId,
+      })
+
+      const readSpy = vi.spyOn(ContentStore.prototype, 'read')
+      try {
+        await listEntries(tempDir, flattenSchema(schema, 'content'), 'content')
+        expect(readSpy).not.toHaveBeenCalled()
+      } finally {
+        readSpy.mockRestore()
+      }
     })
   })
 })

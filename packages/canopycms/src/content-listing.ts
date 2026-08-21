@@ -20,7 +20,12 @@ import { isNotFoundError, getErrorMessage } from './utils/error'
 import { createDebugLogger } from './utils/debug'
 import { isValidId } from './id'
 import type { LogicalPath, PhysicalPath, Slug, ContentId } from './paths/types'
-import { ContentStoreError } from './content-store'
+import {
+  ContentStore,
+  ContentStoreError,
+  createReferenceResolveCache,
+  type ReferenceResolveCache,
+} from './content-store'
 import { isBuildMode } from './build-mode'
 
 const log = createDebugLogger({ prefix: 'ContentListing' })
@@ -245,6 +250,33 @@ export interface ListEntriesOptions<T = Record<string, unknown>> {
   rootPath?: string
   /** Custom sort. */
   sort?: (a: ListEntriesItem<T>, b: ListEntriesItem<T>) => number
+  /**
+   * Resolve `reference` fields to the referenced entry's data, the way
+   * `read()`/`readByUrlPath()` do — including references nested inside `object` fields,
+   * inline `group`s and block templates (so a shared/referenced block finally carries its
+   * snippet's content here). Off leaves them as the bare id string, or `null`.
+   *
+   * **Defaults to `false`, unlike `read()`, which defaults to `true`.** The asymmetry is
+   * deliberate rather than an oversight. `data` is `T` and `extract` receives an untyped
+   * `Record<string, unknown>`, so turning this on changes a reference from `'a1b2c3d4e5f6'`
+   * to `{ id, slug, collection, ...data }` with no compile error anywhere to catch it — an
+   * `/authors/${data.author}` template silently becomes `/authors/[object Object]`. Opting
+   * in is a decision you make per call site, next to the code that reads the field. It also
+   * keeps the common batch uses free: `collectStaticPaths` discards `data` outright, and
+   * `build/generate-ai-content.ts` lists purely to validate entry shapes.
+   *
+   * **Cost, and why it is bounded.** Resolution needs a `ContentStore` and its ContentId
+   * index, so turning it on adds one index scan per call plus one read per DISTINCT
+   * referenced entry — not per referencing entry. A single {@link ReferenceResolveCache}
+   * spans the whole call, so a shared block referenced by 40 pages is read once, not 40
+   * times. Nothing is constructed and nothing is scanned when this is off.
+   *
+   * **Path ACLs are not applied to the resolved targets**, matching `read()` exactly: a
+   * reference can resolve to an entry the user could not `read()` directly. The entries
+   * being LISTED are still ACL-filtered as always, and a filtered-out entry is never
+   * resolved at all.
+   */
+  resolveReferences?: boolean
 }
 
 /**
@@ -264,6 +296,59 @@ export interface ContentVisibilityOptions {
   /** Return false to drop an entry. Receives the entry's branch-root-relative physical path. */
   shouldInclude?: (physicalPath: PhysicalPath) => boolean
 }
+
+/** A collection node from the flattened schema. */
+export type CollectionSchemaItem = Extract<FlatSchemaItem, { type: 'collection' }>
+
+// ---------------------------------------------------------------------------
+// Reference resolution for batch listings
+// ---------------------------------------------------------------------------
+
+/**
+ * Build the `ContentStore` + shared cache that a batch listing resolves references through.
+ *
+ * Constructed lazily by each listing surface, and ONLY when the caller opted in — a store
+ * builds a ContentId index on first use, which is a full scan of the content tree, and the
+ * default (`resolveReferences` off) must stay a pure filesystem walk with no index at all.
+ *
+ * One store and one cache per listing call, not per collection: the cache is the reason a
+ * shared block referenced from 40 pages costs one read instead of 40, so it has to span the
+ * whole batch. Per-call construction is the established shape here — content-reader.ts's
+ * `resolveStore` builds a store per read, and content-index-registry.ts holds stores through
+ * `WeakRef` + a `FinalizationRegistry` precisely so short-lived instances stay collectable.
+ */
+export const createReferenceResolver = (
+  branchRoot: string,
+  flatSchema: FlatSchemaItem[],
+  contentRootName: string,
+): { store: ContentStore; cache: ReferenceResolveCache } => ({
+  store: new ContentStore(branchRoot, flatSchema, { contentRootName }),
+  cache: createReferenceResolveCache(),
+})
+
+/**
+ * Resolve `reference` fields in a collection's listed entries, in place of their raw data.
+ *
+ * Shared by `listEntries` and `buildContentTree` so both opt into resolution through one
+ * implementation. Each entry resolves against its OWN entry type's field list, since that is
+ * what says which fields are references at all; an entry whose type has no resolvable schema
+ * is returned untouched rather than guessed at.
+ */
+export const resolveCollectionItemReferences = async (
+  items: CollectionListItem[],
+  collection: CollectionSchemaItem,
+  resolver: { store: ContentStore; cache: ReferenceResolveCache },
+): Promise<CollectionListItem[]> =>
+  Promise.all(
+    items.map(async (item) => {
+      const fields = collection.entries?.find((e) => e.name === item.entryType)?.schema
+      if (!fields) return item
+      return {
+        ...item,
+        data: await resolver.store.resolveReferences(item.data, fields, resolver.cache),
+      }
+    }),
+  )
 
 /**
  * List all content entries as a flat array.
@@ -291,7 +376,7 @@ export interface ContentVisibilityOptions {
  * @param branchRoot - Absolute path to the branch workspace root
  * @param flatSchema - Flattened schema items (from flattenSchema)
  * @param contentRootName - The content root name (e.g. "content")
- * @param options - Listing options (extract, filter, rootPath, sort)
+ * @param options - Listing options (extract, filter, rootPath, sort, resolveReferences)
  * @param visibility - Internal path-ACL predicate; see `ContentVisibilityOptions`
  */
 export async function listEntries<T = Record<string, unknown>>(
@@ -308,7 +393,7 @@ export async function listEntries<T = Record<string, unknown>>(
 
   // Find all collections under rootPath
   const collections = flatSchema.filter(
-    (item): item is Extract<FlatSchemaItem, { type: 'collection' }> =>
+    (item): item is CollectionSchemaItem =>
       item.type === 'collection' &&
       item.entries !== undefined &&
       (item.logicalPath === rootPath || item.logicalPath.startsWith(`${rootPath}/`)),
@@ -319,13 +404,24 @@ export async function listEntries<T = Record<string, unknown>>(
   // data never reaches `extract` (let alone the returned items).
   const shouldInclude = visibility?.shouldInclude
   const skippedFiles: SkippedListingFile[] = []
+  // One store + cache for the whole call, or nothing at all when the caller did not opt in.
+  // See the `resolveReferences` option for the cost this buys back.
+  const resolver = options?.resolveReferences
+    ? createReferenceResolver(branchRoot, flatSchema, contentRootName)
+    : null
   const collectionResults = await Promise.all(
     collections.map(async (collection) => {
       const entries = await listCollectionEntries(branchRoot, collection, (file) =>
         skippedFiles.push(file),
       )
       const visible = shouldInclude ? entries.filter((e) => shouldInclude(e.physicalPath)) : entries
-      return visible.map((entry) => ({ entry, collection }))
+      // Resolve AFTER the visibility filter (a denied entry is never resolved, so its
+      // references cost nothing and leak nothing) and BEFORE the mapping below, so
+      // `extract` and `filter` both see resolved data — which is the entire point.
+      const resolved = resolver
+        ? await resolveCollectionItemReferences(visible, collection, resolver)
+        : visible
+      return resolved.map((entry) => ({ entry, collection }))
     }),
   )
 

@@ -123,6 +123,73 @@ copy of the schema's `options`, free to drift from it silently; the schema is no
 single source. Also deletable: `typeof v === 'string'` guards that existed only to
 strip the impossible `number`.
 
+### `listEntries()` and `buildContentTree()` can now resolve `reference` fields (#16)
+
+_Adopter request log item 16. This supersedes the caveat shipped in `0.0.63` under
+"Shared/referenced blocks", whose "Now deletable" list said, correctly at the time, that
+there was nothing to delete because the gap was real. There is now._
+
+**What changed.** Both batch listing surfaces take a `resolveReferences` option. Turn it on
+and every `reference` field in the returned `data` is resolved to the referenced entry —
+including references nested inside `object` fields, inline `group`s and block templates, so a
+shared/referenced block finally carries its snippet's content in a listing. Off (the default),
+they stay what they have always been: a bare id string, or `null`.
+
+`collectRoutableEntries` takes the same option and forwards it. `collectStaticPaths` does not,
+because it discards `data` outright.
+
+**The default is `false`, and `read()`'s is `true`.** That asymmetry is deliberate. A resolved
+reference changes from `'a1b2c3d4e5f6'` to `{ id, slug, collection, ...data }`, and a listing's
+`data` is your own generic parameter while `extract` receives an untyped record — so a flipped
+default would have changed the shape under every existing call site with no compile error to
+catch it, turning an `/authors/${data.author}` template into `/authors/[object Object]` at
+runtime. Opting in per call site keeps that decision next to the code that reads the field.
+
+**Cost.** Resolution needs the ContentId index, so an opted-in call adds one index scan plus
+one read per **distinct** referenced entry — not per referencing entry. A single per-call cache
+spans the whole batch, so a shared block referenced from 40 pages is read once, and a
+search-index build over thousands of entries does not multiply by its reference count. Nothing
+is constructed and nothing is scanned when the option is off, so existing calls are unaffected.
+
+Two things worth knowing before you switch it on. Path ACLs are **not** applied to the resolved
+targets — matching `read()` exactly, so a reference can resolve to an entry the current user
+could not `read()` directly; the entries being listed are still ACL-filtered as always, and a
+filtered-out entry is never resolved at all. And within one call, a given id resolves once and
+every occurrence shares that answer, so a batch is internally consistent rather than
+re-deciding per page.
+
+The admin entries API (`GET /:branch/entries`) deliberately does not resolve: it is a paginated
+table that never reads inside a reference, and resolution there would run before pagination on
+a request path.
+
+**To adopt.**
+
+```ts
+// A search index that must see shared-block content:
+const entries = await ctx.listEntries({ resolveReferences: true })
+
+// Or through the static helper:
+const routable = await collectRoutableEntries(await getCanopyForBuild(), {
+  resolveReferences: true,
+})
+```
+
+Leave it off for `generateStaticParams`, sitemaps, and anything else that only needs paths,
+slugs or `updatedAt`.
+
+**Now deletable.**
+
+- **A second `read()` pass bolted onto a `listEntries()`-derived surface.** The shape is a
+  build script or route that lists entries, walks the results looking for id-shaped strings or
+  empty block values, then issues a follow-up single-entry read per hit to fill them in —
+  usually with its own ad-hoc memo table so a shared block is not fetched repeatedly. All of it
+  goes: pass the option, delete the second pass and the memo.
+- **A surface deliberately rebuilt on `read()`/`readByUrlPath()` to dodge the gap** — a search
+  index or feed that enumerates paths and then reads each entry individually, purely because
+  the listing could not resolve references. It can go back to a single listing call.
+- **Nothing where the listing never touched a reference field.** Leaving the option off is the
+  right answer there, not an oversight to correct.
+
 <!--
 Template for each entry — copy, don't improvise:
 
