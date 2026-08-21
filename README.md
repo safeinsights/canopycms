@@ -692,7 +692,12 @@ Content files can carry YAML comments — including explanatory notes that code 
 
 The content itself is still fully determined by the save: a field the editor cleared is cleared in the file. Only comments are carried across from what was already on disk.
 
-Two limits worth knowing. A value that changes shape entirely — a mapping replaced by a single value — keeps the comment attached to it but not comments that were attached inside it, because the structure those described is gone. And if a file's existing bytes do not parse as YAML, the save still succeeds by rewriting the file from scratch, which loses the comments; the alternative would be an editor unable to save at all.
+Some limits worth knowing:
+
+- A comment written **before the first item of a list** belongs to the list, not to that item, and stays at the head of the list however the items change. That is the right reading of "curated by hand, order matters"; comments before any _later_ item travel with their item.
+- A list item that is **deleted and replaced in the same save** does not pass its comment on. There is nothing in a save that says a new item is the old one edited, and leaving a "do not delete this" note above unrelated content is worse than losing it. Editing an item in place keeps its comment.
+- A value that **changes shape entirely** — a mapping replaced by a single value — keeps the comment attached to it, but not comments that were attached inside it, because the structure those described is gone.
+- If a file's existing bytes **do not parse as YAML**, the save still succeeds by rewriting the file from scratch, which loses the comments. The alternative would be an editor unable to save at all.
 
 ### Content Keys Not in the Schema
 

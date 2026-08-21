@@ -1134,6 +1134,14 @@ export class ContentStore {
           // withContentWriteExclusion ([SYNC-C1]), and after the expectedVersion stat above --
           // so the bytes read here are the bytes that OCC check validated, and no rebase can be
           // running against this branch. Do not hoist it out of the critical section.
+          //
+          // INVARIANT, and the one case that does NOT preserve comments: this reads the path
+          // being WRITTEN. A relocating write -- one where the ID resolves to a different
+          // relativePath, so the block below unlinks `staleOldAbsPath` -- finds nothing at the
+          // new path and falls back to a plain stringify, losing the old file's comments. Latent
+          // today: the editor renames through renameEntry(), which link()s the bytes across
+          // intact, and no caller passes `existingId`. If a relocating write ever becomes
+          // reachable, read the ID's current path here instead of `absolutePath`.
           const existingRaw =
             input.format === 'json' ? undefined : await readFileIfExists(absolutePath)
 

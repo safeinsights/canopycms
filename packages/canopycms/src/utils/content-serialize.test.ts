@@ -160,6 +160,83 @@ describe('serializeYaml', () => {
     expect(out).toContain('title: New')
   })
 
+  it('serialises a Date as a timestamp even when a map is currently in that slot', () => {
+    // A class instance is not a record. Walking its (empty) own keys emitted `{}` and silently
+    // replaced the value -- the one way a write could corrupt content rather than just lose a
+    // comment. Reachable from server-side callers (build scripts, migrations), not from HTTP.
+    const iso = '2024-01-15T00:00:00.000Z'
+    expect(serializeYaml({ d: new Date(iso) }, 'd:\n  x: 1\n')).toBe(
+      yamlStringify({ d: new Date(iso) }),
+    )
+    expect(serializeYaml({ d: new Date(iso) }, 'd: 1\n')).toBe(yamlStringify({ d: new Date(iso) }))
+  })
+
+  it('omits an explicitly-undefined key rather than writing null over the old value', () => {
+    // `Object.keys` reports it; JSON.stringify and yaml.stringify both drop it. The reconcile
+    // path must agree with the create path, or "the key set matches the payload" is only
+    // approximately true.
+    expect(serializeYaml({ a: undefined })).toBe('{}\n')
+    expect(serializeYaml({ a: undefined }, 'a: 1\n')).toBe('{}\n')
+    expect(serializeYaml({ a: 1, b: undefined }, 'a: 0\nb: 2\n')).toBe('a: 1\n')
+  })
+
+  it('does not let a deleted list item leave its comment on newly-inserted content', () => {
+    // A save that both removes an item and adds one has no identity information linking them.
+    // Pairing them positionally moved "do not delete" onto a brand-new block -- silently, and
+    // over exactly the kind of comment this whole change exists to protect.
+    const raw = `items:
+  # about A
+  - name: a
+  # about B -- do not delete
+  - name: b
+`
+    const out = serializeYaml({ items: [{ name: 'c' }, { name: 'a' }] }, raw)
+    expect(out).toContain('- name: c')
+    expect(out).toContain('- name: a')
+    // Neither surviving comment may sit above the new item.
+    const newItemBlock = out.slice(out.indexOf('- name: c'))
+    expect(newItemBlock).not.toContain('do not delete')
+    expect(out.indexOf('do not delete')).toBeLessThan(out.indexOf('- name: c'))
+  })
+
+  it('still carries a comment across an edit in place at the same index', () => {
+    const raw = `items:
+  # about A
+  - name: a
+  # about B
+  - name: b
+`
+    const out = serializeYaml({ items: [{ name: 'a' }, { name: 'b2' }] }, raw)
+    expect(out).toContain('# about B')
+    expect(out).toContain('- name: b2')
+    expect(out.indexOf('# about B')).toBeLessThan(out.indexOf('- name: b2'))
+    expect(out).toContain('# about A')
+  })
+
+  it('keeps a non-leading item comment with its item when another is prepended', () => {
+    const raw = `items:
+  # about A
+  - name: a
+  # about B -- do not delete
+  - name: b
+`
+    const out = serializeYaml({ items: [{ name: 'new' }, { name: 'a' }, { name: 'b' }] }, raw)
+    expect(out.indexOf('- name: new')).toBeLessThan(out.indexOf('- name: a'))
+    // B moved from index 1 to index 2; its comment moved with it, not with the index.
+    expect(out.indexOf('do not delete')).toBeGreaterThan(out.indexOf('- name: a'))
+    expect(out.indexOf('do not delete')).toBeLessThan(out.indexOf('- name: b'))
+  })
+
+  it('treats a comment before the FIRST list item as a comment on the list', () => {
+    // `yaml` attaches a comment that leads a collection to the collection node, not to its first
+    // child (verified against parseDocument). So it stays at the head of the list whatever
+    // happens to the items -- which is the right reading of `# curated by hand, order matters`,
+    // and worth pinning because it is the one comment position that does NOT travel.
+    const raw = 'items:\n  # about the list\n  - a\n  - b\n'
+    const out = serializeYaml({ items: ['z', 'a', 'b'] }, raw)
+    expect(out.indexOf('# about the list')).toBeLessThan(out.indexOf('- z'))
+  })
+
   it('does not let a stale key on disk survive when the caller omits it', () => {
     const raw = 'title: Hi\nlegacySubtitle: gone # with its comment\n'
     const out = serializeYaml({ title: 'Hi' }, raw)

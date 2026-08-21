@@ -6,6 +6,8 @@ import {
   validateEntryData,
   type EntryFieldError,
 } from '../validation/entry-validator'
+import { findBodyFieldName } from '../utils/body-field'
+import { isDataOnlyFormat } from '../utils/format'
 
 /**
  * Framework-agnostic helpers for static-site generation. These produce neutral data structures
@@ -222,7 +224,15 @@ export interface InvalidBuildEntry {
  * `collectRoutableEntries<PostContent>`) can still be scanned — the scan re-guards the value
  * anyway, since on-disk data is never trusted.
  */
-type BuildScanItem = Pick<ListEntriesItem, 'entryPath' | 'schema'> & { data: unknown }
+type BuildScanItem = Pick<ListEntriesItem, 'entryPath' | 'schema'> & {
+  data: unknown
+  /**
+   * Only the unknown-key scan reads this, to recognise the md/mdx body key that `listEntries`
+   * merges into `data`. Optional so a caller assembling items by hand still typechecks; an
+   * absent format is treated as markdown-shaped, which errs toward under-reporting.
+   */
+  format?: ListEntriesItem['format']
+}
 
 /**
  * Deep-walk a plain data value (objects and arrays only — the shapes YAML/JSON parsing can
@@ -310,7 +320,16 @@ export function findEntriesWithUnknownKeys(
   for (const item of items) {
     if (!item.schema || item.schema.length === 0) continue
     const data = normalizeDatesDeep(item.data) as Record<string, unknown>
-    const fieldPaths = findUnknownKeys(item.schema, data)
+    // For md/mdx, `listEntries` merges the file's body into `data` under
+    // `findBodyFieldName(schema)` (readEntryData in content-listing.ts). When the schema declares
+    // an `isBody` field that name IS a schema field and this is a no-op -- but declaring one is
+    // optional, and with none the merge key falls back to the literal 'body', which the schema
+    // legitimately does not define. Without this the scan told every adopter whose md entry types
+    // omit `isBody` that their prose was a stale key to delete.
+    const bodyKey = isDataOnlyFormat(item.format ?? 'md')
+      ? undefined
+      : findBodyFieldName(item.schema)
+    const fieldPaths = findUnknownKeys(item.schema, data).filter((path) => path !== bodyKey)
     if (fieldPaths.length > 0) {
       found.push({ entryPath: item.entryPath, fieldPaths })
     }

@@ -41,8 +41,21 @@ interface CommentCarrier {
   spaceBefore?: boolean
 }
 
+/**
+ * True only for a PLAIN object — one that should be reconciled key-by-key against a YAML map.
+ *
+ * The prototype check is load-bearing, not defensive tidiness. A looser "object and not an array"
+ * test classifies a class instance as a record, and the reconciler then walks its (empty) own
+ * enumerable keys and emits `{}` — silently replacing the value. A `Date` is the case that
+ * actually occurs: HTTP payloads carry none, but `ContentStore.write` is also reachable from
+ * server-side callers (build scripts via `createBuildCanopy`, migrations), and `d: 2024-01-15`
+ * became `d: {}` on save. Anything non-plain falls through to `doc.createNode`, which serialises
+ * it exactly as the pre-fix `yaml.stringify` did.
+ */
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false
+  const proto: unknown = Object.getPrototypeOf(value)
+  return proto === Object.prototype || proto === null
 }
 
 /**
@@ -136,7 +149,12 @@ function reconcileMap(
   map: YAMLMap<unknown, unknown>,
   value: Record<string, unknown>,
 ): void {
-  const wanted = new Set(Object.keys(value))
+  // An explicitly-undefined key is NOT a key. `Object.keys` reports it, but both `JSON.stringify`
+  // and `yaml.stringify` omit it — so without this filter a key present on disk and set to
+  // `undefined` in the payload would be rewritten as `key: null` here while the create path
+  // dropped it entirely. Same rule on both paths, so "the key set matches the payload" holds
+  // exactly rather than approximately.
+  const wanted = new Set(Object.keys(value).filter((key) => value[key] !== undefined))
   const seen = new Set<string>()
 
   const retained: Pair<unknown, unknown>[] = []
@@ -152,7 +170,7 @@ function reconcileMap(
   map.items = retained
 
   for (const key of Object.keys(value)) {
-    if (seen.has(key)) continue
+    if (seen.has(key) || !wanted.has(key)) continue
     map.set(doc.createNode(key), doc.createNode(value[key]))
   }
 }
@@ -160,11 +178,22 @@ function reconcileMap(
 /**
  * Make a sequence's items match `value` exactly, aligning by VALUE first and position second.
  *
- * Aligning by value is what makes a reordered list carry its comments with the content they were
- * written about, instead of stranding `# placeholder cards` on whatever now happens to sit at
- * index 0. An item that matches an old item exactly reuses that node whole. Items with no match
- * fall back to reconciling against the leftover old nodes in order, which is what carries a
- * comment across an edit-in-place.
+ * A list has no item identity — nothing in the payload says "this is the item that used to be
+ * third" — so any alignment is a guess, and the two failure modes are not equally bad. Losing a
+ * comment shows up in review as a deletion; silently MOVING a comment onto content it does not
+ * describe does not, and the comments this fix exists to protect are exactly the load-bearing
+ * kind ("do not delete this block") that must never end up over the wrong thing. The rules are
+ * therefore ordered from most evidence to least, and stop rather than guessing:
+ *
+ * 1. **Exact value match** — reuse that old node whole, comments and all. This is what carries a
+ *    comment through a pure reorder, instead of stranding it on whatever moved into its index.
+ * 2. **Same index, still unclaimed** — reconcile against it. This is the edit-in-place case
+ *    (change one field of one item), where position is real evidence.
+ * 3. **Otherwise a fresh node, with no comments.**
+ *
+ * Rule 2 is deliberately same-index rather than "next unclaimed old node in order". The looser
+ * form paired a newly-inserted item with an unrelated deleted one whenever a single save both
+ * removed and added an item, so the deleted item's comments reappeared above brand-new content.
  */
 function reconcileSeq(doc: Document, seq: YAMLSeq<unknown>, value: readonly unknown[]): void {
   const oldItems = seq.items
@@ -194,14 +223,12 @@ function reconcileSeq(doc: Document, seq: YAMLSeq<unknown>, value: readonly unkn
     return undefined
   })
 
-  const leftovers = oldItems.map((_, index) => index).filter((index) => !consumed.has(index))
-  let leftoverCursor = 0
-
   seq.items = value.map((item, index) => {
     const matched = matches[index]
     if (matched !== undefined) return oldItems[matched]
-    const fallback = leftovers[leftoverCursor++]
-    return reconcileNode(doc, fallback === undefined ? undefined : oldItems[fallback], item)
+    const sameIndex = index < oldItems.length && !consumed.has(index) ? oldItems[index] : undefined
+    if (sameIndex !== undefined) consumed.add(index)
+    return reconcileNode(doc, sameIndex, item)
   })
 }
 

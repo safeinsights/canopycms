@@ -526,6 +526,68 @@ describe('findEntriesWithUnknownKeys', () => {
     ).toEqual([{ entryPath: 'content/posts/b', fieldPaths: ['subtitle', 'hero.kicker'] }])
   })
 
+  it('does not report the md body that listEntries merges in when no isBody field is declared', () => {
+    // `findBodyFieldName` falls back to the literal 'body' when a schema declares no `isBody`
+    // field -- which is legal config -- and `listEntries` merges the file's prose in under that
+    // name. Reporting it told the adopter their page content was a stale key to delete.
+    const mdSchema: EntrySchema = [{ name: 'title', type: 'string' }]
+    expect(
+      findEntriesWithUnknownKeys([
+        {
+          entryPath: 'content/posts/a' as never,
+          schema: mdSchema,
+          format: 'md',
+          data: { title: 'A', body: '# Prose' },
+        },
+      ]),
+    ).toEqual([])
+  })
+
+  it('still reports other stale keys on an md entry alongside the body', () => {
+    const mdSchema: EntrySchema = [{ name: 'title', type: 'string' }]
+    expect(
+      findEntriesWithUnknownKeys([
+        {
+          entryPath: 'content/posts/a' as never,
+          schema: mdSchema,
+          format: 'md',
+          data: { title: 'A', body: '# Prose', subtitle: 'stale' },
+        },
+      ]),
+    ).toEqual([{ entryPath: 'content/posts/a', fieldPaths: ['subtitle'] }])
+  })
+
+  it('does report a literal `body` key on a data-only entry, where nothing merges one in', () => {
+    const jsonSchema: EntrySchema = [{ name: 'title', type: 'string' }]
+    expect(
+      findEntriesWithUnknownKeys([
+        {
+          entryPath: 'content/settings/a' as never,
+          schema: jsonSchema,
+          format: 'json',
+          data: { title: 'A', body: 'stale' },
+        },
+      ]),
+    ).toEqual([{ entryPath: 'content/settings/a', fieldPaths: ['body'] }])
+  })
+
+  it('respects a custom isBody field name', () => {
+    const customBody: EntrySchema = [
+      { name: 'title', type: 'string' },
+      { name: 'content', type: 'markdown', isBody: true },
+    ]
+    expect(
+      findEntriesWithUnknownKeys([
+        {
+          entryPath: 'content/posts/a' as never,
+          schema: customBody,
+          format: 'md',
+          data: { title: 'A', content: '# Prose' },
+        },
+      ]),
+    ).toEqual([])
+  })
+
   it('skips an item whose schema could not be resolved', () => {
     expect(
       findEntriesWithUnknownKeys([
