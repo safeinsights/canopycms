@@ -85,19 +85,19 @@ These two flags apply the same way whether or not `--non-interactive` is set: pa
 
 ### What it creates
 
-| File                                             | Purpose                                                                                                                                                                           |
-| ------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `canopycms.config.ts`                            | Main configuration (mode, editor settings)                                                                                                                                        |
-| `{appDir}/lib/canopy.ts`                         | Server-side context setup; exports `getCanopy`, phase-selecting `read`/`readByUrlPath`, `contentStaticParams`, `getHandler` (and `getCanopyForBuild` as an advanced escape hatch) |
-| `{appDir}/schemas.ts`                            | Entry schema definitions and registry                                                                                                                                             |
-| `{appDir}/api/canopycms/[...canopycms]/route.ts` | Single catch-all API route handler                                                                                                                                                |
-| `{appDir}/edit/page.tsx`                         | Editor page component                                                                                                                                                             |
-| `{appDir}/ai/config.ts`                          | AI content configuration (included unless `--no-ai` is passed)                                                                                                                    |
-| `{appDir}/ai/[...path]/route.ts`                 | AI content route handler (included unless `--no-ai` is passed)                                                                                                                    |
-| `middleware.ts`                                  | Route protection for `/edit` and `/api/canopycms` (passthrough by default; commented Clerk example inside)                                                                        |
-| `next.config.ts`                                 | Next.js config wrapped with `withCanopy()` for transpilation and dual-build support                                                                                               |
+| File                                             | Purpose                                                                                                                                                                                                                                                      |
+| ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `canopycms.config.ts`                            | Main configuration (mode, editor settings)                                                                                                                                                                                                                   |
+| `{appDir}/lib/canopy.ts`                         | Server-side context setup; exports `getCanopy`, phase-selecting `read`/`readByUrlPath`, `contentStaticParams`, `getHandler` (and `getCanopyForBuild` as an advanced escape hatch)                                                                            |
+| `{appDir}/schemas.ts`                            | Entry schema definitions and registry                                                                                                                                                                                                                        |
+| `{appDir}/api/canopycms/[...canopycms]/route.ts` | Single catch-all API route handler                                                                                                                                                                                                                           |
+| `{appDir}/edit/page.tsx`                         | Editor page component                                                                                                                                                                                                                                        |
+| `{appDir}/ai/config.ts`                          | AI content configuration (included unless `--no-ai` is passed)                                                                                                                                                                                               |
+| `{appDir}/ai/[...path]/route.ts`                 | AI content route handler (included unless `--no-ai` is passed)                                                                                                                                                                                               |
+| `middleware.ts`                                  | Route protection for `/edit` and `/api/canopycms` (passthrough by default; commented Clerk example inside). Written into the parent of your app directory, not always the project root -- see [Protect editor routes](#5-protect-editor-routes)              |
+| `next.config.ts`                                 | Next.js config wrapped with `withCanopy()` for transpilation and dual-build support. Skipped (with manual instructions printed instead) if you already have a `next.config.js`/`.mjs` -- see [Next.js configuration](#3-nextjs-configuration-auto-generated) |
 
-It also updates `.gitignore` to exclude CanopyCMS runtime directories (`.canopy-dev/`).
+It also creates `.gitignore` if you don't have one (or appends to an existing one) to exclude CanopyCMS runtime directories (`.canopy-dev/`) -- this is what stops an accidental `git add .` from committing the whole `.canopy-dev` workspace as broken git submodule-like entries.
 
 ### 2. Install dependencies
 
@@ -119,7 +119,7 @@ These are not bundled with `canopycms-auth-clerk` so you control the Clerk SDK v
 
 The `init` command creates a `next.config.ts` that wraps your config with `withCanopy()` from `canopycms-next/config`. You do not need to set this up manually.
 
-If you already have a `next.config.ts`, the init command will ask before overwriting. To add the wrapper to an existing config, merge it like this:
+If you already have a `next.config.ts`, the init command will ask before overwriting. If you already have a `next.config.js` or `next.config.mjs`, `init` leaves it alone and prints the manual wiring steps instead -- Next.js loads exactly one config file (`.js`, then `.mjs`, then `.ts`, first match wins), so writing a second `next.config.ts` alongside it would produce a file Next silently never loads, taking `withCanopy()` with it. To add the wrapper to an existing config, merge it like this:
 
 ```typescript
 // next.config.ts
@@ -214,6 +214,8 @@ Edit `{appDir}/schemas.ts` with your content types. See [Schema Registry and Ref
 
 The `init` command generates a `middleware.ts` that matches `/edit` and `/api/canopycms` routes. By default it is a passthrough (suitable for dev auth mode). For Clerk auth, replace the file contents with the commented example inside, or use this:
 
+`middleware.ts` is written into the PARENT of your app directory, not always the project root -- Next.js only loads middleware from there. With the default `--app-dir app` that's still the project root, but with `--app-dir src/app` it's `src/middleware.ts`. If you move the app directory later, move `middleware.ts` alongside it (or re-run `init --force`).
+
 Unlike `canopy.ts` and the edit page, `middleware.ts` does not switch on `CANOPY_AUTH_MODE` at runtime -- if you switch auth providers later, replace this file too (or re-run `init --force`).
 
 ```typescript
@@ -241,7 +243,7 @@ npm run dev
 
 ### .gitignore
 
-The init command adds `.canopy-dev/` to your `.gitignore`. Branch metadata is automatically excluded via git's `info/exclude` inside branch workspaces. In production mode, permissions and groups live on a separate git branch (`canopycms-settings-{deploymentName}`).
+The init command adds `.canopy-dev/` to your `.gitignore`, creating the file if you don't already have one. Branch metadata is automatically excluded via git's `info/exclude` inside branch workspaces. In production mode, permissions and groups live on a separate git branch (`canopycms-settings-{deploymentName}`).
 
 ## Schema Registry and References
 
@@ -2120,8 +2122,12 @@ only the library record — existing content references keep resolving.
 > in the asset store.
 
 **Infrastructure** — the `canopycms-cdk` package ships an `AssetSupport` construct that
-provisions the bucket (or attaches to an existing one), the transform Lambda, and the
-CloudFront behaviors. See [docs/deploying-to-aws.md](docs/deploying-to-aws.md).
+provisions the bucket (or attaches to an existing one) and the transform Lambda. Its
+`assetBehaviors()` method returns the two CloudFront behaviors media needs; attach them via
+`CanopyCmsDistribution`'s `additionalBehaviors` option, listing `/assets/t/*` before
+`/assets/*` -- CloudFront matches path patterns in the order given, so a more specific
+pattern listed after a more general one is never reached. See
+[docs/deploying-to-aws.md](docs/deploying-to-aws.md).
 
 ### Editor Customization
 
@@ -2910,15 +2916,15 @@ Admins can check the CMS's operational health from the same Settings menu:
 
 CanopyCMS is designed for minimal integration effort. Run `npx canopycms init` to generate all required files, or create them manually. Use `--app-dir` to customize the app directory path (default: `app`).
 
-| Touchpoint       | File                                             | Purpose                                                                                                                                                                      |
-| ---------------- | ------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Config**       | `canopycms.config.ts`                            | Define settings and operating mode                                                                                                                                           |
-| **Next.js wrap** | `next.config.ts`                                 | Auto-generated by `init`; wraps config with `withCanopy()` (supports `staticBuild` for dual-build sites)                                                                     |
-| **Schemas**      | `{appDir}/schemas.ts`                            | Field schemas and registry (for `.collection.json` approach)                                                                                                                 |
-| **Context**      | `{appDir}/lib/canopy.ts`                         | One-time async setup with auth plugin                                                                                                                                        |
-| **API Route**    | `{appDir}/api/canopycms/[...canopycms]/route.ts` | Single catch-all handler                                                                                                                                                     |
-| **Editor Page**  | `{appDir}/edit/page.tsx`                         | Embed the editor component                                                                                                                                                   |
-| **Middleware**   | `middleware.ts`                                  | Auto-generated by `init` for the auth mode chosen at init time; passthrough for dev auth, Clerk middleware for Clerk auth. Does **not** switch at runtime -- see note below. |
+| Touchpoint       | File                                             | Purpose                                                                                                                                                                                                                                                                                                                                    |
+| ---------------- | ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Config**       | `canopycms.config.ts`                            | Define settings and operating mode                                                                                                                                                                                                                                                                                                         |
+| **Next.js wrap** | `next.config.ts`                                 | Auto-generated by `init`; wraps config with `withCanopy()` (supports `staticBuild` for dual-build sites)                                                                                                                                                                                                                                   |
+| **Schemas**      | `{appDir}/schemas.ts`                            | Field schemas and registry (for `.collection.json` approach)                                                                                                                                                                                                                                                                               |
+| **Context**      | `{appDir}/lib/canopy.ts`                         | One-time async setup with auth plugin                                                                                                                                                                                                                                                                                                      |
+| **API Route**    | `{appDir}/api/canopycms/[...canopycms]/route.ts` | Single catch-all handler                                                                                                                                                                                                                                                                                                                   |
+| **Editor Page**  | `{appDir}/edit/page.tsx`                         | Embed the editor component                                                                                                                                                                                                                                                                                                                 |
+| **Middleware**   | `middleware.ts`                                  | Auto-generated by `init` for the auth mode chosen at init time; passthrough for dev auth, Clerk middleware for Clerk auth. Does **not** switch at runtime -- see note below. Written into the parent of your app directory (e.g. `src/middleware.ts` for `--app-dir src/app`), since that is the only place Next.js loads middleware from. |
 
 **Optional touchpoints:**
 
