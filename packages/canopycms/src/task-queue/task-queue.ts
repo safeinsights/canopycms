@@ -415,7 +415,16 @@ export async function cleanupOldTasks(
   const now = Date.now()
   let cleaned = 0
 
-  for (const subdir of ['completed', 'failed']) {
+  // `corrupt` included: unparseable task files are quarantined there by
+  // dequeue and orphan recovery and surfaced in admin listing, but the
+  // retention sweep never covered the directory, so it grew forever with
+  // deletion available only as a manual per-file admin action. Any recurring
+  // producer of malformed task JSON -- a partial write surviving a crash, a
+  // bad deploy writing schema-drifted tasks for a week -- accumulated files no
+  // automated path removed. Same stamp-based retention as the other two: a
+  // quarantined file older than the window has long since been triaged or
+  // forgotten.
+  for (const subdir of ['completed', 'failed', 'corrupt']) {
     const dir = path.join(taskDir, subdir)
     let files: string[]
     try {

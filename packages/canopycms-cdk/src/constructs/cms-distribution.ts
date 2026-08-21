@@ -1,6 +1,8 @@
 import { Construct } from 'constructs'
 import {
   Duration,
+  Stack,
+  Token,
   aws_cloudfront as cloudfront,
   aws_cloudfront_origins as origins,
   aws_certificatemanager as acm,
@@ -44,6 +46,26 @@ export interface CanopyCmsDistributionProps {
    * Capped at 60s: CloudFront rejects more without a service-quota increase.
    */
   originReadTimeout?: Duration
+
+  /**
+   * Extra CloudFront behaviors, merged with this construct's own.
+   *
+   * The reason this exists: `AssetSupport.assetBehaviors()` returns the two
+   * behaviors a media-enabled deployment needs (`/assets/*` and
+   * `/assets/t/*`), and without a way to pass them in there was no route to
+   * attach them to the distribution the scaffold generates — making the
+   * scaffold's own "uncomment to enable media" path a dead end.
+   *
+   * ORDER MATTERS. CloudFront matches path patterns in the order given, so a
+   * more specific pattern must be listed before a more general one that also
+   * matches: `/assets/t/*` before `/assets/*`, or every transform request is
+   * served by the static S3-only behavior and never fails over to the
+   * transform Lambda.
+   *
+   * Keys here override this construct's own behaviors on collision, which is
+   * deliberate — the caller is more specific than the default.
+   */
+  additionalBehaviors?: Record<string, cloudfront.BehaviorOptions>
 }
 
 /**
@@ -81,6 +103,28 @@ export class CanopyCmsDistribution extends Construct {
     // ========================================================================
     // ACM Certificate
     // ========================================================================
+
+    // CloudFront requires its ACM certificate to live in us-east-1, and this
+    // construct creates one in the STACK's region. Nothing in the construct,
+    // the scaffold, or docs/deploying-to-aws.md said so -- the scaffold merely
+    // asks for an AWS_REGION variable with us-east-1 as an example -- so an
+    // adopter elsewhere got an opaque region error and had to research both
+    // workarounds themselves. Fail with the answer instead.
+    //
+    // Only when the region is actually known at synth: a region-agnostic stack
+    // resolves to a token, and rejecting that would break `cdk synth` for
+    // everyone (the token is not us-east-1 as a string). Those deploys are
+    // rejected by CloudFront at deploy time as before.
+    const stackRegion = Stack.of(this).region
+    if (!props.certificate && !Token.isUnresolved(stackRegion) && stackRegion !== 'us-east-1') {
+      throw new Error(
+        `CanopyCmsDistribution: CloudFront requires its ACM certificate in us-east-1, but this ` +
+          `stack is in ${stackRegion}, so the certificate this construct would create cannot be ` +
+          `used. Either (a) create the certificate in a us-east-1 stack and pass it as the ` +
+          `\`certificate\` prop, or (b) deploy this stack in us-east-1. See ` +
+          `docs/deploying-to-aws.md.`,
+      )
+    }
 
     const certificate =
       props.certificate ??
@@ -178,12 +222,15 @@ export class CanopyCmsDistribution extends Construct {
           },
         ],
       },
+      // Caller-supplied behaviors last, so they win on a key collision -- see
+      // `additionalBehaviors`'s doc comment for the ordering caveat.
       additionalBehaviors: {
         '/_next/static/*': {
           origin,
           cachePolicy: staticCachePolicy,
           viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
         },
+        ...props.additionalBehaviors,
       },
     })
 

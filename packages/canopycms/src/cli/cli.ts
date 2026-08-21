@@ -210,6 +210,24 @@ async function main() {
     // Resolve auth plugin from the adopter's installed packages.
     // Uses variable-based import() so TypeScript doesn't resolve against canopycms's own deps.
     const authMode = process.env.CANOPY_AUTH_MODE || 'dev'
+    // Validate BEFORE dispatch. The branch below only knows 'clerk' and 'dev',
+    // so any other value -- a typo, wrong casing like 'Clerk', a stale value
+    // from another system -- selected no plugin at all, and the catch below
+    // only fires on an import FAILURE, so nothing warned. workerRunOnce then
+    // skipped the auth refresh entirely and the command ran to "Done" with
+    // exit code 0: a cron'd `CANOPY_AUTH_MODE=clerk canopycms worker run-once`
+    // would refresh nothing for as long as the typo survived, while the cache
+    // aged indefinitely and a user removed from the Clerk org kept editor
+    // access. The non-zero exit that already exists for refresh FAILURES never
+    // fired, because nothing failed.
+    const KNOWN_AUTH_MODES = ['clerk', 'dev'] as const
+    if (!KNOWN_AUTH_MODES.includes(authMode as (typeof KNOWN_AUTH_MODES)[number])) {
+      console.error(
+        `Unknown CANOPY_AUTH_MODE "${authMode}" — expected one of: ${KNOWN_AUTH_MODES.join(', ')}. ` +
+          `No auth plugin was loaded, so the auth cache will NOT be refreshed.`,
+      )
+      process.exitCode = 1
+    }
     let authPlugin: AuthPlugin | undefined
     try {
       if (authMode === 'clerk') {
