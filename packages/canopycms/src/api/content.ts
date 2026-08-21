@@ -422,6 +422,31 @@ const writeContentHandler = async (
   // 'warning' issues are returned alongside the successful write.
   let validationWarnings: EntryValidationIssue[] | undefined
   const validateEntry = ctx.services.config.validateEntry
+  // Collapse resolved reference objects back to bare ID strings before PERSISTING, not just
+  // before validating (the reference validator gets its own normalized copy above).
+  //
+  // The editor round-trips whole documents: its GET reads through `store.read()`, whose
+  // `resolveReferences` defaults to TRUE, so form state holds `{...target data, id, slug,
+  // collection, urlPath}` for every reference field, and a save posts that straight back. Left
+  // unnormalized it lands in the content file verbatim — and because resolution only re-resolves
+  // a `typeof value === 'string'`, every later read passes the frozen snapshot through and every
+  // later save rewrites it. The reference is then permanently severed from its target: renaming
+  // or editing the target changes nothing, silently.
+  //
+  // The mechanism predates reference resolution reaching listings, but `includeBody` makes it
+  // materially worse — the snapshot now carries the target's entire prose — and `urlPath` adds a
+  // value that goes stale the moment the target is renamed. Normalizing here is schema-driven and
+  // idempotent: a payload that already holds ID strings is unchanged.
+  const normalizedData =
+    body.data === undefined ? undefined : normalizeReferenceValues(fields, body.data)
+  //
+  // Computed BEFORE the validateEntry hook and the entry-link scan, not just before the write,
+  // so every consumer of the payload agrees with the bytes that land on disk. Otherwise an
+  // adopter's hook inspecting a reference field saw a resolved object while the file got an ID
+  // string -- and saw it only when the post came from the editor, since a client posting bare
+  // IDs already gave the hook bare IDs. Normalizing first makes the hook's input deterministic
+  // regardless of caller.
+
   if (validateEntry) {
     let issues: EntryValidationIssue[]
     try {
@@ -430,7 +455,7 @@ const writeContentHandler = async (
         branch: params.branch,
         ...(params.entryType ? { entryType: params.entryType } : {}),
         format: body.format,
-        data: body.data ?? {},
+        data: normalizedData ?? {},
         body: body.body,
       })
     } catch (err) {
@@ -457,24 +482,6 @@ const writeContentHandler = async (
     if (warnings.length > 0) validationWarnings = warnings
   }
 
-  // Collapse resolved reference objects back to bare ID strings before PERSISTING, not just
-  // before validating (the reference validator gets its own normalized copy above).
-  //
-  // The editor round-trips whole documents: its GET reads through `store.read()`, whose
-  // `resolveReferences` defaults to TRUE, so form state holds `{...target data, id, slug,
-  // collection, urlPath}` for every reference field, and a save posts that straight back. Left
-  // unnormalized it lands in the content file verbatim — and because resolution only re-resolves
-  // a `typeof value === 'string'`, every later read passes the frozen snapshot through and every
-  // later save rewrites it. The reference is then permanently severed from its target: renaming
-  // or editing the target changes nothing, silently.
-  //
-  // The mechanism predates reference resolution reaching listings, but `includeBody` makes it
-  // materially worse — the snapshot now carries the target's entire prose — and `urlPath` adds a
-  // value that goes stale the moment the target is renamed. Normalizing here is schema-driven and
-  // idempotent: a payload that already holds ID strings is unchanged.
-  const normalizedData =
-    body.data === undefined ? undefined : normalizeReferenceValues(fields, body.data)
-
   try {
     const writeInput: WriteInput = isDataOnlyFormat(body.format)
       ? {
@@ -497,7 +504,7 @@ const writeContentHandler = async (
     // Validate entry links in body content (warnings only, don't block save).
     // Reuses the entry-type fields resolved above for schema validation.
     const idIndex = await store.idIndex()
-    const linkValidation = validateEntryLinks(body.data ?? {}, fields, idIndex, body.body)
+    const linkValidation = validateEntryLinks(normalizedData ?? {}, fields, idIndex, body.body)
     const entryLinkWarnings =
       linkValidation.warnings.length > 0 ? linkValidation.warnings : undefined
 

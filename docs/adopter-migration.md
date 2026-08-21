@@ -269,6 +269,12 @@ fields through the editor on an earlier version, check your content files**: a r
 holding an object rather than a 12-character ID string is a severed reference. Replacing the
 object with its own `id` value restores it.
 
+One case this does **not** cover, so you know the boundary: if a reference's target has been
+deleted, resolution yields `null` and a save persists that `null` over the ID — there is no
+object left to collapse back. Open-and-save is lossless only while every reference still
+resolves. Tracked separately; if you see `null` where a reference should be, the ID it used to
+hold is not recoverable from the file.
+
 **To adopt.** Nothing is required — `urlPath` simply appears. Add `includeBody: true` to
 reference fields whose target's prose you actually render or index.
 

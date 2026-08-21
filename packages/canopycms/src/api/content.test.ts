@@ -936,6 +936,30 @@ describe('content api', () => {
       expect(writeSpy.mock.calls[0][2].data.author).toBe(AUTHOR_ID)
     })
 
+    it('shows the validateEntry hook the shape that will be persisted', async () => {
+      // The hook validates what is being saved, so it must see what is saved. Before the
+      // normalization moved above it, an adopter hook inspecting a reference field saw a
+      // resolved object while the file received an ID string -- and saw it only when the post
+      // came from the editor, since any client posting bare IDs already gave the hook bare IDs.
+      const ctx = allowedCtx()
+      const hook = vi.fn().mockResolvedValue([])
+      ctx.services.config.validateEntry = hook
+      const { writeSpy } = await mockStoreOnce({ knownIds: [AUTHOR_ID] })
+
+      const res = await writeContent(ctx, writeReq, writeParams, {
+        format: 'json',
+        data: {
+          title: 'Hello',
+          author: { name: 'Alice', id: AUTHOR_ID, slug: 'alice', urlPath: '/authors/alice' },
+        },
+      })
+
+      expect(res.ok).toBe(true)
+      expect(hook).toHaveBeenCalledTimes(1)
+      expect(hook.mock.calls[0][0].data.author).toBe(AUTHOR_ID)
+      expect(writeSpy.mock.calls[0][2].data.author).toBe(AUTHOR_ID)
+    })
+
     it('rejects a save missing a required field with a per-field error', async () => {
       const ctx = allowedCtx()
       const { writeSpy } = await mockStoreOnce({ knownIds: [AUTHOR_ID] })
