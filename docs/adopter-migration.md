@@ -407,6 +407,12 @@ const duplicates = findDuplicateUrlPaths(await canopy.listEntries())
 Scan `listEntries()`, not `collectRoutableEntries()` — the latter reduces each entry to what static
 generation needs and drops the `entryPath` that names the offenders.
 
+**Also changed, smaller.** The `path` field on a `read()` / `readByUrlPath()` result now collapses
+an index slug and strips the content root from root-level entries, so it is a URL that actually
+resolves. It previously returned `/guides/index` for an index entry — a URL this release stops resolving —
+and `/content` / `/content/about` for root-level ones, which never resolved at all. If you were
+working around either, stop.
+
 **Now deletable.**
 
 - **A route-level guard whose only job is to reject a `.../index` URL.** The shape is a check at

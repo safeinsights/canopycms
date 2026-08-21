@@ -189,10 +189,15 @@ export const createContentReader = (options: ContentReaderOptions): ContentReade
   // collectionPath IS the content root, which does not start with `${contentRoot}/`, so without
   // it the root index reported `path: '/content'` (and a root entry `/content/about`) -- paths
   // that resolve to nothing. `computeEntryUrl` has always had both branches; this had one.
+  //
+  // Both branches stay guarded on `contentRoot` so an empty one passes the value through
+  // unchanged, exactly as `computeEntryUrl` does. Unreachable today (`contentRootSchema` is
+  // `relativePathSchema.default('content')` with `.min(1)`), but a blanket short-circuit would
+  // be the WRONG answer if it ever were reachable -- it would flatten every entry to root.
   const stripRoot = (val: string) =>
-    !contentRoot || val === contentRoot
+    contentRoot && val === contentRoot
       ? ''
-      : val.startsWith(`${contentRoot}/`)
+      : contentRoot && val.startsWith(`${contentRoot}/`)
         ? val.slice(contentRoot.length + 1)
         : val
 

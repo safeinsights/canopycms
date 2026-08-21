@@ -6,13 +6,24 @@ one undocumented edge.
 ## What
 
 The "where does this entry live?" rule — strip the content root, collapse an `index` slug to
-its parent, lowercase — now has two implementations:
+its parent, lowercase — now has FOUR implementations. (Filed when it was two; the other two were
+found by the 2026-08-21 review rounds, each because it had drifted — which is this task's whole
+argument.) Only the `index` sub-decision is shared, via `utils/entry-url.ts`'s `isIndexSlug`;
+each still strips the content root and handles encoding/casing itself:
 
 1. `computeEntryUrl` (`utils/entry-url.ts`), used by `listEntries` for `item.urlPath`, by
    reference resolution for a resolved reference's `urlPath`, and by `entry-link-resolver.ts`
    for `entry:ID` links.
 2. `defaultBuildPath` (`content-tree.ts`), which `buildContentTree` uses for node paths and
    which is **exported** so adopters can extend rather than reimplement it.
+3. `buildEntryPath` (`content-reader.ts`), which produces the `path` field on every `read()` /
+   `readByUrlPath()` result. Found 2026-08-21 returning `/x/index` for an index entry and
+   `/content` for a root-level one — both URLs that resolve to nothing. Fixed in place; it keeps
+   its own strip and its own `encodeSlug`, so it is still a copy.
+4. `buildPreviewSrc` (`editor/editor-utils.ts`), which builds the editor's preview-iframe URL.
+   Found the same day pointing the iframe at `/x/index`. Also fixed in place, and it has a real
+   reason not to delegate: it must percent-encode segments and must NOT lowercase, because a
+   `previewBaseByCollection` value is adopter-supplied and case-sensitive.
 
 They were verified to agree across nested collections, root index, a collection literally
 named `index`, an entry slugged `index` inside one, mixed case, dotted slugs, multi-segment
