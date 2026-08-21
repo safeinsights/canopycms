@@ -34,10 +34,15 @@ export function resolveUrlPathCandidates(
 
   // Try 1: last segment is the entry slug, rest is the collection path.
   //
-  // Skipped when that slug is an index slug. An index entry's one URL is its collapsed
+  // Skipped when that slug is an index slug. An index entry's ADVERTISED URL is its collapsed
   // collection path, so matching it here would answer at a second URL enumeration never emits.
   // `index` is not a contrived segment either — it is the slug the index convention requires on
   // disk, so the collision was structural rather than accidental.
+  //
+  // This closes the `.../index` spelling, NOT every extra URL: candidate 2 below still resolves an
+  // index entry at `/<collection>/<entryTypeName>`, because that path is a registered entry-TYPE
+  // schema item which `buildPaths` delegates to the parent collection. Open, and tracked in
+  // .claude/future-tasks/readbyurlpath-entry-type-candidate-phantom-url.md.
   //
   // Compared case-INSENSITIVELY, through the shared `isIndexSlug`. This function is the one
   // consumer that sees a raw, un-normalized URL segment — everything downstream lowercases

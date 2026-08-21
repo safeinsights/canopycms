@@ -124,10 +124,20 @@ type SitemapItem = MetadataRoute.Sitemap[number]
  * - **No `lastModified` fallback.** The per-entry branch defaults to `entry.updatedAt`; here,
  *   omitting `lastModified` means the URL simply ships without a date.
  *
- * Both are easy to get wrong in exactly the same direction, and our own reference app's sitemap
- * gets the second one wrong. Prefer modelling the entry so its natural `urlPath` is the URL you
- * want — an `index` entry collapses onto its collection path — and keep `extraUrls` for URLs
- * that genuinely have no entry behind them.
+ * Both are easy to get wrong in exactly the same direction, and both used to be unavoidable:
+ * `extraUrls` was once the only way to advertise a real entry at a different URL, so every such
+ * use re-derived `noindex` and `lastModified` by hand — this repo's own reference app among them,
+ * and it got `lastModified` wrong.
+ *
+ * It is no longer the only way, so it should no longer be that way:
+ *
+ * 1. **Model the entry so its natural `urlPath` IS the URL you serve.** An `index` entry collapses
+ *    onto its collection's path, and a root `index` entry onto `/`. Nothing to keep in sync. This
+ *    is what the reference app does now, which is why its sitemap passes neither option.
+ * 2. **Failing that, use `pathFor`** (see `GenerateContentSitemapOptions`), which overrides the
+ *    URL while keeping the entry inside the walk — so the `noindex` gate, the `lastModified`
+ *    default and `priority` all still apply.
+ * 3. **Keep `extraUrls` for what its name says:** URLs with no entry behind them at all.
  */
 export interface SitemapExtraUrl {
   /** Site-relative path ('/blog') or an absolute URL. Trailing-slash rules apply to the former. */
@@ -176,11 +186,59 @@ export interface GenerateContentSitemapOptions {
   /** `<priority>` per entry. Omitted from the URL when this returns undefined (the default). */
   priority?: (entry: RoutableEntry) => number | undefined
   /**
-   * URLs with no entry behind them — hand-written app routes, feeds — appended to the result.
+   * Override the URL an entry is advertised at, keeping it INSIDE the entry walk.
+   *
+   * Return a path to advertise the entry at instead of its structural `urlPath`; return `null`
+   * (or `undefined`) to leave it alone.
+   *
+   * **`null` means "no opinion", not "drop it".** So the obvious shape — handle the one entry
+   * type you care about, return `null` for the rest — advertises every other entry at its own
+   * path rather than silently emitting a one-URL sitemap. Dropping an entry stays `exclude`'s
+   * job, and keeping the two separate is the whole reason for this choice: a `pathFor` whose
+   * natural-looking callback silently omitted everything else would re-introduce exactly the
+   * quietly-short sitemap this module exists to prevent.
+   *
+   * This is the principled alternative to reaching for `extraUrls` to reroute a REAL entry.
+   * Because the entry stays in the walk, it keeps the `isNoindexEntry` gate, the `updatedAt`
+   * `lastModified` default and its `priority` automatically — all three of which an `extraUrls`
+   * entry makes you re-derive by hand, and get wrong independently (see {@link SitemapExtraUrl}).
+   *
+   * **It changes what is ADVERTISED, not what is BUILT.** `generateContentStaticParams` still
+   * enumerates the entry at its structural path, so the URL returned here must be one your app
+   * actually routes — otherwise you have advertised a 404, the same hazard `extraUrls` carries.
+   *
+   * Return a **site-relative path**. The value is trimmed, and an empty or off-site return (an
+   * absolute `https://…` or a protocol-relative `//host/…`) throws rather than being emitted:
+   * the first silently claims `/`, and the second lands in the sitemap as a non-absolute `<loc>`,
+   * which invalidates the whole file. `extraUrls` is where an off-origin URL is legitimate.
+   *
+   * Reach for it only when the URL is fixed by something OUTSIDE the content tree: published URLs
+   * you cannot change, or a route prefix that deliberately differs from the content layout. When
+   * you control the modelling, model the entry so its natural `urlPath` is already the URL you
+   * serve — an `index` entry collapses onto its collection's path, and a root `index` entry onto
+   * `/` — which needs no option at all. That ordering is not advice we only give: it is what the
+   * reference app in this repo does, which is why its sitemap passes neither this nor `extraUrls`.
+   *
+   * Runs AFTER the `noindex` and `exclude` gates (a dropped entry needs no URL). `exclude`,
+   * `lastModified` and `priority` receive the entry as ENUMERATED, so `entry.urlPath` there is
+   * always the structural path and never your override — branch on the entry, not on the URL.
+   *
+   * Two entries rewritten onto one URL are NOT caught by the build's `assertNoDuplicateUrlPaths`
+   * guard, which runs on the raw listing and never sees these rewrites; `dedupeSitemapItems`
+   * warns and keeps the first.
+   *
+   * @example
+   * // Content lives under content/articles/*, but this site has always published /blog/*.
+   * pathFor: (entry) =>
+   *   entry.entryType === 'article' ? entry.urlPath.replace(/^\/articles\//, '/blog/') : null,
+   */
+  pathFor?: (entry: RoutableEntry) => string | null | undefined
+  /**
+   * URLs with NO entry behind them — hand-written app routes, feeds — appended to the result.
    *
    * Appended after the entry walk, so these bypass BOTH the `isNoindexEntry` gate and the
-   * `lastModified` default. See {@link SitemapExtraUrl} before using this to re-advertise a real
-   * entry under a different path.
+   * `lastModified` default. To point a REAL entry at a different URL, use `pathFor` above, which
+   * keeps both. See {@link SitemapExtraUrl}.
    */
   extraUrls?: SitemapExtraUrl[]
 }
@@ -213,7 +271,8 @@ export async function generateContentSitemap(
   buildCtx: Pick<CanopyBuildContext, 'listEntries'>,
   options: GenerateContentSitemapOptions,
 ): Promise<MetadataRoute.Sitemap> {
-  const { siteUrl, trailingSlash, rootPath, seo, exclude, lastModified, priority } = options
+  const { siteUrl, trailingSlash, rootPath, seo, exclude, lastModified, priority, pathFor } =
+    options
 
   // A sitemap with a non-absolute <loc> is invalid — search engines reject the WHOLE file, not
   // just the bad entry, and the build stays green because nothing here threw. 'example.com' (no
@@ -237,7 +296,7 @@ export async function generateContentSitemap(
     const modified = lastModified ? lastModified(entry) : entry.updatedAt
     const entryPriority = priority?.(entry)
     items.push({
-      url: resolveSeoUrl(entry.urlPath, urlOpts),
+      url: resolveSeoUrl(resolveEntrySitemapPath(entry, pathFor), urlOpts),
       ...(modified ? { lastModified: modified } : {}),
       ...(entryPriority === undefined ? {} : { priority: entryPriority }),
     })
@@ -262,19 +321,76 @@ export async function generateContentSitemap(
 }
 
 /**
+ * Resolve the path an entry is advertised at, applying the caller's `pathFor` override.
+ *
+ * `null`/`undefined` mean "no opinion" and keep the entry's own `urlPath` — see the `pathFor`
+ * doc for why that is not "drop it".
+ *
+ * Two shapes are rejected rather than passed through, because each produces a WRONG SITEMAP THAT
+ * SHIPS GREEN — the failure mode every other guard in this file exists to convert into a red
+ * build. (A third, the WHATWG-backslash spellings like `/\evil.com/x`, is not thrown but
+ * neutralized downstream by `resolveSeoUrl`'s `neutralizeImplicitOffOrigin`.)
+ *
+ * - **Empty or whitespace-only.** `resolveSeoUrl('')` resolves to the site root, so an empty
+ *   return would quietly advertise this entry at `/` and collide with whatever really lives there.
+ * - **Absolute (scheme-qualified or protocol-relative).** `resolveSeoUrl` passes both through
+ *   verbatim, by design — for `extraUrls`, where an absolute URL is explicitly allowed. Here it is
+ *   not: a protocol-relative `//host/x` lands in the sitemap as a NON-absolute `<loc>`, the exact
+ *   invalidity `generateContentSitemap`'s `siteUrl` guard exists to prevent, and search engines
+ *   reject the whole file for it. Refused whatever the origin — including one matching `siteUrl` —
+ *   so the rule is "return a site-relative path" with no host comparison to get subtly wrong.
+ *
+ * The returned path is TRIMMED. Surrounding whitespace is never intended and survives into the
+ * URL otherwise (`' /blog'` → `<siteUrl>/ /blog`) — which this function would previously detect
+ * while checking for emptiness and then hand back untrimmed anyway.
+ */
+function resolveEntrySitemapPath(
+  entry: RoutableEntry,
+  pathFor: GenerateContentSitemapOptions['pathFor'],
+): string {
+  if (!pathFor) return entry.urlPath
+  const override = pathFor(entry)
+  if (override === null || override === undefined) return entry.urlPath
+
+  const trimmed = override.trim()
+  const where = `the ${JSON.stringify(entry.entryType)} entry at ${JSON.stringify(entry.urlPath)}`
+  if (trimmed === '') {
+    throw new Error(
+      `CanopyCMS: generateContentSitemap's pathFor returned an empty path for ${where}. An empty ` +
+        'path resolves to the site root, so honouring it would advertise this entry at "/" and ' +
+        "collide with whatever really lives there. Return null to keep the entry's own urlPath.",
+    )
+  }
+  if (isAbsoluteUrl(trimmed)) {
+    throw new Error(
+      `CanopyCMS: generateContentSitemap's pathFor returned an absolute URL ` +
+        `(${JSON.stringify(trimmed)}) for ${where}. Return a site-relative path instead — the ` +
+        'site origin is applied for you. Absolute returns are refused whatever the origin, rather ' +
+        'than only off-origin ones, so there is one rule to remember and no host comparison to get ' +
+        'subtly wrong; a protocol-relative value (`//host/x`) is the reason it matters, since that ' +
+        'ships as a non-absolute <loc> and invalidates the entire sitemap. Use extraUrls to list a ' +
+        'URL on another origin.',
+    )
+  }
+  return trimmed
+}
+
+/**
  * Drop duplicate `<loc>` entries, keeping the first occurrence and warning about each collision.
  *
- * A duplicate URL isn't fatal to a crawler, but it usually means two entries (or an entry and an
- * `extraUrls` path) are unintentionally sharing one URL — an index entry collapsing onto a
- * sibling's path, or two `urlPath`s that only differ by case (`urlPath` is lowercased — see
- * `content-listing.ts`). Warning rather than silently deduping turns that into a build-time signal
- * an adopter can act on instead of a sitemap that just quietly has fewer URLs than expected.
+ * A duplicate URL isn't fatal to a crawler, but it usually means two URLs are unintentionally
+ * sharing one `<loc>` — an index entry collapsing onto a sibling's path, two `urlPath`s that only
+ * differ by case (`urlPath` is lowercased — see `content-listing.ts`), an `extraUrls` path
+ * repeating an entry's URL, or a `pathFor` that rewrote two entries onto the same path. Warning
+ * rather than silently deduping turns that into a build-time signal an adopter can act on instead
+ * of a sitemap that just quietly has fewer URLs than expected.
  *
  * Still needed alongside `assertNoDuplicateUrlPaths` (canopycms `static/index.ts`), which fails a
  * production build on the entry-vs-entry case before generation ever reaches here. This covers the
- * two cases that guard cannot: a collision involving an `extraUrls` path, which is supplied here
- * and never appears in the content enumeration, and any call outside build mode, where that guard
- * is deliberately silent.
+ * three cases that guard cannot: a collision involving an `extraUrls` path, which is supplied here
+ * and never appears in the content enumeration; a collision created by `pathFor`, which rewrites
+ * URLs after that guard has already run on the raw listing; and any call outside build mode, where
+ * that guard is deliberately silent.
  */
 function dedupeSitemapItems(items: SitemapItem[]): SitemapItem[] {
   const seen = new Set<string>()
@@ -284,7 +400,8 @@ function dedupeSitemapItems(items: SitemapItem[]): SitemapItem[] {
       console.warn(
         `CanopyCMS: generateContentSitemap found more than one entry resolving to the same sitemap ` +
           `URL ${JSON.stringify(item.url)}. Keeping the first and dropping the rest — this usually means ` +
-          'two entries (or an entry and an extraUrls path) are unintentionally sharing one URL.',
+          'two entries, an entry and an extraUrls path, or a pathFor override are unintentionally ' +
+          'sharing one URL.',
       )
       continue
     }

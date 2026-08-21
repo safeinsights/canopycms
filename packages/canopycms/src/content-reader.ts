@@ -216,7 +216,7 @@ export const createContentReader = (options: ContentReaderOptions): ContentReade
         : url
     const trimmed = base.endsWith('/') ? base.slice(0, -1) : base
     // An index entry's URL is its COLLECTION's path. Without this collapse `path` handed back
-    // `/docs/index` for an entry that answers only at `/docs` -- `resolveUrlPathCandidates`
+    // `/docs/index` for an entry advertised at `/docs` -- `resolveUrlPathCandidates`
     // deliberately does not resolve the former, so a caller linking `path` linked to a 404.
     // Same index decision as computeEntryUrl/listEntries/buildPreviewSrc, through the same
     // predicate. NOTE this builder still keeps its own content-root strip and its own encoding

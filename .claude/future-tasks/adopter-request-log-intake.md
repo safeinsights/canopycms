@@ -36,14 +36,14 @@ left alone.
 | 6 | `react-markdown`-in-RSC trap undocumented | Confirmed | Fixed on this branch |
 | 24 | Assets/media system undiscoverable | Confirmed (docs), plus one real behaviour gap | Docs fixed; behaviour split out |
 | 22 | Enumeration and resolution disagree on URL count | **Confirmed, plus a second consequence they did not find** | [url-resolver-index-entry-extra-url.md](resolved/url-resolver-index-entry-extra-url.md) |
-| 20b | `extraUrls` bypasses `isNoindexEntry`, no `lastModified` | Confirmed, both halves | Docs first; `pathFor` deferred |
+| 20b | `extraUrls` bypasses `isNoindexEntry`, no `lastModified` | Confirmed, both halves | **Shipped 2026-08-21** — docs earlier, `pathFor` on `feat/sitemap-path-for-index-entries` |
 | 27 | Non-list `object` field can be entered but never cleared | Confirmed | Open, small |
 | 28 | `object` fields drop comment support | **Partially true** — see below | Open, small |
 | 26 | `generate-ai-content` never prunes previous output | Confirmed | Open, small-medium |
 | 23 | `select` infers `string \| number` | Confirmed, and the literal-union fix is **verified reachable** | Fixed on this branch |
 | 29 | Unknown keys never reported | Confirmed; cheaper than they framed it | Fixed on this branch |
 | 16 | `listEntries()` never resolves `reference` fields | Confirmed; blast radius **differs** from their account | Open, medium |
-| 20 | Reference app teaches index singletons the hard way | Confirmed but **narrower** than framed | Open, deferred |
+| 20 | Reference app teaches index singletons the hard way | Confirmed but **narrower** than framed | **Shipped 2026-08-21** on `feat/sitemap-path-for-index-entries` |
 
 ### Where our verification disagreed with theirs
 
@@ -91,6 +91,25 @@ reading at all.
   project README. What is genuinely missing is that `apps/example1` still models `home` the hard
   way and demonstrates the `exclude` + `extraUrls` workaround in its own `sitemap.ts`. Fixing the
   example is the work; documenting the convention is already done.
+
+  **Shipped 2026-08-21** on `feat/sitemap-path-for-index-entries`, together with the deferred code
+  half of #20b — one PR, because fixing the example DELETED the obvious demo for `pathFor`. Home is
+  now `content/home.index.<id>.json`, so its `urlPath` is `/` and both workaround lines are gone;
+  `app/page.tsx` resolves via `readByUrlPath('/')`. Two things the triage did not anticipate:
+
+  - The old `read({ entryPath: 'content/home' })` passes no slug, and a slugless read **defaults the
+    slug to the entry-type name** (`content-store.ts`'s `effectiveSlug = slug || schemaItem.name`),
+    so the rename breaks that read — `/` 404s. Passing `slug: 'index'` explicitly would have kept it
+    working; either way it had to change in the same commit, not as a follow-up.
+  - **Nothing in CI would have caught that.** `apps/example1` is typechecked but never built, so a
+    404 homepage ships green. Split out to
+    [example1-next-build-not-in-ci.md](example1-next-build-not-in-ci.md); it was verified here only
+    because the build was run by hand.
+
+  `pathFor` is deliberately NOT demonstrated in `apps/example1`: the reference app's job is to teach
+  the modelling that needs no option at all, and any use of it there would re-teach what this item
+  removed. It is exercised by unit tests and documented as the fallback for URLs fixed outside the
+  content tree.
 - **#24 contains one real behaviour gap and one non-gap.** Their "two substantive gaps underneath
   the docs gap" do not weigh the same. The basePath one is real and was untracked — split out to
   [assets-basepath-deployments.md](assets-basepath-deployments.md). The branch-agnostic asset store

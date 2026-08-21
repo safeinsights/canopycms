@@ -361,8 +361,10 @@ resolver disagreed: it tried "last segment is the slug" first, so the same entry
 + await readByUrlPath('/guides/index')  // null
 ```
 
-The round-trip guarantee is now exclusive for index entries: `item.urlPath` reaches the entry, and
-no `.../index` spelling does, in any case (`/x/Index` and `/x/INDEX` return null too). Ordinary
+The round-trip guarantee now excludes the `.../index` spelling for index entries: `item.urlPath`
+reaches the entry, and no `.../index` spelling does, in any case (`/x/Index` and `/x/INDEX` return
+null too). It is not yet exclusive in general — an index entry still also answers at
+`/<collection>/<entryTypeName>`, a separate open hole (see the Unreleased entry below). Ordinary
 entries are unchanged — their final slug segment stays case-insensitive.
 A collection literally _named_ `index` is unaffected and in fact fixed — `/docs/index` now resolves
 to that collection's own index entry instead of being shadowed by its parent's.
@@ -424,6 +426,82 @@ working around either, stop.
   asserts no two entries share a URL, written because nothing in the package checked. The build
   now enforces it; if you want the assertion kept locally, call `findDuplicateUrlPaths` instead of
   re-implementing the scan.
+
+### Sitemap `pathFor`, and modelling a page served at `/` as a root `index` entry
+
+_Adopter request log items 20 and 20b._
+
+**What changed.** Two changes answering one question — "the URL my app serves this entry at isn't
+the entry's own `urlPath`" — in the order you should try them.
+
+1. **Modelling, which needs no API at all.** An entry whose slug is `index` collapses onto its
+   collection's path; at the content root that path is `/`. So a home page stored as
+   `content/home.index.<id>.json` has `urlPath: '/'` — already the URL its route serves. Nothing to
+   reconcile anywhere. This was always true and always documented; what was missing is that the
+   reference app in this repo modelled `home` as an ordinary root entry (`urlPath: '/home'`) and
+   then papered over the mismatch in its own sitemap, so the workaround was what adopters actually
+   had in front of them. It no longer does that.
+
+2. **`generateContentSitemap` gained `pathFor`**, for the cases where modelling is not available —
+   a URL fixed by published history you cannot change, or a route prefix that deliberately differs
+   from the content layout:
+
+   ```ts
+   pathFor: (entry) =>
+     entry.entryType === 'article' ? entry.urlPath.replace(/^\/articles\//, '/blog/') : null,
+   ```
+
+   It overrides the URL while keeping the entry **inside** the entry walk, so the `isNoindexEntry`
+   gate, the `updatedAt` `lastModified` default and `priority` all still apply.
+
+   `null` (or `undefined`) means **"keep the structural path", not "drop this entry"** — so the
+   callback above reroutes articles and leaves every other entry at its own URL. Dropping is still
+   `exclude`'s job. An empty string throws rather than silently resolving to `/`.
+
+   `extraUrls` is unchanged and now means only what its name says: URLs with **no entry behind
+   them**, like a feed or a hand-written route. It still inherits neither the `noindex` gate nor
+   the `lastModified` default, which is exactly why rerouting a real entry through it was always
+   hand-managed.
+
+**To adopt.** Nothing is required — `pathFor` is additive and the modelling change is a
+recommendation. If you do re-model a singleton you serve at a collection's own path:
+
+1. Rename the file so its slug segment is `index` (`git mv home.home.<id>.json
+home.index.<id>.json`). Entry type and ID are unchanged, so references, `order` arrays and
+   editor position all survive.
+2. **Fix any read that addresses the entry by entry-type path.** This is the step that bites:
+   `read({ entryPath: 'content/home' })` passes no `slug`, and a slugless read defaults the slug to
+   the entry-type _name_ (`effectiveSlug = slug || schemaItem.name`), so it looks for slug `home`
+   and stops resolving once the slug is `index`. Passing `slug: 'index'` explicitly keeps that call
+   working. Prefer switching to `readByUrlPath('/')` and handling its `null` return (it
+   returns `null` where `read` throws). Skipping this yields a **green build with a 404 at `/`** —
+   a static build prerenders the not-found boundary and reports success either way, so verify by
+   reading the emitted HTML, not the build's exit code.
+3. Drop the sitemap workaround (below), and re-check the emitted `sitemap.xml` for the new URL.
+4. If the old URL was publicly indexed, add a redirect from it — the entry's URL genuinely changes.
+
+**One known caveat, if you serve a root catch-all.** An entry-type name is currently still
+resolvable as a URL segment: with home modelled at the root, `readByUrlPath('/home')` returns the
+home entry as well as `readByUrlPath('/')`. Nothing advertises `/home` (it is absent from the
+sitemap and from `generateContentStaticParams`), so on a route-per-page app it simply 404s. But an
+`app/[[...slug]]` catch-all resolves whatever it is handed, so it would serve a duplicate homepage
+there — filter it until this is fixed.
+
+**Now deletable.**
+
+- **The `exclude` + `extraUrls` pair that re-adds a page's real URL by hand.** The shape is an
+  exclusion by entry type (or slug) in `generateContentSitemap`, paired with an `extraUrls` item
+  putting the same page back at the URL the route actually serves — two lines that exist only
+  because the entry's structural URL and its served URL disagree. Re-model the entry and both go;
+  the page is then advertised on its own merits, carrying a real `lastModified` instead of
+  whichever value was hand-copied into the extra URL, or none at all.
+- **Hand-derived `noindex` and `lastModified` beside an `extraUrls` entry.** The shape is a
+  re-implementation of the SEO-flag read, or a date threaded in from elsewhere, sitting next to an
+  extra URL that stands in for a real entry — written because an extra URL inherits neither. If the
+  entry exists, `pathFor` gives you both back; delete the re-derivation rather than keeping a second
+  copy of the rule to drift.
+- **Nothing on the `pathFor` side if you were not already working around this.** It is a new option
+  for an existing gap, not a replacement for a supported API.
 
 <!--
 Template for each entry — copy, don't improvise:

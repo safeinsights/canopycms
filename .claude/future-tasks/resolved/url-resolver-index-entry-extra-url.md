@@ -200,7 +200,10 @@ Also corrected in review: the published "check your own content" sample did not 
 `findDuplicateUrlPaths` needs — it takes `listEntries()` output), and several doc sentences
 overclaimed exclusivity. Empirically settled while fixing them: collection path segments are
 case-SENSITIVE (`/DOCS/overview` → null) and only the final slug segment is case-insensitive
-(`/docs/OVERVIEW` → resolves), so after fix 1 an index entry really does answer at exactly one URL.
+(`/docs/OVERVIEW` → resolves), so after fix 1 an index entry no longer answers at the `.../index`
+spelling. **Follow-up, found 2026-08-21:** "exactly one URL" was too strong — a second, distinct
+hole (`/<collection>/<entryTypeName>`) is still open, tracked in
+[readbyurlpath-entry-type-candidate-phantom-url.md](../readbyurlpath-entry-type-candidate-phantom-url.md).
 
 **One correction to the analysis above.** The concern that changing `index` URL semantics would
 propagate into resolved references (which gained a `urlPath` in #245, after this was filed) does

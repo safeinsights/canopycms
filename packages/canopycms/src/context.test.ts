@@ -416,7 +416,7 @@ describe('readByUrlPath', () => {
   })
 
   // -------------------------------------------------------------------------
-  // An index entry answers at EXACTLY ONE URL
+  // An index entry does not answer at its literal `.../index` URL
   // -------------------------------------------------------------------------
   //
   // The forward rule (computeEntryUrl, and defaultBuildPath for kind 'entry') collapses an
@@ -426,9 +426,16 @@ describe('readByUrlPath', () => {
   // the literal `.../index` URL that no forward surface ever emits. Adopters were paying for
   // that disagreement with per-route entryType gates whose only job was to reject the phantom.
   //
-  // These pin the round-trip as EXCLUSIVE — item.urlPath resolves the entry, and nothing else
-  // does. See .claude/future-tasks/resolved/url-resolver-index-entry-extra-url.md.
-  describe('index entries answer at exactly one URL', () => {
+  // These pin exactly what they say and no more: item.urlPath resolves the entry, and the
+  // `.../index` spelling does not, in any case. They do NOT pin "and nothing else does" — an
+  // earlier version of this comment claimed that, and it is false: an index entry still also
+  // answers at `/<collection>/<entryTypeName>`, because the index-fallback candidate lands on a
+  // registered entry-TYPE schema item that buildPaths delegates to the parent collection. That
+  // hole is open and tracked in
+  // .claude/future-tasks/readbyurlpath-entry-type-candidate-phantom-url.md; when it closes, this
+  // block is where the exclusivity assertion belongs.
+  // See also .claude/future-tasks/resolved/url-resolver-index-entry-extra-url.md.
+  describe('index entries do not answer at their literal /index URL', () => {
     it('does not resolve an index entry at its literal /index URL', async () => {
       const guidesDir = path.join(root, 'content/docs/guides')
       await fs.mkdir(guidesDir, { recursive: true })
@@ -438,7 +445,7 @@ describe('readByUrlPath', () => {
       )
 
       const ctx = await createContext()
-      // The collapsed path is the entry's one URL...
+      // The collapsed path is the entry's advertised URL...
       const collapsed = await ctx.readByUrlPath<{ title: string }>('/docs/guides')
       expect(collapsed!.data.title).toBe('Guides Index')
       // ...and the literal one is not a second one.

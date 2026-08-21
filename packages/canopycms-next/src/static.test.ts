@@ -260,6 +260,262 @@ describe('generateContentSitemap', () => {
 })
 
 // ---------------------------------------------------------------------------
+// pathFor: reroute a real entry WITHOUT leaving the entry pipeline
+// ---------------------------------------------------------------------------
+//
+// The capability `extraUrls` could not provide. Re-advertising a real entry through `extraUrls`
+// drops it out of the walk, and with it the noindex gate, the `updatedAt` default and `priority`
+// — three things the adopter then re-derives by hand, and gets wrong independently. The pair of
+// tests at the end of this block assert that difference directly, in both directions.
+describe('pathFor', () => {
+  const noindexed = { metaTitle: 'Hidden', noindex: true }
+
+  it('advertises the entry at the returned path instead of its structural urlPath', async () => {
+    const ctx = fakeBuildCtx([{ urlPath: '/articles/a', slug: 'a', entryType: 'article' }])
+
+    const sitemap = await generateContentSitemap(ctx, {
+      siteUrl: SITE,
+      pathFor: (entry) => entry.urlPath.replace(/^\/articles\//, '/blog/'),
+    })
+
+    expect(sitemap.map((u) => u.url)).toEqual([`${SITE}/blog/a`])
+  })
+
+  // THE semantic choice. `null` means "no opinion", not "drop it" — so the shape every adopter
+  // reaches for first (handle the one type you care about, `null` for the rest) rewrites that one
+  // and leaves the others at their own URLs. Had `null` meant "skip", this exact callback would
+  // have shipped a one-URL sitemap and nothing would have warned.
+  it('treats a null return as "keep the structural path", not "drop the entry"', async () => {
+    const ctx = fakeBuildCtx([
+      { urlPath: '/home', slug: 'home', entryType: 'home' },
+      { urlPath: '/posts/a', slug: 'a', entryType: 'post' },
+      { urlPath: '/posts/b', slug: 'b', entryType: 'post' },
+    ])
+
+    const sitemap = await generateContentSitemap(ctx, {
+      siteUrl: SITE,
+      pathFor: (entry) => (entry.entryType === 'home' ? '/' : null),
+    })
+
+    expect(sitemap.map((u) => u.url)).toEqual([`${SITE}/`, `${SITE}/posts/a`, `${SITE}/posts/b`])
+  })
+
+  // Same meaning as null, because an adopter writing `if (…) return '/x'` with no else produces
+  // undefined and TypeScript would otherwise reject the callback for no reason a user can act on.
+  it('treats an undefined return the same as null', async () => {
+    const ctx = fakeBuildCtx([{ urlPath: '/posts/a', slug: 'a', entryType: 'post' }])
+
+    const sitemap = await generateContentSitemap(ctx, {
+      siteUrl: SITE,
+      pathFor: () => undefined,
+    })
+
+    expect(sitemap.map((u) => u.url)).toEqual([`${SITE}/posts/a`])
+  })
+
+  // An empty string is neither an override nor an abstention: resolveSeoUrl('') is the site root,
+  // so honouring it would silently advertise this entry at '/'. Red build instead.
+  it('throws on an empty override rather than silently advertising the site root', async () => {
+    const ctx = fakeBuildCtx([{ urlPath: '/posts/a', slug: 'a', entryType: 'post' }])
+
+    await expect(
+      generateContentSitemap(ctx, { siteUrl: SITE, pathFor: () => '   ' }),
+    ).rejects.toThrow(/pathFor returned an empty path/)
+  })
+
+  // An absolute return is refused in every spelling. The protocol-relative one is the dangerous
+  // spelling: `resolveSeoUrl` treats `//host/x` as absolute and passes it through verbatim, so it
+  // would land in the sitemap as a NON-absolute <loc> — the exact invalidity the `siteUrl` guard
+  // rejects, reached through a different field. (`extraUrls` still allows absolute URLs by design.)
+  //
+  // The same-origin case is refused TOO, and is asserted here on purpose: it is the plausible
+  // adopter reflex (return the full canonical URL), and accepting it would mean a host comparison
+  // — origin case, port, trailing slash — for no gain over "return a site-relative path".
+  it('throws on an absolute override rather than emitting an invalid or off-origin <loc>', async () => {
+    const ctx = fakeBuildCtx([{ urlPath: '/posts/a', slug: 'a', entryType: 'post' }])
+
+    await expect(
+      generateContentSitemap(ctx, { siteUrl: SITE, pathFor: () => '//cdn.example.com/x' }),
+    ).rejects.toThrow(/absolute URL/)
+    await expect(
+      generateContentSitemap(ctx, { siteUrl: SITE, pathFor: () => 'https://evil.example.org/x' }),
+    ).rejects.toThrow(/absolute URL/)
+    // Same origin as SITE — still refused, and the message must not call it "off-site".
+    await expect(
+      generateContentSitemap(ctx, { siteUrl: SITE, pathFor: () => `${SITE}/posts/a` }),
+    ).rejects.toThrow(/absolute URL/)
+    await expect(
+      generateContentSitemap(ctx, { siteUrl: SITE, pathFor: () => `${SITE}/posts/a` }),
+    ).rejects.not.toThrow(/off-site/)
+  })
+
+  // Surrounding whitespace is never intended, and it survives into the URL if not trimmed:
+  // ' /blog' resolved to `<siteUrl>/ /blog`. The empty-check already trimmed to decide emptiness,
+  // then returned the untrimmed string anyway.
+  it('trims the override instead of emitting the whitespace into the URL', async () => {
+    const ctx = fakeBuildCtx([{ urlPath: '/posts/a', slug: 'a', entryType: 'post' }])
+
+    const sitemap = await generateContentSitemap(ctx, { siteUrl: SITE, pathFor: () => '  /blog  ' })
+
+    expect(sitemap.map((u) => u.url)).toEqual([`${SITE}/blog`])
+  })
+
+  it('applies trailingSlash to an override, same as to a structural path', async () => {
+    const ctx = fakeBuildCtx([{ urlPath: '/articles/a', slug: 'a', entryType: 'article' }])
+
+    const sitemap = await generateContentSitemap(ctx, {
+      siteUrl: SITE,
+      trailingSlash: true,
+      pathFor: () => '/blog/a',
+    })
+
+    expect(sitemap.map((u) => u.url)).toEqual([`${SITE}/blog/a/`])
+  })
+
+  it('keeps the entry inside the walk: updatedAt default and priority still apply', async () => {
+    const ctx = fakeBuildCtx([
+      { urlPath: '/articles/a', slug: 'a', entryType: 'article', updatedAt: '2024-03-01' },
+    ])
+
+    const sitemap = await generateContentSitemap(ctx, {
+      siteUrl: SITE,
+      pathFor: () => '/blog/a',
+      priority: () => 0.7,
+    })
+
+    expect(sitemap).toEqual([{ url: `${SITE}/blog/a`, lastModified: '2024-03-01', priority: 0.7 }])
+  })
+
+  // Documented ordering: the override decides the URL, never whether the entry is advertised.
+  //
+  // Asserted on INVOCATION, not just on output. A total, pure `pathFor` returns the same URLs
+  // whichever side of the gates it runs on, so an output-only assertion here passes identically
+  // with the ordering reversed and pins nothing. What is actually observable — and what a
+  // `pathFor` that throws for some entries depends on — is that it is never CALLED for an entry
+  // the gates already dropped.
+  it('runs after exclude: a dropped entry is never passed to pathFor at all', async () => {
+    const ctx = fakeBuildCtx([
+      { urlPath: '/articles/a', slug: 'a', entryType: 'article' },
+      { urlPath: '/articles/b', slug: 'b', entryType: 'article' },
+    ])
+    const seen: string[] = []
+
+    const sitemap = await generateContentSitemap(ctx, {
+      siteUrl: SITE,
+      exclude: (entry) => entry.slug === 'a',
+      pathFor: (entry) => {
+        seen.push(entry.slug)
+        return `/blog/${entry.slug}`
+      },
+    })
+
+    expect(seen).toEqual(['b'])
+    expect(sitemap.map((u) => u.url)).toEqual([`${SITE}/blog/b`])
+  })
+
+  // The same ordering guarantee for the gate that is NOT optional.
+  it('runs after the noindex gate: a noindex entry is never passed to pathFor', async () => {
+    const ctx = fakeBuildCtx([
+      { urlPath: '/articles/a', slug: 'a', entryType: 'article', data: noindexed },
+      { urlPath: '/articles/b', slug: 'b', entryType: 'article' },
+    ])
+    const seen: string[] = []
+
+    await generateContentSitemap(ctx, {
+      siteUrl: SITE,
+      pathFor: (entry) => {
+        seen.push(entry.slug)
+        return null
+      },
+    })
+
+    expect(seen).toEqual(['b'])
+  })
+
+  // The other half of that ordering, and the thing most likely to surprise: sibling callbacks see
+  // the entry as ENUMERATED. Branch on the entry, not on a urlPath that pathFor has not applied.
+  it('passes the structural urlPath to exclude, lastModified and priority — not the override', async () => {
+    const ctx = fakeBuildCtx([{ urlPath: '/articles/a', slug: 'a', entryType: 'article' }])
+    const seenByExclude: string[] = []
+    const seenByLastModified: string[] = []
+    const seenByPriority: string[] = []
+
+    await generateContentSitemap(ctx, {
+      siteUrl: SITE,
+      pathFor: () => '/blog/a',
+      exclude: (entry) => {
+        seenByExclude.push(entry.urlPath)
+        return false
+      },
+      lastModified: (entry) => {
+        seenByLastModified.push(entry.urlPath)
+        return undefined
+      },
+      priority: (entry) => {
+        seenByPriority.push(entry.urlPath)
+        return undefined
+      },
+    })
+
+    expect(seenByExclude).toEqual(['/articles/a'])
+    expect(seenByLastModified).toEqual(['/articles/a'])
+    expect(seenByPriority).toEqual(['/articles/a'])
+  })
+
+  it('warns and keeps the first when pathFor rewrites two entries onto one URL', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      const ctx = fakeBuildCtx([
+        { urlPath: '/articles/a', slug: 'a', entryType: 'article' },
+        { urlPath: '/articles/b', slug: 'b', entryType: 'article' },
+      ])
+
+      const sitemap = await generateContentSitemap(ctx, { siteUrl: SITE, pathFor: () => '/blog' })
+
+      expect(sitemap.map((u) => u.url)).toEqual([`${SITE}/blog`])
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('pathFor'))
+    } finally {
+      warnSpy.mockRestore()
+    }
+  })
+
+  // The reason this option exists, asserted as a contrast rather than described in a comment.
+  it('applies the noindex gate to a rerouted entry — which extraUrls cannot', async () => {
+    const ctx = fakeBuildCtx([
+      { urlPath: '/home', slug: 'home', entryType: 'home', data: noindexed },
+    ])
+
+    // Rerouted via pathFor: still inside the walk, so noindex still suppresses it.
+    expect(await generateContentSitemap(ctx, { siteUrl: SITE, pathFor: () => '/' })).toEqual([])
+
+    // The pre-pathFor workaround, for contrast: exclude the entry and re-add its URL by hand. The
+    // entry is marked noindex and the URL is advertised anyway, because nothing gates an extra URL.
+    const viaExtraUrls = await generateContentSitemap(ctx, {
+      siteUrl: SITE,
+      exclude: (entry) => entry.entryType === 'home',
+      extraUrls: [{ path: '/' }],
+    })
+    expect(viaExtraUrls.map((u) => u.url)).toEqual([`${SITE}/`])
+  })
+
+  it('carries lastModified onto a rerouted entry — which extraUrls also cannot', async () => {
+    const ctx = fakeBuildCtx([
+      { urlPath: '/home', slug: 'home', entryType: 'home', updatedAt: '2024-05-05' },
+    ])
+
+    const viaPathFor = await generateContentSitemap(ctx, { siteUrl: SITE, pathFor: () => '/' })
+    expect(viaPathFor).toEqual([{ url: `${SITE}/`, lastModified: '2024-05-05' }])
+
+    const viaExtraUrls = await generateContentSitemap(ctx, {
+      siteUrl: SITE,
+      exclude: (entry) => entry.entryType === 'home',
+      extraUrls: [{ path: '/' }],
+    })
+    expect(viaExtraUrls).toEqual([{ url: `${SITE}/` }])
+  })
+})
+
+// ---------------------------------------------------------------------------
 // noindex: ONE predicate, BOTH surfaces
 // ---------------------------------------------------------------------------
 //

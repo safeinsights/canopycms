@@ -110,9 +110,10 @@ export type RootCollectionMeta = {
  */
 
 /**
- * Strip embedded ID from a directory or file name.
+ * Strip embedded ID from a directory or file name, leaving the slug.
  * e.g., "docs.bChqT78gcaLd" -> "docs"
- * e.g., "home.home.agfzDt2RLpSn.json" -> "home"
+ * e.g., "post.hello-world.vh2WdhwAFiSL.md" -> "hello-world" (the SLUG, not the entry type)
+ * e.g., "home.index.agfzDt2RLpSn.json" -> "index"
  */
 function stripEmbeddedIdFromName(name: string): string {
   // Use extractSlugFromFilename which handles the ID extraction logic

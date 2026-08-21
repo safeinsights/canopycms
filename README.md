@@ -1681,9 +1681,10 @@ export default async function Page({ params }) {
 3. `/docs/guides` -- resolves to the index entry of the `guides` collection (if one exists)
 4. `/` -- resolves to the root index entry at the content root (if one exists)
 5. `/docs/guides/index` -- returns `null`. When the last segment is literally `index`, step 1 is
-   skipped: an index entry's only URL is its collection's path (step 3), so it never answers at
-   the literal `.../index` URL as well. Step 2 still runs, which is what resolves a collection
-   actually _named_ `index`.
+   skipped: an index entry's advertised URL is its collection's path (step 3), so it never answers
+   at the literal `.../index` URL as well. Step 2 still runs, which is what resolves a collection
+   actually _named_ `index`. (Step 2 is also the open hole below — it still lets an index entry
+   answer at `/<collection>/<entryTypeName>`.)
 
 Returns `null` when no content matches the path, or when the current user is not permitted to read it (a `FORBIDDEN` denial renders as a 404 via your existing `if (!result) return notFound()`, rather than throwing). The strict `read()` API still throws on permission errors.
 
@@ -1692,12 +1693,14 @@ Returns `null` when no content matches the path, or when the current user is not
 Index entries (entries with slug `"index"`) represent the default content for a collection URL. All three content APIs -- `readByUrlPath`, `listEntries`, and `buildContentTree` -- treat index entries consistently:
 
 - **`readByUrlPath('/guides')`** resolves to the index entry in the `guides` collection
-- **`readByUrlPath('/guides/index')`** returns `null` -- an index entry has exactly one URL, and it is `/guides`. Case variants (`/guides/Index`, `/guides/INDEX`) are `null` too
+- **`readByUrlPath('/guides/index')`** returns `null` -- the `.../index` spelling is not a second URL for the entry, in any case variant (`/guides/Index`, `/guides/INDEX`). Its advertised URL is `/guides`
 - **`readByUrlPath('/')`** resolves to the index entry at the content root
 - **`listEntries()`** returns `urlPath: '/guides'` (not `'/guides/index'`) for index entries, and `urlPath: '/'` for a root index entry
 - **`buildContentTree()`** generates `path: '/guides'` (not `'/guides/index'`) for index entries by default
 
-This means `entry.urlPath` from `listEntries()` is round-trip safe: `readByUrlPath(entry.urlPath)` always resolves back to the same entry. For an index entry that is now the _only_ URL that reaches it, in any case spelling. (For an ordinary entry the final slug segment stays case-insensitive, so `/docs/OVERVIEW` still resolves `/docs/overview` -- collection path segments do not.)
+**Model your home page this way.** (One caveat first, because this recommendation is what exposes it: an entry-type name is currently also resolvable as a URL segment, so with home modelled at the root, `readByUrlPath('/home')` still returns the home entry even though nothing advertises that URL. It is harmless unless you serve a root catch-all -- if you do, filter it, and see [`readbyurlpath-entry-type-candidate-phantom-url.md`](.claude/future-tasks/readbyurlpath-entry-type-candidate-phantom-url.md).) A singleton stored as an ordinary root entry (`content/home.home.<id>.json`) has `urlPath: '/home'`, so a route serving it at `/` leaves the entry's own URL disagreeing with the served one -- which every URL-derived surface then has to be told about separately, starting with the sitemap. Stored as a root index entry (`content/home.index.<id>.json`) its `urlPath` is `/`, the route reads `readByUrlPath('/')`, and nothing needs special-casing. Note what happens to a read that addresses the entry by entry-type path. `read({ entryPath: 'content/home' })` with no `slug` defaults the slug to the entry-type _name_ (`content-store.ts`'s `effectiveSlug = slug || schemaItem.name`), so it looks for slug `home` and stops resolving once the slug is `index`. Passing the slug explicitly -- `read({ entryPath: 'content/home', slug: 'index' })` -- keeps working, and is the smaller migration if you want one. Prefer `readByUrlPath('/')`.
+
+This means `entry.urlPath` from `listEntries()` is round-trip safe: `readByUrlPath(entry.urlPath)` always resolves back to the same entry. For an index entry, `/docs/index` no longer reaches it in any case spelling -- though `/docs/<entryTypeName>` still does, which is the open hole the caveat above points at. (For an ordinary entry the final slug segment stays case-insensitive, so `/docs/OVERVIEW` still resolves `/docs/overview` -- collection path segments do not.)
 
 ### One URL, one entry
 
@@ -1867,6 +1870,7 @@ export default function sitemap(): Promise<MetadataRoute.Sitemap> {
 | `exclude`       | `(entry) => boolean`                     | -             | Drop entries, on top of the non-optional `noindex` exclusion                                                                          |
 | `lastModified`  | `(entry) => Date \| string \| undefined` | `updatedAt`   | `<lastmod>` per entry; return `undefined` to omit it                                                                                  |
 | `priority`      | `(entry) => number \| undefined`         | -             | `<priority>` per entry                                                                                                                |
+| `pathFor`       | `(entry) => string \| null`              | -             | Advertise an entry at a different URL, keeping it inside the entry walk (so `noindex`/`lastModified`/`priority` still apply)          |
 | `extraUrls`     | `SitemapExtraUrl[]`                      | -             | URLs with no entry behind them (hand-written routes, feeds)                                                                           |
 | `seo`           | `{ fields?, group? }`                    | flat defaults | Where the SEO fields live, when they aren't the defaults                                                                              |
 
@@ -1878,7 +1882,24 @@ export default function sitemap(): Promise<MetadataRoute.Sitemap> {
 >
 > **Colliding URLs are deduped, not silently doubled.** Two entries resolving to the same `<loc>` is not fatal to a crawler, but it almost always means two entries are unintentionally sharing one URL. `generateContentSitemap` keeps the first and drops the rest, and warns on the duplicate so you notice instead of shipping a sitemap with fewer URLs than you expect.
 >
-> In a **production build** the entry-vs-entry case no longer gets this far: enumeration fails the build first (see [One URL, one entry](#one-url-one-entry)). This dedupe still covers the cases that guard cannot see -- a collision involving an `extraUrls` path, which you supply here and which never appears in the content enumeration -- and any call outside a production build.
+> In a **production build** the entry-vs-entry case no longer gets this far: enumeration fails the build first (see [One URL, one entry](#one-url-one-entry)). This dedupe still covers the cases that guard cannot see -- a collision involving an `extraUrls` path, which you supply here and which never appears in the content enumeration, a collision created by `pathFor`, which rewrites URLs after that guard has run on the raw listing -- and any call outside a production build.
+
+**When the URL you serve isn't the entry's `urlPath`.** Three answers, in the order to try them:
+
+1. **Re-model the entry, which needs no option at all.** An entry whose slug is `index` collapses onto its collection's path, and at the content root that path is `/`. A home page stored as `content/home.index.<id>.json` therefore has `urlPath: '/'` already -- nothing to reconcile, and nothing to keep in sync later. The example app in this repo does exactly this.
+2. **`pathFor`, when re-modelling isn't available** -- a URL fixed by published history you cannot change, or a route prefix that deliberately differs from your content layout:
+
+   ```typescript
+   // Content lives under content/articles/*, but the site has always published /blog/*.
+   pathFor: (entry) =>
+     entry.entryType === 'article' ? entry.urlPath.replace(/^\/articles\//, '/blog/') : null,
+   ```
+
+   Returning `null` (or `undefined`) means **"keep this entry's own URL", not "drop it"** -- so the callback above reroutes articles and leaves everything else alone. Dropping an entry is still `exclude`'s job. Because the entry never leaves the walk, it keeps the `noindex` gate, the `updatedAt` `lastModified` default and its `priority`.
+
+   It changes what is **advertised**, not what is **built**: `generateContentStaticParams` still enumerates the entry at its structural path, so the URL you return must be one your app actually routes.
+
+3. **`extraUrls`, only for URLs with no entry behind them** -- a feed, a hand-written route. An extra URL inherits neither the `noindex` gate nor the `lastModified` default, because there is no entry to read either from; using it to re-advertise a real entry means re-deriving both by hand, and keeping them in sync forever.
 
 #### `generateMetadata`
 

@@ -249,19 +249,28 @@ export default async function DocPage({ params }: { params: { slug?: string[] } 
 }
 ```
 
-For known, fixed paths you can still use `read` directly:
+For a known, fixed path you can still use `read` directly. It addresses an entry by its
+**logical path**, not by URL, so it suits content that has no URL of its own — an entry read for
+embedding, or a singleton pulled into a layout:
 
 ```ts
-// app/page.tsx (server component)
-import { getCanopy } from './lib/canopy'
-import type { HomeContent } from './schemas'
-
-export default async function Page() {
-  const canopy = await getCanopy()
-  const { data } = await canopy.read<HomeContent>({ entryPath: 'content/home' })
-  return <HomeView data={data} />
-}
+// A snippet is addressed by reference from inside a block; it has no page of its own.
+const canopy = await getCanopy()
+const { data } = await canopy.read<SnippetContent>({
+  entryPath: 'content/snippets',
+  slug: 'try-canopy',
+})
 ```
+
+**For a page you actually serve at a URL, prefer `readByUrlPath` above**, and model the entry so
+its natural `urlPath` is that URL. A home page is the case worth spelling out: model it as a root
+`index` entry (`content/home.index.<id>.json`) and it answers at `/`, so the route reads
+`readByUrlPath('/')` and the sitemap advertises it with no special-casing. Reading it instead by
+entry-type path (`{ entryPath: 'content/home' }`, with no `slug` — it defaults to the entry-type
+name) works, but leaves the entry's real `urlPath` as
+`/home` while the route serves `/` — two answers to "where does this live", which every
+URL-derived surface then has to be told about one at a time. The example app in this repo used to
+do that and no longer does.
 
 Both methods return `{ data, path }`. `read` throws if the content is missing; `readByUrlPath` returns `null` instead. Pass a `branch` option when you want branch-specific data (e.g., for preview); otherwise it defaults to your configured base branch. Both enforce the same branch/path access rules as the API handlers.
 
@@ -282,7 +291,9 @@ This convention is applied consistently across the API:
 | `readByUrlPath`    | Automatically tries `slug: 'index'` as a fallback when the direct entry doesn't match. Works for all paths including `/`. A path whose last segment is an index slug (any case) skips the direct-entry attempt, so an index entry is reachable only at its collapsed path. |
 | `buildContentTree` | Default `buildPath` collapses index entries so tree node paths match the URLs consumers would use.                                                                                                                                                                         |
 
-The round-trip property holds in both directions: for every item from `listEntries`, `readByUrlPath(item.urlPath)` resolves to the same entry, and for an index entry no other URL does. (Ordinary entries keep case-insensitive matching on the final slug segment.)
+The round-trip property holds in both directions: for every item from `listEntries`, `readByUrlPath(item.urlPath)` resolves to the same entry, and for an index entry no `.../index` spelling does. (Ordinary entries keep case-insensitive matching on the final slug segment.)
+
+One known exception, still open: an entry-type name is also resolvable as a URL segment, so an index entry additionally answers at `/<collection>/<entryTypeName>` -- e.g. a root index entry at both `/` and `/home`. Nothing advertises that URL (it is absent from `listEntries` and from static-param generation), so it only matters if you serve a catch-all route. See the `readbyurlpath-entry-type-candidate-phantom-url` task in the CanopyCMS repo.
 
 Two different entries can still compute the same `urlPath` — an entry whose slug matches a sibling collection that also has an `index` entry, or two slugs differing only by case. Only one of them can be served, so a production build fails and names them. `findDuplicateUrlPaths` (exported from `canopycms/server`) runs the same scan on demand.
 

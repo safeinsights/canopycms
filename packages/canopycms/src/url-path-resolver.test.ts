@@ -71,7 +71,7 @@ describe('resolveUrlPathCandidates', () => {
   })
 
   // A literal `index` segment is the one case where the direct-entry candidate is dropped: an
-  // index entry's only URL is its collapsed collection path, so emitting the direct candidate
+  // index entry's advertised URL is its collapsed collection path, so emitting the direct candidate
   // would let it answer at a URL no forward surface (computeEntryUrl / defaultBuildPath) ever
   // publishes. See the resolver's own doc comment.
   describe('a literal `index` segment', () => {
