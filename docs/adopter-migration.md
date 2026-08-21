@@ -37,7 +37,68 @@ supersedes an earlier one's workaround entirely.
 
 ## Unreleased
 
-_Entries land here as changes merge._
+### `select` fields now infer their own options (#23) — **breaking (type-level)**
+
+**What changed.** `TypeFromEntrySchema` used to infer every `select` field as
+`string | number`. It now infers the literal union of that field's own `options`:
+
+```diff
+- status: string | number
++ status: 'draft' | 'published'
+```
+
+The `number` half was never reachable. `SelectOption` carries `value: string` in both
+of its arms, the editor's option normalizer emits strings, and the entry validator
+rejects any select value that is not a string — so `number` was a type-level fiction
+that every adopter had to launder back out by hand.
+
+Both option forms work, including a single array that mixes them: a bare string option
+contributes itself, and a `{ label, value }` option contributes its **`value`**, not its
+label and not the whole object.
+
+**To adopt.** Nothing, if your schema goes through `defineEntrySchema` (or is declared
+`as const`) and your code already treats select values as strings. The narrowing is
+inferred from the schema you already wrote.
+
+Two things determine whether you get the narrow type:
+
+- **The options must still be literals at the type level.** `defineEntrySchema` and
+  `as const` preserve them. An options array annotated as the runtime type
+  (`const options: SelectOption[] = [...]`) has no literals left, so the field falls
+  back to `string`. That fallback is deliberate, not an error — but if you expected a
+  union and got `string`, this is why.
+- **A `select` with no `options`, or with `options: []`, also falls back to `string`.**
+  Both are schema mistakes that `validateCanopyConfig` rejects at startup with a clear
+  message; the inferred type stays usable rather than collapsing to `never`.
+
+**`''` is deliberately not in the union.** The validator accepts an empty string as
+"not filled in" for any field that is not explicitly `required: true`, so a select can
+hold `''` on disk. Like the rest of `TypeFromEntrySchema`, this models the schema's
+declared shape rather than everything the validator tolerates — the same stance that
+already types a field omitting `required` as a required property. If your content has
+cleared selects and you branch on that, compare before the value reaches the typed
+surface, or add `''` to your own schema's options so it becomes a declared state.
+
+_Broken (act on these):_
+
+- **Comparing a select value against a string that is not one of its options.** This
+  now fails to compile with "no overlap" instead of silently being dead code. That is
+  usually a real bug being surfaced — a renamed option, or a comparison against a
+  label instead of a value. Fix the comparison; do not widen the type to silence it.
+- **Assigning a schema-derived select value to a hand-written `string` field.** Still
+  fine — the union is assignable to `string`. The reverse is not: assigning a plain
+  `string` **into** a schema-derived select value is now an error. Derive the type from
+  the schema instead of re-declaring it.
+- **Anything that relied on the `number` half.** A `typeof value === 'number'` branch on
+  a select value is now flagged as unreachable, correctly — it never ran.
+
+**Now deletable.** Any local shim that re-narrows a schema-derived select value back to
+the app's own union before use — typically a helper or an inline cast that takes the
+value, checks it against a hand-maintained allowlist of the same option strings (or
+just asserts `as 'a' | 'b'`), and returns the narrow type. That allowlist was a second
+copy of the schema's `options`, free to drift from it silently; the schema is now the
+single source. Also deletable: `typeof v === 'string'` guards that existed only to
+strip the impossible `number`.
 
 **Promoting them is a manual step, and it is easy to miss.** `main` auto-publishes a patch
 on every push, so an entry written here is usually released within hours — while the heading

@@ -12,7 +12,7 @@ import {
   type TypeFromEntrySchema,
 } from './entry-schema'
 import { validateEntryData } from './validation/entry-validator'
-import type { EntrySchema } from './config/types'
+import type { EntrySchema, SelectOption } from './config/types'
 
 describe('TypeFromEntrySchema', () => {
   describe('block discriminated union', () => {
@@ -296,6 +296,144 @@ describe('TypeFromEntrySchema', () => {
     })
   })
 
+  describe('select field', () => {
+    it('infers the literal union of its own options, not a bare string', () => {
+      const schema = defineEntrySchema([
+        { name: 'status', type: 'select', options: ['draft', 'published'] },
+      ])
+
+      type Content = TypeFromEntrySchema<typeof schema>
+
+      expectTypeOf<Content['status']>().toEqualTypeOf<'draft' | 'published'>()
+
+      void schema
+    })
+
+    it('rejects a string that is not one of the options, and any number', () => {
+      const schema = defineEntrySchema([
+        { name: 'status', type: 'select', options: ['draft', 'published'] },
+      ])
+
+      type Content = TypeFromEntrySchema<typeof schema>
+
+      const valid: Content = { status: 'published' }
+      // @ts-expect-error - 'archived' is not one of the declared options
+      const notAnOption: Content = { status: 'archived' }
+      // @ts-expect-error - no select value can ever be a number: SelectOption carries
+      // `value: string` in both arms and validateEntryData rejects a non-string
+      const aNumber: Content = { status: 42 }
+
+      expect(valid.status).toBe('published')
+      expect(notAnOption.status).toBe('archived')
+      expect(aNumber.status).toBe(42)
+
+      void schema
+    })
+
+    it('takes `value` off an object option, not the whole option object', () => {
+      const schema = defineEntrySchema([
+        {
+          name: 'status',
+          type: 'select',
+          options: [
+            { label: 'Draft', value: 'draft' },
+            { label: 'Published', value: 'published' },
+          ],
+        },
+      ])
+
+      type Content = TypeFromEntrySchema<typeof schema>
+
+      expectTypeOf<Content['status']>().toEqualTypeOf<'draft' | 'published'>()
+
+      const valid: Content = { status: 'draft' }
+      // @ts-expect-error - 'Draft' is the option's label, not its value
+      const usingLabel: Content = { status: 'Draft' }
+
+      expect(valid.status).toBe('draft')
+      expect(usingLabel.status).toBe('Draft')
+
+      void schema
+    })
+
+    it('handles an options array mixing bare strings and object options', () => {
+      const schema = defineEntrySchema([
+        {
+          name: 'status',
+          type: 'select',
+          options: ['draft', { label: 'Published', value: 'published' }, 'archived'],
+        },
+      ])
+
+      type Content = TypeFromEntrySchema<typeof schema>
+
+      expectTypeOf<Content['status']>().toEqualTypeOf<'draft' | 'published' | 'archived'>()
+
+      // @ts-expect-error - 'Published' is the object option's label, not its value
+      const usingLabel: Content = { status: 'Published' }
+
+      expect(usingLabel.status).toBe('Published')
+
+      void schema
+    })
+
+    it('a list select becomes an array of the option union', () => {
+      const schema = defineEntrySchema([
+        { name: 'tags', type: 'select', list: true, options: ['a', 'b'] },
+      ])
+
+      type Content = TypeFromEntrySchema<typeof schema>
+
+      expectTypeOf<Content['tags']>().toEqualTypeOf<Array<'a' | 'b'>>()
+
+      // @ts-expect-error - 'c' is not one of the declared options
+      const wrong: Content = { tags: ['a', 'c'] }
+
+      expect(wrong.tags).toEqual(['a', 'c'])
+
+      void schema
+    })
+
+    it('the inferred union agrees with what validateEntryData accepts at runtime', () => {
+      const schema = defineEntrySchema([
+        { name: 'status', type: 'select', options: ['draft', { label: 'Live', value: 'live' }] },
+      ])
+
+      type Content = TypeFromEntrySchema<typeof schema>
+
+      const live: Content = { status: 'live' }
+
+      expect(validateEntryData(schema as EntrySchema, live)).toEqual([])
+      expect(validateEntryData(schema as EntrySchema, { status: 'Live' })).toEqual([
+        { fieldPath: 'status', message: 'Must be one of: draft, live' },
+      ])
+      expect(validateEntryData(schema as EntrySchema, { status: 42 })).toEqual([
+        { fieldPath: 'status', message: 'Expected a selection' },
+      ])
+    })
+
+    it('degrades to string when there is no literal option list to infer', () => {
+      // No `options` key at all, and an empty one — both are schema mistakes that
+      // validateCanopyConfig rejects at runtime. Neither should type as `never`.
+      const noOptions = defineEntrySchema([{ name: 'status', type: 'select' }])
+      const emptyOptions = defineEntrySchema([{ name: 'status', type: 'select', options: [] }])
+
+      expectTypeOf<TypeFromEntrySchema<typeof noOptions>['status']>().toEqualTypeOf<string>()
+      expectTypeOf<TypeFromEntrySchema<typeof emptyOptions>['status']>().toEqualTypeOf<string>()
+
+      // An options array annotated as the runtime SelectOption[] has no literals left,
+      // so it widens to `string` rather than failing to compile.
+      const options: SelectOption[] = ['draft', { label: 'Live', value: 'live' }]
+      const widened = defineEntrySchema([{ name: 'status', type: 'select', options }])
+
+      expectTypeOf<TypeFromEntrySchema<typeof widened>['status']>().toEqualTypeOf<string>()
+
+      void noOptions
+      void emptyOptions
+      void widened
+    })
+  })
+
   describe('required-ness to property optionality', () => {
     // Three-way distinction, deliberately: ONLY an explicit `required: false` produces
     // an optional (`?:`) property. `required: true` and an OMITTED `required` both
@@ -425,11 +563,11 @@ describe('defineSeoFieldGroup', () => {
       metaTitle?: string
       metaDescription?: string
       ogImage?: string
-      // select fields infer as string | number (TypeFromEntrySchema does not narrow options).
-      ogType?: string | number
+      // The two select fields narrow to their own declared options, not a bare string.
+      ogType?: 'website' | 'article' | 'profile'
       canonical?: string
       noindex?: boolean
-      twitterCard?: string | number
+      twitterCard?: 'summary' | 'summary_large_image'
     }>()
 
     // An entry that sets no SEO fields at all is still a valid literal.
@@ -458,10 +596,10 @@ describe('defineSeoFieldGroup', () => {
         metaTitle?: string
         metaDescription?: string
         ogImage?: string
-        ogType?: string | number
+        ogType?: 'website' | 'article' | 'profile'
         canonical?: string
         noindex?: boolean
-        twitterCard?: string | number
+        twitterCard?: 'summary' | 'summary_large_image'
       }
     }>()
     expect(schema[1]).toMatchObject({ name: 'seo', type: 'object', required: false })
