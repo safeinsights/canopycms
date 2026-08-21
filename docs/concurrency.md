@@ -255,6 +255,15 @@ waiting on a save:
 - **Reads never take it.** An EFS round-trip on every read is not an acceptable price,
   and a read racing a rebase gets an older or newer file, never a destroyed one.
 
+**A content write is now a read-modify-write of the content file itself.** To stop editor
+saves deleting the file's comments, `ContentStore.write` re-serialises onto the file's own
+parsed YAML document rather than a fresh one (`utils/content-serialize.ts`), which means it
+reads the current bytes before writing. That read sits _inside_ `withLock(lockKey)`, inside
+this lock, and _after_ the `expectedVersion` stat — so the bytes it reconciles against are
+the bytes OCC validated, and no rebase can be replaying against the branch while it happens.
+It adds no lock and no cached state; the only requirement is that it never be hoisted out of
+the critical section.
+
 Acquisition order is always content lock → `withLock`, never the reverse. The lock
 keeps its marker under `{branchRoot}/.canopy-meta` (git-excluded, so the marker can never
 dirty the tree or land in a publish commit) and anchors on that marker path, like every
