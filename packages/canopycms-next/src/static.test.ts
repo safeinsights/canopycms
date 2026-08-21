@@ -41,6 +41,30 @@ describe('collectStaticParams', () => {
     expect(params).toEqual([{ slug: 'a' }, { slug: 'b' }])
   })
 
+  it('single shape: skips index entries, whose URL a [slug] route cannot represent', async () => {
+    // An index entry's urlPath is the COLLECTION's path (/posts), so a [slug] route has no param
+    // that addresses it — emitting `slug: 'index'` reconstructs /posts/index, which
+    // readByUrlPath deliberately does not resolve, prerendering a guaranteed notFound.
+    const ctx = fakeBuildCtx([
+      { urlPath: '/posts/a', slug: 'a', entryType: 'post' },
+      { urlPath: '/posts', slug: 'index', entryType: 'postIndex' },
+      { urlPath: '/posts/b', slug: 'b', entryType: 'post' },
+    ])
+
+    expect(await collectStaticParams(ctx, { shape: 'single' })).toEqual([
+      { slug: 'a' },
+      { slug: 'b' },
+    ])
+  })
+
+  it('catch-all shape still emits index entries, using their collapsed segments', async () => {
+    // The counterpart to the skip above: catch-all CAN represent a collection URL, so dropping
+    // index entries there would lose the page entirely.
+    const ctx = fakeBuildCtx([{ urlPath: '/posts', slug: 'index', entryType: 'postIndex' }])
+
+    expect(await collectStaticParams(ctx)).toEqual([{ slug: ['posts'] }])
+  })
+
   it('honors a custom paramName and filter', async () => {
     const ctx = fakeBuildCtx([
       { urlPath: '/', slug: 'index', entryType: 'home' },

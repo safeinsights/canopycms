@@ -43,6 +43,12 @@ describe('createContentReader', () => {
       JSON.stringify({ hero: { title: 'Hi' } }, null, 2),
       'utf8',
     )
+    // An index entry, so the `path` an index read reports is covered below.
+    await fs.writeFile(
+      path.join(pagesDir, 'index.json'),
+      JSON.stringify({ hero: { title: 'Pages Landing' } }, null, 2),
+      'utf8',
+    )
 
     const schema = {
       collections: [
@@ -99,6 +105,17 @@ describe('createContentReader', () => {
     })
     expect(home.path).toBe('/pages/home?branch=main')
     expect(home.data.hero.title).toBe('Hi')
+
+    // An index entry's `path` is its COLLECTION's path. Without the collapse this handed back
+    // `/pages/index?branch=main` — a URL readByUrlPath deliberately refuses to resolve, so a
+    // caller linking `path` linked to a 404.
+    const index = await reader.read({
+      entryPath: unsafeAsLogicalPath('content/pages'),
+      slug: unsafeAsSlug('index'),
+      branch: 'main',
+      user: ANONYMOUS_USER,
+    })
+    expect(index.path).toBe('/pages?branch=main')
 
     await expect(
       reader.read({

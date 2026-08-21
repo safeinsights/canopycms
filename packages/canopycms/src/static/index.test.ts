@@ -6,6 +6,8 @@ import {
   findEntriesWithUnknownKeys,
   warnUnknownEntryKeys,
   assertBuildEntriesValid,
+  findDuplicateUrlPaths,
+  assertNoDuplicateUrlPaths,
   type StaticPathEntry,
 } from './index'
 import type { ListEntriesItem, ListEntriesOptions } from '../content-listing'
@@ -128,6 +130,47 @@ describe('collectStaticPaths', () => {
 
       const result = await collectStaticPaths(ctx)
       expect(result).toHaveLength(1)
+    })
+
+    // Two entries, one URL: exactly one of them gets a route and the other silently vanishes
+    // from the build. Same gate, same phase, same reasoning as the schema-validity guard above.
+    const contested = [
+      {
+        urlPath: '/docs/guides',
+        slug: 'guides' as never,
+        entryPath: 'content/docs/guides' as never,
+      },
+      {
+        urlPath: '/docs/guides',
+        slug: 'index' as never,
+        entryPath: 'content/docs/guides/index' as never,
+      },
+    ]
+
+    it('throws on a URL claimed by two entries when CANOPY_BUILD_MODE is set', async () => {
+      vi.stubEnv('CANOPY_BUILD_MODE', 'true')
+
+      await expect(collectStaticPaths(fakeCtx(contested))).rejects.toThrow(
+        'claimed by more than one entry',
+      )
+    })
+
+    it('does not throw when CANOPY_BUILD_MODE is unset, even with a contested URL', async () => {
+      vi.stubEnv('CANOPY_BUILD_MODE', '')
+
+      // `next dev` and the admin UI both enumerate mid-edit trees; only the production build fails.
+      expect(await collectStaticPaths(fakeCtx(contested))).toHaveLength(2)
+    })
+
+    it('sees a collision the caller would have filtered away', async () => {
+      // The guard runs on the raw listing, before `filter`. A filtered-out entry still occupies
+      // its URL as far as every other route is concerned, so hiding it here would just move the
+      // silent page loss somewhere the adopter cannot see it.
+      vi.stubEnv('CANOPY_BUILD_MODE', 'true')
+
+      await expect(
+        collectStaticPaths(fakeCtx(contested), { filter: (e) => e.slug !== 'index' }),
+      ).rejects.toThrow('claimed by more than one entry')
     })
 
     it('warns about stale keys during a build without failing it', async () => {
@@ -679,5 +722,144 @@ describe('warnUnknownEntryKeys output volume', () => {
     } finally {
       consoleSpy.restore()
     }
+  })
+})
+
+// ---------------------------------------------------------------------------
+// findDuplicateUrlPaths / assertNoDuplicateUrlPaths
+// ---------------------------------------------------------------------------
+
+describe('findDuplicateUrlPaths', () => {
+  const item = (urlPath: string, entryPath: string) =>
+    ({ urlPath, entryPath }) as unknown as { urlPath: string; entryPath: never }
+
+  it('returns nothing when every URL is unique', () => {
+    expect(
+      findDuplicateUrlPaths([
+        item('/posts/a', 'content/posts/a'),
+        item('/posts/b', 'content/posts/b'),
+        item('/', 'content/index'),
+      ]),
+    ).toEqual([])
+  })
+
+  it('reports an entry colliding with a sibling collection index', () => {
+    // The (b) shape: an entry slugged `guides` beside a `guides` collection that also has an
+    // index entry. Both compute /docs/guides.
+    expect(
+      findDuplicateUrlPaths([
+        item('/docs/guides', 'content/docs/guides'),
+        item('/docs/guides', 'content/docs/guides/index'),
+        item('/docs/overview', 'content/docs/overview'),
+      ]),
+    ).toEqual([
+      {
+        urlPath: '/docs/guides',
+        entryPaths: ['content/docs/guides', 'content/docs/guides/index'],
+      },
+    ])
+  })
+
+  it('reports a case-only collision', () => {
+    // `urlPath` is lowercased, so slugs differing only by case land on one URL. Two such files
+    // cannot coexist on a case-insensitive filesystem but travel fine through git.
+    expect(
+      findDuplicateUrlPaths([
+        item('/docs/api', 'content/docs/API'),
+        item('/docs/api', 'content/docs/api'),
+      ]),
+    ).toEqual([{ urlPath: '/docs/api', entryPaths: ['content/docs/API', 'content/docs/api'] }])
+  })
+
+  it('reports same-slug-different-entry-type in one collection', () => {
+    // The write boundary already refuses this (ContentStore.buildPaths resolves by slug across
+    // entry types), but a merge can still deliver it — which is the whole reason detection lives
+    // here and not only at the write path.
+    expect(
+      findDuplicateUrlPaths([
+        item('/posts/hello', 'content/posts/hello'),
+        item('/posts/hello', 'content/posts/hello'),
+      ]),
+    ).toEqual([
+      { urlPath: '/posts/hello', entryPaths: ['content/posts/hello', 'content/posts/hello'] },
+    ])
+  })
+
+  it('reports all claimants of a three-way collision, and every distinct collision', () => {
+    const result = findDuplicateUrlPaths([
+      item('/z', 'content/z-three'),
+      item('/a', 'content/a-one'),
+      item('/z', 'content/z-one'),
+      item('/a', 'content/a-two'),
+      item('/z', 'content/z-two'),
+    ])
+
+    // Sorted by urlPath, each claimant list sorted — listEntries resolves collections in
+    // parallel, so its own order is not stable enough to assert against.
+    expect(result).toEqual([
+      { urlPath: '/a', entryPaths: ['content/a-one', 'content/a-two'] },
+      { urlPath: '/z', entryPaths: ['content/z-one', 'content/z-three', 'content/z-two'] },
+    ])
+  })
+})
+
+describe('assertNoDuplicateUrlPaths', () => {
+  const item = (urlPath: string, entryPath: string) =>
+    ({ urlPath, entryPath }) as unknown as { urlPath: string; entryPath: never }
+
+  it('does not throw when every URL is unique', () => {
+    expect(() =>
+      assertNoDuplicateUrlPaths(
+        [item('/posts/a', 'content/posts/a'), item('/posts/b', 'content/posts/b')],
+        'test phase',
+      ),
+    ).not.toThrow()
+  })
+
+  it('says "enumerated more than once" when the claimants are the same entry', () => {
+    // Two sibling collections sharing a name resolve to ONE directory, so its entries are
+    // listed once per sibling and both entryPaths are identical. "Rename or remove one of the
+    // colliding entries" is unfollowable there — there is only one file.
+    let thrown: unknown
+    try {
+      assertNoDuplicateUrlPaths(
+        [item('/docs/a', 'content/docs/a'), item('/docs/a', 'content/docs/a')],
+        'test phase',
+      )
+    } catch (err) {
+      thrown = err
+    }
+
+    const message = (thrown as Error).message
+    expect(message).toContain('enumerated more than once')
+    expect(message).toContain('sibling collections sharing one name')
+    expect(message).toContain('2x content/docs/a')
+    // The summary header always says "claimed by more than one entry"; what must NOT appear is
+    // the per-line `— claimed by a, b` form and its unfollowable remedy.
+    expect(message).not.toContain('— claimed by')
+  })
+
+  it('throws one error naming every contested URL and its claimants', () => {
+    let thrown: unknown
+    try {
+      assertNoDuplicateUrlPaths(
+        [
+          item('/docs/guides', 'content/docs/guides'),
+          item('/docs/guides', 'content/docs/guides/index'),
+          item('/docs/overview', 'content/docs/overview'),
+        ],
+        'test phase',
+      )
+    } catch (err) {
+      thrown = err
+    }
+
+    expect(thrown).toBeInstanceOf(Error)
+    const message = (thrown as Error).message
+    expect(message).toContain('CanopyCMS static build:')
+    expect(message).toContain('test phase')
+    expect(message).toContain('/docs/guides')
+    expect(message).toContain('content/docs/guides/index')
+    expect(message).not.toContain('content/docs/overview')
   })
 })

@@ -89,6 +89,7 @@ export interface ContentTreeExtractMeta<TEntryTypes = DefaultEntryTypes> {
   }[keyof TEntryTypes & string]
 }
 import type { LogicalPath, ContentId, Slug } from './paths/types'
+import { isIndexSlug } from './utils/entry-url'
 import {
   createReferenceResolver,
   listCollectionEntries,
@@ -212,7 +213,7 @@ const groupByParent = (flat: FlatSchemaItem[]): Map<string | undefined, Collecti
  * All URL paths are lowercased unconditionally for consistency with slug normalization.
  * Adopters with case-sensitive slugs (e.g., "API-Reference") will get lowercased URLs.
  *
- * Index entries (slug 'index') are collapsed to their parent collection path,
+ * Index entries (slug 'index', any case) are collapsed to their parent collection path,
  * matching the URL convention used by readByUrlPath and listEntries.
  *
  * Exported (also re-exported from `canopycms/server`) so adopters who want to
@@ -230,12 +231,19 @@ export const defaultBuildPath = (
     prefix && logicalPath.startsWith(prefix) ? logicalPath.slice(prefix.length) : logicalPath
   // Collapse index entries: content/guides/index → /guides (not /guides/index)
   // Only for entries — a collection named "index" should keep its path.
+  //
+  // The index test runs on the LAST SEGMENT through the shared `isIndexSlug`, so it is
+  // case-insensitive and agrees with `computeEntryUrl`. A string `endsWith('/index')` test
+  // did not: for an adopter-supplied `content/docs/Index` this said `/docs/index` while
+  // `computeEntryUrl` said `/docs`, and `/docs/index` is the one that does NOT round-trip.
+  const lastSlash = stripped.lastIndexOf('/')
+  const lastSegment = lastSlash === -1 ? stripped : stripped.slice(lastSlash + 1)
   const collapsed =
-    kind === 'entry' && stripped.endsWith('/index')
-      ? stripped.slice(0, -6)
-      : kind === 'entry' && stripped === 'index'
+    kind === 'entry' && isIndexSlug(lastSegment)
+      ? lastSlash === -1
         ? ''
-        : stripped
+        : stripped.slice(0, lastSlash)
+      : stripped
   const urlPath = collapsed ? `/${collapsed}` : '/'
   return urlPath.toLowerCase()
 }

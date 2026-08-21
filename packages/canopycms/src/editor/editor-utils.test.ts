@@ -77,6 +77,39 @@ describe('buildPreviewSrc', () => {
     expect(result).toBe('/posts/my-post?branch=main')
   })
 
+  // An index entry's URL is its COLLECTION's path. This is the same collapse `computeEntryUrl`,
+  // `listEntries` and `defaultBuildPath` apply, and `resolveUrlPathCandidates` deliberately
+  // refuses to resolve `/x/index` — so a preview URL built by naively joining collection + slug
+  // points the iframe at a URL the host app answers with notFound().
+  describe('index entries collapse to their collection path', () => {
+    it('collapses an index slug when building from the collection path', () => {
+      const result = buildPreviewSrc(
+        { collectionPath: 'content/docs/guides', slug: 'index', itemType: 'entry' },
+        { branchName: 'main', previewBaseByCollection: undefined },
+      )
+      expect(result).toBe('/docs/guides?branch=main')
+    })
+
+    it('collapses an index slug under a configured preview base', () => {
+      const result = buildPreviewSrc(
+        { collectionPath: 'content/docs', slug: 'index', itemType: 'entry' },
+        {
+          branchName: 'main',
+          previewBaseByCollection: { 'content/docs': '/preview/docs' },
+        },
+      )
+      expect(result).toBe('/preview/docs?branch=main')
+    })
+
+    it('leaves a non-index slug alone', () => {
+      const result = buildPreviewSrc(
+        { collectionPath: 'content/docs/guides', slug: 'indexing', itemType: 'entry' },
+        { branchName: 'main', previewBaseByCollection: undefined },
+      )
+      expect(result).toBe('/docs/guides/indexing?branch=main')
+    })
+  })
+
   describe('with a configured contentRoot', () => {
     it('strips the whole multi-segment prefix from a collection entry URL', () => {
       const result = buildPreviewSrc(
