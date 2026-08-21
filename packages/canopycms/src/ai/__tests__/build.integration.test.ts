@@ -8,7 +8,7 @@ import { defineCanopyTestConfig } from '../../config-test'
 import { flattenSchema, type RootCollectionConfig } from '../../config'
 import { ContentStore } from '../../content-store'
 import { unsafeAsLogicalPath, unsafeAsSlug } from '../../paths/test-utils'
-import { generateAIContentFiles } from '../../build/generate-ai-content'
+import { GENERATED_RECORD_FILENAME, generateAIContentFiles } from '../../build/generate-ai-content'
 import type { AIManifest } from '../types'
 
 const scaffoldSchema: RootCollectionConfig = {
@@ -154,7 +154,9 @@ describe('generateAIContentFiles', () => {
       for (const entry of entries) {
         if (entry.isDirectory()) {
           count += await countFiles(path.join(dir, entry.name))
-        } else {
+        } else if (entry.name !== GENERATED_RECORD_FILENAME) {
+          // Bookkeeping, not generated content: it records which files the run produced so a
+          // later run can prune what it no longer produces. It is not part of `fileCount`.
           count++
         }
       }
@@ -163,6 +165,105 @@ describe('generateAIContentFiles', () => {
 
     const filesOnDisk = await countFiles(outputDir)
     expect(filesOnDisk).toBe(result.fileCount)
+  })
+
+  describe('pruning output from a previous run', () => {
+    // Seeding and generating are deliberately separate: a prune only happens when a LATER run
+    // produces less than an earlier one, so a helper that re-seeds content on every call would
+    // make every run identical and quietly assert nothing.
+    const seed = () => setupContent(contentRoot, testSchema)
+
+    const generate = async (
+      config: Awaited<ReturnType<typeof seed>>['config'],
+      flat: Awaited<ReturnType<typeof seed>>['flat'],
+    ) => {
+      vi.spyOn(process, 'cwd').mockReturnValue(contentRoot)
+      return generateAIContentFiles({
+        config: { ...config, mode: 'dev', deployedAs: 'static' },
+        entrySchemaRegistry: {},
+        outputDir,
+        _testFlatSchema: flat,
+      })
+    }
+
+    const exists = async (p: string): Promise<boolean> => {
+      try {
+        await fs.stat(p)
+        return true
+      } catch {
+        return false
+      }
+    }
+
+    it('removes a file the current run no longer produces', async () => {
+      const { config, flat, store } = await seed()
+      const first = await generate(config, flat)
+      expect(first.removedCount).toBe(0)
+      const renamedAway = path.join(outputDir, 'posts', 'hello-world.md')
+      expect(await exists(renamedAway)).toBe(true)
+
+      // Re-model the content the way a slug rename or an IA restructure would: the entry still
+      // exists, but under a different path. The old output file is what used to be left behind,
+      // advertising a URL the site no longer serves.
+      await store.delete(unsafeAsLogicalPath('content/posts'), unsafeAsSlug('hello-world'))
+      await store.write(unsafeAsLogicalPath('content/posts'), unsafeAsSlug('hello-world-renamed'), {
+        format: 'md',
+        data: { title: 'Hello World', published: true },
+        body: '# Hello\n\nFirst post.',
+      })
+
+      const second = await generate(config, flat)
+      expect(await exists(renamedAway)).toBe(false)
+      expect(await exists(path.join(outputDir, 'posts', 'hello-world-renamed.md'))).toBe(true)
+      expect(second.removedCount).toBeGreaterThan(0)
+    })
+
+    it('never removes a file it did not write', async () => {
+      const { config, flat } = await seed()
+      await generate(config, flat)
+
+      // The output directory belongs to the adopter, not to this tool. Anything the tool cannot
+      // prove it created must survive — which is why this prunes from its own record rather than
+      // clearing the directory.
+      const foreign = path.join(outputDir, 'adopter-owned.txt')
+      await fs.writeFile(foreign, 'not ours', 'utf-8')
+      const foreignNested = path.join(outputDir, 'hand-written', 'notes.md')
+      await fs.mkdir(path.dirname(foreignNested), { recursive: true })
+      await fs.writeFile(foreignNested, 'also not ours', 'utf-8')
+
+      await generate(config, flat)
+
+      expect(await exists(foreign)).toBe(true)
+      expect(await exists(foreignNested)).toBe(true)
+    })
+
+    it('survives a missing or malformed record without failing the build', async () => {
+      const { config, flat } = await seed()
+      await generate(config, flat)
+      await fs.writeFile(
+        path.join(outputDir, GENERATED_RECORD_FILENAME),
+        'this is not json',
+        'utf-8',
+      )
+
+      // Pruning is an optimisation; a corrupt bookkeeping file must degrade to the old behaviour
+      // (leave strays) rather than take the build down.
+      const result = await generate(config, flat)
+      expect(result.fileCount).toBeGreaterThan(0)
+      expect(result.removedCount).toBe(0)
+      expect(await exists(path.join(outputDir, 'manifest.json'))).toBe(true)
+    })
+
+    it('keeps the output directory itself even when everything under it is pruned', async () => {
+      const { config, flat } = await seed()
+      await generate(config, flat)
+      expect(await exists(outputDir)).toBe(true)
+      const record = JSON.parse(
+        await fs.readFile(path.join(outputDir, GENERATED_RECORD_FILENAME), 'utf-8'),
+      ) as { files: string[] }
+      expect(record.files.length).toBeGreaterThan(0)
+      expect(record.files).not.toContain(GENERATED_RECORD_FILENAME)
+    })
   })
 
   it('writes bundles to bundles/ subdirectory', async () => {

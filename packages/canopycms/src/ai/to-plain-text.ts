@@ -79,6 +79,50 @@ const ATTR_CONTENT = `(?:[^<>"']|"[^"]*"|'[^']*')*`
  */
 const TAG_RE = new RegExp(`<\\/?([A-Za-z][\\w.-]*)?(?:\\s${ATTR_CONTENT})?\\/?>`, 'g')
 
+const COMMENT_OPEN = '<!--'
+const COMMENT_CLOSE = '-->'
+
+/**
+ * Strip well-formed HTML/MDX comments (`<!-- ... -->`), including their contents.
+ *
+ * `TAG_RE` cannot do this: its tag-name group is `[A-Za-z]`-initial, so `<!--` matches neither
+ * the name nor the bare-fragment form, and both delimiters plus every word between them survive
+ * into the extracted text. Authoring notes then show up verbatim in a search index or an AI
+ * export — text the author explicitly marked as not-for-readers.
+ *
+ * A hand-rolled `indexOf` scan rather than `/<!--[\s\S]*?-->/g`, for the same reason
+ * `maskFencedCodeBlocks` above is hand-rolled: that lazy pattern has no bound on how far it
+ * scans looking for a closer, so on input with many unterminated `<!--` openers the engine
+ * exhausts to end-of-string at every one of them — quadratic in the number of openers, the same
+ * polynomial-ReDoS shape documented on `TAG_RE` and the fence scanner. This scan visits each
+ * character at most once.
+ *
+ * An UNTERMINATED `<!--` is deliberately left alone rather than swallowing the rest of the
+ * document. HTML would run such a comment to EOF, but here the input is prose being extracted
+ * for search and AI consumption, where silently dropping everything after a mistyped delimiter
+ * loses far more than it protects. The stray `<!--` survives as literal text, which is visible
+ * and fixable; a vanished second half of a document is neither.
+ *
+ * Runs while fenced/inline code is still masked, so a comment shown as example code keeps its
+ * delimiters.
+ */
+function stripHtmlComments(text: string): string {
+  let searchFrom = 0
+  let open = text.indexOf(COMMENT_OPEN, searchFrom)
+  if (open === -1) return text
+
+  let out = ''
+  while (open !== -1) {
+    const close = text.indexOf(COMMENT_CLOSE, open + COMMENT_OPEN.length)
+    if (close === -1) break
+    out += text.slice(searchFrom, open) + ' '
+    searchFrom = close + COMMENT_CLOSE.length
+    open = text.indexOf(COMMENT_OPEN, searchFrom)
+  }
+
+  return out + text.slice(searchFrom)
+}
+
 /** True if `line` is a valid closing fence line for `marker` ("```" or "~~~"): the marker
  * followed by nothing but whitespace through end of line — matching what `\1\s*$` required in
  * the regex this replaced. */
@@ -257,6 +301,10 @@ function collapseWhitespace(text: string): string {
  * text are kept, everything else is discarded. Paired custom components
  * lose only their tags; the prose between them survives.
  *
+ * HTML/MDX comments (`<!-- ... -->`) are removed along with their contents:
+ * an authoring note is text the author marked as not-for-readers, so it does
+ * not belong in a search index or an AI export.
+ *
  * Output preserves paragraph breaks (blank lines) but is not further
  * chunked, weighted, or field-selected — composing that into a search
  * document is left to the caller, since that logic is where adopter search
@@ -268,6 +316,7 @@ export function toPlainText(markdown: string): string {
   const { masked, restore } = maskCode(withoutImports)
 
   let result = masked
+  result = stripHtmlComments(result)
   result = result.replace(TAG_RE, ' ')
   result = stripBraceExpressions(result)
   result = stripMarkdownSyntax(result)

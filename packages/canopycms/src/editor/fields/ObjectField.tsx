@@ -1,6 +1,6 @@
 import React from 'react'
 
-import { Paper, Stack, Text } from '@mantine/core'
+import { Button, Group, Paper, Stack, Text } from '@mantine/core'
 
 import type { FieldConfig } from '../../config'
 import { formatCanopyPath } from '../canopy-path'
@@ -20,6 +20,16 @@ export interface ObjectFieldProps {
   renderField: RenderField
   path: Array<string | number>
   dataCanopyField?: string
+  /**
+   * When provided, renders a "Clear" affordance next to the label that
+   * resets this object field back to its unset (`undefined`) state.
+   * Used by FormRenderer's non-list 'object' case so a non-list object with
+   * a required child can't get stuck present-but-invalid with no way back
+   * to "not filled in" (see FormRenderer.tsx's `case 'object'`). Omitted
+   * for object-list items, which are removed via the list's own per-item
+   * Remove button instead.
+   */
+  onRemove?: () => void
 }
 
 export const ObjectField: React.FC<ObjectFieldProps> = ({
@@ -30,6 +40,7 @@ export const ObjectField: React.FC<ObjectFieldProps> = ({
   renderField,
   path,
   dataCanopyField,
+  onRemove,
 }) => {
   const current = value ?? {}
 
@@ -43,10 +54,19 @@ export const ObjectField: React.FC<ObjectFieldProps> = ({
       shadow="xs"
     >
       <Stack gap="sm">
-        {label && (
-          <Text size="xs" fw={700} c="neutral.8">
-            {label}
-          </Text>
+        {(label || onRemove) && (
+          <Group justify="space-between">
+            {label && (
+              <Text size="xs" fw={700} c="neutral.8">
+                {label}
+              </Text>
+            )}
+            {onRemove && (
+              <Button size="xs" variant="subtle" color="red" onClick={onRemove}>
+                Clear
+              </Button>
+            )}
+          </Group>
         )}
         <Stack gap="sm">
           {fields.map((field) => {

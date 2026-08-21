@@ -65,6 +65,26 @@ jobs:
         run: pnpm run build
         working-directory: packages/canopycms
 
+      # Builds every OTHER published package (not the example/test apps —
+      # those get their own dedicated build coverage in the dual-build and
+      # e2e jobs below). Needed so check:esm below has real dist/ output to
+      # resolve for canopycms-next, canopycms-auth-clerk, canopycms-auth-dev
+      # and canopycms-cdk, none of which the step above builds.
+      - name: Build other published packages
+        run: >-
+          pnpm --filter canopycms-next --filter canopycms-auth-clerk
+          --filter canopycms-auth-dev --filter canopycms-cdk run build
+
+      # Regression guard for the extensionless-relative-import defect (see
+      # scripts/add-js-extensions.mjs): actually resolves each published
+      # package's entry points under Node's native ESM resolver. Catches the
+      # class of bug that shipped silently for four of five packages until a
+      # real adopter hit it — `tsc` with moduleResolution:"Bundler" preserves
+      # bare relative specifiers, which only Node's resolver (not tsc, not a
+      # bundler) rejects.
+      - name: Check published packages import under Node ESM
+        run: pnpm check:esm
+
       # Runs at the workspace ROOT (`pnpm -r run test`), deliberately: pinning
       # this to packages/canopycms meant `pnpm test` resolved to that one
       # package's script, so canopycms-cdk, canopycms-next, canopycms-auth-clerk

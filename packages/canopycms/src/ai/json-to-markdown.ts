@@ -159,8 +159,12 @@ function renderField(
 
   const label = field.label || field.name
   const heading = '#'.repeat(Math.min(depth, 6))
+  // `_…_`, not `*…*`: Prettier's markdown formatter normalizes emphasis to underscores, so
+  // asterisks here make every generated file dirty under a standard `prettier --write` pass.
+  // Adopters run this output through their own formatting, so emitting the form Prettier
+  // already agrees with is what keeps a regenerated bundle diff-free.
   const descriptionLine =
-    'description' in field && field.description ? `\n\n*${field.description}*` : ''
+    'description' in field && field.description ? `\n\n_${field.description}_` : ''
 
   // Handle list fields
   if ('list' in field && field.list && Array.isArray(value)) {
@@ -604,6 +608,11 @@ function formatInlineValue(field: FieldConfig, value: unknown): string {
  * Wraps in quotes if value contains special characters.
  */
 function yamlValue(value: string): string {
+  // An empty value must be quoted, not emitted bare. A bare `key: ` leaves a trailing space that
+  // Prettier strips (making every regenerated bundle dirty), and reads as YAML null rather than
+  // the empty string it actually is. Reachable in practice: a root-collection entry has
+  // `collection === ''`.
+  if (value === '') return '""'
   if (/[:#{}[\],&*?|>!%@`]/.test(value) || value.includes('\n')) {
     return `"${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`
   }

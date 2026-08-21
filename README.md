@@ -924,6 +924,27 @@ Then place a `.collection.json` next to each collection's content. The directory
 
 **Note**: For `type: 'string'` fields, `list: true` renders as a tag input — type a value and press Enter to add it, each value shows as a removable pill, and Backspace on an empty input removes the last one.
 
+#### Rendering `markdown` / `mdx` content on your site
+
+CanopyCMS stores and edits markdown; it deliberately does **not** ship a renderer. Two sites
+render the same markdown differently on purpose — different component mappings, different
+sanitization needs — so choosing the presentation layer is yours, and forcing one would take
+away a degree of freedom adopters legitimately want.
+
+One trap is worth knowing before you pick one, because it fails confusingly:
+
+> **`react-markdown` does not work in a React Server Component.** Rendering its default export
+> from a server component crashes a static prerender with `Element type is invalid … got:
+undefined`, while the same code resolves fine once it is in the client bundle. The fix is to
+> put `'use client'` on your own wrapper component.
+
+That fix is correct, but it is not free: the wrapper and its markdown subtree ship to the
+browser and lose server-only rendering for that part of the page. If the content is static
+prose, consider a build-time renderer (`remark`/`rehype` to HTML, or MDX compiled at build
+time) and keep the component on the server instead.
+
+`apps/example1` shows the client-wrapper shape.
+
 ### Field Groups
 
 Field groups let you visually organize related fields in the editor without forcing you to restructure your content files. Two helpers are available:
@@ -2439,6 +2460,13 @@ Access control uses three layers:
 3. **Reserved groups**: `admins` (full access) and `reviewers` (review branches, approve PRs)
 
 Every content read and write must pass **both** layer 1 and layer 2.
+
+> **Assets are outside this model.** Uploaded images and PDFs live in a content-addressed
+> store that is site-wide, not branch-scoped, so neither layer applies to them: any
+> authenticated editor can list and fetch every asset in the site, including images uploaded
+> on branches they cannot otherwise access. This is a deliberate tradeoff — content addressing
+> is what lets a branch merge avoid moving files. See [Media Configuration](#media-configuration)
+> for the full statement.
 
 **Branch access precedence**, highest first — admins/reviewers; an explicit `managerOrAdminAllowed` lockdown; an explicit user/group ACL; and finally, only when the branch has no ACL at all, the branch's creator, then `defaultBranchAccess`, and then the protected base branch.
 

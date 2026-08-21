@@ -602,6 +602,93 @@ describe('FormRenderer', () => {
     })
   })
 
+  describe("'object' field type", () => {
+    const objectFields: FieldConfig[] = [
+      {
+        name: 'meta',
+        type: 'object',
+        label: 'Meta',
+        fields: [{ name: 'label', type: 'string', label: 'Label', required: true }],
+      },
+    ]
+
+    it('has no Clear affordance while the field is absent (nothing to clear)', () => {
+      render(<StatefulForm fields={objectFields} initialValue={{}} />)
+      expect(screen.queryByRole('button', { name: 'Clear' })).toBeNull()
+    })
+
+    it('a filled-then-cleared required child is recoverable via Clear, resetting to undefined (not {})', async () => {
+      const user = userEvent.setup()
+      render(<StatefulForm fields={objectFields} initialValue={{}} />)
+
+      // Fill in the required nested child.
+      const labelInput = screen.getByLabelText('Label')
+      await user.type(labelInput, 'x')
+
+      let state = JSON.parse(screen.getByTestId('form-state').textContent ?? '{}')
+      expect(state.meta).toEqual({ label: 'x' })
+
+      // The object now has a value, so the Clear affordance appears.
+      const clearButton = screen.getByRole('button', { name: 'Clear' })
+
+      // Change their mind and empty the child back out. The object is still
+      // "present" ({ label: '' }), so entry-validator's required-child check
+      // fires and, without Clear, there would be no way back to "not filled
+      // in" (isEmptyForRequired only special-cases undefined/null for plain
+      // objects, not their contents).
+      await user.clear(labelInput)
+      state = JSON.parse(screen.getByTestId('form-state').textContent ?? '{}')
+      expect(state.meta).toEqual({ label: '' })
+      expect(validateEntryData(objectFields, state)).toEqual([
+        { fieldPath: 'meta.label', message: 'This field is required' },
+      ])
+
+      // Clear recovers by resetting the whole object field to undefined,
+      // never to {} (which would still carry the required-but-empty child
+      // straight back into validation).
+      await user.click(clearButton)
+      state = JSON.parse(screen.getByTestId('form-state').textContent ?? '{}')
+      expect(state.meta).toBeUndefined()
+      expect(validateEntryData(objectFields, state)).toEqual([])
+    })
+
+    it('does not show Clear for a required object field, even when it has a value', () => {
+      const requiredFields: FieldConfig[] = [
+        {
+          name: 'meta',
+          type: 'object',
+          label: 'Meta',
+          required: true,
+          fields: [{ name: 'label', type: 'string', label: 'Label' }],
+        },
+      ]
+      render(<StatefulForm fields={requiredFields} initialValue={{ meta: { label: 'x' } }} />)
+      expect(screen.queryByRole('button', { name: 'Clear' })).toBeNull()
+    })
+
+    it('gets its own comment affordance, and a nested child keeps its own (regression guard)', () => {
+      // The original bug report claimed nested comment affordances were
+      // broken too. They were not: children render through the same
+      // recursive renderField path and already get FieldWrapper. What was
+      // actually missing is an affordance for the object AS A WHOLE.
+      render(
+        <CanopyCMSProvider>
+          <FormRenderer
+            fields={objectFields}
+            value={{}}
+            onChange={() => {}}
+            currentEntryPath="pages/home.md"
+            currentUserId="user-1"
+            onAddComment={vi.fn()}
+            onResolveThread={vi.fn()}
+          />
+        </CanopyCMSProvider>,
+      )
+      expect(screen.getByTestId('field-new-comment-meta')).toBeTruthy()
+      expect(screen.getByTestId('field-new-comment-meta.label')).toBeTruthy()
+    })
+  })
+
   describe('primitive field type coverage (config <-> renderer drift guard)', () => {
     let mockClient: MockApiClient
     let wrapper: ReturnType<typeof createApiClientWrapper>

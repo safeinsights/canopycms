@@ -37,7 +37,14 @@ supersedes an earlier one's workaround entirely.
 
 ## Unreleased
 
-_Entries land here as changes merge; they move to a release section when published._
+_Entries land here as changes merge._
+
+**Promoting them is a manual step, and it is easy to miss.** `main` auto-publishes a patch
+on every push, so an entry written here is usually released within hours — while the heading
+still says "Unreleased". When you next touch this file, check `npm view canopycms version`
+and move anything already published down into `## Released` under its version heading,
+demoting each entry from `###` to `####`. An adopter reading "Unreleased" about a feature
+they already have installed cannot tell whether they are missing something.
 
 <!--
 Template for each entry — copy, don't improvise:
@@ -56,7 +63,18 @@ repos generally are not. If nothing becomes deletable, say so explicitly — tha
 real and useful answer.
 -->
 
-### `required: false` now infers an optional property (#14) — **breaking (type-level)**
+---
+
+## Released
+
+### 0.0.63
+
+Every entry below shipped in `0.0.63`. They were promoted from `## Unreleased` on
+2026-08-20, after an adopter reported that the section had been describing already-released
+features as unreleased — see the note under `## Unreleased` for why that happens and what to
+check before trusting the heading.
+
+#### `required: false` now infers an optional property (#14) — **breaking (type-level)**
 
 **What changed.** `TypeFromEntrySchema` used to emit every field as a _required_
 property, adding `| undefined` to the value type for `required: false` fields. It now
@@ -125,7 +143,7 @@ the code below.
   optional property still yields `| undefined`; and `Required<...>` applied to a
   _local_ type rather than a schema-derived one is untouched.
 
-### Sitemap and SEO metadata helpers (#10, #10a)
+#### Sitemap and SEO metadata helpers (#10, #10a)
 
 **What changed.** CanopyCMS now ships the two static-export surfaces it previously told you
 were "coming separately", and they ship **together on purpose** (see the `noindex` note below).
@@ -261,7 +279,7 @@ pass `{ fields: { title: 'yourName' } }` to the read side — do not keep both.
   entry above; `collectRoutableEntries` now carries it, with the same mtime caveat.
 - **Nothing, for `robots.txt`.** It stays hand-written; that is deliberate, not an oversight.
 
-### Static-generation review follow-ups: siteUrl validation, one shared SEO field location, sitemap dedup
+#### Static-generation review follow-ups: siteUrl validation, one shared SEO field location, sitemap dedup
 
 **What changed.** A static-generation review of the sitemap/SEO helpers above found four gaps
 before they shipped to any adopter, all fixed here, plus one silent-content-loss gap one layer
@@ -301,7 +319,7 @@ placement bug), and the dedup/build-failure behaviors only fire on inputs that w
 keep the two surfaces in sync by hand — the shared `seo` option replaces the discipline of
 remembering to update both.
 
-### The build guard now ignores files that were never entry-shaped
+#### The build guard now ignores files that were never entry-shaped
 
 **What changed.** Item 5 above (the content-entry build guard) turned out to be too broad: it
 fired on _any_ file inside a collection directory that shared a recognized content extension but
@@ -345,7 +363,7 @@ begin with, so relocating it may have silently broken the `entryTransforms` call
 **Now deletable.** Any workaround that relocated or renamed a colocated sibling artifact solely
 to avoid tripping the build guard.
 
-### `canopycms init` scaffolds `defaultBranchAccess: 'deny'` and public read by default
+#### `canopycms init` scaffolds `defaultBranchAccess: 'deny'` and public read by default
 
 **What changed.** The generated `canopycms.config.ts.template` used to write
 `defaultBranchAccess: 'allow'`, which no longer matches the package's fail-closed schema default
@@ -381,7 +399,7 @@ in your own `canopycms.config.ts`:
 
 **Now deletable.** Nothing — this only affects newly generated files.
 
-### `parseTypedFilename` exported from `canopycms/server` (#1)
+#### `parseTypedFilename` exported from `canopycms/server` (#1)
 
 **What changed.** `parseTypedFilename` — parses a content filename
 `{type}.{slug}.{id}.{ext}` into `{ type, slug, id }` — existed in `content-listing.ts`
@@ -427,7 +445,7 @@ Typical homes for a copy:
   by the `meta.entryType` entry below, which removes the need to parse at all.
 - Route-level `{type}.{slug}.{id}` hand-splits.
 
-### `defaultBuildPath` exported from `canopycms/server` (#2)
+#### `defaultBuildPath` exported from `canopycms/server` (#2)
 
 **What changed.** `buildContentTree`'s default URL path builder (strip the content
 root prefix, collapse an entry's `index` slug to its parent collection path, lowercase)
@@ -462,7 +480,7 @@ top of it instead of reimplementing it.
   default changes. Replace with a call to `defaultBuildPath`, or drop the custom
   `buildPath` entirely if you were not actually extending the default.
 
-### `read()` / `readByUrlPath()` return `meta.entryType` and `meta.entryId` (#3, `.claude/future-tasks/resolved/readbyurlpath-entry-type.md`)
+#### `read()` / `readByUrlPath()` return `meta.entryType` and `meta.entryId` (#3, `.claude/future-tasks/resolved/readbyurlpath-entry-type.md`)
 
 **What changed.** `CanopyContext.read()` and `.readByUrlPath()` now include
 `entryType: string` and `entryId?: ContentId` on the returned `meta`, alongside the
@@ -519,7 +537,7 @@ Purely additive — no change to the input side of either function.
   Each collapses to a `switch` on `result.meta.entryType`, often letting several
   near-duplicate route files become one catch-all.
 
-### Build-context factory, title derivation, and a Markdown-to-plaintext primitive (#17)
+#### Build-context factory, title derivation, and a Markdown-to-plaintext primitive (#17)
 
 **What changed.** An adopter asked for a single `extractSearchDocuments(registry, opts)`
 helper so two sites building their own search indexes could share one implementation.
@@ -595,7 +613,7 @@ top-level-`await` boot block, which can never be imported by anything.
   keeping the children's text. If your search results are missing content that you can
   see is present in the source file, this is the pattern to look for.
 
-### `listEntries` carries `updatedAt` (#4)
+#### `listEntries` carries `updatedAt` (#4)
 
 **What changed.** `listCollectionEntries` already ran an unconditional `fs.stat` on
 every entry file and set `updatedAt` on its `CollectionListItem` result; `listEntries`
@@ -621,7 +639,7 @@ wherever `listEntries` is already called.
   instead — and note that deleting such a module usually removes a duplicate filename
   parser too (see the `parseTypedFilename` entry above).
 
-### `BlockValueOf` / `BlockComponentRegistry` — exhaustive block → component types (#13)
+#### `BlockValueOf` / `BlockComponentRegistry` — exhaustive block → component types (#13)
 
 **What changed.** Two new exported types, `BlockValueOf<Blocks, N>` and
 `BlockComponentRegistry<Blocks, ExtraProps>`, make a block-field → React-component
@@ -668,7 +686,7 @@ Purely additive — no existing API changes.
   `BlockComponentRegistry` now catches at compile time — the runtime guard becomes
   redundant once the registry is in place.
 
-### Reusable field fragments — documented, plus `defineFieldFragment()` (#15)
+#### Reusable field fragments — documented, plus `defineFieldFragment()` (#15)
 
 **What changed.** No new runtime behavior — this closes a documentation gap. Two
 patterns for sharing a field cluster across schemas already worked and now have a
@@ -711,7 +729,7 @@ the full example.
   spread it everywhere it's used; for schemas that need one field to differ, override
   just that field per the pattern above instead of retyping the whole cluster.
 
-### Shared/referenced blocks: documented recipe, plus a `listEntries` caveat (#16)
+#### Shared/referenced blocks: documented recipe, plus a `listEntries` caveat (#16)
 
 **What changed.** No new runtime behavior. A block template can already hold a
 `reference` field pointing at another entry — so a "shared content block" (a call to
@@ -760,7 +778,7 @@ const sharedCtaBlock = defineBlockTemplate({
   silently empty there today; resolve them with a follow-up `read()` call, or build
   that surface from `read()`/`readByUrlPath()` results instead.
 
-### `checkPathAccess` removed from `CanopyServices`
+#### `checkPathAccess` removed from `CanopyServices`
 
 **What changed.** The `CanopyServices` interface (reachable via `context.services` from
 `getCanopy()`/`createBuildCanopy()`) no longer exposes `checkPathAccess`. It was bound
@@ -778,10 +796,6 @@ If you did, it was never evaluating your actual path-permission rules — replac
 
 **Now deletable.** Nothing new — an adopter integration would not have built anything
 around this, since it never returned a real answer to begin with.
-
----
-
-## Released
 
 ### 0.0.62 and earlier
 

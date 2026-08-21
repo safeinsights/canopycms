@@ -17,6 +17,31 @@ function makeEntry(overrides: Partial<AIEntry> & { fields: FieldConfig[] }): AIE
 }
 
 describe('entryToMarkdown', () => {
+  describe('Prettier stability', () => {
+    it('emits field descriptions with underscore emphasis, not asterisks', () => {
+      // Prettier's markdown formatter normalizes `*text*` to `_text_`, so asterisks made every
+      // generated file dirty under a standard formatting pass.
+      const entry = makeEntry({
+        fields: [{ name: 'body', type: 'string', label: 'Body', description: 'The main text' }],
+        data: { body: 'hello' },
+      })
+      const md = entryToMarkdown(entry)
+      expect(md).toContain('_The main text_')
+      expect(md).not.toContain('*The main text*')
+    })
+
+    it('leaves no line with trailing whitespace', () => {
+      const entry = makeEntry({
+        collection: '',
+        fields: [{ name: 'body', type: 'string', label: 'Body', description: 'A description' }],
+        data: { body: 'hello' },
+      })
+      const md = entryToMarkdown(entry)
+      const offenders = md.split('\n').filter((line) => /[ \t]+$/.test(line))
+      expect(offenders).toEqual([])
+    })
+  })
+
   describe('frontmatter', () => {
     it('includes slug, collection, and type in frontmatter', () => {
       const entry = makeEntry({
@@ -30,6 +55,16 @@ describe('entryToMarkdown', () => {
       expect(md).toContain('slug: hello')
       expect(md).toContain('collection: docs')
       expect(md).toContain('type: doc')
+    })
+
+    it('quotes an empty collection rather than leaving a trailing space', () => {
+      // A root-collection entry has `collection === ''`. Emitting it bare produced the line
+      // `collection: ` with a trailing space, which Prettier strips -- so every regenerated
+      // bundle came back dirty. It also read as YAML null rather than the empty string it is.
+      const entry = makeEntry({ collection: '', fields: [], data: {} })
+      const md = entryToMarkdown(entry)
+      expect(md).toContain('collection: ""')
+      expect(md).not.toMatch(/collection: $/m)
     })
 
     it('includes title in frontmatter when present in data', () => {
@@ -627,7 +662,7 @@ describe('entryToMarkdown', () => {
         data: { irbStatus: 'approved' },
       })
       const md = entryToMarkdown(entry)
-      expect(md).toContain('*Whether this dataset requires IRB approval*')
+      expect(md).toContain('_Whether this dataset requires IRB approval_')
     })
   })
 

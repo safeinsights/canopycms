@@ -35,6 +35,17 @@ CanopyCMS supports content as
 - Markdown (`.md`) and MDX (`.mdx`) with frontmatter
 - Blocks and nested objects via schema definitions
 
+CanopyCMS stores and edits markdown but deliberately ships **no renderer** — how your site
+presents markdown is a site decision, and two sites reasonably make it differently.
+
+One trap is worth knowing up front, because it fails confusingly: **`react-markdown` does not
+work in a React Server Component.** Rendering its default export from a server component
+crashes a static prerender with `Element type is invalid … got: undefined`, while the same
+code works once it is in the client bundle. Put `'use client'` on your own wrapper component
+to fix it — at the cost of shipping that subtree to the browser. For static prose, a
+build-time renderer (`remark`/`rehype`, or MDX compiled at build time) keeps the component on
+the server instead.
+
 ## How it works (behind the scenes)
 
 When a user makes an edit in CanopyCMS, they do so on a branch they choose (or are defaulted into). That branch represents an underlying git branch that they don't see. Behind the scenes, CanopyCMS manages a set of git clones, each tuned to a different branch supporting the branches your users see in the editing interface. When a user saves a change, that change is written to disk. A user can change multiple files on a branch, e.g. to work on changes across files that work together. When they click a button to publish their branch, the changes are committed in git, and a pull request is made. Reviewers can comment on the submission within the editor and users can make changes and resubmit. Reviewers finally accept the change on GitHub by merging the pull request. CanopyCMS then marks the change as complete and archives the branch. Sync jobs refresh clones when upstream changes happen and surface conflicts without dropping a branch's changes. Authorization information for users and groups is stored on disk and managed by CanopyCMS.
@@ -512,6 +523,58 @@ export default defineCanopyConfig({
 - Editor build: ships the editor UI + CanopyCMS API routes; handles branch create/switch/save/submit and asset uploads.
 - Modes map to environments: dev for local development, prod on EFS. More deployment guidance will be documented as the branch-rooted APIs and submission flow land.
 
-## Assets
+## Assets and media
 
-- Local filesystem adapter (`LocalAssetStore`) is available now. S3 and LFS adapters are planned; the API handlers accept a provided adapter so you can swap storage without changing the editor.
+Uploaded images and PDFs go into a content-addressed asset store, and images are served
+through an on-demand transform layer. Both the **local** adapter (for development) and the
+**S3** adapter ship today.
+
+```typescript
+// canopycms.config.ts — production
+media: { adapter: 's3', bucket: 'my-site-assets', region: 'us-east-1' }
+
+// …or omit `media` entirely for local development
+// (uploads land in .canopy-dev/assets/ via the built-in local adapter)
+```
+
+- **Upload** — editors add images from the Media Library drawer, an `image` field, or the MDX
+  "Insert Image" dialog. Bytes go straight from the browser to S3 via a presigned POST and
+  never pass through your API route. On completion the server sniffs the real file type,
+  strips EXIF (including GPS), sanitizes SVGs, and hashes the bytes.
+- **Content addressing** — every asset is keyed by a hash of its contents, so uploads are
+  immutable and deduplicated. A draft branch references its images immediately; publishing
+  needs no separate asset step.
+- **Delivery** — images are served from `/assets/t/{directives}/…` URLs that resize, crop and
+  convert to WebP on first request, then cache immutably. Build responsive markup with the
+  exported helpers, which are client-safe:
+
+  ```typescript
+  import { assetUrl, assetSrcSet } from 'canopycms'
+
+  <img
+    src={assetUrl(image, { width: 960 })}
+    srcSet={assetSrcSet(image, [480, 960, 1600])}
+    sizes="(max-width: 700px) 100vw, 960px"
+    alt={image.alt}
+    width={image.width}
+    height={image.height}
+  />
+  ```
+
+  SVGs and PDFs are served statically, with no transform.
+
+An `image` field holds a structured value — `{ src, alt, width, height, crop? }` — so alt text
+is enforced and intrinsic dimensions prevent layout shift. Declare an `aspect` (e.g. `'16:9'`)
+to enable the interactive crop step, or `altOptional: true` for decorative images.
+
+> **The asset store is site-wide, not branch-scoped.** Assets are content-addressed and shared,
+> which is what lets a branch merge avoid moving files — but it means branch and path ACLs do
+> **not** apply to them. Any authenticated editor can list and fetch every asset in the site,
+> including images uploaded on branches they cannot otherwise access. Treat "uploaded to
+> CanopyCMS" as visible to your whole editorial team.
+
+For deployment, the `canopycms-cdk` package ships an `AssetSupport` construct that provisions
+the bucket, the transform Lambda and the CloudFront behaviors. Fuller documentation — every
+config option, the transform directive syntax, and the AWS wiring — is in the
+[project README](https://github.com/safeinsights/canopycms#media-configuration) and
+[docs/deploying-to-aws.md](https://github.com/safeinsights/canopycms/blob/main/docs/deploying-to-aws.md).

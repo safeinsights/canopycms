@@ -94,10 +94,30 @@ export async function collectStaticParams(
 
 type SitemapItem = MetadataRoute.Sitemap[number]
 
-/** A URL with no CanopyCMS entry behind it (a hand-written app route, a feed). */
+/**
+ * A URL with no CanopyCMS entry behind it (a hand-written app route, a feed).
+ *
+ * **An extra URL is entirely hand-managed — it inherits nothing from the entry pipeline.**
+ * `generateContentSitemap` applies `isNoindexEntry` and a default `lastModified` only while
+ * walking real entries; this list is appended afterwards and passes through both:
+ *
+ * - **No `noindex` gate.** Nothing checks the SEO flag for an extra URL, because there is no
+ *   entry data to check. If you are using `extraUrls` to re-advertise a real entry under a
+ *   different path (the usual reason — an entry whose structural `urlPath` no route serves),
+ *   you are responsible for not listing it when that entry is marked `noindex`. Marking the
+ *   entry does not remove the extra URL.
+ * - **No `lastModified` fallback.** The per-entry branch defaults to `entry.updatedAt`; here,
+ *   omitting `lastModified` means the URL simply ships without a date.
+ *
+ * Both are easy to get wrong in exactly the same direction, and our own reference app's sitemap
+ * gets the second one wrong. Prefer modelling the entry so its natural `urlPath` is the URL you
+ * want — an `index` entry collapses onto its collection path — and keep `extraUrls` for URLs
+ * that genuinely have no entry behind them.
+ */
 export interface SitemapExtraUrl {
   /** Site-relative path ('/blog') or an absolute URL. Trailing-slash rules apply to the former. */
   path: string
+  /** No fallback: omit this and the URL ships with no date at all (entries default to `updatedAt`). */
   lastModified?: Date | string
   changeFrequency?: SitemapItem['changeFrequency']
   priority?: number
@@ -140,7 +160,13 @@ export interface GenerateContentSitemapOptions {
   lastModified?: (entry: RoutableEntry) => Date | string | undefined
   /** `<priority>` per entry. Omitted from the URL when this returns undefined (the default). */
   priority?: (entry: RoutableEntry) => number | undefined
-  /** URLs with no entry behind them — hand-written app routes, feeds — appended to the result. */
+  /**
+   * URLs with no entry behind them — hand-written app routes, feeds — appended to the result.
+   *
+   * Appended after the entry walk, so these bypass BOTH the `isNoindexEntry` gate and the
+   * `lastModified` default. See {@link SitemapExtraUrl} before using this to re-advertise a real
+   * entry under a different path.
+   */
   extraUrls?: SitemapExtraUrl[]
 }
 
@@ -202,6 +228,9 @@ export async function generateContentSitemap(
     })
   }
 
+  // Deliberately outside the entry loop above, and therefore outside its `isNoindexEntry` gate
+  // and its `entry.updatedAt` fallback — an extra URL has no entry to derive either from. This is
+  // the behaviour documented on SitemapExtraUrl; if that ever changes, change the doc with it.
   for (const extra of options.extraUrls ?? []) {
     items.push({
       url: resolveSeoUrl(extra.path, urlOpts),

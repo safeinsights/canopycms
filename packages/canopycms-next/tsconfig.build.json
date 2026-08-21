@@ -1,4 +1,13 @@
 {
   "extends": "./tsconfig.json",
+  "compilerOptions": {
+    // Maps off for the PUBLISHED build: we ship "files": ["dist"], not src/,
+    // so dist/*.js.map and dist/*.d.ts.map would point at ../src/... paths
+    // that aren't in the tarball — dead weight nobody can resolve. tsconfig.json
+    // (dev/typecheck) keeps these on for local editing/debugging. Don't
+    // re-enable these without also shipping src/.
+    "declarationMap": false,
+    "sourceMap": false
+  },
   "exclude": ["node_modules", "dist", "**/*.test.ts"]
 }

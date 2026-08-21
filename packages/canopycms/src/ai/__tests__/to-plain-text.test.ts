@@ -258,6 +258,65 @@ describe('toPlainText', () => {
     })
   })
 
+  describe('HTML comments', () => {
+    it('removes a comment and everything inside it', () => {
+      expect(toPlainText('Before <!-- an authoring note --> after')).toBe('Before after')
+    })
+
+    it('removes a multi-line comment', () => {
+      const input = [
+        'Visible prose.',
+        '',
+        '<!--',
+        'FLAG: these cards are placeholders.',
+        '-->',
+        '',
+        'More prose.',
+      ].join('\n')
+      const result = toPlainText(input)
+      expect(result).toContain('Visible prose.')
+      expect(result).toContain('More prose.')
+      expect(result).not.toContain('FLAG')
+      expect(result).not.toContain('placeholders')
+    })
+
+    it('removes several comments in one document', () => {
+      expect(toPlainText('a <!-- one --> b <!-- two --> c')).toBe('a b c')
+    })
+
+    it('does not glue the words on either side together', () => {
+      expect(toPlainText('one<!-- x -->two')).toBe('one two')
+    })
+
+    it('keeps a comment that appears inside a code fence', () => {
+      const input = ['Prose.', '', '```html', '<!-- this is example markup -->', '```'].join('\n')
+      expect(toPlainText(input)).toContain('<!-- this is example markup -->')
+    })
+
+    it('leaves an unterminated comment alone rather than swallowing the rest of the document', () => {
+      // HTML would run an unclosed comment to EOF. Here the input is prose being extracted for
+      // search and AI consumption, so dropping everything after a mistyped delimiter would lose
+      // far more than it protects -- the stray marker is visible and fixable, a vanished second
+      // half of a document is not.
+      const result = toPlainText('Before <!-- oops, never closed\n\nImportant later prose.')
+      expect(result).toContain('Important later prose.')
+    })
+  })
+
+  describe('comment stripping is linear (js/polynomial-redos)', () => {
+    it('does not degrade on many unterminated comment openers', () => {
+      // `/<!--[\s\S]*?-->/g` has no bound on how far its lazy scan runs looking for a closer
+      // that never arrives, and retries that exhaustive scan at every subsequent opener --
+      // quadratic in the number of openers, the same shape documented on TAG_RE and the fence
+      // scanner. The indexOf scan that replaced it visits each character at most once.
+      const adversarial = Array.from({ length: 32_000 }, (_, i) => `<!-- note ${i}`).join('\n')
+      const started = performance.now()
+      const result = toPlainText(adversarial)
+      expect(result).toContain('note 0')
+      expect(performance.now() - started).toBeLessThan(1000)
+    })
+  })
+
   describe('realistic combined document', () => {
     it('handles frontmatter + heading + prose + component + code + link together', () => {
       const input = [
