@@ -207,6 +207,11 @@ export interface GenerateContentSitemapOptions {
    * enumerates the entry at its structural path, so the URL returned here must be one your app
    * actually routes — otherwise you have advertised a 404, the same hazard `extraUrls` carries.
    *
+   * Return a **site-relative path**. The value is trimmed, and an empty or off-site return (an
+   * absolute `https://…` or a protocol-relative `//host/…`) throws rather than being emitted:
+   * the first silently claims `/`, and the second lands in the sitemap as a non-absolute `<loc>`,
+   * which invalidates the whole file. `extraUrls` is where an off-origin URL is legitimate.
+   *
    * Reach for it only when the URL is fixed by something OUTSIDE the content tree: published URLs
    * you cannot change, or a route prefix that deliberately differs from the content layout. When
    * you control the modelling, model the entry so its natural `urlPath` is already the URL you
@@ -321,11 +326,23 @@ export async function generateContentSitemap(
  * `null`/`undefined` mean "no opinion" and keep the entry's own `urlPath` — see the `pathFor`
  * doc for why that is not "drop it".
  *
- * An empty (or whitespace-only) string THROWS rather than being treated as either. It cannot be
- * honoured: `resolveSeoUrl('')` resolves to the site root, so an empty return would quietly
- * advertise this entry at `/` and collide with whatever really lives there — a wrong sitemap
- * that ships green, which is the failure mode every other guard in this file exists to convert
- * into a red build.
+ * Everything else is validated rather than passed through, because every rejected shape here is
+ * one that produces a WRONG SITEMAP THAT SHIPS GREEN — the failure mode every other guard in
+ * this file exists to convert into a red build:
+ *
+ * - **Empty or whitespace-only.** `resolveSeoUrl('')` resolves to the site root, so an empty
+ *   return would quietly advertise this entry at `/` and collide with whatever really lives there.
+ * - **Off-site (absolute or protocol-relative).** `resolveSeoUrl` passes both through verbatim, by
+ *   design — for `extraUrls`, where an absolute URL is explicitly allowed. Here it is not: a
+ *   protocol-relative `//host/x` lands in the sitemap as a NON-absolute `<loc>`, the exact
+ *   invalidity `generateContentSitemap`'s `siteUrl` guard exists to prevent, and search engines
+ *   reject the whole file for it. A scheme-qualified off-site URL is refused for the same reason
+ *   it makes no sense here: `pathFor` names a URL *your app routes*, and you do not route another
+ *   origin. Return a site-relative path.
+ *
+ * The returned path is TRIMMED. Surrounding whitespace is never intended and survives into the
+ * URL otherwise (`' /blog'` → `<siteUrl>/ /blog`) — which this function would previously detect
+ * while checking for emptiness and then hand back untrimmed anyway.
  */
 function resolveEntrySitemapPath(
   entry: RoutableEntry,
@@ -334,15 +351,26 @@ function resolveEntrySitemapPath(
   if (!pathFor) return entry.urlPath
   const override = pathFor(entry)
   if (override === null || override === undefined) return entry.urlPath
-  if (override.trim() === '') {
+
+  const trimmed = override.trim()
+  const where = `the ${JSON.stringify(entry.entryType)} entry at ${JSON.stringify(entry.urlPath)}`
+  if (trimmed === '') {
     throw new Error(
-      `CanopyCMS: generateContentSitemap's pathFor returned an empty path for the ` +
-        `${JSON.stringify(entry.entryType)} entry at ${JSON.stringify(entry.urlPath)}. An empty ` +
+      `CanopyCMS: generateContentSitemap's pathFor returned an empty path for ${where}. An empty ` +
         'path resolves to the site root, so honouring it would advertise this entry at "/" and ' +
         "collide with whatever really lives there. Return null to keep the entry's own urlPath.",
     )
   }
-  return override
+  if (isAbsoluteUrl(trimmed)) {
+    throw new Error(
+      `CanopyCMS: generateContentSitemap's pathFor returned an off-site URL ` +
+        `(${JSON.stringify(trimmed)}) for ${where}. pathFor names a URL your own app serves, so it ` +
+        'must be a site-relative path — a protocol-relative value lands in the sitemap as a ' +
+        'non-absolute <loc>, which invalidates the entire file. Use extraUrls if you really mean ' +
+        'to list a URL on another origin.',
+    )
+  }
+  return trimmed
 }
 
 /**

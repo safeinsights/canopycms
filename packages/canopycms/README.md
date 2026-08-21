@@ -266,7 +266,8 @@ const { data } = await canopy.read<SnippetContent>({
 its natural `urlPath` is that URL. A home page is the case worth spelling out: model it as a root
 `index` entry (`content/home.index.<id>.json`) and it answers at `/`, so the route reads
 `readByUrlPath('/')` and the sitemap advertises it with no special-casing. Reading it instead by
-entry-type path (`{ entryPath: 'content/home' }`) works, but leaves the entry's real `urlPath` as
+entry-type path (`{ entryPath: 'content/home' }`, with no `slug` — it defaults to the entry-type
+name) works, but leaves the entry's real `urlPath` as
 `/home` while the route serves `/` — two answers to "where does this live", which every
 URL-derived surface then has to be told about one at a time. The example app in this repo used to
 do that and no longer does.

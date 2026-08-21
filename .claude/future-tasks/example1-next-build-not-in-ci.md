@@ -8,19 +8,23 @@ re-modelling example1's home entry as a root `index` entry
 ## Problem
 
 CI never runs `next build` for `apps/example1`. `.github/workflows/ci.yml` runs `pnpm run build`
-with `working-directory: packages/canopycms`, and `apps/example1/package.json` stubs its own test
-script (`echo "No tests for example app yet"`). The only CI surface that touches the app at all is
-`pnpm typecheck`.
+with `working-directory: packages/canopycms`; the other build steps cover the published packages,
+`apps/dual-build-fixture`, and `apps/test-app` (e2e). `apps/example1/package.json` stubs its own
+test script (`echo "No tests for example app yet"`). What DOES reach the app is static-only:
+`pnpm typecheck`, the recursive `pnpm lint` (the app has its own `eslint app/`), and
+`prettier --check .`.
 
-So the reference app is protected against type errors and nothing else. Every runtime-only failure
+So the reference app is protected against type, lint and formatting errors — and nothing that
+requires actually running it. Every runtime-only failure
 mode is invisible: a route that resolves no content, a `generateStaticParams` that emits nothing, a
 sitemap that advertises the wrong URLs, a prerender that quietly falls through to `notFound()`.
 
 ## How it showed up
 
 Re-modelling `home` as a root `index` entry changed the on-disk slug, which broke
-`app/page.tsx`'s `read({ entryPath: 'content/home' })` — that call addresses the entry by entry-type
-name, not by slug, so after the rename it resolved nothing and `/` rendered the 404 page.
+`app/page.tsx`'s `read({ entryPath: 'content/home' })` — a slugless read defaults the slug to the
+entry-type name (`content-store.ts`'s `effectiveSlug = slug || schemaItem.name`), so it looked for
+slug `home`, found nothing once the slug became `index`, and `/` rendered the 404 page.
 
 **The build stayed green.** Next prerendered `/` successfully; it just prerendered the not-found
 boundary into it. Nothing in CI, and nothing in the build output, distinguishes "prerendered the
@@ -34,7 +38,8 @@ wrong.
 
 Add an example1 build step to CI. Two parts, the second being the one that carries the value:
 
-1. **Run `pnpm --filter example1 build`.** Catches hard failures (a throwing build guard, a
+1. **Run `pnpm --filter canopycms-example-one build`** (that is the package name — `example1` is
+   only the directory, and `--filter example1` matches nothing). Catches hard failures (a throwing build guard, a
    contested URL — `assertNoDuplicateUrlPaths` fails a production build and would otherwise never
    run against this app).
 2. **Assert on the OUTPUT, not just the exit code.** A build that succeeds proves very little here.

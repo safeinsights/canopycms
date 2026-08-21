@@ -323,6 +323,44 @@ describe('pathFor', () => {
     ).rejects.toThrow(/pathFor returned an empty path/)
   })
 
+  // An off-site return is refused, in both spellings. The protocol-relative one is the dangerous
+  // spelling: `resolveSeoUrl` treats `//host/x` as absolute and passes it through verbatim, so it
+  // would land in the sitemap as a NON-absolute <loc> — the exact invalidity the `siteUrl` guard
+  // rejects, reached through a different field. (`extraUrls` still allows absolute URLs by design.)
+  it('throws on an off-site override rather than emitting an invalid or off-origin <loc>', async () => {
+    const ctx = fakeBuildCtx([{ urlPath: '/posts/a', slug: 'a', entryType: 'post' }])
+
+    await expect(
+      generateContentSitemap(ctx, { siteUrl: SITE, pathFor: () => '//cdn.example.com/x' }),
+    ).rejects.toThrow(/off-site URL/)
+    await expect(
+      generateContentSitemap(ctx, { siteUrl: SITE, pathFor: () => 'https://evil.example.org/x' }),
+    ).rejects.toThrow(/off-site URL/)
+  })
+
+  // Surrounding whitespace is never intended, and it survives into the URL if not trimmed:
+  // ' /blog' resolved to `<siteUrl>/ /blog`. The empty-check already trimmed to decide emptiness,
+  // then returned the untrimmed string anyway.
+  it('trims the override instead of emitting the whitespace into the URL', async () => {
+    const ctx = fakeBuildCtx([{ urlPath: '/posts/a', slug: 'a', entryType: 'post' }])
+
+    const sitemap = await generateContentSitemap(ctx, { siteUrl: SITE, pathFor: () => '  /blog  ' })
+
+    expect(sitemap.map((u) => u.url)).toEqual([`${SITE}/blog`])
+  })
+
+  it('applies trailingSlash to an override, same as to a structural path', async () => {
+    const ctx = fakeBuildCtx([{ urlPath: '/articles/a', slug: 'a', entryType: 'article' }])
+
+    const sitemap = await generateContentSitemap(ctx, {
+      siteUrl: SITE,
+      trailingSlash: true,
+      pathFor: () => '/blog/a',
+    })
+
+    expect(sitemap.map((u) => u.url)).toEqual([`${SITE}/blog/a/`])
+  })
+
   it('keeps the entry inside the walk: updatedAt default and priority still apply', async () => {
     const ctx = fakeBuildCtx([
       { urlPath: '/articles/a', slug: 'a', entryType: 'article', updatedAt: '2024-03-01' },
@@ -338,19 +376,49 @@ describe('pathFor', () => {
   })
 
   // Documented ordering: the override decides the URL, never whether the entry is advertised.
-  it('runs after exclude, so an excluded entry is not advertised at the override either', async () => {
+  //
+  // Asserted on INVOCATION, not just on output. A total, pure `pathFor` returns the same URLs
+  // whichever side of the gates it runs on, so an output-only assertion here passes identically
+  // with the ordering reversed and pins nothing. What is actually observable — and what a
+  // `pathFor` that throws for some entries depends on — is that it is never CALLED for an entry
+  // the gates already dropped.
+  it('runs after exclude: a dropped entry is never passed to pathFor at all', async () => {
     const ctx = fakeBuildCtx([
       { urlPath: '/articles/a', slug: 'a', entryType: 'article' },
       { urlPath: '/articles/b', slug: 'b', entryType: 'article' },
     ])
+    const seen: string[] = []
 
     const sitemap = await generateContentSitemap(ctx, {
       siteUrl: SITE,
       exclude: (entry) => entry.slug === 'a',
-      pathFor: (entry) => `/blog/${entry.slug}`,
+      pathFor: (entry) => {
+        seen.push(entry.slug)
+        return `/blog/${entry.slug}`
+      },
     })
 
+    expect(seen).toEqual(['b'])
     expect(sitemap.map((u) => u.url)).toEqual([`${SITE}/blog/b`])
+  })
+
+  // The same ordering guarantee for the gate that is NOT optional.
+  it('runs after the noindex gate: a noindex entry is never passed to pathFor', async () => {
+    const ctx = fakeBuildCtx([
+      { urlPath: '/articles/a', slug: 'a', entryType: 'article', data: noindexed },
+      { urlPath: '/articles/b', slug: 'b', entryType: 'article' },
+    ])
+    const seen: string[] = []
+
+    await generateContentSitemap(ctx, {
+      siteUrl: SITE,
+      pathFor: (entry) => {
+        seen.push(entry.slug)
+        return null
+      },
+    })
+
+    expect(seen).toEqual(['b'])
   })
 
   // The other half of that ordering, and the thing most likely to surprise: sibling callbacks see

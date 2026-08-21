@@ -47,6 +47,10 @@ export default function sitemap(): Promise<MetadataRoute.Sitemap> {
     // Set `trailingSlash: true` here if your next config does — CanopyCMS cannot see that file,
     // and a mismatch advertises URLs that redirect.
     exclude: (entry) => entry.entryType === 'author' || entry.entryType === 'snippet',
+    // No `priority` callback, deliberately. The removed `extraUrls` line hand-set `priority: 1`
+    // on `/`; nothing replaces it, because `<priority>` is a relative hint that search engines say
+    // they ignore, and asserting it for one URL says nothing without a scale for the rest. Add a
+    // callback here if you actually maintain one.
     // lastModified defaults to the entry's `updatedAt`, which is the file's mtime: on a fresh CI
     // clone that is checkout time, not edit time — which is exactly what you will see if you run
     // `next build` here. Pass a `lastModified` callback returning a real content date if you have

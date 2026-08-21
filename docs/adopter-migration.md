@@ -468,13 +468,22 @@ recommendation. If you do re-model a singleton you serve at a collection's own p
 home.index.<id>.json`). Entry type and ID are unchanged, so references, `order` arrays and
    editor position all survive.
 2. **Fix any read that addresses the entry by entry-type path.** This is the step that bites:
-   `read({ entryPath: 'content/home' })` resolves by entry-type _name_, not by slug, so after the
-   rename it resolves nothing. Switch to `readByUrlPath('/')` and handle its `null` return (it
+   `read({ entryPath: 'content/home' })` passes no `slug`, and a slugless read defaults the slug to
+   the entry-type _name_ (`effectiveSlug = slug || schemaItem.name`), so it looks for slug `home`
+   and stops resolving once the slug is `index`. Passing `slug: 'index'` explicitly keeps that call
+   working. Prefer switching to `readByUrlPath('/')` and handling its `null` return (it
    returns `null` where `read` throws). Skipping this yields a **green build with a 404 at `/`** —
    a static build prerenders the not-found boundary and reports success either way, so verify by
    reading the emitted HTML, not the build's exit code.
 3. Drop the sitemap workaround (below), and re-check the emitted `sitemap.xml` for the new URL.
 4. If the old URL was publicly indexed, add a redirect from it — the entry's URL genuinely changes.
+
+**One known caveat, if you serve a root catch-all.** An entry-type name is currently still
+resolvable as a URL segment: with home modelled at the root, `readByUrlPath('/home')` returns the
+home entry as well as `readByUrlPath('/')`. Nothing advertises `/home` (it is absent from the
+sitemap and from `generateContentStaticParams`), so on a route-per-page app it simply 404s. But an
+`app/[[...slug]]` catch-all resolves whatever it is handed, so it would serve a duplicate homepage
+there — filter it until this is fixed.
 
 **Now deletable.**
 
