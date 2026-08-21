@@ -1,4 +1,36 @@
-# [P2] Two latent proper-lockfile hazards found while adding the content-write lock
+# [RESOLVED 2026-08-20] Two latent proper-lockfile hazards found while adding the content-write lock
+
+**RESOLVED 2026-08-20** — both hazards fixed on `fix/test-suite-unhandled-errors`,
+after hazard #2 stopped being latent and started failing the test suite outright
+(7 of 10 full-suite runs under load exited non-zero with an `ECOMPROMISED`
+"Unhandled Error" and zero test failures; 0 of 10 after).
+
+- **#1 (registry aliasing):** both `provisioning-lock.ts` helpers now anchor
+  proper-lockfile on the lock MARKER's own path (`realpath: false`) instead of
+  the directory holding it, so the in-process registry key equals the on-disk
+  lock identity and two live locks can no longer share one. This is what the
+  file's "fix direction" asked for. `branch-health.ts`'s [H1] freshness rail is
+  unaffected: `lockfilePath` is unchanged, and the rail `fs.stat`s that path
+  directly. Regression coverage: `utils/provisioning-lock.test.ts` (the two
+  aliasing tests fail on the old call shape with `ERELEASED` + a leaked marker).
+- **#2 (throw from the refresh timer):** both helpers now take an optional
+  `onCompromised` — the options passthrough this file prescribed — defaulting to
+  log-and-continue via `canopyLogWarn` (always-on, not the `CANOPYCMS_DEBUG`-gated
+  debug logger, because "two holders may be live" must not be silent in prod).
+  The per-call-site decision the file asked for was made: provisioning callers
+  take the default (their critical section is idempotent), while the content-write
+  lock does NOT — `withContentWriteLock` surfaces a compromise as the retriable
+  `ContentWriteLockBusyError`, and the worker's rebase loop aborts before the next
+  destructive git step and retries the branch next cycle rather than replaying
+  over a possibly-concurrent save.
+- Release now swallows `ERELEASED` (and only that), because callers release in a
+  `finally` and a compromised lock would otherwise turn a completed operation
+  into a spurious failure.
+
+Kept as the analysis record. Original text follows.
+
+---
+
 
 Both surfaced while implementing [SYNC-C1]
 (`packages/canopycms/src/utils/content-write-lock.ts`). Neither is caused by that change; the

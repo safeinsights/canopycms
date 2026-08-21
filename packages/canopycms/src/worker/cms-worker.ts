@@ -2248,8 +2248,18 @@ export class CmsWorker {
         // below is an awaited subprocess, never a synchronous block, so the
         // refresh keeps firing for the whole hold.
         let releaseContentLock: (() => Promise<void>) | undefined
+        // [SYNC-C1] If the lock is lost mid-hold, a writer may now be live
+        // against this same tree. Every git step below is destructive, so
+        // record it and bail before the next one rather than replaying over
+        // an editor's concurrent save.
+        let contentLockCompromised = false
         try {
-          releaseContentLock = await tryAcquireContentWriteLock(branchPath)
+          releaseContentLock = await tryAcquireContentWriteLock(branchPath, (lockErr) => {
+            contentLockCompromised = true
+            workerLogWarn(
+              `  Content-write lock compromised mid-rebase for ${branchDir}: ${getErrorMessage(lockErr)}`,
+            )
+          })
         } catch (lockErr: unknown) {
           if (isNodeError(lockErr) && lockErr.code === 'ELOCKED') {
             workerLog(`  Skipping ${branchDir}: content write in progress (retrying next cycle)`)
@@ -2372,6 +2382,11 @@ export class CmsWorker {
           const MAX_ROUNDS = 50 // safety limit against infinite loops
 
           for (let round = 0; round < MAX_ROUNDS && !completed; round++) {
+            // Re-checked every round: the compromise can land between rounds,
+            // and `--continue`/`--skip` are as destructive as the initial
+            // rebase. Handled after the loop so it cannot be mistaken for the
+            // `!completed` rebase-FAILURE path below.
+            if (contentLockCompromised) break
             try {
               if (nextAction === 'start') {
                 // The pinned base tip fetched above (single-branch clones have
@@ -2420,6 +2435,24 @@ export class CmsWorker {
                 }
               }
             }
+          }
+
+          // [SYNC-C1] A lost lock is a RETRY, not a rebase failure: nothing is
+          // wrong with the branch, we simply can no longer prove we were the
+          // only writer. Handled ahead of the `!completed` block so it never
+          // records a user-visible rebaseFailure or lands in `failed[]`, and
+          // deliberately checked even when the rebase DID complete -- having
+          // possibly replayed over a concurrent save, we must not publish it.
+          // The `finally` below still releases the lock, and the next cycle
+          // re-derives everything from a settled tree.
+          if (contentLockCompromised) {
+            workerLogWarn(
+              `  Skipping ${branchDir}: content-write lock was compromised mid-rebase (retrying next cycle)`,
+            )
+            // No-op when no rebase is in progress; failure is expected there.
+            await branchGit.rebase(['--abort']).catch(() => {})
+            skippedLocked.push(branchDir)
+            continue
           }
 
           if (!completed) {

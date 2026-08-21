@@ -88,12 +88,18 @@ assumptions on.
 **Anchor path matters.** proper-lockfile keys its module-level `locks{}` bookkeeping
 (refresh timer, release fn) by the **target path** passed to `lock()`, not by
 `lockfilePath`. Two locks in one process that pass the same target alias each other
-even with different lock names — which is why `withOccFileLock` locks the FILE rather
-than its directory, why the content-write lock anchors on `{branchRoot}/.canopy-meta`
-rather than the branches root, and why the settings-workspace init lock anchors on its own
-`{workspaceRoot}/.settings-init` rather than `path.dirname(settingsRoot)` — which is
-`{workspaceRoot}`, the very target `ensureLocalSimulatedRemote` passes, and which settings
-init calls into while holding its lock.
+even with different lock names. Every lock here therefore anchors on something unique to
+that lock: `withOccFileLock` locks the FILE rather than its directory, and both
+`provisioning-lock.ts` helpers anchor on the lock MARKER's own path. That makes the
+registry key identical to the on-disk lock identity, so two live locks can no longer share
+a key at all — aliasing is structurally impossible rather than avoided by convention.
+
+Markers still LIVE in a per-purpose directory — `{branchRoot}/.canopy-meta` for the
+content-write lock, `{workspaceRoot}/.settings-init` for settings init (rather than
+`path.dirname(settingsRoot)`, which is `{workspaceRoot}`, the very directory
+`ensureLocalSimulatedRemote` puts `.remote-init.lock` in, and which settings init calls
+into while holding its own lock). That placement is now about keeping markers out of each
+other's way on disk and out of the git working tree, not about dodging the registry.
 
 _This bit us._ Until 2026-08-20 both provisioning-lock variants passed the shared
 content-branches directory as the target, so every branch under one root aliased a single

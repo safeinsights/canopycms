@@ -1730,8 +1730,10 @@ with `globals: false`, so that global does not exist and RTL's auto-registration
 silently no-ops. Importing `afterEach` from `vitest` in the setup file is what makes it
 real. Two things follow for contributors:
 
-- **Every test starts with an empty `document.body`.** Don't write a test that depends
-  on a tree an earlier test in the same file rendered; render what you need.
+- **Every test starts without the previous test's rendered trees.** `cleanup()` unmounts
+  the containers RTL itself mounted; nodes a test appended to `document.body` by hand
+  are its own to remove. Don't write a test that depends on a tree an earlier test in
+  the same file rendered; render what you need.
 - **A new jsdom vitest project, or a second editor setup file, must register `cleanup()`
   too.** Nothing else will do it for you.
 
