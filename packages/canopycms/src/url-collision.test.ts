@@ -144,15 +144,27 @@ describe('url-collision', () => {
   })
 
   // Drift tripwire for CONTENT_EXTENSIONS, which is a literal in url-collision.ts because that
-  // module cannot reach the ContentFormat union. Adding a format to ContentFormat breaks the
-  // compile-time check below; forgetting to add its extension to the guard breaks the runtime one.
-  // The comment this replaces claimed a `format.test.ts` pinned this. No such file existed.
+  // module cannot reach the ContentFormat union.
+  //
+  // Adding a format to `ContentFormat` stops the compile-time check below from typechecking
+  // (verified: TS2322 under `pnpm typecheck`, which includes this file).
+  //
+  // The runtime half needs the DISTINCTNESS assertion, not just the per-format fixture. An
+  // earlier version of this comment claimed a fixture per format would catch a missing extension;
+  // it would not, because `getFormatExtension` is an if-chain with `return '.json'` as its
+  // FALLBACK — a new format silently maps to `.json`, the fixture is then written as `.json`, and
+  // every test passes. The distinctness check is what actually goes red on that.
   describe('every content format is recognised', () => {
     const ALL_FORMATS = ['md', 'mdx', 'json', 'yaml'] as const
     // If a new ContentFormat is added, this stops compiling until it is listed above.
     type Unhandled = Exclude<ContentFormat, (typeof ALL_FORMATS)[number]>
     const _exhaustive: Unhandled extends never ? true : never = true
     void _exhaustive
+
+    it("maps every format to a DISTINCT extension — catches getFormatExtension's silent fallback", () => {
+      const exts = ALL_FORMATS.map((f) => getFormatExtension(f as ContentFormat))
+      expect(new Set(exts).size).toBe(ALL_FORMATS.length)
+    })
 
     it.each(ALL_FORMATS)('recognises an index entry written as %s', async (format) => {
       const guides = await collection(content, `guides-${format}`)
@@ -165,7 +177,9 @@ describe('url-collision', () => {
 
   describe('edges', () => {
     it('never contests a root index entry — it claims "/", which nothing above it can hold', async () => {
-      await entry(content, 'page', 'content')
+      // The claimant must sit in content/'s PARENT, or this passes because the parent scan finds
+      // nothing rather than because the root-stop fired — which is what it did before round 3.
+      await entry(root, 'page', 'content')
 
       expect(
         await findUrlPathClaimant({ collectionDir: content, slug: 'index', contentRoot: content }),

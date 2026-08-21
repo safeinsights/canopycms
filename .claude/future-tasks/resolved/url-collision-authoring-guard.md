@@ -137,6 +137,11 @@ the message names the conflicting entry and its path so the author can act; rena
 than offering a fix-up, since the correct fix depends on which of the two pages the author meant
 to keep.
 
-Every test was break-and-rerun verified: disabling the entry guard fails exactly the five REFUSES
-tests and leaves the three ALLOWS tests passing (they guard against over-blocking), and disabling
-the collection-rename guard fails exactly its one REFUSES test.
+Every test was break-and-rerun verified. Disabling the entry guard fails exactly its REFUSES tests
+and leaves the three ALLOWS tests passing — those are the ones that matter most, since they pin
+that the guard does NOT over-block. Disabling the collection-rename guard fails exactly its one
+REFUSES test (2 ALLOWS survive).
+
+Counts are deliberately not written here. An earlier version said "five REFUSES", which was true
+when written and wrong two commits later after review added more — the same
+claims-outran-the-fix pattern this branch kept reproducing, in a record nobody re-runs.

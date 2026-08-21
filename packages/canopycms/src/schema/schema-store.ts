@@ -802,8 +802,10 @@ export class SchemaOps {
         // that no `{slug}.{id}` directory exists at the destination, so no descendant DEEPER than
         // the index entry has anything to collide with.
         //
-        // That holds only as far as the check above does, and it compares case-SENSITIVELY -- so
-        // `guides` beside an existing `Guides.{id}` passes it and descendants CAN then contest.
+        // That holds only as far as the check above does, and it is narrower than it looks: it
+        // compares case-SENSITIVELY (so `guides` beside an existing `Guides.{id}` passes it) and
+        // it requires `parts.length === 2 && isValidId(parts[1])` (so a plain, ID-less `docs/`
+        // directory at the destination passes it too). Descendants CAN then contest.
         // See .claude/future-tasks/collection-sibling-name-uniqueness.md, which tracks both the
         // missing create-side check and this case hole.
         if (await findIndexEntryIn(physicalPath)) {

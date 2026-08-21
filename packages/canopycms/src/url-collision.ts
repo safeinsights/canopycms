@@ -22,7 +22,7 @@ import { parseTypedFilename } from './utils/typed-filename'
  * collection's configured formats into a module that is deliberately schema-free, across three
  * call sites, and going from a physical directory back to a schema item to do it — a change with
  * more room to introduce a new defect than the narrow one it fixes. Tracked in
- * .claude/future-tasks/url-collision-guard-configured-formats.md.
+ * .claude/future-tasks/url-collision-guard-superset-of-listing.md.
  *
  * A literal rather than derived: deriving it needs the `ContentFormat` union this module has no
  * reason to import. `url-collision.test.ts` carries the drift tripwire — a compile-time
@@ -39,6 +39,11 @@ const CONTENT_EXTENSIONS = ['.md', '.mdx', '.json', '.yaml'] as const
  * merge, by PR, by direct commit and by adopters retrofitting an existing repo — none of which
  * pass through this boundary — while the build guard cannot help an editor who is about to author
  * the collision right now.
+ *
+ * A SCHEMA edit alone can also create one, with no content write at all: `updateEntryType`
+ * changing a format changes the listing's `validExts`, which can flip a previously-unlisted
+ * `guide.index.{id}.json` into a published entry and so into a contested pair. Another reason
+ * neither half of this invariant subsumes the other.
  *
  * Deliberately formulated on `urlPath`, not on names. An entry whose slug matches a sibling
  * collection is only a problem when that collection ALSO has an index entry:
@@ -121,9 +126,24 @@ async function findChildCollectionDir(dir: string, name: string): Promise<string
  * retrofitted onto CanopyCMS, which is precisely the audience this guard's migration note
  * addresses.
  *
- * Parsed structurally (no `entryTypes` list): this module has no schema, and an entry of a type
- * that is not in the config is a different problem, already reported by the listing's own
- * malformed-file guard.
+ * Parsed structurally (no `entryTypes` list), which is the SECOND of three known ways this
+ * claimant set is a strict superset of the listing's — all of them over-blocks, all of them
+ * tracked together in .claude/future-tasks/url-collision-guard-superset-of-listing.md:
+ *
+ *   1. extension — see `CONTENT_EXTENSIONS` above;
+ *   2. entry TYPE — a file whose type is not in the collection's config is skipped by the
+ *      listing but counted here. An earlier version of this comment dismissed that as "already
+ *      reported by the listing's malformed-file guard". That is true only in BUILD mode; in the
+ *      editor, where this guard actually runs, `listCollectionEntries` skips such a file with a
+ *      debug-gated warning and nothing surfaces. Reached by the accident
+ *      `looksLikeMalformedEntry` itself names as most common: renaming an entry type in
+ *      `.collection.json` without renaming the files;
+ *   3. collection-hood — `findChildCollectionDir` matches any child directory by name, but a
+ *      directory with no `.collection.json` is not a collection, so nothing inside it publishes
+ *      a URL. Narrow (the file inside still needs valid entry grammar) but the same direction.
+ *
+ * All three need the same fix — the schema this module deliberately does not have — so they are
+ * one task, not three.
  */
 function entrySlugOf(filename: string): string | null {
   // `parseTypedFilename` strips the extension without checking it, so an editor backup

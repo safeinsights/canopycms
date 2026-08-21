@@ -679,7 +679,6 @@ export class ContentStore {
    * @param options.existingId - Optional ID to use (for edits). If not provided, generates new ID.
    * @param options.entryTypeName - For collections with multiple entry types, specify which one to use. Defaults to the default entry type.
    */
-
   private async buildPaths(
     schemaItem: FlatSchemaItem,
     slug: string,
@@ -1606,11 +1605,6 @@ export class ContentStore {
             const parentDir = path.dirname(currentPath)
             const newPath = path.join(parentDir, newFilename)
 
-            // [URL] Contested-URL guard. A rename moves the entry to a NEW url, so the same
-            // check a create gets applies here -- including the index direction, since renaming
-            // an entry TO `index` is how an existing collection acquires a landing page.
-            await this.assertUrlPathAvailable(parentDir, safeNewSlug)
-
             // Check if any file with the new slug already exists (regardless of ID)
             // This catches same-slug-different-ID conflicts that link() alone cannot prevent
             try {
@@ -1629,6 +1623,17 @@ export class ContentStore {
               if (err instanceof ContentStoreError) throw err
               // Ignore filesystem errors (e.g. ENOENT if parent dir doesn't exist)
             }
+
+            // [URL] Contested-URL guard. A rename moves the entry to a NEW url, so the same
+            // check a create gets applies here -- including the index direction, since renaming
+            // an entry TO `index` is how an existing collection acquires a landing page.
+            //
+            // Runs AFTER the same-slug scan above, deliberately. In an already-contested tree
+            // both refusals apply, and the same-slug one is the more immediate and more
+            // actionable of the two -- reporting the URL conflict first sent the author to fix
+            // the other claimant, only to hit the same-slug refusal on the retry. Still before
+            // link(), so either refusal leaves the tree untouched.
+            await this.assertUrlPathAvailable(parentDir, safeNewSlug)
 
             // Use link()+unlink() instead of rename() so a concurrent cross-process rename to the
             // exact same destination path fails with EEXIST rather than silently overwriting.
