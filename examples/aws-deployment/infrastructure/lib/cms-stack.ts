@@ -101,13 +101,34 @@ export class CmsStack extends Stack {
       reservedConcurrency: 10,
     })
 
-    // Media support (uploads, on-demand image transforms). Uncomment to give
-    // the deployed editor an asset backend, pass `assetBucket:
-    // assetSupport.bucket` to CanopyCmsService above, and wire
-    // `assetSupport.cloudFrontBehaviors` into the distribution below. See the
-    // assets section of docs/deploying-to-aws.md.
+    // Media support (uploads, on-demand image transforms). To enable it:
     //
-    // const assetSupport = new AssetSupport(this, 'Assets', {})
+    //   1. add `AssetSupport` to the `canopycms-cdk` import at the top;
+    //   2. uncomment the block below, moving it ABOVE `cmsService` (it has to
+    //      exist before you can pass its bucket);
+    //   3. pass `assetBucket: assetSupport.bucket` to CanopyCmsService;
+    //   4. pass the behaviors to CanopyCmsDistribution, `/assets/t/*` FIRST
+    //      (CloudFront matches in order, so the general pattern would
+    //      otherwise swallow the transform one):
+    //
+    //        additionalBehaviors: {
+    //          '/assets/t/*': assetSupport.assetBehaviors().assetsTransform,
+    //          '/assets/*': assetSupport.assetBehaviors().assets,
+    //        },
+    //
+    // `editorOrigins` is REQUIRED: it is the S3 CORS allowlist for the
+    // editor's presigned uploads, so it must list the origin the editor is
+    // served from.
+    //
+    // Run `pnpm --filter canopycms-cdk run build:lambda` before deploying --
+    // the transform Lambda needs its native sharp binary, and the construct
+    // refuses to synth without it.
+    //
+    // See the assets section of docs/deploying-to-aws.md.
+    //
+    // const assetSupport = new AssetSupport(this, 'Assets', {
+    //   editorOrigins: [`https://${props.domainName}`],
+    // })
 
     // CloudFront + Route53, only when a domain is configured. Skipping this
     // leaves `cmsService.functionUrl` as the entry point, which is enough to
