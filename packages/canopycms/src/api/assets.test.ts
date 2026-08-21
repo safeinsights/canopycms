@@ -646,6 +646,19 @@ describe('assetRawRoute - lazy transform (GET /assets/t/{directives}/{hash32}/{s
     expect(cached).not.toBeNull()
   })
 
+  it('rejects a slug that is not the asset’s own, without transforming or caching', async () => {
+    // Parity with the prod transform Lambda (canopycms-cdk's handler.ts): the
+    // slug is load-bearing in the stored key, and `[a-z0-9-]+` is all the
+    // parser can enforce, so every distinct string would otherwise alias the
+    // same image into a new cache entry and a new transform.
+    const key = `assets/t/w=160/${rasterHash32}/any-slug-at-all.png`
+    const res = await assetRawRoute.handler(ctxWith(store), authedReq(), { key })
+
+    expect(res).toMatchObject({ ok: false, status: 404 })
+    expect(transformModule.applyTransform).not.toHaveBeenCalled()
+    expect(await store.readPublicObject(key)).toBeNull()
+  })
+
   it('serves the second identical request from the store without invoking the transform engine again', async () => {
     const key = `assets/t/w=160/${rasterHash32}/photo.png`
     await assetRawRoute.handler(ctxWith(store), authedReq(), { key })

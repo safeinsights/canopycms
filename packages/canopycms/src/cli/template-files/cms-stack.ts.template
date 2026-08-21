@@ -124,6 +124,11 @@ export class CmsStack extends Stack {
         functionUrl: cmsService.functionUrl,
         domainName: props.domainName,
         hostedZoneDomain: props.hostedZoneDomain,
+        // Keep CloudFront's origin read timeout equal to the Lambda's own.
+        // Both default to 60s, so this line changes nothing today -- it is
+        // here so that raising `timeout` above cannot silently leave
+        // CloudFront answering 504 at the edge on requests that succeed.
+        originReadTimeout: cmsService.timeout,
       })
     }
   }

@@ -261,6 +261,77 @@ describe('AssetSupport - standalone mode (creates its own bucket)', () => {
   })
 })
 
+describe('AssetSupport - bounding the anonymous transform path', () => {
+  it('caps the transform Lambda with a reserved-concurrency limit', () => {
+    const stack = makeStack()
+    new AssetSupport(stack, 'Assets', { ...BASE_PROPS })
+    const template = Template.fromStack(stack)
+
+    // /assets/t/* is anonymous and `crop` is an unbounded float rect, so
+    // without a cap a scripted loop is an uncapped sharp/S3 amplifier. This is
+    // a RESERVATION (a cap), not provisioned concurrency -- it costs nothing.
+    template.hasResourceProperties(
+      'AWS::Lambda::Function',
+      Match.objectLike({ ReservedConcurrentExecutions: 10 }),
+    )
+  })
+
+  it('honours an overridden transform concurrency cap', () => {
+    const stack = makeStack()
+    new AssetSupport(stack, 'Assets', { ...BASE_PROPS, transformReservedConcurrency: 3 })
+    Template.fromStack(stack).hasResourceProperties(
+      'AWS::Lambda::Function',
+      Match.objectLike({ ReservedConcurrentExecutions: 3 }),
+    )
+  })
+
+  it('expires generated derivatives under assets/t/ while keeping originals forever', () => {
+    const stack = makeStack()
+    new AssetSupport(stack, 'Assets', { ...BASE_PROPS })
+    const template = Template.fromStack(stack)
+
+    template.hasResourceProperties(
+      'AWS::S3::Bucket',
+      Match.objectLike({
+        LifecycleConfiguration: {
+          Rules: Match.arrayWith([
+            Match.objectLike({
+              Status: 'Enabled',
+              Prefix: 'assets/t/',
+              ExpirationInDays: 180,
+            }),
+          ]),
+        },
+      }),
+    )
+
+    // Source assets and metadata must NOT be swept -- they are not
+    // regenerable, unlike everything under assets/t/.
+    const buckets = Object.values(template.findResources('AWS::S3::Bucket'))
+    const prefixes = buckets.flatMap(
+      (b) =>
+        (b.Properties.LifecycleConfiguration?.Rules ?? []).map(
+          (r: { Prefix?: string }) => r.Prefix,
+        ) as (string | undefined)[],
+    )
+    expect(prefixes).not.toContain('asset-originals/')
+    expect(prefixes).not.toContain('asset-meta/')
+  })
+
+  it('leaves lifecycle rules to the caller in BYO-bucket mode', () => {
+    const stack = makeStack()
+    const existing = new s3.Bucket(stack, 'Existing')
+    new AssetSupport(stack, 'Assets', { ...BASE_PROPS, bucket: existing })
+    const template = Template.fromStack(stack)
+
+    // A default `s3.Bucket` emits no Properties at all, so this reads through
+    // optional chaining rather than asserting the key's container exists.
+    const buckets = Object.values(template.findResources('AWS::S3::Bucket'))
+    expect(buckets).toHaveLength(1)
+    expect(buckets[0].Properties?.LifecycleConfiguration).toBeUndefined()
+  })
+})
+
 describe('AssetSupport - transform Lambda CloudWatch log group', () => {
   it('creates a dedicated transform log group named /canopycms/<stackName>/transform with 90-day default retention and DESTROY removal', () => {
     const stack = makeStack()
