@@ -31,7 +31,15 @@ CanopyCMS is organized as a monorepo with separate packages for extensibility:
 
 This separation keeps the core framework-agnostic while allowing adapters to be minimal integration layers. All business logic lives in core—adapters only handle framework-specific concerns like extracting user identity from request contexts.
 
-The core package also exposes a `canopycms/test-utils` subpath export for shared test utilities (API test helpers, console spies, git test repo initialization). This replaces fragile cross-package relative imports and gives other packages in the monorepo a stable, versioned way to import test infrastructure.
+The core package also exposes a `canopycms/test-utils` subpath export for shared test utilities (API test helpers, console spies, git test repo initialization). This replaces fragile cross-package relative imports and gives other packages in the monorepo a stable, versioned way to import test infrastructure. **In the monorepo only, today:** the export is declared but `tsconfig.build.json` excludes `src/test-utils/**`, so `dist/test-utils/` is never emitted and an external `import 'canopycms/test-utils'` fails with `ERR_MODULE_NOT_FOUND`. In-repo consumers resolve through the dev `exports` field and never notice — the same blind spot described under [ESM Output Must Be Node-Resolvable](#esm-output-must-be-node-resolvable-not-just-bundler-resolvable). Tracked in `.claude/future-tasks/canopycms-test-utils-export-unbuilt.md`.
+
+### ESM Output Must Be Node-Resolvable, Not Just Bundler-Resolvable
+
+Every published package declares `"type": "module"`, so every relative import in its `dist/` must carry a `.js` extension. `tsc` alone doesn't do this: with `moduleResolution: "Bundler"`, it preserves bare specifiers verbatim, which bundlers (Next, Vite) resolve happily but Node's native ESM resolver rejects outright. A build that skips the rewrite step produces a package that works for bundler-based adopters but is broken for anyone importing it directly under Node — `canopycms-cdk` is the sharpest case, since CDK apps run directly under Node with no bundler in front of them. All five published packages now run a shared rewrite step (`scripts/add-js-extensions.mjs`) as part of their build, added after this gap let four of the five packages ship broken for a period while only the core package ran it.
+
+This is a structural blind spot particular to pnpm workspaces, not just a missed build step: inside the workspace, importing one package from another resolves through the package's dev `exports` field (raw `.ts` source), never through `publishConfig.exports` — the shape a real npm/pnpm consumer actually gets. So in-repo tests and dev usage exercise a different resolution path than the published tarball, and can pass while the tarball is broken. Catching this requires reconstructing what publish actually produces — merging each package's `publishConfig` the way `npm publish` does, against the built `dist/` output — rather than just importing the package by name.
+
+Published packages retain `declaration` (`.d.ts` output) but not `sourceMap`/`declarationMap`, since `files: ["dist"]` means the source files those maps reference are never included in the tarball.
 
 ## Dependency Model
 

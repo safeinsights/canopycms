@@ -3313,6 +3313,20 @@ error client-bundle-no-node-builtins: packages/canopycms/src/client.ts → fs/pr
 
 The fix is normally to import the dependency-free sibling instead of the node-importing module -- `paths/branch-name` (not `paths/branch` or the `paths` barrel), `assets/asset-prefixes` (not `assets/keys`), `assets/transform-directives` (not `assets/transform`) -- or to make the import `import type`. If a client-reachable module genuinely needs new browser-safe logic that currently lives in a node-importing file, extract that logic into its own dependency-free module rather than widening the rule.
 
+### Published-Package ESM Import Check
+
+`tsc` with `moduleResolution: "Bundler"` emits extensionless relative specifiers (`from './adapter'`), which `tsc` and bundlers both tolerate but Node's native ESM resolver rejects outright (`ERR_MODULE_NOT_FOUND`). Four of five published packages shipped that way, undetected, until a real adopter hit it:
+
+```bash
+pnpm check:esm
+```
+
+This **requires a build first** -- it resolves each published package's entry points against real built `dist/` output, not `src/`. It runs in CI (`.github/workflows/ci.yml`) right after a step that builds the four non-core published packages (CI previously only built `packages/canopycms`, so nothing ever built `canopycms-next`, `canopycms-auth-clerk`, `canopycms-auth-dev`, or `canopycms-cdk` to check).
+
+**Why it can't just `import('canopycms')` in-repo:** this is a pnpm workspace, so `node_modules/canopycms` is a symlink that resolves through the package's _dev_ `exports` field (raw `.ts`, meant for bundlers/tsx) -- never through `publishConfig.exports`, the field a real npm consumer actually gets. A naive in-repo smoke test would pass while the published tarball was broken. The guard ([scripts/check-esm-imports.mjs](scripts/check-esm-imports.mjs)) instead builds a sandbox `node_modules`, merging each package's `publishConfig` over its `package.json` (the same merge `npm publish`/`pnpm pack` perform) and pointing the result at the real built `dist/`, then imports every entry point from there under a real Node subprocess.
+
+**Fix:** run [scripts/add-js-extensions.mjs](scripts/add-js-extensions.mjs), the shared post-build step that rewrites extensionless relative specifiers to explicit `.js` (or `/index.js` for directory specifiers). It is now wired into all five published packages' `build` scripts (`packages/canopycms` via `scripts/postbuild.mjs`; the other four inline as `tsc ... && node ../../scripts/add-js-extensions.mjs dist`). If you add a new published package, wire its `build` script the same way -- `check:esm` will fail on the omission the next time CI runs.
+
 ### Future-Tasks Backlog Check
 
 `.claude/future-tasks/` is the durable backlog, and AGENTS.md requires every deferred issue to exist as a task file **plus** an `index.md` row. Four failure modes kept slipping through review, so they are now enforced:
