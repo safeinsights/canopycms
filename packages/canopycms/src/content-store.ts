@@ -1102,14 +1102,31 @@ export class ContentStore {
             }
           }
 
-          // [URL] Contested-URL guard, create only. `existed` is false exactly when this write
-          // introduces a NEW entry, which is the only time an entry's URL comes into being --
-          // an ordinary save cannot contest a URL it already holds, and blocking it would trap
-          // the author in an entry they can no longer edit. Runs inside the same per-entry lock
-          // and against the same in-lock re-resolution as the create-intent guard below, so a
-          // concurrent create cannot slip between the check and the write.
-          if (!inLock.existed) {
-            await this.assertUrlPathAvailable(path.dirname(absolutePath), slug)
+          // [URL] Contested-URL guard, create only: an ordinary save cannot contest a URL it
+          // already holds, and blocking it would trap the author in an entry they can no longer
+          // edit.
+          //
+          // Keyed on whether the target file actually EXISTS, not on `inLock.existed`. That flag
+          // is `foundExisting || Boolean(options.existingId)`, and the `existingId` half is a
+          // caller ASSERTION rather than disk truth -- so an id-addressed write recreating an
+          // entry that was deleted out from under it (git, another process) would skip the guard
+          // while in fact creating one.
+          //
+          // The slug is read back off the filename `buildPaths` actually chose, never the
+          // caller's raw argument: `buildPaths` strips leading slashes and lowercases, and for
+          // the entry-type delegation shape substitutes the type name for an empty slug. Checking
+          // the raw value let `write(collection, '/guides', ...)` sail past a `guides` claimant.
+          //
+          // Serialization comes from `withContentWriteExclusion` (the branch-wide, cross-host
+          // content-write lock wrapping this whole reclassification loop), NOT from the per-entry
+          // lock: the two halves of a contested pair live in DIFFERENT collections and so take
+          // different entry-lock keys. The branch lock is what makes check-then-write atomic
+          // against the other half landing concurrently.
+          if (!(await filePathExists(absolutePath))) {
+            await this.assertUrlPathAvailable(
+              path.dirname(absolutePath),
+              extractSlugFromFilename(path.basename(absolutePath)),
+            )
           }
 
           await fs.mkdir(path.dirname(absolutePath), { recursive: true })

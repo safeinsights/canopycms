@@ -4,6 +4,14 @@ import path from 'node:path'
 import { extractSlugFromFilename } from './content-id-index'
 import { isIndexSlug } from './utils/entry-url'
 import { isNotFoundError } from './utils/error'
+import { parseTypedFilename } from './utils/typed-filename'
+
+/**
+ * The extensions an entry file can carry — every value `getFormatExtension` can return.
+ * Kept as a literal rather than derived, because deriving it needs a `ContentFormat` list this
+ * module has no reason to import; `format.test.ts` pins the mapping it mirrors.
+ */
+const CONTENT_EXTENSIONS = ['.md', '.mdx', '.json', '.yaml'] as const
 
 /**
  * The WRITE-BOUNDARY half of the invariant "no two entries may claim the same `urlPath`".
@@ -76,6 +84,36 @@ async function findChildCollectionDir(dir: string, name: string): Promise<string
 }
 
 /**
+ * The slug a file CLAIMS A URL AT, or null when the file claims none.
+ *
+ * This must recognise exactly the set `listEntries` recognises, because the invariant is defined
+ * over the `urlPath`s `listEntries` publishes and the build-time half checks those. Hence
+ * `parseTypedFilename` — the same `{type}.{slug}.{id}.{ext}` grammar `listCollectionEntries` uses
+ * — rather than `extractSlugFromFilename`, which answers a different and much looser question
+ * ("what would I call this file?") and happily names a slug for things that are not entries.
+ *
+ * Getting this wrong OVER-BLOCKS, which is worse here than under-blocking: a hand-authored
+ * `index.md` with no content ID, an `index.md~` editor backup, or a colocated `guides.png` are all
+ * non-entries that claim no URL, so the build guard ignores them — but a looser scan counted them
+ * as claimants and refused a legitimate write, telling the author to "remove that collection's
+ * index entry" about a file Canopy does not consider an entry. That lands hardest on repos being
+ * retrofitted onto CanopyCMS, which is precisely the audience this guard's migration note
+ * addresses.
+ *
+ * Parsed structurally (no `entryTypes` list): this module has no schema, and an entry of a type
+ * that is not in the config is a different problem, already reported by the listing's own
+ * malformed-file guard.
+ */
+function entrySlugOf(filename: string): string | null {
+  // `parseTypedFilename` strips the extension without checking it, so an editor backup
+  // (`doc.index.{id}.md~`) parses exactly like the entry it shadows. `listCollectionEntries`
+  // additionally requires a CONFIGURED format extension, so it skips those -- and this must skip
+  // them too, or the guard refuses a write over a file the build guard never counted.
+  if (!CONTENT_EXTENSIONS.some((ext) => filename.toLowerCase().endsWith(ext))) return null
+  return parseTypedFilename(filename)?.slug ?? null
+}
+
+/**
  * The index entry file directly inside `dir`, or null.
  *
  * Slug extraction is entry-type-agnostic (each candidate's own type is read out of its filename),
@@ -85,7 +123,7 @@ async function findChildCollectionDir(dir: string, name: string): Promise<string
 export async function findIndexEntryIn(dir: string): Promise<string | null> {
   for (const entry of await readDirSafe(dir)) {
     if (entry.isDirectory()) continue
-    if (isIndexSlug(extractSlugFromFilename(entry.name))) return path.join(dir, entry.name)
+    if (isIndexSlug(entrySlugOf(entry.name) ?? undefined)) return path.join(dir, entry.name)
   }
   return null
 }
@@ -95,7 +133,7 @@ export async function findEntryBySlugIn(dir: string, slug: string): Promise<stri
   const wanted = slug.toLowerCase()
   for (const entry of await readDirSafe(dir)) {
     if (entry.isDirectory()) continue
-    if (extractSlugFromFilename(entry.name) === wanted) return path.join(dir, entry.name)
+    if (entrySlugOf(entry.name) === wanted) return path.join(dir, entry.name)
   }
   return null
 }
@@ -136,6 +174,16 @@ export async function findUrlPathClaimant(opts: {
   }
 
   // A plain entry sits at the same URL as a same-named child collection's index entry.
+  //
+  // KNOWN DEPENDENCY: this resolves ONE child collection by name, and the index direction above
+  // likewise looks only for a parent ENTRY. Neither considers a second collection sharing the
+  // same name, because nothing currently stops one being created -- `createCollectionInner` does
+  // not check sibling names at all (tracked in collection-sibling-name-uniqueness.md). With two
+  // `guides.{id}` directories side by side you can write an index entry into each, and both
+  // writes pass this guard while two entries end up claiming one URL. The build guard still
+  // catches it. Fixing sibling-name uniqueness closes this without changing anything here --
+  // which is why that task is a prerequisite for this guard being complete, not an unrelated
+  // tidy-up.
   const childDir = await findChildCollectionDir(collectionDir, slug)
   if (!childDir) return null
   const indexEntry = await findIndexEntryIn(childDir)

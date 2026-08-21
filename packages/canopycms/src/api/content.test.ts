@@ -67,6 +67,15 @@ vi.mock('../content-store', () => {
         )
       }
     },
+    // [URL] Same reasoning again: a real ContentConflictError subclass so the
+    // handler's instanceof chain behaves as it does in production.
+    UrlPathConflictError: class UrlPathConflictError extends MockContentConflictError {
+      readonly conflictingPath: string
+      constructor(message: string, conflictingPath: string) {
+        super(message)
+        this.conflictingPath = conflictingPath
+      }
+    },
     getDefaultEntryType: (entries: Array<{ default?: boolean }> | undefined) =>
       entries && entries.length > 0 ? entries.find((e) => e.default) || entries[0] : undefined,
   }
@@ -428,6 +437,52 @@ describe('content api', () => {
       }
     })
 
+    it('[URL] surfaces the contested-URL refusal, NOT the false "slug already exists"', async () => {
+      // The create path's fallback for `expectedVersion: null` reports that an entry with this
+      // slug already exists. For a URL conflict that is factually WRONG -- no entry with this
+      // slug is in this collection, which is why the handler's early `exists` check passed. The
+      // offender is a different entry claiming the same URL, and only this message names it.
+      const ctx = allowedCtx()
+      const { ContentStore, UrlPathConflictError } = await import('../content-store')
+
+      const urlError = new UrlPathConflictError(
+        'An entry with slug "guides" would share a URL with the index entry of the "guides" ' +
+          'collection beside it ("content/posts/guides/doc.index.aB3cD4eF5gH6.json").',
+        'content/posts/guides/doc.index.aB3cD4eF5gH6.json',
+      )
+      const mockStore = {
+        resolvePath: vi.fn().mockReturnValue({
+          schemaItem: { logicalPath: 'content/posts', type: 'collection', entries: [] },
+          slug: 'guides',
+        }),
+        resolveDocumentPath: vi.fn().mockReturnValue({ relativePath: 'content/posts/guides' }),
+        write: vi.fn().mockRejectedValue(urlError),
+        idIndex: vi.fn().mockResolvedValue({ findById: vi.fn().mockReturnValue(null) }),
+        documentExists: vi.fn().mockResolvedValue(false),
+        getExistingEntryType: vi.fn().mockResolvedValue(undefined),
+        countEntriesOfType: vi.fn().mockResolvedValue(0),
+      }
+      vi.mocked(ContentStore).mockImplementationOnce(function () {
+        return mockStore as unknown as InstanceType<typeof ContentStore>
+      })
+
+      const res = await writeContent(
+        ctx,
+        { user: { type: 'authenticated', userId: 'u1', groups: [] } },
+        { branch: unsafeAsBranchName('feature/x'), path: unsafeAsLogicalPath('posts/guides') },
+        // expectedVersion: null is create intent -- the exact case whose fallback lies.
+        { format: 'json', data: {}, expectedVersion: null },
+      )
+      expect(res.ok).toBe(false)
+      expect(res.status).toBe(409)
+      if (!res.ok) {
+        expect(res.error).toBe(urlError.message)
+        expect(res.error).toContain('share a URL')
+        expect(res.error).not.toContain('already exists')
+        expect(res.error).not.toContain('modified by another editor')
+      }
+    })
+
     it('[F1] surfaces the duplicate-content-ID refusal instead of the generic conflict message', async () => {
       const ctx = allowedCtx()
       const { ContentStore, DuplicateContentIdError } = await import('../content-store')
@@ -587,6 +642,47 @@ describe('content api', () => {
       expect(res.ok).toBe(true)
       if (res.ok && res.data) {
         expect(res.data.newPath).toBe('content/posts/new-slug')
+      }
+    })
+
+    it('[URL] surfaces the contested-URL refusal instead of "modified by another editor"', async () => {
+      // The worst of the three sites before this was wired: a contested-URL rename was flattened
+      // into the generic conflict message, whose advice is "reload and retry" -- a loop that
+      // cannot succeed, since the rename stays refused until the author picks a different slug
+      // or removes the other claimant. That loop is the exact thing UrlPathConflictError's doc
+      // comment says the distinct type exists to prevent.
+      const ctx = allowedCtx()
+      const { ContentStore, UrlPathConflictError } = await import('../content-store')
+
+      const urlError = new UrlPathConflictError(
+        'An entry with slug "guides" would share a URL with the index entry of the "guides" ' +
+          'collection beside it ("content/posts/guides/doc.index.aB3cD4eF5gH6.json").',
+        'content/posts/guides/doc.index.aB3cD4eF5gH6.json',
+      )
+      vi.mocked(ContentStore).mockImplementationOnce(function () {
+        return {
+          resolvePath: vi.fn().mockReturnValue({
+            schemaItem: { logicalPath: 'content/posts', type: 'collection', entries: [] },
+            slug: 'old-slug',
+          }),
+          resolveDocumentPath: vi
+            .fn()
+            .mockResolvedValue({ relativePath: 'content/posts/old-slug' }),
+          renameEntry: vi.fn().mockRejectedValue(urlError),
+        } as unknown as InstanceType<typeof ContentStore>
+      })
+
+      const res = await renameEntry(
+        ctx,
+        { user: { type: 'authenticated', userId: 'u1', groups: [] } },
+        { branch: unsafeAsBranchName('feature/x'), path: unsafeAsLogicalPath('posts/old-slug') },
+        { newSlug: unsafeAsSlug('guides') },
+      )
+      expect(res.ok).toBe(false)
+      expect(res.status).toBe(409)
+      if (!res.ok) {
+        expect(res.error).toBe(urlError.message)
+        expect(res.error).not.toContain('modified by another editor')
       }
     })
 

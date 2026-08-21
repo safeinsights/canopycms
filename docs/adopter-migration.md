@@ -526,7 +526,11 @@ It is also create/rename **only**. An ordinary save of an entry already in a con
 succeeds — blocking it would trap you in an entry you could no longer fix. Pre-existing collisions
 (from a merge, a retrofit, or a direct commit) are the build guard's business, and it still runs.
 
-**To adopt.** Nothing. The refusal surfaces as a 409 with a message naming the other entry.
+**To adopt.** Nothing. Creating or renaming an entry into a contested URL returns **409** with a
+message naming the other entry and its path; renaming a _collection_ into one returns **400**,
+matching that endpoint's existing refusals. Both messages say which entry is in the way and what
+to do about it — they are not the generic "modified by another editor", which would be advice you
+cannot act on.
 
 **Now deletable.** Nothing — this closes a gap rather than replacing local code. If you added your
 own editor-side check for this after hitting it, it is now redundant.
