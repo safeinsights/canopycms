@@ -1,7 +1,11 @@
 import type { CanopyBuildContext } from '../context'
 import { isBuildMode } from '../build-mode'
 import type { ListEntriesItem } from '../content-listing'
-import { validateEntryData, type EntryFieldError } from '../validation/entry-validator'
+import {
+  findUnknownKeys,
+  validateEntryData,
+  type EntryFieldError,
+} from '../validation/entry-validator'
 
 /**
  * Framework-agnostic helpers for static-site generation. These produce neutral data structures
@@ -121,7 +125,13 @@ async function enumerateRoutableEntries<T>(
   // fresh create-scaffolds legitimately exist mid-edit. Only fail the actual production build —
   // an abandoned schema-invalid scaffold shipping into a static build silently drops that page's
   // route (or worse, renders broken), which is worse than a red build.
-  if (isBuildMode()) assertBuildEntriesValid(entries, phaseLabel)
+  //
+  // The unknown-key warning runs BEFORE the throwing guard, so a build about to go red still
+  // prints everything it found rather than dying on the first problem.
+  if (isBuildMode()) {
+    warnUnknownEntryKeys(entries, phaseLabel)
+    assertBuildEntriesValid(entries, phaseLabel)
+  }
   return entries.map((entry) => ({
     urlPath: entry.urlPath,
     segments: entry.urlPath === '/' ? [] : entry.urlPath.replace(/^\//, '').split('/'),
@@ -271,6 +281,63 @@ export function findInvalidEntries(items: readonly BuildScanItem[]): InvalidBuil
     }
   }
   return invalid
+}
+
+/** An entry carrying data keys the schema no longer defines. */
+export interface EntryWithUnknownKeys {
+  entryPath: string
+  /** Canonical field paths, e.g. `author.nickname` or `blocks[2].headline`. */
+  fieldPaths: string[]
+}
+
+/**
+ * Scan listEntries-shaped items for data keys with no schema counterpart.
+ *
+ * The inverse of `findInvalidEntries`, and non-fatal by design: an unknown key is stale data,
+ * not broken data. A build must not go red for it — the page still renders, it is just quietly
+ * missing whatever the renamed field used to supply. `warnUnknownEntryKeys` is the reporting
+ * half. Both sit at module scope alongside `findInvalidEntries`/`assertBuildEntriesValid` and
+ * are deliberately NOT on `canopycms/server`, matching those two — the build wires them itself.
+ *
+ * Skips items with no resolved schema, and items whose schema is empty — "no schema" is not
+ * "every key is unknown". Same `normalizeDatesDeep` pass as the validity scan, so a hand-authored
+ * `date: 2024-01-15` is a plain value here too.
+ */
+export function findEntriesWithUnknownKeys(
+  items: readonly BuildScanItem[],
+): EntryWithUnknownKeys[] {
+  const found: EntryWithUnknownKeys[] = []
+  for (const item of items) {
+    if (!item.schema || item.schema.length === 0) continue
+    const data = normalizeDatesDeep(item.data) as Record<string, unknown>
+    const fieldPaths = findUnknownKeys(item.schema, data)
+    if (fieldPaths.length > 0) {
+      found.push({ entryPath: item.entryPath, fieldPaths })
+    }
+  }
+  return found
+}
+
+/**
+ * Warn — never throw — about entries carrying keys the schema no longer defines.
+ *
+ * A production build is the one place that sees every entry at once, which makes it the only
+ * place a schema reshape's leftovers show up as a list rather than one mysteriously undefined
+ * value at a time.
+ */
+export function warnUnknownEntryKeys(items: readonly BuildScanItem[], phaseLabel: string): void {
+  const found = findEntriesWithUnknownKeys(items)
+  if (found.length === 0) return
+
+  const lines = found.map(
+    ({ entryPath, fieldPaths }) => `  - ${entryPath} — ${fieldPaths.join(', ')}`,
+  )
+
+  console.warn(
+    `CanopyCMS static build: ${found.length} ${found.length === 1 ? 'entry has' : 'entries have'} content keys not defined in their schema during ${phaseLabel}:\n${lines.join('\n')}\n` +
+      `These are usually left over from a renamed or reshaped field. Nothing reads them, and they are kept in the file on every save. ` +
+      `Add them to the schema or remove them from the content.`,
+  )
 }
 
 /**

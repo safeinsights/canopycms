@@ -14,6 +14,7 @@ import type { EntrySchema, EntryTypeConfig, EntryValidationIssue, FlatSchemaItem
 import { defineEndpoint } from './route-builder'
 import { ReferenceValidator } from '../validation/reference-validator'
 import {
+  findUnknownKeys,
   mergeBodyIntoData,
   normalizeReferenceValues,
   validateEntryData,
@@ -447,6 +448,27 @@ const writeContentHandler = async (
   // IDs already gave the hook bare IDs. Normalizing first makes the hook's input deterministic
   // regardless of caller.
 
+  // Keys with no counterpart in the schema. validateEntryData iterates the SCHEMA, so nothing
+  // reported the inverse: a renamed or reshaped field left its old key on disk forever (the
+  // editor round-trips the whole record, so every save rewrote it) and the only symptom was a
+  // component receiving `undefined`. Adopter request log item 29.
+  //
+  // Run against normalizedData -- the shape that will actually be persisted -- so the report
+  // matches the bytes, and so a resolved reference collapsed back to an ID string cannot be
+  // mistaken for anything. A warning, never a rejection: the key is still written (with its
+  // comments, see utils/content-serialize.ts), it is just not editable and nothing reads it.
+  if (normalizedData !== undefined) {
+    const unknownKeys = findUnknownKeys(fields, normalizedData)
+    if (unknownKeys.length > 0) {
+      validationWarnings = unknownKeys.map((fieldPath) => ({
+        level: 'warning' as const,
+        fieldPath,
+        message:
+          'Not defined in this entry type’s schema. It is kept in the file, but nothing reads it — add it to the schema or remove it.',
+      }))
+    }
+  }
+
   if (validateEntry) {
     let issues: EntryValidationIssue[]
     try {
@@ -478,8 +500,10 @@ const writeContentHandler = async (
           .join('; '),
       }
     }
+    // Appended, not assigned: the unknown-key scan above may already have found some, and the
+    // editor shows the channel as one notification.
     const warnings = issues.filter((issue) => issue.level === 'warning')
-    if (warnings.length > 0) validationWarnings = warnings
+    if (warnings.length > 0) validationWarnings = [...(validationWarnings ?? []), ...warnings]
   }
 
   try {

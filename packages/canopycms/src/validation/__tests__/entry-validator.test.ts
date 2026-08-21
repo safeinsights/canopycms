@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import type { EntrySchema } from '../../config'
 import {
+  findUnknownKeys,
   mergeBodyIntoData,
   normalizeReferenceValues,
   referenceValueId,
@@ -268,5 +269,135 @@ describe('referenceValueId / normalizeReferenceValues', () => {
     const data = { ...validData, author: { id: '5NVkkrB1MJUv' } }
     normalizeReferenceValues(schema, data)
     expect(data.author).toEqual({ id: '5NVkkrB1MJUv' })
+  })
+})
+
+describe('findUnknownKeys', () => {
+  it('returns nothing for data that matches the schema', () => {
+    expect(findUnknownKeys(schema, validData)).toEqual([])
+  })
+
+  it('reports a top-level key with no schema counterpart', () => {
+    expect(findUnknownKeys(schema, { ...validData, subtitle: 'stale' })).toEqual(['subtitle'])
+  })
+
+  it('reports keys inside an object field, path-qualified', () => {
+    expect(
+      findUnknownKeys(schema, { ...validData, hero: { headline: 'Hi', kicker: 'stale' } }),
+    ).toEqual(['hero.kicker'])
+  })
+
+  it('reports keys inside each item of an object list', () => {
+    const listSchema: EntrySchema = [
+      {
+        name: 'cards',
+        type: 'object',
+        list: true,
+        fields: [{ name: 'label', type: 'string' }],
+      },
+    ]
+    expect(
+      findUnknownKeys(listSchema, {
+        cards: [{ label: 'One' }, { label: 'Two', href: '/two' }],
+      }),
+    ).toEqual(['cards[1].href'])
+  })
+
+  it('reports keys inside a block item and never its template discriminator', () => {
+    expect(
+      findUnknownKeys(schema, {
+        ...validData,
+        blocks: [{ template: 'quote', value: { text: 'Hi', attribution: 'stale' } }],
+      }),
+    ).toEqual(['blocks[0].attribution'])
+  })
+
+  it('never reports the discriminator of the inline `_type` block shape', () => {
+    expect(
+      findUnknownKeys(schema, {
+        ...validData,
+        blocks: [{ _type: 'quote', text: 'Hi' }],
+      }),
+    ).toEqual([])
+  })
+
+  it('treats an inline group as transparent, reporting at the parent level', () => {
+    const groupSchema: EntrySchema = [
+      {
+        name: 'seo',
+        type: 'group',
+        fields: [{ name: 'metaTitle', type: 'string' }],
+      },
+    ]
+    expect(findUnknownKeys(groupSchema, { metaTitle: 'Hi' })).toEqual([])
+    expect(findUnknownKeys(groupSchema, { metaTitle: 'Hi', metaDesc: 'stale' })).toEqual([
+      'metaDesc',
+    ])
+  })
+
+  it('does not descend into a resolved reference value', () => {
+    // Reads resolve references by default, so a reference field's value carries the target's own
+    // data plus the reserved id/slug/collection/urlPath keys. None of those are entry keys.
+    expect(
+      findUnknownKeys(schema, {
+        ...validData,
+        author: {
+          id: '5NVkkrB1MJUv',
+          slug: 'jane',
+          collection: 'content/authors',
+          urlPath: '/authors/jane',
+          name: 'Jane',
+          bio: 'Writer',
+        },
+      }),
+    ).toEqual([])
+  })
+
+  it('reports nothing when the schema is empty — no schema is not "everything is unknown"', () => {
+    expect(findUnknownKeys([], { anything: 1, atAll: 2 })).toEqual([])
+  })
+
+  it('reports nothing for a schema field that is simply absent from the data', () => {
+    expect(findUnknownKeys(schema, { author: '5NVkkrB1MJUv' })).toEqual([])
+  })
+})
+
+describe('findUnknownKeys — inline groups are not containers', () => {
+  const groupWithSiblings: EntrySchema = [
+    { name: 'title', type: 'string' },
+    {
+      name: 'seo',
+      type: 'group',
+      fields: [{ name: 'metaTitle', type: 'string' }],
+    },
+  ]
+
+  it('does not report a sibling of a group as unknown', () => {
+    // A group re-enters the traversal with the same record. Treating it as its own container
+    // would hand the check only [metaTitle] and make `title` read as unknown.
+    expect(findUnknownKeys(groupWithSiblings, { title: 'Hi', metaTitle: 'Hi' })).toEqual([])
+  })
+
+  it('reports an unknown key exactly once when a group is present', () => {
+    expect(findUnknownKeys(groupWithSiblings, { title: 'Hi', stale: 1 })).toEqual(['stale'])
+  })
+
+  it('still reports inside an object nested under a group', () => {
+    const nested: EntrySchema = [
+      {
+        name: 'seo',
+        type: 'group',
+        fields: [
+          {
+            name: 'og',
+            type: 'object',
+            fields: [{ name: 'image', type: 'string' }],
+          },
+        ],
+      },
+    ]
+    expect(findUnknownKeys(nested, { og: { image: '/a.png', legacyAlt: 'stale' } })).toEqual([
+      'og.legacyAlt',
+    ])
   })
 })

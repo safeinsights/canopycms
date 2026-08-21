@@ -1229,3 +1229,152 @@ describe('content api', () => {
     })
   })
 })
+
+/**
+ * `validateEntryData` iterates the schema, so nothing ever reported the inverse: a key in the
+ * data with no schema counterpart. Renaming or reshaping a field left the old key on disk
+ * forever — the editor round-trips the whole record — and the only symptom was a component
+ * receiving `undefined`. Adopter request log item 29.
+ */
+describe('unknown content keys', () => {
+  const writeReq = { user: { type: 'authenticated' as const, userId: 'u1', groups: [] } }
+  const writeParams = {
+    branch: unsafeAsBranchName('feature/x'),
+    path: unsafeAsLogicalPath('posts/hello'),
+  }
+
+  const storeWithSchema = async (fields: unknown[]) => {
+    const { ContentStore } = await import('../content-store')
+    vi.mocked(ContentStore).mockImplementationOnce(function () {
+      return {
+        resolvePath: vi.fn().mockReturnValue({
+          schemaItem: {
+            logicalPath: 'content/posts',
+            type: 'collection',
+            entries: [{ name: 'post', format: 'json', schema: fields }],
+          },
+          slug: 'hello',
+        }),
+        resolveDocumentPath: vi.fn().mockReturnValue({ relativePath: 'content/posts/hello' }),
+        write: vi.fn().mockResolvedValue({ collection: 'posts', format: 'json', data: {} }),
+        idIndex: vi.fn().mockResolvedValue({ findById: vi.fn().mockReturnValue(null) }),
+        documentExists: vi.fn().mockResolvedValue(true),
+        getExistingEntryType: vi.fn().mockResolvedValue('post'),
+        countEntriesOfType: vi.fn().mockResolvedValue(0),
+        resolveCollectionItem: vi.fn().mockReturnValue(undefined),
+      } as never
+    })
+  }
+
+  it('warns about a stale key but still saves', async () => {
+    await storeWithSchema([{ name: 'title', type: 'string' }])
+    const res = await writeContent(allowedCtx(), writeReq, writeParams, {
+      format: 'json',
+      data: { title: 'hi', subtitle: 'renamed away three releases ago' },
+    })
+
+    expect(res.ok).toBe(true)
+    expect(res.status).toBe(200)
+    expect(res.data?.validationWarnings).toHaveLength(1)
+    expect(res.data?.validationWarnings?.[0]).toMatchObject({
+      level: 'warning',
+      fieldPath: 'subtitle',
+    })
+    expect(res.data?.validationWarnings?.[0].message).toContain('schema')
+  })
+
+  it('reports a nested stale key with its full path', async () => {
+    await storeWithSchema([
+      { name: 'hero', type: 'object', fields: [{ name: 'headline', type: 'string' }] },
+    ])
+    const res = await writeContent(allowedCtx(), writeReq, writeParams, {
+      format: 'json',
+      data: { hero: { headline: 'Hi', kicker: 'stale' } },
+    })
+
+    expect(res.ok).toBe(true)
+    expect(res.data?.validationWarnings?.map((issue) => issue.fieldPath)).toEqual(['hero.kicker'])
+  })
+
+  it('says nothing when every key matches the schema', async () => {
+    await storeWithSchema([{ name: 'title', type: 'string' }])
+    const res = await writeContent(allowedCtx(), writeReq, writeParams, {
+      format: 'json',
+      data: { title: 'hi' },
+    })
+
+    expect(res.ok).toBe(true)
+    expect(res.data?.validationWarnings).toBeUndefined()
+  })
+
+  it('does not mistake a resolved reference for a set of unknown keys', async () => {
+    // Reads resolve references by default, so the editor posts back
+    // `{ ...target data, id, slug, collection, urlPath }` for a reference field. The value is
+    // normalized to an ID string before persisting, and the scan runs on that shape.
+    const { ContentStore } = await import('../content-store')
+    vi.mocked(ContentStore).mockImplementationOnce(function () {
+      return {
+        resolvePath: vi.fn().mockReturnValue({
+          schemaItem: {
+            logicalPath: 'content/posts',
+            type: 'collection',
+            entries: [
+              {
+                name: 'post',
+                format: 'json',
+                schema: [{ name: 'author', type: 'reference', collections: ['authors'] }],
+              },
+            ],
+          },
+          slug: 'hello',
+        }),
+        resolveDocumentPath: vi.fn().mockReturnValue({ relativePath: 'content/posts/hello' }),
+        write: vi.fn().mockResolvedValue({ collection: 'posts', format: 'json', data: {} }),
+        idIndex: vi.fn().mockResolvedValue({
+          findById: vi.fn().mockReturnValue({
+            type: 'entry',
+            relativePath: 'content/authors/author.jane.5NVkkrB1MJUv.json',
+            collection: 'content/authors',
+            slug: 'jane',
+          }),
+        }),
+        documentExists: vi.fn().mockResolvedValue(true),
+        getExistingEntryType: vi.fn().mockResolvedValue('post'),
+        countEntriesOfType: vi.fn().mockResolvedValue(0),
+        resolveCollectionItem: vi.fn().mockReturnValue({ logicalPath: 'content/authors' }),
+      } as never
+    })
+    const res = await writeContent(allowedCtx(), writeReq, writeParams, {
+      format: 'json',
+      data: {
+        author: {
+          id: '5NVkkrB1MJUv',
+          slug: 'jane',
+          collection: 'content/authors',
+          urlPath: '/authors/jane',
+          name: 'Jane',
+        },
+      },
+    })
+
+    expect(res.ok).toBe(true)
+    expect(res.data?.validationWarnings).toBeUndefined()
+  })
+
+  it('keeps the adopter hook’s own warnings alongside its findings', async () => {
+    await storeWithSchema([{ name: 'title', type: 'string' }])
+    const ctx = allowedCtx()
+    ctx.services.config.validateEntry = () => [{ level: 'warning', message: 'Hook says hi' }]
+
+    const res = await writeContent(ctx, writeReq, writeParams, {
+      format: 'json',
+      data: { title: 'hi', subtitle: 'stale' },
+    })
+
+    expect(res.ok).toBe(true)
+    expect(res.data?.validationWarnings?.map((issue) => issue.message)).toEqual([
+      expect.stringContaining('schema'),
+      'Hook says hi',
+    ])
+  })
+})
