@@ -15,9 +15,16 @@
 // (what most scaffolds set, Next.js included) there is no signal at all.
 // Verified both ways against a real packed tarball before this was fixed.
 //
-// Appending `.js` is correct for a .d.ts: TypeScript resolves a `./x.js`
-// specifier to `./x.d.ts`, which is why the declaration files must name the
+// Appending `.js` is correct for a .d.ts MODULE SPECIFIER: TypeScript resolves a
+// `./x.js` specifier to `./x.d.ts`, which is why declaration files must name the
 // RUNTIME extension and never `.d.ts`.
+//
+// Caveat, pre-existing but wider now that .d.ts is in scope: this is a textual
+// rewrite and cannot tell a specifier from prose. An `import`-shaped string in a
+// comment or a JSDoc @example gets the same treatment, so a doc example citing
+// `../canopycms.config` becomes `../canopycms.config.js`. Harmless — it changes
+// no resolution — but it is adopter-visible in IntelliSense, so don't read a
+// rewritten example as evidence the file it names exists.
 //
 // Shared by every published package's build so there is ONE implementation.
 // Each package invokes this against its own dist/ after tsc emits it, either
@@ -30,9 +37,10 @@
 // entrypoints) — those stay in packages/canopycms/scripts/postbuild.mjs,
 // which imports `addJsExtensions` from here instead of duplicating it.
 
-import { readdir, readFile, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { existsSync, statSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
+import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
 
 const RELATIVE_IMPORT_RE =
@@ -77,17 +85,100 @@ export async function addJsExtensions(dir) {
   }
 }
 
+// Self-test for the specifier pattern and the rewrite itself, run as the first
+// step of `pnpm check:esm` so it executes in CI.
+//
+// This exists because the pattern is the single most fragile part of the script
+// and its failure modes are silent in both directions: too narrow and a relative
+// specifier ships unrewritten (a bare `.` did exactly that for months), too wide
+// and a bare package name gets a spurious `.js` welded onto it. Neither shows up
+// as a build error.
+async function selfTest() {
+  const failures = []
+  const expectMatch = (input, expected) => {
+    RELATIVE_IMPORT_RE.lastIndex = 0
+    const m = RELATIVE_IMPORT_RE.exec(`from '${input}'`)
+    const actual = m ? m[2] : null
+    if (actual !== expected) {
+      failures.push(
+        `  pattern: from '${input}' -> ${JSON.stringify(actual)}, want ${JSON.stringify(expected)}`,
+      )
+    }
+  }
+
+  // Relative specifiers the rewrite MUST see.
+  for (const spec of ['.', '..', './', '../', './x', '../x/y', './x.js', './a.b.c']) {
+    expectMatch(spec, spec)
+  }
+  // Non-relative specifiers it must NOT touch. A bare package name picking up a
+  // `.js` suffix would break every consumer of that dependency.
+  for (const spec of ['.foo', '..foo', '...', 'pkg', '@scope/pkg', 'node:fs']) {
+    expectMatch(spec, null)
+  }
+
+  // End-to-end: a throwaway dist tree covering directory expansion, the bare-dot
+  // form, an already-suffixed specifier, and .d.ts alongside .js.
+  const tmp = await mkdtemp(join(tmpdir(), 'add-js-ext-selftest-'))
+  try {
+    await mkdir(join(tmp, 'sub'), { recursive: true })
+    await writeFile(join(tmp, 'sub', 'index.js'), 'export const x = 1\n')
+    await writeFile(join(tmp, 'sub', 'index.d.ts'), 'export declare const x: number\n')
+    await writeFile(join(tmp, 'leaf.js'), 'export const y = 2\n')
+    await writeFile(join(tmp, 'leaf.d.ts'), 'export declare const y: number\n')
+    await writeFile(
+      join(tmp, 'entry.js'),
+      ["export * from './leaf'", "export * from './sub'", "export * from './leaf.js'"].join('\n') +
+        '\n',
+    )
+    await writeFile(
+      join(tmp, 'sub', 'self.d.ts'),
+      ["import type { x } from '.'", 'export type Z = typeof x'].join('\n') + '\n',
+    )
+
+    await addJsExtensions(tmp)
+
+    const entry = await readFile(join(tmp, 'entry.js'), 'utf8')
+    const self = await readFile(join(tmp, 'sub', 'self.d.ts'), 'utf8')
+    const expectContains = (label, haystack, needle) => {
+      if (!haystack.includes(needle)) failures.push(`  ${label}: expected to contain ${needle}`)
+    }
+    expectContains('file specifier', entry, "'./leaf.js'")
+    expectContains('directory specifier', entry, "'./sub/index.js'")
+    expectContains('bare-dot in .d.ts', self, "'./index.js'")
+    if (entry.includes('.js.js')) failures.push('  double-suffixed an already-explicit specifier')
+
+    // Idempotence: running twice must be a no-op, since builds re-run it.
+    await addJsExtensions(tmp)
+    if ((await readFile(join(tmp, 'entry.js'), 'utf8')) !== entry) {
+      failures.push('  not idempotent: a second pass changed the output')
+    }
+  } finally {
+    await rm(tmp, { recursive: true, force: true })
+  }
+
+  if (failures.length > 0) {
+    console.error('add-js-extensions self-test FAILED:')
+    console.error(failures.join('\n'))
+    process.exit(1)
+  }
+  console.log('add-js-extensions self-test passed.')
+}
+
 // Allow direct invocation as a build step:
 //   node <this-file> <dist-dir>
+//   node <this-file> --self-test
 // <dist-dir> is resolved relative to the current working directory, i.e. the
 // package running its own build script.
 const invokedDirectly =
   process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1])
 if (invokedDirectly) {
   const target = process.argv[2]
-  if (!target) {
-    console.error('Usage: node add-js-extensions.mjs <dist-dir>')
+  if (target === '--self-test') {
+    await selfTest()
+  } else if (!target) {
+    console.error('Usage: node add-js-extensions.mjs <dist-dir> | --self-test')
     process.exit(1)
+  } else {
+    await addJsExtensions(resolve(process.cwd(), target))
   }
-  await addJsExtensions(resolve(process.cwd(), target))
 }

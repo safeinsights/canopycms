@@ -76,18 +76,50 @@ i.e. the types resolve for real.
 ### Regression guard
 
 `scripts/check-esm-imports.mjs` gained a `checkDeclarationResolution()` pass. It reuses the
-sandbox the runtime probe already builds, writes a consumer importing every testable entry
+sandbox the runtime probe already builds, writes a consumer importing every published entry
 point, and typechecks it with `module`/`moduleResolution: nodenext` and `skipLibCheck`
 deliberately **off** — that setting is precisely what hides the defect, so the guard must not
-inherit it. It fails on any `TS2834`/`TS2835`/`TS2307` diagnostic whose path points into one
-of our own `dist/` directories; third-party diagnostics are ignored, because the sandbox has
-no `@types/node` and dependencies emit their own unrelated noise. Cost is about 2s.
+inherit it. Cost is about 2s.
+
+An adversarial review of the first version of this guard found three holes in it, all since
+closed; they are recorded here because each was a way the guard could report green while the
+defect it exists to catch was present:
+
+- **It filtered out diagnostics attributed to the consumer.** Only paths containing
+  `node_modules/<pkg>/dist/` counted, so `TS7016` ("could not find a declaration file") and a
+  consumer-located `TS2307` were both discarded. Deleting `dist/server.d.ts` outright left the
+  check green — verified. The consumer file imports nothing but our own packages, so every
+  diagnostic in it is ours by construction, and all of them now count.
+- **It never checked that tsc ran.** No inspection of `result.error`, a killing signal, or a
+  non-zero exit with empty output, so a broken TypeScript install or an OOM-killed process
+  would have silently turned the pass into a permanent no-op.
+- **It only type-probed the runtime-testable entries.** Every `skip` in the `PACKAGES` list is
+  a *runtime* limitation and none apply to `import type`, so restricting the type pass to
+  `test` entries left canopycms's whole `editor/` subtree — reachable only through `./client`
+  — unguarded. It now covers every published subpath: 22 entry points rather than 17.
+
+Third-party diagnostics are still ignored: the probe sets `types: []`, so ambient `@types` are
+not auto-included and dependency declarations emit unrelated noise. The original comment
+claimed the sandbox "has no `@types/node`" — that was simply wrong (`layerInNodeModules`
+symlinks it in), and `types: []` is what excludes the globals. Corrected everywhere it was
+repeated.
 
 The two passes are genuinely independent and both are required: **a `.d.ts` regression leaves
-the runtime probe completely green.** That was verified rather than assumed — stripping
-`.js` off one specifier in a built `dist/server.d.ts` left all 17 runtime imports passing and
-turned only the type pass red. DEVELOPING.md documents that as the way to re-verify the guard
-after changing either half.
+the runtime probe completely green.** Verified rather than assumed, across three injected
+regressions — an extensionless specifier in `dist/server.d.ts`, the same inside
+`dist/editor/CanopyEditorPage.d.ts` (reachable only via `./client`), and a deleted
+`dist/server.d.ts`. All three left every runtime import passing and turned only the type pass
+red. DEVELOPING.md documents that as the way to re-verify the guard after changing either
+half.
+
+The rewrite pattern also gained a `--self-test` (`node scripts/add-js-extensions.mjs
+--self-test`, run as the first step of `pnpm check:esm`) asserting its classification table
+and an end-to-end rewrite including idempotence. The commit that introduced the widened
+pattern claimed it "was unit-checked" against a list of cases; that check was ad hoc and not
+reproducible from the repo, which is exactly the gap this closes. It was itself verified by
+mutating the pattern in both directions — back to the old slash-requiring form, and to an
+over-wide form that swallows bare package names — and confirming each mutation actually landed
+before trusting that the self-test caught it.
 
 ARCHITECTURE.md's "ESM Output Must Be Node-Resolvable" section and DEVELOPING.md's
 "Published-Package ESM Import Check" section were both updated.

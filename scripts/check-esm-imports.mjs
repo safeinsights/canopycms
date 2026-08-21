@@ -161,6 +161,11 @@ function loadPackageJson(dir) {
   return JSON.parse(readFileSync(path.join(packagesDir, dir, 'package.json'), 'utf8'))
 }
 
+// Anchored, and requires the delimiter, so a `skip:` reason that happens to open
+// with the word cannot silently reclassify a published subpath as unpublished.
+// The `test` checks elsewhere are exact comparisons; this matches that rigor.
+const isDevOnly = (mode) => /^devOnly(:|$)/.test(mode)
+
 // Fail fast (before spending time building the sandbox) if a package's real
 // `exports` map has grown a subpath this file doesn't know about, or if a
 // subpath was removed — either way the list above is out of sync.
@@ -177,6 +182,11 @@ function checkCoverage() {
     const pkg = loadPackageJson(dir)
     const actual = new Set(Object.keys(pkg.exports ?? {}))
     const known = new Set(Object.keys(subpaths))
+    // A package with no publishConfig.exports publishes its dev `exports` map
+    // verbatim, so the cross-check below does not apply — asserting "missing
+    // from publishConfig" there would be exactly backwards. All five packages
+    // define one today; this keeps the failure honest if a sixth does not.
+    const publishesDevExports = pkg.publishConfig?.exports === undefined
     const published = new Set(Object.keys(pkg.publishConfig?.exports ?? {}))
     for (const subpath of actual) {
       if (!known.has(subpath)) {
@@ -189,14 +199,15 @@ function checkCoverage() {
       }
     }
     for (const [subpath, mode] of Object.entries(subpaths)) {
-      const isDevOnly = mode.startsWith('devOnly')
-      if (isDevOnly && published.has(subpath)) {
+      if (publishesDevExports) continue
+      const devOnly = isDevOnly(mode)
+      if (devOnly && published.has(subpath)) {
         problems.push(
           `${pkg.name}: "${subpath}" is marked devOnly in PACKAGES above, but ` +
             'publishConfig.exports still advertises it to npm consumers',
         )
       }
-      if (!isDevOnly && !published.has(subpath)) {
+      if (!devOnly && !published.has(subpath)) {
         problems.push(
           `${pkg.name}: "${subpath}" is in exports but missing from ` +
             'publishConfig.exports, so npm consumers never get it — publish it, or ' +
@@ -329,11 +340,31 @@ console.log(JSON.stringify(results))
 //
 // Detecting "the type became any" directly is awkward, so this asserts the
 // mechanism instead: typecheck a consumer under nodenext with skipLibCheck OFF
-// and fail on any extension/resolution diagnostic (TS2834/TS2835/TS2307)
-// pointing INTO one of our packages' dist. Third-party diagnostics are ignored
-// — the sandbox deliberately has no @types/node, so dependencies produce their
-// own unrelated noise.
-const TYPE_DIAGNOSTIC_RE = /error TS(2834|2835|2307):/
+// and fail on anything that means "this package's types did not resolve".
+//
+// Two classes of diagnostic count, and BOTH are needed:
+//
+//   * Anything attributed to consumer.ts. That file is generated here and
+//     imports nothing but our own packages, so every diagnostic in it is ours by
+//     construction — a missing .d.ts (TS7016), a broken publishConfig "types"
+//     path or exports subpath (TS2307), and so on. Filtering these out by path
+//     was the original bug in this guard: `dist/server.d.ts` could be deleted
+//     outright and the check still passed green, which is the exact
+//     types-silently-vanish failure it exists to catch.
+//   * Extension/resolution diagnostics whose path points INTO one of our dist
+//     directories. This is the .d.ts-kept-an-extensionless-import case, which
+//     surfaces inside our own declarations rather than at the consumer.
+//
+// Diagnostics attributed to a THIRD-PARTY path are ignored. The probe sets
+// `types: []`, so ambient @types are not auto-included and dependency
+// declarations emit their own unrelated noise (missing NodeJS namespace, Buffer,
+// bare `child_process` specifiers, and Next's own extensionless imports). Note
+// the sandbox does have @types/node symlinked in — `types: []` is what excludes
+// the globals, not its absence. A handful of our own declarations reference
+// `NodeJS.`/`Buffer` under that setting; those produce TS2503/TS2591, which are
+// deliberately NOT in the list below because they say nothing about resolution.
+const CONSUMER_DIAGNOSTIC_RE = /^consumer\.ts\([0-9]+,[0-9]+\): error TS[0-9]+:/
+const DIST_DIAGNOSTIC_RE = /error TS(2834|2835|2307|7016):/
 
 function checkDeclarationResolution(sandbox) {
   const tsc = path.join(repoRoot, 'node_modules', 'typescript', 'bin', 'tsc')
@@ -344,13 +375,21 @@ function checkDeclarationResolution(sandbox) {
   const probeDir = path.join(sandbox, 'types-probe')
   mkdirSync(probeDir, { recursive: true })
 
-  // One import per testable entry point, type-only: enough to pull each
-  // entry's whole .d.ts graph into the program.
+  // One import per PUBLISHED entry point, type-only: enough to pull each entry's
+  // whole .d.ts graph into the program.
+  //
+  // Deliberately broader than the runtime probe's `test` set. Every `skip` above
+  // is a RUNTIME limitation — a CSS import Node's loader rejects, a `next/server`
+  // specifier only a bundler resolves — and none of them apply to `import type`,
+  // which never executes the module. Restricting this pass to `test` entries
+  // left canopycms's entire editor/ declaration subtree unguarded, since only
+  // ./client reaches it. `devOnly` subpaths are excluded because they are not
+  // published at all.
   const specifiers = []
   for (const { dir, subpaths } of PACKAGES) {
     const pkg = loadPackageJson(dir)
     for (const [subpath, mode] of Object.entries(subpaths)) {
-      if (mode !== 'test') continue
+      if (isDevOnly(mode)) continue
       specifiers.push(subpath === '.' ? pkg.name : `${pkg.name}${subpath.slice(1)}`)
     }
   }
@@ -397,13 +436,33 @@ function checkDeclarationResolution(sandbox) {
     cwd: probeDir,
     encoding: 'utf8',
   })
-  const output = `${result.stdout ?? ''}${result.stderr ?? ''}`
-  const ours = output
-    .split('\n')
-    .filter((line) => TYPE_DIAGNOSTIC_RE.test(line))
-    .filter((line) => ourDistPrefixes.some((prefix) => line.includes(prefix)))
 
-  return { specifiers, problems: ours }
+  // Prove tsc actually ran. Without this the pass reports "OK" for an empty
+  // result, so a broken typescript install or an OOM-killed process would turn
+  // the guard into a permanent no-op instead of a failure. A healthy run can
+  // legitimately exit either way — 0 with no output, or non-zero carrying
+  // third-party noise we filter — so the assertion is on the COMBINATION.
+  if (result.error) throw result.error
+  const output = `${result.stdout ?? ''}${result.stderr ?? ''}`
+  if (result.signal) {
+    throw new Error(`tsc was killed by signal ${result.signal} — type pass did not complete`)
+  }
+  if (result.status !== 0 && output.trim() === '') {
+    throw new Error(
+      `tsc exited ${result.status} with no output — type pass did not complete. ` +
+        'This is a broken probe, not a clean run.',
+    )
+  }
+
+  const problems = output
+    .split('\n')
+    .filter(
+      (line) =>
+        CONSUMER_DIAGNOSTIC_RE.test(line.trim()) ||
+        (DIST_DIAGNOSTIC_RE.test(line) && ourDistPrefixes.some((prefix) => line.includes(prefix))),
+    )
+
+  return { specifiers, problems }
 }
 
 function main() {
@@ -466,12 +525,16 @@ function main() {
     for (const line of problems.slice(0, 20)) console.log(`  FAIL  ${line.trim()}`)
     if (problems.length > 20) console.log(`  ... and ${problems.length - 20} more`)
     console.error(
-      `\ncheck:esm FAILED — ${problems.length} extension/resolution diagnostic(s) inside our ` +
-        'own published .d.ts under moduleResolution:nodenext. These do NOT throw at runtime: ' +
+      `\ncheck:esm FAILED — ${problems.length} diagnostic(s) show our published types failing ` +
+        'to resolve under moduleResolution:nodenext. None of these throw at runtime: ' +
         "TypeScript resolves nothing and types the import as `any`, so an adopter's build stays " +
-        'green while our types silently vanish. Almost certainly a .d.ts that kept an ' +
-        "extensionless relative import (`from './x'` rather than `from './x.js'`) — see " +
-        'scripts/add-js-extensions.mjs.',
+        'green while our types silently vanish.\n\n' +
+        'Two usual causes:\n' +
+        "  TS2834/TS2835 in our dist — a .d.ts kept an extensionless relative import (`from './x'`\n" +
+        "                              rather than `from './x.js'`). See scripts/add-js-extensions.mjs.\n" +
+        '  TS7016/TS2307 at consumer.ts — the declaration file is missing entirely, or a\n' +
+        '                              publishConfig "types"/exports path points somewhere that\n' +
+        '                              does not exist in the built output.',
     )
     // Sandbox left in place on failure for local debugging.
     process.exit(1)
