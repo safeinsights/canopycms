@@ -32,6 +32,20 @@ and no new rule: `computeEntryUrl` and `findDuplicateUrlPaths` already exist and
 Emitting it at plan time turns "your build failed weeks later" into "these two source files map
 to the same URL, rename one before continuing", naming both paths.
 
+## A third shape found in the same sweep: `.yml` migrates into an invisible entry
+
+`cli/migrate.ts` accepts `.yml` as a match for the `yaml` format and **keeps the extension as-is**
+through the rename, producing `{type}.{slug}.{id}.yml`. But `getFormatExtension('yaml')` is
+`.yaml`, and `listCollectionEntries` filters on that — so those files are never listed. A yaml
+migration of a `.yml` tree yields conforming-LOOKING entries that publish zero URLs, raise no
+build error (the extension filter runs before the malformed-entry guard, so nothing reports them)
+and are invisible to the editor.
+
+Normalising the extension during the rename is the obvious fix and belongs in the same pass as the
+pre-flight above — both are "make the migrate output actually be entries". Note the contested-URL
+guard ignores `.yml` too, so guard and listing at least agree; the problem is that neither sees
+content the adopter believes they migrated.
+
 ## Not in scope
 
 Refusing the migration. A retrofit is exactly the situation where an adopter may want to get the

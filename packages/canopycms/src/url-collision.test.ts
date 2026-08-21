@@ -5,6 +5,8 @@ import path from 'node:path'
 import { beforeEach, describe, expect, it } from 'vitest'
 
 import { findUrlPathClaimant, findIndexEntryIn, findEntryBySlugIn } from './url-collision'
+import { getFormatExtension } from './utils/format'
+import type { ContentFormat } from './config'
 
 /**
  * Direct tests for the claimant scan. It was previously exercised only through its two consumers,
@@ -74,6 +76,17 @@ describe('url-collision', () => {
       ).toBeNull()
     })
 
+    it('ignores an uppercase extension, exactly as listCollectionEntries does', async () => {
+      // The listing's extension filter is case-SENSITIVE (`d.name.endsWith(ext)`), and it runs
+      // BEFORE the parse — so a `.MD` file is skipped silently, publishing no URL and raising no
+      // build error. A case-insensitive guard was therefore looser than the listing and blocked a
+      // write the build would have accepted.
+      const guides = await collection(content, 'guides')
+      await fs.writeFile(path.join(guides, 'doc.index.aB3cD4eF5gH6.MD'), '# Guides')
+
+      expect(await findIndexEntryIn(guides)).toBeNull()
+    })
+
     it('DOES count a real entry file', async () => {
       const guides = await collection(content, 'guides')
       const indexFile = await entry(guides, 'doc', 'index')
@@ -127,6 +140,26 @@ describe('url-collision', () => {
       expect(
         await findUrlPathClaimant({ collectionDir: guides, slug: 'Index', contentRoot: content }),
       ).toBeNull() // no parent entry named "guides" exists
+    })
+  })
+
+  // Drift tripwire for CONTENT_EXTENSIONS, which is a literal in url-collision.ts because that
+  // module cannot reach the ContentFormat union. Adding a format to ContentFormat breaks the
+  // compile-time check below; forgetting to add its extension to the guard breaks the runtime one.
+  // The comment this replaces claimed a `format.test.ts` pinned this. No such file existed.
+  describe('every content format is recognised', () => {
+    const ALL_FORMATS = ['md', 'mdx', 'json', 'yaml'] as const
+    // If a new ContentFormat is added, this stops compiling until it is listed above.
+    type Unhandled = Exclude<ContentFormat, (typeof ALL_FORMATS)[number]>
+    const _exhaustive: Unhandled extends never ? true : never = true
+    void _exhaustive
+
+    it.each(ALL_FORMATS)('recognises an index entry written as %s', async (format) => {
+      const guides = await collection(content, `guides-${format}`)
+      const ext = getFormatExtension(format as ContentFormat).slice(1)
+      const file = await entry(guides, 'doc', 'index', ext)
+
+      expect(await findIndexEntryIn(guides)).toBe(file)
     })
   })
 

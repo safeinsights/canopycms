@@ -7,9 +7,27 @@ import { isNotFoundError } from './utils/error'
 import { parseTypedFilename } from './utils/typed-filename'
 
 /**
- * The extensions an entry file can carry — every value `getFormatExtension` can return.
- * Kept as a literal rather than derived, because deriving it needs a `ContentFormat` list this
- * module has no reason to import; `format.test.ts` pins the mapping it mirrors.
+ * Every extension `getFormatExtension` can return.
+ *
+ * Compared CASE-SENSITIVELY, deliberately, because `listCollectionEntries` compares
+ * case-sensitively (`d.name.endsWith(ext)` against lowercase extensions). Lowercasing here made
+ * the guard looser than the listing: a `doc.index.{id}.MD` file counted as a claimant while the
+ * listing skipped it silently — publishing no URL, tripping no build error, and blocking a write
+ * the build would have accepted.
+ *
+ * KNOWN RESIDUAL LOOSENESS, stated because the alternative is a comment that overclaims: the
+ * listing accepts only the extensions of a collection's OWN configured entry-type formats, while
+ * this accepts all four. A hand-authored `doc.index.{id}.json` inside an md-only collection
+ * therefore claims no URL yet still blocks a sibling write. Closing that means threading each
+ * collection's configured formats into a module that is deliberately schema-free, across three
+ * call sites, and going from a physical directory back to a schema item to do it — a change with
+ * more room to introduce a new defect than the narrow one it fixes. Tracked in
+ * .claude/future-tasks/url-collision-guard-configured-formats.md.
+ *
+ * A literal rather than derived: deriving it needs the `ContentFormat` union this module has no
+ * reason to import. `url-collision.test.ts` carries the drift tripwire — a compile-time
+ * exhaustiveness check plus a fixture per format — so adding a format fails there rather than
+ * silently under-blocking here.
  */
 const CONTENT_EXTENSIONS = ['.md', '.mdx', '.json', '.yaml'] as const
 
@@ -86,8 +104,9 @@ async function findChildCollectionDir(dir: string, name: string): Promise<string
 /**
  * The slug a file CLAIMS A URL AT, or null when the file claims none.
  *
- * This must recognise exactly the set `listEntries` recognises, because the invariant is defined
- * over the `urlPath`s `listEntries` publishes and the build-time half checks those. Hence
+ * This must recognise the set `listEntries` recognises, as closely as a schema-free module can,
+ * because the invariant is defined over the `urlPath`s `listEntries` publishes and the build-time
+ * half checks those. (One documented gap remains — see `CONTENT_EXTENSIONS`.) Hence
  * `parseTypedFilename` — the same `{type}.{slug}.{id}.{ext}` grammar `listCollectionEntries` uses
  * — rather than `extractSlugFromFilename`, which answers a different and much looser question
  * ("what would I call this file?") and happily names a slug for things that are not entries.
@@ -109,7 +128,7 @@ function entrySlugOf(filename: string): string | null {
   // (`doc.index.{id}.md~`) parses exactly like the entry it shadows. `listCollectionEntries`
   // additionally requires a CONFIGURED format extension, so it skips those -- and this must skip
   // them too, or the guard refuses a write over a file the build guard never counted.
-  if (!CONTENT_EXTENSIONS.some((ext) => filename.toLowerCase().endsWith(ext))) return null
+  if (!CONTENT_EXTENSIONS.some((ext) => filename.endsWith(ext))) return null
   return parseTypedFilename(filename)?.slug ?? null
 }
 
