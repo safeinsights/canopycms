@@ -7,6 +7,7 @@ import {
   ContentStoreError,
   ContentConflictError,
   DuplicateContentIdError,
+  UrlPathConflictError,
   getDefaultEntryType,
   type WriteInput,
 } from '../content-store'
@@ -574,6 +575,17 @@ const writeContentHandler = async (
       if (err instanceof DuplicateContentIdError) {
         return { ok: false, status: 409, error: err.message }
       }
+      // [URL] Also not an editor-vs-editor collision, and critically NOT the
+      // same-slug case the branch below reports: no entry with this slug
+      // exists in this collection (the early `exists` check passed). What
+      // exists is a DIFFERENT entry claiming the same URL -- a sibling
+      // collection's index entry, or the parent entry this index entry would
+      // collide with. Falling through would tell the editor to look for an
+      // entry that is not there, and discard the one message that names the
+      // actual offender and what to do about it.
+      if (err instanceof UrlPathConflictError) {
+        return { ok: false, status: 409, error: err.message }
+      }
       // The early `exists` short-circuit above catches this in the common
       // case; this is the race-safe fallback for a collision that landed
       // between that check and store.write()'s in-lock stat.
@@ -744,13 +756,16 @@ const renameEntryHandler = async (
     // [SYNC-C1] The rename was refused because the branch is mid-rebase, not
     // because the request was bad -- 409 + retry, never a 400.
     if (err instanceof ContentConflictError) {
+      // [URL] A contested-URL refusal must carry its own message. The generic
+      // one below tells the editor to reload and retry, which cannot succeed
+      // here -- the rename stays refused until they pick a different slug or
+      // remove the other claimant -- which is exactly the loop
+      // UrlPathConflictError's doc comment exists to prevent.
+      const passThrough = err instanceof BranchSyncingError || err instanceof UrlPathConflictError
       return {
         ok: false,
         status: 409,
-        error:
-          err instanceof BranchSyncingError
-            ? err.message
-            : 'Content conflict: entry was modified by another editor',
+        error: passThrough ? err.message : 'Content conflict: entry was modified by another editor',
       }
     }
     // C2: same distinction as writeContentHandler above - a ContentStoreError

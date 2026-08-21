@@ -15,6 +15,7 @@ import {
 import { findBodyFieldName } from './utils/body-field'
 import { buildResolvedReference } from './entry-schema'
 import { computeEntryUrl } from './utils/entry-url'
+import { findUrlPathClaimant } from './url-collision'
 import type {
   BlockFieldConfig,
   ContentFormat,
@@ -191,6 +192,31 @@ export class DuplicateContentIdError extends ContentConflictError {
     this.name = 'DuplicateContentIdError'
     this.contentId = contentId
     this.paths = sorted
+  }
+}
+
+/**
+ * Thrown when a create or rename would give a SECOND entry a `urlPath` another entry already
+ * holds -- the write-boundary half of the invariant `assertNoDuplicateUrlPaths` enforces at build
+ * time (see url-collision.ts for which shapes count and, just as importantly, which do not).
+ *
+ * Why refuse rather than write: only one of the two entries can be served at that URL, so the
+ * other silently has no route anywhere. Allowing the write trades a clear error now for a page
+ * that quietly does not exist later -- and, because the loser is picked by resolver precedence
+ * rather than by the author, not necessarily the page they were editing.
+ *
+ * A `ContentConflictError` subclass so every existing 409 mapping keeps working; the distinct
+ * type exists so the API can surface THIS message rather than the generic "modified by another
+ * editor", which would send the editor into a reload-and-retry loop that cannot succeed.
+ */
+export class UrlPathConflictError extends ContentConflictError {
+  /** Absolute path of the entry already holding the contested URL. */
+  readonly conflictingPath: string
+
+  constructor(message: string, conflictingPath: string) {
+    super(message)
+    this.name = 'UrlPathConflictError'
+    this.conflictingPath = conflictingPath
   }
 }
 
@@ -607,6 +633,35 @@ export class ContentStore {
   ): string {
     if (!prePass.existed) return this.createLockKey(schemaItem, slug)
     return prePass.id ? this.idLockKey(prePass.id) : prePass.absolutePath
+  }
+
+  /**
+   * Refuse a create/rename that would give a second entry a `urlPath` another entry already
+   * holds. See url-collision.ts for the two shapes that count, and the legitimate
+   * landing-page-beside-a-collection shape that deliberately does not.
+   *
+   * @param collectionDir Absolute physical directory the entry will live in.
+   * @param slug The entry's slug, as it will be written.
+   */
+  private async assertUrlPathAvailable(collectionDir: string, slug: string): Promise<void> {
+    const claimant = await findUrlPathClaimant({
+      collectionDir,
+      slug,
+      contentRoot: path.resolve(this.root, this.contentRootName),
+    })
+    if (!claimant) return
+
+    const relative = path.relative(this.root, claimant.physicalPath)
+    const message =
+      claimant.kind === 'sibling-collection-index'
+        ? `An entry with slug "${slug}" would share a URL with the index entry of the ` +
+          `"${claimant.name}" collection beside it ("${relative}"), and only one of them could ` +
+          `be served there. Rename this entry, or remove that collection's index entry.`
+        : `An index entry here would share a URL with the "${claimant.name}" entry in the parent ` +
+          `collection ("${relative}"), and only one of them could be served there. Rename that ` +
+          `entry, or give this collection's landing page a different slug.`
+
+    throw new UrlPathConflictError(message, claimant.physicalPath)
   }
 
   /**
@@ -1045,6 +1100,33 @@ export class ContentStore {
                 ])
               }
             }
+          }
+
+          // [URL] Contested-URL guard, create only: an ordinary save cannot contest a URL it
+          // already holds, and blocking it would trap the author in an entry they can no longer
+          // edit.
+          //
+          // Keyed on whether the target file actually EXISTS, not on `inLock.existed`. That flag
+          // is `foundExisting || Boolean(options.existingId)`, and the `existingId` half is a
+          // caller ASSERTION rather than disk truth -- so an id-addressed write recreating an
+          // entry that was deleted out from under it (git, another process) would skip the guard
+          // while in fact creating one.
+          //
+          // The slug is read back off the filename `buildPaths` actually chose, never the
+          // caller's raw argument: `buildPaths` strips leading slashes and lowercases, and for
+          // the entry-type delegation shape substitutes the type name for an empty slug. Checking
+          // the raw value let `write(collection, '/guides', ...)` sail past a `guides` claimant.
+          //
+          // Serialization comes from `withContentWriteExclusion` (the branch-wide, cross-host
+          // content-write lock wrapping this whole reclassification loop), NOT from the per-entry
+          // lock: the two halves of a contested pair live in DIFFERENT collections and so take
+          // different entry-lock keys. The branch lock is what makes check-then-write atomic
+          // against the other half landing concurrently.
+          if (!(await filePathExists(absolutePath))) {
+            await this.assertUrlPathAvailable(
+              path.dirname(absolutePath),
+              extractSlugFromFilename(path.basename(absolutePath)),
+            )
           }
 
           await fs.mkdir(path.dirname(absolutePath), { recursive: true })
@@ -1541,6 +1623,17 @@ export class ContentStore {
               if (err instanceof ContentStoreError) throw err
               // Ignore filesystem errors (e.g. ENOENT if parent dir doesn't exist)
             }
+
+            // [URL] Contested-URL guard. A rename moves the entry to a NEW url, so the same
+            // check a create gets applies here -- including the index direction, since renaming
+            // an entry TO `index` is how an existing collection acquires a landing page.
+            //
+            // Runs AFTER the same-slug scan above, deliberately. In an already-contested tree
+            // both refusals apply, and the same-slug one is the more immediate and more
+            // actionable of the two -- reporting the URL conflict first sent the author to fix
+            // the other claimant, only to hit the same-slug refusal on the retry. Still before
+            // link(), so either refusal leaves the tree untouched.
+            await this.assertUrlPathAvailable(parentDir, safeNewSlug)
 
             // Use link()+unlink() instead of rename() so a concurrent cross-process rename to the
             // exact same destination path fails with EEXIST rather than silently overwriting.

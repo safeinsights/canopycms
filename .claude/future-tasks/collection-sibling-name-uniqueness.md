@@ -2,7 +2,7 @@
 
 **Status:** Open. **Priority: P2.** Found 2026-08-21 while checking the write boundary's existing
 slug-uniqueness guarantees for
-[url-collision-authoring-guard.md](url-collision-authoring-guard.md). Pre-existing; unrelated to
+[url-collision-authoring-guard.md](resolved/url-collision-authoring-guard.md). Pre-existing; unrelated to
 the change that surfaced it.
 
 ## Problem
@@ -51,6 +51,31 @@ correction 1 above the duplicate-`urlPath` build guard (`assertNoDuplicateUrlPat
 winner directory with no entries of its own, where the shadowed directory's content simply
 disappears from every listing with nothing to notice.
 
+## Why this is now a prerequisite, not just a tidy-up
+
+The write-boundary contested-URL guard shipped in
+[url-collision-authoring-guard.md](resolved/url-collision-authoring-guard.md) resolves ONE child
+collection by name. With two same-named sibling collections on disk -- which only this hole
+permits -- an editor can write an index entry into each, both writes pass the guard, and two
+entries end up claiming one URL through fully guarded paths. So this is the gap that keeps that
+guard from being complete. Fixing sibling-name uniqueness closes it with no change to the guard
+itself. Noted in `url-collision.ts` at the check that depends on it.
+
+## Also: the existing rename check is case-sensitive
+
+Found 2026-08-21 by the review of the write-boundary guard. `updateCollection`'s sibling-name
+check tests `entry.name.startsWith(`${updates.slug}.`)` — a case-SENSITIVE JS string comparison,
+so renaming a collection to `guides` beside an existing `Guides.{id}` passes it. Every entry
+beneath the two then contests, far deeper than the index entry, and `schema-store.ts`'s comment
+asserting "no `{slug}.{id}` directory exists at the destination" is wrong in that case. Fold the
+case fix into the shared helper this task already proposes.
+
+**This is platform-independent**, contrary to an earlier draft of this note which claimed it bit
+Linux/EFS but not a Mac. It is a string comparison, not a filesystem one — and `guides.{id1}` and
+`Guides.{id2}` differ by more than case, so a case-insensitive APFS does not stop them coexisting
+either. The only platform-adjacent fact is that a `Guides.{id}` directory can only ORIGINATE from
+git rather than from the editor, since `SAFE_NAME_PATTERN` is lowercase-only.
+
 ## Fix sketch
 
 Port the rename path's existing check to `createCollectionInner`: scan the parent for an existing
@@ -64,7 +89,7 @@ reject two collection items resolving to one logical path, which is the actual m
 
 ## Related
 
-- [url-collision-authoring-guard.md](url-collision-authoring-guard.md) — the same class of missing
+- [url-collision-authoring-guard.md](resolved/url-collision-authoring-guard.md) — the same class of missing
   write-boundary check, on the entry-vs-collection axis.
 - [url-resolver-index-entry-extra-url.md](resolved/url-resolver-index-entry-extra-url.md) — added
   the build-time duplicate-`urlPath` guard that partially covers this.

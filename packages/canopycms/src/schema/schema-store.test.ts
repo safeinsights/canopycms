@@ -243,6 +243,61 @@ describe('SchemaOps', () => {
     })
   })
 
+  // [URL] Contested-URL guard on the collection-rename path. Renaming a collection re-paths every
+  // entry beneath it, so its INDEX entry -- whose URL is the collection's own path -- lands on the
+  // new name. If the parent already holds an entry with that slug, the two contest one URL.
+  // Companion to the entry-side guard in content-store.test.ts's 'contested-URL guard'.
+  describe('collection rename, contested URL', () => {
+    /** A collection `name` under the content root, holding one entry with slug `slug`. */
+    const seedCollection = async (name: string, slug: string) => {
+      await store.createCollection({
+        name,
+        entries: [{ name: 'page', format: 'json', schema: 'pageSchema', default: true }],
+      })
+      const dir = (await fs.readdir(contentRoot)).find((d) => d.startsWith(`${name}.`))!
+      await fs.writeFile(
+        path.join(contentRoot, dir, `page.${slug}.aB3cD4eF5gH6.json`),
+        JSON.stringify({ title: slug }),
+      )
+      return path.join(contentRoot, dir)
+    }
+
+    it("refuses a rename that would put its landing page on a parent entry's URL", async () => {
+      await seedCollection('guides', 'index')
+      // A root-level entry already at /docs.
+      await fs.writeFile(
+        path.join(contentRoot, 'page.docs.zZ9yY8xX7wW6.json'),
+        JSON.stringify({ title: 'Docs' }),
+      )
+
+      await expect(
+        store.updateCollection(unsafeAsLogicalPath('content/guides'), { slug: 'docs' }),
+      ).rejects.toThrow(/share a URL with the "docs" entry already in the parent/)
+    })
+
+    it('ALLOWS the rename when the collection has no index entry', async () => {
+      // No landing page, so nothing contests the parent entry — the same legitimate shape the
+      // entry-side guard permits.
+      await seedCollection('guides', 'getting-started')
+      await fs.writeFile(
+        path.join(contentRoot, 'page.docs.zZ9yY8xX7wW6.json'),
+        JSON.stringify({ title: 'Docs' }),
+      )
+
+      await expect(
+        store.updateCollection(unsafeAsLogicalPath('content/guides'), { slug: 'docs' }),
+      ).resolves.toBeUndefined()
+    })
+
+    it('ALLOWS the rename when the parent holds no entry with that slug', async () => {
+      await seedCollection('guides', 'index')
+
+      await expect(
+        store.updateCollection(unsafeAsLogicalPath('content/guides'), { slug: 'docs' }),
+      ).resolves.toBeUndefined()
+    })
+  })
+
   describe('createCollection', () => {
     it('should create a new collection with entry types', async () => {
       const result = await store.createCollection({
