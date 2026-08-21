@@ -41,13 +41,49 @@ const PACKAGES = [
 const corePkgPath = join(ROOT, 'packages/canopycms/package.json')
 const corePkg = JSON.parse(readFileSync(corePkgPath, 'utf8'))
 
-/** Parse `x.y.z` into a comparable triple. Throws on anything else. */
+// Leading zeros are rejected deliberately: npm treats `01.2.3` as invalid
+// semver, so accepting it here would only move the failure to `npm publish`.
+const CORE_VERSION = String.raw`(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)`
+const STRICT_VERSION_RE = new RegExp(`^${CORE_VERSION}$`)
+// Semver's optional `-prerelease` and `+build`. The prerelease publish path
+// needs this: `prerelease-version.mjs` emits `X.Y.Z-int.N`.
+const EXPLICIT_VERSION_RE = new RegExp(
+  `^${CORE_VERSION}(?:-[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?$`,
+)
+
+/**
+ * Parse a plain `x.y.z` into a comparable triple. Throws on anything else,
+ * INCLUDING a prerelease suffix -- this is used for the committed version and
+ * for `--min`, where an `-int.N` value has no meaningful ordering against a
+ * stable release and would silently mis-floor the bump.
+ */
 function parseVersion(value, label) {
-  const match = /^(\d+)\.(\d+)\.(\d+)$/.exec(String(value).trim())
+  const match = STRICT_VERSION_RE.exec(String(value).trim())
   if (!match) {
     throw new Error(`${label} must be a plain x.y.z version, got ${JSON.stringify(value)}`)
   }
   return [Number(match[1]), Number(match[2]), Number(match[3])]
+}
+
+/**
+ * Validate an explicit version and return the CANONICAL (trimmed) string to
+ * write. Accepts a semver prerelease/build suffix, because that is the only
+ * shape this mode is ever called with in production: publish-prerelease.yml
+ * passes `prerelease-version.mjs`'s `X.Y.Z-int.N` output straight through.
+ *
+ * Returning the trimmed value rather than the caller's original closes the gap
+ * where the string that was VALIDATED and the string that got WRITTEN differed
+ * -- ` 1.2.3` used to validate on its trimmed form and then land in six
+ * manifests with the leading space intact.
+ */
+function parseExplicitVersion(value, label) {
+  const trimmed = String(value).trim()
+  if (!EXPLICIT_VERSION_RE.test(trimmed)) {
+    throw new Error(
+      `${label} must be a semver version (x.y.z, optionally -prerelease), got ${JSON.stringify(value)}`,
+    )
+  }
+  return trimmed
 }
 
 /** > 0 when a is newer than b. */
@@ -90,9 +126,9 @@ if (firstArg === '--min') {
   const [major, minor, patch] = compareVersions(floor, committed) > 0 ? floor : committed
   newVersion = `${major}.${minor}.${patch + 1}`
 } else if (firstArg) {
-  // Validated, not trusted: this value is written into every package.json.
-  parseVersion(firstArg, 'the explicit version argument')
-  newVersion = firstArg
+  // Validated AND canonicalised: the returned value is what gets written, so
+  // the validated string and the written string cannot differ.
+  newVersion = parseExplicitVersion(firstArg, 'the explicit version argument')
 } else {
   const [major, minor, patch] = parseVersion(corePkg.version, 'the committed version')
   newVersion = `${major}.${minor}.${patch + 1}`

@@ -30,7 +30,9 @@ const execFileAsync = promisify(execFile)
 
 // This file sits at packages/canopycms/src/cli/, so the workspace root is four up.
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
-const SCRIPT = path.join(__dirname, '..', '..', '..', '..', 'scripts', 'bump-version.mjs')
+const SCRIPTS_DIR = path.join(__dirname, '..', '..', '..', '..', 'scripts')
+const SCRIPT = path.join(SCRIPTS_DIR, 'bump-version.mjs')
+const PRERELEASE_SCRIPT = path.join(SCRIPTS_DIR, 'prerelease-version.mjs')
 
 /** The five publishable packages the script rewrites, plus the root manifest. */
 const PACKAGES = [
@@ -105,10 +107,43 @@ describe('scripts/bump-version.mjs', () => {
       expect(stdout.trim()).toBe('0.0.64')
     })
 
-    it('applies an explicit version without bumping (the prerelease path)', async () => {
+    it('applies an explicit version without bumping', async () => {
       await seed('0.0.63')
       const { stdout } = await run(['1.2.3'])
       expect(stdout.trim()).toBe('1.2.3')
+    })
+
+    it('accepts EXACTLY what the prerelease channel feeds it', async () => {
+      // This test exists because its predecessor did not. It asserted the
+      // "prerelease path" using a plain `1.2.3`, so when stricter validation
+      // was added it stayed green while publish-prerelease.yml -- which passes
+      // `prerelease-version.mjs`'s `X.Y.Z-int.N` output straight through --
+      // began failing at "Apply prerelease version" on every dispatch.
+      //
+      // The input is DERIVED from the real script rather than hard-coded, so
+      // the two cannot drift apart again.
+      const { stdout: generated } = await execFileAsync(process.execPath, [
+        PRERELEASE_SCRIPT,
+        '0.0.63',
+        '123',
+      ])
+      const prereleaseVersion = generated.trim()
+      expect(prereleaseVersion).toMatch(/^\d+\.\d+\.\d+-int\.\d+$/)
+
+      await seed('0.0.63')
+      const { stdout } = await run([prereleaseVersion])
+      expect(stdout.trim()).toBe(prereleaseVersion)
+      expect(await readVersion('packages/canopycms')).toBe(prereleaseVersion)
+    })
+
+    it('trims an explicit version rather than writing the untrimmed original', async () => {
+      // The validated string and the written string must be the same one:
+      // validating `value.trim()` while writing `value` put a leading space
+      // into six manifests and exited 0.
+      await seed('0.0.63')
+      const { stdout } = await run([' 1.2.3'])
+      expect(stdout.trim()).toBe('1.2.3')
+      expect(await readVersion('packages/canopycms')).toBe('1.2.3')
     })
 
     it('writes the new version to every publishable package and the root', async () => {
@@ -152,7 +187,18 @@ describe('scripts/bump-version.mjs', () => {
     })
 
     it('rejects a prerelease floor, which this channel cannot order', async () => {
+      // Strict for --min even though the EXPLICIT form accepts a suffix: an
+      // `-int.N` value has no meaningful ordering against a stable release, so
+      // flooring on one would silently mis-derive the next stable version.
       await expectRejected(['--min', '0.0.64-int.3'])
+    })
+
+    it('rejects a leading-zero version, which npm treats as invalid semver', async () => {
+      await expectRejected(['01.2.3'])
+    })
+
+    it('rejects a four-component version', async () => {
+      await expectRejected(['1.2.3.4'])
     })
   })
 })

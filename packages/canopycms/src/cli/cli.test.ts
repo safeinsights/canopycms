@@ -1,5 +1,11 @@
 import { describe, it, expect } from 'vitest'
-import { parseArgs, resolveSyncSubcommand, parseAuthFlag, parseDualBuildFlag } from './cli'
+import {
+  parseArgs,
+  resolveSyncSubcommand,
+  parseAuthFlag,
+  parseDualBuildFlag,
+  isKnownAuthMode,
+} from './cli'
 
 describe('parseArgs', () => {
   it('parses command as first positional arg', () => {
@@ -174,5 +180,25 @@ describe('resolveSyncSubcommand', () => {
 
   it('returns null for unrecognized subcommand', () => {
     expect(resolveSyncSubcommand('foo')).toBeNull()
+  })
+})
+
+describe('isKnownAuthMode', () => {
+  // The guard that stops `worker run-once` silently refreshing nothing: the
+  // dispatch knows only 'clerk' and 'dev', and the catch around plugin loading
+  // fires only on an IMPORT failure, so any other value used to select no
+  // plugin, skip the refresh, and exit 0.
+  it.each(['clerk', 'dev'])('accepts %s', (mode) => {
+    expect(isKnownAuthMode(mode)).toBe(true)
+  })
+
+  it.each([
+    ['Clerk', 'wrong casing -- the realistic typo'],
+    ['DEV', 'wrong casing'],
+    ['clerk ', 'trailing whitespace from a .env line'],
+    ['', 'empty'],
+    ['auth0', 'a provider this CLI cannot construct'],
+  ])('rejects %j (%s)', (mode) => {
+    expect(isKnownAuthMode(mode)).toBe(false)
   })
 })

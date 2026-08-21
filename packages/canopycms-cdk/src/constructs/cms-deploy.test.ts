@@ -331,6 +331,59 @@ describe('CanopyCmsDistribution: additionalBehaviors', () => {
     expect(patterns).toContain('/_next/static/*')
     expect(patterns).toContain('/custom/*')
   })
+
+  it('preserves the CALLER’s ordering even for a key that collides with a default', () => {
+    // CloudFront matches path patterns in order, so a more specific pattern
+    // must precede a more general one that also matches. A plain object spread
+    // keeps an overridden key at its FIRST-insertion index, which would pin an
+    // overridden `/_next/static/*` ahead of everything else the caller passed
+    // -- silently making their more specific pattern unreachable, which is
+    // exactly what the prop's own doc warns them to avoid.
+    const app = new App()
+    const stack = new Stack(app, 'OrderStack', {
+      env: { account: '123456789012', region: 'us-east-1' },
+    })
+    const service = new CanopyCmsService(stack, 'Cms', {
+      cmsDockerImage: lambda.DockerImageCode.fromEcr(
+        ecr.Repository.fromRepositoryName(stack, 'Repo', 'cms'),
+      ),
+      githubOwner: 'acme',
+      githubRepo: 'site',
+    })
+    const anyOrigin = origins.FunctionUrlOrigin.withOriginAccessControl(service.functionUrl)
+    new CanopyCmsDistribution(stack, 'Dist', {
+      functionUrl: service.functionUrl,
+      domainName: 'cms.example.org',
+      hostedZoneDomain: 'example.org',
+      hostedZone: route53.HostedZone.fromHostedZoneAttributes(stack, 'Zone', {
+        hostedZoneId: 'Z123456789',
+        zoneName: 'example.org',
+      }),
+      certificate: acm.Certificate.fromCertificateArn(
+        stack,
+        'Cert',
+        'arn:aws:acm:us-east-1:123456789012:certificate/abc',
+      ),
+      additionalBehaviors: {
+        // Specific first, as the caller intends and the docs instruct.
+        '/_next/static/chunks/*': { origin: anyOrigin },
+        // Collides with the construct's own default.
+        '/_next/static/*': { origin: anyOrigin },
+      },
+    })
+
+    const dist = Object.values(
+      Template.fromStack(stack).findResources('AWS::CloudFront::Distribution'),
+    )[0]
+    const patterns = (
+      dist.Properties.DistributionConfig.CacheBehaviors as { PathPattern: string }[]
+    ).map((b) => b.PathPattern)
+
+    expect(patterns.indexOf('/_next/static/chunks/*')).toBeGreaterThanOrEqual(0)
+    expect(patterns.indexOf('/_next/static/chunks/*')).toBeLessThan(
+      patterns.indexOf('/_next/static/*'),
+    )
+  })
 })
 
 describe('CanopyCmsDistribution origin access control', () => {
