@@ -1005,6 +1005,13 @@ describe('basePath', () => {
     expect(() => validateCanopyConfig({ ...gitAuthor, basePath: '/preview-123/' })).not.toThrow()
   })
 
+  it('trims surrounding whitespace rather than baking it into every URL', () => {
+    // ' /preview-123' is a plausible paste/templating artifact. Untrimmed it produced
+    // '/ /preview-123/api/canopycms' for the editor's API base.
+    const config = validateCanopyConfig({ ...gitAuthor, basePath: '  /preview-123  ' })
+    expect(config.basePath).toBe('/preview-123')
+  })
+
   it('rejects a whitespace-only basePath', () => {
     expect(() => validateCanopyConfig({ ...gitAuthor, basePath: '   ' })).toThrow()
   })

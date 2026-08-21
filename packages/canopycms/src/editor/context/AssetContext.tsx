@@ -25,10 +25,28 @@ const AssetContext = createContext<AssetContextValue>({})
 
 export interface AssetContextProviderProps extends AssetContextValue {
   children: React.ReactNode
+  /**
+   * `CanopyClientConfig.basePath` - the deployment prefix the host app is served under. Used only
+   * when `baseUrl` is unset.
+   */
+  basePath?: string
 }
 
-export function AssetContextProvider({ baseUrl, children }: AssetContextProviderProps) {
-  const value = useMemo<AssetContextValue>(() => ({ baseUrl }), [baseUrl])
+/**
+ * `baseUrl` (`media.publicBaseUrl`) wins; `basePath` is the fallback.
+ *
+ * They are ALTERNATIVES, never composed: `publicBaseUrl` is validated absolute-only, so it names
+ * another origin serving `/assets` at THAT origin's root, and a deployment `basePath` cannot apply
+ * on top of it. Where the two differ is topology, not precedence - see the asset-mount table in
+ * the README.
+ *
+ * The fallback is load-bearing rather than cosmetic: without it the editor's own thumbnails,
+ * previews and crop images stay root-relative on a basePath deployment where Next serves
+ * `/assets`, and NO config value can fix it, because `publicBaseUrl` cannot express a bare path.
+ */
+export function AssetContextProvider({ baseUrl, basePath, children }: AssetContextProviderProps) {
+  const resolved = baseUrl ?? basePath
+  const value = useMemo<AssetContextValue>(() => ({ baseUrl: resolved }), [resolved])
   return <AssetContext.Provider value={value}>{children}</AssetContext.Provider>
 }
 

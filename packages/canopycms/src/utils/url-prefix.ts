@@ -18,7 +18,7 @@
  * node built-in here; `pnpm lint:bundle` fails the build if you do.
  */
 
-import { neutralizeImplicitOffOrigin } from './sanitize-href'
+import { declaresScheme, neutralizeImplicitOffOrigin } from './sanitize-href'
 
 /**
  * Whether `url` is a DECLARED off-site pointer - a scheme-qualified absolute URL
@@ -57,6 +57,52 @@ export function stripTrailingSlashes(value: string): string {
 }
 
 /**
+ * Reduce a URL reference to a value that is safe to emit as a SAME-ORIGIN path.
+ *
+ * `neutralizeImplicitOffOrigin` alone is not sufficient, and this is the subtle part: it returns
+ * `pathname + search + hash`, and a WHATWG `pathname` can ITSELF begin with `//`. `/\evil.com//a`
+ * parses to host `evil.com` with pathname `//a`, so neutralizing yields the string `//a` — which,
+ * re-emitted as a URL reference, reads as protocol-relative all over again and points at a host
+ * literally named `a`. Neutralizing a second time does not help: the value is now indistinguishable
+ * from a caller's legitimate `//cdn.example.com` pointer, so every absolute-URL check downstream
+ * (correctly) passes it straight through, prefix and all.
+ *
+ * The value is same-origin by construction at this point, so collapse the leading slash run to a
+ * single slash. Linear scan rather than a regex, for the reason `stripTrailingSlashes` documents.
+ *
+ * Use this instead of calling `neutralizeImplicitOffOrigin` directly anywhere the result is going
+ * to be prefixed or emitted as a path.
+ */
+export function toSameOriginPath(url: string): string {
+  const neutralized = neutralizeImplicitOffOrigin(url)
+  let slashes = 0
+  while (slashes < neutralized.length && neutralized.charCodeAt(slashes) === 47 /* '/' */) slashes++
+  return slashes > 1 ? `/${neutralized.slice(slashes)}` : neutralized
+}
+
+/**
+ * Make `url` safe to emit AS-IS, changing nothing else.
+ *
+ * The safety half of `joinUrlPrefix`, without the prefixing or the leading-slash rooting - for a
+ * caller that has no mount point to apply and must hand a value back byte-identical wherever it
+ * legitimately can. Two kinds pass through untouched:
+ *
+ * - **Scheme-bearing** (`data:`, `blob:`, `mailto:`, `https://…`). Not a site-relative path, so
+ *   rooting it just corrupts it (`data:image/png;…` → `/data:image/png;…`, a broken `<img src>`).
+ *   Whether a given scheme is SAFE to render is a separate question that belongs to the caller -
+ *   see `sanitize-href.ts`'s `sanitizeHref` for href contexts.
+ * - **Literal protocol-relative** (`//cdn.example.com/x`), an intentionally-supported off-site
+ *   pointer.
+ *
+ * Everything else goes through `toSameOriginPath`, so a value that merely *reads* as off-origin to
+ * a browser (the backslash spellings) is still neutralized rather than passed along.
+ */
+export function sanitizeUnprefixedPath(url: string): string {
+  if (declaresScheme(url) || isAbsoluteUrl(url)) return url
+  return toSameOriginPath(url)
+}
+
+/**
  * Put `prefix` in front of the root-relative `path`, and return `path` untouched when it is
  * already a declared off-site URL.
  *
@@ -78,17 +124,19 @@ export function stripTrailingSlashes(value: string): string {
  *   *document-relative* URL that resolves to a different place on every page — an intermittent
  *   failure that is harder to diagnose than the plain 404 it replaced.
  *
- * `path` is run through `neutralizeImplicitOffOrigin` when it is not absolute, so a
+ * `path` is run through `toSameOriginPath` when it is not a pass-through, so a
  * backslash-equivalent spelling that `isAbsoluteUrl` correctly declines to call "absolute"
- * (see its doc) can't still be read by a browser as protocol-relative once emitted.
+ * (see its doc) can't still be read by a browser as protocol-relative once emitted. Note this
+ * needs the `//`-pathname collapse, not just neutralization — see `toSameOriginPath`.
  *
  * `prefix` is NOT neutralized: it is adopter-supplied configuration rather than content, and
  * neutralizing it would silently rewrite a legitimate protocol-relative CDN base into a path.
  */
 export function joinUrlPrefix(prefix: string | undefined, path: string): string {
-  if (isAbsoluteUrl(path)) return path
+  const safePath = sanitizeUnprefixedPath(path)
+  // Pass-throughs are returned verbatim: there is no meaningful way to prefix them.
+  if (declaresScheme(safePath) || isAbsoluteUrl(safePath)) return safePath
 
-  const safePath = neutralizeImplicitOffOrigin(path)
   const normalizedPath = safePath.startsWith('/') ? safePath : `/${safePath}`
 
   if (!prefix) return normalizedPath

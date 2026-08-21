@@ -6,7 +6,7 @@
  * import from client (editor) code as well as during static builds.
  */
 
-import { joinUrlPrefix } from '../utils/url-prefix'
+import { joinUrlPrefix, sanitizeUnprefixedPath } from '../utils/url-prefix'
 import { ASSET_PREFIXES } from './asset-prefixes'
 import {
   formatDirectives,
@@ -85,6 +85,12 @@ export function assetUrl(ref: AssetRef, opts: AssetUrlOptions = {}): string {
   const { src } = ref
 
   if (!src.startsWith(TRANSFORM_URL_PREFIX)) {
+    // With no mount point to apply, a src we don't own comes back byte-identical - the README
+    // routes every markdown/MDX body image through here so a basePath deployment can prefix them,
+    // and bodies carry srcs canopycms never wrote: `data:` URIs, and page-relative paths whose
+    // meaning would change if we rooted them. `sanitizeUnprefixedPath` still neutralizes a value
+    // that a browser would read as off-origin, so "leave it alone" never means "emit `/\evil.com`".
+    if (!opts.baseUrl) return sanitizeUnprefixedPath(src)
     return joinUrlPrefix(opts.baseUrl, src)
   }
 

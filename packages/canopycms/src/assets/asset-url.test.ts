@@ -194,6 +194,28 @@ describe('assetUrl - an already-absolute src is never prefixed', () => {
     expect(assetUrl({ src: offSite }, { baseUrl: '/preview-123' })).toBe(offSite)
   })
 
+  // A src we don't own must come back EXACTLY as it went in when there is no mount point to
+  // apply. The README routes every markdown/MDX body image through assetUrl so a basePath
+  // deployment can prefix them, and bodies carry srcs canopycms never wrote.
+  it('returns a data: URI unchanged rather than rooting it into a broken src', () => {
+    const dataUri = 'data:image/png;base64,AAA'
+    expect(assetUrl({ src: dataUri })).toBe(dataUri)
+    expect(assetUrl({ src: dataUri }, { baseUrl: '/preview-123' })).toBe(dataUri)
+  })
+
+  it('leaves a page-relative src alone when no baseUrl is given', () => {
+    // Rooting it would change which URL it resolves to.
+    expect(assetUrl({ src: 'images/x.png' })).toBe('images/x.png')
+    expect(assetUrl({ src: '' })).toBe('')
+  })
+
+  it('collapses a // pathname produced by neutralizing, rather than emitting protocol-relative', () => {
+    expect(assetUrl({ src: '/\\evil.com//x.png' })).toBe('/x.png')
+    expect(assetUrl({ src: '/\\evil.com//x.png' }, { baseUrl: '/preview-123' })).toBe(
+      '/preview-123/x.png',
+    )
+  })
+
   it('neutralizes a backslash-spelled off-origin src instead of prefixing it', () => {
     // `/\evil.com/x` parses to origin https://evil.com in a browser despite looking
     // site-relative. It must not survive into an <img src>.

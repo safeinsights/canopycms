@@ -42,7 +42,8 @@ export const sourceRootSchema = z.string().min(1).optional()
 // indicates a copy-paste/templating mistake in the adopter's config.
 export const basePathSchema = z
   .string()
-  .refine((value) => value.trim().length > 0, {
+  .transform((value) => value.trim())
+  .refine((value) => value.length > 0, {
     message: 'basePath must not be empty or only whitespace',
   })
   .optional()

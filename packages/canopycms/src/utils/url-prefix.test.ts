@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { isAbsoluteUrl, joinUrlPrefix, stripTrailingSlashes } from './url-prefix'
+import { isAbsoluteUrl, joinUrlPrefix, stripTrailingSlashes, toSameOriginPath } from './url-prefix'
 
 describe('joinUrlPrefix - path side', () => {
   it('passes a declared off-site path through untouched, prefix or not', () => {
@@ -22,6 +22,37 @@ describe('joinUrlPrefix - path side', () => {
     expect(joinUrlPrefix(undefined, '/\\evil.com/x')).toBe('/x')
     expect(joinUrlPrefix('/preview-123', '\\\\evil.com/x')).toBe('/preview-123/x')
     expect(joinUrlPrefix(undefined, '\\/evil.com/x')).toBe('/x')
+  })
+
+  // REGRESSION. Neutralizing returns pathname+search+hash, and a WHATWG pathname can itself begin
+  // with '//': '/\evil.com//x' parses to host evil.com with pathname '//x'. Emitting that string
+  // re-creates a protocol-relative reference to a host named 'x'. The cases above all happened to
+  // neutralize to a SINGLE-segment path, which is why they missed this entirely.
+  it('collapses a // pathname produced by neutralizing, instead of re-creating a protocol-relative URL', () => {
+    expect(joinUrlPrefix(undefined, '/\\evil.com//x')).toBe('/x')
+    expect(joinUrlPrefix('/preview-123', '/\\evil.com//x')).toBe('/preview-123/x')
+    expect(joinUrlPrefix('https://example.com', '\\\\evil.com//x')).toBe('https://example.com/x')
+    expect(joinUrlPrefix(undefined, '/\\evil.com///x')).toBe('/x')
+    expect(joinUrlPrefix(undefined, '/\\evil.com//x?a=1#b')).toBe('/x?a=1#b')
+  })
+
+  it('exposes that collapse as toSameOriginPath, and leaves an ordinary path alone', () => {
+    expect(toSameOriginPath('/\\evil.com//x')).toBe('/x')
+    expect(toSameOriginPath('/a/b')).toBe('/a/b')
+    expect(toSameOriginPath('a/b')).toBe('a/b')
+  })
+
+  it('returns a scheme-bearing value untouched rather than rooting it', () => {
+    // '/data:image/png;…' is a broken <img src>. Prefixing or slash-normalizing any scheme-bearing
+    // value is meaningless; judging whether the scheme is safe to render is the caller's job.
+    expect(joinUrlPrefix(undefined, 'data:image/png;base64,AAA')).toBe('data:image/png;base64,AAA')
+    expect(joinUrlPrefix('/preview-123', 'data:image/png;base64,AAA')).toBe(
+      'data:image/png;base64,AAA',
+    )
+    expect(joinUrlPrefix('/preview-123', 'blob:https://example.com/abc')).toBe(
+      'blob:https://example.com/abc',
+    )
+    expect(joinUrlPrefix('/preview-123', 'mailto:a@b.c')).toBe('mailto:a@b.c')
   })
 })
 

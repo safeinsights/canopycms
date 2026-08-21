@@ -95,8 +95,10 @@ Two traps worth checking for explicitly:
   nothing, emits zero static params, and still builds green.
 - **Body images bypass `assetUrl()` entirely.** Images inserted into markdown/MDX bodies are
   stored as raw srcs and rendered by your own renderer. Under a `basePath` they need an `img`
-  override; the README shows one. `assetUrl()` passes an off-site src through unchanged, so the
-  override is safe to apply to every image in a body.
+  override; the README shows one. It is safe to apply to every image in a body: `assetUrl()` hands
+  back anything it does not own byte-identical — off-site srcs, `data:` URIs and page-relative
+  paths alike — and only neutralizes a value that would read as off-origin despite looking
+  site-relative.
 
 **Now deletable.** Any hand-rolled prefixing wrapper around `assetUrl` — the shape is a module
 exporting a re-bound `assetUrl`/`assetSrcSet` that injects a prefix read from an env var. The

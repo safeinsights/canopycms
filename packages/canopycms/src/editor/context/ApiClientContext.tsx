@@ -36,6 +36,10 @@ export interface ApiClientProviderProps {
  * Use the client prop to inject a mock client for testing.
  */
 export function ApiClientProvider({ children, client, basePath }: ApiClientProviderProps) {
+  // Memoized on identity, not just for cost: several consumers now list the client in their
+  // effect deps (useUserContext, useReferenceResolution, ReferenceField), so a fresh client each
+  // render would turn those one-shot fetches into a loop. A caller injecting an inline
+  // `client={createApiClient()}` would reintroduce exactly that.
   const apiClient = useMemo(() => {
     return client ?? createApiClient({ baseUrl: joinUrlPrefix(basePath, '/api/canopycms') })
   }, [client, basePath])

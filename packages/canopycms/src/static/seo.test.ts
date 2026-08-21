@@ -155,6 +155,37 @@ describe('defineSeoFieldGroup', () => {
   })
 })
 
+describe('URL shaping — off-origin regression guards', () => {
+  // A WHATWG pathname can itself start with '//': '/\\evil.com//a' parses to host evil.com with
+  // pathname '//a'. Emitting that dropped siteUrl entirely and produced a protocol-relative URL
+  // pointing at a host named 'a' — an off-site canonical/og:url from a plain content field, and a
+  // non-absolute <loc> that invalidates the whole sitemap.
+  it('never drops siteUrl for a backslash-spelled off-origin value whose pathname starts with //', () => {
+    expect(resolveSeoUrl('/\\evil.com//a', { siteUrl: 'https://example.com' })).toBe(
+      'https://example.com/a',
+    )
+    expect(
+      resolveSeoUrl('/\\evil.com//a.png', { siteUrl: 'https://example.com', trailingSlash: true }),
+    ).toBe('https://example.com/a.png')
+    expect(resolveSeoUrl('\\\\evil.com//a', { siteUrl: 'https://example.com' })).toBe(
+      'https://example.com/a',
+    )
+  })
+
+  it('emits a same-origin path, not a protocol-relative one, when no siteUrl is given', () => {
+    expect(resolveSeoUrl('/\\evil.com//a')).toBe('/a')
+  })
+
+  it('still passes a genuinely off-site pointer through untouched', () => {
+    expect(resolveSeoUrl('https://other.org/page', { siteUrl: 'https://example.com' })).toBe(
+      'https://other.org/page',
+    )
+    expect(resolveSeoUrl('//cdn.example.com/a.png', { siteUrl: 'https://example.com' })).toBe(
+      '//cdn.example.com/a.png',
+    )
+  })
+})
+
 describe('URL shaping', () => {
   it('recognizes scheme-qualified and protocol-relative URLs as absolute', () => {
     expect(isAbsoluteUrl('https://other.org/page')).toBe(true)

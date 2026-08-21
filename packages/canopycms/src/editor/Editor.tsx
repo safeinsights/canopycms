@@ -1021,7 +1021,8 @@ export const Editor: React.FC<EditorProps> = ({
 
   return (
     <CanopyCMSProvider {...(themeOptions ?? {})}>
-      <AssetContextProvider baseUrl={assetBaseUrl}>
+      {/* Precedence (baseUrl wins, basePath is the fallback) lives in AssetContextProvider. */}
+      <AssetContextProvider baseUrl={assetBaseUrl} basePath={basePath}>
         <Box bg="gray.0" style={{ minHeight: '100vh', width: '100%' }}>
           <EditorHeader
             ref={headerRef}

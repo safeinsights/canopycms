@@ -10,8 +10,12 @@
  * the read side cannot drift.
  */
 
-import { neutralizeImplicitOffOrigin } from '../utils/sanitize-href'
-import { isAbsoluteUrl, joinUrlPrefix, stripTrailingSlashes } from '../utils/url-prefix'
+import {
+  isAbsoluteUrl,
+  joinUrlPrefix,
+  stripTrailingSlashes,
+  toSameOriginPath,
+} from '../utils/url-prefix'
 
 /**
  * Re-exported so this module's public surface (and `canopycms/server`'s, via `static/index.ts`)
@@ -216,9 +220,13 @@ export function resolveSeoUrl(pathOrUrl: string, opts: ResolveSeoUrlOptions = {}
   if (isAbsoluteUrl(pathOrUrl)) return pathOrUrl
   // Neutralize BEFORE the trailing-slash step, which is the order this has always run in:
   // `withTrailingSlash` inspects the last path segment, and a backslash-equivalent spelling
-  // changes what that segment is. `joinUrlPrefix` neutralizes again (idempotent) and supplies
-  // the leading slash, so only the trailing-slash decision needs to happen here.
-  const safePathOrUrl = neutralizeImplicitOffOrigin(pathOrUrl)
+  // changes what that segment is.
+  //
+  // `toSameOriginPath`, not a bare `neutralizeImplicitOffOrigin`: neutralizing `/\evil.com//a`
+  // yields `//a`, and handing THAT to `joinUrlPrefix` means its absolute-URL check reads it as a
+  // protocol-relative pointer and returns it verbatim — dropping `siteUrl` and emitting an
+  // off-origin canonical. See `toSameOriginPath`'s doc.
+  const safePathOrUrl = toSameOriginPath(pathOrUrl)
   const normalized = opts.trailingSlash ? withTrailingSlash(safePathOrUrl) : safePathOrUrl
   return joinUrlPrefix(opts.siteUrl, normalized)
 }
