@@ -10,7 +10,12 @@ import { trimSlashes } from '../paths/normalize'
 /**
  * Is this slug the collection-index slug?
  *
- * THE single place that decision is made. Slug matching is case-insensitive throughout
+ * The shared home for that decision. Every site that collapses an index slug routes through
+ * here — `computeEntryUrl` below, `content-tree.ts`'s `defaultBuildPath`, the reverse
+ * `resolveUrlPathCandidates`, `content-reader.ts`'s `buildEntryPath`, and the editor's
+ * `buildPreviewSrc`. (`content-tree.ts`'s `indexEntry` lookup still does its own
+ * `slug === 'index'`; it is fed slugs already lowercased by the listing, so it is safe rather
+ * than shared.) Slug matching is case-insensitive throughout
  * CanopyCMS (`parseSlug` lowercases, and `ContentStore` resolves slugs by a lowercased
  * directory scan), so this compares lowercased — a bare `slug === 'index'` is correct only
  * for callers whose input was already normalized, and silently wrong for the ones handling

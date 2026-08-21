@@ -142,6 +142,36 @@ the three defects were introduced BY the fix rather than found in the original c
    guaranteed-notFound (and a possible hard failure under `output: export`). Index entries are now
    skipped for that shape; catch-all is unaffected, since it reads the already-collapsed segments.
 
+**Round 2** (adversarial pass on the fix commit + a final whole-diff review) found three more,
+two of them again introduced by the round-1 fix:
+
+4. **A FIFTH copy of the forward rule.** `content-reader.ts`'s `buildEntryPath` — the `path`
+   field on every `read()`/`readByUrlPath()` result, an adopter-visible API — did not collapse an
+   index slug either, so reading an index entry handed back `/docs/index`, the URL this branch
+   had just made a 404. Same defect class as the preview builder, one file over. Now collapsed
+   through the same predicate.
+5. **`defaultBuildPath` was left behind.** Sharing `isIndexSlug` with `computeEntryUrl` made the
+   two DISAGREE on a case-variant index slug (`content/docs/Index` → `/docs` vs `/docs/index`),
+   because `content-tree.ts` still used a case-sensitive `endsWith('/index')` string test. The
+   tree's answer was the one that no longer round-trips. Now shared, and
+   `content-tree.test.ts` pins the two against each other — the agreement had never been
+   asserted, which is why nothing caught it. `default-build-path-url-rule-copy.md`'s
+   "verified to agree … mixed case" line was corrected in the same pass; this branch is what
+   briefly falsified it.
+6. **A page could silently stop being generated.** The `shape: 'single'` skip (fix 3) is correct,
+   but an adopter routing a collection ONLY through `[slug]`, with an index entry and no
+   collection route, loses that landing page at upgrade with no error and no guard trip. Now
+   called out explicitly in the migration guide's "To adopt" as the one case to check.
+
+Also hardened: the duplicate-URL error advised "rename or remove one of the colliding entries",
+which is unfollowable for the self-collision case (two sibling collections sharing a name make
+ONE entry enumerate twice, so both `entryPath`s are identical and there is only one file). It now
+says so.
+
+One round-2 finding was rejected after checking: a reviewer flagged `contentStaticParams` in the
+migration guide as a name that does not exist in the package. It is the scaffolded `lib/canopy.ts`
+alias adopters actually have. The wording was made precise rather than "fixed".
+
 Also corrected in review: the published "check your own content" sample did not compile
 (`collectRoutableEntries` returns `RoutableEntry`, which drops the `entryPath` that
 `findDuplicateUrlPaths` needs — it takes `listEntries()` output), and several doc sentences

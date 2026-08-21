@@ -490,9 +490,16 @@ export function assertNoDuplicateUrlPaths(items: readonly UrlScanItem[], phaseLa
   const duplicates = findDuplicateUrlPaths(items)
   if (duplicates.length === 0) return
 
-  const lines = duplicates.map(
-    ({ urlPath, entryPaths }) => `  - ${urlPath} — claimed by ${entryPaths.join(', ')}`,
-  )
+  const lines = duplicates.map(({ urlPath, entryPaths }) => {
+    // Identical entryPaths means ONE entry was enumerated more than once, not two entries
+    // colliding — the remedy below ("rename or remove one of them") is unfollowable, since
+    // there is only one file. The known cause is two sibling collections sharing a name: both
+    // resolve to the same directory, so its entries are listed once per sibling.
+    const selfCollision = entryPaths.every((entryPath) => entryPath === entryPaths[0])
+    return selfCollision
+      ? `  - ${urlPath} — ${entryPaths.length}x ${entryPaths[0]} (the same entry, enumerated more than once — usually two sibling collections sharing one name)`
+      : `  - ${urlPath} — claimed by ${entryPaths.join(', ')}`
+  })
 
   throw new Error(
     `CanopyCMS static build: found ${duplicates.length} ${duplicates.length === 1 ? 'URL' : 'URLs'} claimed by more than one entry during ${phaseLabel}:\n${lines.join('\n')}\n` +

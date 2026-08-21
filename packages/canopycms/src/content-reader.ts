@@ -8,6 +8,7 @@ import {
   type Slug,
 } from './paths'
 import { trimSlashes } from './paths/normalize'
+import { isIndexSlug } from './utils/entry-url'
 import { type OperatingMode } from './operating-mode'
 import type { CanopyServices } from './services'
 import type { BranchContext } from './types'
@@ -201,7 +202,11 @@ export const createContentReader = (options: ContentReaderOptions): ContentReade
         ? `${url}${url.includes('?') ? '&' : '?'}branch=${encodeURIComponent(opts.branch)}`
         : url
     const trimmed = base.endsWith('/') ? base.slice(0, -1) : base
-    const encodedSlug = encodeSlug(opts.slug)
+    // An index entry's URL is its COLLECTION's path. Without this collapse `path` handed back
+    // `/docs/index` for an entry that answers only at `/docs` -- `resolveUrlPathCandidates`
+    // deliberately does not resolve the former, so a caller linking `path` linked to a 404.
+    // Same decision as computeEntryUrl/listEntries/buildPreviewSrc, through the same predicate.
+    const encodedSlug = isIndexSlug(opts.slug) ? '' : encodeSlug(opts.slug)
     const url = encodedSlug ? `${trimmed}/${encodedSlug}` : trimmed || '/'
     return appendBranch(url)
   }

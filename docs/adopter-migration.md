@@ -375,13 +375,25 @@ case (URL paths are lowercased). An entry beside a sibling collection with **no*
 untouched — a landing page plus a folder of children is a legitimate shape and nothing about it
 is contested.
 
-**To adopt.** Usually nothing: the resolver change removes URLs no API ever advertised. Two
-exceptions worth checking. If you have a collection literally _named_ `index`, `/x/index` was
+**To adopt.** Mostly nothing: the resolver change removes URLs no API ever advertised. Three
+exceptions worth checking.
+
+**If you route a collection through a single-segment `[slug]` route** — `shape: 'single'` static
+params, typically the scaffolded `contentStaticParams({ shape: 'single' })` — that helper no
+longer emits the collection's **index** entry. It never had a param that could address it (its
+URL is the collection's own path, not a slug under it), and the URL it did emit is one of the
+`.../index` URLs that now return null. **This is the one case where a page can silently stop
+being generated**, so check for it: if a collection has an index entry and you were relying on
+that route to render it, move it to the collection's own route (`app/posts/page.tsx`). Catch-all
+routes are unaffected — they use the already-collapsed segments. If you have a collection literally _named_ `index`, `/x/index` was
 advertised and now resolves to a **different** entry (that collection's own index, rather than its
 parent's — the previous answer was a bug). And if a build starts failing on a contested URL, the
 error names every colliding entry; rename or remove one of each pair. Note the build only fails if
-it enumerates through the package helpers (`contentStaticParams`, `collectStaticPaths`,
-`generateContentSitemap`) — a hand-rolled `generateStaticParams` over `listEntries` does not.
+it enumerates through Canopy's own helpers — `collectStaticPaths` / `collectRoutableEntries`,
+or the bound wrappers over them that `createNextCanopyContext` returns (the scaffolded
+`lib/canopy.ts` names them `contentStaticParams` and `contentSitemap`). A hand-rolled
+`generateStaticParams` over `listEntries` does not fail; call `findDuplicateUrlPaths` yourself
+there.
 To check before upgrading:
 
 ```ts

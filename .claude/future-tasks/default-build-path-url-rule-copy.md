@@ -16,11 +16,22 @@ its parent, lowercase — now has two implementations:
 
 They were verified to agree across nested collections, root index, a collection literally
 named `index`, an entry slugged `index` inside one, mixed case, dotted slugs, multi-segment
-content roots, and an empty content root. Nothing is broken. But two copies of one rule is
+content roots, and an empty content root. Nothing is broken.
+
+**Re-verified 2026-08-21, after a near-miss that is the argument for this task.** Making
+`computeEntryUrl`'s index test case-insensitive silently broke the mixed-case agreement above:
+for `content/docs/Index`, `computeEntryUrl` said `/docs` while `defaultBuildPath`'s
+`endsWith('/index')` string test still said `/docs/index` — and `/docs/index` is the answer that
+does NOT round-trip. Caught by review, not by a test, because nothing asserted the agreement.
+Both now route the index decision through `utils/entry-url.ts`'s shared `isIndexSlug`, and
+`content-tree.test.ts` pins the two against each other across case variants. The DUPLICATION
+below is unchanged — only the one sub-decision that drifted is now shared. But two copies of one rule is
 what the adopter migration guide names as the failure mode, and #1 was consolidated from two
 copies to one on exactly that reasoning — leaving a third undercuts it.
 
 ## Why it was not folded in with the rest
+
+(Still accurate — the 2026-08-21 change shared one decision, not the rule.)
 
 `defaultBuildPath` takes a full `logicalPath` plus a `kind`, and handles `kind: 'collection'`,
 which `computeEntryUrl` does not model. Delegating the entry case means splitting the last
