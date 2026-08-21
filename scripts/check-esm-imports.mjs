@@ -316,6 +316,96 @@ console.log(JSON.stringify(results))
   return { body, count: imports.length }
 }
 
+// Second guard, for the OTHER half of the same defect: the emitted .d.ts.
+//
+// The runtime probe above cannot see this. A .d.ts with an extensionless
+// relative import does not throw — TypeScript's recovery under
+// moduleResolution "node16"/"nodenext" is to resolve nothing and type the whole
+// import as `any`. So the adopter's build stays GREEN while every type this
+// package exports silently degrades to `any`; with skipLibCheck:true (what most
+// scaffolds set) there is not even a diagnostic. Both states were reproduced
+// against a real packed tarball before scripts/add-js-extensions.mjs learned to
+// rewrite .d.ts.
+//
+// Detecting "the type became any" directly is awkward, so this asserts the
+// mechanism instead: typecheck a consumer under nodenext with skipLibCheck OFF
+// and fail on any extension/resolution diagnostic (TS2834/TS2835/TS2307)
+// pointing INTO one of our packages' dist. Third-party diagnostics are ignored
+// — the sandbox deliberately has no @types/node, so dependencies produce their
+// own unrelated noise.
+const TYPE_DIAGNOSTIC_RE = /error TS(2834|2835|2307):/
+
+function checkDeclarationResolution(sandbox) {
+  const tsc = path.join(repoRoot, 'node_modules', 'typescript', 'bin', 'tsc')
+  if (!existsSync(tsc)) {
+    throw new Error(`typescript not found at ${tsc} — run \`pnpm install\` first`)
+  }
+
+  const probeDir = path.join(sandbox, 'types-probe')
+  mkdirSync(probeDir, { recursive: true })
+
+  // One import per testable entry point, type-only: enough to pull each
+  // entry's whole .d.ts graph into the program.
+  const specifiers = []
+  for (const { dir, subpaths } of PACKAGES) {
+    const pkg = loadPackageJson(dir)
+    for (const [subpath, mode] of Object.entries(subpaths)) {
+      if (mode !== 'test') continue
+      specifiers.push(subpath === '.' ? pkg.name : `${pkg.name}${subpath.slice(1)}`)
+    }
+  }
+
+  writeFileSync(
+    path.join(probeDir, 'consumer.ts'),
+    specifiers
+      .map((spec, i) => `import type * as m${i} from '${spec}'\nexport type T${i} = typeof m${i}`)
+      .join('\n') + '\n',
+  )
+  writeFileSync(
+    path.join(probeDir, 'package.json'),
+    JSON.stringify({ name: 'types-probe', private: true, type: 'module' }, null, 2),
+  )
+  writeFileSync(
+    path.join(probeDir, 'tsconfig.json'),
+    JSON.stringify(
+      {
+        compilerOptions: {
+          module: 'nodenext',
+          moduleResolution: 'nodenext',
+          target: 'es2022',
+          strict: true,
+          noEmit: true,
+          // MUST stay false: skipLibCheck:true is precisely what hides this.
+          skipLibCheck: false,
+          types: [],
+          baseUrl: '.',
+          paths: {},
+        },
+        files: ['consumer.ts'],
+      },
+      null,
+      2,
+    ),
+  )
+  // Resolve bare specifiers against the sandbox's node_modules.
+  symlinkSync(path.join(sandbox, 'node_modules'), path.join(probeDir, 'node_modules'), 'dir')
+
+  const ourDistPrefixes = PACKAGES.map(
+    ({ dir }) => `node_modules/${loadPackageJson(dir).name}/dist/`,
+  )
+  const result = spawnSync(process.execPath, [tsc, '-p', 'tsconfig.json'], {
+    cwd: probeDir,
+    encoding: 'utf8',
+  })
+  const output = `${result.stdout ?? ''}${result.stderr ?? ''}`
+  const ours = output
+    .split('\n')
+    .filter((line) => TYPE_DIAGNOSTIC_RE.test(line))
+    .filter((line) => ourDistPrefixes.some((prefix) => line.includes(prefix)))
+
+  return { specifiers, problems: ours }
+}
+
 function main() {
   checkCoverage()
 
@@ -365,7 +455,32 @@ function main() {
     process.exit(1)
   }
 
-  console.log(`check:esm passed — all ${results.length} entry point(s) imported cleanly.`)
+  console.log(`Runtime: all ${results.length} entry point(s) imported cleanly.`)
+
+  const { specifiers, problems } = checkDeclarationResolution(sandbox)
+  console.log(
+    `\nTypechecking ${specifiers.length} entry point(s)' declarations under ` +
+      'moduleResolution:nodenext...\n',
+  )
+  if (problems.length > 0) {
+    for (const line of problems.slice(0, 20)) console.log(`  FAIL  ${line.trim()}`)
+    if (problems.length > 20) console.log(`  ... and ${problems.length - 20} more`)
+    console.error(
+      `\ncheck:esm FAILED — ${problems.length} extension/resolution diagnostic(s) inside our ` +
+        'own published .d.ts under moduleResolution:nodenext. These do NOT throw at runtime: ' +
+        "TypeScript resolves nothing and types the import as `any`, so an adopter's build stays " +
+        'green while our types silently vanish. Almost certainly a .d.ts that kept an ' +
+        "extensionless relative import (`from './x'` rather than `from './x.js'`) — see " +
+        'scripts/add-js-extensions.mjs.',
+    )
+    // Sandbox left in place on failure for local debugging.
+    process.exit(1)
+  }
+  console.log(
+    `  OK    declarations resolve under nodenext for all ${specifiers.length} entry point(s).`,
+  )
+
+  console.log(`\ncheck:esm passed — runtime imports and nodenext type resolution both clean.`)
   rmSync(sandbox, { recursive: true, force: true })
 }
 
