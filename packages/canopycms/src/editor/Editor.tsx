@@ -73,7 +73,6 @@ export interface EditorEntry {
   label: string
   status?: string
   schema: EntrySchema
-  apiPath: string
   previewSrc?: string
   collectionPath?: LogicalPath
   collectionName?: string
@@ -130,6 +129,13 @@ export interface EditorProps {
   /** `media.publicBaseUrl` from config - prefixed onto asset URLs the editor builds (MediaLibrary/ImageField/MDX image dialog). Undefined means root-relative (editor and site share an origin). */
   assetBaseUrl?: string
   /**
+   * `CanopyClientConfig.basePath` - the deployment prefix the host Next.js app is served under
+   * (e.g. `/preview-123`). Prefixed onto every preview iframe `src` this component builds via
+   * `buildPreviewSrc`, so the iframe navigates to the entry's real served URL instead of the
+   * un-prefixed root. Undefined means the app is served at its origin's root (no-op).
+   */
+  basePath?: string
+  /**
    * Adopter-supplied overrides for how specific field types render, keyed by
    * field `type` (see `FormRenderer`'s `customRenderers` prop). Threaded
    * straight through to `FormRenderer` so this documented extension point is
@@ -167,6 +173,7 @@ export const Editor: React.FC<EditorProps> = ({
   currentUser = 'current-user',
   canResolveComments = true,
   assetBaseUrl,
+  basePath,
   AccountComponent,
   onAccountClick,
   onLogoutClick,
@@ -308,9 +315,9 @@ export const Editor: React.FC<EditorProps> = ({
         branchName: branchNameState,
         previewBaseByCollection,
         contentRoot,
+        basePath,
       }),
     setBusy: setEntriesLoading,
-    contentRoot,
   })
 
   // Keep the entry-type list referentially stable for as long as the create

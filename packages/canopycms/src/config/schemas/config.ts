@@ -36,6 +36,16 @@ export const operatingModeSchema = z.enum(['prod', 'dev'])
 export const deployedAsSchema = z.enum(['static', 'server']).default('server')
 export const contentRootSchema = relativePathSchema.default('content')
 export const sourceRootSchema = z.string().min(1).optional()
+// Lenient on shape (leading/trailing slashes, absolute-URL prefixes) -- `joinUrlPrefix`
+// normalizes all of that at every use site. Only reject a value that is nothing but
+// whitespace, since that can never be a meaningful deployment prefix and most likely
+// indicates a copy-paste/templating mistake in the adopter's config.
+export const basePathSchema = z
+  .string()
+  .refine((value) => value.trim().length > 0, {
+    message: 'basePath must not be empty or only whitespace',
+  })
+  .optional()
 export const deploymentNameSchema = z.string().default('prod')
 export const devContentSyncSchema = z.enum(['off', 'warn']).default('warn')
 
@@ -104,6 +114,7 @@ export const CanopyConfigSchema = z
     deploymentName: deploymentNameSchema.optional(),
     contentRoot: contentRootSchema.default('content'),
     sourceRoot: sourceRootSchema.optional(),
+    basePath: basePathSchema,
     editor: editorConfigSchema.optional(),
     authPlugin: z.custom<AuthPlugin>().optional(),
     entryLinkUrl: z.custom<EntryLinkUrlResolver>().optional(),

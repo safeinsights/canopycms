@@ -39,7 +39,6 @@ describe('useCommentSystem', () => {
     collectionName: 'posts',
     slug: 'test',
     type: 'entry',
-    apiPath: '/api/canopycms/main/content/posts/test',
     format: 'mdx',
     schema: [],
     previewSrc: 'preview-entry1',

@@ -58,7 +58,6 @@ describe('useDraftManager', () => {
     collectionName: 'posts',
     slug: 'test',
     type: 'entry',
-    apiPath: '/api/canopycms/main/content/posts/test',
     format: 'mdx',
     schema: [],
   }

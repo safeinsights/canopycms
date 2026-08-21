@@ -981,3 +981,47 @@ describe('mediaSchema', () => {
     expect(() => mediaSchema.parse({ adapter: 'cloudinary' })).toThrow()
   })
 })
+
+// basePath is the deployment prefix the host Next.js app is served under (e.g.
+// '/preview-123', matching next.config's basePath). See config/types.ts's CanopyConfig
+// doc comment for the full rationale, incl. disambiguation from collectStaticParams'
+// unrelated basePath option.
+describe('basePath', () => {
+  it('is undefined by default (no deployment prefix configured)', () => {
+    const config = validateCanopyConfig({ ...gitAuthor })
+    expect(config.basePath).toBeUndefined()
+  })
+
+  it('round-trips a configured basePath', () => {
+    const config = validateCanopyConfig({ ...gitAuthor, basePath: '/preview-123' })
+    expect(config.basePath).toBe('/preview-123')
+  })
+
+  it('accepts a basePath missing its leading slash -- joinUrlPrefix normalizes shape at every use site', () => {
+    expect(() => validateCanopyConfig({ ...gitAuthor, basePath: 'preview-123' })).not.toThrow()
+  })
+
+  it('accepts a basePath with trailing slashes -- joinUrlPrefix normalizes shape at every use site', () => {
+    expect(() => validateCanopyConfig({ ...gitAuthor, basePath: '/preview-123/' })).not.toThrow()
+  })
+
+  it('rejects a whitespace-only basePath', () => {
+    expect(() => validateCanopyConfig({ ...gitAuthor, basePath: '   ' })).toThrow()
+  })
+
+  it('rejects an empty-string basePath', () => {
+    expect(() => validateCanopyConfig({ ...gitAuthor, basePath: '' })).toThrow()
+  })
+})
+
+describe('defineCanopyConfig().client()', () => {
+  it('carries a configured basePath through to the client config', () => {
+    const { client } = defineCanopyConfig({ ...gitAuthor, basePath: '/preview-123' })
+    expect(client().basePath).toBe('/preview-123')
+  })
+
+  it('leaves basePath undefined on the client config when unset (regression guard)', () => {
+    const { client } = defineCanopyConfig({ ...gitAuthor })
+    expect(client().basePath).toBeUndefined()
+  })
+})

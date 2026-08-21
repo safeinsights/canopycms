@@ -13,6 +13,7 @@ import {
   resolveMessageOrigin,
   useCanopyPreview,
 } from './preview-bridge'
+import { buildPreviewSrc } from './editor-utils'
 
 /**
  * Simulate running inside an editor iframe: window.parent becomes a real
@@ -163,6 +164,61 @@ describe('useCanopyPreview', () => {
     )
 
     await waitFor(() => expect(getByTestId('value').textContent).toBe('updated'))
+  })
+
+  // buildPreviewSrc (editor-utils.ts) and resolvePreviewPath's window.location fallback
+  // (this file) are computed independently -- one by the editor building the iframe `src`,
+  // the other by the preview page reading its own browser URL -- but MUST produce identical
+  // strings, or usePreviewData's `msg.path !== path` check silently drops every draft update
+  // (see editor-utils.ts's buildPreviewSrc doc comment). Next.js does NOT strip a configured
+  // `basePath` from the raw browser URL, so the served page's window.location.pathname
+  // literally includes it -- this proves buildPreviewSrc's basePath-prefixed output matches
+  // that real value byte-for-byte.
+  it("accepts a draft update whose path is buildPreviewSrc's basePath-prefixed output", async () => {
+    const parentWin = simulateFramed()
+    window.history.pushState({}, '', '/preview-123/docs/overview?branch=main')
+
+    const previewSrc = buildPreviewSrc(
+      { collectionPath: 'content/docs', slug: 'overview' },
+      { branchName: 'main', basePath: '/preview-123' },
+    )
+    // The invariant itself, checked directly before relying on it below.
+    expect(previewSrc).toBe(`${window.location.pathname}${window.location.search}`)
+
+    const { getByTestId } = render(<PreviewValue initialData={{ value: 'initial' }} />)
+
+    window.dispatchEvent(
+      trustedEvent(
+        { type: CANOPY_PREVIEW_MESSAGE, path: previewSrc, data: { value: 'updated' } },
+        parentWin,
+      ),
+    )
+
+    await waitFor(() => expect(getByTestId('value').textContent).toBe('updated'))
+  })
+
+  // The failure mode the basePath fix addresses: an UNprefixed previewSrc (what buildPreviewSrc
+  // produced before this change) silently stops matching window.location once the app is
+  // deployed under a basePath -- no error, the update just never arrives.
+  it('rejects a draft update whose path omits the basePath the real page is served under', async () => {
+    const parentWin = simulateFramed()
+    window.history.pushState({}, '', '/preview-123/docs/overview?branch=main')
+
+    const { getByTestId } = render(<PreviewValue initialData={{ value: 'initial' }} />)
+
+    window.dispatchEvent(
+      trustedEvent(
+        {
+          type: CANOPY_PREVIEW_MESSAGE,
+          path: '/docs/overview?branch=main',
+          data: { value: 'updated' },
+        },
+        parentWin,
+      ),
+    )
+
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(getByTestId('value').textContent).toBe('initial')
   })
 
   it('ignores draft messages when not framed', async () => {
