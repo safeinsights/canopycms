@@ -1,7 +1,13 @@
 import type { CanopyBuildContext } from '../context'
 import { isBuildMode } from '../build-mode'
 import type { ListEntriesItem } from '../content-listing'
-import { validateEntryData, type EntryFieldError } from '../validation/entry-validator'
+import {
+  findUnknownKeys,
+  validateEntryData,
+  type EntryFieldError,
+} from '../validation/entry-validator'
+import { findBodyFieldName } from '../utils/body-field'
+import { isDataOnlyFormat } from '../utils/format'
 
 /**
  * Framework-agnostic helpers for static-site generation. These produce neutral data structures
@@ -121,7 +127,13 @@ async function enumerateRoutableEntries<T>(
   // fresh create-scaffolds legitimately exist mid-edit. Only fail the actual production build —
   // an abandoned schema-invalid scaffold shipping into a static build silently drops that page's
   // route (or worse, renders broken), which is worse than a red build.
-  if (isBuildMode()) assertBuildEntriesValid(entries, phaseLabel)
+  //
+  // The unknown-key warning runs BEFORE the throwing guard, so a build about to go red still
+  // prints everything it found rather than dying on the first problem.
+  if (isBuildMode()) {
+    warnUnknownEntryKeys(entries, phaseLabel)
+    assertBuildEntriesValid(entries, phaseLabel)
+  }
   return entries.map((entry) => ({
     urlPath: entry.urlPath,
     segments: entry.urlPath === '/' ? [] : entry.urlPath.replace(/^\//, '').split('/'),
@@ -212,7 +224,15 @@ export interface InvalidBuildEntry {
  * `collectRoutableEntries<PostContent>`) can still be scanned — the scan re-guards the value
  * anyway, since on-disk data is never trusted.
  */
-type BuildScanItem = Pick<ListEntriesItem, 'entryPath' | 'schema'> & { data: unknown }
+type BuildScanItem = Pick<ListEntriesItem, 'entryPath' | 'schema'> & {
+  data: unknown
+  /**
+   * Only the unknown-key scan reads this, to recognise the md/mdx body key that `listEntries`
+   * merges into `data`. Optional so a caller assembling items by hand still typechecks; an
+   * absent format is treated as markdown-shaped, which errs toward under-reporting.
+   */
+  format?: ListEntriesItem['format']
+}
 
 /**
  * Deep-walk a plain data value (objects and arrays only — the shapes YAML/JSON parsing can
@@ -271,6 +291,86 @@ export function findInvalidEntries(items: readonly BuildScanItem[]): InvalidBuil
     }
   }
   return invalid
+}
+
+/**
+ * How many offending entries `warnUnknownEntryKeys` lists before summarising the rest. Bounds CI
+ * output for a schema-wide rename across a large content tree; the reported COUNT is never capped.
+ */
+const UNKNOWN_KEY_REPORT_LIMIT = 20
+
+/** An entry carrying data keys the schema no longer defines. */
+export interface EntryWithUnknownKeys {
+  entryPath: string
+  /** Canonical field paths, e.g. `author.nickname` or `blocks[2].headline`. */
+  fieldPaths: string[]
+}
+
+/**
+ * Scan listEntries-shaped items for data keys with no schema counterpart.
+ *
+ * The inverse of `findInvalidEntries`, and non-fatal by design: an unknown key is stale data,
+ * not broken data. A build must not go red for it — the page still renders, it is just quietly
+ * missing whatever the renamed field used to supply. `warnUnknownEntryKeys` is the reporting
+ * half. Both sit at module scope alongside `findInvalidEntries`/`assertBuildEntriesValid` and
+ * are deliberately NOT on `canopycms/server`, matching those two — the build wires them itself.
+ *
+ * Skips items with no resolved schema, and items whose schema is empty — "no schema" is not
+ * "every key is unknown". Same `normalizeDatesDeep` pass as the validity scan, so a hand-authored
+ * `date: 2024-01-15` is a plain value here too.
+ */
+export function findEntriesWithUnknownKeys(
+  items: readonly BuildScanItem[],
+): EntryWithUnknownKeys[] {
+  const found: EntryWithUnknownKeys[] = []
+  for (const item of items) {
+    if (!item.schema || item.schema.length === 0) continue
+    const data = normalizeDatesDeep(item.data) as Record<string, unknown>
+    // For md/mdx, `listEntries` merges the file's body into `data` under
+    // `findBodyFieldName(schema)` (readEntryData in content-listing.ts). When the schema declares
+    // an `isBody` field that name IS a schema field and this is a no-op -- but declaring one is
+    // optional, and with none the merge key falls back to the literal 'body', which the schema
+    // legitimately does not define. Without this the scan told every adopter whose md entry types
+    // omit `isBody` that their prose was a stale key to delete.
+    const bodyKey = isDataOnlyFormat(item.format ?? 'md')
+      ? undefined
+      : findBodyFieldName(item.schema)
+    const fieldPaths = findUnknownKeys(item.schema, data).filter((path) => path !== bodyKey)
+    if (fieldPaths.length > 0) {
+      found.push({ entryPath: item.entryPath, fieldPaths })
+    }
+  }
+  return found
+}
+
+/**
+ * Warn — never throw — about entries carrying keys the schema no longer defines.
+ *
+ * A production build is the one place that sees every entry at once, which makes it the only
+ * place a schema reshape's leftovers show up as a list rather than one mysteriously undefined
+ * value at a time.
+ */
+export function warnUnknownEntryKeys(items: readonly BuildScanItem[], phaseLabel: string): void {
+  const found = findEntriesWithUnknownKeys(items)
+  if (found.length === 0) return
+
+  // Capped, unlike the sibling assert. That one throws, so it prints once and the build stops;
+  // this one returns, and a Next build runs the enumeration several times (every catch-all route
+  // plus the sitemap). A schema-wide rename across a large tree would otherwise bury CI output
+  // under the same thousands of lines two or three times over. The count is always exact.
+  const shown = found.slice(0, UNKNOWN_KEY_REPORT_LIMIT)
+  const lines = shown.map(
+    ({ entryPath, fieldPaths }) => `  - ${entryPath} — ${fieldPaths.join(', ')}`,
+  )
+  if (found.length > shown.length) {
+    lines.push(`  …and ${found.length - shown.length} more`)
+  }
+
+  console.warn(
+    `CanopyCMS static build: ${found.length} ${found.length === 1 ? 'entry has' : 'entries have'} content keys not defined in their schema during ${phaseLabel}:\n${lines.join('\n')}\n` +
+      `These are usually left over from a renamed or reshaped field. Nothing reads them, and they are kept in the file on every save. ` +
+      `Add them to the schema or remove them from the content.`,
+  )
 }
 
 /**

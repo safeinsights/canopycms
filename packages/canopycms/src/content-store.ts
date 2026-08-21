@@ -3,8 +3,9 @@ import path from 'node:path'
 import type { Dirent } from 'node:fs'
 
 import matter from 'gray-matter'
-import { parse as yamlParse, stringify as yamlStringify } from 'yaml'
+import { parse as yamlParse } from 'yaml'
 import { atomicWriteFile } from './utils/atomic-write'
+import { serializeFrontmatter, serializeYaml } from './utils/content-serialize'
 import { withLock } from './utils/async-mutex'
 import {
   ContentWriteLockBusyError,
@@ -35,7 +36,7 @@ import { registerContentIndexForInvalidation } from './content-index-registry'
 import { bumpContentIndexGeneration, readContentIndexGeneration } from './content-index-generation'
 import { generateId } from './id'
 import { isNodeError } from './utils/error'
-import { filePathExists } from './utils/fs'
+import { filePathExists, readFileIfExists } from './utils/fs'
 import { asRecord, getFormatExtension } from './utils/format'
 import {
   normalizeFilesystemPath,
@@ -1122,14 +1123,36 @@ export class ContentStore {
             }
           }
 
+          // Comment preservation: re-serialise onto the file's OWN parsed document rather than
+          // a fresh one, so nodes the payload did not change -- and the comments attached to
+          // them -- survive the write. Without this every editor save silently deleted every
+          // comment in the file (JSON has no comment syntax, so it is unaffected and skips the
+          // read). See utils/content-serialize.ts.
+          //
+          // This makes the write a genuine read-modify-write of the content file, so WHERE the
+          // read happens matters: it is inside withLock(lockKey), inside
+          // withContentWriteExclusion ([SYNC-C1]), and after the expectedVersion stat above --
+          // so the bytes read here are the bytes that OCC check validated, and no rebase can be
+          // running against this branch. Do not hoist it out of the critical section.
+          //
+          // INVARIANT, and the one case that does NOT preserve comments: this reads the path
+          // being WRITTEN. A relocating write -- one where the ID resolves to a different
+          // relativePath, so the block below unlinks `staleOldAbsPath` -- finds nothing at the
+          // new path and falls back to a plain stringify, losing the old file's comments. Latent
+          // today: the editor renames through renameEntry(), which link()s the bytes across
+          // intact, and no caller passes `existingId`. If a relocating write ever becomes
+          // reachable, read the ID's current path here instead of `absolutePath`.
+          const existingRaw =
+            input.format === 'json' ? undefined : await readFileIfExists(absolutePath)
+
           // Serialize content string
           let content: string
           if (input.format === 'json') {
             content = `${JSON.stringify(input.data ?? {}, null, 2)}\n`
           } else if (input.format === 'yaml') {
-            content = yamlStringify(input.data ?? {})
+            content = serializeYaml(input.data ?? {}, existingRaw)
           } else {
-            content = matter.stringify(input.body, input.data ?? {})
+            content = serializeFrontmatter(input.body, input.data ?? {}, existingRaw)
           }
 
           await atomicWriteFile(absolutePath, content)

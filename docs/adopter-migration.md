@@ -290,6 +290,59 @@ reference fields whose target's prose you actually render or index.
 - **A follow-up `read()` of a referenced entry purely to get its body**, in code that renders a
   shared/referenced block. Set `includeBody: true` on the field instead.
 
+### Editor saves no longer delete comments in content files
+
+**What changed.** `ContentStore` used to write an entry by re-serialising a fresh plain object
+(`yaml.stringify` for `.yaml`, `gray-matter` for `md`/`mdx` frontmatter). Comments are in neither
+the object nor that round trip, so the first CMS save of a hand-authored entry silently deleted
+every comment in it — with no warning, and no recovery outside git. `canopycms sync` copies files
+byte-for-byte, so a dev team never saw this; an editorial team hit it on their first save.
+
+Writes now re-serialise onto the file's own parsed document, so a node whose value did not change
+keeps its comments (and its original quoting and block style). Both YAML entries and md/mdx
+frontmatter are covered. Reordering a list carries each comment with the content it was written
+about rather than leaving it on whatever now sits at that index. JSON is unaffected — it has no
+comment syntax.
+
+The payload is still authoritative about _content_: a key the editor removed is removed from the
+file, and a client that posts a partial payload still replaces the document, exactly as before.
+Comments are the only thing inherited from what was on disk.
+
+**To adopt.** Nothing. It applies to every save automatically.
+
+**Now deletable.** Any convention your team adopted to work around it — moving explanatory notes
+out of content files into a sidecar doc or a README, or a rule that comment-bearing entries must
+never be opened in the CMS. Content files can carry comments again, including notes that code
+elsewhere refers to by name.
+
+### Saves and builds now report content keys the schema does not define (#29)
+
+**What changed.** Entry validation walked the schema, so it could only ever report fields the
+schema already knew about. A key in the content with no schema counterpart was reported nowhere:
+rename or reshape a field and there was no editor error, no 422 and no build failure, while the
+old key persisted on disk indefinitely. The only symptom was a component receiving `undefined`.
+
+Two non-fatal reports now exist:
+
+- **On save**, unknown keys come back in the write response's `validationWarnings`, which the
+  editor already surfaces as a "Saved with warnings" notification. The save still succeeds.
+- **During a production build**, `collectStaticPaths` / `collectRoutableEntries` print a single
+  warning naming the offending entries and their key paths. The count is exact; the listing stops
+  after the first 20 and summarises the rest. The build still passes.
+
+Both report paths, not just names — `hero.kicker`, `blocks[2].headline` — and neither fires for an
+entry type with no schema at all, or for a block item's `template` discriminator. This is
+reporting only: nothing is rejected and nothing is stripped, and with the comment-preserving write
+above, an unknown key and its comments are still written back on every save.
+
+**To adopt.** Nothing to wire up. Expect the first build after upgrading to list keys you no
+longer use — that list is the point. For each one, either add the field to the entry type's schema
+or delete the key from the content.
+
+**Now deletable.** Any hand-rolled script that diffs content keys against a schema to catch drift
+after a rename, and any defensive `?? fallback` a component carries purely because nobody could
+tell whether a field was still populated.
+
 <!--
 Template for each entry — copy, don't improvise:
 

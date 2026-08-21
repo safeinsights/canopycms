@@ -3206,3 +3206,217 @@ describe('ContentStore duplicate content ID resilience (August 2026 baseline rev
     })
   })
 })
+
+/**
+ * An editor save used to re-serialise a fresh plain object over the file, so every comment in a
+ * content file was silently deleted the first time anyone edited it. Fixtures here are shaped
+ * like real adopter content: a top-of-file block comment, a comment on a nested key, and a
+ * comment inside a list — including a load-bearing `FLAG:` block that the adopter's own page
+ * code cites by name.
+ *
+ * See `.claude/future-tasks/resolved/content-comment-loss-on-editor-save.md`.
+ */
+describe('ContentStore comment preservation', () => {
+  const yamlSchema = {
+    collections: [
+      {
+        name: 'landing',
+        path: 'landing',
+        entries: [
+          {
+            name: 'page',
+            format: 'yaml' as const,
+            schema: [
+              { name: 'title', type: 'string' as const },
+              {
+                name: 'intro',
+                type: 'object' as const,
+                fields: [
+                  { name: 'heading', type: 'string' as const },
+                  { name: 'blurb', type: 'string' as const },
+                ],
+              },
+              { name: 'cards', type: 'string' as const, list: true },
+            ],
+          },
+        ],
+      },
+    ],
+  } as const
+
+  const COMMENTED_YAML = `# Landing page media rail.
+# Curated by hand — the CMS list order is the render order.
+
+title: Resources # shown in the hero
+intro:
+  # FLAG: these post cards are placeholders until the blog ships.
+  # The site's resources page cites this block by name — do not delete it.
+  heading: Latest from the blog
+  blurb: Placeholder copy.
+cards:
+  # First card is pinned to the top of the rail.
+  - Getting started
+  - Release notes # updated every Friday
+`
+
+  it('keeps every comment in a YAML entry across an editor save', async () => {
+    const root = await tmpDir()
+    const config = defineCanopyTestConfig({ schema: yamlSchema })
+    const store = new ContentStore(root, flattenSchema(yamlSchema, config.contentRoot))
+    const landing = unsafeAsLogicalPath('content/landing')
+
+    // Create the entry, then replace it on disk with the hand-authored, comment-bearing version
+    // an adopter would have committed.
+    const created = await store.write(landing, unsafeAsSlug('resources'), {
+      format: 'yaml',
+      data: { title: 'Resources' },
+    })
+    await fs.writeFile(created.absolutePath, COMMENTED_YAML, 'utf8')
+
+    // A save exactly like the editor's: the whole record back, with one field edited.
+    await store.write(landing, unsafeAsSlug('resources'), {
+      format: 'yaml',
+      data: {
+        title: 'Resources',
+        intro: { heading: 'Latest from the blog', blurb: 'Real copy now.' },
+        cards: ['Getting started', 'Release notes'],
+      },
+    })
+
+    const saved = await fs.readFile(created.absolutePath, 'utf8')
+    expect(saved).toContain('# Landing page media rail.')
+    expect(saved).toContain('# Curated by hand')
+    expect(saved).toContain('# FLAG: these post cards are placeholders until the blog ships.')
+    expect(saved).toContain("# The site's resources page cites this block by name")
+    expect(saved).toContain('# First card is pinned to the top of the rail.')
+    expect(saved).toContain('title: Resources # shown in the hero')
+    expect(saved).toContain('- Release notes # updated every Friday')
+    // ...and the edit actually landed.
+    expect(saved).toContain('blurb: Real copy now.')
+    expect(saved).not.toContain('Placeholder copy.')
+  })
+
+  it('removes a key the save dropped, comment and all', async () => {
+    const root = await tmpDir()
+    const config = defineCanopyTestConfig({ schema: yamlSchema })
+    const store = new ContentStore(root, flattenSchema(yamlSchema, config.contentRoot))
+    const landing = unsafeAsLogicalPath('content/landing')
+
+    const created = await store.write(landing, unsafeAsSlug('resources'), {
+      format: 'yaml',
+      data: { title: 'Resources' },
+    })
+    await fs.writeFile(created.absolutePath, COMMENTED_YAML, 'utf8')
+
+    await store.write(landing, unsafeAsSlug('resources'), {
+      format: 'yaml',
+      data: { title: 'Resources', cards: ['Getting started', 'Release notes'] },
+    })
+
+    const saved = await fs.readFile(created.absolutePath, 'utf8')
+    expect(saved).not.toContain('intro:')
+    expect(saved).not.toContain('# FLAG:')
+    expect(saved).not.toContain('Placeholder copy.')
+    // Untouched neighbours keep theirs.
+    expect(saved).toContain('# Landing page media rail.')
+    expect(saved).toContain('# First card is pinned to the top of the rail.')
+  })
+
+  it('keeps md/mdx frontmatter comments across an editor save', async () => {
+    const root = await tmpDir()
+    const schema = {
+      collections: [
+        {
+          name: 'posts',
+          path: 'posts',
+          entries: [
+            {
+              name: 'post',
+              format: 'md' as const,
+              schema: [
+                { name: 'draft', type: 'boolean' as const },
+                { name: 'title', type: 'string' as const },
+                { name: 'tags', type: 'string' as const, list: true },
+              ],
+            },
+          ],
+        },
+      ],
+    } as const
+
+    const config = defineCanopyTestConfig({ schema })
+    const store = new ContentStore(root, flattenSchema(schema, config.contentRoot))
+    const posts = unsafeAsLogicalPath('content/posts')
+
+    const created = await store.write(posts, unsafeAsSlug('hello'), {
+      format: 'md',
+      data: { title: 'Hello' },
+      body: 'Body.',
+    })
+    await fs.writeFile(
+      created.absolutePath,
+      `---
+# Post metadata. Keep \`draft\` first — the build reads it.
+draft: false
+title: Hello # displayed in the card
+tags:
+  # Order matters: the first tag is the primary category.
+  - guides
+  - release
+---
+
+Body text here.
+`,
+      'utf8',
+    )
+
+    await store.write(posts, unsafeAsSlug('hello'), {
+      format: 'md',
+      data: { draft: false, title: 'Goodbye', tags: ['guides', 'release'] },
+      body: 'Rewritten body.',
+    })
+
+    const saved = await fs.readFile(created.absolutePath, 'utf8')
+    expect(saved).toContain('# Post metadata. Keep `draft` first')
+    expect(saved).toContain('# Order matters: the first tag is the primary category.')
+    expect(saved).toContain('title: Goodbye # displayed in the card')
+    expect(saved).toContain('Rewritten body.')
+    expect(saved).not.toContain('Body text here.')
+  })
+
+  it('does not disturb a JSON entry', async () => {
+    const root = await tmpDir()
+    const schema = {
+      collections: [
+        {
+          name: 'settings',
+          path: 'settings',
+          entries: [
+            {
+              name: 'config',
+              format: 'json' as const,
+              schema: [{ name: 'title', type: 'string' as const }],
+            },
+          ],
+        },
+      ],
+    } as const
+
+    const config = defineCanopyTestConfig({ schema })
+    const store = new ContentStore(root, flattenSchema(schema, config.contentRoot))
+    const settings = unsafeAsLogicalPath('content/settings')
+
+    const created = await store.write(settings, unsafeAsSlug('site'), {
+      format: 'json',
+      data: { title: 'One' },
+    })
+    await store.write(settings, unsafeAsSlug('site'), {
+      format: 'json',
+      data: { title: 'Two' },
+    })
+
+    expect(await fs.readFile(created.absolutePath, 'utf8')).toBe(
+      `${JSON.stringify({ title: 'Two' }, null, 2)}\n`,
+    )
+  })
+})

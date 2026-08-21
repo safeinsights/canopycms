@@ -14,6 +14,7 @@ import type { EntrySchema, EntryTypeConfig, EntryValidationIssue, FlatSchemaItem
 import { defineEndpoint } from './route-builder'
 import { ReferenceValidator } from '../validation/reference-validator'
 import {
+  findUnknownKeys,
   mergeBodyIntoData,
   normalizeReferenceValues,
   validateEntryData,
@@ -76,6 +77,13 @@ export type ReferenceValidationResponse = ApiResponse<{
 export type RenameEntryResponse = ApiResponse<{
   newPath: string
 }>
+
+/**
+ * How many stale field paths the unknown-key warning names before summarising the rest. The
+ * editor shows warnings in one notification, so this bounds a schema-wide rename to a readable
+ * sentence rather than a wall of paths.
+ */
+const UNKNOWN_KEY_WARNING_LIMIT = 10
 
 export interface WriteContentBody {
   format: 'json' | 'md' | 'mdx' | 'yaml'
@@ -447,6 +455,40 @@ const writeContentHandler = async (
   // IDs already gave the hook bare IDs. Normalizing first makes the hook's input deterministic
   // regardless of caller.
 
+  // Keys with no counterpart in the schema. validateEntryData iterates the SCHEMA, so nothing
+  // reported the inverse: a renamed or reshaped field left its old key on disk forever (the
+  // editor round-trips the whole record, so every save rewrote it) and the only symptom was a
+  // component receiving `undefined`. Adopter request log item 29.
+  //
+  // Run against normalizedData -- the shape that will actually be persisted -- so the report
+  // matches the bytes, and so a resolved reference collapsed back to an ID string cannot be
+  // mistaken for anything. A warning, never a rejection: the key is still written (with its
+  // comments, see utils/content-serialize.ts), it is just not editable and nothing reads it.
+  //
+  // ONE issue, not one per key. The editor joins every warning into a single non-auto-closing
+  // notification (useEntryManager.ts), so one-per-key repeated the same explanatory sentence
+  // once per stale key, on every save, for a condition that is permanent until someone edits the
+  // schema. The keys are listed in the message instead, capped so a schema-wide rename cannot
+  // produce an unreadable wall of text. Worded for who can actually act: an editor cannot remove
+  // a key the form does not render, and cannot change the schema.
+  if (normalizedData !== undefined) {
+    const unknownKeys = findUnknownKeys(fields, normalizedData)
+    if (unknownKeys.length > 0) {
+      const shown = unknownKeys.slice(0, UNKNOWN_KEY_WARNING_LIMIT)
+      const overflow = unknownKeys.length - shown.length
+      const list = overflow > 0 ? `${shown.join(', ')} (and ${overflow} more)` : shown.join(', ')
+      validationWarnings = [
+        {
+          level: 'warning',
+          message:
+            `Saved. ${unknownKeys.length === 1 ? 'One field is' : `${unknownKeys.length} fields are`} ` +
+            `not part of this entry type’s schema: ${list}. They are kept in the file, but nothing ` +
+            `reads them — ask a developer to add them to the schema or remove them from the content.`,
+        },
+      ]
+    }
+  }
+
   if (validateEntry) {
     let issues: EntryValidationIssue[]
     try {
@@ -478,8 +520,10 @@ const writeContentHandler = async (
           .join('; '),
       }
     }
+    // Appended, not assigned: the unknown-key scan above may already have found some, and the
+    // editor shows the channel as one notification.
     const warnings = issues.filter((issue) => issue.level === 'warning')
-    if (warnings.length > 0) validationWarnings = warnings
+    if (warnings.length > 0) validationWarnings = [...(validationWarnings ?? []), ...warnings]
   }
 
   try {

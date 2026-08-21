@@ -3,11 +3,14 @@ import {
   collectRoutableEntries,
   collectStaticPaths,
   findInvalidEntries,
+  findEntriesWithUnknownKeys,
+  warnUnknownEntryKeys,
   assertBuildEntriesValid,
   type StaticPathEntry,
 } from './index'
 import type { ListEntriesItem, ListEntriesOptions } from '../content-listing'
 import type { EntrySchema } from '../config'
+import { mockConsole } from '../test-utils/console-spy'
 
 /** Minimal listEntries stub returning the given items (typed loosely — only fields the helper reads). */
 function fakeCtx(
@@ -125,6 +128,76 @@ describe('collectStaticPaths', () => {
 
       const result = await collectStaticPaths(ctx)
       expect(result).toHaveLength(1)
+    })
+
+    it('warns about stale keys during a build without failing it', async () => {
+      vi.stubEnv('CANOPY_BUILD_MODE', 'true')
+      const consoleSpy = mockConsole()
+      try {
+        const ctx = fakeCtx([
+          {
+            urlPath: '/posts/a',
+            slug: 'a' as never,
+            entryType: 'post',
+            entryPath: 'content/posts/a' as never,
+            format: 'json',
+            schema: [{ name: 'title', type: 'string' }] as EntrySchema,
+            data: { title: 'A', subtitle: 'renamed away' },
+          },
+        ])
+
+        const result = await collectStaticPaths(ctx)
+        expect(result).toHaveLength(1)
+        expect(consoleSpy).toHaveWarned('subtitle')
+      } finally {
+        consoleSpy.restore()
+      }
+    })
+
+    it('warns BEFORE the throwing guard, so a failing build still reports both', async () => {
+      vi.stubEnv('CANOPY_BUILD_MODE', 'true')
+      const consoleSpy = mockConsole()
+      try {
+        const ctx = fakeCtx([
+          {
+            urlPath: '/posts/draft',
+            slug: 'draft' as never,
+            entryType: 'post',
+            entryPath: 'content/posts/draft' as never,
+            format: 'json',
+            schema: requiredTitleSchema,
+            data: { subtitle: 'renamed away' },
+          },
+        ])
+
+        await expect(collectStaticPaths(ctx)).rejects.toThrow('CanopyCMS static build:')
+        expect(consoleSpy).toHaveWarned('subtitle')
+      } finally {
+        consoleSpy.restore()
+      }
+    })
+
+    it('stays quiet outside build mode', async () => {
+      vi.stubEnv('CANOPY_BUILD_MODE', '')
+      const consoleSpy = mockConsole()
+      try {
+        const ctx = fakeCtx([
+          {
+            urlPath: '/posts/a',
+            slug: 'a' as never,
+            entryType: 'post',
+            entryPath: 'content/posts/a' as never,
+            format: 'json',
+            schema: [{ name: 'title', type: 'string' }] as EntrySchema,
+            data: { title: 'A', subtitle: 'renamed away' },
+          },
+        ])
+
+        await collectStaticPaths(ctx)
+        expect(consoleSpy.all().warn).toEqual([])
+      } finally {
+        consoleSpy.restore()
+      }
     })
   })
 })
@@ -418,5 +491,193 @@ describe('assertBuildEntriesValid', () => {
     expect(message).toContain('content/posts/draft-one')
     expect(message).toContain('content/posts/draft-two')
     expect(message).not.toContain('content/posts/hello')
+  })
+})
+
+/**
+ * The inverse of `findInvalidEntries`: keys in the data with no schema counterpart. Non-fatal by
+ * design — the page still renders, it is just quietly missing whatever the renamed field used to
+ * supply, so a build reports rather than dies. Adopter request log item 29.
+ */
+describe('findEntriesWithUnknownKeys', () => {
+  const schema: EntrySchema = [
+    { name: 'title', type: 'string' },
+    { name: 'hero', type: 'object', fields: [{ name: 'headline', type: 'string' }] },
+  ]
+
+  it('finds nothing when every key is in the schema', () => {
+    expect(
+      findEntriesWithUnknownKeys([
+        { entryPath: 'content/posts/a' as never, schema, data: { title: 'A' } },
+      ]),
+    ).toEqual([])
+  })
+
+  it('reports stale keys per entry, path-qualified', () => {
+    expect(
+      findEntriesWithUnknownKeys([
+        { entryPath: 'content/posts/a' as never, schema, data: { title: 'A' } },
+        {
+          entryPath: 'content/posts/b' as never,
+          schema,
+          data: { title: 'B', subtitle: 'stale', hero: { headline: 'H', kicker: 'also stale' } },
+        },
+      ]),
+    ).toEqual([{ entryPath: 'content/posts/b', fieldPaths: ['subtitle', 'hero.kicker'] }])
+  })
+
+  it('does not report the md body that listEntries merges in when no isBody field is declared', () => {
+    // `findBodyFieldName` falls back to the literal 'body' when a schema declares no `isBody`
+    // field -- which is legal config -- and `listEntries` merges the file's prose in under that
+    // name. Reporting it told the adopter their page content was a stale key to delete.
+    const mdSchema: EntrySchema = [{ name: 'title', type: 'string' }]
+    expect(
+      findEntriesWithUnknownKeys([
+        {
+          entryPath: 'content/posts/a' as never,
+          schema: mdSchema,
+          format: 'md',
+          data: { title: 'A', body: '# Prose' },
+        },
+      ]),
+    ).toEqual([])
+  })
+
+  it('still reports other stale keys on an md entry alongside the body', () => {
+    const mdSchema: EntrySchema = [{ name: 'title', type: 'string' }]
+    expect(
+      findEntriesWithUnknownKeys([
+        {
+          entryPath: 'content/posts/a' as never,
+          schema: mdSchema,
+          format: 'md',
+          data: { title: 'A', body: '# Prose', subtitle: 'stale' },
+        },
+      ]),
+    ).toEqual([{ entryPath: 'content/posts/a', fieldPaths: ['subtitle'] }])
+  })
+
+  it('does report a literal `body` key on a data-only entry, where nothing merges one in', () => {
+    const jsonSchema: EntrySchema = [{ name: 'title', type: 'string' }]
+    expect(
+      findEntriesWithUnknownKeys([
+        {
+          entryPath: 'content/settings/a' as never,
+          schema: jsonSchema,
+          format: 'json',
+          data: { title: 'A', body: 'stale' },
+        },
+      ]),
+    ).toEqual([{ entryPath: 'content/settings/a', fieldPaths: ['body'] }])
+  })
+
+  it('respects a custom isBody field name', () => {
+    const customBody: EntrySchema = [
+      { name: 'title', type: 'string' },
+      { name: 'content', type: 'markdown', isBody: true },
+    ]
+    expect(
+      findEntriesWithUnknownKeys([
+        {
+          entryPath: 'content/posts/a' as never,
+          schema: customBody,
+          format: 'md',
+          data: { title: 'A', content: '# Prose' },
+        },
+      ]),
+    ).toEqual([])
+  })
+
+  it('skips an item whose schema could not be resolved', () => {
+    expect(
+      findEntriesWithUnknownKeys([
+        { entryPath: 'content/posts/mystery' as never, schema: undefined, data: { any: 1 } },
+      ]),
+    ).toEqual([])
+  })
+
+  it('skips an item with an empty schema — no schema is not "everything is unknown"', () => {
+    expect(
+      findEntriesWithUnknownKeys([
+        { entryPath: 'content/posts/typeless' as never, schema: [], data: { any: 1 } },
+      ]),
+    ).toEqual([])
+  })
+
+  it('normalizes gray-matter Date instances the same way the validity scan does', () => {
+    const dateSchema: EntrySchema = [{ name: 'publishedAt', type: 'datetime' }]
+    expect(
+      findEntriesWithUnknownKeys([
+        {
+          entryPath: 'content/posts/dated' as never,
+          schema: dateSchema,
+          data: { publishedAt: new Date('2024-01-15') },
+        },
+      ]),
+    ).toEqual([])
+  })
+})
+
+describe('warnUnknownEntryKeys', () => {
+  const schema: EntrySchema = [{ name: 'title', type: 'string' }]
+
+  it('warns without throwing, naming the entry and the keys', () => {
+    const consoleSpy = mockConsole()
+    try {
+      expect(() =>
+        warnUnknownEntryKeys(
+          [
+            {
+              entryPath: 'content/posts/b' as never,
+              schema,
+              data: { title: 'B', subtitle: 'stale' },
+            },
+          ],
+          'sitemap generation',
+        ),
+      ).not.toThrow()
+      expect(consoleSpy).toHaveWarned('content/posts/b')
+      expect(consoleSpy).toHaveWarned('subtitle')
+      expect(consoleSpy).toHaveWarned('sitemap generation')
+    } finally {
+      consoleSpy.restore()
+    }
+  })
+
+  it('says nothing when there is nothing to say', () => {
+    const consoleSpy = mockConsole()
+    try {
+      warnUnknownEntryKeys(
+        [{ entryPath: 'content/posts/a' as never, schema, data: { title: 'A' } }],
+        'sitemap generation',
+      )
+      expect(consoleSpy.all().warn).toEqual([])
+    } finally {
+      consoleSpy.restore()
+    }
+  })
+})
+
+describe('warnUnknownEntryKeys output volume', () => {
+  const schema: EntrySchema = [{ name: 'title', type: 'string' }]
+
+  it('caps the listing but never the count', () => {
+    const items = Array.from({ length: 50 }, (_, i) => ({
+      entryPath: `content/posts/p${i}` as never,
+      schema,
+      format: 'json' as const,
+      data: { title: 'x', stale: 1 },
+    }))
+    const consoleSpy = mockConsole()
+    try {
+      warnUnknownEntryKeys(items, 'sitemap generation')
+      const [message] = consoleSpy.all().warn
+      expect(message).toContain('50 entries have')
+      expect(message).toContain('…and 30 more')
+      expect(message).toContain('content/posts/p19')
+      expect(message).not.toContain('content/posts/p20')
+    } finally {
+      consoleSpy.restore()
+    }
   })
 })
