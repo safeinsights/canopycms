@@ -249,9 +249,23 @@ waiting on a save:
     spot interruption, or the ASG rolling the instance — which happens on every
     `cdk deploy`, while `stop()` drains for at most `taskTimeoutMs`) reads as dirty
     forever, so without this it was `skippedDirty` on every cycle for good while
-    `branch-health` scanned it as healthy. Aborting is safe here precisely because the
-    lock is held: no writer is live, and a rebase replays **committed** history, so the
-    abort discards only the half-applied replay.
+    `branch-health` scanned it as healthy.
+
+    **The abort is not lossless, and this is the canonical place to say so.** A
+    `rebase --abort` hard-resets tracked files. While the worker was DOWN nothing held
+    this lock, so an editor could have saved into the wedged clone and received a 200 —
+    that save is working-tree state, and the abort reverts it. (New, untracked entry
+    files survive; edits to existing ones do not.) Taking the lock here prevents a
+    _further_ save racing the abort; it cannot recover one that already landed.
+    Aborting is still correct — the alternative is a branch wedged forever whose tree
+    serves conflict-marker content to editors — but it must not be silent, so the
+    recovery logs by path every working-tree modification it is about to discard. It
+    keys that on the working-tree status column only: an interrupted replay's own
+    cleanly-merged files are already STAGED (`M `) and survive the abort, while an
+    editor's save is an unstaged modification (` M`) that does not. One case escapes
+    the log and is called out in the code — a save onto one of the rebase's own
+    conflicted paths reads `UU` either way, so `git status` cannot distinguish it.
+
   - **The exit guarantee**, in the same `finally` that releases the lock, so no exit path
     — including an unexpected throw — can leave a clone mid-rebase. It must be in the
     `finally` and not the outer per-branch `catch`: that catch runs _after_ the lock is
