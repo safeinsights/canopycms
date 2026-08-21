@@ -6,8 +6,8 @@ with read-only `gh api` — it is real end to end, not compensated by branch
 protection.
 
 Overlaps by subject, not by content, with
-[document-release-process.md](document-release-process.md) (nothing describes
-either publish channel) and [pr172-deferred-by-decision.md](pr172-deferred-by-decision.md)
+[document-release-process.md](../document-release-process.md) (nothing describes
+either publish channel) and [pr172-deferred-by-decision.md](../pr172-deferred-by-decision.md)
 #5 (`workflow_dispatch` publishing from unreviewed branches). Do them together.
 
 ## 1. publish.yml claims "only run after CI passes" — no such mechanism exists
