@@ -27,7 +27,6 @@ import type {
 export interface S3AssetStoreOptions {
   bucket: string
   region: string
-  publicBaseUrl?: string
   /** Defaults to 50 MiB. */
   maxUploadBytes?: number
   /** Override the default bucket-prefix layout (rarely needed). */

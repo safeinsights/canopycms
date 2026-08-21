@@ -11,13 +11,35 @@ const identitySrc = `/assets/t/orig/${HASH32}/photo.png`
 const staticSvgSrc = `/assets/${HASH32}/logo.svg`
 
 describe('module purity', () => {
-  it('imports nothing beyond asset-prefixes.ts and transform-directives.ts (no node:/sharp reachable from here)', () => {
+  // The whitelist admits ../utils/url-prefix deliberately: sharing ONE join with
+  // static/seo.ts is what stopped assetUrl carrying a weaker copy of the absolute-URL and
+  // prefix-shape rules (see utils/url-prefix.ts's header). url-prefix.ts imports only
+  // utils/sanitize-href.ts, whose sole dependency is the global URL, so nothing node: becomes
+  // reachable. `pnpm lint:bundle` is the real enforcement — this guard just fails faster.
+  it('imports nothing beyond asset-prefixes, transform-directives and utils/url-prefix (no node:/sharp reachable from here)', () => {
     const filePath = path.join(path.dirname(fileURLToPath(import.meta.url)), 'asset-url.ts')
     const source = readFileSync(filePath, 'utf-8')
     const specifiers = [...source.matchAll(/from '([^']+)'/g)].map((m) => m[1])
     expect(specifiers.length).toBeGreaterThan(0)
     for (const specifier of specifiers) {
-      expect(specifier).toMatch(/^\.\/(asset-prefixes|transform-directives)$/)
+      expect(specifier).toMatch(
+        /^(\.\/(asset-prefixes|transform-directives)|\.\.\/utils\/url-prefix)$/,
+      )
+    }
+  })
+
+  it('the shared join module is itself pure (its only import is sanitize-href)', () => {
+    const filePath = path.join(
+      path.dirname(fileURLToPath(import.meta.url)),
+      '..',
+      'utils',
+      'url-prefix.ts',
+    )
+    const source = readFileSync(filePath, 'utf-8')
+    const specifiers = [...source.matchAll(/from '([^']+)'/g)].map((m) => m[1])
+    expect(specifiers.length).toBeGreaterThan(0)
+    for (const specifier of specifiers) {
+      expect(specifier).toBe('./sanitize-href')
     }
   })
 })
@@ -80,7 +102,7 @@ describe('assetUrl - transform srcs', () => {
 })
 
 describe('assetUrl - baseUrl joining', () => {
-  it('joins baseUrl without double slashes regardless of trailing/leading slash', () => {
+  it('joins an absolute baseUrl without double slashes, with or without a trailing slash', () => {
     expect(assetUrl({ src: identitySrc }, { baseUrl: 'https://cms.example.com' })).toBe(
       `https://cms.example.com${identitySrc}`,
     )
@@ -91,6 +113,93 @@ describe('assetUrl - baseUrl joining', () => {
 
   it('omits baseUrl entirely when not given (root-relative)', () => {
     expect(assetUrl({ src: identitySrc })).toBe(identitySrc)
+  })
+})
+
+// The basePath case this whole option had to be made safe for: a site deployed under a Next
+// `basePath` serves everything at `/{prefix}/…`, and Next auto-prefixes only its own
+// Image/Link/Script - never a raw string URL - so the prefix has to be applied here.
+describe('assetUrl - baseUrl as a same-origin path prefix (basePath deployments)', () => {
+  it('prefixes a bare path onto a transform src', () => {
+    expect(assetUrl({ src: identitySrc }, { baseUrl: '/preview-123' })).toBe(
+      `/preview-123${identitySrc}`,
+    )
+  })
+
+  it('prefixes a bare path onto a static (svg) src too', () => {
+    expect(assetUrl({ src: staticSvgSrc }, { baseUrl: '/preview-123' })).toBe(
+      `/preview-123${staticSvgSrc}`,
+    )
+  })
+
+  it('applies the prefix alongside directive merging, not instead of it', () => {
+    expect(assetUrl({ src: identitySrc }, { baseUrl: '/preview-123', width: 320 })).toBe(
+      `/preview-123/assets/t/w=320/${HASH32}/photo.png`,
+    )
+  })
+
+  it('strips a trailing slash, and any run of them, from the prefix', () => {
+    expect(assetUrl({ src: identitySrc }, { baseUrl: '/preview-123/' })).toBe(
+      `/preview-123${identitySrc}`,
+    )
+    expect(assetUrl({ src: identitySrc }, { baseUrl: '/preview-123///' })).toBe(
+      `/preview-123${identitySrc}`,
+    )
+  })
+
+  it('supplies a missing leading slash rather than emitting a document-relative URL', () => {
+    // 'preview-123' is the shape an env var often carries. Without normalization this produced
+    // `preview-123/assets/…`, which resolves against the CURRENT page - so it happened to work
+    // on `/about` and silently fetched the wrong URL on `/blog/post`.
+    expect(assetUrl({ src: identitySrc }, { baseUrl: 'preview-123' })).toBe(
+      `/preview-123${identitySrc}`,
+    )
+  })
+
+  it('treats a slash-only or empty prefix as no prefix at all', () => {
+    expect(assetUrl({ src: identitySrc }, { baseUrl: '/' })).toBe(identitySrc)
+    expect(assetUrl({ src: identitySrc }, { baseUrl: '' })).toBe(identitySrc)
+    // '//' would otherwise concatenate to `//assets/…`, which a browser reads as
+    // protocol-relative - a request to a host literally named `assets`.
+    expect(assetUrl({ src: identitySrc }, { baseUrl: '//' })).toBe(identitySrc)
+  })
+
+  it('preserves a literal protocol-relative prefix (an intentional off-site CDN pointer)', () => {
+    expect(assetUrl({ src: identitySrc }, { baseUrl: '//cdn.example.com' })).toBe(
+      `//cdn.example.com${identitySrc}`,
+    )
+  })
+
+  it('applies the prefix to every srcset entry', () => {
+    expect(assetSrcSet({ src: identitySrc }, [320, 640], { baseUrl: '/preview-123' })).toBe(
+      `/preview-123/assets/t/w=320/${HASH32}/photo.png 320w, ` +
+        `/preview-123/assets/t/w=640/${HASH32}/photo.png 640w`,
+    )
+  })
+})
+
+describe('assetUrl - an already-absolute src is never prefixed', () => {
+  // Regression: the old join checked only whether the PATH started with '/', so an off-site src
+  // was concatenated onto the base as if it were a path - producing
+  // `/preview-123/https://cdn.example.com/x.png`. Reachable because the MDX image dialog's
+  // "By URL" tab stores arbitrary author-typed srcs.
+  it('returns a scheme-qualified src unchanged even with a baseUrl', () => {
+    const offSite = 'https://cdn.example.com/x.png'
+    expect(assetUrl({ src: offSite }, { baseUrl: '/preview-123' })).toBe(offSite)
+    expect(assetUrl({ src: offSite }, { baseUrl: 'https://cms.example.com' })).toBe(offSite)
+  })
+
+  it('returns a protocol-relative src unchanged even with a baseUrl', () => {
+    const offSite = '//cdn.example.com/x.png'
+    expect(assetUrl({ src: offSite }, { baseUrl: '/preview-123' })).toBe(offSite)
+  })
+
+  it('neutralizes a backslash-spelled off-origin src instead of prefixing it', () => {
+    // `/\evil.com/x` parses to origin https://evil.com in a browser despite looking
+    // site-relative. It must not survive into an <img src>.
+    expect(assetUrl({ src: '/\\evil.com/x.png' }, { baseUrl: '/preview-123' })).toBe(
+      '/preview-123/x.png',
+    )
   })
 })
 

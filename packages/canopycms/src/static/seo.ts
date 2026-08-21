@@ -11,6 +11,15 @@
  */
 
 import { neutralizeImplicitOffOrigin } from '../utils/sanitize-href'
+import { isAbsoluteUrl, joinUrlPrefix, stripTrailingSlashes } from '../utils/url-prefix'
+
+/**
+ * Re-exported so this module's public surface (and `canopycms/server`'s, via `static/index.ts`)
+ * is unchanged by their move to `utils/url-prefix.ts` — where they now sit beside
+ * `joinUrlPrefix`, the shared join that `assets/asset-url.ts` also needs and that must not
+ * import anything under `static/`.
+ */
+export { isAbsoluteUrl, stripTrailingSlashes }
 
 /** og:type values covered by the recommended group. */
 export type SeoOgType = 'website' | 'article' | 'profile'
@@ -154,43 +163,6 @@ export function isNoindexEntry(entryData: unknown, opts: SeoFieldLocation = {}):
 }
 
 /**
- * An off-site URL: either scheme-qualified (`https://…`) or LITERAL protocol-relative
- * (`//cdn…`). Both name a host we don't control, so neither may be rewritten against the site
- * origin — `resolveSeoUrl` passes a `true` result through verbatim.
- *
- * Deliberately narrower than "resolves off-origin": a WHATWG-backslash-equivalent spelling
- * (`/\evil.com`, `\\evil.com`, `\/evil.com` — see `utils/sanitize-href.ts`'s
- * `isImplicitlyOffOrigin`) also resolves off-origin in a browser, but is NOT recognized here as
- * an intentional off-site pointer the way a literal `//cdn…` is. `resolveSeoUrl` handles that
- * case separately, by neutralizing (`neutralizeImplicitOffOrigin`) rather than passing through: a
- * `false` result here isn't a guarantee the value is a safe site-relative path on its own, only
- * that it isn't a *declared* off-site one.
- */
-export function isAbsoluteUrl(url: string): boolean {
-  return /^[a-z][a-z0-9+.-]*:\/\//i.test(url) || url.startsWith('//')
-}
-
-/**
- * Strip trailing slashes without a regex.
- *
- * The obvious `replace(/\/+$/, '')` is a polynomial-ReDoS shape (CodeQL
- * `js/polynomial-redos`, flagged high): on a value that is mostly slashes but does not end in
- * one, the engine retries `\/+` from every position and the match cost is quadratic in the
- * input length. `siteUrl` is adopter-supplied and can reach here from config or an env var, so
- * it counts as uncontrolled. A character scan is linear and needs no reasoning about
- * backtracking.
- *
- * Exported (from `canopycms/server`) so adopter code normalizing its own site-origin env var —
- * e.g. a `SITE_URL` constant built from `NEXT_PUBLIC_SITE_URL` — has a package-provided linear
- * way to do it instead of reaching for the same regex this function replaced.
- */
-export function stripTrailingSlashes(value: string): string {
-  let end = value.length
-  while (end > 0 && value.charCodeAt(end - 1) === 47 /* '/' */) end--
-  return value.slice(0, end)
-}
-
-/**
  * Append a trailing slash to a site-relative path, matching a site that serves `/contact/`.
  *
  * Leaves the root (`/`) and file-like paths (a last segment containing a dot, e.g.
@@ -242,12 +214,11 @@ export interface ResolveSeoUrlOptions {
  */
 export function resolveSeoUrl(pathOrUrl: string, opts: ResolveSeoUrlOptions = {}): string {
   if (isAbsoluteUrl(pathOrUrl)) return pathOrUrl
+  // Neutralize BEFORE the trailing-slash step, which is the order this has always run in:
+  // `withTrailingSlash` inspects the last path segment, and a backslash-equivalent spelling
+  // changes what that segment is. `joinUrlPrefix` neutralizes again (idempotent) and supplies
+  // the leading slash, so only the trailing-slash decision needs to happen here.
   const safePathOrUrl = neutralizeImplicitOffOrigin(pathOrUrl)
-  const normalized = opts.trailingSlash
-    ? withTrailingSlash(safePathOrUrl)
-    : safePathOrUrl.startsWith('/')
-      ? safePathOrUrl
-      : `/${safePathOrUrl}`
-  const origin = opts.siteUrl === undefined ? undefined : stripTrailingSlashes(opts.siteUrl)
-  return origin ? origin + normalized : normalized
+  const normalized = opts.trailingSlash ? withTrailingSlash(safePathOrUrl) : safePathOrUrl
+  return joinUrlPrefix(opts.siteUrl, normalized)
 }

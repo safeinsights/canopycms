@@ -1,11 +1,12 @@
 /**
  * Build/adjust transform URLs for `<img>`/srcset without pulling in the
- * server-only transform engine. Isomorphic - only depends on
- * transform-directives.ts and the plain `ASSET_PREFIXES` constant, neither
- * of which import node builtins, so this is safe to import from client
- * (editor) code as well as during static builds.
+ * server-only transform engine. Isomorphic - depends only on
+ * transform-directives.ts, the plain `ASSET_PREFIXES` constant, and
+ * utils/url-prefix.ts, none of which import node builtins, so this is safe to
+ * import from client (editor) code as well as during static builds.
  */
 
+import { joinUrlPrefix } from '../utils/url-prefix'
 import { ASSET_PREFIXES } from './asset-prefixes'
 import {
   formatDirectives,
@@ -26,18 +27,33 @@ export interface AssetUrlOptions {
   format?: OutputFormat
   quality?: number
   crop?: CropRect
-  /** Prefixed onto the result, e.g. `media.publicBaseUrl` when the editor is served from a different origin than the site. */
+  /**
+   * Where the `/assets` URL space is mounted **as seen by this renderer**. Prefixed onto the
+   * result at render time.
+   *
+   * This is the ONE prefix concept for asset URLs; there is deliberately no second "basePath"
+   * option beside it. Two shapes are legitimate, and they are alternatives, never composed:
+   *
+   * - An absolute origin (`https://assets.example.com`) — assets served from another origin.
+   *   `media.publicBaseUrl` is one source of this, and is the source the editor uses; it is
+   *   validated as an absolute URL, so it structurally cannot carry the second shape.
+   * - A same-origin path prefix (`/preview-123`) — the site is deployed under a Next `basePath`
+   *   AND its assets are served by Next (`withCanopy`'s `/assets/:path*` rewrite, which Next
+   *   auto-prefixes). NOT the right value on a CloudFront/CDK deployment, where the asset
+   *   behaviors are anchored at the distribution root and a `basePath` does not move them —
+   *   there the correct value is none at all. See the README's asset-mount table.
+   *
+   * It is a per-render option rather than a config field precisely because the editor and the
+   * public site can legitimately have different answers.
+   *
+   * **Render-time only — never stored.** A stored `src` is always root-relative (see
+   * `assets/asset-src.ts`), because content moves between branches and environments. Nothing
+   * that writes content may bake this prefix in.
+   */
   baseUrl?: string
 }
 
 const TRANSFORM_URL_PREFIX = `/${ASSET_PREFIXES.transform}/`
-
-function joinBaseUrl(baseUrl: string | undefined, urlPath: string): string {
-  if (!baseUrl) return urlPath
-  const trimmedBase = baseUrl.endsWith('/') ? baseUrl.slice(0, -1) : baseUrl
-  const trimmedPath = urlPath.startsWith('/') ? urlPath : `/${urlPath}`
-  return `${trimmedBase}${trimmedPath}`
-}
 
 /**
  * Merge `opts` over an already-parsed directive set - opts win when given,
@@ -69,7 +85,7 @@ export function assetUrl(ref: AssetRef, opts: AssetUrlOptions = {}): string {
   const { src } = ref
 
   if (!src.startsWith(TRANSFORM_URL_PREFIX)) {
-    return joinBaseUrl(opts.baseUrl, src)
+    return joinUrlPrefix(opts.baseUrl, src)
   }
 
   const rest = src.slice(TRANSFORM_URL_PREFIX.length)
@@ -77,7 +93,7 @@ export function assetUrl(ref: AssetRef, opts: AssetUrlOptions = {}): string {
   if (!parsed.ok) {
     // Malformed src (shouldn't happen for a src canopycms itself wrote) -
     // nothing sensible to merge onto, so return it unchanged rather than throw.
-    return joinBaseUrl(opts.baseUrl, src)
+    return joinUrlPrefix(opts.baseUrl, src)
   }
 
   const merged = mergeDirectives(parsed.directives, opts)
@@ -87,7 +103,7 @@ export function assetUrl(ref: AssetRef, opts: AssetUrlOptions = {}): string {
   const ext = !merged.identity && merged.format !== undefined ? merged.format : parsed.ext
 
   const newSrc = `${TRANSFORM_URL_PREFIX}${formatDirectives(merged)}/${parsed.hash32}/${parsed.slug}.${ext}`
-  return joinBaseUrl(opts.baseUrl, newSrc)
+  return joinUrlPrefix(opts.baseUrl, newSrc)
 }
 
 /**
