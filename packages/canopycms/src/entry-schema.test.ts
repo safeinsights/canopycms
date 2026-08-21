@@ -8,6 +8,8 @@ import {
   defineSeoFieldGroup,
   type BlockComponentRegistry,
   type BlockValueOf,
+  buildResolvedReference,
+  RESOLVED_REFERENCE_KEYS,
   type EntryTypesFromRegistry,
   type ResolvedReferenceMeta,
   type TypeFromEntrySchema,
@@ -865,5 +867,63 @@ describe('EntryTypesFromRegistry', () => {
     expectTypeOf<PartnerContent>().toEqualTypeOf<TypeFromEntrySchema<typeof partnerSchema>>()
 
     expect(true).toBe(true)
+  })
+})
+
+describe('buildResolvedReference', () => {
+  const meta: ResolvedReferenceMeta = {
+    id: 'aB3cD4eF5gH6',
+    slug: 'signup',
+    collection: 'content/snippets',
+    urlPath: '/snippets/signup',
+  }
+
+  it('carries the target data alongside the metadata', () => {
+    const result = buildResolvedReference({ title: 'Sign up', ctaText: 'Go' }, meta)
+    expect(result).toEqual({ title: 'Sign up', ctaText: 'Go', ...meta })
+  })
+
+  it.each(RESOLVED_REFERENCE_KEYS)('does not let target data shadow %s', (key) => {
+    // The write boundary recovers a reference's id from `value.id`, so a target modelling one
+    // of these as content used to make a re-save persist the wrong value and silently repoint
+    // the reference. Metadata is applied last precisely to prevent that.
+    const result = buildResolvedReference({ [key]: 'CONTENT-VALUE', title: 'Sign up' }, meta)
+    expect(result[key]).toBe(meta[key])
+    expect(result.title).toBe('Sign up')
+  })
+
+  it.each(RESOLVED_REFERENCE_KEYS)('does not let an embedded body shadow %s either', (key) => {
+    // The body is assigned by KEY rather than spread, so it was the one way around the
+    // ordering above. (The entry schema registry also rejects such a schema outright; this
+    // pins the structural guarantee independently of that check.)
+    const result = buildResolvedReference({ title: 'Sign up' }, meta, {
+      fieldName: key,
+      value: 'THE PROSE',
+    })
+    expect(result[key]).toBe(meta[key])
+  })
+
+  it('places an embedded body under its own field name', () => {
+    const result = buildResolvedReference({ title: 'Sign up' }, meta, {
+      fieldName: 'prose',
+      value: 'THE PROSE',
+    })
+    expect(result.prose).toBe('THE PROSE')
+  })
+
+  it('omits an empty body rather than writing an empty string', () => {
+    // Matches `readEntryData`, which merges a body only when truthy -- so a listed md entry
+    // with no prose and a resolved reference to it agree on having no body key at all.
+    const result = buildResolvedReference({ title: 'Sign up' }, meta, {
+      fieldName: 'prose',
+      value: '',
+    })
+    expect('prose' in result).toBe(false)
+  })
+
+  it('does not mutate the data it was given', () => {
+    const data = { title: 'Sign up' }
+    buildResolvedReference(data, meta, { fieldName: 'prose', value: 'THE PROSE' })
+    expect(data).toEqual({ title: 'Sign up' })
   })
 })

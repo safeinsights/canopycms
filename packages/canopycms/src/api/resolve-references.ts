@@ -5,6 +5,8 @@ import type { BranchContextWithSchema } from '../types'
 import { ContentStore } from '../content-store'
 import { defineEndpoint } from './route-builder'
 import { ReferenceResolver } from '../reference-resolver'
+import { buildResolvedReference } from '../entry-schema'
+import { computeEntryUrl } from '../utils/entry-url'
 import { branchNameSchema, contentIdSchema } from './validators'
 
 export interface ResolveReferencesBody {
@@ -48,8 +50,9 @@ const resolveReferencesHandler = async (
   const { ids } = body
 
   const flatSchema = branchContext.flatSchema
+  const contentRootName = ctx.services.config.contentRoot || 'content'
   const store = new ContentStore(branchContext.branchRoot, flatSchema, {
-    contentRootName: ctx.services.config.contentRoot || 'content',
+    contentRootName,
   })
 
   // Get ID index (automatically loads if needed)
@@ -81,10 +84,21 @@ const resolveReferencesHandler = async (
 
         const doc = await store.read(result.collection, result.slug)
         if (doc && doc.data) {
-          resolved[id] = {
+          // Same shape the server-side resolver produces (content-store.ts's
+          // resolveSingleReferenceOnce): the target's data first, then the reserved keys.
+          //
+          // Both halves matter. The ORDER is the corruption guard -- a target modelling `id`
+          // as content must not shadow the real content ID. The extra KEYS are what stops the
+          // editor's live preview disagreeing with production: this endpoint feeds
+          // client-reference-resolver.ts, so without `urlPath` a component rendering
+          // `<a href={ref.urlPath}>` showed `undefined` while previewing and a real URL once
+          // published -- exactly the class of divergence live preview exists to rule out.
+          resolved[id] = buildResolvedReference(doc.data, {
             id,
-            ...doc.data,
-          }
+            slug: result.slug,
+            collection: result.collection,
+            urlPath: computeEntryUrl(result.collection, result.slug, contentRootName),
+          })
         }
       }
     } catch (error) {

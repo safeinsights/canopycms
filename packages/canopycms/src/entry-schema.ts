@@ -53,6 +53,15 @@ type InferableField = {
  * the same collection+slug rule `listEntries` publishes as `item.urlPath`, so an index entry
  * collapses to its parent path.
  */
+export const RESOLVED_REFERENCE_KEYS = ['id', 'slug', 'collection', 'urlPath'] as const
+
+/**
+ * Runtime counterpart of {@link ResolvedReferenceMeta}'s keys — the names reference resolution
+ * reserves on a resolved value. Kept beside the type so the two cannot drift, and consumed by
+ * both the resolver (which applies these last, so a target cannot shadow them) and the entry
+ * schema registry (which rejects a body field named one of them, since the body is assigned by
+ * key and would otherwise be the one way around that ordering).
+ */
 export interface ResolvedReferenceMeta {
   /** The referenced entry's 12-char content ID. */
   id: string
@@ -62,6 +71,41 @@ export interface ResolvedReferenceMeta {
   collection: string
   /** URL path for the referenced entry, e.g. `/guides/getting-started`. */
   urlPath: string
+}
+
+/**
+ * Assemble a resolved reference: the target's own data, then its body if the field asked to
+ * embed it, then the reserved metadata.
+ *
+ * Exists so the two places that construct one — the server resolver in content-store.ts and
+ * the editor's live-preview endpoint in api/resolve-references.ts — cannot drift. They already
+ * had: the preview endpoint kept the old `{ id, ...data }` order and carried none of the other
+ * three keys, so a component rendering `<a href={ref.urlPath}>` showed `undefined` while
+ * previewing and a real URL once published.
+ *
+ * The ordering is the contract, not a detail. Metadata last means a target that models `id` as
+ * a content field cannot shadow the real content ID — which matters because the write boundary
+ * recovers a reference's id from `value.id` (`referenceValueId`), so shadowing it made a
+ * re-save persist the wrong value and silently repoint the reference. Body before metadata
+ * closes the same hole for a body field named `id`; that schema is also rejected outright by
+ * the entry schema registry, so this ordering is the guarantee and that check is the loud
+ * error rather than a silent drop.
+ */
+export function buildResolvedReference(
+  data: Record<string, unknown>,
+  meta: ResolvedReferenceMeta,
+  body?: { fieldName: string; value: string | undefined },
+): Record<string, unknown> {
+  const resolved: Record<string, unknown> = { ...data }
+  // Truthiness, matching `readEntryData`'s own merge: a listed md entry with an empty body
+  // carries no body key, so resolving one to `''` would reintroduce a listed-vs-resolved
+  // shape disagreement.
+  if (body && body.value) resolved[body.fieldName] = body.value
+  resolved.id = meta.id
+  resolved.slug = meta.slug
+  resolved.collection = meta.collection
+  resolved.urlPath = meta.urlPath
+  return resolved
 }
 
 /**
