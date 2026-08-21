@@ -636,21 +636,6 @@ export class ContentStore {
   }
 
   /**
-   * Build absolute and relative paths with security validation.
-   * All entries use the unified filename pattern: {type}.{slug}.{id}.{ext}
-   *
-   * SECURITY BOUNDARY: This method prevents path traversal attacks by:
-   * 1. Validating that resolved paths stay within the content root
-   * 2. Checking slugs for malicious patterns (via validateSlug)
-   * 3. Using path.resolve to normalize paths before validation
-   *
-   * This validation is performed BEFORE file I/O in resolveDocumentPath(),
-   * ensuring permission checks happen before any file system access.
-   *
-   * @param options.existingId - Optional ID to use (for edits). If not provided, generates new ID.
-   * @param options.entryTypeName - For collections with multiple entry types, specify which one to use. Defaults to the default entry type.
-   */
-  /**
    * Refuse a create/rename that would give a second entry a `urlPath` another entry already
    * holds. See url-collision.ts for the two shapes that count, and the legitimate
    * landing-page-beside-a-collection shape that deliberately does not.
@@ -678,6 +663,22 @@ export class ContentStore {
 
     throw new UrlPathConflictError(message, claimant.physicalPath)
   }
+
+  /**
+   * Build absolute and relative paths with security validation.
+   * All entries use the unified filename pattern: {type}.{slug}.{id}.{ext}
+   *
+   * SECURITY BOUNDARY: This method prevents path traversal attacks by:
+   * 1. Validating that resolved paths stay within the content root
+   * 2. Checking slugs for malicious patterns (via validateSlug)
+   * 3. Using path.resolve to normalize paths before validation
+   *
+   * This validation is performed BEFORE file I/O in resolveDocumentPath(),
+   * ensuring permission checks happen before any file system access.
+   *
+   * @param options.existingId - Optional ID to use (for edits). If not provided, generates new ID.
+   * @param options.entryTypeName - For collections with multiple entry types, specify which one to use. Defaults to the default entry type.
+   */
 
   private async buildPaths(
     schemaItem: FlatSchemaItem,

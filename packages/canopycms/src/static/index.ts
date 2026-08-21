@@ -435,7 +435,9 @@ type UrlScanItem = Pick<ListEntriesItem, 'entryPath' | 'urlPath'>
  * silently has no route at all. The known ways to get there:
  *
  * - An entry whose slug matches a sibling collection that also has an `index` entry — the index
- *   collapses onto the collection's path, which is the entry's path too. (An entry beside a
+ *   collapses onto the collection's path, which is the entry's path too. The write boundary now
+ *   refuses to author this too (url-collision.ts), so reaching it means the content arrived some
+ *   other way — the same merge/PR/retrofit routes as the same-slug case below. (An entry beside a
  *   sibling collection with NO index entry is a different, legitimate shape: a landing page plus
  *   a folder of children, nothing contested.)
  * - Two entries whose slugs differ only by case, since `urlPath` is lowercased.

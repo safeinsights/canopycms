@@ -105,11 +105,22 @@ new name.
 
 The three real sites:
 
-1. `ContentStore.write`, create only (`!existed`). Deliberately not on an ordinary save: the
-   entry's URL is not changing, the collision predates the write, and refusing would trap the
-   author in an entry they could no longer fix. Runs inside the same per-entry lock and the same
-   in-lock re-resolution as the create-intent guard, so a concurrent create cannot slip between
-   the check and the write.
+1. `ContentStore.write`, create only. Deliberately not on an ordinary save: the entry's URL is not
+   changing, the collision predates the write, and refusing would trap the author in an entry they
+   could no longer fix.
+
+   "Create" is decided by whether the target file actually EXISTS, not by `buildPaths`' `existed`
+   flag. Review corrected an earlier version that used the flag: it is
+   `foundExisting || Boolean(options.existingId)`, and the `existingId` half is a caller
+   ASSERTION, so an id-addressed write recreating an externally-deleted entry skipped the guard
+   while in fact creating one. The checked slug likewise comes from the filename `buildPaths`
+   chose, not the caller's raw argument, which let `write(collection, '/guides', ...)` past.
+
+   Serialisation comes from `withContentWriteExclusion`, the branch-wide cross-host content-write
+   lock — NOT from the per-entry lock, as an earlier version of this record claimed. The two
+   halves of a contested pair live in different collections and so take different entry-lock keys;
+   only the branch-wide lock makes check-then-write atomic against the other half landing
+   concurrently.
 2. `ContentStore.renameEntry` — a rename moves the entry to a new URL, including the `index`
    direction, which is how an existing collection acquires a landing page.
 3. `SchemaOps.updateCollection`'s directory-rename branch. Only the index entry can collide there:

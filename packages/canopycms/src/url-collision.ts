@@ -43,10 +43,10 @@ const CONTENT_EXTENSIONS = ['.md', '.mdx', '.json', '.yaml'] as const
  * Deliberately formulated on `urlPath`, not on names. An entry whose slug matches a sibling
  * collection is only a problem when that collection ALSO has an index entry:
  *
- *   content/docs/guides.json          + content/docs/guides.{id}/  (no index)  -> fine.
+ *   content/docs/page.guides.{id}.json + content/docs/guides.{id}/  (no index)  -> fine.
  *     A landing page plus a folder of children. Both are reachable; nothing is contested.
  *
- *   content/docs/guides.json          + content/docs/guides.{id}/doc.index.{id}.md
+ *   content/docs/page.guides.{id}.json + content/docs/guides.{id}/doc.index.{id}.md
  *     -> contested. Both compute /docs/guides, so exactly one of them is reachable and the
  *        other silently has no route.
  *
@@ -59,8 +59,10 @@ const CONTENT_EXTENSIONS = ['.md', '.mdx', '.json', '.yaml'] as const
  * SCOPE, and do not widen it by accident: this guards the URL an ENTRY claims -- the `urlPath`
  * that `computeEntryUrl` derives and `listEntries` publishes. It is NOT "every URL the site
  * serves", and the two are not the same set. A framework adapter can route an entry somewhere
- * else (`generateContentSitemap`'s `pathFor` rewrites a sitemap `<loc>` AFTER enumeration has
- * happened), and adopters add hand-written routes Canopy knows nothing about. Those URLs are
+ * else — adopters add hand-written routes Canopy knows nothing about, and a framework adapter can
+ * rewrite a sitemap `<loc>` after enumeration (an in-flight `pathFor` option on
+ * `generateContentSitemap` does exactly that; not on this branch, so treat it as illustrative
+ * rather than as a symbol to go read). Those URLs are
  * invisible here by design -- there is no filesystem state to check them against at write time.
  * A future change that tries to make this the authority on "the set of URLs this site claims"
  * would be reaching past what the write boundary can actually see.

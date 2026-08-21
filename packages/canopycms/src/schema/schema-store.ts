@@ -801,6 +801,11 @@ export class SchemaOps {
         // Only the index entry can collide: the sibling-name check above has already established
         // that no `{slug}.{id}` directory exists at the destination, so no descendant DEEPER than
         // the index entry has anything to collide with.
+        //
+        // That holds only as far as the check above does, and it compares case-SENSITIVELY -- so
+        // `guides` beside an existing `Guides.{id}` passes it and descendants CAN then contest.
+        // See .claude/future-tasks/collection-sibling-name-uniqueness.md, which tracks both the
+        // missing create-side check and this case hole.
         if (await findIndexEntryIn(physicalPath)) {
           const conflicting = await findEntryBySlugIn(parentDir, updates.slug)
           if (conflicting) {

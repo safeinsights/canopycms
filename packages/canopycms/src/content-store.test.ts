@@ -24,7 +24,7 @@ import {
 import { tryAcquireContentWriteLock } from './utils/content-write-lock'
 import { getErrorMessage } from './utils/error'
 import { generateId } from './id'
-import { unsafeAsLogicalPath, unsafeAsSlug } from './paths/test-utils'
+import { unsafeAsContentId, unsafeAsLogicalPath, unsafeAsSlug } from './paths/test-utils'
 import { mockConsole } from './test-utils/console-spy'
 
 const tmpDir = async () => fs.mkdtemp(path.join(os.tmpdir(), 'canopycms-'))
@@ -3563,6 +3563,45 @@ describe('contested-URL guard', () => {
     await expect(
       store.renameEntry(guides, unsafeAsSlug('landing'), unsafeAsSlug('index')),
     ).rejects.toThrow(/share a URL with the "guides" entry in the parent/)
+  })
+
+  it("checks the slug that will be WRITTEN, not the caller's raw argument", async () => {
+    // buildPaths strips leading slashes and lowercases before choosing the filename, so a guard
+    // reading the raw argument compared "/GUIDES" against nothing and let the write through.
+    const { store } = await setup()
+    await store.write(guides, unsafeAsSlug('index'), { format: 'json', data: { title: 'L' } })
+
+    await expect(
+      store.write(docs, unsafeAsSlug('/GUIDES'), { format: 'json', data: { title: 'G' } }),
+    ).rejects.toThrow(/share a URL with the index entry/)
+  })
+
+  it('guards an id-addressed write that is a create in fact, not just per the caller', async () => {
+    // `buildPaths`' `existed` is `foundExisting || Boolean(existingId)`, and the existingId half
+    // is a caller ASSERTION. Recreating an entry deleted out from under the store (git, another
+    // process) is a create in fact, and must be guarded like one.
+    const { root, store } = await setup()
+    await store.write(docs, unsafeAsSlug('guides'), { format: 'json', data: { title: 'Guides' } })
+
+    const docsDir = path.join(root, 'content/docs')
+    const file = (await fs.readdir(docsDir)).find((f) => f.includes('.guides.'))!
+    // {type}.{slug}.{id}.{ext} — the id is the second-to-last segment.
+    const id = unsafeAsContentId(file.split('.').at(-2)!)
+
+    // The file vanishes behind the store's back (git, another process), which frees the URL...
+    await fs.rm(path.join(docsDir, file))
+    // ...so the collection legitimately acquires a landing page at that URL.
+    await store.write(guides, unsafeAsSlug('index'), { format: 'json', data: { title: 'L' } })
+
+    await expect(
+      store.write(
+        docs,
+        unsafeAsSlug('guides'),
+        { format: 'json', data: { title: 'G' } },
+        undefined,
+        id,
+      ),
+    ).rejects.toThrow(/share a URL with the index entry/)
   })
 
   it('ALLOWS a root index entry, which claims "/" and cannot be contested from above', async () => {

@@ -64,12 +64,17 @@ itself. Noted in `url-collision.ts` at the check that depends on it.
 ## Also: the existing rename check is case-sensitive
 
 Found 2026-08-21 by the review of the write-boundary guard. `updateCollection`'s sibling-name
-check tests `entry.name.startsWith(`${updates.slug}.`)` — a case-SENSITIVE comparison. On a
-case-sensitive filesystem (Linux, EFS — i.e. production, though not a Mac dev machine), renaming a
-collection to `guides` beside an existing `Guides.{id}` passes it. Every entry beneath the two then
-contests, far deeper than the index entry, and `schema-store.ts`'s comment asserting "no
-`{slug}.{id}` directory exists at the destination" is wrong in that case. Fold the case fix into
-the shared helper this task already proposes.
+check tests `entry.name.startsWith(`${updates.slug}.`)` — a case-SENSITIVE JS string comparison,
+so renaming a collection to `guides` beside an existing `Guides.{id}` passes it. Every entry
+beneath the two then contests, far deeper than the index entry, and `schema-store.ts`'s comment
+asserting "no `{slug}.{id}` directory exists at the destination" is wrong in that case. Fold the
+case fix into the shared helper this task already proposes.
+
+**This is platform-independent**, contrary to an earlier draft of this note which claimed it bit
+Linux/EFS but not a Mac. It is a string comparison, not a filesystem one — and `guides.{id1}` and
+`Guides.{id2}` differ by more than case, so a case-insensitive APFS does not stop them coexisting
+either. The only platform-adjacent fact is that a `Guides.{id}` directory can only ORIGINATE from
+git rather than from the editor, since `SAFE_NAME_PATTERN` is lowercase-only.
 
 ## Fix sketch
 
