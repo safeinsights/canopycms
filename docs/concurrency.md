@@ -89,14 +89,29 @@ assumptions on.
 (refresh timer, release fn) by the **target path** passed to `lock()`, not by
 `lockfilePath`. Two locks in one process that pass the same target alias each other
 even with different lock names — which is why `withOccFileLock` locks the FILE rather
-than its directory, and why the content-write lock anchors on
-`{branchRoot}/.canopy-meta` instead of the provisioning lock's
-`path.dirname(branchRoot)`, and why the settings-workspace init lock anchors on its own
+than its directory, why the content-write lock anchors on `{branchRoot}/.canopy-meta`
+rather than the branches root, and why the settings-workspace init lock anchors on its own
 `{workspaceRoot}/.settings-init` rather than `path.dirname(settingsRoot)` — which is
 `{workspaceRoot}`, the very target `ensureLocalSimulatedRemote` passes, and which settings
-init calls into while holding its lock. (Known consequence, not yet addressed: the
-provisioning locks for different branches all pass the shared content-branches directory
-and so already share one registry key.)
+init calls into while holding its lock.
+
+_This bit us._ Until 2026-08-20 both provisioning-lock variants passed the shared
+content-branches directory as the target, so every branch under one root aliased a single
+registry entry. Acquiring `.branch-b.init.lock` overwrote `.branch-a.init.lock`'s entry,
+so releasing A tore down B's refresh timer, made B's own release fail with `ERELEASED`,
+and leaked B's lock directory on disk until `stale` expired. The orphaned refresh timer
+then `stat`ed a path its owner had already deleted and raised `ECOMPROMISED` — which,
+under proper-lockfile's default `onCompromised` (rethrow from a timer), is an **uncaught
+exception that kills the process**. In the test suite that surfaced as an intermittent
+"Unhandled Error" failing the run while every test passed. Both variants now anchor on the
+lock marker's own path (`realpath: false`, since the marker need not exist yet) and pass an
+`onCompromised` that logs instead of crashing. Regression coverage:
+`utils/provisioning-lock.test.ts`.
+
+**Never let a compromised lock kill the process.** Always pass `onCompromised`. By the
+time proper-lockfile reports a compromise the mutual exclusion is already gone, so
+crashing protects nothing — it just converts a lock failure into an outage for a Lambda
+serving unrelated requests, or an unhandled error for a test worker.
 
 ### 4. Generation markers for regenerating caches — `resource-generation.ts`
 

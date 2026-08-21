@@ -2,6 +2,54 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 
 import lockfile from 'proper-lockfile'
+import type { LockOptions } from 'proper-lockfile'
+
+import { getErrorMessage } from './error'
+import { createDebugLogger } from './debug'
+
+const log = createDebugLogger({ prefix: 'ProvisioningLock' })
+
+/**
+ * Shared option set for both provisioning-lock variants.
+ *
+ * Two details are load-bearing and must stay in sync between them:
+ *
+ * 1. **The lock is anchored on the lock file's own path, not its directory.**
+ *    proper-lockfile keys its module-level `locks{}` bookkeeping (refresh
+ *    timer, release fn) by the TARGET path passed to `lock()` — not by
+ *    `lockfilePath`. Passing the shared branches directory made every branch
+ *    under one root alias a single registry entry: acquiring `.b.init.lock`
+ *    overwrote `.a.init.lock`'s entry, so releasing A tore down B's refresh
+ *    timer, made B's own release fail with `ERELEASED`, and leaked B's lock
+ *    directory on disk until `stale` expired. The orphaned refresh timer then
+ *    `stat`ed a path its owner had already deleted, which surfaced as an
+ *    `ECOMPROMISED` uncaught exception. `realpath: false` because the anchor
+ *    path is the lock marker itself and need not exist before we create it.
+ *    See docs/concurrency.md ("Anchor path matters").
+ *
+ * 2. **A compromised lock must not kill the process.** proper-lockfile's
+ *    default `onCompromised` rethrows from the refresh timer, i.e. an uncaught
+ *    exception. Crashing protects nothing here: by the time the lock is
+ *    reported compromised the mutual exclusion it provided is already gone, so
+ *    killing the process (a Lambda serving unrelated requests, or a Vitest
+ *    worker) only converts a lock failure into an outage. Log it and let the
+ *    in-flight operation finish — `initializeWorkspace` is idempotent, and a
+ *    genuine concurrent provisioner fails loudly on its own ("destination path
+ *    already exists") rather than corrupting anything silently.
+ */
+function provisioningLockOptions(lockPath: string, retries: LockOptions['retries']): LockOptions {
+  return {
+    lockfilePath: lockPath,
+    realpath: false,
+    retries,
+    stale: 30_000,
+    onCompromised: (err) => {
+      log.warn('lock', `Provisioning lock compromised mid-hold for ${lockPath}`, {
+        error: getErrorMessage(err),
+      })
+    },
+  }
+}
 
 /**
  * Acquire a cross-process filesystem lock for content provisioning.
@@ -16,7 +64,7 @@ import lockfile from 'proper-lockfile'
  *
  * Returns a release function — always call it in a `finally`.
  *
- * @param lockTargetDir directory the lock is anchored on (created if missing)
+ * @param lockTargetDir directory the lock marker lives in (created if missing)
  * @param lockName name of the on-disk lock marker, created inside lockTargetDir
  */
 export async function acquireProvisioningLock(
@@ -31,11 +79,17 @@ export async function acquireProvisioningLock(
   // perpetually colliding on the same tick. `stale` stays modest because proper-
   // lockfile auto-refreshes a live holder's lock, so it only expires when a
   // process actually dies.
-  return lockfile.lock(lockTargetDir, {
-    lockfilePath: path.join(lockTargetDir, lockName),
-    retries: { retries: 600, factor: 1, minTimeout: 300, maxTimeout: 800, randomize: true },
-    stale: 30_000,
-  })
+  const lockPath = path.join(lockTargetDir, lockName)
+  return lockfile.lock(
+    lockPath,
+    provisioningLockOptions(lockPath, {
+      retries: 600,
+      factor: 1,
+      minTimeout: 300,
+      maxTimeout: 800,
+      randomize: true,
+    }),
+  )
 }
 
 /**
@@ -62,9 +116,6 @@ export async function tryAcquireProvisioningLock(
 ): Promise<() => Promise<void>> {
   await fs.mkdir(lockTargetDir, { recursive: true })
 
-  return lockfile.lock(lockTargetDir, {
-    lockfilePath: path.join(lockTargetDir, lockName),
-    retries: 0,
-    stale: 30_000,
-  })
+  const lockPath = path.join(lockTargetDir, lockName)
+  return lockfile.lock(lockPath, provisioningLockOptions(lockPath, 0))
 }
