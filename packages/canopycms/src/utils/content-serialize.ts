@@ -22,6 +22,7 @@
 
 import matter from 'gray-matter'
 import {
+  isCollection,
   isMap,
   isNode,
   isScalar,
@@ -178,7 +179,14 @@ function reconcileNode(doc: Document, existing: unknown, value: unknown): unknow
   // `scalar.value` in place: an in-place type change would keep the old node's representation,
   // emitting `'42'` where the number 42 was meant.
   const fresh = doc.createNode(value)
-  carryComments(existing, fresh)
+  // Comments move with a changed VALUE, but not off a replaced STRUCTURE. `yaml` attaches a
+  // comment written above a collection's first entry to the collection node itself (the same
+  // rule that makes a leading list comment a list-head comment), so that node's comments are
+  // about its innards. Carrying them onto whatever replaces the collection put "# FLAG: explains
+  // the heading below" above a bare string that has no heading -- a comment over content it does
+  // not describe, which this module treats as worse than losing it. A comment written above the
+  // KEY is unaffected either way: it lives on the pair's key node, which is never replaced here.
+  if (!isCollection(existing)) carryComments(existing, fresh)
   return fresh
 }
 

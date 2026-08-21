@@ -284,6 +284,28 @@ describe('serializeYaml', () => {
     expect(out.indexOf('do not delete')).toBeLessThan(out.indexOf('- name: b'))
   })
 
+  it('drops a mapping-head comment when the mapping is replaced by a plain value', () => {
+    // `yaml` attaches a comment above a collection's first entry to the collection node, so it
+    // describes that collection's innards. Replacing the collection wholesale destroys what the
+    // comment was about; carrying it onto the replacement puts it over unrelated content.
+    const raw = `intro:
+  # FLAG: explains the heading below
+  heading: Hi
+other: keep
+`
+    const out = serializeYaml({ intro: 'now a string', other: 'keep' }, raw)
+    expect(out).toContain('intro: now a string')
+    expect(out).not.toContain('FLAG')
+    expect(out).toContain('other: keep')
+  })
+
+  it('still carries a comment when a plain value simply changes type', () => {
+    // The old node is a scalar, not a structure: the comment is about this key's value, which
+    // still exists. This is the case the shape-change rule must NOT swallow.
+    const out = serializeYaml({ ...ADOPTER_DATA, title: 42 }, ADOPTER_YAML)
+    expect(out).toContain('title: 42 # shown in the hero')
+  })
+
   it('treats a comment before the FIRST list item as a comment on the list', () => {
     // `yaml` attaches a comment that leads a collection to the collection node, not to its first
     // child (verified against parseDocument). So it stays at the head of the list whatever
@@ -291,6 +313,9 @@ describe('serializeYaml', () => {
     // and worth pinning because it is the one comment position that does NOT travel.
     const raw = 'items:\n  # about the list\n  - a\n  - b\n'
     const out = serializeYaml({ items: ['z', 'a', 'b'] }, raw)
+    // Presence first: without this, an absent comment gives indexOf === -1 and the position
+    // assertion below passes vacuously.
+    expect(out).toContain('# about the list')
     expect(out.indexOf('# about the list')).toBeLessThan(out.indexOf('- z'))
   })
 

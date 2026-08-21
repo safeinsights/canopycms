@@ -327,7 +327,8 @@ Two non-fatal reports now exist:
 - **On save**, unknown keys come back in the write response's `validationWarnings`, which the
   editor already surfaces as a "Saved with warnings" notification. The save still succeeds.
 - **During a production build**, `collectStaticPaths` / `collectRoutableEntries` print a single
-  warning listing every entry and every offending key path. The build still passes.
+  warning naming the offending entries and their key paths. The count is exact; the listing stops
+  after the first 20 and summarises the rest. The build still passes.
 
 Both report paths, not just names — `hero.kicker`, `blocks[2].headline` — and neither fires for an
 entry type with no schema at all, or for a block item's `template` discriminator. This is

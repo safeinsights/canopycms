@@ -1281,6 +1281,7 @@ describe('unknown content keys', () => {
     expect(res.data?.validationWarnings?.[0].level).toBe('warning')
     expect(res.data?.validationWarnings?.[0].message).toContain('subtitle')
     expect(res.data?.validationWarnings?.[0].message).toContain('schema')
+    expect(res.data?.validationWarnings?.[0].message).toContain('One field is')
   })
 
   it('names every stale key in one warning rather than repeating itself', async () => {
@@ -1343,8 +1344,10 @@ describe('unknown content keys', () => {
 
   it('does not mistake a resolved reference for a set of unknown keys', async () => {
     // Reads resolve references by default, so the editor posts back
-    // `{ ...target data, id, slug, collection, urlPath }` for a reference field. The value is
-    // normalized to an ID string before persisting, and the scan runs on that shape.
+    // `{ ...target data, id, slug, collection, urlPath }` for a reference field. Two independent
+    // reasons this is clean, and this pins the end-to-end result rather than either one: the scan
+    // runs on the normalized (id-string) shape, AND a schema-driven walk never descends into a
+    // reference value in the first place.
     const { ContentStore } = await import('../content-store')
     vi.mocked(ContentStore).mockImplementationOnce(function () {
       return {
