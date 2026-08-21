@@ -256,6 +256,48 @@ const FORCED_REFRESH_MIN_INTERVAL_MS = 5000
 /** Internal sentinel: a lookup result that suggests this store's index is stale. */
 const STALE_LOOKUP = Symbol('stale-index-lookup')
 
+/**
+ * Per-batch memo for reference resolution, keyed by content ID.
+ *
+ * Exists because a batch surface resolves the SAME reference over and over: a shared
+ * block ("call to action", "promo card") referenced by 40 pages costs 40 separate
+ * `read()`s of one small file in a single `listEntries()` pass, and a search-index build
+ * over thousands of entries multiplies that. Pass one cache through a whole batch and
+ * each distinct target is read once.
+ *
+ * Values are the in-flight **promise**, not the settled value, so concurrent lookups
+ * inside a `Promise.all` collapse onto one read rather than each starting their own —
+ * the same in-flight dedup `ContentStore.indexBuild` uses for index rebuilds.
+ *
+ * What is cached is the READ, not the object handed out: every occurrence receives its own
+ * deep copy, so a caller mutating one resolved reference cannot rewrite it for the other 39
+ * entries pointing at the same target. See `resolveSingleReference` for why that matters and
+ * why it does not undo the saving.
+ *
+ * ## Lifetime and invalidation
+ *
+ * There is no invalidation, and that is the design: a cache lives inside a single
+ * `listEntries()` / `buildContentTree()` call and is dropped when it returns. That is
+ * strictly shorter than the lifetime of the `ContentStore` whose memoized `idIndex()` it
+ * sits on top of, so it introduces no staleness window that store did not already have,
+ * and it is out of scope for the generation-marker protocol in
+ * `docs/concurrency.md` (which governs caches rebuilt by scanning that OUTLIVE the
+ * mutations they can miss). Never make one module-global, never persist one, and never
+ * reuse one across requests.
+ *
+ * Misses are memoized alongside hits, deliberately: one batch should be internally
+ * coherent, and a shared block resolving to data on page 1 and to `null` on page 40 of
+ * the same sitemap is worse than either consistent answer. The accepted cost is that a
+ * later occurrence in the same batch can no longer get incidentally lucky after a
+ * sibling lookup wins the stale-index refresh throttle. Each DISTINCT id still gets its
+ * full self-healing retry, because that retry happens inside the memoized promise (see
+ * `resolveSingleReference`).
+ */
+export type ReferenceResolveCache = Map<string, Promise<Record<string, unknown> | null>>
+
+/** Create a cache for one batch of reference resolution. See {@link ReferenceResolveCache}. */
+export const createReferenceResolveCache = (): ReferenceResolveCache => new Map()
+
 export class ContentStore {
   private readonly root: string
   /** See ContentStoreOptions.contentRootName — the ID index scan root. */
@@ -1606,12 +1648,40 @@ export class ContentStore {
   }
 
   /**
+   * Resolve every `reference` field in `data` against `fields`, returning a copy.
+   *
+   * This is what `read()` applies automatically (unless `resolveReferences: false`), exposed
+   * so BATCH surfaces can opt into the same resolution without duplicating the walk: the
+   * listing primitives in content-listing.ts and content-tree.ts read entry files straight
+   * off disk and never touch this store, so before this existed a `reference` field reached
+   * `listEntries()`/`buildContentTree()` callers as a bare id string or `null`.
+   *
+   * Pass one {@link ReferenceResolveCache} across a whole batch so a target referenced by
+   * many entries is read once rather than once per referencing entry. Omit `cache` and the
+   * behavior is exactly what `read()` has always done, unmemoized.
+   *
+   * **Path ACLs are not consulted for the targets.** Resolution goes through this store's
+   * own `read()`, below the per-entry permission check in content-reader.ts — so a resolved
+   * target may be an entry the caller could not `read()` directly. That is pre-existing
+   * `read()` behavior, matched here on purpose so one rule covers both; see the
+   * `resolveReferences` option in content-listing.ts for the note adopters see.
+   */
+  public async resolveReferences(
+    data: Record<string, unknown>,
+    fields: EntrySchema,
+    cache?: ReferenceResolveCache,
+  ): Promise<Record<string, unknown>> {
+    return this.resolveReferencesInData(data, fields, cache)
+  }
+
+  /**
    * Recursively resolve reference fields in data.
    * This traverses objects, arrays, and blocks to find and resolve all reference fields.
    */
   private async resolveReferencesInData(
     data: Record<string, unknown>,
     fields: EntrySchema,
+    cache?: ReferenceResolveCache,
   ): Promise<Record<string, unknown>> {
     const resolved = { ...data }
     const idIndex = await this.idIndex()
@@ -1622,6 +1692,7 @@ export class ContentStore {
         const groupResolved = await this.resolveReferencesInData(
           resolved,
           (field as InlineGroupFieldConfig).fields,
+          cache,
         )
         Object.assign(resolved, groupResolved)
         continue
@@ -1632,13 +1703,13 @@ export class ContentStore {
       if (field.type === 'reference') {
         // Single reference
         if (typeof value === 'string' && value) {
-          resolved[field.name] = await this.resolveSingleReference(value, idIndex)
+          resolved[field.name] = await this.resolveSingleReference(value, idIndex, cache)
         }
         // Array of references (list: true)
         else if (field.list && Array.isArray(value)) {
           resolved[field.name] = await Promise.all(
             value.map((id) =>
-              typeof id === 'string' ? this.resolveSingleReference(id, idIndex) : null,
+              typeof id === 'string' ? this.resolveSingleReference(id, idIndex, cache) : null,
             ),
           )
         }
@@ -1651,7 +1722,11 @@ export class ContentStore {
           resolved[field.name] = await Promise.all(
             value.map((item) =>
               typeof item === 'object' && item !== null
-                ? this.resolveReferencesInData(item as Record<string, unknown>, objectField.fields)
+                ? this.resolveReferencesInData(
+                    item as Record<string, unknown>,
+                    objectField.fields,
+                    cache,
+                  )
                 : item,
             ),
           )
@@ -1659,6 +1734,7 @@ export class ContentStore {
           resolved[field.name] = await this.resolveReferencesInData(
             value as Record<string, unknown>,
             objectField.fields,
+            cache,
           )
         }
       }
@@ -1677,6 +1753,7 @@ export class ContentStore {
               value: await this.resolveReferencesInData(
                 b.value as Record<string, unknown>,
                 template.fields,
+                cache,
               ),
             }
           }),
@@ -1688,7 +1765,63 @@ export class ContentStore {
   }
 
   /**
-   * Resolve a single reference ID to full entry data.
+   * Resolve a single reference ID to full entry data, memoized when a batch cache is
+   * supplied. Without a cache this is a straight pass-through to the uncached path, so
+   * `read()` behaves exactly as it always has.
+   *
+   * Every occurrence gets its OWN deep copy, even on a cache hit. Without that, the memo
+   * would hand one shared object to all 40 entries referencing the same block — a mutation
+   * in one caller's `extract` (truncating a body for a search index, deleting a field) would
+   * silently rewrite it for every sibling, and both `list: true` elements of `[id, id]` would
+   * be the same instance. The copy is what keeps the cache a pure performance optimization
+   * instead of a semantic change.
+   *
+   * Note the uncached path is NOT the clean baseline it looks like. For a json/yaml target it
+   * genuinely reparses fresh per occurrence, but for md/mdx gray-matter serves `data` from a
+   * process-global content-keyed cache, so `resolveSingleReferenceOnce`'s top-level spread
+   * severs exactly one level and NESTED frontmatter objects alias across occurrences, calls and
+   * requests. That is pre-existing `read()` behavior and out of scope here — deliberately, since
+   * touching it would change `read()` — but it means the cached path is the safer of the two,
+   * not a relaxation of a guarantee the uncached one provides. See
+   * `.claude/future-tasks/graymatter-cache-shared-frontmatter.md`.
+   *
+   * What the copy costs, measured rather than assumed (2000 occurrences of one target, local
+   * disk, so every read hits the page cache — the friendliest possible case for NOT caching):
+   * a snippet-sized target is ~63x cheaper to clone than to re-read-and-parse, while a 265KB
+   * JSON target is ~0.8x, i.e. cloning is marginally SLOWER than reparsing it. So the win is
+   * large in the case this exists for and roughly a wash at the pathological end, never a
+   * blow-up. Two things keep the bad end narrow: an md/mdx target resolves to its FRONTMATTER
+   * only (`read()` puts the body on `doc.body`, which is not spread in
+   * `resolveSingleReferenceOnce`), so body size is irrelevant no matter how long the document
+   * — only a genuinely huge JSON/YAML target reaches the wash. And in the deployment this
+   * targets, content lives on EFS/NFS where the syscall the memo removes dominates parse and
+   * clone alike, which the local-disk numbers above understate badly. Correctness is the
+   * reason for the copy regardless; the numbers are here so nobody has to re-derive them
+   * before touching this.
+   */
+  private resolveSingleReference(
+    id: string,
+    idIndex: ContentIdIndex,
+    cache?: ReferenceResolveCache,
+  ): Promise<Record<string, unknown> | null> {
+    if (!cache) return this.resolveSingleReferenceUncached(id, idIndex)
+    let pending = cache.get(id)
+    if (!pending) {
+      // Store the in-flight promise, and do it with no `await` in between: the whole point is
+      // that concurrent lookups from one Promise.all batch find it and collapse onto a single
+      // read. Memoizing the promise also keeps the self-healing retry below shared rather than
+      // repeated — see ReferenceResolveCache for why misses are cached too.
+      pending = this.resolveSingleReferenceUncached(id, idIndex)
+      cache.set(id, pending)
+    }
+    // The cached promise always has this handler attached, so it is never an unhandled
+    // rejection; entry data is plain parsed JSON/YAML/frontmatter, so it is always cloneable
+    // (verified against real parser output incl. `!!timestamp` Dates — the sole shape not
+    // preserved exactly is a `!!binary` Buffer, which clones to a plain Uint8Array).
+    return pending.then((resolved) => (resolved === null ? null : structuredClone(resolved)))
+  }
+
+  /**
    * Returns null if the reference is invalid or missing.
    * Includes id, slug, and collection fields for debugging.
    *
@@ -1702,8 +1835,13 @@ export class ContentStore {
    * idIndex() dedupes concurrent builds — so a sibling call that wins the
    * throttle and rebuilds heals every other miss in the same batch, not just
    * the first.
+   *
+   * A {@link ReferenceResolveCache} sits ABOVE this, never inside it, so every
+   * distinct id still runs the full refresh-and-retry above. What a cache changes
+   * is only that repeats of the SAME id in one batch share that one attempt's
+   * outcome instead of each getting an independent throw of the dice.
    */
-  private async resolveSingleReference(
+  private async resolveSingleReferenceUncached(
     id: string,
     idIndex: ContentIdIndex,
   ): Promise<Record<string, unknown> | null> {

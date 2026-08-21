@@ -88,6 +88,20 @@ export interface CollectRoutableEntriesOptions<T = Record<string, unknown>> {
   rootPath?: string
   /** Keep only entries matching this predicate. Runs after `data` is attached, so it can read content. */
   filter?: (entry: RoutableEntry<T>) => boolean
+  /**
+   * Resolve `reference` fields in each entry's `data`, the way `read()`/`readByUrlPath()` do.
+   * Defaults to `false`; see `ListEntriesOptions.resolveReferences` in content-listing.ts for
+   * the full rationale, cost and caveats.
+   *
+   * Turn this on for a surface that reads INSIDE an entry and must see referenced content —
+   * a search index over pages built from shared/referenced blocks is the case this exists
+   * for, since those blocks are otherwise indexed as an id string with no text in them.
+   * A sitemap needs `urlPath`/`updatedAt`/`noindex` only, so leave it off there.
+   *
+   * Not offered on `collectStaticPaths`, which discards `data` entirely — resolving
+   * references only to throw them away would be pure cost.
+   */
+  resolveReferences?: boolean
 }
 
 /**
@@ -100,8 +114,9 @@ async function enumerateRoutableEntries<T>(
   ctx: Pick<CanopyBuildContext, 'listEntries'>,
   rootPath: string | undefined,
   phaseLabel: string,
+  resolveReferences?: boolean,
 ): Promise<RoutableEntry<T>[]> {
-  const entries = await ctx.listEntries<T>({ rootPath })
+  const entries = await ctx.listEntries<T>({ rootPath, resolveReferences })
   // Build-time only: `next dev` runs generateStaticParams against the live working tree, where
   // fresh create-scaffolds legitimately exist mid-edit. Only fail the actual production build —
   // an abandoned schema-invalid scaffold shipping into a static build silently drops that page's
@@ -122,7 +137,8 @@ async function enumerateRoutableEntries<T>(
  * inside an entry to decide what to publish (sitemap, RSS, search index, index grids).
  *
  * Identical enumeration to `collectStaticPaths` (same single `listEntries` pass, same build-time
- * schema-validity guard); it simply keeps `data` and `updatedAt` instead of discarding them.
+ * schema-validity guard); it simply keeps `data` and `updatedAt` instead of discarding them, and
+ * can additionally opt into `reference` resolution, which a path-only enumeration has no use for.
  *
  * **Enumerates every entry type by default.** There is no allow-list of "publishable" types, and
  * that is deliberate: a sitemap built from a hand-maintained list of entry types silently omits
@@ -144,6 +160,7 @@ export async function collectRoutableEntries<T = Record<string, unknown>>(
     ctx,
     options.rootPath,
     'routable entry enumeration',
+    options.resolveReferences,
   )
   return options.filter ? entries.filter(options.filter) : entries
 }

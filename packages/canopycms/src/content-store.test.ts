@@ -17,6 +17,7 @@ import {
   ContentStore,
   ContentStoreError,
   ContentConflictError,
+  createReferenceResolveCache,
   DuplicateContentIdError,
 } from './content-store'
 import { tryAcquireContentWriteLock } from './utils/content-write-lock'
@@ -2471,6 +2472,137 @@ describe('ContentStore cross-process index consistency', () => {
     } finally {
       buildSpy.mockRestore()
     }
+  })
+
+  describe('resolveReferences with a batch cache', () => {
+    const refSchema = {
+      collections: [
+        {
+          name: 'authors',
+          path: 'authors',
+          entries: [
+            {
+              name: 'author',
+              format: 'md' as const,
+              schema: [{ name: 'name', type: 'string' as const }],
+            },
+          ],
+        },
+        {
+          name: 'posts',
+          path: 'posts',
+          entries: [
+            {
+              name: 'post',
+              format: 'md' as const,
+              schema: [
+                { name: 'title', type: 'string' as const },
+                { name: 'author', type: 'reference' as const },
+              ],
+            },
+          ],
+        },
+      ],
+    } as const
+
+    /** A store holding one author, plus that author's content ID and the post field list. */
+    const makeRefStore = async () => {
+      const root = await tmpDir()
+      const config = defineCanopyTestConfig({ schema: refSchema })
+      const store = new ContentStore(root, flattenSchema(refSchema, config.contentRoot))
+      const authorsPath = unsafeAsLogicalPath('content/authors')
+
+      await store.write(authorsPath, unsafeAsSlug('ada'), {
+        format: 'md',
+        data: { name: 'Ada' },
+        body: '',
+      })
+      const authorId = await store.getIdForEntry(authorsPath, unsafeAsSlug('ada'))
+      if (!authorId) throw new Error('expected an id for the author')
+
+      const postFields = refSchema.collections[1].entries[0].schema
+      return { store, authorId, postFields }
+    }
+
+    it('reads a repeated reference once across separate calls sharing one cache', async () => {
+      const { store, authorId, postFields } = await makeRefStore()
+      const cache = createReferenceResolveCache()
+
+      const readSpy = vi.spyOn(store, 'read')
+      try {
+        const first = await store.resolveReferences({ author: authorId }, postFields, cache)
+        const second = await store.resolveReferences({ author: authorId }, postFields, cache)
+
+        expect(first.author).toMatchObject({ slug: 'ada', name: 'Ada' })
+        expect(second.author).toMatchObject({ slug: 'ada', name: 'Ada' })
+        // This is the whole point of the cache: one shared block, one read, however
+        // many entries in the batch reference it.
+        expect(readSpy).toHaveBeenCalledTimes(1)
+      } finally {
+        readSpy.mockRestore()
+      }
+    })
+
+    it('reads independently when no cache is passed, preserving read() behavior', async () => {
+      const { store, authorId, postFields } = await makeRefStore()
+
+      const readSpy = vi.spyOn(store, 'read')
+      try {
+        await store.resolveReferences({ author: authorId }, postFields)
+        await store.resolveReferences({ author: authorId }, postFields)
+        // read() passes no cache, so it must keep resolving unmemoized exactly as before.
+        expect(readSpy).toHaveBeenCalledTimes(2)
+      } finally {
+        readSpy.mockRestore()
+      }
+    })
+
+    it('memoizes a miss too, so one batch answers the same id consistently', async () => {
+      const { store, postFields } = await makeRefStore()
+      const cache = createReferenceResolveCache()
+      const danglingId = generateId()
+
+      // Warm the index so the spy below counts only lookup work, not the initial build.
+      await store.idIndex()
+
+      const findSpy = vi.spyOn(ContentIdIndex.prototype, 'findById')
+      try {
+        const first = await store.resolveReferences({ author: danglingId }, postFields, cache)
+        expect(first.author).toBeNull()
+        const afterFirst = findSpy.mock.calls.length
+        expect(afterFirst).toBeGreaterThan(0)
+
+        const second = await store.resolveReferences({ author: danglingId }, postFields, cache)
+        expect(second.author).toBeNull()
+        // No further index work: the null is memoized alongside hits, so a shared block
+        // cannot resolve to data on one entry and null on another within one batch.
+        expect(findSpy.mock.calls.length).toBe(afterFirst)
+        expect(cache.size).toBe(1)
+      } finally {
+        findSpy.mockRestore()
+      }
+    })
+
+    it('collapses concurrent lookups of the same id onto a single read', async () => {
+      const { store, authorId, postFields } = await makeRefStore()
+      const cache = createReferenceResolveCache()
+
+      const readSpy = vi.spyOn(store, 'read')
+      try {
+        // Started together, so neither has settled when the other consults the cache --
+        // this is why the cache stores the in-flight promise rather than the value.
+        const [a, b] = await Promise.all([
+          store.resolveReferences({ author: authorId }, postFields, cache),
+          store.resolveReferences({ author: authorId }, postFields, cache),
+        ])
+
+        expect(a.author).toMatchObject({ name: 'Ada' })
+        expect(b.author).toMatchObject({ name: 'Ada' })
+        expect(readSpy).toHaveBeenCalledTimes(1)
+      } finally {
+        readSpy.mockRestore()
+      }
+    })
   })
 
   it('write() with existingId refuses to recreate an entry another store renamed', async () => {

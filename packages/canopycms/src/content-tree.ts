@@ -90,9 +90,12 @@ export interface ContentTreeExtractMeta<TEntryTypes = DefaultEntryTypes> {
 }
 import type { LogicalPath, ContentId, Slug } from './paths/types'
 import {
+  createReferenceResolver,
   listCollectionEntries,
+  resolveCollectionItemReferences,
   sortByOrder,
   type CollectionListItem,
+  type CollectionSchemaItem,
   type ContentVisibilityOptions,
 } from './content-listing'
 
@@ -175,13 +178,22 @@ export interface BuildContentTreeOptions<T = unknown, TEntryTypes = DefaultEntry
   sort?: (a: ContentTreeNode<T>, b: ContentTreeNode<T>) => number
   /** Max depth to traverse. Default: unlimited. */
   maxDepth?: number
+  /**
+   * Resolve `reference` fields to the referenced entry's data, the way
+   * `read()`/`readByUrlPath()` do. Applies to both entry nodes and the `meta.indexEntry`
+   * handed to a collection's `extract`. Off leaves them as the bare id string, or `null`.
+   *
+   * Same flag, same default (`false`) and same reasoning as `listEntries`' option — see
+   * `ListEntriesOptions.resolveReferences` in content-listing.ts for why the default is
+   * opt-in rather than matching `read()`, what it costs, and why path ACLs are not applied
+   * to the resolved targets.
+   */
+  resolveReferences?: boolean
 }
 
 // ---------------------------------------------------------------------------
 // Internal helpers
 // ---------------------------------------------------------------------------
-
-type CollectionSchemaItem = Extract<FlatSchemaItem, { type: 'collection' }>
 
 /** Group flat schema items by parentPath for O(1) child lookup. */
 const groupByParent = (flat: FlatSchemaItem[]): Map<string | undefined, CollectionSchemaItem[]> => {
@@ -263,11 +275,20 @@ export async function buildContentTree<T = unknown, TEntryTypes = DefaultEntryTy
    * even though no node for it is ever emitted.
    */
   const shouldInclude = visibility?.shouldInclude
+  // One store + cache for the whole recursive walk, so a block shared across collections is
+  // read once for the entire tree rather than once per collection. Null unless opted in —
+  // see the `resolveReferences` option above.
+  const resolver = options?.resolveReferences
+    ? createReferenceResolver(branchRoot, flatSchema, contentRootName)
+    : null
   const listVisibleEntries = async (
     collection: CollectionSchemaItem,
   ): Promise<CollectionListItem[]> => {
     const entries = await listCollectionEntries(branchRoot, collection)
-    return shouldInclude ? entries.filter((e) => shouldInclude(e.physicalPath)) : entries
+    const visible = shouldInclude ? entries.filter((e) => shouldInclude(e.physicalPath)) : entries
+    // Resolved here rather than at the two node-building sites so BOTH inherit it — the same
+    // reason the ACL filter lives here. A denied entry is filtered above and never resolved.
+    return resolver ? resolveCollectionItemReferences(visible, collection, resolver) : visible
   }
 
   // Find the starting collection(s)

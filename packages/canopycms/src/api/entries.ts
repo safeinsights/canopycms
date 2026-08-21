@@ -131,7 +131,18 @@ const toCollectionItem = (
   }
 }
 
-/** List entries in a single collection, mapped to API CollectionItem type. */
+/**
+ * List entries in a single collection, mapped to API CollectionItem type.
+ *
+ * Deliberately does NOT resolve `reference` fields, unlike the `resolveReferences` option
+ * that `listEntries`/`buildContentTree` grew for the same underlying primitive. This is a
+ * paginated admin table rendering slug/title/canEdit — it never reads inside a reference —
+ * and resolution here would land in the worst possible place: it runs BEFORE pagination
+ * (`filterWithAccessControl` walks the full collection, `slice` happens at the end), on a
+ * request path, so every keystroke in the admin search box would pay a full ContentId index
+ * scan plus one read per distinct referenced entry. Revisit only if a column ever needs to
+ * display a reference's content.
+ */
 const listCollectionEntries = async (
   root: string,
   collection: FlatSchemaItem,

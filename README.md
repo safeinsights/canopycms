@@ -1248,7 +1248,7 @@ for (const section of data.sections) {
 }
 ```
 
-> **Caveat — `listEntries()` never resolves references.** Everything above is a `read()`-time behavior. [`listEntries()`](#listing-entries) reads content files raw off disk and does not resolve `reference` fields at all, inside a block template or anywhere else. So any surface built from `listEntries()` — a search index, a sitemap, an AI-content export — sees a shared block's reference field as `null` or a bare id string, never the snippet's actual data. An adopter who builds a search index by walking `listEntries()` output over pages with shared blocks will silently get nothing for those blocks. If you need shared-block content in a `listEntries()`-derived surface, resolve the reference yourself with a follow-up `read()` call, or build that surface from `read()`/`readByUrlPath()` results instead of `listEntries()`.
+> **In a listing, ask for resolution explicitly.** Everything above is `read()`-time behavior, where references resolve automatically. [`listEntries()`](#listing-entries) and `buildContentTree()` read content files raw off disk and resolve nothing **unless you pass `{ resolveReferences: true }`** — so a surface built from a listing without that option sees a shared block's reference field as `null` or a bare id string, never the snippet's data, and a search index built that way silently contains nothing for those blocks. Turn the option on for any listing-derived surface that needs shared-block content; see [Resolving References in a Listing](#resolving-references-in-a-listing) for what it costs and the two caveats that come with it. (The AI-content export is separate: it disables reference resolution on purpose, so shared-block content is not duplicated into every referencing page's export.)
 
 ## Content Identification & References
 
@@ -2361,7 +2361,7 @@ import { buildContentTree } from 'canopycms/server'
 
 `listEntries()` returns a flat array of every content entry in your site. It is designed for search indexing, sitemaps, and any other case where you need to iterate over all content without the tree hierarchy. (For `generateStaticParams`, prefer the bound `contentStaticParams` helper — see [Static Export with generateStaticParams](#static-export-with-generatestaticparams) — which enumerates routable paths without handing an admin context to your page module.)
 
-> **`listEntries()` does not resolve `reference` fields.** It reads content files raw off disk for speed across a whole site scan, so a `reference` field (top-level or inside a block template — see [Shared / Referenced Blocks](#shared--referenced-blocks)) comes back as a bare id string, or `null`. Only `read()`/`readByUrlPath()` resolve references. Building a search index or sitemap from `listEntries()` over content that leans on referenced/shared blocks will silently omit that referenced data — resolve it yourself with a follow-up `read()` call if your `listEntries()`-derived surface needs it.
+> **`listEntries()` does not resolve `reference` fields unless you ask it to.** By default it reads content files raw off disk for speed across a whole site scan, so a `reference` field (top-level or inside a block template — see [Shared / Referenced Blocks](#shared--referenced-blocks)) comes back as a bare id string, or `null`. Pass `{ resolveReferences: true }` and it resolves them exactly as `read()`/`readByUrlPath()` do, at any nesting depth. Build a search index over content that leans on referenced/shared blocks with the option **on**, or that referenced content is silently missing from your index; leave it **off** for sitemaps and `generateStaticParams`, which only need paths and timestamps. See [Resolving References in a Listing](#resolving-references-in-a-listing) for the cost and the caveats.
 >
 > **An unparseable content file fails a production build.** Content files are named `{type}.{slug}.{id}.{ext}`; during an actual production `next build`, a `.md`/`.mdx`/`.json`/`.yaml` file in a collection directory that doesn't match that shape throws instead of being silently dropped from the result — the same "a page that vanishes from the build is worse than a red build" reasoning as the schema-invalid-entry guard above. Outside a production build it's still just skipped (logged only with `CANOPYCMS_DEBUG=true`), since in-progress renames legitimately leave such a file around while editing.
 
@@ -2443,14 +2443,36 @@ const guideEntries = await canopy.listEntries({
 })
 ```
 
+### Resolving References in a Listing
+
+By default a listing leaves `reference` fields as the bare id string (or `null`) — it reads content files straight off disk and never looks the target up. Pass `resolveReferences` and each one becomes the referenced entry's data, exactly as `read()`/`readByUrlPath()` return it, at any nesting depth: top-level fields, inside `object` fields and inline `group`s, and inside block templates — which is what makes [shared/referenced blocks](#shared--referenced-blocks) usable from a listing at all.
+
+```typescript
+// A search index that must see the text inside shared blocks:
+const entries = await canopy.listEntries({ resolveReferences: true })
+
+// entries[0].data.snippet
+//   off: 'a1b2c3d4e5f6'
+//   on:  { id: 'a1b2c3d4e5f6', slug: 'signup', collection: 'content/snippets', title: '...' }
+```
+
+`buildContentTree()` takes the same option (it also applies to the `indexEntry` handed to a collection's `extract`), and so does `collectRoutableEntries()`. `collectStaticPaths()` does not, because it discards entry data.
+
+**Why it is off by default, when `read()` resolves automatically.** A resolved reference is a different shape, and a listing's `data` is your own type parameter — so nothing in the type system would flag the change if the default flipped. An `/authors/${data.author}` template would keep compiling and start emitting `/authors/[object Object]`. Deciding per call site keeps that where the code that reads the field is.
+
+**What it costs.** Resolution needs the content ID index, so an opted-in call adds one index scan plus one read per _distinct_ referenced entry — not per referencing entry. All the resolution in one call shares a cache, so a block referenced from 40 pages is read once, not 40 times. With the option off, none of that machinery is built.
+
+**Three caveats.** For an **md/mdx** target you get its frontmatter, not its prose — `read()` puts an entry's body on `doc.body` and a resolved reference carries `doc.data`, so a resolved markdown snippet has its `title` and other frontmatter fields but not the text below the `---`. (A _listed_ md entry's own `data` does include the body, so the two differ; if your search index needs a markdown snippet's prose, read the target directly for now.) Path permissions are not applied to the resolved _targets_, matching `read()` — a reference can resolve to an entry the current user could not open directly. (The entries being listed are still permission-filtered as always, and an entry that is filtered out is never resolved.) And within a single call, a given id is looked up once and every occurrence shares that answer, so one listing is internally consistent rather than deciding per entry — though each occurrence still gets its own copy of the resolved object, so nothing you do to one entry's resolved reference can affect another's.
+
 ### Options Reference
 
-| Option     | Type                                                       | Default      | Description                                       |
-| ---------- | ---------------------------------------------------------- | ------------ | ------------------------------------------------- |
-| `extract`  | `(raw, meta) => T`                                         | -            | Transform raw data; controls what `data` contains |
-| `filter`   | `(entry: ListEntriesItem<T>) => boolean`                   | -            | Return false to exclude an entry                  |
-| `rootPath` | `string`                                                   | Content root | Scope to a subtree (e.g., `"content/docs"`)       |
-| `sort`     | `(a: ListEntriesItem<T>, b: ListEntriesItem<T>) => number` | -            | Custom sort comparator                            |
+| Option              | Type                                                       | Default      | Description                                               |
+| ------------------- | ---------------------------------------------------------- | ------------ | --------------------------------------------------------- |
+| `extract`           | `(raw, meta) => T`                                         | -            | Transform raw data; controls what `data` contains         |
+| `filter`            | `(entry: ListEntriesItem<T>) => boolean`                   | -            | Return false to exclude an entry                          |
+| `rootPath`          | `string`                                                   | Content root | Scope to a subtree (e.g., `"content/docs"`)               |
+| `sort`              | `(a: ListEntriesItem<T>, b: ListEntriesItem<T>) => number` | -            | Custom sort comparator                                    |
+| `resolveReferences` | `boolean`                                                  | `false`      | Resolve `reference` fields to the referenced entry's data |
 
 ### Imports
 

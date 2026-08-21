@@ -10,10 +10,16 @@ import type { ListEntriesItem, ListEntriesOptions } from '../content-listing'
 import type { EntrySchema } from '../config'
 
 /** Minimal listEntries stub returning the given items (typed loosely — only fields the helper reads). */
-function fakeCtx(items: Array<Partial<ListEntriesItem>>, capture?: { rootPath?: string }) {
+function fakeCtx(
+  items: Array<Partial<ListEntriesItem>>,
+  capture?: { rootPath?: string; resolveReferences?: boolean },
+) {
   return {
     listEntries: async <T = Record<string, unknown>>(options?: ListEntriesOptions<T>) => {
-      if (capture) capture.rootPath = options?.rootPath
+      if (capture) {
+        capture.rootPath = options?.rootPath
+        capture.resolveReferences = options?.resolveReferences
+      }
       return items as unknown as ListEntriesItem<T>[]
     },
   }
@@ -55,6 +61,17 @@ describe('collectStaticPaths', () => {
     await collectStaticPaths(ctx, { rootPath: 'content/posts' })
 
     expect(capture.rootPath).toBe('content/posts')
+  })
+
+  // Path enumeration discards `data`, so it must never opt into resolution -- doing so
+  // would pay a full ContentId index scan plus a read per referenced entry for nothing.
+  it('never asks listEntries to resolve references', async () => {
+    const capture: { resolveReferences?: boolean } = {}
+    const ctx = fakeCtx([], capture)
+
+    await collectStaticPaths(ctx)
+
+    expect(capture.resolveReferences).toBeUndefined()
   })
 
   it('applies the filter predicate (e.g. drop the root index)', async () => {
@@ -196,6 +213,26 @@ describe('collectRoutableEntries', () => {
     await collectRoutableEntries(ctx, { rootPath: 'content/posts' })
 
     expect(capture.rootPath).toBe('content/posts')
+  })
+
+  // `resolveReferences` reaches listEntries as a positional argument through the shared
+  // `enumerateRoutableEntries`, so nothing else would go red if a refactor dropped it.
+  it('passes resolveReferences through to listEntries', async () => {
+    const capture: { resolveReferences?: boolean } = {}
+    const ctx = fakeCtx([], capture)
+
+    await collectRoutableEntries(ctx, { resolveReferences: true })
+
+    expect(capture.resolveReferences).toBe(true)
+  })
+
+  it('leaves resolveReferences unset when not asked for', async () => {
+    const capture: { resolveReferences?: boolean } = {}
+    const ctx = fakeCtx([], capture)
+
+    await collectRoutableEntries(ctx)
+
+    expect(capture.resolveReferences).toBeUndefined()
   })
 
   // Inherited from the shared enumeration: sitemap generation is now another place a
