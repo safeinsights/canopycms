@@ -78,6 +78,13 @@ export type RenameEntryResponse = ApiResponse<{
   newPath: string
 }>
 
+/**
+ * How many stale field paths the unknown-key warning names before summarising the rest. The
+ * editor shows warnings in one notification, so this bounds a schema-wide rename to a readable
+ * sentence rather than a wall of paths.
+ */
+const UNKNOWN_KEY_WARNING_LIMIT = 10
+
 export interface WriteContentBody {
   format: 'json' | 'md' | 'mdx' | 'yaml'
   data?: Record<string, unknown>
@@ -457,15 +464,28 @@ const writeContentHandler = async (
   // matches the bytes, and so a resolved reference collapsed back to an ID string cannot be
   // mistaken for anything. A warning, never a rejection: the key is still written (with its
   // comments, see utils/content-serialize.ts), it is just not editable and nothing reads it.
+  //
+  // ONE issue, not one per key. The editor joins every warning into a single non-auto-closing
+  // notification (useEntryManager.ts), so one-per-key repeated the same explanatory sentence
+  // once per stale key, on every save, for a condition that is permanent until someone edits the
+  // schema. The keys are listed in the message instead, capped so a schema-wide rename cannot
+  // produce an unreadable wall of text. Worded for who can actually act: an editor cannot remove
+  // a key the form does not render, and cannot change the schema.
   if (normalizedData !== undefined) {
     const unknownKeys = findUnknownKeys(fields, normalizedData)
     if (unknownKeys.length > 0) {
-      validationWarnings = unknownKeys.map((fieldPath) => ({
-        level: 'warning' as const,
-        fieldPath,
-        message:
-          'Not defined in this entry type’s schema. It is kept in the file, but nothing reads it — add it to the schema or remove it.',
-      }))
+      const shown = unknownKeys.slice(0, UNKNOWN_KEY_WARNING_LIMIT)
+      const overflow = unknownKeys.length - shown.length
+      const list = overflow > 0 ? `${shown.join(', ')} (and ${overflow} more)` : shown.join(', ')
+      validationWarnings = [
+        {
+          level: 'warning',
+          message:
+            `Saved. ${unknownKeys.length === 1 ? 'One field is' : `${unknownKeys.length} fields are`} ` +
+            `not part of this entry type’s schema: ${list}. They are kept in the file, but nothing ` +
+            `reads them — ask a developer to add them to the schema or remove them from the content.`,
+        },
+      ]
     }
   }
 

@@ -657,3 +657,27 @@ describe('warnUnknownEntryKeys', () => {
     }
   })
 })
+
+describe('warnUnknownEntryKeys output volume', () => {
+  const schema: EntrySchema = [{ name: 'title', type: 'string' }]
+
+  it('caps the listing but never the count', () => {
+    const items = Array.from({ length: 50 }, (_, i) => ({
+      entryPath: `content/posts/p${i}` as never,
+      schema,
+      format: 'json' as const,
+      data: { title: 'x', stale: 1 },
+    }))
+    const consoleSpy = mockConsole()
+    try {
+      warnUnknownEntryKeys(items, 'sitemap generation')
+      const [message] = consoleSpy.all().warn
+      expect(message).toContain('50 entries have')
+      expect(message).toContain('…and 30 more')
+      expect(message).toContain('content/posts/p19')
+      expect(message).not.toContain('content/posts/p20')
+    } finally {
+      consoleSpy.restore()
+    }
+  })
+})

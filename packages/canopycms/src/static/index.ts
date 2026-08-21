@@ -293,6 +293,12 @@ export function findInvalidEntries(items: readonly BuildScanItem[]): InvalidBuil
   return invalid
 }
 
+/**
+ * How many offending entries `warnUnknownEntryKeys` lists before summarising the rest. Bounds CI
+ * output for a schema-wide rename across a large content tree; the reported COUNT is never capped.
+ */
+const UNKNOWN_KEY_REPORT_LIMIT = 20
+
 /** An entry carrying data keys the schema no longer defines. */
 export interface EntryWithUnknownKeys {
   entryPath: string
@@ -348,9 +354,17 @@ export function warnUnknownEntryKeys(items: readonly BuildScanItem[], phaseLabel
   const found = findEntriesWithUnknownKeys(items)
   if (found.length === 0) return
 
-  const lines = found.map(
+  // Capped, unlike the sibling assert. That one throws, so it prints once and the build stops;
+  // this one returns, and a Next build runs the enumeration several times (every catch-all route
+  // plus the sitemap). A schema-wide rename across a large tree would otherwise bury CI output
+  // under the same thousands of lines two or three times over. The count is always exact.
+  const shown = found.slice(0, UNKNOWN_KEY_REPORT_LIMIT)
+  const lines = shown.map(
     ({ entryPath, fieldPaths }) => `  - ${entryPath} — ${fieldPaths.join(', ')}`,
   )
+  if (found.length > shown.length) {
+    lines.push(`  …and ${found.length - shown.length} more`)
+  }
 
   console.warn(
     `CanopyCMS static build: ${found.length} ${found.length === 1 ? 'entry has' : 'entries have'} content keys not defined in their schema during ${phaseLabel}:\n${lines.join('\n')}\n` +

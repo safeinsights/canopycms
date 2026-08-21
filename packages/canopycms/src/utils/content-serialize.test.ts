@@ -182,8 +182,8 @@ describe('serializeYaml', () => {
 
   it('does not let a deleted list item leave its comment on newly-inserted content', () => {
     // A save that both removes an item and adds one has no identity information linking them.
-    // Pairing them positionally moved "do not delete" onto a brand-new block -- silently, and
-    // over exactly the kind of comment this whole change exists to protect.
+    // Pairing them moved "do not delete" onto a brand-new block -- silently, and over exactly
+    // the kind of comment this whole change exists to protect.
     const raw = `items:
   # about A
   - name: a
@@ -193,13 +193,70 @@ describe('serializeYaml', () => {
     const out = serializeYaml({ items: [{ name: 'c' }, { name: 'a' }] }, raw)
     expect(out).toContain('- name: c')
     expect(out).toContain('- name: a')
-    // Neither surviving comment may sit above the new item.
-    const newItemBlock = out.slice(out.indexOf('- name: c'))
-    expect(newItemBlock).not.toContain('do not delete')
-    expect(out.indexOf('do not delete')).toBeLessThan(out.indexOf('- name: c'))
+    // The comment goes with the item it described, which is gone. It must NOT reappear anywhere.
+    expect(out).not.toContain('do not delete')
   })
 
-  it('still carries a comment across an edit in place at the same index', () => {
+  it('does not migrate a comment onto a list item replaced wholesale at the same index', () => {
+    // The replacement lands exactly where the old item was, so position alone cannot tell this
+    // apart from an edit. Records carry evidence: a wholesale replacement shares no field value
+    // with what it replaced.
+    const raw = `items:
+  - name: a
+    role: x
+  # FLAG: do not delete this block
+  - name: b
+    role: y
+`
+    const out = serializeYaml(
+      {
+        items: [
+          { name: 'a', role: 'x' },
+          { title: 'zzz', kind: 'q' },
+        ],
+      },
+      raw,
+    )
+    expect(out).toContain('title: zzz')
+    expect(out).not.toContain('FLAG: do not delete this block')
+  })
+
+  it('keeps a comment when an item at the same index is edited rather than replaced', () => {
+    const raw = `items:
+  - name: a
+    role: x
+  # FLAG: do not delete this block
+  - name: b
+    role: y
+`
+    const out = serializeYaml(
+      {
+        items: [
+          { name: 'a', role: 'x' },
+          { name: 'b2', role: 'y' },
+        ],
+      },
+      raw,
+    )
+    // `role: y` survived the edit, so this is recognisably the same item.
+    expect(out).toContain('# FLAG: do not delete this block')
+    expect(out).toContain('name: b2')
+    expect(out.indexOf('FLAG')).toBeLessThan(out.indexOf('name: b2'))
+  })
+
+  it('keeps a scalar list item comment across an in-place edit', () => {
+    // Scalars carry no identity evidence, so they keep the plain same-index rule.
+    const raw = 'items:\n  - one\n  # about the second\n  - two\n'
+    const out = serializeYaml({ items: ['one', 'deux'] }, raw)
+    expect(out).toContain('# about the second')
+    expect(out).toContain('- deux')
+  })
+
+  it('drops the comment on a single-field record whose only field changed (accepted residual)', () => {
+    // `{name: 'b'}` -> `{name: 'b2'}` shares no surviving field value, so it is indistinguishable
+    // from a wholesale replacement. The rule errs toward dropping the comment rather than risking
+    // moving it onto content it does not describe. Pinned so the trade-off is a decision, not a
+    // surprise.
     const raw = `items:
   # about A
   - name: a
@@ -207,9 +264,9 @@ describe('serializeYaml', () => {
   - name: b
 `
     const out = serializeYaml({ items: [{ name: 'a' }, { name: 'b2' }] }, raw)
-    expect(out).toContain('# about B')
     expect(out).toContain('- name: b2')
-    expect(out.indexOf('# about B')).toBeLessThan(out.indexOf('- name: b2'))
+    expect(out).not.toContain('# about B')
+    // The list-head comment is unaffected.
     expect(out).toContain('# about A')
   })
 

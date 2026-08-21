@@ -51,6 +51,13 @@ interface CommentCarrier {
  * server-side callers (build scripts via `createBuildCanopy`, migrations), and `d: 2024-01-15`
  * became `d: {}` on save. Anything non-plain falls through to `doc.createNode`, which serialises
  * it exactly as the pre-fix `yaml.stringify` did.
+ *
+ * Known residual, and the reason this is a prototype check rather than a `toJSON` check: a PLAIN
+ * object carrying its own `toJSON` is still walked as a record here, while `createNode` (the
+ * create path, and the scalar-slot path) would call `toJSON` instead — so the same payload can
+ * serialise differently depending on what is currently on disk, and a `toJSON` function value
+ * makes `createNode` throw. Unreachable over HTTP, since JSON payloads carry no functions; a loud
+ * failure rather than corruption if a server-side caller ever hits it.
  */
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return false
@@ -102,13 +109,51 @@ function identityKey(value: unknown): string | undefined {
   }
 }
 
-function nodeIdentityKey(node: unknown): string | undefined {
-  if (!isNode(node)) return identityKey(node)
+function nodePlainValue(node: unknown): unknown {
+  if (!isNode(node)) return node
   try {
-    return identityKey(node.toJSON())
+    return node.toJSON()
   } catch {
     return undefined
   }
+}
+
+function nodeIdentityKey(node: unknown): string | undefined {
+  const plain = nodePlainValue(node)
+  return plain === undefined && isNode(node) ? undefined : identityKey(plain)
+}
+
+/**
+ * Is `value` plausibly an EDITED version of the item currently at this index, rather than a
+ * different item that merely landed on the same index?
+ *
+ * Position alone is not evidence. A save that replaces one list item wholesale — delete this
+ * block, add that one — leaves the new item sitting exactly where the old one was, and pairing
+ * them purely by index moved the old item's comments onto content they do not describe. For the
+ * comments this change exists to protect ("do not delete this block") that is worse than losing
+ * them, because a lost comment reads as a deletion in review while a moved one reads as intact.
+ *
+ * Records carry usable evidence: an edit changes some fields and leaves others alone, so one
+ * surviving key/value pair means "same item, edited". A wholesale replacement shares nothing.
+ * Scalars carry no evidence at all, so they keep the plain same-index rule — an edited string in
+ * a list is overwhelmingly the common case there, and a short annotation on a scalar is far less
+ * load-bearing than a block comment.
+ *
+ * The residual, deliberately accepted: a single-field record whose only field changed shares
+ * nothing, so its comment is dropped rather than risked.
+ */
+function looksLikeSameItem(node: unknown, value: unknown): boolean {
+  const existing = nodePlainValue(node)
+  // No record evidence available on either side — fall back to position.
+  if (!isPlainRecord(existing) || !isPlainRecord(value)) return true
+
+  for (const key of Object.keys(value)) {
+    if (!Object.prototype.hasOwnProperty.call(existing, key)) continue
+    const before = identityKey(existing[key])
+    const after = identityKey(value[key])
+    if (before !== undefined && before === after) return true
+  }
+  return false
 }
 
 /**
@@ -187,13 +232,14 @@ function reconcileMap(
  *
  * 1. **Exact value match** — reuse that old node whole, comments and all. This is what carries a
  *    comment through a pure reorder, instead of stranding it on whatever moved into its index.
- * 2. **Same index, still unclaimed** — reconcile against it. This is the edit-in-place case
- *    (change one field of one item), where position is real evidence.
+ * 2. **Same index, still unclaimed, and recognisably the same item** (`looksLikeSameItem`) —
+ *    reconcile against it. This is the edit-in-place case.
  * 3. **Otherwise a fresh node, with no comments.**
  *
- * Rule 2 is deliberately same-index rather than "next unclaimed old node in order". The looser
- * form paired a newly-inserted item with an unrelated deleted one whenever a single save both
- * removed and added an item, so the deleted item's comments reappeared above brand-new content.
+ * Rule 2 is deliberately same-index rather than "next unclaimed old node in order": the looser
+ * form paired a newly-inserted item with an unrelated deleted one whenever one save both removed
+ * and added an item. Position alone is still not enough, though — a wholesale replacement lands
+ * on the index it replaced — which is why rule 2 also demands evidence of identity.
  */
 function reconcileSeq(doc: Document, seq: YAMLSeq<unknown>, value: readonly unknown[]): void {
   const oldItems = seq.items
@@ -226,9 +272,13 @@ function reconcileSeq(doc: Document, seq: YAMLSeq<unknown>, value: readonly unkn
   seq.items = value.map((item, index) => {
     const matched = matches[index]
     if (matched !== undefined) return oldItems[matched]
-    const sameIndex = index < oldItems.length && !consumed.has(index) ? oldItems[index] : undefined
-    if (sameIndex !== undefined) consumed.add(index)
-    return reconcileNode(doc, sameIndex, item)
+    // `consumed` holds OLD indices claimed by rule 1, so this asks "is the node that sits at my
+    // index still unclaimed?". Each iteration owns a distinct index, so no bookkeeping is needed
+    // here — a candidate cannot be taken twice.
+    const candidate = index < oldItems.length && !consumed.has(index) ? oldItems[index] : undefined
+    const sameItem =
+      candidate !== undefined && looksLikeSameItem(candidate, item) ? candidate : undefined
+    return reconcileNode(doc, sameItem, item)
   })
 }
 

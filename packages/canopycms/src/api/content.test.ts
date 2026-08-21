@@ -1275,12 +1275,46 @@ describe('unknown content keys', () => {
 
     expect(res.ok).toBe(true)
     expect(res.status).toBe(200)
+    // ONE warning naming the keys, not one warning per key: the editor renders them all into a
+    // single non-auto-closing notification.
     expect(res.data?.validationWarnings).toHaveLength(1)
-    expect(res.data?.validationWarnings?.[0]).toMatchObject({
-      level: 'warning',
-      fieldPath: 'subtitle',
-    })
+    expect(res.data?.validationWarnings?.[0].level).toBe('warning')
+    expect(res.data?.validationWarnings?.[0].message).toContain('subtitle')
     expect(res.data?.validationWarnings?.[0].message).toContain('schema')
+  })
+
+  it('names every stale key in one warning rather than repeating itself', async () => {
+    await storeWithSchema([{ name: 'title', type: 'string' }])
+    const res = await writeContent(allowedCtx(), writeReq, writeParams, {
+      format: 'json',
+      data: { title: 'hi', alpha: 1, beta: 2, gamma: 3 },
+    })
+
+    expect(res.ok).toBe(true)
+    expect(res.data?.validationWarnings).toHaveLength(1)
+    const message = res.data?.validationWarnings?.[0].message ?? ''
+    expect(message).toContain('alpha')
+    expect(message).toContain('beta')
+    expect(message).toContain('gamma')
+    expect(message).toContain('3 fields are')
+    // The explanatory sentence appears once, not once per key.
+    expect(message.split('nothing').length - 1).toBe(1)
+  })
+
+  it('summarises the tail when a schema-wide rename leaves many stale keys', async () => {
+    await storeWithSchema([{ name: 'title', type: 'string' }])
+    const data: Record<string, unknown> = { title: 'hi' }
+    for (let i = 0; i < 25; i++) data[`stale${i}`] = i
+    const res = await writeContent(allowedCtx(), writeReq, writeParams, {
+      format: 'json',
+      data,
+    })
+
+    expect(res.ok).toBe(true)
+    const message = res.data?.validationWarnings?.[0].message ?? ''
+    expect(message).toContain('25 fields are')
+    expect(message).toContain('(and 15 more)')
+    expect(message).not.toContain('stale24')
   })
 
   it('reports a nested stale key with its full path', async () => {
@@ -1293,7 +1327,7 @@ describe('unknown content keys', () => {
     })
 
     expect(res.ok).toBe(true)
-    expect(res.data?.validationWarnings?.map((issue) => issue.fieldPath)).toEqual(['hero.kicker'])
+    expect(res.data?.validationWarnings?.[0].message).toContain('hero.kicker')
   })
 
   it('says nothing when every key matches the schema', async () => {
@@ -1373,7 +1407,7 @@ describe('unknown content keys', () => {
 
     expect(res.ok).toBe(true)
     expect(res.data?.validationWarnings?.map((issue) => issue.message)).toEqual([
-      expect.stringContaining('schema'),
+      expect.stringContaining('subtitle'),
       'Hook says hi',
     ])
   })
