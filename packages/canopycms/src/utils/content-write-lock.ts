@@ -26,22 +26,18 @@
  * an acceptable price, and a read racing a rebase gets a consistent-enough
  * older or newer file, never a destroyed one.
  *
- * ## Why the lock is anchored on `{branchRoot}/.canopy-meta`
+ * ## Why the lock marker lives under `{branchRoot}/.canopy-meta`
  *
  * proper-lockfile keys its module-level `locks{}` bookkeeping (refresh timer,
  * release function) by the **target path** passed to `lock()`, NOT by
- * `lockfilePath`. The provisioning lock targets `path.dirname(branchRoot)` --
- * the shared content-branches directory -- so anchoring here on that same
- * directory with a different lock NAME would land on the same registry key:
- * one process holding both (a Lambda container provisioning a workspace and
- * writing content) would have the second acquisition clobber the first's
- * bookkeeping. Targeting `{branchRoot}/.canopy-meta` instead gives:
+ * `lockfilePath`. `provisioning-lock.ts` now anchors every lock on its own
+ * marker path, so the registry key equals the on-disk lock identity and two
+ * live locks can no longer share a key -- aliasing is structurally impossible
+ * rather than merely avoided by convention. Keeping the content lock under
+ * `{branchRoot}/.canopy-meta` still buys:
  *
- * - a distinct in-process registry key from the provisioning lock (and from
- *   every other branch's content lock -- the provisioning locks already share
- *   one key across branches);
- * - a distinct on-disk lock directory, so the server-enforced mkdir cannot
- *   collide either; and
+ * - a per-branch marker, so one branch's content lock is independent of every
+ *   other branch's and of that branch's provisioning lock; and
  * - no deadlock potential: the two locks are never both required, and the only
  *   possible acquisition order (provision, then write) is consistent.
  *
@@ -62,8 +58,9 @@
 
 import path from 'node:path'
 
-import { isNodeError } from './error'
-import { tryAcquireProvisioningLock } from './provisioning-lock'
+import { getErrorMessage, isNodeError } from './error'
+import { canopyLogWarn } from './logger'
+import { tryAcquireProvisioningLock, type OnLockCompromised } from './provisioning-lock'
 
 /** Directory the lock marker lives in, relative to the branch root. */
 const META_DIR = '.canopy-meta'
@@ -117,7 +114,8 @@ export class ContentWriteLockBusyError extends Error {
   }
 }
 
-/** The directory proper-lockfile anchors on -- also its in-process registry key. */
+/** Directory the lock marker is created in. proper-lockfile anchors on the
+ * marker path itself (see provisioning-lock.ts), not on this directory. */
 function lockTargetDir(branchRoot: string): string {
   return path.join(path.resolve(branchRoot), META_DIR)
 }
@@ -134,8 +132,15 @@ const sleep = (ms: number): Promise<void> =>
  * the worker's rebase loop (which skips the branch and retries next cycle) and
  * by tests standing in for a writer.
  */
-export function tryAcquireContentWriteLock(branchRoot: string): Promise<() => Promise<void>> {
-  return tryAcquireProvisioningLock(lockTargetDir(branchRoot), CONTENT_WRITE_LOCK_NAME)
+export function tryAcquireContentWriteLock(
+  branchRoot: string,
+  onCompromised?: OnLockCompromised,
+): Promise<() => Promise<void>> {
+  return tryAcquireProvisioningLock(
+    lockTargetDir(branchRoot),
+    CONTENT_WRITE_LOCK_NAME,
+    onCompromised,
+  )
 }
 
 /**
@@ -151,11 +156,12 @@ export function tryAcquireContentWriteLock(branchRoot: string): Promise<() => Pr
 export async function acquireContentWriteLock(
   branchRoot: string,
   waitMs: number = DEFAULT_CONTENT_WRITE_LOCK_WAIT_MS,
+  onCompromised?: OnLockCompromised,
 ): Promise<() => Promise<void>> {
   const startedAt = Date.now()
   for (let attempt = 0; ; attempt++) {
     try {
-      return await tryAcquireContentWriteLock(branchRoot)
+      return await tryAcquireContentWriteLock(branchRoot, onCompromised)
     } catch (err: unknown) {
       if (!isNodeError(err) || err.code !== 'ELOCKED') throw err
       const remaining = waitMs - (Date.now() - startedAt)
@@ -177,10 +183,34 @@ export async function withContentWriteLock<T>(
   fn: () => Promise<T>,
   waitMs: number = DEFAULT_CONTENT_WRITE_LOCK_WAIT_MS,
 ): Promise<T> {
-  const release = await acquireContentWriteLock(branchRoot, waitMs)
+  // A compromise means this write may no longer have been exclusive -- the
+  // worker's rebase (or another writer) could have been running against the
+  // same tree. Reporting success would silently accept a possibly-raced write,
+  // so surface the same retriable "branch busy" error contention already maps
+  // to (409) and let the caller re-save against the settled tree.
+  let compromised = false
+  const release = await acquireContentWriteLock(branchRoot, waitMs, (err) => {
+    compromised = true
+    canopyLogWarn(
+      `[canopy] Content-write lock compromised mid-hold for ${branchRoot}:`,
+      getErrorMessage(err),
+    )
+  })
+  let result: T
   try {
-    return await fn()
+    result = await fn()
   } finally {
     await release()
   }
+  if (compromised) {
+    // Deliberately NOT the default "was not saved" message: `fn()` completed,
+    // so the write is on disk. What we lost is the proof it was exclusive, so
+    // the honest instruction is "reload, then decide" rather than "retry",
+    // which would resend a now-stale expectedVersion and bounce off the
+    // caller's own landed write as a phantom editor collision.
+    throw new ContentWriteLockBusyError(
+      'This branch was being synced while your change was written, so the change may or may not have been recorded. Reload the entry to see the current state before saving again.',
+    )
+  }
+  return result
 }

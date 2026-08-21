@@ -27,18 +27,16 @@ const SETTINGS_INIT_LOCK_NAME = 'lock'
  *    mkdir's its target, and `GitManager.initializeWorkspace` clones INTO the
  *    settings root — `git clone` refuses a destination that already has content
  *    in it. So the lock lives beside the settings root, never inside it.
- * 2. **It must not alias any other proper-lockfile target.** proper-lockfile
- *    keys its module-level bookkeeping (refresh timer + release function) by the
- *    TARGET path passed to `lock()`, not by `lockfilePath`, so two live locks in
- *    one process that share a target clobber each other's registry entry (see
- *    `.claude/future-tasks/proper-lockfile-hazards.md`). This target is a
- *    dedicated dot-directory, so it collides with none of the existing targets:
- *    the content-branches root and the bare remote's parent (provisioning locks
- *    — note the latter IS `path.dirname(settingsRoot)`, which is precisely why
- *    this cannot be anchored there: settings init calls into
- *    `ensureLocalSimulatedRemote` while holding this lock), `<branchRoot>/.canopy-meta`
- *    (content-write lock), `<workspaceRoot>/.tasks` (worker task lock), and the
- *    individual JSON file paths used by `withOccFileLock`.
+ * 2. **Its marker must not collide with another lock's marker.** Since
+ *    2026-08-20 `acquireProvisioningLock` anchors proper-lockfile on the lock
+ *    MARKER's own path rather than on the directory holding it, so its
+ *    in-process registry key is the on-disk lock identity and two live locks
+ *    can no longer clobber each other's bookkeeping (see docs/concurrency.md,
+ *    "Anchor path matters"). A dedicated dot-directory is still the right home
+ *    for this marker: `path.dirname(settingsRoot)` is where
+ *    `ensureLocalSimulatedRemote` puts `.remote-init.lock`, and settings init
+ *    calls into it while holding this lock, so keeping the two markers in
+ *    separate directories keeps that nesting obvious rather than incidental.
  */
 export function settingsInitLockTarget(settingsRoot: string): string {
   return path.join(path.dirname(path.resolve(settingsRoot)), SETTINGS_INIT_LOCK_DIR)
