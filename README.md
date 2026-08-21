@@ -1681,9 +1681,10 @@ export default async function Page({ params }) {
 3. `/docs/guides` -- resolves to the index entry of the `guides` collection (if one exists)
 4. `/` -- resolves to the root index entry at the content root (if one exists)
 5. `/docs/guides/index` -- returns `null`. When the last segment is literally `index`, step 1 is
-   skipped: an index entry's only URL is its collection's path (step 3), so it never answers at
-   the literal `.../index` URL as well. Step 2 still runs, which is what resolves a collection
-   actually _named_ `index`.
+   skipped: an index entry's advertised URL is its collection's path (step 3), so it never answers
+   at the literal `.../index` URL as well. Step 2 still runs, which is what resolves a collection
+   actually _named_ `index`. (Step 2 is also the open hole below — it still lets an index entry
+   answer at `/<collection>/<entryTypeName>`.)
 
 Returns `null` when no content matches the path, or when the current user is not permitted to read it (a `FORBIDDEN` denial renders as a 404 via your existing `if (!result) return notFound()`, rather than throwing). The strict `read()` API still throws on permission errors.
 
@@ -1692,7 +1693,7 @@ Returns `null` when no content matches the path, or when the current user is not
 Index entries (entries with slug `"index"`) represent the default content for a collection URL. All three content APIs -- `readByUrlPath`, `listEntries`, and `buildContentTree` -- treat index entries consistently:
 
 - **`readByUrlPath('/guides')`** resolves to the index entry in the `guides` collection
-- **`readByUrlPath('/guides/index')`** returns `null` -- an index entry has exactly one URL, and it is `/guides`. Case variants (`/guides/Index`, `/guides/INDEX`) are `null` too
+- **`readByUrlPath('/guides/index')`** returns `null` -- the `.../index` spelling is not a second URL for the entry, in any case variant (`/guides/Index`, `/guides/INDEX`). Its advertised URL is `/guides`
 - **`readByUrlPath('/')`** resolves to the index entry at the content root
 - **`listEntries()`** returns `urlPath: '/guides'` (not `'/guides/index'`) for index entries, and `urlPath: '/'` for a root index entry
 - **`buildContentTree()`** generates `path: '/guides'` (not `'/guides/index'`) for index entries by default

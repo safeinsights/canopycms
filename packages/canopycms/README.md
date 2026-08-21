@@ -291,7 +291,9 @@ This convention is applied consistently across the API:
 | `readByUrlPath`    | Automatically tries `slug: 'index'` as a fallback when the direct entry doesn't match. Works for all paths including `/`. A path whose last segment is an index slug (any case) skips the direct-entry attempt, so an index entry is reachable only at its collapsed path. |
 | `buildContentTree` | Default `buildPath` collapses index entries so tree node paths match the URLs consumers would use.                                                                                                                                                                         |
 
-The round-trip property holds in both directions: for every item from `listEntries`, `readByUrlPath(item.urlPath)` resolves to the same entry, and for an index entry no other URL does. (Ordinary entries keep case-insensitive matching on the final slug segment.)
+The round-trip property holds in both directions: for every item from `listEntries`, `readByUrlPath(item.urlPath)` resolves to the same entry, and for an index entry no `.../index` spelling does. (Ordinary entries keep case-insensitive matching on the final slug segment.)
+
+One known exception, still open: an entry-type name is also resolvable as a URL segment, so an index entry additionally answers at `/<collection>/<entryTypeName>` -- e.g. a root index entry at both `/` and `/home`. Nothing advertises that URL (it is absent from `listEntries` and from static-param generation), so it only matters if you serve a catch-all route. See the `readbyurlpath-entry-type-candidate-phantom-url` task in the CanopyCMS repo.
 
 Two different entries can still compute the same `urlPath` — an entry whose slug matches a sibling collection that also has an `index` entry, or two slugs differing only by case. Only one of them can be served, so a production build fails and names them. `findDuplicateUrlPaths` (exported from `canopycms/server`) runs the same scan on demand.
 

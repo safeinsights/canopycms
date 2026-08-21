@@ -361,8 +361,10 @@ resolver disagreed: it tried "last segment is the slug" first, so the same entry
 + await readByUrlPath('/guides/index')  // null
 ```
 
-The round-trip guarantee is now exclusive for index entries: `item.urlPath` reaches the entry, and
-no `.../index` spelling does, in any case (`/x/Index` and `/x/INDEX` return null too). Ordinary
+The round-trip guarantee now excludes the `.../index` spelling for index entries: `item.urlPath`
+reaches the entry, and no `.../index` spelling does, in any case (`/x/Index` and `/x/INDEX` return
+null too). It is not yet exclusive in general — an index entry still also answers at
+`/<collection>/<entryTypeName>`, a separate open hole (see the Unreleased entry below). Ordinary
 entries are unchanged — their final slug segment stays case-insensitive.
 A collection literally _named_ `index` is unaffected and in fact fixed — `/docs/index` now resolves
 to that collection's own index entry instead of being shadowed by its parent's.
