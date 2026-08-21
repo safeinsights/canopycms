@@ -250,10 +250,16 @@ interface RebaseSummary {
   /** Branches skipped this cycle because their working tree had uncommitted changes. */
   skippedDirty: string[]
   /**
-   * [SYNC-C1] Branches skipped this cycle because a content write held the
-   * branch's cross-host content-write lock (utils/content-write-lock.ts). The
-   * worker yields on contention -- it retries the branch next cycle, while the
-   * editor on the other side is a person waiting on a save.
+   * [SYNC-C1] Branches skipped this cycle for a content-write-lock reason,
+   * either of which is a RETRY rather than a failure:
+   *
+   * - a content write already held the branch's cross-host content-write lock
+   *   (utils/content-write-lock.ts) -- the worker yields on contention, since
+   *   the editor on the other side is a person waiting on a save; or
+   * - the lock was LOST mid-rebase (compromised), so the worker stopped before
+   *   the next destructive git step. Only when the rebase had not completed:
+   *   a completed rebase must still run its completion path, or it strands the
+   *   [SYNC-H1] marker on a branch nothing will revisit.
    */
   skippedLocked: string[]
   /** Branches whose rebase attempt failed (fetch error, unexpected rebase error, or MAX_ROUNDS exceeded). */
@@ -2407,7 +2413,6 @@ export class CmsWorker {
                 await branchGit.rebase(['--skip'])
               }
               completed = true
-              await this.afterRebaseCompletedForTesting()
             } catch (rebaseErr) {
               nextAction = 'continue'
               const st = await branchGit.status()
@@ -2446,6 +2451,10 @@ export class CmsWorker {
               }
             }
           }
+
+          // Outside the round loop's try/catch, so a throwing test hook can
+          // never be misread as a rebase error.
+          if (completed) await this.afterRebaseCompletedForTesting()
 
           // [SYNC-C1] A lost lock is a RETRY, not a rebase failure: nothing is
           // wrong with the branch, we simply can no longer prove we were the

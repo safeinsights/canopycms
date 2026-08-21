@@ -70,8 +70,17 @@ function provisioningLockOptions(
           getErrorMessage(err),
         )
       } catch {
-        // Nothing further is safe to attempt -- reporting the reporting
-        // failure could throw for exactly the same reason.
+        // Last resort: a raw stderr write goes around both a replaced logger
+        // and vitest's console interception, so the compromise still leaves a
+        // trace. Guarded in turn, because nothing above this line is allowed
+        // to throw out of a refresh timer.
+        try {
+          process.stderr.write(
+            `[canopy] lock compromised for ${lockPath}; its handler or logger threw\n`,
+          )
+        } catch {
+          // Nothing further is safe to attempt.
+        }
       }
     },
   }

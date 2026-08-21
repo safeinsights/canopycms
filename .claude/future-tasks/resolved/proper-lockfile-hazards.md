@@ -22,7 +22,11 @@ after hazard #2 stopped being latent and started failing the test suite outright
   lock does NOT — `withContentWriteLock` surfaces a compromise as the retriable
   `ContentWriteLockBusyError`, and the worker's rebase loop aborts before the next
   destructive git step and retries the branch next cycle rather than replaying
-  over a possibly-concurrent save.
+  over a possibly-concurrent save. That abort applies ONLY when the rebase had
+  not completed: a completed rebase still runs its completion path, because
+  skipping it would strand the [SYNC-H1] history-rewrite marker and the cache
+  invalidation on a caught-up branch the next cycle never revisits
+  (`behindCount === 0`), wedging it permanently.
 - Release now swallows `ERELEASED` (and only that), because callers release in a
   `finally` and a compromised lock would otherwise turn a completed operation
   into a spurious failure.
