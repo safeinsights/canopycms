@@ -202,6 +202,15 @@ export async function withContentWriteLock<T>(
   } finally {
     await release()
   }
-  if (compromised) throw new ContentWriteLockBusyError()
+  if (compromised) {
+    // Deliberately NOT the default "was not saved" message: `fn()` completed,
+    // so the write is on disk. What we lost is the proof it was exclusive, so
+    // the honest instruction is "reload, then decide" rather than "retry",
+    // which would resend a now-stale expectedVersion and bounce off the
+    // caller's own landed write as a phantom editor collision.
+    throw new ContentWriteLockBusyError(
+      'This branch was being synced while your change was written, so the change may or may not have been recorded. Reload the entry to see the current state before saving again.',
+    )
+  }
   return result
 }

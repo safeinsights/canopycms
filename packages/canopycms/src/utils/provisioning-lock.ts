@@ -48,12 +48,20 @@ function provisioningLockOptions(
     realpath: false,
     retries,
     stale: 30_000,
-    onCompromised:
-      onCompromised ??
-      ((err) => {
+    // proper-lockfile invokes this from inside its refresh timer, so ANY throw
+    // escaping here is an uncaught exception that kills the process -- the very
+    // failure the handler exists to prevent. Call sites are told not to throw
+    // (see OnLockCompromised); this makes it structural rather than a
+    // convention, and also covers the LOGGER throwing: under `CI=true`,
+    // vitest's `onConsoleLog` turns any console write into a throw.
+    onCompromised: (err) => {
+      try {
+        if (onCompromised) {
+          onCompromised(err)
+          return
+        }
         // Default: log and let the holder finish. proper-lockfile's own default
-        // rethrows from the refresh timer, i.e. an uncaught exception that
-        // takes the process down -- which protects nothing, because by the time
+        // rethrows from the refresh timer, which protects nothing -- by the time
         // a compromise is reported the mutual exclusion is already gone.
         // `canopyLogWarn` (not the debug logger) because this means "two
         // holders may now be live": it must be visible without CANOPYCMS_DEBUG.
@@ -61,7 +69,11 @@ function provisioningLockOptions(
           `[canopy] Provisioning lock compromised mid-hold for ${lockPath}:`,
           getErrorMessage(err),
         )
-      }),
+      } catch {
+        // Nothing further is safe to attempt -- reporting the reporting
+        // failure could throw for exactly the same reason.
+      }
+    },
   }
 }
 
@@ -82,8 +94,11 @@ function releaseIgnoringAlreadyReleased(
       await release()
     } catch (err: unknown) {
       if (isNodeError(err) && err.code === 'ERELEASED') {
+        // Deliberately does not name a cause: ERELEASED is raised both by a
+        // lock compromised mid-hold AND by a plain double-release bug, and
+        // from here the two are indistinguishable.
         canopyLogWarn(
-          `[canopy] Lock at ${lockPath} was already released (compromised mid-hold); nothing to release`,
+          `[canopy] Lock at ${lockPath} was already released (compromised mid-hold, or released twice); nothing to release`,
         )
         return
       }

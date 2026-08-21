@@ -114,10 +114,25 @@ lock marker's own path (`realpath: false`, since the marker need not exist yet) 
 `onCompromised` that logs instead of crashing. Regression coverage:
 `utils/provisioning-lock.test.ts`.
 
-**Never let a compromised lock kill the process.** Always pass `onCompromised`. By the
-time proper-lockfile reports a compromise the mutual exclusion is already gone, so
-crashing protects nothing — it just converts a lock failure into an outage for a Lambda
-serving unrelated requests, or an unhandled error for a test worker.
+**Never let a compromised lock kill the process.** proper-lockfile's default
+`onCompromised` rethrows from inside its refresh timer, i.e. an uncaught exception. By the
+time a compromise is reported the mutual exclusion is already gone, so crashing protects
+nothing — it just converts a lock failure into an outage for a Lambda serving unrelated
+requests, or an unhandled error for a test worker. `provisioning-lock.ts` therefore wraps
+whatever handler a call site supplies in a `try/catch`, so this holds even if the handler
+(or the logger it calls) throws — which is not hypothetical: under `CI=true` vitest's
+`onConsoleLog` turns any console write into a throw.
+
+**Then decide, per call site, what a compromise means for that critical section.** It is a
+parameter, not a fixed policy, because the right answer differs: provisioning logs and
+finishes (idempotent, and a real concurrent provisioner fails loudly on its own), whereas
+the content-write lock must not let the work stand unexamined — `withContentWriteLock`
+raises a retriable `ContentWriteLockBusyError` telling the editor to reload before saving
+again, and the worker's rebase stops before the next destructive git step. The one thing
+that is NOT a valid response is skipping cleanup for work that already happened: a rebase
+that completed owns the [SYNC-H1] history-rewrite marker and its cache invalidation, and a
+caught-up branch is never revisited (`behindCount === 0`), so bailing there wedges the
+branch permanently.
 
 ### 4. Generation markers for regenerating caches — `resource-generation.ts`
 
@@ -240,9 +255,10 @@ waiting on a save:
   and a read racing a rebase gets an older or newer file, never a destroyed one.
 
 Acquisition order is always content lock → `withLock`, never the reverse. The lock
-anchors on `{branchRoot}/.canopy-meta` (git-excluded, so the marker can never dirty the
-tree or land in a publish commit) — deliberately a different proper-lockfile target from
-the provisioning lock, per the aliasing note in layer 3.
+keeps its marker under `{branchRoot}/.canopy-meta` (git-excluded, so the marker can never
+dirty the tree or land in a publish commit) and anchors on that marker path, like every
+other lock here — so per the aliasing note in layer 3 it cannot share a registry key with
+the branch's provisioning lock.
 
 **Residual (accepted):** the stale-takeover caveat in layer 3 applies here too — a
 waiter reading a cached mtime can take the lock from a live rebase. The result is
@@ -447,9 +463,11 @@ change — the old comment defended the loser proceeding; it no longer does.
 
 Its anchor path is deliberately its own dot-directory,
 `{workspaceRoot}/.settings-init` (`settingsInitLockTarget()`), for two reasons. It cannot
-live inside the settings root, because `acquireProvisioningLock` mkdir's its target and
-`git clone` refuses a destination with content in it. And per the aliasing note in layer
-3, it must not equal any other proper-lockfile target: `path.dirname(settingsRoot)` is
-`{workspaceRoot}`, which is precisely the target `ensureLocalSimulatedRemote` passes for
-`.remote-init.lock` — and settings init calls into that while holding this lock, so
-anchoring there would have two live locks sharing one registry key in one process.
+live inside the settings root, because `acquireProvisioningLock` mkdir's the directory its
+marker goes in and `git clone` refuses a destination with content in it. Keeping it in a
+dedicated dot-directory also keeps it clear of `.remote-init.lock`, which
+`ensureLocalSimulatedRemote` creates in `path.dirname(settingsRoot)` (= `{workspaceRoot}`)
+and which settings init calls into while holding this lock. Since 2026-08-20 that nesting
+is no longer a registry hazard — locks anchor on their own marker paths, so the two can
+never share a key — but keeping the markers in separate directories keeps the nesting
+obvious rather than incidental.

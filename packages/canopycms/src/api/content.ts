@@ -487,10 +487,12 @@ const writeContentHandler = async (
   } catch (err) {
     if (err instanceof ContentConflictError) {
       // [SYNC-C1] Not an editor-vs-editor collision at all: the branch's
-      // working tree is being rebased right now, so the write was refused
-      // rather than acknowledged and then rolled back. Its own message says
-      // that and says to retry -- checked first, since the generic branches
-      // below would otherwise blame another editor.
+      // working tree is being rebased. Usually the write was refused outright
+      // rather than acknowledged and then rolled back; the one exception is a
+      // lock compromised mid-write, where the write DID land but we can no
+      // longer prove it was exclusive. Each case carries its own message
+      // (retry vs. reload-then-decide), so pass it through -- checked first,
+      // since the generic branches below would otherwise blame another editor.
       if (err instanceof BranchSyncingError) {
         return { ok: false, status: 409, error: err.message }
       }

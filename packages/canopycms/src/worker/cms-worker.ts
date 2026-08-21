@@ -2143,6 +2143,15 @@ export class CmsWorker {
    */
   protected async afterConflictDetectedForTesting(): Promise<void> {}
 
+  /**
+   * Test seam, sibling of {@link afterConflictDetectedForTesting}: runs at the
+   * instant a rebase round has succeeded, before the completion path (cache
+   * invalidation, conflict metadata, [SYNC-H1] marker) executes. Exists so a
+   * test can lose the content-write lock at exactly the point where bailing out
+   * would strand a rewritten history.
+   */
+  protected async afterRebaseCompletedForTesting(): Promise<void> {}
+
   private async rebaseActiveBranches(): Promise<RebaseSummary> {
     // PR-W1: collected across the loop below and returned as a summary
     // (folded into worker-status.json by syncGit()). Purely additive
@@ -2398,6 +2407,7 @@ export class CmsWorker {
                 await branchGit.rebase(['--skip'])
               }
               completed = true
+              await this.afterRebaseCompletedForTesting()
             } catch (rebaseErr) {
               nextAction = 'continue'
               const st = await branchGit.status()
@@ -2440,12 +2450,26 @@ export class CmsWorker {
           // [SYNC-C1] A lost lock is a RETRY, not a rebase failure: nothing is
           // wrong with the branch, we simply can no longer prove we were the
           // only writer. Handled ahead of the `!completed` block so it never
-          // records a user-visible rebaseFailure or lands in `failed[]`, and
-          // deliberately checked even when the rebase DID complete -- having
-          // possibly replayed over a concurrent save, we must not publish it.
-          // The `finally` below still releases the lock, and the next cycle
-          // re-derives everything from a settled tree.
-          if (contentLockCompromised) {
+          // records a user-visible rebaseFailure or lands in `failed[]`.
+          //
+          // ONLY when the rebase did not complete. Bailing out of a COMPLETED
+          // rebase would be worse than useless: the history is already
+          // rewritten (so `--abort` is a no-op), and skipping the completion
+          // path below strands three things the next cycle will never redo,
+          // because a caught-up branch short-circuits at the `behindCount === 0`
+          // check above -- the [SYNC-H1] `markHistoryRewritten` marker (without
+          // which the editor's next submit is rejected non-fast-forward and
+          // mis-diagnosed as another deployment), the content-cache
+          // invalidation for a tree that DID change, and the conflictStatus
+          // save. That converts a transient lock compromise into a permanently
+          // wedged published branch.
+          //
+          // Nor does bailing protect a racing save: a rebase replays COMMITTED
+          // history, while a concurrent save is uncommitted working-tree state,
+          // and that writer is already told to retry via
+          // ContentWriteLockBusyError. So when the rebase completed, log the
+          // lost exclusivity loudly and finish the job.
+          if (contentLockCompromised && !completed) {
             workerLogWarn(
               `  Skipping ${branchDir}: content-write lock was compromised mid-rebase (retrying next cycle)`,
             )
@@ -2453,6 +2477,11 @@ export class CmsWorker {
             await branchGit.rebase(['--abort']).catch(() => {})
             skippedLocked.push(branchDir)
             continue
+          }
+          if (contentLockCompromised) {
+            workerLogWarn(
+              `  Content-write lock for ${branchDir} was compromised, but its rebase had already completed -- finishing the sync (history is rewritten; skipping now would strand the history-rewrite marker and wedge the branch)`,
+            )
           }
 
           if (!completed) {
