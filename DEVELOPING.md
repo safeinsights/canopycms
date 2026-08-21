@@ -1723,6 +1723,29 @@ next -- and Vitest warns that such errors can cause false positives elsewhere in
 run. If you see an unhandled error blamed on a test that plainly can't have caused it,
 suspect a missing jsdom shim in the test that ran before it.
 
+`test-setup.ts` also registers React Testing Library's `cleanup()` in an `afterEach`,
+and that registration has to be explicit here. RTL normally installs its own automatic
+cleanup, but only when it finds a **global** `afterEach` -- and this package runs vitest
+with `globals: false`, so that global does not exist and RTL's auto-registration
+silently no-ops. Importing `afterEach` from `vitest` in the setup file is what makes it
+real. Two things follow for contributors:
+
+- **Every test starts without the previous test's rendered trees.** `cleanup()` unmounts
+  the containers RTL itself mounted; nodes a test appended to `document.body` by hand
+  are its own to remove. Don't write a test that depends on a tree an earlier test in
+  the same file rendered; render what you need.
+- **A new jsdom vitest project, or a second editor setup file, must register `cleanup()`
+  too.** Nothing else will do it for you.
+
+This is not just tidiness. Without the unmount, components stay mounted for the whole
+file and their timers outlive the test: Mantine's `useTransition` cancels its pending
+`setTimeout(setState)` from an unmount effect, so an un-unmounted transition can fire
+after the jsdom environment is torn down and blow up inside React with
+`ReferenceError: window is not defined`. That lands as exactly the kind of
+misattributed "Unhandled Error" described above -- a run that exits non-zero while every
+single test passes. Before this was fixed, 17 of the 53 editor test files ended with
+components still mounted (252 trees in total).
+
 ### Diagnosing a Test Failure
 
 **Attribute the failure to the base before blaming your diff.** Run the suite at the

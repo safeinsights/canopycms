@@ -37,6 +37,26 @@ import { initTestRepo, mockConsole } from '../test-utils'
 import { tryAcquireContentWriteLock } from '../utils/content-write-lock'
 import { CmsWorker } from './cms-worker'
 
+/**
+ * Captures the `onCompromised` callback the worker installs on its
+ * content-write lock, so a test can lose the lock at a chosen instant. A real
+ * compromise needs proper-lockfile's ~15s refresh heartbeat; firing the
+ * callback is the same code path without the wait. The mock delegates to the
+ * real implementation, so every other test in this file is unaffected.
+ */
+const compromiseHook = vi.hoisted(() => ({ fire: undefined as ((err: Error) => void) | undefined }))
+
+vi.mock('../utils/content-write-lock', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../utils/content-write-lock')>()
+  return {
+    ...actual,
+    tryAcquireContentWriteLock: (branchRoot: string, onCompromised?: (err: Error) => void) => {
+      if (onCompromised) compromiseHook.fire = onCompromised
+      return actual.tryAcquireContentWriteLock(branchRoot, onCompromised)
+    },
+  }
+})
+
 // ---------------------------------------------------------------------------
 // Fixture
 // ---------------------------------------------------------------------------
@@ -76,10 +96,17 @@ const makeStore = (branchPath: string, contentWriteLockWaitMs = 150) =>
  */
 class ConflictHookWorker extends CmsWorker {
   onConflict?: () => Promise<void>
+  onRebaseCompleted?: () => Promise<void>
 
   protected async afterConflictDetectedForTesting(): Promise<void> {
     const fn = this.onConflict
     this.onConflict = undefined
+    if (fn) await fn()
+  }
+
+  protected async afterRebaseCompletedForTesting(): Promise<void> {
+    const fn = this.onRebaseCompleted
+    this.onRebaseCompleted = undefined
     if (fn) await fn()
   }
 }
@@ -223,6 +250,61 @@ describe('rebase vs. content write exclusion', () => {
       expect((writeOutcome?.err as Error).message).toMatch(/syncing/i)
       expect(after).not.toContain('editor save')
     }
+  })
+
+  it('skips a branch, without recording a failure, when the lock is lost mid-rebase', async () => {
+    const setup = await createConflictSetup(tmpDir, 'my-feature')
+
+    const consoleSpy = mockConsole()
+    const worker = makeWorker(tmpDir)
+    // Another host takes the lock over while the rebase is mid-conflict.
+    worker.onConflict = async () => {
+      compromiseHook.fire?.(new Error('simulated lock takeover'))
+    }
+    const summary = await runRebase(worker)
+
+    // A lost lock is a RETRY, not a rebase failure.
+    expect(summary.skippedLocked).toContain('my-feature')
+    expect(summary.failed).toEqual([])
+    expect(summary.rebased).not.toContain('my-feature')
+    expect(consoleSpy).toHaveWarned(/compromised mid-rebase/i)
+    consoleSpy.restore()
+
+    // Nothing user-visible is recorded against the branch...
+    const meta = await BranchMetadataFileManager.loadOnly(setup.branchPath)
+    expect(meta?.branch.rebaseFailure).toBeUndefined()
+
+    // ...and it is left behind, so the next cycle simply retries it.
+    await setup.branchGit.fetch('origin', 'main')
+    expect((await setup.branchGit.status()).behind).toBeGreaterThan(0)
+  })
+
+  // Regression: bailing out of a COMPLETED rebase strands a rewritten history.
+  // `--abort` is a no-op by then, and the completion path owns the [SYNC-H1]
+  // history-rewrite marker, the content-cache invalidation and the conflict
+  // metadata -- none of which the next cycle redoes, because a caught-up branch
+  // short-circuits on `behindCount === 0`. The result would be a permanently
+  // wedged published branch, so the skip must apply only when !completed.
+  it('finishes the sync when the lock is lost AFTER the rebase completed', async () => {
+    const setup = await createConflictSetup(tmpDir, 'my-feature')
+
+    const consoleSpy = mockConsole()
+    const worker = makeWorker(tmpDir)
+    worker.onRebaseCompleted = async () => {
+      compromiseHook.fire?.(new Error('simulated lock takeover'))
+    }
+    const summary = await runRebase(worker)
+
+    expect(summary.rebased).toContain('my-feature')
+    expect(summary.skippedLocked).not.toContain('my-feature')
+    expect(summary.failed).toEqual([])
+    expect(consoleSpy).toHaveWarned(/already completed/i)
+    consoleSpy.restore()
+
+    // The rebase really did land -- the branch is caught up, which is exactly
+    // why the next cycle would never revisit it.
+    await setup.branchGit.fetch('origin', 'main')
+    expect((await setup.branchGit.status()).behind).toBe(0)
   })
 
   it('skips a branch whose content-write lock is held, and reports the skip', async () => {

@@ -40,3 +40,14 @@ sites have not been audited against it.
 **Guard to add for each:** the pattern in
 `packages/canopycms/src/worker/cms-worker-content-lock.test.ts` — drive the mutation with the
 lock held and assert it fails retriably rather than proceeding.
+
+## Also uncovered: `submitBranch` (added 2026-08-20)
+
+Noted by the independent review of the proper-lockfile-hazards fix. `services.ts`'s
+`submitBranch` is the **only** path that commits the working tree (`git.add('.')` +
+commit + push), and it takes no content-write lock, so it can race the worker's rebase
+in the same way the mutators above can. It is not an acute risk today -- the publish
+side is keyed to the pre-rebase sha via `--force-with-lease`, so a colliding push is
+refused rather than silently clobbering -- but it belongs on this list, because it is
+the one place where a racing editor save could actually be *committed* rather than left
+as dirty working-tree state.
