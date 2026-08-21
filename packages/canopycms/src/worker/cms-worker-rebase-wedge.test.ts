@@ -21,7 +21,7 @@ import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { simpleGit, type SimpleGit } from 'simple-git'
 
 import { BranchMetadataFileManager } from '../branch-metadata'
@@ -31,6 +31,20 @@ import { isRebaseInProgress } from '../utils/git'
 import { CmsWorker } from './cms-worker'
 
 const ENTRY_FILE = 'content/posts/post.hello.TESTENTRYabc.json'
+/**
+ * Present from the base commit and touched by neither side, so a test can
+ * modify it DURING a wedge to stand in for an editor's save (` M`). It has to
+ * predate the rebase: git refuses `commit` while unmerged paths exist.
+ */
+const BYSTANDER_FILE = 'content/posts/post.bystander.TESTENTRYdef.json'
+/**
+ * Present from the base commit and edited by the BRANCH in the same commit as
+ * the conflicting entry. When the rebase stops on that conflict, this file's
+ * cleanly-replayed change is already STAGED (`M `) -- committed history that
+ * survives the abort untouched, and must therefore never be reported as a
+ * discarded editor save.
+ */
+const REPLAY_STAGED_FILE = 'content/posts/post.replayed.TESTENTRYghi.json'
 
 const makeWorker = (workspacePath: string) =>
   new CmsWorker({
@@ -85,6 +99,11 @@ async function createSetup(
   }
 
   await writeInto(remotePath, '{\n  "title": "base"\n}\n')
+  for (const extra of [BYSTANDER_FILE, REPLAY_STAGED_FILE]) {
+    const full = path.join(remotePath, extra)
+    await fs.mkdir(path.dirname(full), { recursive: true })
+    await fs.writeFile(full, '{\n  "title": "base"\n}\n')
+  }
   await remoteGit.add(['.'])
   await remoteGit.commit('initial commit')
 
@@ -109,8 +128,14 @@ async function createSetup(
     await branchGit.commit('branch: delete entry')
   } else {
     await writeInto(branchPath, '{\n  "title": "branch version"\n}\n')
+    // Edited in the SAME commit and NOT touched by base, so it replays cleanly
+    // and sits staged while the rebase is stopped on the conflict above.
+    await fs.writeFile(
+      path.join(branchPath, REPLAY_STAGED_FILE),
+      '{\n  "title": "branch replayed"\n}\n',
+    )
     await branchGit.add(['.'])
-    await branchGit.commit('branch: update entry')
+    await branchGit.commit('branch: update entry and one clean file')
   }
 
   // ...and the upstream side, which either modifies the same file or deletes
@@ -225,6 +250,74 @@ describe('rebase wedge recovery', () => {
       // "has uncommitted changes" every cycle from now on.
       expect(summary.skippedDirty).not.toContain('my-feature')
       expect(summary.rebased).toContain('my-feature')
+    })
+
+    it('names the editor saves it is about to discard, and only those', async () => {
+      // This filter has now been written wrong TWICE -- first keyed on the
+      // wrong columns entirely, then over-reporting the replay's own staged
+      // files -- and both times the whole suite stayed green. So assert the
+      // classification directly.
+      //
+      // A `rebase --abort` hard-resets tracked files. While the worker was
+      // down nothing held the content-write lock, so an editor's save could
+      // have landed; the abort reverts it, and the log line is the only record
+      // an operator gets.
+      const setup = await createSetup(tmpDir, 'my-feature', { branchDeletesEntry: false })
+      await setup.branchGit.fetch('origin')
+      await setup.branchGit.rebase(['origin/main']).catch(() => {})
+      expect(await isRebaseInProgress(setup.branchPath)).toBe(true)
+
+      // An editor edits an EXISTING entry in the wedged clone (` M`) ...
+      const savedOver = path.join(setup.branchPath, BYSTANDER_FILE)
+      await fs.writeFile(savedOver, '{\n  "title": "edited during downtime"\n}\n')
+      // ... and creates a NEW one, which is untracked and survives the abort.
+      const newEntry = path.join(setup.branchPath, 'content/posts/brand-new.json')
+      await fs.writeFile(newEntry, '{\n  "title": "new"\n}\n')
+
+      const warnings: string[] = []
+      const spy = vi.spyOn(console, 'warn').mockImplementation((...args: unknown[]) => {
+        warnings.push(args.map(String).join(' '))
+      })
+      try {
+        await runRebase(makeWorker(tmpDir))
+      } finally {
+        spy.mockRestore()
+      }
+
+      const discardLine = warnings.find((w) => w.includes('will DISCARD'))
+      expect(discardLine, 'the discard warning must be emitted').toBeDefined()
+      // The editor's unstaged modification is named...
+      expect(discardLine).toContain(BYSTANDER_FILE)
+      // ...and the untracked new file, which the abort does NOT delete, is not.
+      expect(discardLine).not.toContain('content/posts/brand-new.json')
+      // ...nor is the interrupted replay's own STAGED file (`M `). That change
+      // is committed history and survives the abort, so naming it would be a
+      // false data-loss report -- the exact defect the first two versions of
+      // this filter had.
+      expect(discardLine).not.toContain(REPLAY_STAGED_FILE)
+      // The new entry really did survive, which is what makes that correct.
+      expect((await fs.stat(newEntry)).isFile()).toBe(true)
+    })
+
+    it('stays silent when there is nothing to discard', async () => {
+      // The common recovery: nothing but the interrupted replay's own state.
+      // Reporting the replay's staged files here would be a false data-loss
+      // alarm naming specific files, which is worse than no report at all.
+      const setup = await createSetup(tmpDir, 'my-feature', { branchDeletesEntry: false })
+      await setup.branchGit.fetch('origin')
+      await setup.branchGit.rebase(['origin/main']).catch(() => {})
+
+      const warnings: string[] = []
+      const spy = vi.spyOn(console, 'warn').mockImplementation((...args: unknown[]) => {
+        warnings.push(args.map(String).join(' '))
+      })
+      try {
+        await runRebase(makeWorker(tmpDir))
+      } finally {
+        spy.mockRestore()
+      }
+
+      expect(warnings.find((w) => w.includes('will DISCARD'))).toBeUndefined()
     })
 
     it('leaves no conflict markers for editors to read or save over', async () => {

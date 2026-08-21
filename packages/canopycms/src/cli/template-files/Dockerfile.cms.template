@@ -1,4 +1,7 @@
-FROM public.ecr.aws/docker/library/node:20-slim AS builder
+# Node 22, matching canopycms's `engines.node: ">=22"`. Node 20 reached
+# upstream EOL on 2026-04-30, so it receives no further security patches --
+# and the CMS Lambda runs this image.
+FROM public.ecr.aws/docker/library/node:22-slim AS builder
 WORKDIR /app
 {{DOCKER_COPY}}
 # If your app uses `file:` dependencies (e.g. vendored tarballs under vendor/),
@@ -53,7 +56,7 @@ ARG NEXT_PUBLIC_CANOPY_MODE=dev
 ENV NEXT_PUBLIC_CANOPY_MODE=$NEXT_PUBLIC_CANOPY_MODE
 RUN {{DOCKER_BUILD}}
 
-FROM public.ecr.aws/docker/library/node:20-slim AS runner
+FROM public.ecr.aws/docker/library/node:22-slim AS runner
 # Git is required by CanopyCMS for branch operations
 RUN apt-get update && apt-get install -y git && rm -rf /var/lib/apt/lists/*
 # The runtime user's uid differs from the uid that owns EFS workspace files

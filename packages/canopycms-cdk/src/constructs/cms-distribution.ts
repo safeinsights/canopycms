@@ -12,6 +12,32 @@ import {
 } from 'aws-cdk-lib'
 import { DEFAULT_CMS_LAMBDA_TIMEOUT, MAX_CLOUDFRONT_ORIGIN_READ_TIMEOUT } from './cms-service'
 
+/**
+ * Merge caller behaviors over this construct's own, preserving THE CALLER'S
+ * ordering for every key they supply.
+ *
+ * A plain `{ ...defaults, ...caller }` gets the values right and the ORDER
+ * wrong: JavaScript keeps an overridden key at its first-insertion index, so a
+ * caller who overrides `/_next/static/*` finds it pinned ahead of every other
+ * pattern they passed, regardless of the order they wrote. Since CloudFront
+ * matches path patterns in order, that silently makes a more specific pattern
+ * listed after it unreachable -- exactly the failure the prop's doc comment
+ * warns callers to avoid, introduced by the merge itself.
+ *
+ * Dropping collided defaults FIRST means the caller's own object contributes
+ * its keys in its own order.
+ */
+function mergeBehaviors(
+  defaults: Record<string, cloudfront.BehaviorOptions>,
+  caller: Record<string, cloudfront.BehaviorOptions> | undefined,
+): Record<string, cloudfront.BehaviorOptions> {
+  if (!caller) return defaults
+  const uncollided = Object.fromEntries(
+    Object.entries(defaults).filter(([pattern]) => !(pattern in caller)),
+  )
+  return { ...uncollided, ...caller }
+}
+
 export interface CanopyCmsDistributionProps {
   /** Lambda Function URL from CanopyCmsService */
   functionUrl: lambda.FunctionUrl
@@ -63,7 +89,10 @@ export interface CanopyCmsDistributionProps {
    * transform Lambda.
    *
    * Keys here override this construct's own behaviors on collision, which is
-   * deliberate — the caller is more specific than the default.
+   * deliberate — the caller is more specific than the default — and an
+   * overridden key takes YOUR position in this object, not the position the
+   * default held. (A plain object spread would do the opposite; see
+   * `mergeBehaviors`.)
    */
   additionalBehaviors?: Record<string, cloudfront.BehaviorOptions>
 }
@@ -222,16 +251,16 @@ export class CanopyCmsDistribution extends Construct {
           },
         ],
       },
-      // Caller-supplied behaviors last, so they win on a key collision -- see
-      // `additionalBehaviors`'s doc comment for the ordering caveat.
-      additionalBehaviors: {
-        '/_next/static/*': {
-          origin,
-          cachePolicy: staticCachePolicy,
-          viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+      additionalBehaviors: mergeBehaviors(
+        {
+          '/_next/static/*': {
+            origin,
+            cachePolicy: staticCachePolicy,
+            viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+          },
         },
-        ...props.additionalBehaviors,
-      },
+        props.additionalBehaviors,
+      ),
     })
 
     // ========================================================================

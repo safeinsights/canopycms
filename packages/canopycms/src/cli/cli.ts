@@ -106,6 +106,28 @@ async function requireProjectRoot(command: string): Promise<string> {
 }
 
 /** Resolve sync subcommand from positional arg. Returns null if missing or invalid. Exported for testing. */
+/** The auth modes `worker run-once` knows how to build a plugin for. */
+export const KNOWN_AUTH_MODES = ['clerk', 'dev'] as const
+
+export type KnownAuthMode = (typeof KNOWN_AUTH_MODES)[number]
+
+/**
+ * Whether `CANOPY_AUTH_MODE` names a provider the CLI can actually construct.
+ *
+ * Pure and exported so it is testable: the dispatch below branches on 'clerk'
+ * and 'dev' only, and the catch around plugin loading fires solely on an
+ * IMPORT failure -- so before this guard existed, any other value (a typo,
+ * wrong casing like 'Clerk', a stale value from another system) selected no
+ * plugin, skipped the auth refresh entirely, and let the command run to "Done"
+ * with exit code 0. A cron'd `CANOPY_AUTH_MODE=clerk canopycms worker
+ * run-once` that became `Clerk` refreshed nothing for as long as the typo
+ * survived, while the cache aged and a user removed from the Clerk org kept
+ * editor access.
+ */
+export function isKnownAuthMode(value: string): value is KnownAuthMode {
+  return (KNOWN_AUTH_MODES as readonly string[]).includes(value)
+}
+
 export function resolveSyncSubcommand(sub: string | undefined): SyncSubcommand | null {
   if (sub && (SYNC_SUBCOMMANDS as readonly string[]).includes(sub)) return sub as SyncSubcommand
   return null
@@ -220,8 +242,7 @@ async function main() {
     // aged indefinitely and a user removed from the Clerk org kept editor
     // access. The non-zero exit that already exists for refresh FAILURES never
     // fired, because nothing failed.
-    const KNOWN_AUTH_MODES = ['clerk', 'dev'] as const
-    if (!KNOWN_AUTH_MODES.includes(authMode as (typeof KNOWN_AUTH_MODES)[number])) {
+    if (!isKnownAuthMode(authMode)) {
       console.error(
         `Unknown CANOPY_AUTH_MODE "${authMode}" — expected one of: ${KNOWN_AUTH_MODES.join(', ')}. ` +
           `No auth plugin was loaded, so the auth cache will NOT be refreshed.`,
