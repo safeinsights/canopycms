@@ -7,6 +7,7 @@ import {
   aws_lambda as lambda,
   aws_route53 as route53,
   aws_certificatemanager as acm,
+  aws_cloudfront_origins as origins,
   aws_s3 as s3,
 } from 'aws-cdk-lib'
 import { CanopyCmsService, DEFAULT_CMS_LAMBDA_TIMEOUT } from './cms-service'
@@ -229,6 +230,106 @@ describe('CanopyCmsDistribution: origin read timeout matches the Lambda timeout'
           ),
         }),
     ).toThrow(/service-quota increase/)
+  })
+})
+
+describe('CanopyCmsDistribution: us-east-1 certificate restriction', () => {
+  function distInRegion(region: string, withCertificate: boolean) {
+    const app = new App()
+    const stack = new Stack(app, `RegionStack${region.replace(/-/g, '')}`, {
+      env: { account: '123456789012', region },
+    })
+    const service = new CanopyCmsService(stack, 'Cms', {
+      cmsDockerImage: lambda.DockerImageCode.fromEcr(
+        ecr.Repository.fromRepositoryName(stack, 'Repo', 'cms'),
+      ),
+      githubOwner: 'acme',
+      githubRepo: 'site',
+    })
+    return () =>
+      new CanopyCmsDistribution(stack, 'Dist', {
+        functionUrl: service.functionUrl,
+        domainName: 'cms.example.org',
+        hostedZoneDomain: 'example.org',
+        hostedZone: route53.HostedZone.fromHostedZoneAttributes(stack, 'Zone', {
+          hostedZoneId: 'Z123456789',
+          zoneName: 'example.org',
+        }),
+        ...(withCertificate
+          ? {
+              certificate: acm.Certificate.fromCertificateArn(
+                stack,
+                'Cert',
+                'arn:aws:acm:us-east-1:123456789012:certificate/abc',
+              ),
+            }
+          : {}),
+      })
+  }
+
+  it('throws at synth outside us-east-1, naming both workarounds', () => {
+    // CloudFront requires its certificate in us-east-1; this construct creates
+    // one in the STACK's region. The restriction was documented nowhere, so an
+    // adopter in eu-west-1 got an opaque error and had to research the fix.
+    expect(distInRegion('eu-west-1', false)).toThrow(/us-east-1/)
+    expect(distInRegion('eu-west-1', false)).toThrow(/certificate` prop/)
+  })
+
+  it('allows any region when the caller supplies its own certificate', () => {
+    // A pre-created us-east-1 certificate is one of the two documented
+    // workarounds, so it must not be rejected.
+    expect(distInRegion('eu-west-1', true)).not.toThrow()
+  })
+
+  it('allows us-east-1', () => {
+    expect(distInRegion('us-east-1', false)).not.toThrow()
+  })
+})
+
+describe('CanopyCmsDistribution: additionalBehaviors', () => {
+  it('merges caller behaviors alongside the built-in ones', () => {
+    // Without this prop there was no way to attach AssetSupport's behaviors to
+    // the distribution the scaffold generates, so its own "uncomment to enable
+    // media" instructions were a dead end.
+    const app = new App()
+    const stack = new Stack(app, 'BehaviorStack', {
+      env: { account: '123456789012', region: 'us-east-1' },
+    })
+    const service = new CanopyCmsService(stack, 'Cms', {
+      cmsDockerImage: lambda.DockerImageCode.fromEcr(
+        ecr.Repository.fromRepositoryName(stack, 'Repo', 'cms'),
+      ),
+      githubOwner: 'acme',
+      githubRepo: 'site',
+    })
+    new CanopyCmsDistribution(stack, 'Dist', {
+      functionUrl: service.functionUrl,
+      domainName: 'cms.example.org',
+      hostedZoneDomain: 'example.org',
+      hostedZone: route53.HostedZone.fromHostedZoneAttributes(stack, 'Zone', {
+        hostedZoneId: 'Z123456789',
+        zoneName: 'example.org',
+      }),
+      certificate: acm.Certificate.fromCertificateArn(
+        stack,
+        'Cert',
+        'arn:aws:acm:us-east-1:123456789012:certificate/abc',
+      ),
+      additionalBehaviors: {
+        '/custom/*': {
+          origin: origins.FunctionUrlOrigin.withOriginAccessControl(service.functionUrl),
+        },
+      },
+    })
+
+    const template = Template.fromStack(stack)
+    const dist = Object.values(template.findResources('AWS::CloudFront::Distribution'))[0]
+    const patterns = (
+      dist.Properties.DistributionConfig.CacheBehaviors as { PathPattern: string }[]
+    ).map((b) => b.PathPattern)
+    // Both the construct's own behavior and the caller's survive the merge.
+    expect(patterns).toContain('/_next/static/*')
+    expect(patterns).toContain('/custom/*')
   })
 })
 

@@ -319,6 +319,13 @@ deploy at synth — before anything is changed in the account.
 | `CANOPYCMS_DEPLOYMENT_NAME`                 | variable  | no (defaults to `prod`)                      |
 | `CMS_DOMAIN_NAME`, `CMS_HOSTED_ZONE_DOMAIN` | variables | no (enables CloudFront + Route53)            |
 
+> **CloudFront requires a us-east-1 certificate.** When `CMS_DOMAIN_NAME` is set,
+> `CanopyCmsDistribution` creates an ACM certificate in the **stack's own region**, and
+> CloudFront only accepts certificates from `us-east-1`. So with a domain configured,
+> `AWS_REGION` must be `us-east-1` — or you must create the certificate in a us-east-1
+> stack yourself and pass it via the construct's `certificate` prop. The construct now
+> fails at synth with that message rather than letting the deploy fail obscurely.
+
 The workflow deploys the stack **by name**, not with `--all`: `--all` would
 also deploy any unrelated stacks you keep in the same repository, on every
 content merge. Rename the stack in `infrastructure/bin/app.ts` and you must

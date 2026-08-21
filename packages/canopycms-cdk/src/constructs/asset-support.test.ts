@@ -1,4 +1,4 @@
-import { existsSync, renameSync } from 'node:fs'
+import { existsSync, readFileSync, renameSync } from 'node:fs'
 import * as path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { App, Duration, Stack } from 'aws-cdk-lib'
@@ -485,5 +485,49 @@ describe('deployable-bundle guard', () => {
         renameSync(backupPath, deployableMarkerPath)
       }
     }
+  })
+})
+
+describe('cms-stack template: the media block names a real API', () => {
+  // The scaffold's "uncomment to enable media" block previously named
+  // `assetSupport.cloudFrontBehaviors`, which does not exist, and omitted the
+  // REQUIRED `editorOrigins` prop -- so an adopter who followed the template's
+  // own instructions hit two type errors plus a nonexistent property, then had
+  // to reverse-engineer the construct's real API. Template text cannot be
+  // type-checked while it is commented out, so assert the API surface it
+  // references actually exists.
+  const templatePath = path.join(
+    __dirname,
+    '..',
+    '..',
+    '..',
+    'canopycms',
+    'src',
+    'cli',
+    'template-files',
+    'cms-stack.ts.template',
+  )
+
+  it('references only members AssetSupport actually has', () => {
+    const template = readFileSync(templatePath, 'utf-8')
+    const referenced = [...template.matchAll(/assetSupport\.([A-Za-z_$][\w$]*)/g)].map((m) => m[1])
+    expect(referenced.length).toBeGreaterThan(0)
+
+    const stack = makeStack()
+    const assetSupport = new AssetSupport(stack, 'Assets', { ...BASE_PROPS })
+    for (const member of new Set(referenced)) {
+      expect(
+        member in assetSupport ||
+          member in (Object.getPrototypeOf(assetSupport) as Record<string, unknown>),
+        `cms-stack.ts.template references assetSupport.${member}, which AssetSupport does not have`,
+      ).toBe(true)
+    }
+  })
+
+  it('passes the required editorOrigins prop in its example', () => {
+    const template = readFileSync(templatePath, 'utf-8')
+    const constructorCall = /new AssetSupport\(/.test(template)
+    expect(constructorCall).toBe(true)
+    expect(template).toContain('editorOrigins')
   })
 })

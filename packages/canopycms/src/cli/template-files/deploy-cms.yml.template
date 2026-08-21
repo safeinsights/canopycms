@@ -64,6 +64,14 @@ on:
       - 'src/**'
       - 'content/**'
       - 'canopycms.config.ts'
+      # The Next config is what `init-deploy aws` itself tells you to edit for
+      # the dual build, and `public/**` is copied into the runner image (and is
+      # load-bearing for editor/public preview parity). Omitting them meant an
+      # edit shipped days later, piggybacked on an unrelated content change --
+      # so any breakage was attributed to the wrong commit.
+      - 'next.config.*'
+      - 'middleware.ts'
+      - 'public/**'
       - 'Dockerfile.cms'
       - 'infrastructure/**'
       - 'cdk.json'
