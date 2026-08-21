@@ -215,6 +215,17 @@ async function handleTransformRequest(
     return errorResponse(400, 'Not a raster asset - svg/pdf are served statically')
   }
 
+  // The slug is decorative in the URL but LOAD-BEARING in the S3 key, so it
+  // has to be pinned to the asset's real slug. `[a-z0-9-]+` is all the parser
+  // can enforce, and every distinct string that passes it aliases the same
+  // image into a brand-new cache key: a new CloudFront miss, a new sharp
+  // invocation, and a new stored object, without limit. Canopy's own URLs are
+  // always built from `meta.slug` (assets/asset-url.ts), so nothing legitimate
+  // reaches here with anything else.
+  if (parsed.slug !== meta.slug) {
+    return errorResponse(404, 'Not found')
+  }
+
   // When the URL omits an explicit `f=` format, the transform preserves the
   // source format, so the URL's `{ext}` must match the source's real ext
   // exactly - the parser alone can't check this (it doesn't know the source

@@ -8,6 +8,7 @@ import {
   aws_route53_targets as targets,
   aws_lambda as lambda,
 } from 'aws-cdk-lib'
+import { DEFAULT_CMS_LAMBDA_TIMEOUT, MAX_CLOUDFRONT_ORIGIN_READ_TIMEOUT } from './cms-service'
 
 export interface CanopyCmsDistributionProps {
   /** Lambda Function URL from CanopyCmsService */
@@ -24,6 +25,25 @@ export interface CanopyCmsDistributionProps {
 
   /** Optional: provide an existing ACM certificate instead of creating one */
   certificate?: acm.ICertificate
+
+  /**
+   * How long CloudFront waits for the origin to respond.
+   *
+   * Defaults to {@link DEFAULT_CMS_LAMBDA_TIMEOUT}, matching the CMS Lambda's
+   * own default. Pass `cmsService.timeout` when you override the Lambda's
+   * timeout, so the two cannot drift.
+   *
+   * Left unset on the origin, CloudFront applies its service default of **30
+   * seconds** — which silently caps a 60s Lambda at half its budget. Every
+   * request landing in the 30-60s band is answered 504 at the edge while the
+   * invocation continues to completion behind it: server-side success,
+   * viewer-facing failure, and nothing in either log explaining the other
+   * half. First-touch branch provisioning does a full `git clone` onto EFS
+   * inside the request, so this is a real path.
+   *
+   * Capped at 60s: CloudFront rejects more without a service-quota increase.
+   */
+  originReadTimeout?: Duration
 }
 
 /**
@@ -78,7 +98,24 @@ export class CanopyCmsDistribution extends Construct {
     // Function URL only accepts traffic from this distribution — direct hits to
     // the Function URL are rejected (DEP-H2). withOriginAccessControl creates
     // the OAC and grants CloudFront lambda:InvokeFunctionUrl automatically.
-    const origin = origins.FunctionUrlOrigin.withOriginAccessControl(props.functionUrl)
+    //
+    // readTimeout is passed EXPLICITLY. aws-cdk-lib emits it as
+    // `originReadTimeout: this.props.readTimeout?.toSeconds()` — omitted
+    // entirely when unset, so CloudFront's 30s service default applies and
+    // silently halves the CMS Lambda's 60s budget. See the prop's doc comment.
+    const readTimeout = props.originReadTimeout ?? DEFAULT_CMS_LAMBDA_TIMEOUT
+    if (readTimeout.toSeconds() > MAX_CLOUDFRONT_ORIGIN_READ_TIMEOUT.toSeconds()) {
+      throw new Error(
+        `CanopyCmsDistribution: originReadTimeout is ${readTimeout.toSeconds()}s, but CloudFront ` +
+          `allows at most ${MAX_CLOUDFRONT_ORIGIN_READ_TIMEOUT.toSeconds()}s without a service-quota ` +
+          `increase. Either lower the CMS Lambda's timeout to match, or request a quota increase for ` +
+          `"Origin response timeout" and pass the higher value explicitly. Deploying with a shorter ` +
+          `origin timeout than the Lambda's would 504 at the edge on requests that actually succeed.`,
+      )
+    }
+    const origin = origins.FunctionUrlOrigin.withOriginAccessControl(props.functionUrl, {
+      readTimeout,
+    })
 
     // Cache policy for API/editor routes: AWS's managed CACHING_DISABLED
     // policy. Deploy-proven (deploy-test epic, 2026-07-23): CloudFront

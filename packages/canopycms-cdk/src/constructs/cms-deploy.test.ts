@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { App, Stack } from 'aws-cdk-lib'
+import { App, Duration, Stack } from 'aws-cdk-lib'
 import { Template, Match } from 'aws-cdk-lib/assertions'
 import { RetentionDays } from 'aws-cdk-lib/aws-logs'
 import {
@@ -9,7 +9,7 @@ import {
   aws_certificatemanager as acm,
   aws_s3 as s3,
 } from 'aws-cdk-lib'
-import { CanopyCmsService } from './cms-service'
+import { CanopyCmsService, DEFAULT_CMS_LAMBDA_TIMEOUT } from './cms-service'
 import type { CanopyCmsServiceProps } from './cms-service'
 import { CanopyCmsDistribution } from './cms-distribution'
 // Test-only imports across the package boundary, deliberately: the construct
@@ -134,6 +134,101 @@ describe('CanopyCmsService deploy blockers', () => {
     for (const url of Object.values(urls)) {
       expect(url.Properties.AuthType).not.toBe('NONE')
     }
+  })
+})
+
+describe('CanopyCmsDistribution: origin read timeout matches the Lambda timeout', () => {
+  /** Every CloudFront origin's OriginReadTimeout, keyed by origin id. */
+  function originReadTimeouts(template: Template): (number | undefined)[] {
+    const dists = template.findResources('AWS::CloudFront::Distribution')
+    return Object.values(dists).flatMap((d) =>
+      (d.Properties.DistributionConfig.Origins ?? []).map(
+        (o: { CustomOriginConfig?: { OriginReadTimeout?: number } }) =>
+          o.CustomOriginConfig?.OriginReadTimeout,
+      ),
+    )
+  }
+
+  it('emits OriginReadTimeout equal to the CMS Lambda timeout, not CloudFront’s 30s default', () => {
+    const template = synth(true)
+    // Left unset, aws-cdk-lib omits the property entirely and CloudFront
+    // applies 30s -- halving the Lambda's 60s budget and 504ing at the edge on
+    // requests that actually succeed (first-touch branch provisioning clones
+    // onto EFS inside the request).
+    const lambdaTimeout = Object.values(
+      template.findResources('AWS::Lambda::Function', {
+        Properties: { Timeout: Match.anyValue() },
+      }),
+    ).find((fn) => fn.Properties.Timeout === DEFAULT_CMS_LAMBDA_TIMEOUT.toSeconds())
+    expect(lambdaTimeout).toBeDefined()
+
+    expect(originReadTimeouts(template)).toContain(DEFAULT_CMS_LAMBDA_TIMEOUT.toSeconds())
+    expect(originReadTimeouts(template)).not.toContain(undefined)
+  })
+
+  it('follows an overridden Lambda timeout when the pair is wired through', () => {
+    const app = new App()
+    const stack = new Stack(app, 'PairStack', {
+      env: { account: '123456789012', region: 'us-east-1' },
+    })
+    const service = new CanopyCmsService(stack, 'Cms', {
+      cmsDockerImage: lambda.DockerImageCode.fromEcr(
+        ecr.Repository.fromRepositoryName(stack, 'Repo', 'cms'),
+      ),
+      githubOwner: 'acme',
+      githubRepo: 'site',
+      timeout: Duration.seconds(45),
+    })
+    new CanopyCmsDistribution(stack, 'Dist', {
+      functionUrl: service.functionUrl,
+      domainName: 'cms.example.org',
+      hostedZoneDomain: 'example.org',
+      originReadTimeout: service.timeout,
+      hostedZone: route53.HostedZone.fromHostedZoneAttributes(stack, 'Zone', {
+        hostedZoneId: 'Z123456789',
+        zoneName: 'example.org',
+      }),
+      certificate: acm.Certificate.fromCertificateArn(
+        stack,
+        'Cert',
+        'arn:aws:acm:us-east-1:123456789012:certificate/abc',
+      ),
+    })
+
+    expect(originReadTimeouts(Template.fromStack(stack))).toContain(45)
+  })
+
+  it('fails at synth rather than deploying a timeout CloudFront would reject', () => {
+    const app = new App()
+    const stack = new Stack(app, 'TooLongStack', {
+      env: { account: '123456789012', region: 'us-east-1' },
+    })
+    const service = new CanopyCmsService(stack, 'Cms', {
+      cmsDockerImage: lambda.DockerImageCode.fromEcr(
+        ecr.Repository.fromRepositoryName(stack, 'Repo', 'cms'),
+      ),
+      githubOwner: 'acme',
+      githubRepo: 'site',
+      timeout: Duration.seconds(120),
+    })
+    expect(
+      () =>
+        new CanopyCmsDistribution(stack, 'Dist', {
+          functionUrl: service.functionUrl,
+          domainName: 'cms.example.org',
+          hostedZoneDomain: 'example.org',
+          originReadTimeout: service.timeout,
+          hostedZone: route53.HostedZone.fromHostedZoneAttributes(stack, 'Zone', {
+            hostedZoneId: 'Z123456789',
+            zoneName: 'example.org',
+          }),
+          certificate: acm.Certificate.fromCertificateArn(
+            stack,
+            'Cert',
+            'arn:aws:acm:us-east-1:123456789012:certificate/abc',
+          ),
+        }),
+    ).toThrow(/service-quota increase/)
   })
 })
 

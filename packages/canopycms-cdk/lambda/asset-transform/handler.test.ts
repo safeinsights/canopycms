@@ -189,6 +189,25 @@ describe('asset-transform handler', () => {
     expect(JSON.parse(res.body ?? '{}')).toHaveProperty('error')
   })
 
+  it('rejects a slug that does not match the asset, without writing anything to S3', async () => {
+    // The aliasing amplifier: `[a-z0-9-]+` is all the parser can enforce, so
+    // every distinct slug string would otherwise mint a fresh cache key, a
+    // fresh sharp invocation and a fresh permanently-stored S3 object for one
+    // and the same image.
+    const res = await handler(makeEvent(`/assets/t/w=160/${HASH32}/any-slug-at-all.png`))
+
+    expect(res.statusCode).toBe(404)
+    expect(s3Mock.commandCalls(PutObjectCommand)).toHaveLength(0)
+  })
+
+  it('still serves the asset under its real slug', async () => {
+    // Guards the check above against being over-tight: `makeMeta` slug is
+    // 'photo', which is what every Canopy-generated URL carries.
+    const res = await handler(makeEvent(`/assets/t/w=160/${HASH32}/photo.png`))
+
+    expect(res.statusCode).toBe(200)
+  })
+
   it('returns 400 JSON for a non-raster (svg) asset - svg/pdf are served statically, never through the transform layer', async () => {
     objects.set(`asset-meta/${HASH32}.json`, {
       body: new TextEncoder().encode(JSON.stringify(makeMeta({ kind: 'svg', ext: 'svg' }))),

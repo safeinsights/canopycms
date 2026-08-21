@@ -18,7 +18,7 @@ continues to completion behind it.
 
 This is not hypothetical for this codebase: first-touch branch provisioning does
 a full `git clone` onto EFS inside the request, and
-[pr229-review-followups.md](pr229-review-followups.md) already notes branch-health
+[pr229-review-followups.md](../pr229-review-followups.md) already notes branch-health
 scans running "inside a 60s Lambda".
 
 ## Failure scenario

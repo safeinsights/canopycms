@@ -75,6 +75,45 @@ const TRANSFORM_LAMBDA_MEMORY_MB = 1536
 const TRANSFORM_LAMBDA_TIMEOUT = Duration.seconds(30)
 
 /**
+ * Concurrency cap on the transform Lambda.
+ *
+ * `/assets/t/*` is reachable by any anonymous viewer through CloudFront, and
+ * `hash32` is not secret — it appears in every published page's `<img src>`.
+ * Width and quality are allowlisted precisely to bound how many cache keys one
+ * asset can have, but `crop` is a 4-decimal float rect (~10^16 values), so a
+ * scripted loop of unique crops is an unbounded stream of guaranteed
+ * CloudFront+S3 misses, each a sharp transform on a 1536MB Lambda plus a
+ * permanently stored S3 object.
+ *
+ * A reservation is the cheap half of bounding that: it is a CAP carved from the
+ * account's concurrency pool, not pre-warmed capacity, so it costs nothing when
+ * idle (that is `provisionedConcurrentExecutions`, which this is not).
+ *
+ * 10 mirrors the CMS Lambda's own reservation. Genuine demand is first-render
+ * misses only — every already-generated derivative is served by the S3 primary
+ * origin without invoking this function at all — so 10 concurrent transforms
+ * covers a cold page of images comfortably while capping a flood.
+ */
+const TRANSFORM_LAMBDA_RESERVED_CONCURRENCY = 10
+
+/**
+ * Retention for generated derivatives under `assets/t/`.
+ *
+ * Everything under that prefix is REGENERABLE — source assets live under
+ * `asset-originals/` and are never touched by this rule. Without it the bucket
+ * keeps every derivative forever, including every object minted by the crop
+ * amplifier above.
+ *
+ * S3 lifecycle is prefix+age based; there is no "expire if not recently read"
+ * mode. Expiry is self-healing anyway: the next request for an expired
+ * derivative misses S3, fails over to the transform Lambda, regenerates and
+ * re-stores it — one invocation, then it is warm in both CloudFront and S3
+ * again. 180 days is set so ordinary traffic never notices and only genuinely
+ * cold or abusive objects age out.
+ */
+const TRANSFORM_OUTPUT_RETENTION = Duration.days(180)
+
+/**
  * `/assets/t/*`-specific cache TTLs. The managed `CachePolicy.CACHING_OPTIMIZED`
  * (used for the plain `/assets/*` static behavior) has a 1-second MIN TTL,
  * which is exactly the bug this policy exists to avoid: the transform
@@ -176,6 +215,28 @@ export interface AssetSupportProps {
    * three months / 90 days).
    */
   readonly transformLogRetention?: logs.RetentionDays
+
+  /**
+   * Concurrency cap on the transform Lambda (default: 10).
+   *
+   * This is a reservation — a CAP carved from the account's concurrency pool,
+   * not pre-warmed capacity, so it costs nothing when idle. It bounds the
+   * blast radius of the anonymous `/assets/t/*` path; see the default
+   * constant's doc comment. Raise it for an unusually image-heavy site;
+   * setting it to 0 would disable transforms entirely.
+   */
+  readonly transformReservedConcurrency?: number
+
+  /**
+   * How long generated derivatives under `assets/t/` are kept (default: 180
+   * days). Only applies to a bucket this construct creates — in BYO-bucket
+   * mode the caller owns lifecycle rules.
+   *
+   * These objects are regenerable; expiry is self-healing (the next request
+   * regenerates and re-stores). Source assets under `asset-originals/` are
+   * never affected.
+   */
+  readonly transformOutputRetention?: Duration
 
   /**
    * Name for the transform Lambda's CloudWatch log group (default:
@@ -311,15 +372,29 @@ export class AssetSupport extends Construct {
         versioned: props.versioned ?? false,
         removalPolicy: props.removalPolicy ?? RemovalPolicy.RETAIN,
         autoDeleteObjects: props.autoDeleteObjects ?? false,
-        // Only `asset-staging/` expires - originals/meta/public/transform
-        // outputs are all kept forever by design (content-addressed,
+        // `asset-staging/` expires after a day, and generated derivatives
+        // under `assets/t/` after `transformOutputRetention`. Originals, meta
+        // and the public prefix are kept forever by design (content-addressed,
         // immutable - see the design record's "Storage" section).
+        //
+        // Derivatives were originally in that keep-forever set, on the same
+        // "immutable" reasoning. That holds for their CONTENT but not for
+        // their COUNT: `assets/t/` is the one prefix an anonymous caller can
+        // mint unbounded distinct keys in (see
+        // TRANSFORM_LAMBDA_RESERVED_CONCURRENCY), and unlike an original, a
+        // derivative that is deleted can simply be recomputed.
         lifecycleRules: [
           {
             id: 'expire-asset-staging',
             enabled: true,
             prefix: `${PREFIXES.staging}/`,
             expiration: Duration.days(1),
+          },
+          {
+            id: 'expire-transform-outputs',
+            enabled: true,
+            prefix: `${PREFIXES.transform}/`,
+            expiration: props.transformOutputRetention ?? TRANSFORM_OUTPUT_RETENTION,
           },
         ],
         cors: [
@@ -368,6 +443,10 @@ export class AssetSupport extends Construct {
       architecture: lambda.Architecture.ARM_64,
       memorySize: TRANSFORM_LAMBDA_MEMORY_MB,
       timeout: TRANSFORM_LAMBDA_TIMEOUT,
+      // See the constant's doc comment: this is an anonymous, uncapped compute
+      // and storage amplifier without it.
+      reservedConcurrentExecutions:
+        props.transformReservedConcurrency ?? TRANSFORM_LAMBDA_RESERVED_CONCURRENCY,
       // Pass the pre-created group via `logGroup`, NOT `logRetention` (CDK
       // throws LogRetentionLogGroupConflict/ConflictingLogPolicyOptions if
       // both are set on the same function) - the removal policy lives on the
@@ -414,8 +493,14 @@ export class AssetSupport extends Construct {
 
   private buildBehaviors(): AssetCloudFrontBehaviors {
     const s3Origin = origins.S3BucketOrigin.withOriginAccessControl(this.bucket)
+    // readTimeout passed EXPLICITLY, matching the transform Lambda's own
+    // timeout. Unset, CloudFront applies its 30s service default, which
+    // happens to equal TRANSFORM_LAMBDA_TIMEOUT today -- an accidental match,
+    // not an asserted one: raising the Lambda's timeout alone would silently
+    // start 504ing the slow transforms the raise was meant to allow.
     const transformLambdaOrigin = origins.FunctionUrlOrigin.withOriginAccessControl(
       this.transformFunctionUrl,
+      { readTimeout: TRANSFORM_LAMBDA_TIMEOUT },
     )
 
     const assets: cloudfront.BehaviorOptions = {

@@ -87,6 +87,29 @@ function assertEnvSafe(name: string, value: string): string {
   return value
 }
 
+/**
+ * Default CMS Lambda timeout.
+ *
+ * Shared with `CanopyCmsDistribution`, which uses it as its default origin
+ * read timeout: CloudFront's own default is **30 seconds**, so leaving the
+ * origin unset silently caps this Lambda at half its budget. Requests in the
+ * gap are answered 504 at the edge while the invocation runs to completion
+ * behind them — first-touch branch provisioning does a full `git clone` onto
+ * EFS inside the request, so this is a real path, not a hypothetical one.
+ *
+ * One constant rather than two matching literals, so the pair cannot drift;
+ * `cms-deploy.test.ts` asserts the emitted template keeps them equal.
+ *
+ * NOTE: CloudFront accepts an origin read timeout up to 60s without a quota
+ * increase. A longer Lambda timeout needs an AWS quota increase before the
+ * distribution can match it — `CanopyCmsDistribution` fails at synth rather
+ * than deploying a configuration that would 504.
+ */
+export const DEFAULT_CMS_LAMBDA_TIMEOUT = Duration.seconds(60)
+
+/** CloudFront's maximum origin read timeout without a service-quota increase. */
+export const MAX_CLOUDFRONT_ORIGIN_READ_TIMEOUT = Duration.seconds(60)
+
 export interface CanopyCmsServiceProps {
   /** Docker image for the CMS Lambda function */
   cmsDockerImage: lambda.DockerImageCode
@@ -243,6 +266,18 @@ export interface CanopyCmsServiceProps {
 export class CanopyCmsService extends Construct {
   /** Lambda Function URL — use as CloudFront origin */
   public readonly functionUrl: lambda.FunctionUrl
+
+  /**
+   * The CMS Lambda's resolved timeout — `props.timeout` or
+   * {@link DEFAULT_CMS_LAMBDA_TIMEOUT}.
+   *
+   * Exposed so a distribution in front of this service can set its origin read
+   * timeout to the SAME value. CloudFront's own default is 30s, which silently
+   * caps a longer Lambda: every request landing in the gap is answered 504 at
+   * the edge while the invocation runs to completion behind it (see
+   * `CanopyCmsDistribution`'s `originReadTimeout`).
+   */
+  public readonly timeout: Duration
 
   /** The EFS filesystem */
   public readonly fileSystem: efs.FileSystem
@@ -455,10 +490,12 @@ export class CanopyCmsService extends Construct {
       removalPolicy: RemovalPolicy.DESTROY,
     })
 
+    this.timeout = props.timeout ?? DEFAULT_CMS_LAMBDA_TIMEOUT
+
     this.lambdaFunction = new lambda.DockerImageFunction(this, 'CmsFunction', {
       code: props.cmsDockerImage,
       memorySize: props.memorySize ?? 2048,
-      timeout: props.timeout ?? Duration.seconds(60),
+      timeout: this.timeout,
       reservedConcurrentExecutions: props.reservedConcurrency ?? 10,
       architecture: props.architecture,
       vpc: this.vpc,
