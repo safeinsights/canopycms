@@ -323,19 +323,30 @@ describe('pathFor', () => {
     ).rejects.toThrow(/pathFor returned an empty path/)
   })
 
-  // An off-site return is refused, in both spellings. The protocol-relative one is the dangerous
+  // An absolute return is refused in every spelling. The protocol-relative one is the dangerous
   // spelling: `resolveSeoUrl` treats `//host/x` as absolute and passes it through verbatim, so it
   // would land in the sitemap as a NON-absolute <loc> — the exact invalidity the `siteUrl` guard
   // rejects, reached through a different field. (`extraUrls` still allows absolute URLs by design.)
-  it('throws on an off-site override rather than emitting an invalid or off-origin <loc>', async () => {
+  //
+  // The same-origin case is refused TOO, and is asserted here on purpose: it is the plausible
+  // adopter reflex (return the full canonical URL), and accepting it would mean a host comparison
+  // — origin case, port, trailing slash — for no gain over "return a site-relative path".
+  it('throws on an absolute override rather than emitting an invalid or off-origin <loc>', async () => {
     const ctx = fakeBuildCtx([{ urlPath: '/posts/a', slug: 'a', entryType: 'post' }])
 
     await expect(
       generateContentSitemap(ctx, { siteUrl: SITE, pathFor: () => '//cdn.example.com/x' }),
-    ).rejects.toThrow(/off-site URL/)
+    ).rejects.toThrow(/absolute URL/)
     await expect(
       generateContentSitemap(ctx, { siteUrl: SITE, pathFor: () => 'https://evil.example.org/x' }),
-    ).rejects.toThrow(/off-site URL/)
+    ).rejects.toThrow(/absolute URL/)
+    // Same origin as SITE — still refused, and the message must not call it "off-site".
+    await expect(
+      generateContentSitemap(ctx, { siteUrl: SITE, pathFor: () => `${SITE}/posts/a` }),
+    ).rejects.toThrow(/absolute URL/)
+    await expect(
+      generateContentSitemap(ctx, { siteUrl: SITE, pathFor: () => `${SITE}/posts/a` }),
+    ).rejects.not.toThrow(/off-site/)
   })
 
   // Surrounding whitespace is never intended, and it survives into the URL if not trimmed:

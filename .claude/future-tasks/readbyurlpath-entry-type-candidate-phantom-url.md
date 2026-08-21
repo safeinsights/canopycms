@@ -26,7 +26,10 @@ Candidate 2 assumes `content/home` is a **collection**. When the content root de
 `index` — which resolves that collection's index entry.
 
 So a root index entry answers at both `/` and `/home`. Generalised: for any collection that has an
-index entry, `/<collection>/<entryTypeName>` also resolves it.
+index entry, `/<collection>/<entryTypeName>` also resolves it — the scan matches on slug alone, so it
+holds even when the index entry's own type differs from the probed name. One exception: if that
+collection also holds a real entry whose slug literally equals the entry-type name, candidate 1 wins
+and that entry answers instead, which is a collision rather than a phantom.
 
 ## Confirmed, not inferred
 
@@ -63,8 +66,14 @@ Make `readByUrlPath` (`context.ts`) skip the index-fallback candidate when its `
 to an entry-**type** schema item rather than a collection. The forward rule never emits
 `/<collection>/<typeName>`, so that candidate can only ever produce a phantom URL.
 
-The obstacle, and the reason this was not fixed inline: `readByUrlPath` has no schema index today —
-neither `services` nor `createContentReader` exposes one. Options, roughly in order of preference:
+The obstacle, and the reason this was not fixed inline, is narrower than "no schema is reachable" —
+an earlier draft of this file overstated it. `context.ts`'s `getContext` closure DOES resolve a flat
+schema, via `services.branchSchemaCache.getSchema(branchRoot, registry, contentRootName)` inside
+`resolveSchemaContextImpl`, a few dozen lines below `readByUrlPath`. Two things still stand in the
+way: that flat schema is a list, not a logicalPath-keyed index, so a lookup would have to be built;
+and `resolveSchemaContextImpl` is memoized against the DEFAULT branch, while `readByUrlPath` takes a
+per-call `branch` — so reusing it as-is would consult the wrong branch's schema for any non-default
+read. Options, roughly in order of preference:
 
 1. Expose a narrow predicate off `ContentStore` (it already holds `this.schemaIndex`), e.g.
    `isCollectionPath(logicalPath)`, and consult it in the candidate loop.

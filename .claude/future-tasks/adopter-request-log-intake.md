@@ -97,9 +97,10 @@ reading at all.
   now `content/home.index.<id>.json`, so its `urlPath` is `/` and both workaround lines are gone;
   `app/page.tsx` resolves via `readByUrlPath('/')`. Two things the triage did not anticipate:
 
-  - The old `read({ entryPath: 'content/home' })` addresses the entry by **entry type**, not slug
-    (`content-store.ts`'s `effectiveSlug = slug || schemaItem.name`), so the rename breaks that read
-    outright — `/` 404s. It had to change in the same commit, not as a follow-up.
+  - The old `read({ entryPath: 'content/home' })` passes no slug, and a slugless read **defaults the
+    slug to the entry-type name** (`content-store.ts`'s `effectiveSlug = slug || schemaItem.name`),
+    so the rename breaks that read — `/` 404s. Passing `slug: 'index'` explicitly would have kept it
+    working; either way it had to change in the same commit, not as a follow-up.
   - **Nothing in CI would have caught that.** `apps/example1` is typechecked but never built, so a
     404 homepage ships green. Split out to
     [example1-next-build-not-in-ci.md](example1-next-build-not-in-ci.md); it was verified here only

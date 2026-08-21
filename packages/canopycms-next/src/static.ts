@@ -326,19 +326,19 @@ export async function generateContentSitemap(
  * `null`/`undefined` mean "no opinion" and keep the entry's own `urlPath` — see the `pathFor`
  * doc for why that is not "drop it".
  *
- * Everything else is validated rather than passed through, because every rejected shape here is
- * one that produces a WRONG SITEMAP THAT SHIPS GREEN — the failure mode every other guard in
- * this file exists to convert into a red build:
+ * Two shapes are rejected rather than passed through, because each produces a WRONG SITEMAP THAT
+ * SHIPS GREEN — the failure mode every other guard in this file exists to convert into a red
+ * build. (A third, the WHATWG-backslash spellings like `/\evil.com/x`, is not thrown but
+ * neutralized downstream by `resolveSeoUrl`'s `neutralizeImplicitOffOrigin`.)
  *
  * - **Empty or whitespace-only.** `resolveSeoUrl('')` resolves to the site root, so an empty
  *   return would quietly advertise this entry at `/` and collide with whatever really lives there.
- * - **Off-site (absolute or protocol-relative).** `resolveSeoUrl` passes both through verbatim, by
- *   design — for `extraUrls`, where an absolute URL is explicitly allowed. Here it is not: a
- *   protocol-relative `//host/x` lands in the sitemap as a NON-absolute `<loc>`, the exact
+ * - **Absolute (scheme-qualified or protocol-relative).** `resolveSeoUrl` passes both through
+ *   verbatim, by design — for `extraUrls`, where an absolute URL is explicitly allowed. Here it is
+ *   not: a protocol-relative `//host/x` lands in the sitemap as a NON-absolute `<loc>`, the exact
  *   invalidity `generateContentSitemap`'s `siteUrl` guard exists to prevent, and search engines
- *   reject the whole file for it. A scheme-qualified off-site URL is refused for the same reason
- *   it makes no sense here: `pathFor` names a URL *your app routes*, and you do not route another
- *   origin. Return a site-relative path.
+ *   reject the whole file for it. Refused whatever the origin — including one matching `siteUrl` —
+ *   so the rule is "return a site-relative path" with no host comparison to get subtly wrong.
  *
  * The returned path is TRIMMED. Surrounding whitespace is never intended and survives into the
  * URL otherwise (`' /blog'` → `<siteUrl>/ /blog`) — which this function would previously detect
@@ -363,11 +363,13 @@ function resolveEntrySitemapPath(
   }
   if (isAbsoluteUrl(trimmed)) {
     throw new Error(
-      `CanopyCMS: generateContentSitemap's pathFor returned an off-site URL ` +
-        `(${JSON.stringify(trimmed)}) for ${where}. pathFor names a URL your own app serves, so it ` +
-        'must be a site-relative path — a protocol-relative value lands in the sitemap as a ' +
-        'non-absolute <loc>, which invalidates the entire file. Use extraUrls if you really mean ' +
-        'to list a URL on another origin.',
+      `CanopyCMS: generateContentSitemap's pathFor returned an absolute URL ` +
+        `(${JSON.stringify(trimmed)}) for ${where}. Return a site-relative path instead — the ` +
+        'site origin is applied for you. Absolute returns are refused whatever the origin, rather ' +
+        'than only off-origin ones, so there is one rule to remember and no host comparison to get ' +
+        'subtly wrong; a protocol-relative value (`//host/x`) is the reason it matters, since that ' +
+        'ships as a non-absolute <loc> and invalidates the entire sitemap. Use extraUrls to list a ' +
+        'URL on another origin.',
     )
   }
   return trimmed
