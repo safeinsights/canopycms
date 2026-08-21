@@ -686,6 +686,25 @@ export default defineCanopyConfig({
 
 The hook receives `{ entryPath, branch, entryType?, format, data, body }` for every editor content save (`entryType` is set when the editor specifies one, e.g. in collections with multiple entry types). `error` issues reject the save with the message shown to the editor; `warning` issues let the save through and appear as a notification. The hook gates content writes only — renames and deletes do not invoke it. Pair it with the preview error channel (see [Live Preview](#live-preview)) so authors see compile failures while typing, not just at save time.
 
+### Comments in Content Files Survive Editing
+
+Content files can carry YAML comments — including explanatory notes that code elsewhere refers to by name — and a CMS save keeps them. Writes re-serialise onto the file's own parsed document, so a value the editor did not change keeps its comments and its original quoting and block style. This covers `.yaml` entries and `md`/`mdx` frontmatter alike; JSON has no comment syntax and is unaffected.
+
+The content itself is still fully determined by the save: a field the editor cleared is cleared in the file. Only comments are carried across from what was already on disk.
+
+Two limits worth knowing. A value that changes shape entirely — a mapping replaced by a single value — keeps the comment attached to it but not comments that were attached inside it, because the structure those described is gone. And if a file's existing bytes do not parse as YAML, the save still succeeds by rewriting the file from scratch, which loses the comments; the alternative would be an editor unable to save at all.
+
+### Content Keys Not in the Schema
+
+A field renamed or removed from a schema leaves its old key behind in every content file that had it. Nothing reads that key any more, so the only symptom is a component quietly receiving `undefined`. CanopyCMS reports these rather than leaving you to find them:
+
+- **On save**, they come back with the write and appear to the editor as a "Saved with warnings" notification. The save succeeds.
+- **During a production build**, `collectStaticPaths` and `collectRoutableEntries` print one warning listing every entry and every offending key path (`hero.kicker`, `blocks[2].headline`). The build passes.
+
+Neither report rejects a save or fails a build, and neither strips anything — an unrecognised key stays in the file, comments and all. Expect the first build after upgrading to name keys you no longer use; for each, either add the field to the entry type's schema or delete it from the content.
+
+This is separate from the `validateEntry` hook above: that one is yours to define, this one comes from the schema you already wrote.
+
 ### Operating Modes
 
 `mode` is required in `defineCanopyConfig` — there is no default. CanopyCMS throws at config validation time if it's omitted, so a deployment can't accidentally run in production with dev-mode auth semantics.

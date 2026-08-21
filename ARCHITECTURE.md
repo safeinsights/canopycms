@@ -151,6 +151,20 @@ The core package organizes code into focused modules, each with a single respons
 - Static AI content writer (writes generated markdown and manifest to disk)
 - Used by the CLI and during static site builds
 
+**Content Serialization** - Comment-preserving writes for YAML and md/mdx frontmatter:
+
+- `utils/content-serialize.ts` re-serialises an entry onto the file's OWN parsed `yaml` document rather than stringifying a fresh plain object, so a node whose value did not change keeps its comments, quoting and block style. Writing a fresh object is why an editor save used to delete every comment in a content file.
+- The reconciler is deliberately schema-blind: it makes the document's key set match the write payload exactly, so data authority stays with the payload and comments are the only thing inherited from disk. Whether a surviving key still belongs is answered a layer up, by the unknown-key report below.
+- Sequences align by value before position, so reordering a list carries each comment with the content it describes instead of leaving it on whatever moved into that index.
+- Every fallback path (new file, unparseable existing bytes, no frontmatter) emits byte-identical output to the pre-fix behaviour, so entry creation is unchanged and a malformed file can still be saved over.
+- Because the write now reads the file it is about to replace, the read sits inside the per-entry lock and the [SYNC-C1] content-write lock and after the OCC stat — see [docs/concurrency.md](docs/concurrency.md).
+
+**Unknown-Key Reporting** - Content keys the schema no longer defines:
+
+- `validation/field-traversal.ts`'s `traverseFields` is the single encoding of the schema-nesting rules; its optional `onContainer` hook reports each (data record, governing fields) pair, which is what lets a check inspect the data's own keys rather than only the schema's. An inline group does not fire the hook — it shares its parent's record, so treating it as a container would make every sibling of the group read as unknown.
+- `validation/entry-validator.ts`'s `findUnknownKeys` builds on that hook. It is non-blocking by design and feeds two surfaces: `validationWarnings` on the write response (already rendered by the editor) and `static/`'s `warnUnknownEntryKeys` during a production build.
+- It runs on the normalized, about-to-be-persisted data, so a resolved reference collapsed back to an id string cannot be misread, and it reports nothing for a container with no fields at all.
+
 **Static-Export Helpers** - Framework-agnostic static-site-generation support:
 
 - Core `collectStaticPaths` (canopycms/server) produces neutral route descriptors (URL path, segments, slug, entry type) from the build context

@@ -41,7 +41,7 @@ left alone.
 | 28 | `object` fields drop comment support | **Partially true** — see below | Open, small |
 | 26 | `generate-ai-content` never prunes previous output | Confirmed | Open, small-medium |
 | 23 | `select` infers `string \| number` | Confirmed, and the literal-union fix is **verified reachable** | Fixed on this branch |
-| 29 | Unknown keys never reported | Confirmed; cheaper than they framed it | Open, medium |
+| 29 | Unknown keys never reported | Confirmed; cheaper than they framed it | Fixed on this branch |
 | 16 | `listEntries()` never resolves `reference` fields | Confirmed; blast radius **differs** from their account | Open, medium |
 | 20 | Reference app teaches index singletons the hard way | Confirmed but **narrower** than framed | Open, deferred |
 
@@ -74,6 +74,19 @@ reading at all.
   it. The build-time half has no non-fatal concept and does need new plumbing. The real risk they
   did not flag: reference resolution injects `id`/`slug`/`collection` into saved data, so a naive
   unknown-key walker false-positives on every reference field that was read and re-saved.
+
+  **Shipped 2026-08-21** on `fix/content-comment-preservation`, and both halves landed as
+  predicted. The reference hazard turned out to be already retired by `3068cf32` — resolved
+  objects are normalized back to id strings BEFORE persisting, and the check runs on that shape —
+  and it could not have fired anyway, since a schema-driven walker never descends into a
+  `reference` value. The risk the triage missed was different and closer to home: an inline
+  **group** re-enters the traversal with the same record, so treating it as its own container
+  double-reports every unknown key AND makes every sibling of the group read as unknown. Two
+  guards proved necessary in practice: an entry type with no schema at all must report nothing,
+  and a block item's `template`/`_type` discriminator is never a content key. Implemented by
+  generalising `traverseFields` with an `onContainer` hook rather than adding a fourth copy of
+  the schema-nesting rules. It found real stale data on its first run — three `apps/example1`
+  fixtures carrying a redundant `slug` key that no schema models and nothing reads.
 - **#20 is narrower than framed.** The `index`-slug convention *is* documented at length in the
   project README. What is genuinely missing is that `apps/example1` still models `home` the hard
   way and demonstrates the `exclude` + `extraUrls` workaround in its own `sitemap.ts`. Fixing the
@@ -88,8 +101,10 @@ reading at all.
 
 ## Found by us in the same review, absent from their log
 
-- [content-comment-loss-on-editor-save.md](content-comment-loss-on-editor-save.md) — the editor
-  destroys every comment in a content file on save. Distinct from their #28.
+- [content-comment-loss-on-editor-save.md](resolved/content-comment-loss-on-editor-save.md) —
+  the editor destroyed every comment in a content file on save. Distinct from their #28.
+  **Fixed 2026-08-21** on `fix/content-comment-preservation`, alongside #29 — the two shared a
+  cause (how `ContentStore` rewrites a file) and were designed together.
 - [conditional-field-visibility.md](conditional-field-visibility.md) — no way to express
   mutually-exclusive fields, so the rule ends up in labels.
 - The second half of #22 — a flat entry in a parent collection can shadow a nested collection's
