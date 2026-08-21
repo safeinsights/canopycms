@@ -56,3 +56,20 @@ Either way, a fast, reliable way to verify: temporarily add a debug log of `bran
 `content-listing.ts`'s `listEntries`, or check `.canopy-dev/content-branches/<branch>/content/`
 directly after a build — a file present only in the working tree (uncommitted, or even staged
 but uncommitted) will be absent from the clone.
+
+## Confirmed again, 2026-08-21 (`feat/sitemap-path-for-index-entries`)
+
+Cost another session real time, in exactly the shape the last paragraph above predicts — a
+**staged but uncommitted** `git mv`. Renaming `apps/example1`'s home entry to an `index` slug and
+running `next build` produced a build that was green, prerendered `/`, and was reading the OLD
+filename: the sitemap still advertised `/home` and `/` rendered the 404 page, because the branch
+clone is seeded from git-committed state. Committing the rename and rebuilding gave the expected
+result with no other change.
+
+Two details worth adding to the eventual fix or doc:
+
+- The failure is **silent and green**, not an error. The only tells were content-level (`/home`
+  still in the emitted sitemap, `_not-found` markup in `index.html`), so a build that is merely
+  "successful" proves nothing about which content it read.
+- `rm -rf .canopy-dev` does NOT help, which is counter-intuitive: the clone is re-provisioned from
+  git, so a fresh workspace reproduces the stale content exactly.

@@ -249,19 +249,27 @@ export default async function DocPage({ params }: { params: { slug?: string[] } 
 }
 ```
 
-For known, fixed paths you can still use `read` directly:
+For a known, fixed path you can still use `read` directly. It addresses an entry by its
+**logical path**, not by URL, so it suits content that has no URL of its own — an entry read for
+embedding, or a singleton pulled into a layout:
 
 ```ts
-// app/page.tsx (server component)
-import { getCanopy } from './lib/canopy'
-import type { HomeContent } from './schemas'
-
-export default async function Page() {
-  const canopy = await getCanopy()
-  const { data } = await canopy.read<HomeContent>({ entryPath: 'content/home' })
-  return <HomeView data={data} />
-}
+// A snippet is addressed by reference from inside a block; it has no page of its own.
+const canopy = await getCanopy()
+const { data } = await canopy.read<SnippetContent>({
+  entryPath: 'content/snippets',
+  slug: 'try-canopy',
+})
 ```
+
+**For a page you actually serve at a URL, prefer `readByUrlPath` above**, and model the entry so
+its natural `urlPath` is that URL. A home page is the case worth spelling out: model it as a root
+`index` entry (`content/home.index.<id>.json`) and it answers at `/`, so the route reads
+`readByUrlPath('/')` and the sitemap advertises it with no special-casing. Reading it instead by
+entry-type path (`{ entryPath: 'content/home' }`) works, but leaves the entry's real `urlPath` as
+`/home` while the route serves `/` — two answers to "where does this live", which every
+URL-derived surface then has to be told about one at a time. The example app in this repo used to
+do that and no longer does.
 
 Both methods return `{ data, path }`. `read` throws if the content is missing; `readByUrlPath` returns `null` instead. Pass a `branch` option when you want branch-specific data (e.g., for preview); otherwise it defaults to your configured base branch. Both enforce the same branch/path access rules as the API handlers.
 

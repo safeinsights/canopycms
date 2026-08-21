@@ -465,7 +465,7 @@ IDs are embedded directly in filenames and directory names using a simple patter
 ```
 content/
   .collection.json
-  home.home.agfzDt2RLpSn.json
+  home.index.agfzDt2RLpSn.json
   posts.916jXZabYCxu/
     .collection.json
     post.hello-world.vh2WdhwAFiSL.json
@@ -478,7 +478,9 @@ content/
 
 **Filename Pattern:**
 
-- Entries: `type.slug.id.ext` (e.g., `post.hello-world.vh2WdhwAFiSL.json`)
+- Entries: `type.slug.id.ext` (e.g., `post.hello-world.vh2WdhwAFiSL.json`). A slug of `index`
+  makes the entry its collection's landing page, and its URL is the collection's own path — which
+  is why the root entry above (`home.index.…`) answers at `/`
 - Directories: `slug.id` (e.g., `posts.916jXZabYCxu`)
 - Metadata files: No ID (e.g., `.collection.json`, `.gitignore`)
 

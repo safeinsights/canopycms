@@ -1697,6 +1697,8 @@ Index entries (entries with slug `"index"`) represent the default content for a 
 - **`listEntries()`** returns `urlPath: '/guides'` (not `'/guides/index'`) for index entries, and `urlPath: '/'` for a root index entry
 - **`buildContentTree()`** generates `path: '/guides'` (not `'/guides/index'`) for index entries by default
 
+**Model your home page this way.** A singleton stored as an ordinary root entry (`content/home.home.<id>.json`) has `urlPath: '/home'`, so a route serving it at `/` leaves the entry's own URL disagreeing with the served one -- which every URL-derived surface then has to be told about separately, starting with the sitemap. Stored as a root index entry (`content/home.index.<id>.json`) its `urlPath` is `/`, the route reads `readByUrlPath('/')`, and nothing needs special-casing. Note that a read addressing the entry by entry-type path (`read({ entryPath: 'content/home' })`) resolves by entry-type _name_ rather than slug, so it does **not** survive that change -- switch it to `readByUrlPath('/')`.
+
 This means `entry.urlPath` from `listEntries()` is round-trip safe: `readByUrlPath(entry.urlPath)` always resolves back to the same entry. For an index entry that is now the _only_ URL that reaches it, in any case spelling. (For an ordinary entry the final slug segment stays case-insensitive, so `/docs/OVERVIEW` still resolves `/docs/overview` -- collection path segments do not.)
 
 ### One URL, one entry
@@ -1867,6 +1869,7 @@ export default function sitemap(): Promise<MetadataRoute.Sitemap> {
 | `exclude`       | `(entry) => boolean`                     | -             | Drop entries, on top of the non-optional `noindex` exclusion                                                                          |
 | `lastModified`  | `(entry) => Date \| string \| undefined` | `updatedAt`   | `<lastmod>` per entry; return `undefined` to omit it                                                                                  |
 | `priority`      | `(entry) => number \| undefined`         | -             | `<priority>` per entry                                                                                                                |
+| `pathFor`       | `(entry) => string \| null`              | -             | Advertise an entry at a different URL, keeping it inside the entry walk (so `noindex`/`lastModified`/`priority` still apply)          |
 | `extraUrls`     | `SitemapExtraUrl[]`                      | -             | URLs with no entry behind them (hand-written routes, feeds)                                                                           |
 | `seo`           | `{ fields?, group? }`                    | flat defaults | Where the SEO fields live, when they aren't the defaults                                                                              |
 
@@ -1878,7 +1881,24 @@ export default function sitemap(): Promise<MetadataRoute.Sitemap> {
 >
 > **Colliding URLs are deduped, not silently doubled.** Two entries resolving to the same `<loc>` is not fatal to a crawler, but it almost always means two entries are unintentionally sharing one URL. `generateContentSitemap` keeps the first and drops the rest, and warns on the duplicate so you notice instead of shipping a sitemap with fewer URLs than you expect.
 >
-> In a **production build** the entry-vs-entry case no longer gets this far: enumeration fails the build first (see [One URL, one entry](#one-url-one-entry)). This dedupe still covers the cases that guard cannot see -- a collision involving an `extraUrls` path, which you supply here and which never appears in the content enumeration -- and any call outside a production build.
+> In a **production build** the entry-vs-entry case no longer gets this far: enumeration fails the build first (see [One URL, one entry](#one-url-one-entry)). This dedupe still covers the cases that guard cannot see -- a collision involving an `extraUrls` path, which you supply here and which never appears in the content enumeration, a collision created by `pathFor`, which rewrites URLs after that guard has run on the raw listing -- and any call outside a production build.
+
+**When the URL you serve isn't the entry's `urlPath`.** Three answers, in the order to try them:
+
+1. **Re-model the entry, which needs no option at all.** An entry whose slug is `index` collapses onto its collection's path, and at the content root that path is `/`. A home page stored as `content/home.index.<id>.json` therefore has `urlPath: '/'` already -- nothing to reconcile, and nothing to keep in sync later. The example app in this repo does exactly this.
+2. **`pathFor`, when re-modelling isn't available** -- a URL fixed by published history you cannot change, or a route prefix that deliberately differs from your content layout:
+
+   ```typescript
+   // Content lives under content/articles/*, but the site has always published /blog/*.
+   pathFor: (entry) =>
+     entry.entryType === 'article' ? entry.urlPath.replace(/^\/articles\//, '/blog/') : null,
+   ```
+
+   Returning `null` (or `undefined`) means **"keep this entry's own URL", not "drop it"** -- so the callback above reroutes articles and leaves everything else alone. Dropping an entry is still `exclude`'s job. Because the entry never leaves the walk, it keeps the `noindex` gate, the `updatedAt` `lastModified` default and its `priority`.
+
+   It changes what is **advertised**, not what is **built**: `generateContentStaticParams` still enumerates the entry at its structural path, so the URL you return must be one your app actually routes.
+
+3. **`extraUrls`, only for URLs with no entry behind them** -- a feed, a hand-written route. An extra URL inherits neither the `noindex` gate nor the `lastModified` default, because there is no entry to read either from; using it to re-advertise a real entry means re-deriving both by hand, and keeping them in sync forever.
 
 #### `generateMetadata`
 
