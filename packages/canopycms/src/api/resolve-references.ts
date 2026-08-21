@@ -82,7 +82,12 @@ const resolveReferencesHandler = async (
         const access = checkAccess(resolvedPath.relativePath, 'read')
         if (!access.allowed) continue
 
-        const doc = await store.read(result.collection, result.slug)
+        // `resolveReferences: false` matches what the server-side resolver does
+        // (content-store.ts's resolveSingleReferenceOnce reads its targets the same way).
+        // Without it this endpoint resolved one level DEEPER than production, so a nested
+        // reference inside a target rendered as an object in live preview and as a bare ID
+        // string on the published site.
+        const doc = await store.read(result.collection, result.slug, { resolveReferences: false })
         if (doc && doc.data) {
           // Same shape the server-side resolver produces (content-store.ts's
           // resolveSingleReferenceOnce): the target's data first, then the reserved keys.

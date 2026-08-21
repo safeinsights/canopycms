@@ -255,6 +255,20 @@ And `includeBody: true` carries the target's body into every referencing entry's
 so a long document embedded by many pages is carried once per page. Fine for a snippet; think
 twice for a full article, which probably wanted a link.
 
+**A save no longer freezes a resolved reference into your content.** Separately fixed here: the
+editor reads a document with references already resolved, so a plain open-and-save posted those
+resolved objects back, and the write boundary persisted them verbatim into the content file.
+Because resolution only re-resolves a bare string, the frozen snapshot then survived every later
+read and save — the reference was silently severed from its target for good, and renaming or
+editing the target changed nothing. Reference fields are now collapsed back to their ID at the
+write boundary, not just in the copy handed to validation.
+
+The mechanism predates this release; `includeBody` is what made it urgent, since the snapshot
+would otherwise carry the target's entire prose. **If you have edited entries with reference
+fields through the editor on an earlier version, check your content files**: a reference field
+holding an object rather than a 12-character ID string is a severed reference. Replacing the
+object with its own `id` value restores it.
+
 **To adopt.** Nothing is required — `urlPath` simply appears. Add `includeBody: true` to
 reference fields whose target's prose you actually render or index.
 

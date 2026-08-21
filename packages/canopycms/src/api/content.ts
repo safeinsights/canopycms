@@ -457,16 +457,34 @@ const writeContentHandler = async (
     if (warnings.length > 0) validationWarnings = warnings
   }
 
+  // Collapse resolved reference objects back to bare ID strings before PERSISTING, not just
+  // before validating (the reference validator gets its own normalized copy above).
+  //
+  // The editor round-trips whole documents: its GET reads through `store.read()`, whose
+  // `resolveReferences` defaults to TRUE, so form state holds `{...target data, id, slug,
+  // collection, urlPath}` for every reference field, and a save posts that straight back. Left
+  // unnormalized it lands in the content file verbatim — and because resolution only re-resolves
+  // a `typeof value === 'string'`, every later read passes the frozen snapshot through and every
+  // later save rewrites it. The reference is then permanently severed from its target: renaming
+  // or editing the target changes nothing, silently.
+  //
+  // The mechanism predates reference resolution reaching listings, but `includeBody` makes it
+  // materially worse — the snapshot now carries the target's entire prose — and `urlPath` adds a
+  // value that goes stale the moment the target is renamed. Normalizing here is schema-driven and
+  // idempotent: a payload that already holds ID strings is unchanged.
+  const normalizedData =
+    body.data === undefined ? undefined : normalizeReferenceValues(fields, body.data)
+
   try {
     const writeInput: WriteInput = isDataOnlyFormat(body.format)
       ? {
           format: body.format as 'json' | 'yaml',
-          data: body.data ?? {},
+          data: normalizedData ?? {},
           expectedVersion: body.expectedVersion,
         }
       : {
           format: body.format as 'md' | 'mdx',
-          data: body.data,
+          data: normalizedData,
           body: body.body ?? '',
           expectedVersion: body.expectedVersion,
         }
