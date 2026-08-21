@@ -112,7 +112,7 @@ reading at all.
   content tree.
 - **#24 contains one real behaviour gap and one non-gap.** Their "two substantive gaps underneath
   the docs gap" do not weigh the same. The basePath one is real and was untracked — split out to
-  [assets-basepath-deployments.md](assets-basepath-deployments.md). The branch-agnostic asset store
+  [assets-basepath-deployments.md](resolved/assets-basepath-deployments.md). The branch-agnostic asset store
   is not a behaviour bug at all: it was audited, decided deliberately, and documented; it needed
   only a cross-reference from the ACL docs, which now exists.
 - **#9's "adopter workaround" note describes their repo, not ours.** `apps/example1` has neither
