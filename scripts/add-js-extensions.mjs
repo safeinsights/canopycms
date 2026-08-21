@@ -57,8 +57,14 @@ export async function addJsExtensions(dir) {
     const original = await readFile(filePath, 'utf8')
 
     const rewritten = original.replace(RELATIVE_IMPORT_RE, (match, prefix, specifier, quote) => {
-      // Already has a file extension — leave it alone
+      // Already has a JS/TS file extension — leave it alone
       if (/\.[cm]?[jt]sx?$/.test(specifier)) return match
+      // Non-JS assets are not modules we can suffix: `./x.css` must not become
+      // `./x.css.js`. None exist in any dist today; this keeps a future one from
+      // being silently corrupted rather than merely unrewritten.
+      if (/\.(css|scss|sass|less|json|node|wasm|svg|png|jpe?g|gif|webp|woff2?)$/i.test(specifier)) {
+        return match
+      }
 
       const base = resolve(dirname(filePath), specifier)
 
@@ -95,14 +101,26 @@ export async function addJsExtensions(dir) {
 // as a build error.
 async function selfTest() {
   const failures = []
+  // All three prefix alternatives the pattern supports. `import(...)` matters
+  // twice over: it is how tsc writes inline type references in .d.ts, AND how
+  // function-body dynamic imports appear in .js — and those are never executed
+  // by the runtime probe, so a regression there has no other guard.
+  const forms = [
+    (spec) => `from '${spec}'`,
+    (spec) => `import('${spec}')`,
+    (spec) => `import '${spec}'`,
+  ]
   const expectMatch = (input, expected) => {
-    RELATIVE_IMPORT_RE.lastIndex = 0
-    const m = RELATIVE_IMPORT_RE.exec(`from '${input}'`)
-    const actual = m ? m[2] : null
-    if (actual !== expected) {
-      failures.push(
-        `  pattern: from '${input}' -> ${JSON.stringify(actual)}, want ${JSON.stringify(expected)}`,
-      )
+    for (const form of forms) {
+      const line = form(input)
+      RELATIVE_IMPORT_RE.lastIndex = 0
+      const m = RELATIVE_IMPORT_RE.exec(line)
+      const actual = m ? m[2] : null
+      if (actual !== expected) {
+        failures.push(
+          `  pattern: ${line} -> ${JSON.stringify(actual)}, want ${JSON.stringify(expected)}`,
+        )
+      }
     }
   }
 
@@ -124,11 +142,17 @@ async function selfTest() {
     await writeFile(join(tmp, 'sub', 'index.js'), 'export const x = 1\n')
     await writeFile(join(tmp, 'sub', 'index.d.ts'), 'export declare const x: number\n')
     await writeFile(join(tmp, 'leaf.js'), 'export const y = 2\n')
+    await writeFile(join(tmp, 'theme.css'), '.x { color: red }\n')
     await writeFile(join(tmp, 'leaf.d.ts'), 'export declare const y: number\n')
     await writeFile(
       join(tmp, 'entry.js'),
-      ["export * from './leaf'", "export * from './sub'", "export * from './leaf.js'"].join('\n') +
-        '\n',
+      [
+        "export * from './leaf'",
+        "export * from './sub'",
+        "export * from './leaf.js'",
+        "export const lazy = () => import('./leaf')",
+        "import './theme.css'",
+      ].join('\n') + '\n',
     )
     await writeFile(
       join(tmp, 'sub', 'self.d.ts'),
@@ -144,8 +168,11 @@ async function selfTest() {
     }
     expectContains('file specifier', entry, "'./leaf.js'")
     expectContains('directory specifier', entry, "'./sub/index.js'")
+    expectContains('dynamic import', entry, "import('./leaf.js')")
+    expectContains('asset specifier left alone', entry, "'./theme.css'")
     expectContains('bare-dot in .d.ts', self, "'./index.js'")
     if (entry.includes('.js.js')) failures.push('  double-suffixed an already-explicit specifier')
+    if (entry.includes('.css.js')) failures.push('  suffixed a non-JS asset specifier')
 
     // Idempotence: running twice must be a no-op, since builds re-run it.
     await addJsExtensions(tmp)

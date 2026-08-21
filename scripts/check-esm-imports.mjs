@@ -199,7 +199,21 @@ function checkCoverage() {
       }
     }
     for (const [subpath, mode] of Object.entries(subpaths)) {
-      if (publishesDevExports) continue
+      if (publishesDevExports) {
+        // The one rule that still applies: with no publishConfig.exports, the dev
+        // map publishes verbatim, so a `devOnly` subpath IS published — while
+        // being skipped by the runtime probe, skipped by the type pass, and
+        // (without this) skipped here too. That is a published entry point with
+        // zero coverage: the original defect's exact shape.
+        if (isDevOnly(mode)) {
+          problems.push(
+            `${pkg.name}: "${subpath}" is marked devOnly, but the package has no ` +
+              'publishConfig.exports, so its dev exports map publishes verbatim and the ' +
+              'subpath ships anyway — add a publishConfig.exports map, or stop marking it devOnly',
+          )
+        }
+        continue
+      }
       const devOnly = isDevOnly(mode)
       if (devOnly && published.has(subpath)) {
         problems.push(
@@ -451,6 +465,19 @@ function checkDeclarationResolution(sandbox) {
     throw new Error(
       `tsc exited ${result.status} with no output — type pass did not complete. ` +
         'This is a broken probe, not a clean run.',
+    )
+  }
+  // A diagnostic against the probe's own tsconfig means tsc ran but compiled
+  // nothing — e.g. an empty `files` list (TS18002). That exits non-zero WITH
+  // output, so the assertion above waves it through, and it matches neither
+  // filter below, so the pass would report OK having checked zero declarations.
+  // Fatal rather than filterable: it says the probe is broken, not the package.
+  const probeConfigErrors = output
+    .split('\n')
+    .filter((line) => /^tsconfig\.json\([0-9]+,[0-9]+\): error TS[0-9]+:/.test(line.trim()))
+  if (probeConfigErrors.length > 0) {
+    throw new Error(
+      `the type probe's own tsconfig is broken, so nothing was typechecked:\n${probeConfigErrors.join('\n')}`,
     )
   }
 
