@@ -254,6 +254,12 @@ export async function generateContentSitemap(
  * sibling's path, or two `urlPath`s that only differ by case (`urlPath` is lowercased — see
  * `content-listing.ts`). Warning rather than silently deduping turns that into a build-time signal
  * an adopter can act on instead of a sitemap that just quietly has fewer URLs than expected.
+ *
+ * Still needed alongside `assertNoDuplicateUrlPaths` (canopycms `static/index.ts`), which fails a
+ * production build on the entry-vs-entry case before generation ever reaches here. This covers the
+ * two cases that guard cannot: a collision involving an `extraUrls` path, which is supplied here
+ * and never appears in the content enumeration, and any call outside build mode, where that guard
+ * is deliberately silent.
  */
 function dedupeSitemapItems(items: SitemapItem[]): SitemapItem[] {
   const seen = new Set<string>()

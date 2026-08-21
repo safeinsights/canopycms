@@ -128,11 +128,20 @@ async function enumerateRoutableEntries<T>(
   // an abandoned schema-invalid scaffold shipping into a static build silently drops that page's
   // route (or worse, renders broken), which is worse than a red build.
   //
-  // The unknown-key warning runs BEFORE the throwing guard, so a build about to go red still
+  // The unknown-key warning runs BEFORE both throwing guards, so a build about to go red still
   // prints everything it found rather than dying on the first problem.
+  //
+  // All three run on the RAW listing, before the caller's `filter` — a filtered-out entry still
+  // occupies its URL as far as every other route is concerned. `rootPath` scoping does narrow
+  // them, since that happens inside `listEntries`; that is the intended escape hatch, `filter`
+  // is not.
+  //
+  // Schema validity is asserted before duplicate URLs deliberately: a schema-invalid entry is
+  // the more fundamental problem, and an adopter fixing it may remove the duplicate on the way.
   if (isBuildMode()) {
     warnUnknownEntryKeys(entries, phaseLabel)
     assertBuildEntriesValid(entries, phaseLabel)
+    assertNoDuplicateUrlPaths(entries, phaseLabel)
   }
   return entries.map((entry) => ({
     urlPath: entry.urlPath,
@@ -397,5 +406,92 @@ export function assertBuildEntriesValid(items: readonly BuildScanItem[], phaseLa
     `CanopyCMS static build: found ${invalid.length} schema-invalid ${invalid.length === 1 ? 'entry' : 'entries'} during ${phaseLabel}:\n${lines.join('\n')}\n` +
       `These are likely abandoned create-scaffolds (empty entries left behind when a create was started but never finished). ` +
       `Finish editing the entry (fill in its required fields) or delete the abandoned draft, then rebuild.`,
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Build-time duplicate-URL guard
+// ---------------------------------------------------------------------------
+
+/**
+ * One URL claimed by more than one entry.
+ */
+export interface DuplicateUrlPath {
+  /** The contested URL path, exactly as `listEntries` computed it. */
+  urlPath: string
+  /** Logical paths of every entry claiming it, sorted. Always length >= 2. */
+  entryPaths: string[]
+}
+
+/** What the duplicate-URL scan needs off a listing item. */
+type UrlScanItem = Pick<ListEntriesItem, 'entryPath' | 'urlPath'>
+
+/**
+ * Find every `urlPath` claimed by two or more entries.
+ *
+ * `listEntries` assigns each entry exactly one `urlPath` and documents it as round-trip safe with
+ * `readByUrlPath`. That guarantee is per-entry, not per-URL: nothing stops two DIFFERENT entries
+ * computing the same one, and when they do exactly one of them is reachable while the other
+ * silently has no route at all. The known ways to get there:
+ *
+ * - An entry whose slug matches a sibling collection that also has an `index` entry — the index
+ *   collapses onto the collection's path, which is the entry's path too. (An entry beside a
+ *   sibling collection with NO index entry is a different, legitimate shape: a landing page plus
+ *   a folder of children, nothing contested.)
+ * - Two entries whose slugs differ only by case, since `urlPath` is lowercased.
+ * - Two entries with the same slug in one collection. The write boundary already refuses this
+ *   (`ContentStore.buildPaths` resolves by slug across entry types, and the create-intent guard
+ *   turns a hit into a conflict), but content also arrives by merge, by PR, and by adopters
+ *   retrofitting an existing repo — none of which pass through that boundary.
+ *
+ * Exported so adopters can assert on it directly instead of hand-rolling a content-integrity
+ * test; `assertNoDuplicateUrlPaths` is what the build itself uses.
+ *
+ * Pure. Results are sorted by `urlPath`, with each `entryPaths` sorted too, so messages are
+ * stable across runs (`listEntries` resolves collections in parallel, so its own order is not).
+ */
+export function findDuplicateUrlPaths(items: readonly UrlScanItem[]): DuplicateUrlPath[] {
+  const byUrl = new Map<string, string[]>()
+  for (const item of items) {
+    const existing = byUrl.get(item.urlPath)
+    if (existing) existing.push(item.entryPath)
+    else byUrl.set(item.urlPath, [item.entryPath])
+  }
+
+  const duplicates: DuplicateUrlPath[] = []
+  for (const [urlPath, entryPaths] of byUrl) {
+    if (entryPaths.length > 1) {
+      duplicates.push({ urlPath, entryPaths: [...entryPaths].sort() })
+    }
+  }
+  return duplicates.sort((a, b) => a.urlPath.localeCompare(b.urlPath))
+}
+
+/**
+ * Throw a single, descriptive Error if any URL is claimed by more than one entry.
+ *
+ * Fails the build for the same reason its sibling `assertBuildEntriesValid` does: a page that
+ * silently disappears from a static build is a worse failure mode than a red build, and that is
+ * precisely what a contested URL produces — `generateStaticParams` emits the path once, one entry
+ * renders, and the other never appears anywhere with no error to notice.
+ *
+ * Related but not redundant: `canopycms-next`'s `dedupeSitemapItems` warns on the same collision
+ * at the sitemap. It stays, because it also covers entry-vs-`extraUrls` collisions (adopter-supplied
+ * paths this content enumeration never sees) and non-build-mode calls, where this guard is silent.
+ */
+export function assertNoDuplicateUrlPaths(items: readonly UrlScanItem[], phaseLabel: string): void {
+  const duplicates = findDuplicateUrlPaths(items)
+  if (duplicates.length === 0) return
+
+  const lines = duplicates.map(
+    ({ urlPath, entryPaths }) => `  - ${urlPath} — claimed by ${entryPaths.join(', ')}`,
+  )
+
+  throw new Error(
+    `CanopyCMS static build: found ${duplicates.length} ${duplicates.length === 1 ? 'URL' : 'URLs'} claimed by more than one entry during ${phaseLabel}:\n${lines.join('\n')}\n` +
+      'Only one entry can be served at each URL, so the rest have no route at all. This usually means ' +
+      "an entry whose slug matches a sibling collection that also has an 'index' entry (the index " +
+      "collapses onto the collection's path), or two slugs differing only by case (URL paths are " +
+      'lowercased). Rename or remove one of the colliding entries, then rebuild.',
   )
 }

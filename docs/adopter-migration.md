@@ -343,6 +343,58 @@ or delete the key from the content.
 after a rename, and any defensive `?? fallback` a component carries purely because nobody could
 tell whether a field was still populated.
 
+### An `index` entry no longer answers at a second URL, and a contested URL now fails the build — **breaking (routing)**
+
+_Adopter request log item 22._
+
+**What changed.** Two things, from one root cause in the URL → entry resolver.
+
+`readByUrlPath` no longer resolves an index entry at its literal `.../index` URL. An index entry's
+URL is its collection's path — that is what `listEntries` publishes as `item.urlPath`, what
+`buildContentTree` uses for node paths, and what a resolved reference's `urlPath` carries. The
+resolver disagreed: it tried "last segment is the slug" first, so the same entry also answered at
+`/x/index`, a URL no other API ever emits.
+
+```diff
+  await readByUrlPath('/guides')        // the index entry — unchanged
+- await readByUrlPath('/guides/index')  // ALSO the index entry
++ await readByUrlPath('/guides/index')  // null
+```
+
+The round-trip guarantee is now exclusive: `item.urlPath` reaches the entry and nothing else does.
+A collection literally _named_ `index` is unaffected and in fact fixed — `/docs/index` now resolves
+to that collection's own index entry instead of being shadowed by its parent's.
+
+Separately, a **production build** (`isBuildMode()` — not `next dev`) now fails when two entries
+compute the same `urlPath`, listing each contested URL and its claimants. Previously one entry got
+the route and the other silently had no page anywhere. The usual causes are an entry whose slug
+matches a sibling collection that _also_ has an `index` entry, and two slugs differing only by
+case (URL paths are lowercased). An entry beside a sibling collection with **no** index entry is
+untouched — a landing page plus a folder of children is a legitimate shape and nothing about it
+is contested.
+
+**To adopt.** Nothing, if your content has no contested URLs — the resolver change only removes
+URLs that were never advertised. If a build starts failing, the error names every colliding entry;
+rename or remove one of each pair. To check before upgrading:
+
+```ts
+import { collectRoutableEntries, findDuplicateUrlPaths } from 'canopycms/server'
+
+const duplicates = findDuplicateUrlPaths(await collectRoutableEntries(await getCanopyForBuild()))
+```
+
+**Now deletable.**
+
+- **A route-level guard whose only job is to reject a `.../index` URL.** The shape is a check at
+  the top of a `[slug]` route — usually on `entryType`, sometimes on the slug itself — that exists
+  because the collection's index entry resolved through a template meant for its children and
+  rendered with every field undefined. That URL is now a 404 on its own. Delete the check; keep
+  any `entryType` narrowing you rely on for real type safety.
+- **A hand-rolled duplicate-URL integrity test.** The shape is a test that enumerates content and
+  asserts no two entries share a URL, written because nothing in the package checked. The build
+  now enforces it; if you want the assertion kept locally, call `findDuplicateUrlPaths` instead of
+  re-implementing the scan.
+
 <!--
 Template for each entry — copy, don't improvise:
 

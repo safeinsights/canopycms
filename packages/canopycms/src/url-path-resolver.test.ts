@@ -69,4 +69,45 @@ describe('resolveUrlPathCandidates', () => {
       { entryPath: 'content/about', slug: 'index' },
     ])
   })
+
+  // A literal `index` segment is the one case where the direct-entry candidate is dropped: an
+  // index entry's only URL is its collapsed collection path, so emitting the direct candidate
+  // would let it answer at a URL no forward surface (computeEntryUrl / defaultBuildPath) ever
+  // publishes. See the resolver's own doc comment.
+  describe('a literal `index` segment', () => {
+    it('drops the direct-entry candidate, keeping only the index fallback', () => {
+      expect(resolveUrlPathCandidates('/docs/guides/index', 'content')).toEqual([
+        { entryPath: 'content/docs/guides/index', slug: 'index' },
+      ])
+    })
+
+    it('drops it at the content root too', () => {
+      expect(resolveUrlPathCandidates('/index', 'content')).toEqual([
+        { entryPath: 'content/index', slug: 'index' },
+      ])
+    })
+
+    it('still resolves a collection literally named `index`', () => {
+      // The surviving candidate is exactly the one that addresses that collection's own index
+      // entry — the target `defaultBuildPath(kind: 'collection')` assigns the path /docs/index.
+      expect(resolveUrlPathCandidates('/docs/index', 'content')).toEqual([
+        { entryPath: 'content/docs/index', slug: 'index' },
+      ])
+    })
+
+    it('only applies to the LAST segment', () => {
+      // `index` earlier in the path is an ordinary collection name and changes nothing.
+      expect(resolveUrlPathCandidates('/index/overview', 'content')).toEqual([
+        { entryPath: 'content/index', slug: 'overview' },
+        { entryPath: 'content/index/overview', slug: 'index' },
+      ])
+    })
+
+    it('never returns an empty candidate list', () => {
+      // readByUrlPath treats an empty list as an immediate miss, so the fallback has to survive.
+      for (const urlPath of ['/index', '/a/index', '/a/b/index']) {
+        expect(resolveUrlPathCandidates(urlPath, 'content')).toHaveLength(1)
+      }
+    })
+  })
 })

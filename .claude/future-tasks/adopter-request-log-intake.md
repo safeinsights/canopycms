@@ -35,7 +35,7 @@ left alone.
 | 25 | `adopter-migration.md`'s `## Unreleased` is stale | Confirmed | Fixed on this branch |
 | 6 | `react-markdown`-in-RSC trap undocumented | Confirmed | Fixed on this branch |
 | 24 | Assets/media system undiscoverable | Confirmed (docs), plus one real behaviour gap | Docs fixed; behaviour split out |
-| 22 | Enumeration and resolution disagree on URL count | **Confirmed, plus a second consequence they did not find** | [url-resolver-index-entry-extra-url.md](url-resolver-index-entry-extra-url.md) |
+| 22 | Enumeration and resolution disagree on URL count | **Confirmed, plus a second consequence they did not find** | [url-resolver-index-entry-extra-url.md](resolved/url-resolver-index-entry-extra-url.md) |
 | 20b | `extraUrls` bypasses `isNoindexEntry`, no `lastModified` | Confirmed, both halves | Docs first; `pathFor` deferred |
 | 27 | Non-list `object` field can be entered but never cleared | Confirmed | Open, small |
 | 28 | `object` fields drop comment support | **Partially true** — see below | Open, small |

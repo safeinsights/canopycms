@@ -11,6 +11,7 @@ import { createCanopyContext } from './context'
 import { STATIC_DEPLOY_USER } from './build-mode'
 import { RESERVED_GROUPS } from './authorization/helpers'
 import { parsePhysicalPath } from './paths'
+import type { RootCollectionConfig } from './config'
 import type { BranchContext } from './types'
 
 const tmpDir = async () => fs.mkdtemp(path.join(os.tmpdir(), 'canopycms-context-'))
@@ -369,7 +370,10 @@ describe('readByUrlPath', () => {
     await fs.rm(root, { recursive: true, force: true })
   })
 
-  const createContext = async (schema = testSchema) => {
+  // Typed as the real schema type rather than `typeof testSchema`, so a test can pass an inline
+  // schema of a different shape (a root-level collection, a nested collection named `index`)
+  // without being narrowed to the default's exact literal type.
+  const createContext = async (schema: RootCollectionConfig = testSchema) => {
     const services = await createTestServices(
       {
         defaultBranchAccess: 'allow',
@@ -409,6 +413,165 @@ describe('readByUrlPath', () => {
     const result = await ctx.readByUrlPath<{ title: string }>('/docs/guides')
     expect(result).not.toBeNull()
     expect(result!.data.title).toBe('Guides Index')
+  })
+
+  // -------------------------------------------------------------------------
+  // An index entry answers at EXACTLY ONE URL
+  // -------------------------------------------------------------------------
+  //
+  // The forward rule (computeEntryUrl, and defaultBuildPath for kind 'entry') collapses an
+  // `index` slug onto its collection's path, so `listEntries` publishes exactly one `urlPath`
+  // per entry and documents the round-trip as safe. The reverse resolver used to disagree:
+  // its "last segment is the slug" candidate fired first, so an index entry ALSO answered at
+  // the literal `.../index` URL that no forward surface ever emits. Adopters were paying for
+  // that disagreement with per-route entryType gates whose only job was to reject the phantom.
+  //
+  // These pin the round-trip as EXCLUSIVE — item.urlPath resolves the entry, and nothing else
+  // does. See .claude/future-tasks/resolved/url-resolver-index-entry-extra-url.md.
+  describe('index entries answer at exactly one URL', () => {
+    it('does not resolve an index entry at its literal /index URL', async () => {
+      const guidesDir = path.join(root, 'content/docs/guides')
+      await fs.mkdir(guidesDir, { recursive: true })
+      await fs.writeFile(
+        path.join(guidesDir, 'index.md'),
+        matter.stringify('Welcome to guides', { title: 'Guides Index' }),
+      )
+
+      const ctx = await createContext()
+      // The collapsed path is the entry's one URL...
+      const collapsed = await ctx.readByUrlPath<{ title: string }>('/docs/guides')
+      expect(collapsed!.data.title).toBe('Guides Index')
+      // ...and the literal one is not a second one.
+      expect(await ctx.readByUrlPath('/docs/guides/index')).toBeNull()
+    })
+
+    it('does not resolve the root index entry at /index', async () => {
+      await fs.mkdir(path.join(root, 'content'), { recursive: true })
+      await fs.writeFile(path.join(root, 'content/index.json'), JSON.stringify({ title: 'Home' }))
+
+      const ctx = await createContext({
+        collections: [
+          {
+            name: 'root',
+            path: '',
+            entries: [
+              {
+                name: 'page',
+                format: 'json' as const,
+                default: true,
+                schema: [{ name: 'title', type: 'string' as const }],
+              },
+            ],
+          },
+        ],
+      })
+      expect((await ctx.readByUrlPath<{ title: string }>('/'))!.data.title).toBe('Home')
+      expect(await ctx.readByUrlPath('/index')).toBeNull()
+    })
+
+    it('resolves /docs/index to a collection named "index", not to docs\' own index entry', async () => {
+      // A collection literally named `index` is what makes the skip above a skip rather than a
+      // removal: defaultBuildPath(kind: 'collection') hands that collection the path /docs/index,
+      // so the index-fallback candidate has to survive to answer it. Before the fix the
+      // "last segment is the slug" candidate fired first and returned the WRONG entry here —
+      // docs' own index — shadowing the collection entirely.
+      const docsDir = path.join(root, 'content/docs')
+      const indexCollectionDir = path.join(docsDir, 'index')
+      await fs.mkdir(indexCollectionDir, { recursive: true })
+      await fs.writeFile(path.join(docsDir, 'index.json'), JSON.stringify({ title: 'Docs Home' }))
+      await fs.writeFile(
+        path.join(indexCollectionDir, 'index.json'),
+        JSON.stringify({ title: 'The Index Collection' }),
+      )
+
+      const ctx = await createContext({
+        collections: [
+          {
+            name: 'docs',
+            path: 'docs',
+            entries: [
+              {
+                name: 'doc',
+                format: 'json' as const,
+                default: true,
+                schema: [{ name: 'title', type: 'string' as const }],
+              },
+            ],
+            collections: [
+              {
+                name: 'index',
+                path: 'docs/index',
+                entries: [
+                  {
+                    name: 'doc',
+                    format: 'json' as const,
+                    default: true,
+                    schema: [{ name: 'title', type: 'string' as const }],
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      })
+
+      expect((await ctx.readByUrlPath<{ title: string }>('/docs'))!.data.title).toBe('Docs Home')
+      expect((await ctx.readByUrlPath<{ title: string }>('/docs/index'))!.data.title).toBe(
+        'The Index Collection',
+      )
+    })
+  })
+
+  // -------------------------------------------------------------------------
+  // An entry and a sibling collection sharing one name
+  // -------------------------------------------------------------------------
+  //
+  // Two shapes that look alike on disk and are NOT the same thing. Collections are directories
+  // `{name}.{id}` and entries are files `{type}.{slug}.{id}.{ext}`, so both can sit side by side.
+  describe('an entry beside a same-named sibling collection', () => {
+    it('serves the flat entry, and the collection children still resolve (no index entry)', async () => {
+      // The LEGITIMATE shape: a landing-page entry plus a folder of children. No index entry in
+      // the collection, so nothing claims /docs/guides twice and nothing is shadowed. This works
+      // today and must keep working — it is why the flat entry keeps precedence below rather
+      // than yielding to the collection.
+      const docsDir = path.join(root, 'content/docs')
+      const guidesDir = path.join(docsDir, 'guides')
+      await fs.mkdir(guidesDir, { recursive: true })
+      await fs.writeFile(path.join(docsDir, 'guides.json'), JSON.stringify({ title: 'Guides' }))
+      await fs.writeFile(
+        path.join(guidesDir, 'getting-started.md'),
+        matter.stringify('# Hello', { title: 'Getting Started' }),
+      )
+
+      const ctx = await createContext()
+      expect((await ctx.readByUrlPath<{ title: string }>('/docs/guides'))!.data.title).toBe(
+        'Guides',
+      )
+      expect(
+        (await ctx.readByUrlPath<{ title: string }>('/docs/guides/getting-started'))!.data.title,
+      ).toBe('Getting Started')
+    })
+
+    it('serves the flat entry when the collection ALSO has an index entry (ambiguous)', async () => {
+      // The AMBIGUOUS shape: both claim urlPath /docs/guides, so one of them is unreachable
+      // whichever way the resolver leans. Precedence stays with the flat entry so that adding an
+      // index entry to the collection above cannot silently take down an already-published
+      // landing page. The state itself is an authoring error, and it is meant to be caught —
+      // see findDuplicateUrlPaths in static/index.ts, which fails a production build on it.
+      const docsDir = path.join(root, 'content/docs')
+      const guidesDir = path.join(docsDir, 'guides')
+      await fs.mkdir(guidesDir, { recursive: true })
+      await fs.writeFile(path.join(docsDir, 'guides.json'), JSON.stringify({ title: 'Guides' }))
+      await fs.writeFile(
+        path.join(guidesDir, 'index.md'),
+        matter.stringify('Welcome', { title: 'Guides Index' }),
+      )
+
+      const ctx = await createContext()
+      expect((await ctx.readByUrlPath<{ title: string }>('/docs/guides'))!.data.title).toBe(
+        'Guides',
+      )
+    })
   })
 
   it('resolves a nested path (collection + slug)', async () => {

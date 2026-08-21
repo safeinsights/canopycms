@@ -1931,10 +1931,13 @@ export class ContentStore {
       // Deliberately `computeEntryUrl` (utils/entry-url.ts), the same forward
       // collection+slug -> url rule `listEntries` publishes as `item.urlPath` and
       // `entry-link-resolver.ts` already uses for `entry:ID` links — NOT the reverse
-      // url -> entry resolver in url-path-resolver.ts, which disagrees with that rule about
-      // how many URLs an index entry answers at (see the open
-      // url-resolver-index-entry-extra-url task). Sourcing from the reverse resolver would
-      // bake that disagreement into every resolved reference.
+      // url -> entry resolver in url-path-resolver.ts. The two agree today (the reverse
+      // resolver was taught to skip its direct-entry candidate for a literal `index` slug,
+      // precisely so it stops answering at URLs this rule never emits — see
+      // .claude/future-tasks/resolved/url-resolver-index-entry-extra-url.md), but the
+      // direction still matters: this is the surface that DEFINES an entry's URL, and
+      // sourcing it from the resolver that consumes that definition would invert the
+      // dependency and let any future divergence propagate into every resolved reference.
       //
       // The assembly itself — data, then the embedded body, then the reserved metadata — is
       // `buildResolvedReference`'s job rather than this function's, because the editor's

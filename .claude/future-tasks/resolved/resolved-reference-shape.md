@@ -32,7 +32,7 @@ resolve references at all and so made the shape question consequential.
 resolver already holds — no extra I/O. Deliberately the forward collection+slug → URL rule,
 NOT `url-path-resolver.ts`'s reverse URL → entry direction, which has its own open
 disagreement about how many URLs an index entry answers at (see
-[url-resolver-index-entry-extra-url.md](../url-resolver-index-entry-extra-url.md)).
+[url-resolver-index-entry-extra-url.md](url-resolver-index-entry-extra-url.md)).
 
 `listEntries`' own inline `urlPath` computation was replaced with the same call, so a listed
 entry's `urlPath` and a resolved reference's `urlPath` are now one function by construction

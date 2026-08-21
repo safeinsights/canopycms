@@ -43,7 +43,11 @@ override.
 
 - [resolved-reference-shape.md](resolved/resolved-reference-shape.md) — added the resolved
   reference `urlPath` and consolidated the listing's copy of the rule.
-- [url-resolver-index-entry-extra-url.md](url-resolver-index-entry-extra-url.md) — the
-  *reverse* direction (URL → entry) disagreeing with this rule. Different bug, same theme.
+- [url-resolver-index-entry-extra-url.md](resolved/url-resolver-index-entry-extra-url.md) —
+  RESOLVED 2026-08-21. The *reverse* direction (URL → entry) had been disagreeing with this rule
+  about how many URLs an index entry answers at; it now agrees. Different bug, same theme — and
+  the reason this file's remaining copy matters more, not less: the reverse resolver is now
+  written to match the forward rule, so a third forward implementation drifting is a way to break
+  routing, not just tree paths.
 
 [NEITHER]

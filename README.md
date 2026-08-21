@@ -1680,6 +1680,10 @@ export default async function Page({ params }) {
 2. If that fails, tries `content/docs/getting-started` + slug `"index"` (index entry fallback)
 3. `/docs/guides` -- resolves to the index entry of the `guides` collection (if one exists)
 4. `/` -- resolves to the root index entry at the content root (if one exists)
+5. `/docs/guides/index` -- returns `null`. When the last segment is literally `index`, step 1 is
+   skipped: an index entry's only URL is its collection's path (step 3), so it never answers at
+   the literal `.../index` URL as well. Step 2 still runs, which is what resolves a collection
+   actually _named_ `index`.
 
 Returns `null` when no content matches the path, or when the current user is not permitted to read it (a `FORBIDDEN` denial renders as a 404 via your existing `if (!result) return notFound()`, rather than throwing). The strict `read()` API still throws on permission errors.
 
@@ -1688,11 +1692,30 @@ Returns `null` when no content matches the path, or when the current user is not
 Index entries (entries with slug `"index"`) represent the default content for a collection URL. All three content APIs -- `readByUrlPath`, `listEntries`, and `buildContentTree` -- treat index entries consistently:
 
 - **`readByUrlPath('/guides')`** resolves to the index entry in the `guides` collection
+- **`readByUrlPath('/guides/index')`** returns `null` -- an index entry has exactly one URL, and it is `/guides`
 - **`readByUrlPath('/')`** resolves to the index entry at the content root
 - **`listEntries()`** returns `urlPath: '/guides'` (not `'/guides/index'`) for index entries, and `urlPath: '/'` for a root index entry
 - **`buildContentTree()`** generates `path: '/guides'` (not `'/guides/index'`) for index entries by default
 
-This means `entry.urlPath` from `listEntries()` is round-trip safe: `readByUrlPath(entry.urlPath)` always resolves back to the same entry.
+This means `entry.urlPath` from `listEntries()` is round-trip safe: `readByUrlPath(entry.urlPath)` always resolves back to the same entry -- and exclusively so, since no other URL reaches it.
+
+### One URL, one entry
+
+Each entry gets exactly one `urlPath`, but nothing stops two _different_ entries computing the same one. When that happens only one of them can be served and the other silently has no route at all, so a **production build** fails with the contested URLs and their claimants listed. (`next dev` and the admin UI are unaffected -- mid-edit trees are allowed to be temporarily broken.)
+
+The two ways to get there:
+
+- An entry whose slug matches a sibling collection **that also has an `index` entry** -- the index collapses onto the collection's path, which is the entry's path too. An entry beside a sibling collection with no index entry is fine: a landing page plus a folder of children is a normal shape, and nothing is contested.
+- Two slugs differing only by case, since URL paths are lowercased.
+
+To check your own content, `findDuplicateUrlPaths` (exported from `canopycms/server`) is the same scan the build runs:
+
+```typescript
+import { collectRoutableEntries, findDuplicateUrlPaths } from 'canopycms/server'
+
+const duplicates = findDuplicateUrlPaths(await collectRoutableEntries(await getCanopyForBuild()))
+// [{ urlPath: '/docs/guides', entryPaths: ['content/docs/guides', 'content/docs/guides/index'] }]
+```
 
 ### Static Export with generateStaticParams
 

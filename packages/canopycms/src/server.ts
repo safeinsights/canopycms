@@ -164,6 +164,15 @@ export { collectRoutableEntries } from './static'
 export type { RoutableEntry, CollectRoutableEntriesOptions } from './static'
 
 /**
+ * Find every URL claimed by more than one entry — the check a production build already runs
+ * (and fails on). Exported so a content-integrity test can assert it directly rather than
+ * hand-rolling the same scan over `listEntries`.
+ */
+export { findDuplicateUrlPaths } from './static'
+
+export type { DuplicateUrlPath } from './static'
+
+/**
  * SEO field extraction and URL shaping (framework-agnostic). `isNoindexEntry` is the single
  * predicate behind both `robots: noindex` and sitemap exclusion.
  */
