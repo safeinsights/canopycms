@@ -68,7 +68,7 @@ interface Setup {
 async function createSetup(
   tmpDir: string,
   branchName: string,
-  opts: { branchDeletesEntry: boolean },
+  opts: { branchDeletesEntry: boolean; baseDeletesEntry?: boolean },
 ): Promise<Setup> {
   const remotePath = path.join(tmpDir, 'remote')
   const contentBranchesPath = path.join(tmpDir, 'content-branches')
@@ -113,10 +113,16 @@ async function createSetup(
     await branchGit.commit('branch: update entry')
   }
 
-  // ...and an upstream PR modifying the same file.
-  await writeInto(remotePath, '{\n  "title": "main version"\n}\n')
-  await remoteGit.add(['.'])
-  await remoteGit.commit('main: update same entry')
+  // ...and the upstream side, which either modifies the same file or deletes
+  // it (the DU direction: "deleted by us" once the rebase reverses sides).
+  if (opts.baseDeletesEntry) {
+    await remoteGit.rm([ENTRY_FILE])
+    await remoteGit.commit('main: delete entry')
+  } else {
+    await writeInto(remotePath, '{\n  "title": "main version"\n}\n')
+    await remoteGit.add(['.'])
+    await remoteGit.commit('main: update same entry')
+  }
 
   const meta = BranchMetadataFileManager.get(branchPath, contentBranchesPath)
   await meta.save({
@@ -165,6 +171,26 @@ describe('rebase wedge recovery', () => {
       const status = await setup.branchGit.status()
       expect(status.files).toHaveLength(0)
       expect((await setup.branchGit.revparse(['--abbrev-ref', 'HEAD'])).trim()).toBe('my-feature')
+    })
+
+    it('keeps the branch version when BASE deleted the file and the branch modified it (DU)', async () => {
+      // The mirror image of the case above, and the other half of the
+      // conflict-kind dispatch: git status `DU`, "deleted by us". Git leaves
+      // the BRANCH's version in the tree, so keep-branch-version means staging
+      // it with `git add` -- getting this direction backwards would silently
+      // delete an editor's still-wanted file.
+      const setup = await createSetup(tmpDir, 'my-feature', {
+        branchDeletesEntry: false,
+        baseDeletesEntry: true,
+      })
+
+      const summary = await runRebase(makeWorker(tmpDir))
+
+      expect(summary.rebased).toContain('my-feature')
+      expect(await isRebaseInProgress(setup.branchPath)).toBe(false)
+      // The branch's edit survives base's deletion.
+      const entry = await fs.readFile(path.join(setup.branchPath, ENTRY_FILE), 'utf8')
+      expect(entry).toContain('branch version')
     })
 
     it('still keeps the branch version for an ordinary content conflict', async () => {

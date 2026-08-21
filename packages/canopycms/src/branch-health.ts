@@ -50,14 +50,18 @@ export interface BranchHealthEntry {
    *
    * Deliberately an advisory flag on `healthy` rather than its own
    * `BranchHealthKind`, for the same reason `duplicateContentIds` is: the
-   * branch's metadata is intact and the state is transient and
-   * self-recovering -- the worker's sync loop aborts an interrupted rebase at
-   * the top of its next per-branch pass. What this flag buys is visibility in
-   * the window BEFORE that pass runs, where the branch otherwise scanned as
-   * unqualified `healthy` while being skipped as dirty every cycle.
+   * branch's metadata is intact and the state is USUALLY transient -- the
+   * worker's sync loop aborts an interrupted rebase at the top of its next
+   * per-branch pass. What this flag buys is visibility in the window BEFORE
+   * that pass runs, where the branch otherwise scanned as unqualified
+   * `healthy` while being skipped as dirty every cycle.
    *
-   * A value that persists across several sync cycles is the real signal: it
-   * means the abort itself is failing, which needs an operator.
+   * NOT self-recovering in every case, so a persisting value is the real
+   * signal and needs an operator. Two ways it sticks: the abort itself keeps
+   * failing, or the branch's status moved off `editing` after it wedged --
+   * the rebase loop filters by status BEFORE reaching the recovery step, so a
+   * clone that crashed mid-rebase and was then submitted or archived is never
+   * revisited, and this flag is the only thing that surfaces it.
    */
   rebaseInProgress?: boolean
   /** corrupt-metadata only: message describing why the file failed to load. */

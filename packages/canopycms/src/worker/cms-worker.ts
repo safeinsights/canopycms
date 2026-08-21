@@ -668,29 +668,59 @@ export class CmsWorker {
    */
   private async scrubPersistedRemote(gitDir: string): Promise<void> {
     const git = simpleGit({ baseDir: gitDir })
-    const readOriginUrl = async (): Promise<string | null> => {
+    // `git config --get` exits 1 with no output when the key is absent.
+    // simple-git does NOT reliably throw on that -- verified against
+    // simple-git 3.36: it resolves with an empty string -- so an empty result
+    // must be read as "absent" too. Treating "" as a surviving URL is what
+    // made the first version of this reject every clean scrub.
+    //
+    // 'unreadable' is deliberately distinct from 'absent'. A read that fails
+    // for any OTHER reason must not be mistaken for "no token here": that
+    // would let the pre-check below short-circuit and skip the scrub entirely,
+    // silently leaving a token-bearing config on shared EFS -- the exact
+    // outcome this function exists to prevent. Fail closed and attempt the
+    // removal instead.
+    const readOriginUrl = async (): Promise<string | null | 'unreadable'> => {
       try {
-        // `git config --get` exits 1 with no output when the key is absent.
-        // simple-git does NOT reliably throw on that -- verified against
-        // simple-git 3.36: it resolves with an empty string -- so an empty
-        // result must be read as "absent" too. Treating "" as a surviving URL
-        // is what made the first version of this reject every clean scrub.
         const url = (await git.raw(['config', '--get', 'remote.origin.url'])).trim()
         return url === '' ? null : url
-      } catch {
-        return null
+      } catch (err: unknown) {
+        // Exit code 1 is git's documented "key not found" for `--get`.
+        const message = getErrorMessage(err)
+        const isKeyAbsent = /exit code=1\b/.test(message) || message.trim() === ''
+        return isKeyAbsent ? null : 'unreadable'
       }
     }
 
-    if ((await readOriginUrl()) === null) return
+    const before = await readOriginUrl()
+    if (before === null) return
+    if (before === 'unreadable') {
+      workerLogWarn(
+        `  Could not read remote.origin.url in ${gitDir}; attempting the scrub anyway rather than assuming it is absent`,
+      )
+    }
 
-    await git.removeRemote('origin')
+    try {
+      await git.removeRemote('origin')
+    } catch (err: unknown) {
+      // Reached only from the 'unreadable' path, where the remote may in fact
+      // not exist. Let the verification below decide rather than failing here:
+      // it is the authoritative check, and it fails closed.
+      workerLogWarn(
+        `  removeRemote('origin') failed in ${gitDir}: ${getErrorMessage(err)} -- verifying directly`,
+      )
+    }
 
+    // Fails closed on BOTH a surviving URL and an unverifiable read: if we
+    // cannot prove the token is gone from shared storage, we do not proceed.
     const remaining = await readOriginUrl()
     if (remaining !== null) {
       throw new Error(
-        `Failed to remove the 'origin' remote from ${gitDir}: its config still records a remote ` +
-          `URL, which for a token-bearing clone URL means the GitHub bot token is persisted on ` +
+        `Could not confirm the 'origin' remote is gone from ${gitDir} (${
+          remaining === 'unreadable'
+            ? 'its config was unreadable'
+            : 'its config still records a URL'
+        }). For a token-bearing clone URL that means the GitHub bot token may be persisted on ` +
           `shared storage. Refusing to continue.`,
       )
     }
@@ -2364,15 +2394,40 @@ export class CmsWorker {
           // branch-health scanned it as healthy -- and editors would meanwhile
           // read, and be able to save over, conflict-marker content.
           //
-          // Aborting is unambiguously right here: this worker is the only thing
-          // that ever rebases these clones, so an in-progress rebase is always
-          // its own abandoned work (a crash, an OOM, a spot interruption, or the
-          // ASG rolling the instance -- which happens on EVERY `cdk deploy`,
-          // while `stop()` drains for at most taskTimeoutMs). It is also safe:
-          // we hold the [SYNC-C1] content-write lock, so no writer is live, and
-          // a rebase replays COMMITTED history, so aborting discards nothing but
-          // the half-applied replay itself.
+          // An in-progress rebase is always this worker's own abandoned work:
+          // it is the only thing that ever rebases these clones, and it got
+          // here via a crash, an OOM, a spot interruption, or the ASG rolling
+          // the instance (which happens on EVERY `cdk deploy`, while `stop()`
+          // drains for at most taskTimeoutMs).
+          //
+          // NOT LOSSLESS, and it is important not to claim otherwise. `git
+          // rebase --abort` hard-resets tracked files to the pre-rebase head.
+          // While the worker was DOWN nothing held the [SYNC-C1] content-write
+          // lock, so an editor could have saved into this wedged clone and
+          // received a 200; that save is a working-tree modification, and the
+          // abort reverts it. (New, untracked entry files survive; edits to
+          // existing ones do not.) Taking the lock here stops any FURTHER save
+          // racing the abort, but cannot recover one that already landed.
+          //
+          // Aborting anyway is still the right call: the alternative is a
+          // branch wedged forever whose tree serves conflict-marker content to
+          // editors. What must not happen is doing it SILENTLY -- so anything
+          // modified beyond the rebase's own conflict state is logged by path
+          // first, which is the only record an operator would have.
           if (await isRebaseInProgress(branchPath)) {
+            const preAbort = await branchGit.status().catch(() => null)
+            // Plain-modified tracked files, excluding the conflicted paths the
+            // interrupted rebase itself produced.
+            const collateral = (preAbort?.files ?? [])
+              .filter((f) => !preAbort?.conflicted.includes(f.path))
+              .filter((f) => f.index !== '?' && f.working_dir !== '?')
+              .map((f) => f.path)
+            if (collateral.length > 0) {
+              workerLogWarn(
+                `  ${branchDir}: aborting the interrupted rebase will DISCARD working-tree changes to ` +
+                  `${collateral.length} file(s) saved while the worker was down: ${collateral.join(', ')}`,
+              )
+            }
             workerLogWarn(
               `  ${branchDir}: found an interrupted rebase (this worker's own abandoned work) -- aborting it to recover the branch`,
             )
@@ -2798,7 +2853,13 @@ export class CmsWorker {
           // AFTER this finally has released the content-write lock, so aborting
           // there would hard-reset a working tree an editor's save could
           // already be racing -- precisely the [SYNC-C1] hazard the lock
-          // exists to prevent. Inside the finally the lock is still held.
+          // exists to prevent. Inside the finally the lock is still held --
+          // EXCEPT on the narrow path where it was compromised mid-hold, in
+          // which case a newly-admitted writer may already be live and this
+          // abort carries the same exposure as the compromise path's own abort
+          // above. Not special-cased: leaving a clone wedged mid-rebase is the
+          // worse outcome, and the writer in that window is already being told
+          // to retry.
           //
           // Guarded on actual rebase state so the happy path and the `continue`
           // exits cost one stat and do nothing.

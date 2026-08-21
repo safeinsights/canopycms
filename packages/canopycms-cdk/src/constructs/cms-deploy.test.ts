@@ -733,6 +733,27 @@ describe('CanopyCmsService: worker boot cannot fail silently', () => {
     expect(all).toContain('ERR')
   })
 
+  it('disarms the fail-fast trap before the best-effort CloudWatch section', () => {
+    // The trap must cover everything the worker needs to EXIST, and nothing
+    // after that. Left armed, a package-mirror outage during the agent install
+    // would shut down an already-healthy worker, and the ASG would relaunch
+    // straight into the same outage -- turning degraded log shipping into a
+    // replacement loop. That silently revokes the "shipping is best-effort"
+    // invariant this section has always documented, while the ordering test
+    // below still passed.
+    const all = workerUserDataBlobs(synth())
+    const trapIdx = all.indexOf('trap ')
+    const disarmIdx = all.indexOf('trap - ERR')
+    const workerStartIdx = all.indexOf('systemctl start canopy-worker')
+    const agentIdx = all.indexOf('dnf install -y amazon-cloudwatch-agent')
+
+    expect(trapIdx).toBeGreaterThanOrEqual(0)
+    expect(disarmIdx).toBeGreaterThan(trapIdx)
+    // Disarmed only AFTER the worker is running, and BEFORE the agent install.
+    expect(disarmIdx).toBeGreaterThan(workerStartIdx)
+    expect(disarmIdx).toBeLessThan(agentIdx)
+  })
+
   it('retries the network-dependent boot steps', () => {
     const all = workerUserDataBlobs(synth())
     expect(all).toContain('retry()')

@@ -79,13 +79,19 @@ jobs:
           echo "Waiting for the CI workflow to conclude on $SHA"
           deadline=$(( $(date +%s) + TIMEOUT_SECONDS ))
           while :; do
-            # The CI workflow's own run for this exact commit.
-            conclusion=$(gh api \
+            # The CI workflow's own run for this exact commit. Status and
+            # conclusion come from ONE request: reading them in two separate
+            # calls let the newest run for this SHA change between them, which
+            # could briefly pair an old conclusion with a new status.
+            #
+            # FAIL-CLOSED by construction: any read that does not yield exactly
+            # `completed success` leaves the loop polling until the timeout
+            # below exits 1. An empty or malformed read can therefore never
+            # publish -- keep it that way.
+            read -r status conclusion <<<"$(gh api \
               "repos/${GITHUB_REPOSITORY}/actions/workflows/ci.yml/runs?head_sha=${SHA}&per_page=1" \
-              --jq '.workflow_runs[0].conclusion // empty' || true)
-            status=$(gh api \
-              "repos/${GITHUB_REPOSITORY}/actions/workflows/ci.yml/runs?head_sha=${SHA}&per_page=1" \
-              --jq '.workflow_runs[0].status // empty' || true)
+              --jq '"\(.workflow_runs[0].status // "none") \(.workflow_runs[0].conclusion // "none")"' \
+              || echo "none none")"
 
             if [ "$status" = "completed" ]; then
               if [ "$conclusion" = "success" ]; then

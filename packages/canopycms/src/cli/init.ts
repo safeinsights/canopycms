@@ -195,10 +195,15 @@ export async function init(options: InitOptions): Promise<void> {
   //
   // Mirrors initDeployAws's own probe, which already knows configs come as
   // .mjs too.
+  //
+  // Exactly Next's own CONFIG_FILES list, in its order (verified in
+  // next@15.5.21's shared/lib/constants). `.cjs` is deliberately NOT here:
+  // Next never loads it, so treating a stray next.config.cjs as the winner
+  // would skip writing next.config.ts AND print a note falsely claiming Next
+  // prefers the .cjs -- leaving the project with no loaded config at all.
   const existingJsConfig = await firstExistingPath(projectDir, [
     'next.config.js',
     'next.config.mjs',
-    'next.config.cjs',
   ])
   if (existingJsConfig) {
     p.note(
