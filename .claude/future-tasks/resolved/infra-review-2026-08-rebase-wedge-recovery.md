@@ -5,7 +5,7 @@ Found by the 2026-08-20 three-round infrastructure review (round 1), at HEAD
 `rebaseActiveBranches` may leave a clone mid-rebase, and the worker must be able
 to recover one it finds.
 
-Related but distinct from [worker-history-rewrite-marker-races.md](worker-history-rewrite-marker-races.md)
+Related but distinct from [worker-history-rewrite-marker-races.md](../worker-history-rewrite-marker-races.md)
 (that one is about the rewrite marker; this is about `.git/rebase-merge` state).
 
 ## 1. A modify/delete conflict throws out of the resolution loop, skipping every `rebase --abort`

@@ -241,6 +241,26 @@ waiting on a save:
   `worker-status.json` and the admin panel, alongside `skippedDirty`), and retries next
   cycle. The refresh heartbeat is a timer on the worker's event loop and every git step
   is an awaited subprocess, so it keeps firing for the length of the hold.
+
+  Two more destructive steps live inside this hold, both `git rebase --abort`, and both
+  are inside it deliberately:
+  - **Interrupted-rebase recovery**, at the top of the per-branch body, before the dirty
+    check. A clone left with `.git/rebase-merge`/`rebase-apply` (worker SIGKILLed, OOM,
+    spot interruption, or the ASG rolling the instance — which happens on every
+    `cdk deploy`, while `stop()` drains for at most `taskTimeoutMs`) reads as dirty
+    forever, so without this it was `skippedDirty` on every cycle for good while
+    `branch-health` scanned it as healthy. Aborting is safe here precisely because the
+    lock is held: no writer is live, and a rebase replays **committed** history, so the
+    abort discards only the half-applied replay.
+  - **The exit guarantee**, in the same `finally` that releases the lock, so no exit path
+    — including an unexpected throw — can leave a clone mid-rebase. It must be in the
+    `finally` and not the outer per-branch `catch`: that catch runs _after_ the lock is
+    released, so an abort there would hard-reset a tree a concurrent save could be racing,
+    which is the exact hazard this lock exists to prevent.
+
+  Detection is `isRebaseInProgress` (`utils/git.ts`), shared with `branch-health.ts` so
+  the two can never disagree about what "mid-rebase" means.
+
 - **Writers wait, briefly, then fail loudly.** `write`/`delete`/`renameEntry` wrap their
   existing `withLock` critical section in the lock with a short bounded wait
   (`DEFAULT_CONTENT_WRITE_LOCK_WAIT_MS`, 2s; retrying only on `ELOCKED`). A rebase holds
