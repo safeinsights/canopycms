@@ -3165,7 +3165,7 @@ Rebase logic is tested with real git operations in `src/worker/cms-worker-rebase
 
 The prod on-demand transform Lambda needs `sharp`'s native binary for `linux/arm64`, but Docker-based bundling (the usual `aws-cdk-lib/aws-lambda-nodejs` approach) isn't available in this environment. `packages/canopycms-cdk/lambda/asset-transform/build.mjs` works around this:
 
-1. `esbuild` bundles `handler.ts` into a single CJS file, leaving `sharp`/`@img/*` (native bindings) and `@aws-sdk/*` (already present in the Lambda's Node 20.x managed runtime) external.
+1. `esbuild` bundles `handler.ts` into a single CJS file, leaving `sharp`/`@img/*` (native bindings) and `@aws-sdk/*` (already present in the Lambda's Node 22.x managed runtime) external.
 2. `npm install sharp@<range> --os=linux --cpu=arm64 --libc=glibc` runs directly in the output directory. Since sharp >=0.33 ships its native binary as a platform-specific optional dependency, npm's `--os`/`--cpu`/`--libc` overrides fetch the linux/arm64 binary regardless of the host OS actually running the install -- this is what makes Docker unnecessary, even from a macOS dev machine.
 
 The `sharp` version installed is read from `packages/canopycms`'s own `dependencies.sharp`, so the Lambda's bundled binary never drifts from the version the transform engine (`assets/transform.ts`) is written against -- never hardcode a version in `build.mjs`.

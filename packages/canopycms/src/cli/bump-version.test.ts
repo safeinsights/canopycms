@@ -200,5 +200,34 @@ describe('scripts/bump-version.mjs', () => {
     it('rejects a four-component version', async () => {
       await expectRejected(['1.2.3.4'])
     })
+
+    it('rejects an empty argument rather than silently patch-bumping', async () => {
+      await expectRejected([''])
+    })
+
+    // The prerelease/build suffix follows semver's identifier grammar, not a
+    // loose character class -- verified to match the `semver` package exactly
+    // on every strict case. A looser pattern wrote invalid semver into six
+    // manifests and failed later at `npm publish`, which is the same failure
+    // the numeric core's leading-zero rule exists to prevent.
+    it.each([
+      ['1.2.3-int.007', 'leading zero in a numeric prerelease identifier'],
+      ['1.2.3-int..1', 'empty identifier'],
+      ['1.2.3-.', 'empty identifier'],
+      ['1.2.3-', 'empty prerelease'],
+      ['1.2.3+', 'empty build metadata'],
+      ['v1.2.3', 'a `v` prefix, which package.json version must not carry'],
+    ])('rejects %j (%s)', async (version) => {
+      await expectRejected([version])
+    })
+
+    it.each(['1.2.3-int-5', '1.2.3-0', '1.2.3-alpha.beta', '1.2.3+build.1'])(
+      'accepts the valid semver %j',
+      async (version) => {
+        await seed('0.0.63')
+        const { stdout } = await run([version])
+        expect(stdout.trim()).toBe(version)
+      },
+    )
   })
 })

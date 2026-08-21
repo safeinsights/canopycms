@@ -105,7 +105,6 @@ async function requireProjectRoot(command: string): Promise<string> {
   return root
 }
 
-/** Resolve sync subcommand from positional arg. Returns null if missing or invalid. Exported for testing. */
 /** The auth modes `worker run-once` knows how to build a plugin for. */
 export const KNOWN_AUTH_MODES = ['clerk', 'dev'] as const
 
@@ -128,6 +127,7 @@ export function isKnownAuthMode(value: string): value is KnownAuthMode {
   return (KNOWN_AUTH_MODES as readonly string[]).includes(value)
 }
 
+/** Resolve sync subcommand from positional arg. Returns null if missing or invalid. Exported for testing. */
 export function resolveSyncSubcommand(sub: string | undefined): SyncSubcommand | null {
   if (sub && (SYNC_SUBCOMMANDS as readonly string[]).includes(sub)) return sub as SyncSubcommand
   return null
