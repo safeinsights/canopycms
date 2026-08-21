@@ -29,6 +29,15 @@ import { isNotFoundError } from './utils/error'
  * Everything here works on PHYSICAL directories, because that is what the write path holds when
  * it needs the answer, and because the on-disk names carry the content IDs that logical paths
  * hide (`guides.{id}/`, `doc.index.{id}.md`).
+ *
+ * SCOPE, and do not widen it by accident: this guards the URL an ENTRY claims -- the `urlPath`
+ * that `computeEntryUrl` derives and `listEntries` publishes. It is NOT "every URL the site
+ * serves", and the two are not the same set. A framework adapter can route an entry somewhere
+ * else (`generateContentSitemap`'s `pathFor` rewrites a sitemap `<loc>` AFTER enumeration has
+ * happened), and adopters add hand-written routes Canopy knows nothing about. Those URLs are
+ * invisible here by design -- there is no filesystem state to check them against at write time.
+ * A future change that tries to make this the authority on "the set of URLs this site claims"
+ * would be reaching past what the write boundary can actually see.
  */
 
 /** One entry that already claims the `urlPath` a pending write would produce. */
