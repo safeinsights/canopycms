@@ -83,10 +83,6 @@
       "./utils/error": {
         "import": "./dist/utils/error.js",
         "types": "./dist/utils/error.d.ts"
-      },
-      "./test-utils": {
-        "import": "./dist/test-utils/index.js",
-        "types": "./dist/test-utils/index.d.ts"
       }
     },
     "bin": {

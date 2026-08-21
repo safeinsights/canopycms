@@ -51,10 +51,22 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..'
 const packagesDir = path.join(repoRoot, 'packages')
 
 // Every package.json `exports` subpath for the 5 published packages must be
-// accounted for below as either `test` (actually imported under plain Node
-// ESM) or a `skip: <reason>` string. `skip` is not a way to avoid failures —
-// each one documents a specific, verified reason the entry cannot be
-// exercised this way; see the reasons themselves for what was checked.
+// accounted for below as exactly one of three modes:
+//
+//   'test'              — actually imported under plain Node ESM.
+//   'skip: <reason>'    — published, but cannot be exercised this way. Not a
+//                         way to avoid failures: each one documents a specific,
+//                         verified reason; see the reasons for what was checked.
+//   'devOnly: <reason>' — a workspace-internal subpath that is deliberately NOT
+//                         published. Present in the dev `exports` map (so other
+//                         workspace packages can import it) but absent from
+//                         `publishConfig.exports`.
+//
+// `devOnly` is ENFORCED, not merely declarative: checkCoverage() asserts such a
+// subpath is really missing from publishConfig.exports, and that every other
+// subpath is really present in it. That cross-check is what keeps a subpath from
+// being advertised to npm consumers while pointing at output the build never
+// emits — the exact shape of the ./test-utils defect (see below).
 const PACKAGES = [
   {
     dir: 'canopycms',
@@ -76,13 +88,17 @@ const PACKAGES = [
       './build': 'test',
       './utils/error': 'test',
       './test-utils':
-        'skip: pre-existing, SEPARATE defect, not the one this guard targets. ' +
-        'tsconfig.build.json deliberately excludes src/test-utils/** from the ' +
-        'build (commit 461ef995, "exclude test files from tarball"), but ' +
-        'publishConfig.exports still advertises "./test-utils" -> ' +
-        'dist/test-utils/index.js, which is therefore never produced — ERR_MODULE_NOT_FOUND ' +
-        'for any consumer, unrelated to extensionless imports. Tracked in ' +
-        '.claude/future-tasks/canopycms-test-utils-export-unbuilt.md.',
+        'devOnly: workspace-internal test helpers (mock factories for ApiContext/' +
+        'CanopyServices/BranchContext, a console spy, git repo init), shared with ' +
+        'sibling packages via the dev exports map only. Deliberately unpublished: ' +
+        'tsconfig.build.json excludes src/test-utils/** from the build, and the ' +
+        'sources import vitest at module scope (console-spy.ts even calls ' +
+        'expect.extend() as an import side effect and declares a global ' +
+        "'declare module vitest' augmentation), so shipping it would put a " +
+        'devDependency in the published runtime graph and augment every ' +
+        "consumer's vitest types. Was advertised in publishConfig.exports for a " +
+        'while without ever being built — ERR_MODULE_NOT_FOUND for anyone who ' +
+        'tried it; that entry is now removed.',
     },
   },
   {
@@ -148,12 +164,20 @@ function loadPackageJson(dir) {
 // Fail fast (before spending time building the sandbox) if a package's real
 // `exports` map has grown a subpath this file doesn't know about, or if a
 // subpath was removed — either way the list above is out of sync.
+//
+// Also cross-checks the dev `exports` map against `publishConfig.exports`, which
+// is where the two can silently disagree: a subpath present in both is published
+// and must be covered as `test`/`skip`, while a `devOnly` subpath must appear in
+// the dev map and NOT in publishConfig. Without this, publishConfig can advertise
+// an entry point whose output the build never emits and nothing in-repo notices,
+// because workspace resolution never reads publishConfig at all.
 function checkCoverage() {
   const problems = []
   for (const { dir, subpaths } of PACKAGES) {
     const pkg = loadPackageJson(dir)
     const actual = new Set(Object.keys(pkg.exports ?? {}))
     const known = new Set(Object.keys(subpaths))
+    const published = new Set(Object.keys(pkg.publishConfig?.exports ?? {}))
     for (const subpath of actual) {
       if (!known.has(subpath)) {
         problems.push(`${pkg.name}: exports "${subpath}" is not covered in PACKAGES above`)
@@ -162,6 +186,30 @@ function checkCoverage() {
     for (const subpath of known) {
       if (!actual.has(subpath)) {
         problems.push(`${pkg.name}: PACKAGES lists "${subpath}", but it is not in exports`)
+      }
+    }
+    for (const [subpath, mode] of Object.entries(subpaths)) {
+      const isDevOnly = mode.startsWith('devOnly')
+      if (isDevOnly && published.has(subpath)) {
+        problems.push(
+          `${pkg.name}: "${subpath}" is marked devOnly in PACKAGES above, but ` +
+            'publishConfig.exports still advertises it to npm consumers',
+        )
+      }
+      if (!isDevOnly && !published.has(subpath)) {
+        problems.push(
+          `${pkg.name}: "${subpath}" is in exports but missing from ` +
+            'publishConfig.exports, so npm consumers never get it — publish it, or ' +
+            'mark it devOnly in PACKAGES above',
+        )
+      }
+    }
+    for (const subpath of published) {
+      if (!actual.has(subpath)) {
+        problems.push(
+          `${pkg.name}: publishConfig.exports advertises "${subpath}", which is ` +
+            'not in the dev exports map',
+        )
       }
     }
   }
