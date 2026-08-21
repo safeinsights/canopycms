@@ -598,8 +598,99 @@ describe('CanopyCmsService worker UserData: ESM bundle bootstrapping', () => {
   it('installs unzip and writes a type:module package.json next to the ESM worker bundle', () => {
     const template = synth()
     const all = workerUserDataBlobs(template)
-    expect(all).toContain('yum install -y git unzip')
+    expect(all).toContain('dnf install -y git unzip')
     expect(all).toContain('{\\"type\\":\\"module\\"}')
+  })
+})
+
+describe('CanopyCmsService: worker boot cannot fail silently', () => {
+  it('installs Node from AL2023 rather than piping a third-party installer into bash', () => {
+    const all = workerUserDataBlobs(synth())
+    // `curl https://rpm.nodesource.com/... | bash -` under `set -e` made every
+    // instance replacement -- which the ASG performs on every `cdk deploy` --
+    // depend on a third party being reachable.
+    expect(all).not.toContain('rpm.nodesource.com')
+    expect(all).toContain('dnf install -y nodejs22')
+  })
+
+  it('runs the worker from the version-pinned node binary, not the alternatives symlink', () => {
+    const all = workerUserDataBlobs(synth())
+    // AL2023 installs /usr/bin/node-22 and points /usr/bin/node at some
+    // installed version via `alternatives`, whose selection AWS documents as
+    // able to change at any time.
+    expect(all).toContain('ExecStart=/usr/bin/node-22 index.js')
+    expect(all).not.toContain('ExecStart=/usr/bin/node index.js')
+  })
+
+  it('shuts the instance down when user-data fails, so the ASG replaces it', () => {
+    const all = workerUserDataBlobs(synth())
+    // Without this, a failed boot script left an instance that runs, passes the
+    // EC2-only health check forever, and does nothing -- while `cdk deploy`
+    // reported success.
+    expect(all).toContain('trap ')
+    expect(all).toContain('shutdown -h now')
+    expect(all).toContain('ERR')
+  })
+
+  it('retries the network-dependent boot steps', () => {
+    const all = workerUserDataBlobs(synth())
+    expect(all).toContain('retry()')
+    for (const step of [
+      'retry dnf install -y git unzip',
+      'retry dnf install -y nodejs22',
+      'retry dnf install -y amazon-efs-utils',
+      'retry aws s3 cp',
+      'retry dnf install -y amazon-cloudwatch-agent',
+    ]) {
+      expect(all).toContain(step)
+    }
+  })
+})
+
+describe('CanopyCmsService: secret ARN props feed the IAM policy', () => {
+  /** Resources on every GetSecretValue statement in the template. */
+  function secretResources(template: Template): string[] {
+    const policies = template.findResources('AWS::IAM::Policy')
+    return Object.values(policies).flatMap((p) =>
+      (p.Properties.PolicyDocument.Statement as { Action?: unknown; Resource?: unknown }[])
+        .filter((s) => JSON.stringify(s.Action).includes('secretsmanager:GetSecretValue'))
+        .flatMap((s) => (Array.isArray(s.Resource) ? s.Resource : [s.Resource]))
+        .filter((r): r is string => typeof r === 'string'),
+    )
+  }
+
+  const GITHUB_ARN = 'arn:aws:secretsmanager:us-east-1:123456789012:secret:gh-AbCdEf'
+  const CLERK_ARN = 'arn:aws:secretsmanager:us-east-1:123456789012:secret:clerk-AbCdEf'
+
+  it('grants the individual ARN props even when secretsArns is omitted', () => {
+    // The construct carried two disconnected representations of "the secrets
+    // the worker reads": secretsArns fed IAM, the individual props fed only the
+    // worker's .env. Setting the latter alone deployed clean and produced a
+    // worker that knew WHICH secret to read and had no permission to read it --
+    // AccessDenied, exit, systemd restart-loop every 5s, forever.
+    const template = synthUncached(false, {
+      githubTokenSecretArn: GITHUB_ARN,
+      clerkSecretKeySecretArn: CLERK_ARN,
+    })
+    expect(secretResources(template)).toEqual(expect.arrayContaining([GITHUB_ARN, CLERK_ARN]))
+  })
+
+  it('does not list an ARN twice when it is passed both ways', () => {
+    const template = synthUncached(false, {
+      secretsArns: [GITHUB_ARN],
+      githubTokenSecretArn: GITHUB_ARN,
+    })
+    const occurrences = secretResources(template).filter((r) => r === GITHUB_ARN)
+    expect(occurrences).toHaveLength(1)
+  })
+
+  it('still grants extra ARNs that only secretsArns names', () => {
+    const other = 'arn:aws:secretsmanager:us-east-1:123456789012:secret:other-AbCdEf'
+    const template = synthUncached(false, {
+      secretsArns: [other],
+      githubTokenSecretArn: GITHUB_ARN,
+    })
+    expect(secretResources(template)).toEqual(expect.arrayContaining([other, GITHUB_ARN]))
   })
 })
 
@@ -747,7 +838,7 @@ describe('CanopyCmsService: worker CloudWatch log shipping', () => {
     const blobs = JSON.stringify(template.findResources('AWS::AutoScaling::LaunchConfiguration'))
     const ltBlobs = JSON.stringify(template.findResources('AWS::EC2::LaunchTemplate'))
     const all = blobs + ltBlobs
-    expect(all).toContain('yum install -y amazon-cloudwatch-agent')
+    expect(all).toContain('dnf install -y amazon-cloudwatch-agent')
     expect(all).toContain('/var/log/canopy-worker/worker.log')
     expect(all).toContain('\\"log_stream_name\\": \\"{instance_id}\\"')
     expect(all).toContain('amazon-cloudwatch-agent-ctl -a fetch-config -m ec2 -s')
@@ -801,10 +892,10 @@ describe('CanopyCmsService: worker CloudWatch log shipping', () => {
     for (const blob of blobs) {
       const startIdx = blob.indexOf('systemctl start canopy-worker')
       // The failure-isolation invariant is that the ENTIRE agent block runs
-      // after worker start under set -euo pipefail — the yum install is the
+      // after worker start under set -euo pipefail — the dnf install is the
       // first (and most failure-prone: network + repo) command of that block,
       // so pin it explicitly, not just the final ctl call.
-      const yumIdx = blob.indexOf('yum install -y amazon-cloudwatch-agent')
+      const yumIdx = blob.indexOf('dnf install -y amazon-cloudwatch-agent')
       const agentIdx = blob.indexOf('amazon-cloudwatch-agent-ctl')
       expect(startIdx).toBeGreaterThanOrEqual(0)
       expect(yumIdx).toBeGreaterThanOrEqual(0)

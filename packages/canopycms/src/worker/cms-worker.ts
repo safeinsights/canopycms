@@ -646,6 +646,57 @@ export class CmsWorker {
   }
 
   /**
+   * Guarantee a bare repo's config carries NO `remote.origin.url`, and so no
+   * embedded bot token.
+   *
+   * `git clone https://x-access-token:<token>@github.com/...` records that URL
+   * verbatim as `remote.origin.url`, and for `remote.git` that config lives on
+   * shared EFS. The security model in docs/deploying-to-aws.md -- "If Lambda is
+   * compromised, an attacker can read/write content on EFS but cannot push to
+   * GitHub", "Secrets stay on the worker" -- is false while that string is
+   * there: a compromised Lambda could read the token off EFS and, despite
+   * having no egress of its own, exfiltrate it by writing it into branch
+   * content the worker then pushes to GitHub.
+   *
+   * Nothing needs the remote: every push passes the URL explicitly as an
+   * argument (see the `git.push(this.buildGitHubUrl(), ...)` call sites), and
+   * `verifyBaseBranchExists` reads local refs.
+   *
+   * VERIFIES rather than assuming: it re-reads the config and throws if the URL
+   * survives, because the previous code's `.catch(() => {})` meant a failed
+   * scrub was indistinguishable from a successful one.
+   */
+  private async scrubPersistedRemote(gitDir: string): Promise<void> {
+    const git = simpleGit({ baseDir: gitDir })
+    const readOriginUrl = async (): Promise<string | null> => {
+      try {
+        // `git config --get` exits 1 with no output when the key is absent.
+        // simple-git does NOT reliably throw on that -- verified against
+        // simple-git 3.36: it resolves with an empty string -- so an empty
+        // result must be read as "absent" too. Treating "" as a surviving URL
+        // is what made the first version of this reject every clean scrub.
+        const url = (await git.raw(['config', '--get', 'remote.origin.url'])).trim()
+        return url === '' ? null : url
+      } catch {
+        return null
+      }
+    }
+
+    if ((await readOriginUrl()) === null) return
+
+    await git.removeRemote('origin')
+
+    const remaining = await readOriginUrl()
+    if (remaining !== null) {
+      throw new Error(
+        `Failed to remove the 'origin' remote from ${gitDir}: its config still records a remote ` +
+          `URL, which for a token-bearing clone URL means the GitHub bot token is persisted on ` +
+          `shared storage. Refusing to continue.`,
+      )
+    }
+  }
+
+  /**
    * Ensure remote.git bare repo exists.
    * On first run, clone from GitHub as a bare repo.
    *
@@ -670,6 +721,15 @@ export class CmsWorker {
     }
 
     if (exists) {
+      // SELF-HEAL, before anything else touches this repo. The previous
+      // already-exists path fast-returned without ever re-checking the config,
+      // so a token that survived one scrub survived forever -- and a clone
+      // interrupted by SIGKILL/power-off between `git clone` and the scrub left
+      // a repo whose config already held the token, which additionally hit the
+      // "delete remote.git and restart" refusal below and so sat on EFS until
+      // an operator acted.
+      await this.scrubPersistedRemote(this.remoteGitPath)
+
       try {
         await this.verifyBaseBranchExists(this.remoteGitPath)
       } catch (err) {
@@ -686,26 +746,36 @@ export class CmsWorker {
 
     workerLog('Initializing remote.git from GitHub...')
     const git = simpleGit()
-    await git.clone(this.buildGitHubUrl(), this.remoteGitPath, ['--bare'])
+
+    // Clone under a TEMP name and rename into place only once the token has
+    // been scrubbed and the repo verified, so `remote.git` never exists on EFS
+    // in a token-bearing state. A crash mid-clone now leaves only this staging
+    // directory, which the next boot deletes -- rather than a poisoned
+    // `remote.git` that fs.stat cannot distinguish from a healthy one.
+    const stagingPath = `${this.remoteGitPath}.cloning`
+    await fs.rm(stagingPath, { recursive: true, force: true })
 
     try {
-      await this.verifyBaseBranchExists(this.remoteGitPath)
+      await git.clone(this.buildGitHubUrl(), stagingPath, ['--bare'])
+
+      // Before the rename, so the token is gone from the config the moment the
+      // repo becomes reachable under its real name. Throws (rather than
+      // swallowing) if the scrub does not take.
+      await this.scrubPersistedRemote(stagingPath)
+
+      await this.verifyBaseBranchExists(stagingPath)
     } catch (err) {
-      workerLogError(
-        `remote.git base branch verification failed after clone: ${getErrorMessage(err)}`,
-      )
+      workerLogError(`remote.git clone failed: ${redactCredentials(getErrorMessage(err))}`)
       // Deleting before throwing is what makes this recoverable: the next
       // start() sees no remote.git and re-clones, instead of being stuck
       // forever behind a poisoned bare repo that fs.stat alone can't detect.
-      await fs.rm(this.remoteGitPath, { recursive: true, force: true })
+      await fs.rm(stagingPath, { recursive: true, force: true })
       throw new Error(
-        `remote.git clone of ${this.config.githubOwner}/${this.config.githubRepo} has no branch '${this.baseBranch}' - the GitHub repository is empty or the base branch does not exist. Push an initial commit to '${this.baseBranch}' and restart the worker (systemd will retry automatically).`,
+        `remote.git clone of ${this.config.githubOwner}/${this.config.githubRepo} failed or has no branch '${this.baseBranch}' - the GitHub repository may be empty, or the base branch may not exist. Push an initial commit to '${this.baseBranch}' and restart the worker (systemd will retry automatically).`,
       )
     }
 
-    // Remove the origin remote so the token doesn't persist in config
-    const bareGit = simpleGit({ baseDir: this.remoteGitPath })
-    await bareGit.removeRemote('origin').catch(() => {})
+    await fs.rename(stagingPath, this.remoteGitPath)
     workerLog('remote.git initialized')
   }
 

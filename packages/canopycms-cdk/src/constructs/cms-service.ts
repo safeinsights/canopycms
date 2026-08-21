@@ -138,7 +138,14 @@ export interface CanopyCmsServiceProps {
   /** EC2 spot max price (default: on-demand rate for t4g.nano) */
   spotMaxPrice?: string
 
-  /** Secrets Manager ARNs the worker needs to read (GitHub token, Clerk key) */
+  /**
+   * ADDITIONAL Secrets Manager ARNs the worker may read.
+   *
+   * You do NOT need to repeat `githubTokenSecretArn` or
+   * `clerkSecretKeySecretArn` here — those are unioned into the worker's IAM
+   * policy automatically. Use this only for secrets the construct does not
+   * know about.
+   */
   secretsArns?: string[]
 
   /**
@@ -612,12 +619,36 @@ export class CanopyCmsService extends Construct {
       description: 'CanopyCMS EC2 Worker role',
     })
 
-    // Worker needs to read secrets
-    if (props.secretsArns && props.secretsArns.length > 0) {
+    // Worker needs to read secrets.
+    //
+    // The grant is the UNION of `secretsArns` and the individual ARN props,
+    // because the construct previously carried two disconnected
+    // representations of "the secrets the worker reads": `secretsArns` fed
+    // this policy, while `githubTokenSecretArn`/`clerkSecretKeySecretArn` fed
+    // only the worker's `.env`. An adopter hand-writing their stack (both are
+    // individually documented, and `secretsArns`'s doc comment did not say it
+    // was the sole source of IAM) could set the individual props and omit
+    // `secretsArns` -- producing a worker that knows WHICH secret to read and
+    // has no permission to read it. `cdk deploy` succeeded; the worker booted,
+    // got AccessDenied from GetSecretValue, exited, and systemd restart-looped
+    // it every 5s forever. Nothing flagged it at synth.
+    //
+    // Deduped so the emitted policy does not list the same ARN twice when an
+    // adopter correctly passes both.
+    const secretsArns = [
+      ...new Set(
+        [
+          ...(props.secretsArns ?? []),
+          props.githubTokenSecretArn,
+          props.clerkSecretKeySecretArn,
+        ].filter((arn): arn is string => typeof arn === 'string' && arn.length > 0),
+      ),
+    ]
+    if (secretsArns.length > 0) {
       workerRole.addToPolicy(
         new iam.PolicyStatement({
           actions: ['secretsmanager:GetSecretValue'],
-          resources: props.secretsArns,
+          resources: secretsArns,
         }),
       )
     }
@@ -688,13 +719,62 @@ export class CanopyCmsService extends Construct {
       '#!/bin/bash',
       'set -euo pipefail',
       '',
+      '# FAIL-FAST. Every step below is required for the worker to exist at',
+      '# all, and until this trap existed a failure in any of them aborted',
+      '# user-data BEFORE the systemd unit was written -- leaving an instance',
+      "# that runs, passes the ASG's EC2-only health check indefinitely, and",
+      '# does nothing. cfn-signal is deliberately not used here (it would',
+      '# prove nothing about READINESS, which is the argument recorded below),',
+      '# but that argument never covered a boot-SCRIPT failure: `cdk deploy`',
+      '# reported success while publishes queued on EFS, the auth cache went',
+      '# stale and PRs stopped being created, until a human noticed the admin',
+      '# panel showing the worker absent.',
+      '#',
+      '# Shutting down makes the instance fail its EC2 health check, so the ASG',
+      '# replaces it -- which is the only automatic recovery available in this',
+      '# topology. The echo lands in the console log, readable via',
+      '# `aws ec2 get-console-output`, because the CloudWatch agent is itself',
+      '# configured further down and cannot be relied on to exist yet.',
+      'trap \'echo "canopy-worker user-data FAILED at line $LINENO (exit $?)" >&2; shutdown -h now\' ERR',
+      '',
+      '# Bounded retry for the network-dependent steps. Package mirrors and S3',
+      '# have transient failures; a single flake should cost seconds, not an',
+      '# instance replacement.',
+      'retry() {',
+      '  local n=0',
+      '  until "$@"; do',
+      '    n=$((n + 1))',
+      '    if [ "$n" -ge 5 ]; then',
+      '      echo "canopy-worker: command failed after $n attempts: $*" >&2',
+      '      return 1',
+      '    fi',
+      '    sleep $((n * 5))',
+      '  done',
+      '}',
+      '',
       '# Install dependencies (unzip is not guaranteed in the AL2023 AMI)',
-      'yum install -y git unzip',
-      'curl -fsSL https://rpm.nodesource.com/setup_20.x | bash -',
-      'yum install -y nodejs',
+      'retry dnf install -y git unzip',
+      "# Node comes from AL2023's own repos, NOT a piped third-party installer.",
+      '# The previous boot curled the NodeSource RPM setup script straight into',
+      '# bash, so every instance replacement -- which the ASG performs on every',
+      '# `cdk deploy`, plus every spot interruption -- depended on a third party',
+      '# being reachable. cms-deploy.test.ts asserts that URL never comes back,',
+      '# which is why it is not spelled out here.',
+      '#',
+      '# nodejs22, not 20: Node 20 reached upstream EOL on 2026-04-30, and this',
+      '# repo declares `engines.node: ">=22"` with .nvmrc `v22`, so the worker',
+      '# was running an EOL runtime BELOW the floor its own code is tested at.',
+      "# 22 (EOL 2027-04-30) matches .nvmrc, CI, and the transform Lambda's",
+      '# NODEJS_22_X, so one runtime is tested everywhere.',
+      '#',
+      '# ExecStart uses the NAMESPACED /usr/bin/node-22 (see the systemd unit',
+      '# below), not the bare `node`: AL2023 installs versioned binaries and',
+      '# points `/usr/bin/node` at one of them through `alternatives`, whose',
+      '# selection AWS documents as able to change at any time.',
+      'retry dnf install -y nodejs22',
       '',
       '# Mount EFS',
-      'yum install -y amazon-efs-utils',
+      'retry dnf install -y amazon-efs-utils',
       'mkdir -p /mnt/efs',
       `mount -t efs ${this.fileSystem.fileSystemId}:/ /mnt/efs`,
       '# Persist the mount across instance reboots: user-data runs once per',
@@ -704,7 +784,7 @@ export class CanopyCmsService extends Construct {
       `echo '${this.fileSystem.fileSystemId}:/ /mnt/efs efs _netdev 0 0' >> /etc/fstab`,
       '',
       '# Download worker from CDK S3 Asset',
-      `aws s3 cp s3://${workerAsset.s3BucketName}/${workerAsset.s3ObjectKey} /tmp/canopy-worker.zip`,
+      `retry aws s3 cp s3://${workerAsset.s3BucketName}/${workerAsset.s3ObjectKey} /tmp/canopy-worker.zip`,
       'mkdir -p /opt/canopy-worker',
       'cd /opt/canopy-worker',
       'unzip -o /tmp/canopy-worker.zip',
@@ -730,7 +810,10 @@ export class CanopyCmsService extends Construct {
       'Type=simple',
       'User=ec2-user',
       'WorkingDirectory=/opt/canopy-worker',
-      'ExecStart=/usr/bin/node index.js',
+      '# Namespaced binary, not bare `node`: AL2023 points /usr/bin/node at',
+      '# an installed version through `alternatives`, and AWS documents that',
+      '# selection as able to change at any time. node-22 always means 22.',
+      'ExecStart=/usr/bin/node-22 index.js',
       'Restart=always',
       'RestartSec=5',
       'TimeoutStartSec=300',
@@ -776,7 +859,7 @@ export class CanopyCmsService extends Construct {
       '# ---- CloudWatch log shipping ----',
       '# Placed AFTER worker start: with set -euo pipefail, a yum/agent failure',
       '# here must not prevent the worker from running (shipping is best-effort).',
-      'yum install -y amazon-cloudwatch-agent logrotate',
+      'retry dnf install -y amazon-cloudwatch-agent logrotate',
       '',
       '# Bound on-disk growth; copytruncate keeps the fd the CW agent tails valid',
       '# (tiny copy->truncate loss window is acceptable for diagnostic logs).',
