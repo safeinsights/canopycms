@@ -12,6 +12,7 @@ import {
   withContentWriteLock,
 } from './utils/content-write-lock'
 import { findBodyFieldName } from './utils/body-field'
+import { computeEntryUrl } from './utils/entry-url'
 import type {
   BlockFieldConfig,
   ContentFormat,
@@ -20,6 +21,7 @@ import type {
   EntryTypeConfig,
   InlineGroupFieldConfig,
   ObjectFieldConfig,
+  ReferenceFieldConfig,
 } from './config'
 import {
   ContentIdIndex,
@@ -1701,15 +1703,26 @@ export class ContentStore {
       const value = data[field.name]
 
       if (field.type === 'reference') {
+        // Whether this reference EMBEDS its target (wants the target's body) or merely LINKS
+        // to it is a property of the field, declared once in the schema -- not of the call,
+        // which routinely contains both kinds at once. See ReferenceFieldConfig.includeBody.
+        const includeBody = (field as ReferenceFieldConfig).includeBody === true
         // Single reference
         if (typeof value === 'string' && value) {
-          resolved[field.name] = await this.resolveSingleReference(value, idIndex, cache)
+          resolved[field.name] = await this.resolveSingleReference(
+            value,
+            idIndex,
+            includeBody,
+            cache,
+          )
         }
         // Array of references (list: true)
         else if (field.list && Array.isArray(value)) {
           resolved[field.name] = await Promise.all(
             value.map((id) =>
-              typeof id === 'string' ? this.resolveSingleReference(id, idIndex, cache) : null,
+              typeof id === 'string'
+                ? this.resolveSingleReference(id, idIndex, includeBody, cache)
+                : null,
             ),
           )
         }
@@ -1802,17 +1815,23 @@ export class ContentStore {
   private resolveSingleReference(
     id: string,
     idIndex: ContentIdIndex,
+    includeBody: boolean,
     cache?: ReferenceResolveCache,
   ): Promise<Record<string, unknown> | null> {
-    if (!cache) return this.resolveSingleReferenceUncached(id, idIndex)
-    let pending = cache.get(id)
+    if (!cache) return this.resolveSingleReferenceUncached(id, idIndex, includeBody)
+    // The key carries `includeBody`, not just the id: two fields can reference the SAME target
+    // with different settings, and sharing one entry between them would make the shape depend
+    // on which field the walk reached first -- the traversal-order nondeterminism the
+    // per-occurrence copy already exists to prevent.
+    const key = includeBody ? `${id}:body` : id
+    let pending = cache.get(key)
     if (!pending) {
       // Store the in-flight promise, and do it with no `await` in between: the whole point is
       // that concurrent lookups from one Promise.all batch find it and collapse onto a single
       // read. Memoizing the promise also keeps the self-healing retry below shared rather than
       // repeated — see ReferenceResolveCache for why misses are cached too.
-      pending = this.resolveSingleReferenceUncached(id, idIndex)
-      cache.set(id, pending)
+      pending = this.resolveSingleReferenceUncached(id, idIndex, includeBody)
+      cache.set(key, pending)
     }
     // The cached promise always has this handler attached, so it is never an unhandled
     // rejection; entry data is plain parsed JSON/YAML/frontmatter, so it is always cloneable
@@ -1844,21 +1863,23 @@ export class ContentStore {
   private async resolveSingleReferenceUncached(
     id: string,
     idIndex: ContentIdIndex,
+    includeBody: boolean,
   ): Promise<Record<string, unknown> | null> {
-    const first = await this.resolveSingleReferenceOnce(id, idIndex)
+    const first = await this.resolveSingleReferenceOnce(id, idIndex, includeBody)
     if (first !== STALE_LOOKUP) return first
     // Force a rebuild (throttled). Even when this caller loses the throttle,
     // retry against the live index: a sibling lookup in the same batch may have
     // won it and invalidated/rebuilt (idIndex() dedupes in-flight builds), so
     // every miss in a Promise.all batch heals, not just the first.
     await this.refreshIndexForSuspiciousLookup()
-    const second = await this.resolveSingleReferenceOnce(id, await this.idIndex())
+    const second = await this.resolveSingleReferenceOnce(id, await this.idIndex(), includeBody)
     return second === STALE_LOOKUP ? null : second
   }
 
   private async resolveSingleReferenceOnce(
     id: string,
     idIndex: ContentIdIndex,
+    includeBody: boolean,
   ): Promise<Record<string, unknown> | null | typeof STALE_LOOKUP> {
     try {
       const location = idIndex.findById(id)
@@ -1873,12 +1894,36 @@ export class ContentStore {
         resolveReferences: false,
       })
 
-      return {
+      // `urlPath` is what makes a resolved reference linkable. Without it, a page rendering
+      // "see also: <Target>" as a real anchor had no way to get an href from the resolution
+      // it had already paid for — one adopter ran a SECOND full listEntries pass over the
+      // whole tree purely to build a contentId -> url table, and set `resolveReferences:
+      // false` on pages where paying for both was worse than hand-rolling it.
+      //
+      // Deliberately `computeEntryUrl` (utils/entry-url.ts), the same forward
+      // collection+slug -> url rule `listEntries` publishes as `item.urlPath` and
+      // `entry-link-resolver.ts` already uses for `entry:ID` links — NOT the reverse
+      // url -> entry resolver in url-path-resolver.ts, which disagrees with that rule about
+      // how many URLs an index entry answers at (see the open
+      // url-resolver-index-entry-extra-url task). Sourcing from the reverse resolver would
+      // bake that disagreement into every resolved reference.
+      const resolved: Record<string, unknown> = {
         id,
         slug: location.slug,
         collection: location.collection,
+        urlPath: computeEntryUrl(location.collection, location.slug, this.contentRootName),
         ...doc.data,
       }
+
+      // The target's body, only for a field that asked to EMBED rather than link to it.
+      // `read()` keeps an md/mdx body on `doc.body` rather than in `doc.data`, so the spread
+      // above never carries it; `doc.bodyFieldName` is the target entry type's own
+      // `findBodyFieldName`, so the key matches what a listing of that entry would use.
+      if (includeBody && 'body' in doc && typeof doc.body === 'string' && doc.bodyFieldName) {
+        resolved[doc.bodyFieldName] = doc.body
+      }
+
+      return resolved
     } catch (error) {
       // Index hit but the file is gone — the typical symptom of an external
       // rename/delete this store hasn't observed yet.

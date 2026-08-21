@@ -38,7 +38,7 @@ or a bare reference ID, never the resolved data. This is the same underlying
 gap `#17`'s search-document work
 ([search-document-extraction-primitives.md](search-document-extraction-primitives.md))
 runs into, and the same one
-[resolved-references-url.md](../resolved-references-url.md) is designed around.
+[resolved-reference-shape.md](resolved-reference-shape.md) is designed around.
 
 ## Action
 

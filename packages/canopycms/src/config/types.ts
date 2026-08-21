@@ -97,6 +97,27 @@ export interface ReferenceFieldConfig extends BaseFieldConfig {
   entryTypes?: string[]
   displayField?: string
   options?: ReferenceOption[]
+  /**
+   * Include the referenced entry's body in the resolved value, under that entry type's own
+   * body field name (`isBody: true`, else `body`). Defaults to `false`.
+   *
+   * This is the embed-vs-link distinction, declared where it is actually known. A reference
+   * that **embeds** its target — a shared call-to-action block rendered inline — needs the
+   * target's prose, and without this a resolved md/mdx target arrives as frontmatter only, so
+   * a search index built over pages with shared blocks silently contains nothing for them. A
+   * reference that merely **links** to its target — related posts, an author byline — wants
+   * `urlPath` and a title, and emphatically not the target's full body inlined into every
+   * page read.
+   *
+   * It lives on the field rather than on `read()`/`listEntries()` because one call routinely
+   * contains both kinds: a page with a shared CTA *and* a related-posts list cannot be served
+   * by a single call-level setting, and a call-level flag would mean the same field resolved
+   * to different shapes in different places.
+   *
+   * Only affects formats that HAVE a separate body — md and mdx. A json/yaml target's whole
+   * document is already its data, so this is a no-op there.
+   */
+  includeBody?: boolean
 }
 
 /**

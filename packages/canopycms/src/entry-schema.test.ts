@@ -9,6 +9,7 @@ import {
   type BlockComponentRegistry,
   type BlockValueOf,
   type EntryTypesFromRegistry,
+  type ResolvedReferenceMeta,
   type TypeFromEntrySchema,
 } from './entry-schema'
 import { validateEntryData } from './validation/entry-validator'
@@ -200,10 +201,17 @@ describe('TypeFromEntrySchema', () => {
 
       type PostContent = TypeFromEntrySchema<typeof postSchema>
 
-      expectTypeOf<PostContent['author']>().toEqualTypeOf<{
-        name: string
-        bio: string
-      } | null>()
+      // The resolution metadata is part of the shape, not an extra the type omits: the
+      // runtime has always injected id/slug/collection, and urlPath joined them so a
+      // resolved reference can be linked to without a second lookup.
+      expectTypeOf<PostContent['author']>().toEqualTypeOf<
+        | ({
+            name: string
+            bio: string
+          } & ResolvedReferenceMeta)
+        | null
+      >()
+      expectTypeOf<NonNullable<PostContent['author']>['urlPath']>().toEqualTypeOf<string>()
 
       void postSchema
     })
@@ -247,10 +255,13 @@ describe('TypeFromEntrySchema', () => {
 
       type Content = TypeFromEntrySchema<typeof schema>
 
-      expectTypeOf<Content['meta']['author']>().toEqualTypeOf<{
-        name: string
-        bio: string
-      } | null>()
+      expectTypeOf<Content['meta']['author']>().toEqualTypeOf<
+        | ({
+            name: string
+            bio: string
+          } & ResolvedReferenceMeta)
+        | null
+      >()
 
       void schema
     })
@@ -272,7 +283,9 @@ describe('TypeFromEntrySchema', () => {
 
       type Content = TypeFromEntrySchema<typeof schema>
 
-      expectTypeOf<Content['tags']>().toEqualTypeOf<({ label: string } | null)[]>()
+      expectTypeOf<Content['tags']>().toEqualTypeOf<
+        (({ label: string } & ResolvedReferenceMeta) | null)[]
+      >()
 
       void schema
     })

@@ -1387,6 +1387,199 @@ describe('listEntries', () => {
       expect(second[0].data).not.toBe(first[0].data)
     })
 
+    it('carries a urlPath that matches what the listing publishes for the same entry', async () => {
+      // The anti-drift test. `listEntries` and reference resolution both answer "where does
+      // this entry live?", and until they shared `computeEntryUrl` they were two copies of
+      // one rule, free to diverge silently. An adopter linking to a referenced entry has to
+      // be able to trust that the href reaches the entry the listing enumerates.
+      const { postsDir, snippetId, schema } = await createSnippetAndPosts(referenceField)
+      await createEntry(postsDir, 'post', 'hello', 'json', {
+        title: 'Hello',
+        snippet: snippetId,
+      })
+
+      const entries = await listEntries(tempDir, flattenSchema(schema, 'content'), 'content', {
+        resolveReferences: true,
+      })
+
+      const snippetItem = entries.find((e) => e.entryType === 'ctaSnippet')!
+      const resolved = entries.find((e) => e.entryType === 'post')!.data.snippet as Record<
+        string,
+        unknown
+      >
+
+      expect(resolved.urlPath).toBe('/snippets/signup')
+      expect(resolved.urlPath).toBe(snippetItem.urlPath)
+    })
+
+    it('collapses an index target to its parent path, as the listing does', async () => {
+      const { snippetId: _unused, ...rest } = await createSnippetAndPosts(referenceField)
+      void _unused
+      // A second snippet with the magic `index` slug: its URL is the collection, not
+      // `/snippets/index` -- the same collapsing rule listEntries applies.
+      const contentDir = path.join(tempDir, 'content')
+      const snippetsDir = path.join(
+        contentDir,
+        (await fs.readdir(contentDir)).find((d) => d.startsWith('snippets.'))!,
+      )
+      const indexId = await createEntry(snippetsDir, 'ctaSnippet', 'index', 'json', {
+        title: 'Snippets index',
+      })
+      await createEntry(rest.postsDir, 'post', 'hello', 'json', {
+        title: 'Hello',
+        snippet: indexId,
+      })
+
+      const entries = await listEntries(tempDir, flattenSchema(rest.schema, 'content'), 'content', {
+        resolveReferences: true,
+      })
+
+      const resolved = entries.find((e) => e.slug === 'hello')!.data.snippet as Record<
+        string,
+        unknown
+      >
+      expect(resolved.urlPath).toBe('/snippets')
+    })
+
+    it('omits the target body by default and includes it with includeBody', async () => {
+      // md targets on purpose: a json entry's whole document is already its data, so it
+      // cannot show the difference. This is the fixture shape whose absence hid the
+      // gray-matter cache bug.
+      const contentDir = path.join(tempDir, 'content')
+      await fs.mkdir(contentDir)
+
+      const { dir: snippetsDir } = await createCollection(contentDir, 'snippets')
+      const snippetId = await createEntry(
+        snippetsDir,
+        'ctaSnippet',
+        'signup',
+        'md',
+        { title: 'Sign up today' },
+        'THE SNIPPET PROSE',
+      )
+      const { dir: postsDir } = await createCollection(contentDir, 'posts')
+      await createEntry(postsDir, 'post', 'hello', 'md', { title: 'Hello', snippet: snippetId })
+
+      const build = (includeBody: boolean): RootCollectionConfig => ({
+        collections: [
+          {
+            name: 'snippets',
+            path: 'snippets',
+            entries: [
+              { name: 'ctaSnippet', format: 'md', schema: [{ name: 'title', type: 'string' }] },
+            ],
+          },
+          {
+            name: 'posts',
+            path: 'posts',
+            entries: [
+              {
+                name: 'post',
+                format: 'md',
+                schema: [
+                  { name: 'title', type: 'string' },
+                  {
+                    name: 'snippet',
+                    type: 'reference',
+                    entryTypes: ['ctaSnippet'],
+                    ...(includeBody ? { includeBody: true } : {}),
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      })
+
+      const readSnippet = async (includeBody: boolean) => {
+        const entries = await listEntries(
+          tempDir,
+          flattenSchema(build(includeBody), 'content'),
+          'content',
+          { resolveReferences: true },
+        )
+        return entries.find((e) => e.slug === 'hello')!.data.snippet as Record<string, unknown>
+      }
+
+      // Link-style (default): a URL and the target's frontmatter, no prose inlined.
+      const linked = await readSnippet(false)
+      expect(linked).toMatchObject({ title: 'Sign up today', urlPath: '/snippets/signup' })
+      expect(linked).not.toHaveProperty('body')
+
+      // Embed-style: the prose arrives under the target entry type's own body field name.
+      const embedded = await readSnippet(true)
+      expect(embedded.body).toBe('THE SNIPPET PROSE')
+      expect(embedded).toMatchObject({ title: 'Sign up today', urlPath: '/snippets/signup' })
+    })
+
+    it('honors an isBody-renamed body field on the target', async () => {
+      const contentDir = path.join(tempDir, 'content')
+      await fs.mkdir(contentDir)
+
+      const { dir: snippetsDir } = await createCollection(contentDir, 'snippets')
+      const snippetId = await createEntry(
+        snippetsDir,
+        'ctaSnippet',
+        'signup',
+        'md',
+        { title: 'Sign up today' },
+        'THE SNIPPET PROSE',
+      )
+      const { dir: postsDir } = await createCollection(contentDir, 'posts')
+      await createEntry(postsDir, 'post', 'hello', 'md', { title: 'Hello', snippet: snippetId })
+
+      const schema: RootCollectionConfig = {
+        collections: [
+          {
+            name: 'snippets',
+            path: 'snippets',
+            entries: [
+              {
+                name: 'ctaSnippet',
+                format: 'md',
+                schema: [
+                  { name: 'title', type: 'string' },
+                  // Not called `body` -- resolution must use the TARGET's own body field name,
+                  // not a hardcoded default.
+                  { name: 'prose', type: 'markdown', isBody: true },
+                ],
+              },
+            ],
+          },
+          {
+            name: 'posts',
+            path: 'posts',
+            entries: [
+              {
+                name: 'post',
+                format: 'md',
+                schema: [
+                  { name: 'title', type: 'string' },
+                  {
+                    name: 'snippet',
+                    type: 'reference',
+                    entryTypes: ['ctaSnippet'],
+                    includeBody: true,
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      }
+
+      const entries = await listEntries(tempDir, flattenSchema(schema, 'content'), 'content', {
+        resolveReferences: true,
+      })
+
+      const resolved = entries.find((e) => e.slug === 'hello')!.data.snippet as Record<
+        string,
+        unknown
+      >
+      expect(resolved.prose).toBe('THE SNIPPET PROSE')
+      expect(resolved).not.toHaveProperty('body')
+    })
+
     it('gives each element of a list: true array its own copy', async () => {
       const { postsDir, snippetId, schema } = await createSnippetAndPosts({
         ...referenceField,

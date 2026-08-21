@@ -13,6 +13,7 @@ import { parse as yamlParse } from 'yaml'
 
 import type { ContentFormat, FlatSchemaItem, EntryTypeConfig, EntrySchema } from './config'
 import { findBodyFieldName } from './utils/body-field'
+import { computeEntryUrl } from './utils/entry-url'
 import { asRecord, getFormatExtension } from './utils/format'
 import { resolveCollectionPath } from './content-id-index'
 import { validateAndNormalizePath } from './paths'
@@ -473,9 +474,12 @@ export async function listEntries<T = Record<string, unknown>>(
         : entry.logicalPath
       const pathSegments = pathWithoutRoot.split('/').filter(Boolean)
 
-      // Compute urlPath: collapse index entries to parent collection path
-      const urlSegments = entry.slug === 'index' ? pathSegments.slice(0, -1) : pathSegments
-      const urlPath = urlSegments.length > 0 ? `/${urlSegments.join('/')}`.toLowerCase() : '/'
+      // Compute urlPath (collapses an `index` entry to its parent collection path) through
+      // the SHARED rule rather than a local copy of it. A resolved reference now carries a
+      // `urlPath` too, and the whole point of that field is that it addresses the same entry
+      // this listing does -- two implementations of one rule is exactly the drift the adopter
+      // migration guide warns about. `content-listing.test.ts` pins the agreement.
+      const urlPath = computeEntryUrl(entry.collectionPath, entry.slug, contentRootName)
 
       const raw = entry.data
       const meta = {

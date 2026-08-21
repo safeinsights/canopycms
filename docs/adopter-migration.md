@@ -191,6 +191,74 @@ slugs or `updatedAt`.
 - **Nothing where the listing never touched a reference field.** Leaving the option off is the
   right answer there, not an oversight to correct.
 
+### Resolved references now carry `urlPath`, and can carry the target's body — **breaking (type-level)**
+
+_Follows the `listEntries` entry above; together they close what a resolved reference is for._
+
+**What changed.** A resolved reference used to be `{ id, slug, collection, ...frontmatter }`,
+which served neither job it gets used for. Two additions:
+
+- **`urlPath`, on every resolved reference, always.** The referenced entry's URL, following the
+  same rule `listEntries` publishes as `item.urlPath` (an `index` entry collapses to its parent
+  path). Both now come from one shared function, so a link built from a resolved reference
+  reaches the entry the listing enumerates, by construction rather than by coincidence.
+- **`includeBody` on the reference field**, default `false`. When set, the resolved value also
+  carries the target's body, under the _target_ entry type's own body field name (`isBody: true`,
+  else `body`). Only meaningful for md/mdx targets — a json/yaml document is already all data.
+
+```diff
+  {
+    name: 'snippet',
+    type: 'reference',
+    entryTypes: ['ctaSnippet'],
++   includeBody: true,     // this reference EMBEDS its target, so it wants the prose
+  }
+```
+
+**Why `includeBody` sits on the field and not on the call.** A reference either **embeds** its
+target (a shared call-to-action rendered inline — wants the prose) or **links** to it (related
+posts, an author byline — wants a URL and a title, and definitely not the target's full body
+inlined into every page read). That is a property of your content model, not of the call site,
+and a single `listEntries()` call routinely contains both kinds — a page with a shared CTA _and_
+a related-posts list cannot be served by one call-level setting. Declaring it on the field means
+every caller (`read()`, `readByUrlPath()`, `listEntries()`, `buildContentTree()`) gets the right
+shape without being told.
+
+**The type-level break.** `TypeFromEntrySchema` used to infer a resolved reference as just the
+target's content shape. It now intersects the resolution metadata that was always returned at
+runtime but missing from the type:
+
+```diff
+- author: { name: string; bio: string } | null
++ author: ({ name: string; bio: string } & ResolvedReferenceMeta) | null
++   // ResolvedReferenceMeta = { id: string; slug: string; collection: string; urlPath: string }
+```
+
+Reads keep compiling — this is a widening, and `ref.id` no longer needs a cast. What can break
+is an exact-shape assignment: a variable annotated with the old literal object type, an
+`Exact<>`-style helper, or a test asserting the inferred type equals a hand-written shape. If
+you have any, add `& ResolvedReferenceMeta` (exported from `canopycms`) or widen the annotation.
+
+**One thing to know.** If a field's `resolvedSchema` declares a body field but you have not set
+`includeBody`, the inferred type still promises that field while the runtime omits it. Setting
+`includeBody: true` makes the promise true; alternatively, leave the body field out of the
+`resolvedSchema` you pass, which is inference-only and need not be the target's full schema.
+
+**To adopt.** Nothing is required — `urlPath` simply appears. Add `includeBody: true` to
+reference fields whose target's prose you actually render or index.
+
+**Now deletable.**
+
+- **A contentId → URL index built by a second content pass.** The shape is a helper that walks
+  `listEntries()` (or the content tree) a second time purely to map ids to URLs, so referenced
+  entries can be linked — usually memoised, usually built per request or per build. Delete it;
+  read `urlPath` off the resolved reference.
+- **The `resolveReferences: false` escape hatch that index forced.** Pages that turned resolution
+  off because paying for resolution _and_ a separate URL lookup was worse than hand-rolling both
+  can turn it back on.
+- **A follow-up `read()` of a referenced entry purely to get its body**, in code that renders a
+  shared/referenced block. Set `includeBody: true` on the field instead.
+
 <!--
 Template for each entry — copy, don't improvise:
 

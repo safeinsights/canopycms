@@ -35,6 +35,33 @@ type InferableField = {
   entryTypes?: readonly string[]
   /** For reference fields: collection paths to scope the search. */
   collections?: readonly string[]
+  /** For reference fields: resolve the target's body too. See ReferenceFieldConfig.includeBody. */
+  includeBody?: boolean
+}
+
+/**
+ * The fields reference resolution adds to a target's own data, on top of whatever
+ * `resolvedSchema` declares.
+ *
+ * These have always been returned at runtime (`resolveSingleReferenceOnce` in
+ * content-store.ts) but were missing from the inferred type, so a resolved reference typed
+ * narrower than it actually is — which is why reading `ref.id` needed a cast, and one source
+ * of the library-internal type error `adopter-migration.md` records under
+ * `exactOptionalPropertyTypes` + `skipLibCheck: false`.
+ *
+ * `urlPath` is what makes a resolved reference linkable without a second lookup; it follows
+ * the same collection+slug rule `listEntries` publishes as `item.urlPath`, so an index entry
+ * collapses to its parent path.
+ */
+export interface ResolvedReferenceMeta {
+  /** The referenced entry's 12-char content ID. */
+  id: string
+  /** The referenced entry's slug. */
+  slug: string
+  /** The referenced entry's collection logical path (e.g. `content/snippets`). */
+  collection: string
+  /** URL path for the referenced entry, e.g. `/guides/getting-started`. */
+  urlPath: string
 }
 
 /**
@@ -167,7 +194,11 @@ type FieldValue<F extends InferableField> = F extends {
     : F extends { type: 'select' }
       ? ScalarValue<F, SelectValue<F>>
       : F extends { type: 'reference'; resolvedSchema: infer S }
-        ? ScalarValue<F, InferContentShape<Extract<S, readonly InferableField[]>> | null>
+        ? ScalarValue<
+            F,
+            | (InferContentShape<Extract<S, readonly InferableField[]>> & ResolvedReferenceMeta)
+            | null
+          >
         : F extends { type: 'reference' }
           ? ScalarValue<F, string | null>
           : F extends { type: 'image' }
