@@ -32,7 +32,7 @@ import { resolveDeploymentName } from '../operating-mode/deployment-name'
 import type { PullRequestState, WorkerStatusReport } from '../types'
 import { tryAcquireContentWriteLock } from '../utils/content-write-lock'
 import { getErrorMessage, isNodeError, redactCredentials } from '../utils/error'
-import { isNonFastForwardRejection, isStaleLeaseRejection } from '../utils/git'
+import { isNonFastForwardRejection, isRebaseInProgress, isStaleLeaseRejection } from '../utils/git'
 import { writeWorkerStatus } from './worker-status'
 import { workerLog, workerLogWarn, workerLogError } from './log'
 
@@ -2287,6 +2287,43 @@ export class CmsWorker {
         }
 
         try {
+          // Recover an INTERRUPTED rebase before anything else looks at this
+          // tree. A clone left with .git/rebase-merge (or rebase-apply) reports
+          // uncommitted changes, so without this the dirty check below would
+          // classify it `skippedDirty` on every cycle FOREVER while
+          // branch-health scanned it as healthy -- and editors would meanwhile
+          // read, and be able to save over, conflict-marker content.
+          //
+          // Aborting is unambiguously right here: this worker is the only thing
+          // that ever rebases these clones, so an in-progress rebase is always
+          // its own abandoned work (a crash, an OOM, a spot interruption, or the
+          // ASG rolling the instance -- which happens on EVERY `cdk deploy`,
+          // while `stop()` drains for at most taskTimeoutMs). It is also safe:
+          // we hold the [SYNC-C1] content-write lock, so no writer is live, and
+          // a rebase replays COMMITTED history, so aborting discards nothing but
+          // the half-applied replay itself.
+          if (await isRebaseInProgress(branchPath)) {
+            workerLogWarn(
+              `  ${branchDir}: found an interrupted rebase (this worker's own abandoned work) -- aborting it to recover the branch`,
+            )
+            try {
+              await branchGit.rebase(['--abort'])
+            } catch (abortErr: unknown) {
+              // Leave it for the next cycle rather than pressing on: every step
+              // below assumes a clean tree.
+              workerLogWarn(
+                `  Skipping ${branchDir}: could not abort its interrupted rebase: ${getErrorMessage(abortErr)}`,
+              )
+              failed.push({
+                branch: branchDir,
+                error: redactCredentials(
+                  `could not abort interrupted rebase: ${getErrorMessage(abortErr)}`,
+                ),
+              })
+              continue
+            }
+          }
+
           // Skip dirty branches — editor has unsaved changes that can't be rebased.
           // Now inside the lock, so no write can land between this check and the
           // rebase below.
@@ -2421,10 +2458,57 @@ export class CmsWorker {
                 await this.afterConflictDetectedForTesting()
                 // During rebase, --theirs = the branch being replayed (editor's work).
                 // (git rebase reverses ours/theirs: "ours" is the rebase target, "theirs" is the branch.)
+                //
+                // MODIFY/DELETE conflicts have no "their version" to check out
+                // and must be resolved by staging a delete or an add instead.
+                // `git checkout --theirs` on one exits non-zero ("path ... does
+                // not have their version") and simple-git throws -- and because
+                // this loop body IS the round loop's catch, that throw escapes
+                // the round loop entirely, skipping BOTH `rebase --abort` sites
+                // below and leaving the clone wedged mid-rebase forever. The
+                // index/working-tree code pair identifies which side deleted
+                // (verified against real git, not inferred):
+                //
+                //   U/D  "deleted by them"  -- the BRANCH deleted it, base
+                //        modified it. Git leaves base's version in the tree.
+                //        Keep-branch-version means honouring the delete: git rm.
+                //   D/U  "deleted by us"    -- base deleted it, the BRANCH
+                //        modified it. Git leaves the branch's version in the
+                //        tree. Keep-branch-version means keeping it: git add.
+                //
+                // Any per-file resolution that STILL fails routes into the
+                // `!completed` path below (which aborts and records) instead of
+                // escaping -- deliberately NOT a rethrow, since a throw from
+                // here is exactly the bug being fixed.
+                const conflictKind = new Map(
+                  st.files.map((f) => [f.path, `${f.index}${f.working_dir}`]),
+                )
+                let resolutionFailure: string | undefined
                 for (const file of st.conflicted) {
-                  await branchGit.raw(['checkout', '--theirs', file])
-                  await branchGit.add(file)
+                  const kind = conflictKind.get(file)
+                  try {
+                    if (kind === 'UD') {
+                      await branchGit.raw(['rm', '-f', '--', file])
+                    } else if (kind === 'DU') {
+                      await branchGit.add(file)
+                    } else {
+                      await branchGit.raw(['checkout', '--theirs', file])
+                      await branchGit.add(file)
+                    }
+                  } catch (resolveErr: unknown) {
+                    resolutionFailure =
+                      `failed to resolve conflicted file '${file}' (status ${kind ?? '??'}): ` +
+                      getErrorMessage(resolveErr)
+                    break
+                  }
                   conflictedFiles.push(file)
+                }
+                if (resolutionFailure !== undefined) {
+                  // Same exit shape as the "unexpected error" branch below: set
+                  // failureReason and break, letting the `!completed` block do
+                  // the single `rebase --abort` and record the failure once.
+                  failureReason = resolutionFailure
+                  break
                 }
                 // nextAction stays 'continue'
               } else {
@@ -2636,6 +2720,32 @@ export class CmsWorker {
             }
           }
         } finally {
+          // Last-resort guarantee that NO exit path leaves this clone
+          // mid-rebase -- including an unexpected throw from any git step
+          // above, which lands in the outer catch and previously only logged.
+          //
+          // It must live HERE rather than in that outer catch: the catch runs
+          // AFTER this finally has released the content-write lock, so aborting
+          // there would hard-reset a working tree an editor's save could
+          // already be racing -- precisely the [SYNC-C1] hazard the lock
+          // exists to prevent. Inside the finally the lock is still held.
+          //
+          // Guarded on actual rebase state so the happy path and the `continue`
+          // exits cost one stat and do nothing.
+          try {
+            if (await isRebaseInProgress(branchPath)) {
+              workerLogWarn(
+                `  ${branchDir}: rebase still in progress on exit -- aborting so the clone is not left wedged`,
+              )
+              await branchGit.rebase(['--abort'])
+            }
+          } catch (abortErr: unknown) {
+            // Best effort: the next cycle's recovery check retries this.
+            workerLogWarn(
+              `  Failed to abort in-progress rebase for ${branchDir}: ${getErrorMessage(abortErr)}`,
+            )
+          }
+
           // [SYNC-C1] Released on EVERY exit -- the `continue`s above, a throw
           // into the outer catch, and the happy path alike. A stranded lock
           // would wedge every write to this branch until it went stale.
