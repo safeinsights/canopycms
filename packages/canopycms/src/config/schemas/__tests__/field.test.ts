@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { fieldSchema, imageFieldSchema } from '../field'
+import { fieldSchema, imageFieldSchema, referenceFieldSchema } from '../field'
 
 describe('imageFieldSchema', () => {
   it('accepts a minimal image field', () => {
@@ -28,5 +28,47 @@ describe('imageFieldSchema', () => {
   it('is reachable through the general fieldSchema union', () => {
     const parsed = fieldSchema.parse({ name: 'hero', type: 'image', aspect: '16:9' })
     expect(parsed).toMatchObject({ name: 'hero', type: 'image', aspect: '16:9' })
+  })
+})
+
+describe('referenceFieldSchema', () => {
+  // zod strips unknown keys by default, so a runtime-consumed flag that is missing here is
+  // deleted silently by any consumer that adopts the parse output -- the feature no-ops with
+  // no error at all. Every key resolution actually reads must therefore be declared.
+  it.each(['displayField', 'includeBody', 'entryTypes', 'collections'] as const)(
+    'preserves the runtime-consumed key %s',
+    (key) => {
+      const input: Record<string, unknown> = {
+        name: 'snippet',
+        type: 'reference',
+        entryTypes: ['ctaSnippet'],
+        collections: ['content/snippets'],
+        displayField: 'title',
+        includeBody: true,
+      }
+      const parsed = referenceFieldSchema.parse(input) as Record<string, unknown>
+      expect(parsed[key]).toEqual(input[key])
+    },
+  )
+
+  it('survives the general fieldSchema union with includeBody intact', () => {
+    const parsed = fieldSchema.parse({
+      name: 'snippet',
+      type: 'reference',
+      entryTypes: ['ctaSnippet'],
+      includeBody: true,
+    })
+    expect(parsed).toMatchObject({ name: 'snippet', type: 'reference', includeBody: true })
+  })
+
+  it('rejects a non-boolean includeBody', () => {
+    expect(() =>
+      referenceFieldSchema.parse({
+        name: 'snippet',
+        type: 'reference',
+        entryTypes: ['ctaSnippet'],
+        includeBody: 'yes',
+      }),
+    ).toThrow()
   })
 })

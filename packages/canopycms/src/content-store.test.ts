@@ -2583,6 +2583,65 @@ describe('ContentStore cross-process index consistency', () => {
       }
     })
 
+    it('keys the cache by includeBody, so two fields sharing a target get their own shapes', async () => {
+      // Two fields referencing the SAME entry, one linking and one embedding. Keyed by id
+      // alone, whichever the walk reached first would decide the shape for both -- the same
+      // traversal-order nondeterminism the per-occurrence copy exists to prevent.
+      const refSchemaBothWays = {
+        collections: [
+          {
+            name: 'authors',
+            path: 'authors',
+            entries: [
+              {
+                name: 'author',
+                format: 'md' as const,
+                schema: [{ name: 'name', type: 'string' as const }],
+              },
+            ],
+          },
+        ],
+      } as const
+
+      const root = await tmpDir()
+      const config = defineCanopyTestConfig({ schema: refSchemaBothWays })
+      const store = new ContentStore(root, flattenSchema(refSchemaBothWays, config.contentRoot))
+      const authorsPath = unsafeAsLogicalPath('content/authors')
+
+      await store.write(authorsPath, unsafeAsSlug('ada'), {
+        format: 'md',
+        data: { name: 'Ada' },
+        body: 'ADA BIO PROSE',
+      })
+      const authorId = await store.getIdForEntry(authorsPath, unsafeAsSlug('ada'))
+      if (!authorId) throw new Error('expected an id for the author')
+
+      const fields = [
+        { name: 'linked', type: 'reference' as const },
+        { name: 'embedded', type: 'reference' as const, includeBody: true },
+      ]
+      const cache = createReferenceResolveCache()
+
+      const resolved = await store.resolveReferences(
+        { linked: authorId, embedded: authorId },
+        fields,
+        cache,
+      )
+
+      const linked = resolved.linked as Record<string, unknown>
+      const embedded = resolved.embedded as Record<string, unknown>
+      expect(linked).not.toHaveProperty('body')
+      // Trimmed: the write path serialises through matter.stringify, which terminates the
+      // document with a newline. The point here is which field carries the prose, not
+      // round-trip whitespace.
+      expect(String(embedded.body).trim()).toBe('ADA BIO PROSE')
+      // Both still carry the shared metadata, and both point at the same entry.
+      expect(linked.urlPath).toBe('/authors/ada')
+      expect(embedded.urlPath).toBe('/authors/ada')
+      // Two distinct shapes means two cache entries, not one shape overwriting the other.
+      expect(cache.size).toBe(2)
+    })
+
     it('collapses concurrent lookups of the same id onto a single read', async () => {
       const { store, authorId, postFields } = await makeRefStore()
       const cache = createReferenceResolveCache()

@@ -12,6 +12,8 @@ import {
   withContentWriteLock,
 } from './utils/content-write-lock'
 import { findBodyFieldName } from './utils/body-field'
+import { buildResolvedReference } from './entry-schema'
+import { computeEntryUrl } from './utils/entry-url'
 import type {
   BlockFieldConfig,
   ContentFormat,
@@ -20,6 +22,7 @@ import type {
   EntryTypeConfig,
   InlineGroupFieldConfig,
   ObjectFieldConfig,
+  ReferenceFieldConfig,
 } from './config'
 import {
   ContentIdIndex,
@@ -1701,15 +1704,26 @@ export class ContentStore {
       const value = data[field.name]
 
       if (field.type === 'reference') {
+        // Whether this reference EMBEDS its target (wants the target's body) or merely LINKS
+        // to it is a property of the field, declared once in the schema -- not of the call,
+        // which routinely contains both kinds at once. See ReferenceFieldConfig.includeBody.
+        const includeBody = (field as ReferenceFieldConfig).includeBody === true
         // Single reference
         if (typeof value === 'string' && value) {
-          resolved[field.name] = await this.resolveSingleReference(value, idIndex, cache)
+          resolved[field.name] = await this.resolveSingleReference(
+            value,
+            idIndex,
+            includeBody,
+            cache,
+          )
         }
         // Array of references (list: true)
         else if (field.list && Array.isArray(value)) {
           resolved[field.name] = await Promise.all(
             value.map((id) =>
-              typeof id === 'string' ? this.resolveSingleReference(id, idIndex, cache) : null,
+              typeof id === 'string'
+                ? this.resolveSingleReference(id, idIndex, includeBody, cache)
+                : null,
             ),
           )
         }
@@ -1791,9 +1805,13 @@ export class ContentStore {
    * JSON target is ~0.8x, i.e. cloning is marginally SLOWER than reparsing it. So the win is
    * large in the case this exists for and roughly a wash at the pathological end, never a
    * blow-up. Two things keep the bad end narrow: an md/mdx target resolves to its FRONTMATTER
-   * only (`read()` puts the body on `doc.body`, which is not spread in
-   * `resolveSingleReferenceOnce`), so body size is irrelevant no matter how long the document
-   * — only a genuinely huge JSON/YAML target reaches the wash. And in the deployment this
+   * only *unless the field sets `includeBody`* (`read()` puts the body on `doc.body`, which
+   * `resolveSingleReferenceOnce` spreads in only for an embedding field), so by default body
+   * size is irrelevant no matter how long the document and only a genuinely huge JSON/YAML
+   * target reaches the wash. **`includeBody: true` is the case that CAN reach it on markdown**:
+   * the body then sits inside the memoized object and is cloned once per referencing entry, so
+   * a long document embedded by many pages pays that repeatedly — the reason `includeBody`
+   * exists as an opt-in per field rather than as resolution's default. And in the deployment this
    * targets, content lives on EFS/NFS where the syscall the memo removes dominates parse and
    * clone alike, which the local-disk numbers above understate badly. Correctness is the
    * reason for the copy regardless; the numbers are here so nobody has to re-derive them
@@ -1802,17 +1820,23 @@ export class ContentStore {
   private resolveSingleReference(
     id: string,
     idIndex: ContentIdIndex,
+    includeBody: boolean,
     cache?: ReferenceResolveCache,
   ): Promise<Record<string, unknown> | null> {
-    if (!cache) return this.resolveSingleReferenceUncached(id, idIndex)
-    let pending = cache.get(id)
+    if (!cache) return this.resolveSingleReferenceUncached(id, idIndex, includeBody)
+    // The key carries `includeBody`, not just the id: two fields can reference the SAME target
+    // with different settings, and sharing one entry between them would make the shape depend
+    // on which field the walk reached first -- the traversal-order nondeterminism the
+    // per-occurrence copy already exists to prevent.
+    const key = includeBody ? `${id}:body` : id
+    let pending = cache.get(key)
     if (!pending) {
       // Store the in-flight promise, and do it with no `await` in between: the whole point is
       // that concurrent lookups from one Promise.all batch find it and collapse onto a single
       // read. Memoizing the promise also keeps the self-healing retry below shared rather than
       // repeated — see ReferenceResolveCache for why misses are cached too.
-      pending = this.resolveSingleReferenceUncached(id, idIndex)
-      cache.set(id, pending)
+      pending = this.resolveSingleReferenceUncached(id, idIndex, includeBody)
+      cache.set(key, pending)
     }
     // The cached promise always has this handler attached, so it is never an unhandled
     // rejection; entry data is plain parsed JSON/YAML/frontmatter, so it is always cloneable
@@ -1844,21 +1868,23 @@ export class ContentStore {
   private async resolveSingleReferenceUncached(
     id: string,
     idIndex: ContentIdIndex,
+    includeBody: boolean,
   ): Promise<Record<string, unknown> | null> {
-    const first = await this.resolveSingleReferenceOnce(id, idIndex)
+    const first = await this.resolveSingleReferenceOnce(id, idIndex, includeBody)
     if (first !== STALE_LOOKUP) return first
     // Force a rebuild (throttled). Even when this caller loses the throttle,
     // retry against the live index: a sibling lookup in the same batch may have
     // won it and invalidated/rebuilt (idIndex() dedupes in-flight builds), so
     // every miss in a Promise.all batch heals, not just the first.
     await this.refreshIndexForSuspiciousLookup()
-    const second = await this.resolveSingleReferenceOnce(id, await this.idIndex())
+    const second = await this.resolveSingleReferenceOnce(id, await this.idIndex(), includeBody)
     return second === STALE_LOOKUP ? null : second
   }
 
   private async resolveSingleReferenceOnce(
     id: string,
     idIndex: ContentIdIndex,
+    includeBody: boolean,
   ): Promise<Record<string, unknown> | null | typeof STALE_LOOKUP> {
     try {
       const location = idIndex.findById(id)
@@ -1873,12 +1899,41 @@ export class ContentStore {
         resolveReferences: false,
       })
 
-      return {
-        id,
-        slug: location.slug,
-        collection: location.collection,
-        ...doc.data,
-      }
+      // `urlPath` is what makes a resolved reference linkable. Without it, a page rendering
+      // "see also: <Target>" as a real anchor had no way to get an href from the resolution
+      // it had already paid for — one adopter ran a SECOND full listEntries pass over the
+      // whole tree purely to build a contentId -> url table, and set `resolveReferences:
+      // false` on pages where paying for both was worse than hand-rolling it.
+      //
+      // Deliberately `computeEntryUrl` (utils/entry-url.ts), the same forward
+      // collection+slug -> url rule `listEntries` publishes as `item.urlPath` and
+      // `entry-link-resolver.ts` already uses for `entry:ID` links — NOT the reverse
+      // url -> entry resolver in url-path-resolver.ts, which disagrees with that rule about
+      // how many URLs an index entry answers at (see the open
+      // url-resolver-index-entry-extra-url task). Sourcing from the reverse resolver would
+      // bake that disagreement into every resolved reference.
+      //
+      // The assembly itself — data, then the embedded body, then the reserved metadata — is
+      // `buildResolvedReference`'s job rather than this function's, because the editor's
+      // live-preview endpoint (api/resolve-references.ts) builds the same object and the two
+      // had already drifted. That doc comment carries the reasoning for the ordering.
+      //
+      // `'body' in doc` is what narrows the ContentDocument union to its markdown variant, so
+      // `doc.body`/`doc.bodyFieldName` are reachable at all — a type guard, not a redundant
+      // runtime check. Only a field that asked to EMBED its target passes a body at all.
+      const bodyForEmbed =
+        includeBody && 'body' in doc ? { fieldName: doc.bodyFieldName, value: doc.body } : undefined
+
+      return buildResolvedReference(
+        doc.data,
+        {
+          id,
+          slug: location.slug,
+          collection: location.collection,
+          urlPath: computeEntryUrl(location.collection, location.slug, this.contentRootName),
+        },
+        bodyForEmbed,
+      )
     } catch (error) {
       // Index hit but the file is gone — the typical symptom of an external
       // rename/delete this store hasn't observed yet.

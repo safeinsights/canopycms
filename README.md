@@ -2453,16 +2453,31 @@ const entries = await canopy.listEntries({ resolveReferences: true })
 
 // entries[0].data.snippet
 //   off: 'a1b2c3d4e5f6'
-//   on:  { id: 'a1b2c3d4e5f6', slug: 'signup', collection: 'content/snippets', title: '...' }
+//   on:  { id: 'a1b2c3d4e5f6', slug: 'signup', collection: 'content/snippets',
+//          urlPath: '/snippets/signup', title: '...' }
 ```
 
 `buildContentTree()` takes the same option (it also applies to the `indexEntry` handed to a collection's `extract`), and so does `collectRoutableEntries()`. `collectStaticPaths()` does not, because it discards entry data.
 
 **Why it is off by default, when `read()` resolves automatically.** A resolved reference is a different shape, and a listing's `data` is your own type parameter — so nothing in the type system would flag the change if the default flipped. An `/authors/${data.author}` template would keep compiling and start emitting `/authors/[object Object]`. Deciding per call site keeps that where the code that reads the field is.
 
-**What it costs.** Resolution needs the content ID index, so an opted-in call adds one index scan plus one read per _distinct_ referenced entry — not per referencing entry. All the resolution in one call shares a cache, so a block referenced from 40 pages is read once, not 40 times. With the option off, none of that machinery is built.
+**What it costs.** Resolution needs the content ID index, so an opted-in call adds one index scan plus one read per _distinct_ referenced entry — not per referencing entry. All the resolution in one call shares a cache, so a block referenced from 40 pages is read once, not 40 times. With the option off, none of that machinery is built. Note that the shared read is what the cache saves; each referencing entry still gets its own copy of the resolved value, which is what `includeBody` (below) makes worth thinking about for large targets.
 
-**Three caveats.** For an **md/mdx** target you get its frontmatter, not its prose — `read()` puts an entry's body on `doc.body` and a resolved reference carries `doc.data`, so a resolved markdown snippet has its `title` and other frontmatter fields but not the text below the `---`. (A _listed_ md entry's own `data` does include the body, so the two differ; if your search index needs a markdown snippet's prose, read the target directly for now.) Path permissions are not applied to the resolved _targets_, matching `read()` — a reference can resolve to an entry the current user could not open directly. (The entries being listed are still permission-filtered as always, and an entry that is filtered out is never resolved.) And within a single call, a given id is looked up once and every occurrence shares that answer, so one listing is internally consistent rather than deciding per entry — though each occurrence still gets its own copy of the resolved object, so nothing you do to one entry's resolved reference can affect another's.
+**Every resolved reference carries a `urlPath`** — the referenced entry's URL, following the same rule `listEntries` uses for `item.urlPath` (an `index` entry collapses to its parent path). Both come from one shared function, so a link built from a resolved reference reaches the entry the listing enumerates. You do not need a second pass to build an id → URL table.
+
+**A target's body is opt-in, per field.** By default a resolved **md/mdx** target gives you its frontmatter, not its prose. Set `includeBody: true` on the reference field and the body arrives too, under that target entry type's own body field name:
+
+```ts
+{ name: 'snippet', type: 'reference', entryTypes: ['ctaSnippet'], includeBody: true }
+```
+
+The distinction is embed-vs-link, and it belongs on the field because it is a property of your content model rather than of any one call. A reference that **embeds** its target — a shared CTA rendered inline — wants the prose. One that **links** to it — related posts, an author byline — wants `urlPath` and a title, and definitely not the target's whole body inlined into every page read. Since a single call routinely contains both kinds, the field is the only place the answer can differ per reference. (No-op for json/yaml targets, whose whole document is already their data.)
+
+Turning it on has a cost worth knowing: the body becomes part of every referencing entry's resolved value, so a long document embedded by many pages is carried — and copied — once per page. That is exactly why it is opt-in per field rather than resolution's default. For a snippet-sized shared block it is nothing; for a full article you probably wanted a link.
+
+**`id`, `slug`, `collection` and `urlPath` are reserved** on a resolved reference. If the target models one of them as a real content field, the resolution value wins and the content field is not visible here — read that entry directly if you need it.
+
+**Two caveats.** Path permissions are not applied to the resolved _targets_, matching `read()` — a reference can resolve to an entry the current user could not open directly. (The entries being listed are still permission-filtered as always, and an entry that is filtered out is never resolved.) And within a single call, a given id is looked up once and every occurrence shares that answer, so one listing is internally consistent rather than deciding per entry — though each occurrence still gets its own copy of the resolved object, so nothing you do to one entry's resolved reference can affect another's.
 
 ### Options Reference
 

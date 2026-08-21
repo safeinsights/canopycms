@@ -5,7 +5,12 @@ import {
   findInvalidTitleFields,
   findTitleFieldsInLists,
 } from './utils/title-field'
-import { countBodyFields, findInvalidBodyFields } from './utils/body-field'
+import {
+  countBodyFields,
+  findInvalidBodyFields,
+  findReservedBodyFieldName,
+} from './utils/body-field'
+import { RESOLVED_REFERENCE_KEYS } from './entry-schema'
 import { flattenGroupFields } from './utils/flatten-group-fields'
 import {
   ensureSelectFieldsHaveOptions,
@@ -144,6 +149,12 @@ export function createEntrySchemaRegistry<T extends Record<string, EntrySchema>>
     if (invalidBodyFields.length > 0) {
       throw new Error(
         `Entry schema registry entry "${key}": field "${invalidBodyFields[0]}" has isBody: true but is type "${findFieldType(schema, invalidBodyFields[0])}" — isBody is only valid on markdown or mdx fields`,
+      )
+    }
+    const reservedBodyField = findReservedBodyFieldName(schema, RESOLVED_REFERENCE_KEYS)
+    if (reservedBodyField) {
+      throw new Error(
+        `Entry schema registry entry "${key}": field "${reservedBodyField}" has isBody: true but "${reservedBodyField}" is reserved — reference resolution sets ${RESOLVED_REFERENCE_KEYS.map((k) => `"${k}"`).join(', ')} on a resolved reference, and a body field with one of those names would overwrite it. Rename the field (the body's field name is yours to choose; only these four are reserved).`,
       )
     }
     // Field-shape checks moved here from validateCanopyConfig — these used to walk

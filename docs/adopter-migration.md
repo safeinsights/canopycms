@@ -191,6 +191,105 @@ slugs or `updatedAt`.
 - **Nothing where the listing never touched a reference field.** Leaving the option off is the
   right answer there, not an oversight to correct.
 
+### Resolved references now carry `urlPath`, and can carry the target's body — **breaking (type-level)**
+
+_Follows the `listEntries` entry above; together they close what a resolved reference is for._
+
+**What changed.** A resolved reference used to be `{ id, slug, collection, ...frontmatter }`,
+which served neither job it gets used for. Two additions:
+
+- **`urlPath`, on every resolved reference, always.** The referenced entry's URL, following the
+  same rule `listEntries` publishes as `item.urlPath` (an `index` entry collapses to its parent
+  path). Both now come from one shared function, so a link built from a resolved reference
+  reaches the entry the listing enumerates, by construction rather than by coincidence.
+- **`includeBody` on the reference field**, default `false`. When set, the resolved value also
+  carries the target's body, under the _target_ entry type's own body field name (`isBody: true`,
+  else `body`). Only meaningful for md/mdx targets — a json/yaml document is already all data.
+
+```diff
+  {
+    name: 'snippet',
+    type: 'reference',
+    entryTypes: ['ctaSnippet'],
++   includeBody: true,     // this reference EMBEDS its target, so it wants the prose
+  }
+```
+
+**Why `includeBody` sits on the field and not on the call.** A reference either **embeds** its
+target (a shared call-to-action rendered inline — wants the prose) or **links** to it (related
+posts, an author byline — wants a URL and a title, and definitely not the target's full body
+inlined into every page read). That is a property of your content model, not of the call site,
+and a single `listEntries()` call routinely contains both kinds — a page with a shared CTA _and_
+a related-posts list cannot be served by one call-level setting. Declaring it on the field means
+every caller (`read()`, `readByUrlPath()`, `listEntries()`, `buildContentTree()`) gets the right
+shape without being told.
+
+**The type-level break.** `TypeFromEntrySchema` used to infer a resolved reference as just the
+target's content shape. It now intersects the resolution metadata that was always returned at
+runtime but missing from the type:
+
+```diff
+- author: { name: string; bio: string } | null
++ author: ({ name: string; bio: string } & ResolvedReferenceMeta) | null
++   // ResolvedReferenceMeta = { id: string; slug: string; collection: string; urlPath: string }
+```
+
+Reads keep compiling — this is a widening, and `ref.id` no longer needs a cast. What can break
+is an exact-shape assignment: a variable annotated with the old literal object type, an
+`Exact<>`-style helper, or a test asserting the inferred type equals a hand-written shape. If
+you have any, add `& ResolvedReferenceMeta` (exported from `canopycms`) or widen the annotation.
+
+**One thing to know.** If a field's `resolvedSchema` declares a body field but you have not set
+`includeBody`, the inferred type still promises that field while the runtime omits it. Setting
+`includeBody: true` makes the promise true; alternatively, leave the body field out of the
+`resolvedSchema` you pass, which is inference-only and need not be the target's full schema.
+
+**Two things to know.** `id`, `slug`, `collection` and `urlPath` are **reserved** on a resolved
+reference: the resolution value now wins over a target that models one of them as a real content
+field. That ordering is a fix, not a preference — the write boundary recovers a reference's id
+from `value.id`, so a target with its own `id` frontmatter field used to make a re-save persist
+that value and silently repoint the reference. If a target of yours legitimately carries one of
+those four names as content, read that entry directly to get it.
+
+And `includeBody: true` carries the target's body into every referencing entry's resolved value,
+so a long document embedded by many pages is carried once per page. Fine for a snippet; think
+twice for a full article, which probably wanted a link.
+
+**A save no longer freezes a resolved reference into your content.** Separately fixed here: the
+editor reads a document with references already resolved, so a plain open-and-save posted those
+resolved objects back, and the write boundary persisted them verbatim into the content file.
+Because resolution only re-resolves a bare string, the frozen snapshot then survived every later
+read and save — the reference was silently severed from its target for good, and renaming or
+editing the target changed nothing. Reference fields are now collapsed back to their ID at the
+write boundary, not just in the copy handed to validation.
+
+The mechanism predates this release; `includeBody` is what made it urgent, since the snapshot
+would otherwise carry the target's entire prose. **If you have edited entries with reference
+fields through the editor on an earlier version, check your content files**: a reference field
+holding an object rather than a 12-character ID string is a severed reference. Replacing the
+object with its own `id` value restores it.
+
+One case this does **not** cover, so you know the boundary: if a reference's target has been
+deleted, resolution yields `null` and a save persists that `null` over the ID — there is no
+object left to collapse back. Open-and-save is lossless only while every reference still
+resolves. Tracked separately; if you see `null` where a reference should be, the ID it used to
+hold is not recoverable from the file.
+
+**To adopt.** Nothing is required — `urlPath` simply appears. Add `includeBody: true` to
+reference fields whose target's prose you actually render or index.
+
+**Now deletable.**
+
+- **A contentId → URL index built by a second content pass.** The shape is a helper that walks
+  `listEntries()` (or the content tree) a second time purely to map ids to URLs, so referenced
+  entries can be linked — usually memoised, usually built per request or per build. Delete it;
+  read `urlPath` off the resolved reference.
+- **The `resolveReferences: false` escape hatch that index forced.** Pages that turned resolution
+  off because paying for resolution _and_ a separate URL lookup was worse than hand-rolling both
+  can turn it back on.
+- **A follow-up `read()` of a referenced entry purely to get its body**, in code that renders a
+  shared/referenced block. Set `includeBody: true` on the field instead.
+
 <!--
 Template for each entry — copy, don't improvise:
 

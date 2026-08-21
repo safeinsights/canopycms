@@ -869,6 +869,97 @@ describe('content api', () => {
       return { writeSpy }
     }
 
+    it('persists reference fields as bare IDs when the editor posts resolved objects', async () => {
+      // The editor's own GET reads through `store.read()`, whose `resolveReferences` defaults
+      // to TRUE, so its form state holds fully resolved objects and a save posts them straight
+      // back. Unnormalized, that blob landed in the content file verbatim — and since
+      // resolution only re-resolves a `typeof value === 'string'`, every later read passed the
+      // frozen snapshot through, permanently severing the reference from its target.
+      const ctx = allowedCtx()
+      const { writeSpy } = await mockStoreOnce({ knownIds: [AUTHOR_ID] })
+      const res = await writeContent(ctx, writeReq, writeParams, {
+        format: 'json',
+        data: {
+          title: 'Hello',
+          // Exactly what `buildResolvedReference` returns, including an embedded body.
+          author: {
+            name: 'Alice',
+            body: 'THE WHOLE TARGET DOCUMENT',
+            id: AUTHOR_ID,
+            slug: 'alice',
+            collection: 'content/authors',
+            urlPath: '/authors/alice',
+          },
+        },
+      })
+
+      expect(res.ok).toBe(true)
+      expect(writeSpy).toHaveBeenCalledTimes(1)
+      expect(writeSpy.mock.calls[0][2].data.author).toBe(AUTHOR_ID)
+    })
+
+    it('normalizes a resolved reference nested inside a block template', async () => {
+      const ctx = allowedCtx()
+      const { writeSpy } = await mockStoreOnce({ knownIds: [AUTHOR_ID] })
+      const res = await writeContent(ctx, writeReq, writeParams, {
+        format: 'json',
+        data: {
+          title: 'Hello',
+          author: AUTHOR_ID,
+          blocks: [
+            {
+              template: 'quote',
+              value: {
+                text: 'Quoted',
+                source: { name: 'Alice', id: AUTHOR_ID, slug: 'alice', urlPath: '/authors/alice' },
+              },
+            },
+          ],
+        },
+      })
+
+      expect(res.ok).toBe(true)
+      const written = writeSpy.mock.calls[0][2].data as Record<string, unknown>
+      const blocks = written.blocks as Array<{ value: { source: unknown } }>
+      expect(blocks[0].value.source).toBe(AUTHOR_ID)
+    })
+
+    it('leaves an already-bare reference ID untouched (normalization is idempotent)', async () => {
+      const ctx = allowedCtx()
+      const { writeSpy } = await mockStoreOnce({ knownIds: [AUTHOR_ID] })
+      const res = await writeContent(ctx, writeReq, writeParams, {
+        format: 'json',
+        data: { title: 'Hello', author: AUTHOR_ID },
+      })
+
+      expect(res.ok).toBe(true)
+      expect(writeSpy.mock.calls[0][2].data.author).toBe(AUTHOR_ID)
+    })
+
+    it('shows the validateEntry hook the shape that will be persisted', async () => {
+      // The hook validates what is being saved, so it must see what is saved. Before the
+      // normalization moved above it, an adopter hook inspecting a reference field saw a
+      // resolved object while the file received an ID string -- and saw it only when the post
+      // came from the editor, since any client posting bare IDs already gave the hook bare IDs.
+      const ctx = allowedCtx()
+      const hook = vi.fn().mockResolvedValue([])
+      ctx.services.config.validateEntry = hook
+      const { writeSpy } = await mockStoreOnce({ knownIds: [AUTHOR_ID] })
+
+      const res = await writeContent(ctx, writeReq, writeParams, {
+        format: 'json',
+        data: {
+          title: 'Hello',
+          author: { name: 'Alice', id: AUTHOR_ID, slug: 'alice', urlPath: '/authors/alice' },
+        },
+      })
+
+      expect(res.ok).toBe(true)
+      expect(hook).toHaveBeenCalledTimes(1)
+      expect(hook.mock.calls[0][0].data.author).toBe(AUTHOR_ID)
+      expect(writeSpy.mock.calls[0][2].data.author).toBe(AUTHOR_ID)
+    })
+
     it('rejects a save missing a required field with a per-field error', async () => {
       const ctx = allowedCtx()
       const { writeSpy } = await mockStoreOnce({ knownIds: [AUTHOR_ID] })
