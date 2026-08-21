@@ -244,6 +244,17 @@ you have any, add `& ResolvedReferenceMeta` (exported from `canopycms`) or widen
 `includeBody: true` makes the promise true; alternatively, leave the body field out of the
 `resolvedSchema` you pass, which is inference-only and need not be the target's full schema.
 
+**Two things to know.** `id`, `slug`, `collection` and `urlPath` are **reserved** on a resolved
+reference: the resolution value now wins over a target that models one of them as a real content
+field. That ordering is a fix, not a preference — the write boundary recovers a reference's id
+from `value.id`, so a target with its own `id` frontmatter field used to make a re-save persist
+that value and silently repoint the reference. If a target of yours legitimately carries one of
+those four names as content, read that entry directly to get it.
+
+And `includeBody: true` carries the target's body into every referencing entry's resolved value,
+so a long document embedded by many pages is carried once per page. Fine for a snippet; think
+twice for a full article, which probably wanted a link.
+
 **To adopt.** Nothing is required — `urlPath` simply appears. Add `includeBody: true` to
 reference fields whose target's prose you actually render or index.
 

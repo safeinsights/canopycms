@@ -270,7 +270,7 @@ export interface ListEntriesOptions<T = Record<string, unknown>> {
    * **Defaults to `false`, unlike `read()`, which defaults to `true`.** The asymmetry is
    * deliberate rather than an oversight. `data` is `T` and `extract` receives an untyped
    * `Record<string, unknown>`, so turning this on changes a reference from `'a1b2c3d4e5f6'`
-   * to `{ id, slug, collection, ...data }` with no compile error anywhere to catch it — an
+   * to `{ ...data, id, slug, collection, urlPath }` with no compile error anywhere to catch it — an
    * `/authors/${data.author}` template silently becomes `/authors/[object Object]`. Opting
    * in is a decision you make per call site, next to the code that reads the field. It also
    * keeps the common batch uses free: `collectStaticPaths` discards `data` outright, and
@@ -477,8 +477,13 @@ export async function listEntries<T = Record<string, unknown>>(
       // Compute urlPath (collapses an `index` entry to its parent collection path) through
       // the SHARED rule rather than a local copy of it. A resolved reference now carries a
       // `urlPath` too, and the whole point of that field is that it addresses the same entry
-      // this listing does -- two implementations of one rule is exactly the drift the adopter
-      // migration guide warns about. `content-listing.test.ts` pins the agreement.
+      // this listing does, so the two must not be free to drift apart.
+      //
+      // One deliberate copy of this rule remains: `content-tree.ts`'s `defaultBuildPath`,
+      // which is exported for adopters to extend and also handles the collection case
+      // `computeEntryUrl` does not model. It agrees today; folding it in is tracked in
+      // `.claude/future-tasks/default-build-path-url-rule-copy.md`.
+      // `content-listing.test.ts` pins the listing-vs-resolved-reference agreement.
       const urlPath = computeEntryUrl(entry.collectionPath, entry.slug, contentRootName)
 
       const raw = entry.data

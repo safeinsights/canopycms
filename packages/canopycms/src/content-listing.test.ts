@@ -8,6 +8,7 @@ import type { ContentId } from './paths/types'
 import { sortByOrder, parseTypedFilename, listEntries } from './content-listing'
 import { ContentIdIndex } from './content-id-index'
 import { ContentStore } from './content-store'
+import { referenceValueId } from './validation/entry-validator'
 import { flattenSchema } from './config/flatten'
 import { generateId } from './id'
 import type { EntryTypeConfig, FieldConfig, RootCollectionConfig } from './config'
@@ -1578,6 +1579,138 @@ describe('listEntries', () => {
       >
       expect(resolved.prose).toBe('THE SNIPPET PROSE')
       expect(resolved).not.toHaveProperty('body')
+    })
+
+    it('does not let a target shadow the reserved resolution keys', async () => {
+      // A target that models `id` or `urlPath` as real content used to win the spread. That
+      // was not merely untidy: the write boundary recovers a reference's id with
+      // `referenceValueId`, which reads `value.id`, so re-saving the referencing entry
+      // persisted the CONTENT id and silently repointed the reference at nothing.
+      const contentDir = path.join(tempDir, 'content')
+      await fs.mkdir(contentDir)
+
+      const { dir: snippetsDir } = await createCollection(contentDir, 'snippets')
+      const realId = await createEntry(snippetsDir, 'ctaSnippet', 'signup', 'json', {
+        title: 'Sign up today',
+        // Both plausible as genuine content: an external system's id, and a permalink.
+        id: 'EXTERNAL-123',
+        urlPath: '/custom/permalink',
+      })
+      const { dir: postsDir } = await createCollection(contentDir, 'posts')
+      await createEntry(postsDir, 'post', 'hello', 'json', { title: 'Hello', snippet: realId })
+
+      const schema: RootCollectionConfig = {
+        collections: [
+          {
+            name: 'snippets',
+            path: 'snippets',
+            entries: [
+              {
+                name: 'ctaSnippet',
+                format: 'json',
+                schema: [
+                  { name: 'title', type: 'string' },
+                  { name: 'id', type: 'string' },
+                  { name: 'urlPath', type: 'string' },
+                ],
+              },
+            ],
+          },
+          {
+            name: 'posts',
+            path: 'posts',
+            entries: [
+              {
+                name: 'post',
+                format: 'json',
+                schema: [
+                  { name: 'title', type: 'string' },
+                  { name: 'snippet', type: 'reference', entryTypes: ['ctaSnippet'] },
+                ],
+              },
+            ],
+          },
+        ],
+      }
+
+      const entries = await listEntries(tempDir, flattenSchema(schema, 'content'), 'content', {
+        resolveReferences: true,
+      })
+      const resolved = entries.find((e) => e.slug === 'hello')!.data.snippet as Record<
+        string,
+        unknown
+      >
+
+      expect(resolved.id).toBe(realId)
+      expect(resolved.urlPath).toBe('/snippets/signup')
+      // The round trip a save would perform must recover the real content ID.
+      expect(referenceValueId(resolved)).toBe(realId)
+      // Non-reserved content is untouched.
+      expect(resolved.title).toBe('Sign up today')
+    })
+
+    it('omits an empty target body rather than resolving it to an empty string', async () => {
+      // `readEntryData` merges a body only when truthy, so a listed md entry with no prose
+      // carries no body key. Resolution has to agree, or `'body' in data` answers differently
+      // for the same entry depending on which surface produced it.
+      const contentDir = path.join(tempDir, 'content')
+      await fs.mkdir(contentDir)
+
+      const { dir: snippetsDir } = await createCollection(contentDir, 'snippets')
+      const snippetId = await createEntry(
+        snippetsDir,
+        'ctaSnippet',
+        'signup',
+        'md',
+        { title: 'Sign up today' },
+        '',
+      )
+      const { dir: postsDir } = await createCollection(contentDir, 'posts')
+      await createEntry(postsDir, 'post', 'hello', 'md', { title: 'Hello', snippet: snippetId })
+
+      const schema: RootCollectionConfig = {
+        collections: [
+          {
+            name: 'snippets',
+            path: 'snippets',
+            entries: [
+              { name: 'ctaSnippet', format: 'md', schema: [{ name: 'title', type: 'string' }] },
+            ],
+          },
+          {
+            name: 'posts',
+            path: 'posts',
+            entries: [
+              {
+                name: 'post',
+                format: 'md',
+                schema: [
+                  { name: 'title', type: 'string' },
+                  {
+                    name: 'snippet',
+                    type: 'reference',
+                    entryTypes: ['ctaSnippet'],
+                    includeBody: true,
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      }
+
+      const entries = await listEntries(tempDir, flattenSchema(schema, 'content'), 'content', {
+        resolveReferences: true,
+      })
+
+      const listedSnippet = entries.find((e) => e.entryType === 'ctaSnippet')!
+      const resolved = entries.find((e) => e.slug === 'hello')!.data.snippet as Record<
+        string,
+        unknown
+      >
+
+      expect('body' in listedSnippet.data).toBe(false)
+      expect('body' in resolved).toBe(false)
     })
 
     it('gives each element of a list: true array its own copy', async () => {

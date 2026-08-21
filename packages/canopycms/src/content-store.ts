@@ -1804,9 +1804,13 @@ export class ContentStore {
    * JSON target is ~0.8x, i.e. cloning is marginally SLOWER than reparsing it. So the win is
    * large in the case this exists for and roughly a wash at the pathological end, never a
    * blow-up. Two things keep the bad end narrow: an md/mdx target resolves to its FRONTMATTER
-   * only (`read()` puts the body on `doc.body`, which is not spread in
-   * `resolveSingleReferenceOnce`), so body size is irrelevant no matter how long the document
-   * — only a genuinely huge JSON/YAML target reaches the wash. And in the deployment this
+   * only *unless the field sets `includeBody`* (`read()` puts the body on `doc.body`, which
+   * `resolveSingleReferenceOnce` spreads in only for an embedding field), so by default body
+   * size is irrelevant no matter how long the document and only a genuinely huge JSON/YAML
+   * target reaches the wash. **`includeBody: true` is the case that CAN reach it on markdown**:
+   * the body then sits inside the memoized object and is cloned once per referencing entry, so
+   * a long document embedded by many pages pays that repeatedly — the reason `includeBody`
+   * exists as an opt-in per field rather than as resolution's default. And in the deployment this
    * targets, content lives on EFS/NFS where the syscall the memo removes dominates parse and
    * clone alike, which the local-disk numbers above understate badly. Correctness is the
    * reason for the copy regardless; the numbers are here so nobody has to re-derive them
@@ -1907,19 +1911,39 @@ export class ContentStore {
       // how many URLs an index entry answers at (see the open
       // url-resolver-index-entry-extra-url task). Sourcing from the reverse resolver would
       // bake that disagreement into every resolved reference.
+      // The resolution metadata is applied AFTER the target's own data, so `id`, `slug`,
+      // `collection` and `urlPath` are RESERVED on a resolved reference and a target that
+      // happens to model one of them as a content field cannot shadow it.
+      //
+      // This ordering is load-bearing, not tidiness. The write boundary recovers a
+      // reference's id with `referenceValueId` (validation/entry-validator.ts), which reads
+      // `value.id` — so when a target declared its own `id` frontmatter field and won the
+      // spread, re-saving the referencing entry persisted THAT value as the reference,
+      // silently repointing it at nothing. `urlPath` joining the set made the old order
+      // indefensible for a second reason: `ResolvedReferenceMeta` types it as `string`
+      // unconditionally, and the runtime has to be able to honor that.
+      //
+      // The cost is that a target modelling e.g. a `urlPath` permalink field loses it here;
+      // read that entry directly if you need it. Documented in the README.
       const resolved: Record<string, unknown> = {
+        ...doc.data,
         id,
         slug: location.slug,
         collection: location.collection,
         urlPath: computeEntryUrl(location.collection, location.slug, this.contentRootName),
-        ...doc.data,
       }
 
       // The target's body, only for a field that asked to EMBED rather than link to it.
       // `read()` keeps an md/mdx body on `doc.body` rather than in `doc.data`, so the spread
       // above never carries it; `doc.bodyFieldName` is the target entry type's own
       // `findBodyFieldName`, so the key matches what a listing of that entry would use.
-      if (includeBody && 'body' in doc && typeof doc.body === 'string' && doc.bodyFieldName) {
+      // Truthiness, not `typeof === 'string'`, to match `readEntryData`'s own merge: a listed
+      // md entry with an empty body carries no body key, so resolving one to `body: ''` would
+      // reintroduce the listed-vs-resolved shape disagreement this change exists to end.
+      // `'body' in doc` stays FIRST: ContentDocument is a discriminated union and that check
+      // is what narrows it to the markdown variant, so `doc.body`/`doc.bodyFieldName` are
+      // reachable at all. It is a type guard, not a redundant runtime check.
+      if (includeBody && 'body' in doc && typeof doc.body === 'string' && doc.body) {
         resolved[doc.bodyFieldName] = doc.body
       }
 
