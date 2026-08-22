@@ -270,6 +270,171 @@ describe('serializeYaml', () => {
     expect(out).toContain('# about A')
   })
 
+  it('does not migrate a comment when a block is deleted and its successor edited in one save', () => {
+    // The regression this whole rule exists to prevent, via the case it assumed could not happen.
+    // Every Canopy block carries `template: <name>` -- a CATEGORY label, not an identity, so two
+    // `hero` blocks share it. Deleting the first hero shifts the second onto index 0; if
+    // `template` counts as identity evidence, the deleted block's comment migrates onto the
+    // survivor and "keep this verbatim" ends up over content nobody wrote it about.
+    // Three items, so the load-bearing comment sits on an ITEM rather than at the head of the
+    // list -- a comment before the first item belongs to the seq node itself and never travels
+    // (pinned separately below), which is not the case at issue here.
+    const raw = `blocks:
+  - template: hero
+    value:
+      headline: One
+  # LEGAL: keep this disclaimer verbatim
+  - template: hero
+    value:
+      headline: Disclaimer
+  - template: hero
+    value:
+      headline: Three
+`
+    // One save that both deletes the Disclaimer block and edits its successor. "Three" shifts
+    // from index 2 onto index 1, the slot the deleted block held.
+    const out = serializeYaml(
+      {
+        blocks: [
+          { template: 'hero', value: { headline: 'One' } },
+          { template: 'hero', value: { headline: 'Three v2' } },
+        ],
+      },
+      raw,
+    )
+    expect(out).toContain('headline: Three v2')
+    expect(out).not.toContain('headline: Disclaimer')
+    expect(out).not.toContain('LEGAL: keep this disclaimer verbatim')
+  })
+
+  it('does not migrate a comment across the inline `_type` block shape either', () => {
+    // `resolveBlockItem` accepts `{ _type, ...inline fields }` as well as `{ template, value }`,
+    // so the discriminator is exactly as misleading there -- and worse, it sits at the top level
+    // beside the real fields rather than one level up from them.
+    const raw = `blocks:
+  - _type: hero
+    headline: One
+  # LEGAL: keep this disclaimer verbatim
+  - _type: hero
+    headline: Disclaimer
+  - _type: hero
+    headline: Three
+`
+    const out = serializeYaml(
+      {
+        blocks: [
+          { _type: 'hero', headline: 'One' },
+          { _type: 'hero', headline: 'Three v2' },
+        ],
+      },
+      raw,
+    )
+    expect(out).toContain('headline: Three v2')
+    expect(out).not.toContain('headline: Disclaimer')
+    expect(out).not.toContain('LEGAL: keep this disclaimer verbatim')
+  })
+
+  it('still keeps a block comment when the block is edited and one nested field survives', () => {
+    // The other half of the trade: excluding the discriminator must not reduce to "blocks never
+    // keep comments". A block's real fields live one level down under `value`, so the evidence
+    // search has to reach them -- comparing `value` whole would find nothing whenever any field
+    // in it changed, which is every edit.
+    const raw = `blocks:
+  - template: hero
+    value:
+      headline: One
+      body: Shared copy
+  # FLAG: do not delete this block
+  - template: hero
+    value:
+      headline: Two
+      body: Keep me
+`
+    const out = serializeYaml(
+      {
+        blocks: [
+          { template: 'hero', value: { headline: 'One', body: 'Shared copy' } },
+          { template: 'hero', value: { headline: 'Two v2', body: 'Keep me' } },
+        ],
+      },
+      raw,
+    )
+    expect(out).toContain('# FLAG: do not delete this block')
+    expect(out).toContain('headline: Two v2')
+    expect(out.indexOf('FLAG')).toBeLessThan(out.indexOf('headline: Two v2'))
+  })
+
+  it('drops a block comment when every field of the block changed (widened residual)', () => {
+    // The cost of excluding the discriminator, pinned so it stays a decision. Before, `template`
+    // alone kept this comment attached; now a block with nothing surviving is indistinguishable
+    // from a replacement, so the comment is dropped. Per this module's stated priority that is
+    // the correct direction -- a lost comment reads as a deletion in review, a moved one does
+    // not read as anything at all.
+    const raw = `blocks:
+  - template: hero
+    value:
+      headline: One
+  # FLAG: do not delete this block
+  - template: hero
+    value:
+      headline: Two
+      body: Old copy
+`
+    const out = serializeYaml(
+      {
+        blocks: [
+          { template: 'hero', value: { headline: 'One' } },
+          { template: 'hero', value: { headline: 'Two v2', body: 'New copy' } },
+        ],
+      },
+      raw,
+    )
+    expect(out).toContain('headline: Two v2')
+    expect(out).not.toContain('FLAG: do not delete this block')
+  })
+
+  it('does not harvest identity evidence element-wise from a list field', () => {
+    // Lists are compared whole, never by index: a list has no item identity, so pairing its
+    // elements positionally to prove the PARENT is the same item would be the same guess this
+    // module refuses one level up. Here the two records share only a list element, which must
+    // not be enough.
+    const raw = `items:
+  - name: a
+  # FLAG: do not delete
+  - name: b
+    tags:
+      - shared
+      - only-b
+`
+    const out = serializeYaml(
+      {
+        items: [{ name: 'a' }, { name: 'c', tags: ['shared', 'only-c'] }],
+      },
+      raw,
+    )
+    expect(out).toContain('name: c')
+    expect(out).not.toContain('FLAG: do not delete')
+  })
+
+  it('does not fail a save when the payload is cyclic or the file self-references', () => {
+    // "A save must never fail because of it" is this module's rule for unkeyable input, and the
+    // evidence walk is a second place that could break it. A cyclic payload is reachable from
+    // server-side callers; a self-referential anchor is reachable from a hand-edited file.
+    const cyclic: Record<string, unknown> = { name: 'b' }
+    cyclic.self = cyclic
+    expect(() =>
+      serializeYaml({ items: [{ name: 'a' }, cyclic] }, 'items:\n  - name: a\n  - name: b\n'),
+    ).not.toThrow()
+
+    const anchored = `items:
+  - name: a
+  - &b
+    name: b
+    self: *b
+`
+    expect(() => serializeYaml({ items: [{ name: 'a' }, { name: 'b2' }] }, anchored)).not.toThrow()
+  })
+
   it('keeps a non-leading item comment with its item when another is prepended', () => {
     const raw = `items:
   # about A

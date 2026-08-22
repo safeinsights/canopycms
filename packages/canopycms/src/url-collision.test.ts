@@ -141,6 +141,26 @@ describe('url-collision', () => {
         await findUrlPathClaimant({ collectionDir: guides, slug: 'Index', contentRoot: content }),
       ).toBeNull() // no parent entry named "guides" exists
     })
+
+    // A collection literally NAMED "index" collapses onto ITS OWN path (`<parent>/index`), not
+    // onto `<parent>` -- see `computeEntryUrl`/`isIndexSlug`. The lookup used to reuse the
+    // collection's own name ("index") as the slug to search for in the parent, which happened to
+    // match the PARENT's own index/landing entry (also slug "index", but collapsing onto
+    // `<parent>` itself -- a different URL). That is a false collision: nothing actually contests
+    // `<parent>/index`.
+    it('does not false-positive when the collection itself is named "index"', async () => {
+      const docs = await collection(content, 'docs')
+      await entry(docs, 'doc', 'index') // docs' own landing page -> "/docs"
+      const docsIndex = await collection(docs, 'index') // child collection literally named "index"
+
+      expect(
+        await findUrlPathClaimant({
+          collectionDir: docsIndex,
+          slug: 'index',
+          contentRoot: content,
+        }),
+      ).toBeNull()
+    })
   })
 
   // Drift tripwire for CONTENT_EXTENSIONS, which is a literal in url-collision.ts because that

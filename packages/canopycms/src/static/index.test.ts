@@ -8,6 +8,8 @@ import {
   assertBuildEntriesValid,
   findDuplicateUrlPaths,
   assertNoDuplicateUrlPaths,
+  findUnroutableSlugs,
+  assertRoutableSlugs,
   type StaticPathEntry,
 } from './index'
 import type { ListEntriesItem, ListEntriesOptions } from '../content-listing'
@@ -171,6 +173,41 @@ describe('collectStaticPaths', () => {
       await expect(
         collectStaticPaths(fakeCtx(contested), { filter: (e) => e.slug !== 'index' }),
       ).rejects.toThrow('claimed by more than one entry')
+    })
+
+    // A dotted slug is a valid on-disk filename (parseTypedFilename anchors the split on type and
+    // ID, so a slug may itself contain dots) but fails parseSlug, which readByUrlPath runs on
+    // every candidate slug it tries. The entry lists, builds, and gets advertised, then 404s on
+    // every visit — the exact silent-page-loss shape this guard exists to make loud.
+    it('throws on a listed entry whose slug cannot round-trip through a URL (e.g. contains a dot)', async () => {
+      vi.stubEnv('CANOPY_BUILD_MODE', 'true')
+      const ctx = fakeCtx([
+        {
+          urlPath: '/posts/getting.started.guide',
+          slug: 'getting.started.guide' as never,
+          entryType: 'post',
+          entryPath: 'content/posts/getting.started.guide' as never,
+        },
+      ])
+
+      await expect(collectStaticPaths(ctx)).rejects.toThrow(
+        'whose slug cannot resolve back through a URL',
+      )
+    })
+
+    it('does not throw on a dotted slug when CANOPY_BUILD_MODE is unset', async () => {
+      vi.stubEnv('CANOPY_BUILD_MODE', '')
+      const ctx = fakeCtx([
+        {
+          urlPath: '/posts/getting.started.guide',
+          slug: 'getting.started.guide' as never,
+          entryType: 'post',
+          entryPath: 'content/posts/getting.started.guide' as never,
+        },
+      ])
+
+      // `next dev` and the admin UI both enumerate mid-edit trees; only the production build fails.
+      expect(await collectStaticPaths(ctx)).toHaveLength(1)
     })
 
     it('warns about stale keys during a build without failing it', async () => {
@@ -861,5 +898,98 @@ describe('assertNoDuplicateUrlPaths', () => {
     expect(message).toContain('/docs/guides')
     expect(message).toContain('content/docs/guides/index')
     expect(message).not.toContain('content/docs/overview')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// findUnroutableSlugs / assertRoutableSlugs
+// ---------------------------------------------------------------------------
+
+describe('findUnroutableSlugs', () => {
+  const item = (slug: string, urlPath: string, entryPath: string) =>
+    ({ slug, urlPath, entryPath }) as unknown as {
+      slug: never
+      urlPath: string
+      entryPath: never
+    }
+
+  it('returns nothing when every slug is routable', () => {
+    expect(
+      findUnroutableSlugs([
+        item('hello-world', '/posts/hello-world', 'content/posts/hello-world'),
+        item('index', '/docs', 'content/docs/index'),
+      ]),
+    ).toEqual([])
+  })
+
+  it('reports a slug containing a dot — valid on disk, rejected by parseSlug', () => {
+    // The filename grammar (utils/typed-filename.ts) anchors its split on type and ID, so a slug
+    // may itself contain dots. parseSlug does not allow them, and readByUrlPath runs every
+    // candidate through parseSlug before trying a read.
+    const result = findUnroutableSlugs([
+      item(
+        'getting.started.guide',
+        '/posts/getting.started.guide',
+        'content/posts/getting.started.guide',
+      ),
+    ])
+
+    expect(result).toHaveLength(1)
+    expect(result[0]).toMatchObject({
+      entryPath: 'content/posts/getting.started.guide',
+      urlPath: '/posts/getting.started.guide',
+      slug: 'getting.started.guide',
+    })
+    expect(result[0].error).toMatch(/lowercase letters, numbers, and hyphens/)
+  })
+
+  it('does not flag the index slug itself', () => {
+    // "index" is a perfectly valid parseSlug slug (all lowercase letters) — it just also happens
+    // to be the collapse marker computeEntryUrl treats specially. Nothing about routability rejects it.
+    expect(findUnroutableSlugs([item('index', '/', 'content/index')])).toEqual([])
+  })
+})
+
+describe('assertRoutableSlugs', () => {
+  const item = (slug: string, urlPath: string, entryPath: string) =>
+    ({ slug, urlPath, entryPath }) as unknown as {
+      slug: never
+      urlPath: string
+      entryPath: never
+    }
+
+  it('does not throw when every slug is routable', () => {
+    expect(() =>
+      assertRoutableSlugs(
+        [item('hello-world', '/posts/hello-world', 'content/posts/hello-world')],
+        'test phase',
+      ),
+    ).not.toThrow()
+  })
+
+  it('throws one error naming every unroutable entry', () => {
+    let thrown: unknown
+    try {
+      assertRoutableSlugs(
+        [
+          item(
+            'getting.started.guide',
+            '/posts/getting.started.guide',
+            'content/posts/getting.started.guide',
+          ),
+          item('hello-world', '/posts/hello-world', 'content/posts/hello-world'),
+        ],
+        'test phase',
+      )
+    } catch (err) {
+      thrown = err
+    }
+
+    expect(thrown).toBeInstanceOf(Error)
+    const message = (thrown as Error).message
+    expect(message).toContain('CanopyCMS static build:')
+    expect(message).toContain('test phase')
+    expect(message).toContain('content/posts/getting.started.guide')
+    expect(message).not.toContain('content/posts/hello-world')
   })
 })

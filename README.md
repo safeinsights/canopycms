@@ -1725,6 +1725,12 @@ const duplicates = findDuplicateUrlPaths(await canopy.listEntries())
 
 Scan `listEntries()` rather than `collectRoutableEntries()` — the latter reduces each entry to what static generation needs and drops `entryPath`, which is what names the offenders.
 
+### Every slug must round-trip through a URL
+
+Content file names follow `{type}.{slug}.{id}.{ext}`, and the `slug` segment is allowed to contain dots -- the type and ID anchor the parse, not dots, so a file named e.g. `post.getting.started.guide.<id>.md` parses fine and lists with `slug: 'getting.started.guide'`. But `readByUrlPath()` only accepts slugs matching lowercase letters, numbers and hyphens (starting with a letter or number), because that is the rule it runs every URL-resolution candidate through before attempting a read. A slug outside that shape builds, gets a `generateStaticParams` entry and a sitemap `<loc>` -- and then 404s on every actual visit, silently breaking the round-trip guarantee above.
+
+A **production build** fails loudly on this instead, listing every offending entry by path. The editor cannot create such a slug -- it validates with the same rule -- so this only reaches a production build through hand-authored files, scripted content, or a repo being retrofitted onto CanopyCMS. Rename the file's slug segment to letters, numbers and hyphens only, then rebuild.
+
 ### Static Export with generateStaticParams
 
 For static-export sites you need a `generateStaticParams` that enumerates every content URL directly from your CanopyCMS content, so you do not have to hand-roll the path-segment mapping. This is exposed as a **bound helper** on the result of `createNextCanopyContext` — wire it once in your `lib/canopy.ts` and call it from each page. Because it is bound to the build context internally, your page modules never import the admin `getCanopyForBuild`.
