@@ -46,6 +46,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
+import { builtinModules } from 'node:module'
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const packagesDir = path.join(repoRoot, 'packages')
@@ -165,6 +166,65 @@ function loadPackageJson(dir) {
 // with the word cannot silently reclassify a published subpath as unpublished.
 // The `test` checks elsewhere are exact comparisons; this matches that rigor.
 const isDevOnly = (mode) => /^devOnly(:|$)/.test(mode)
+const isSkip = (mode) => /^skip:\s*\S/.test(mode)
+
+// Every mode string must be exactly 'test', or start with 'skip:'/'devOnly'
+// using the same anchored forms `isSkip`/`isDevOnly` check. Anything else
+// (a typo like 'tests' or 'Test', a 'skip' with no reason) is silently treated
+// as neither 'test' NOR `devOnly` by the runtime probe and declaration-resolution
+// builders below (both filter with `mode !== 'test'` / `isDevOnly(mode)`), which
+// downgrades it to skip-with-no-record instead of failing loudly. Reject it here
+// instead, before anything gets built.
+function validateModeStrings() {
+  const problems = []
+  for (const { dir, subpaths } of PACKAGES) {
+    for (const [subpath, mode] of Object.entries(subpaths)) {
+      if (mode === 'test' || isSkip(mode) || isDevOnly(mode)) continue
+      problems.push(
+        `${dir}: subpath "${subpath}" has mode ${JSON.stringify(mode)}, which is none of ` +
+          "'test', 'skip: <reason>', or 'devOnly'/'devOnly: <reason>' — a typo here silently " +
+          'drops the subpath from every check below instead of failing loudly',
+      )
+    }
+  }
+  if (problems.length > 0) {
+    throw new Error(
+      `check-esm-imports.mjs's PACKAGES list has invalid mode string(s):\n` +
+        problems.map((p) => `  - ${p}`).join('\n'),
+    )
+  }
+}
+
+// PACKAGES above is a hand-maintained list of directories; nothing else in this
+// file reads `packages/` itself. A sixth published package that forgets a
+// PACKAGES entry (as well as the add-js-extensions build step) would silently
+// ship with zero coverage from this guard — the original defect's exact shape,
+// one level up. Catch it here: any `packages/*/package.json` that is not
+// `private: true` and is not already in PACKAGES is a problem, checked BEFORE
+// the coverage loop below so an unknown directory fails loudly rather than
+// just being ignored by every subsequent pass.
+function checkPackageListIsComplete() {
+  const knownDirs = new Set(PACKAGES.map(({ dir }) => dir))
+  const problems = []
+  for (const entry of readdirSync(packagesDir, { withFileTypes: true })) {
+    if (!entry.isDirectory() || knownDirs.has(entry.name)) continue
+    const pkgJsonPath = path.join(packagesDir, entry.name, 'package.json')
+    if (!existsSync(pkgJsonPath)) continue // not a package directory at all
+    const pkg = JSON.parse(readFileSync(pkgJsonPath, 'utf8'))
+    if (pkg.private === true) continue // intentionally unpublished, out of scope
+    problems.push(
+      `packages/${entry.name} (package "${pkg.name}") is not private and is missing from ` +
+        'PACKAGES in scripts/check-esm-imports.mjs — add an entry (subpaths + their ' +
+        "'test'/'skip'/'devOnly' modes) so this guard covers its entry points",
+    )
+  }
+  if (problems.length > 0) {
+    throw new Error(
+      `check-esm-imports.mjs's PACKAGES list is missing published package(s):\n` +
+        problems.map((p) => `  - ${p}`).join('\n'),
+    )
+  }
+}
 
 // Fail fast (before spending time building the sandbox) if a package's real
 // `exports` map has grown a subpath this file doesn't know about, or if a
@@ -177,6 +237,9 @@ const isDevOnly = (mode) => /^devOnly(:|$)/.test(mode)
 // an entry point whose output the build never emits and nothing in-repo notices,
 // because workspace resolution never reads publishConfig at all.
 function checkCoverage() {
+  checkPackageListIsComplete()
+  validateModeStrings()
+
   const problems = []
   for (const { dir, subpaths } of PACKAGES) {
     const pkg = loadPackageJson(dir)
@@ -252,6 +315,193 @@ function checkCoverage() {
 function toPublishedPackageJson(pkg) {
   const { publishConfig, ...rest } = pkg
   return { ...rest, ...(publishConfig ?? {}) }
+}
+
+// ---------------------------------------------------------------------------
+// Static undeclared-dependency scan.
+//
+// The runtime probe and the declaration-resolution pass below both run inside
+// buildSandbox()'s sandbox, which symlinks in EVERY already-installed
+// dependency from each package's own node_modules AND the workspace root —
+// devDependencies included — and separately drops all 5 PACKAGES in as real,
+// dist-backed content regardless of whether the package under test actually
+// declares a dependency on any of the other 4. That makes the sandbox
+// structurally unable to see a bare specifier that resolves ONLY because the
+// workspace happens to hoist it somewhere, or because it names one of the
+// other 4 published packages (always present, whether declared or not) — e.g.
+// canopycms-cdk importing `canopycms/worker/cms-worker` with zero declared
+// dependency on `canopycms` at all. That exact gap shipped: `pnpm check:esm`
+// reported OK for canopycms-cdk before its package.json declared `canopycms`
+// as a peerDependency.
+//
+// This pass catches that class directly and without a sandbox: it reads each
+// package's OWN dist/ output, collects every bare (non-relative, non-builtin)
+// import specifier, and asserts the specifier's package name is declared in
+// that SAME package's dependencies/peerDependencies/optionalDependencies —
+// never devDependencies, since resolving there is exactly the leak this
+// exists to catch. Cheap and deterministic: no sandbox, no subprocess, just a
+// directory walk and a regex, and it runs before buildSandbox() so a hit fails
+// fast.
+const BUILTIN_MODULE_NAMES = new Set(builtinModules)
+
+function isBuiltinSpecifier(specifier) {
+  if (specifier.startsWith('node:')) return true
+  return BUILTIN_MODULE_NAMES.has(specifier)
+}
+
+// Scoped packages (`@scope/name`) contribute their first two path segments;
+// everything else contributes its first segment. Works the same whether the
+// specifier is the bare package root or a deep subpath (`next/server`, ->
+// `next`; `@aws-sdk/client-s3/dist-cjs/x` -> `@aws-sdk/client-s3`).
+function packageNameFromSpecifier(specifier) {
+  const parts = specifier.split('/')
+  return specifier.startsWith('@') ? parts.slice(0, 2).join('/') : parts[0]
+}
+
+const SCANNABLE_FILE_RE = /\.(?:m?js|cjs|d\.ts|d\.mts|d\.cts)$/
+
+function walkFiles(dir) {
+  const results = []
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const fullPath = path.join(dir, entry.name)
+    if (entry.isDirectory()) {
+      results.push(...walkFiles(fullPath))
+    } else if (entry.isFile() && SCANNABLE_FILE_RE.test(entry.name)) {
+      results.push(fullPath)
+    }
+  }
+  return results
+}
+
+// Three matchers for the only places a real import can name a module in
+// compiled JS or a .d.ts:
+//
+//   * `import ... from '...'` / `export ... from '...'`, both anchored to the
+//     START of a line (allowing leading whitespace). tsc never wraps these
+//     across lines in this codebase's output (verified: no import/export
+//     block here ever puts `from '...'` on a line by itself), and the anchor
+//     is load-bearing — the unanchored first version of this regex matched
+//     the word "from" followed by a quote ANYWHERE, which is common in this
+//     codebase's own error-message and JSDoc prose (e.g. a thrown
+//     `` `Cannot derive a valid slug from "${name}"` ``) and produced dozens
+//     of bogus "undeclared dependency" hits with garbage specifier text.
+//   * a bare `import '...'` side-effect import, same line anchor.
+//   * `require('...')` / `import('...')` calls, which — unlike the above —
+//     are deliberately NOT line-anchored, since a dynamic import is a normal
+//     expression that can appear anywhere (`await import('sharp')` inside a
+//     function body, `import('./x.js').SomeType` inside a .d.ts type query).
+//     Verified this does not reintroduce the prose problem: every
+//     require(/import( in this codebase's dist is a genuine call, none of it
+//     JSDoc or string prose that happens to contain that exact substring.
+//
+// All three keep the matched string within one line (`[^'"\n]`) rather than
+// `[\s\S]`, so a missing closing quote on the same line can never let the
+// match run on and swallow an unrelated quote several lines later.
+const IMPORT_EXPORT_FROM_RE = /^[ \t]*(?:import|export)\b[^\n]*?\bfrom\s+(['"])([^'"\n]*)\1/gm
+const BARE_IMPORT_RE = /^[ \t]*import\s+(['"])([^'"\n]*)\1\s*;?\s*$/gm
+const CALL_SPECIFIER_RE = /\b(?:require|import)\s*\(\s*(['"])([^'"\n]*)\1\s*\)/g
+
+function extractBareSpecifiers(fileContent) {
+  const specifiers = new Set()
+  for (const re of [IMPORT_EXPORT_FROM_RE, BARE_IMPORT_RE, CALL_SPECIFIER_RE]) {
+    re.lastIndex = 0
+    let match
+    while ((match = re.exec(fileContent))) {
+      const specifier = match[2]
+      if (specifier.startsWith('.') || specifier.startsWith('/')) continue // relative/absolute
+      specifiers.add(specifier)
+    }
+  }
+  return specifiers
+}
+
+function checkDeclaredDependencies() {
+  const problems = []
+  for (const { dir } of PACKAGES) {
+    const pkg = toPublishedPackageJson(loadPackageJson(dir))
+    const declared = new Set([
+      ...Object.keys(pkg.dependencies ?? {}),
+      ...Object.keys(pkg.peerDependencies ?? {}),
+      ...Object.keys(pkg.optionalDependencies ?? {}),
+    ])
+    const distDir = path.join(packagesDir, dir, 'dist')
+    if (!existsSync(distDir)) {
+      throw new Error(`${pkg.name}: dist/ does not exist — run \`pnpm build\` first`)
+    }
+
+    const offendingFiles = new Map() // undeclared package name -> Set of relative file paths
+    for (const file of walkFiles(distDir)) {
+      const content = readFileSync(file, 'utf8')
+      for (const specifier of extractBareSpecifiers(content)) {
+        if (isBuiltinSpecifier(specifier)) continue
+        const specifierPkgName = packageNameFromSpecifier(specifier)
+        if (specifierPkgName === pkg.name) continue // self-reference
+        if (declared.has(specifierPkgName)) continue
+        const rel = path.relative(distDir, file)
+        if (!offendingFiles.has(specifierPkgName)) offendingFiles.set(specifierPkgName, new Set())
+        offendingFiles.get(specifierPkgName).add(rel)
+      }
+    }
+
+    for (const [specifierPkgName, files] of offendingFiles) {
+      const shown = [...files].slice(0, 3)
+      const rest = files.size - shown.length
+      const fileList = shown.join(', ') + (rest > 0 ? `, and ${rest} more` : '')
+      problems.push(
+        `${pkg.name}: dist imports "${specifierPkgName}" (e.g. in ${fileList}) but ` +
+          'package.json declares it in neither dependencies, peerDependencies, nor ' +
+          `optionalDependencies — a consumer installing only ${pkg.name}'s declared ` +
+          'dependencies gets ERR_MODULE_NOT_FOUND',
+      )
+    }
+  }
+  if (problems.length > 0) {
+    throw new Error(
+      'check-esm-imports.mjs found undeclared runtime dependencies (static scan of dist/ ' +
+        'bare specifiers against declared dependencies):\n' +
+        problems.map((p) => `  - ${p}`).join('\n'),
+    )
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Stray test-artifact scan.
+//
+// A dist/ directory should contain only what the package intends to publish.
+// A workspace-internal test helper, mock, or `.stories.tsx` that leaks past a
+// tsconfig.build.json `exclude` list still ends up inside the tarball (`files`
+// only lists directories, not file patterns) even though `exports` makes it
+// unreachable by any consumer — dead weight at best, and at worst (a helper
+// that imports a devDependency like `vitest` at module scope) exactly the kind
+// of thing `checkDeclaredDependencies` above exists to catch, except here it
+// is a build-config gap rather than a missing package.json entry. Cheap to
+// assert directly: no compiled output should carry a test/story/mock
+// filename pattern, full stop.
+const STRAY_TEST_ARTIFACT_RE =
+  /(?:^|[\\/])(?:__tests?__|.*\.test|.*\.stories)\.(?:m?js|cjs|d\.ts|d\.mts|d\.cts)$|(?:^|[\\/])__tests?__[\\/]/
+
+function checkNoStrayTestArtifacts() {
+  const problems = []
+  for (const { dir } of PACKAGES) {
+    const pkg = loadPackageJson(dir)
+    const distDir = path.join(packagesDir, dir, 'dist')
+    if (!existsSync(distDir)) {
+      throw new Error(`${pkg.name}: dist/ does not exist — run \`pnpm build\` first`)
+    }
+    for (const file of walkFiles(distDir)) {
+      const rel = path.relative(distDir, file)
+      if (STRAY_TEST_ARTIFACT_RE.test(rel)) {
+        problems.push(`${pkg.name}: dist/${rel} looks like a test/story artifact`)
+      }
+    }
+  }
+  if (problems.length > 0) {
+    throw new Error(
+      'check-esm-imports.mjs found test/story artifacts published in dist/ (should be excluded ' +
+        "in the package's tsconfig.build.json):\n" +
+        problems.map((p) => `  - ${p}`).join('\n'),
+    )
+  }
 }
 
 // Symlink every entry of `sourceNodeModules` into `sandboxNodeModules`,
@@ -494,6 +744,13 @@ function checkDeclarationResolution(sandbox) {
 
 function main() {
   checkCoverage()
+
+  // Both read dist/ directly — no sandbox needed — so they run first and fail
+  // fast, before paying for buildSandbox() below.
+  checkDeclaredDependencies()
+  console.log('OK    every dist/ bare specifier is declared in its own package.json.\n')
+  checkNoStrayTestArtifacts()
+  console.log('OK    no test/story artifacts found in any dist/.\n')
 
   const sandbox = buildSandbox()
   const { body, count } = buildProbeScript()

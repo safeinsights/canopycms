@@ -3141,7 +3141,7 @@ Scaffolds a complete, deployable CDK app for the recommended AWS architecture (L
 Install the CDK dependencies it needs — the CLI, and the generated workflow, both warn if any are missing:
 
 ```bash
-npm install --save-dev canopycms-cdk aws-cdk-lib constructs tsx aws-cdk
+npm install --save-dev canopycms canopycms-cdk aws-cdk-lib constructs tsx aws-cdk
 ```
 
 Like `init`, this command never overwrites files you already have; pass `--force` to regenerate them.
