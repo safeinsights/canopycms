@@ -155,6 +155,63 @@ describe('defineSeoFieldGroup', () => {
   })
 })
 
+describe('URL shaping — off-origin regression guards', () => {
+  // A WHATWG pathname can itself start with '//': '/\\evil.com//a' parses to host evil.com with
+  // pathname '//a'. Emitting that dropped siteUrl entirely and produced a protocol-relative URL
+  // pointing at a host named 'a' — an off-site canonical/og:url from a plain content field, and a
+  // non-absolute <loc> that invalidates the whole sitemap.
+  it('never drops siteUrl for a backslash-spelled off-origin value whose pathname starts with //', () => {
+    expect(resolveSeoUrl('/\\evil.com//a', { siteUrl: 'https://example.com' })).toBe(
+      'https://example.com/a',
+    )
+    expect(
+      resolveSeoUrl('/\\evil.com//a.png', { siteUrl: 'https://example.com', trailingSlash: true }),
+    ).toBe('https://example.com/a.png')
+    expect(resolveSeoUrl('\\\\evil.com//a', { siteUrl: 'https://example.com' })).toBe(
+      'https://example.com/a',
+    )
+  })
+
+  // The gap that let a scheme pass-through leak in from the shared join and go unnoticed: nothing
+  // pinned what resolveSeoUrl does with a colon-first value. It must ROOT it onto the origin, not
+  // hand it back verbatim -- a non-absolute sitemap <loc> invalidates the entire sitemap, and a
+  // canonical/og:url that silently drops the origin points off-site.
+  it('roots a scheme-bearing value onto siteUrl instead of returning it verbatim', () => {
+    const site = { siteUrl: 'https://example.com' }
+    expect(resolveSeoUrl('mailto:a@b.c', site)).toBe('https://example.com/mailto:a@b.c')
+    expect(resolveSeoUrl('javascript:alert(1)', site)).toBe(
+      'https://example.com/javascript:alert(1)',
+    )
+    expect(resolveSeoUrl('data:text/html,x', site)).toBe('https://example.com/data:text/html,x')
+    expect(resolveSeoUrl('about:blank', site)).toBe('https://example.com/about:blank')
+    expect(resolveSeoUrl('example.com:8080/page', site)).toBe(
+      'https://example.com/example.com:8080/page',
+    )
+  })
+
+  // trailingSlash is a routing flag; it must not decide whether a value is treated as an off-site
+  // pointer or a path segment. While the pass-through leaked in, these two disagreed.
+  it('gives the same class of answer with and without trailingSlash', () => {
+    const site = { siteUrl: 'https://example.com' }
+    expect(resolveSeoUrl('mailto:a@b.c', site)).toBe(
+      resolveSeoUrl('mailto:a@b.c', { ...site, trailingSlash: true }),
+    )
+  })
+
+  it('emits a same-origin path, not a protocol-relative one, when no siteUrl is given', () => {
+    expect(resolveSeoUrl('/\\evil.com//a')).toBe('/a')
+  })
+
+  it('still passes a genuinely off-site pointer through untouched', () => {
+    expect(resolveSeoUrl('https://other.org/page', { siteUrl: 'https://example.com' })).toBe(
+      'https://other.org/page',
+    )
+    expect(resolveSeoUrl('//cdn.example.com/a.png', { siteUrl: 'https://example.com' })).toBe(
+      '//cdn.example.com/a.png',
+    )
+  })
+})
+
 describe('URL shaping', () => {
   it('recognizes scheme-qualified and protocol-relative URLs as absolute', () => {
     expect(isAbsoluteUrl('https://other.org/page')).toBe(true)

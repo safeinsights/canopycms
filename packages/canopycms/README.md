@@ -35,6 +35,27 @@ CanopyCMS supports content as
 - Markdown (`.md`) and MDX (`.mdx`) with frontmatter
 - Blocks and nested objects via schema definitions
 
+CanopyCMS stores and edits markdown but deliberately ships **no renderer** — how your site
+presents markdown is a site decision, and two sites reasonably make it differently.
+
+One trap is worth knowing up front, because it fails confusingly: **`react-markdown` does not
+work in a React Server Component.** Rendering its default export from a server component
+crashes a static prerender with `Element type is invalid … got: undefined`, while the same
+code works once it is in the client bundle. Put `'use client'` on your own wrapper component
+to fix it — at the cost of shipping that subtree to the browser. For static prose, a
+build-time renderer (`remark`/`rehype`, or MDX compiled at build time) keeps the component on
+the server instead.
+
+**Comments survive editing.** YAML entries and md/mdx frontmatter can carry hand-written
+comments, and a CMS save keeps them — a value the editor didn't touch keeps its comment, its
+quoting, and its block style. JSON has no comment syntax and is unaffected.
+
+**Content keys your schema no longer defines are reported, not silently dropped.** Rename or
+remove a field and its old key lingers in every content file that had it; CanopyCMS surfaces
+that on save (a "Saved with warnings" notification) and again during a production build (a
+warning naming the entries and key paths). Neither report rejects the save or fails the build,
+and nothing is stripped — clean up the key or add it back to the schema at your own pace.
+
 ## How it works (behind the scenes)
 
 When a user makes an edit in CanopyCMS, they do so on a branch they choose (or are defaulted into). That branch represents an underlying git branch that they don't see. Behind the scenes, CanopyCMS manages a set of git clones, each tuned to a different branch supporting the branches your users see in the editing interface. When a user saves a change, that change is written to disk. A user can change multiple files on a branch, e.g. to work on changes across files that work together. When they click a button to publish their branch, the changes are committed in git, and a pull request is made. Reviewers can comment on the submission within the editor and users can make changes and resubmit. Reviewers finally accept the change on GitHub by merging the pull request. CanopyCMS then marks the change as complete and archives the branch. Sync jobs refresh clones when upstream changes happen and surface conflicts without dropping a branch's changes. Authorization information for users and groups is stored on disk and managed by CanopyCMS.
@@ -134,6 +155,21 @@ export type PostContent = TypeFromEntrySchema<typeof postSchema>
 ```
 
 If no field has `isBody: true`, the markdown content defaults to a field named `body`. The `isBody` flag is validated at schema registry load time: at most one per schema, and only on `markdown` or `mdx` fields.
+
+**Select fields:**
+
+A `select` field infers the **literal union of its own `options`**, not a bare `string` — this is a breaking change if your code was widening a select value into a plain `string`:
+
+```ts
+const postSchema = defineEntrySchema([
+  { name: 'status', type: 'select', options: ['draft', 'published'] },
+])
+
+export type PostContent = TypeFromEntrySchema<typeof postSchema>
+// { status: 'draft' | 'published' }
+```
+
+Options can also be `{ label, value }` objects, in which case the union is built from `value`, not `label`. A field falls back to a bare `string` only when there is nothing literal to infer — no `options`, an empty `options: []`, or an options array typed as the runtime `SelectOption[]` shape rather than inferred by `defineEntrySchema`.
 
 _TODO_ show how schemas can be defined across multiple files. Show all the configuration options for schemas.
 
@@ -238,19 +274,28 @@ export default async function DocPage({ params }: { params: { slug?: string[] } 
 }
 ```
 
-For known, fixed paths you can still use `read` directly:
+For a known, fixed path you can still use `read` directly. It addresses an entry by its
+**logical path**, not by URL, so it suits content that has no URL of its own — an entry read for
+embedding, or a singleton pulled into a layout:
 
 ```ts
-// app/page.tsx (server component)
-import { getCanopy } from './lib/canopy'
-import type { HomeContent } from './schemas'
-
-export default async function Page() {
-  const canopy = await getCanopy()
-  const { data } = await canopy.read<HomeContent>({ entryPath: 'content/home' })
-  return <HomeView data={data} />
-}
+// A snippet is addressed by reference from inside a block; it has no page of its own.
+const canopy = await getCanopy()
+const { data } = await canopy.read<SnippetContent>({
+  entryPath: 'content/snippets',
+  slug: 'try-canopy',
+})
 ```
+
+**For a page you actually serve at a URL, prefer `readByUrlPath` above**, and model the entry so
+its natural `urlPath` is that URL. A home page is the case worth spelling out: model it as a root
+`index` entry (`content/home.index.<id>.json`) and it answers at `/`, so the route reads
+`readByUrlPath('/')` and the sitemap advertises it with no special-casing. Reading it instead by
+entry-type path (`{ entryPath: 'content/home' }`, with no `slug` — it defaults to the entry-type
+name) works, but leaves the entry's real `urlPath` as
+`/home` while the route serves `/` — two answers to "where does this live", which every
+URL-derived surface then has to be told about one at a time. The example app in this repo used to
+do that and no longer does.
 
 Both methods return `{ data, path }`. `read` throws if the content is missing; `readByUrlPath` returns `null` instead. Pass a `branch` option when you want branch-specific data (e.g., for preview); otherwise it defaults to your configured base branch. Both enforce the same branch/path access rules as the API handlers.
 
@@ -259,19 +304,32 @@ Both methods return `{ data, path }`. `read` throws if the content is missing; `
 Canopy uses an **index entry convention** for collection landing pages, similar to `index.html` in a web server:
 
 - An entry with slug `index` (filename `{type}.index.{id}.{ext}`) acts as the landing page for its collection
-- The URL for an index entry is the **collection's URL**, not `{collection}/index`. For example, an entry at `content/guides/index` has URL `/guides`, not `/guides/index`
+- The URL for an index entry is the **collection's URL**, not `{collection}/index`. For example, an entry at `content/guides/index` has URL `/guides`, not `/guides/index` — and `readByUrlPath('/guides/index')` returns `null` (as do `/guides/Index` and `/guides/INDEX`), since those are not second URLs for it
 - `readByUrlPath('/')` resolves to the content root's index entry (if one exists)
 - Not all collections need an index entry — some are just organizational groupings
 
 This convention is applied consistently across the API:
 
-| API                | Index handling                                                                                                                           |
-| ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| `listEntries`      | Each item includes a `urlPath` field with index collapsing applied. `pathSegments` retains the raw structure for consumers that need it. |
-| `readByUrlPath`    | Automatically tries `slug: 'index'` as a fallback when the direct entry doesn't match. Works for all paths including `/`.                |
-| `buildContentTree` | Default `buildPath` collapses index entries so tree node paths match the URLs consumers would use.                                       |
+| API                | Index handling                                                                                                                                                                                                                                                             |
+| ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `listEntries`      | Each item includes a `urlPath` field with index collapsing applied. `pathSegments` retains the raw structure for consumers that need it.                                                                                                                                   |
+| `readByUrlPath`    | Automatically tries `slug: 'index'` as a fallback when the direct entry doesn't match. Works for all paths including `/`. A path whose last segment is an index slug (any case) skips the direct-entry attempt, so an index entry is reachable only at its collapsed path. |
+| `buildContentTree` | Default `buildPath` collapses index entries so tree node paths match the URLs consumers would use.                                                                                                                                                                         |
 
-The round-trip property holds: for every item from `listEntries`, `readByUrlPath(item.urlPath)` resolves to the same entry.
+The round-trip property holds in both directions: for every item from `listEntries`, `readByUrlPath(item.urlPath)` resolves to the same entry, and for an index entry no `.../index` spelling does. (Ordinary entries keep case-insensitive matching on the final slug segment.)
+
+One known exception, still open: an entry-type name is also resolvable as a URL segment, so an index entry additionally answers at `/<collection>/<entryTypeName>` -- e.g. a root index entry at both `/` and `/home`. Nothing advertises that URL (it is absent from `listEntries` and from static-param generation), so it only matters if you serve a catch-all route. See the `readbyurlpath-entry-type-candidate-phantom-url` task in the CanopyCMS repo.
+
+Two different entries can still compute the same `urlPath` — an entry whose slug matches a sibling collection that also has an `index` entry, or two slugs differing only by case. Only one of them can be served, so a production build fails and names them. `findDuplicateUrlPaths` (exported from `canopycms/server`) runs the same scan on demand.
+
+**Resolving references in listings:** `listEntries` and `buildContentTree` read content straight off disk, so by default a `reference` field comes back as a bare id string (or `null`) -- including inside shared/referenced blocks. Pass `resolveReferences: true` and every reference resolves to the referenced entry's data, at any nesting depth, exactly as `read`/`readByUrlPath` return it:
+
+```ts
+const entries = await canopy.listEntries({ resolveReferences: true })
+// entries[0].data.snippet -> { id, slug, collection, urlPath, title, ... }
+```
+
+Every resolved reference carries a `urlPath` -- the same one `listEntries` publishes for that entry -- so you can build a link without a second lookup. A resolved md/mdx target's body is opt-in **per field**: set `includeBody: true` on the `reference` field definition to pull its prose in too, rather than just its frontmatter. Leave `resolveReferences` off for anything that only needs paths and timestamps, such as a sitemap or `generateStaticParams`.
 
 **Collections without index entries:** `readByUrlPath` returns `null` for URLs that map to collections with no index entry. This is by design — Canopy resolves content, not routes. For collection-level pages, use the content tree:
 
@@ -512,6 +570,82 @@ export default defineCanopyConfig({
 - Editor build: ships the editor UI + CanopyCMS API routes; handles branch create/switch/save/submit and asset uploads.
 - Modes map to environments: dev for local development, prod on EFS. More deployment guidance will be documented as the branch-rooted APIs and submission flow land.
 
-## Assets
+## Assets and media
 
-- Local filesystem adapter (`LocalAssetStore`) is available now. S3 and LFS adapters are planned; the API handlers accept a provided adapter so you can swap storage without changing the editor.
+Uploaded images and PDFs go into a content-addressed asset store, and images are served
+through an on-demand transform layer. Both the **local** adapter (for development) and the
+**S3** adapter ship today.
+
+```typescript
+// canopycms.config.ts — production
+media: { adapter: 's3', bucket: 'my-site-assets', region: 'us-east-1' }
+
+// …or omit `media` entirely for local development
+// (uploads land in .canopy-dev/assets/ via the built-in local adapter)
+```
+
+- **Upload** — editors add images from the Media Library drawer, an `image` field, or the MDX
+  "Insert Image" dialog. Bytes go straight from the browser to S3 via a presigned POST and
+  never pass through your API route. On completion the server sniffs the real file type,
+  strips EXIF (including GPS), sanitizes SVGs, and hashes the bytes.
+- **Content addressing** — every asset is keyed by a hash of its contents, so uploads are
+  immutable and deduplicated. A draft branch references its images immediately; publishing
+  needs no separate asset step.
+- **Delivery** — images are served from `/assets/t/{directives}/…` URLs that resize, crop and
+  convert to WebP on first request, then cache immutably. Build responsive markup with the
+  exported helpers, which are client-safe:
+
+  ```typescript
+  import { assetUrl, assetSrcSet } from 'canopycms'
+
+  <img
+    src={assetUrl(image, { width: 960 })}
+    srcSet={assetSrcSet(image, [480, 960, 1600])}
+    sizes="(max-width: 700px) 100vw, 960px"
+    alt={image.alt}
+    width={image.width}
+    height={image.height}
+  />
+  ```
+
+  SVGs and PDFs are served statically, with no transform.
+
+- **Where `/assets` is mounted** — the URLs above are root-relative, because that is what gets
+  stored in content and content moves between branches and environments. If your renderer sees
+  the asset space somewhere other than the root, pass `baseUrl` and it is applied at render time:
+
+  ```typescript
+  <img src={assetUrl(image, { width: 960, baseUrl: ASSET_BASE })} />
+  ```
+
+  | Your deployment                                           | `baseUrl`                                         |
+  | --------------------------------------------------------- | ------------------------------------------------- |
+  | Site at the root (the usual case)                         | omit it                                           |
+  | Site under a Next.js `basePath`, assets served by Next    | your `basePath` — e.g. `'/preview-123'`           |
+  | Assets on CloudFront via `canopycms-cdk`'s `AssetSupport` | omit it — see below                               |
+  | Assets on a separate host or CDN origin                   | that origin — e.g. `'https://assets.example.com'` |
+
+  **A `basePath` does not always move the asset space.** Next only auto-prefixes its own
+  `Image`/`Link`/`Script`, never a raw string URL — so under `basePath` a plain
+  `<img src={assetUrl(image)}>` 404s and needs the prefix. But that is only true when Next is
+  what serves `/assets` (the local adapter, `next dev`, or S3 without a distribution), because
+  the rewrite Next auto-prefixes is `withCanopy`'s. On a CloudFront deployment the asset
+  behaviors are anchored at the distribution root and a `basePath` never moves them, so the
+  correct value there is no `baseUrl` at all. Never derive it from `next.config`'s `basePath`
+  unconditionally.
+
+An `image` field holds a structured value — `{ src, alt, width, height, crop? }` — so alt text
+is enforced and intrinsic dimensions prevent layout shift. Declare an `aspect` (e.g. `'16:9'`)
+to enable the interactive crop step, or `altOptional: true` for decorative images.
+
+> **The asset store is site-wide, not branch-scoped.** Assets are content-addressed and shared,
+> which is what lets a branch merge avoid moving files — but it means branch and path ACLs do
+> **not** apply to them. Any authenticated editor can list and fetch every asset in the site,
+> including images uploaded on branches they cannot otherwise access. Treat "uploaded to
+> CanopyCMS" as visible to your whole editorial team.
+
+For deployment, the `canopycms-cdk` package ships an `AssetSupport` construct that provisions
+the bucket, the transform Lambda and the CloudFront behaviors. Fuller documentation — every
+config option, the transform directive syntax, and the AWS wiring — is in the
+[project README](https://github.com/safeinsights/canopycms#media-configuration) and
+[docs/deploying-to-aws.md](https://github.com/safeinsights/canopycms/blob/main/docs/deploying-to-aws.md).

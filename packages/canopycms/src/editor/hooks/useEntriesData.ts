@@ -41,7 +41,6 @@ export interface EntriesData {
 
 export interface FetchEntriesParams {
   resolvePreviewSrc: (entry: Partial<EditorEntry>) => string | undefined
-  contentRoot?: string
 }
 
 /**
@@ -120,9 +119,7 @@ export async function fetchEntriesAndSchema(
       entries: allEntries,
       pagination: { hasMore: false, limit: ENTRIES_PAGE_LIMIT },
     },
-    branchName: branch,
     resolvePreviewSrc: (entry) => params.resolvePreviewSrc(entry) ?? '',
-    contentRoot: params.contentRoot || 'content',
     flatSchema: hydratedFlatSchema,
   })
 

@@ -240,12 +240,13 @@ describe('SettingsWorkspaceManager cross-process init lock', () => {
     const settingsRoot = path.join(tmpRoot, 'settings')
     const target = settingsInitLockTarget(settingsRoot)
 
-    // proper-lockfile keys its in-process registry (refresh timer + release fn)
-    // by the TARGET path passed to lock(). The provisioning lock targets the
-    // content-branches root and the bare remote's parent (both plain workspace
-    // dirs); the content-write lock targets `<branchRoot>/.canopy-meta`. This
-    // target must equal none of them, or two live locks in one process clobber
-    // each other's bookkeeping.
+    // Every lock now anchors proper-lockfile on its own MARKER path, so the
+    // in-process registry key is the on-disk lock identity and two live locks
+    // can no longer clobber each other's bookkeeping. This assertion is now
+    // about WHERE the marker lives: not inside the settings root (git clone
+    // refuses a non-empty destination) and not in the directory
+    // `ensureLocalSimulatedRemote` puts `.remote-init.lock` in, which settings
+    // init calls into while holding this lock.
     expect(target).not.toBe(path.dirname(settingsRoot)) // remote-init / provisioning target
     expect(target).not.toBe(settingsRoot)
     expect(target).not.toBe(path.join(settingsRoot, '.canopy-meta')) // content-write target

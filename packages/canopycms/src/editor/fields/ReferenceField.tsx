@@ -6,6 +6,7 @@ import { Alert, Button, MultiSelect, Select, Stack, Text, Loader } from '@mantin
 import { IconAlertCircle } from '@tabler/icons-react'
 
 import { createApiClient } from '../../api/client'
+import { useOptionalApiClient } from '../context'
 import { getErrorMessage } from '../../utils/error'
 
 export interface ReferenceOption {
@@ -40,6 +41,11 @@ export const ReferenceField: React.FC<ReferenceFieldProps> = ({
   multiple,
   dataCanopyField,
 }) => {
+  // Context-provided client (configured with the deployment's basePath) when rendered inside an
+  // ApiClientProvider -- which it always is in the real Editor tree. `null` outside one (e.g.
+  // FormRenderer.stories.tsx has no provider), in which case the fetch effect below falls back
+  // to a default-configured client.
+  const contextApiClient = useOptionalApiClient()
   const hasCollections = !!collections && collections.length > 0
   const hasEntryTypes = !!entryTypes && entryTypes.length > 0
   const needsFetch = !staticOptions && (hasCollections || hasEntryTypes)
@@ -90,7 +96,7 @@ export const ReferenceField: React.FC<ReferenceFieldProps> = ({
   useEffect(() => {
     if (!needsFetch) return
     let active = true
-    const apiClient = createApiClient()
+    const apiClient = contextApiClient ?? createApiClient()
 
     const params: Record<string, string> = { branch, displayField }
     if (collections && collections.length > 0) params.collections = collections.join(',')
@@ -124,7 +130,7 @@ export const ReferenceField: React.FC<ReferenceFieldProps> = ({
       active = false
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- collections/entryTypes/displayField/branch are captured via fetchKey; re-listing them here would defeat the point of keying on the derived string
-  }, [needsFetch, fetchKey, retryCount])
+  }, [needsFetch, fetchKey, retryCount, contextApiClient])
 
   const handleRetry = () => {
     setLoading(true)

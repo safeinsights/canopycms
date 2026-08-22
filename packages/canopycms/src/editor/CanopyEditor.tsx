@@ -52,7 +52,7 @@ export const CanopyEditor: React.FC<CanopyEditorProps> = ({
 
   return (
     <SWRProvider>
-      <ApiClientProvider>
+      <ApiClientProvider basePath={config.basePath}>
         <Editor
           entries={entries}
           title={resolvedTitle}
@@ -69,6 +69,7 @@ export const CanopyEditor: React.FC<CanopyEditorProps> = ({
           entryLinkUrl={config.entryLinkUrl}
           previewBaseByCollection={previewBase}
           assetBaseUrl={config.assetBaseUrl}
+          basePath={config.basePath}
           themeOptions={resolvedTheme}
           AccountComponent={config.editor?.AccountComponent}
           onAccountClick={config.editor?.onAccountClick}

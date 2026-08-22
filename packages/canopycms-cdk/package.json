@@ -31,7 +31,7 @@
   },
   "scripts": {
     "prepack": "pnpm run build && pnpm run build:worker && pnpm run build:lambda",
-    "build": "tsc",
+    "build": "rm -rf dist && tsc && node ../../scripts/add-js-extensions.mjs dist",
     "build:worker": "esbuild worker/index.ts --bundle --platform=node --target=node20 --format=esm --outfile=worker/dist/index.js --banner:js=\"import { createRequire } from 'module'; const require = createRequire(import.meta.url);\"",
     "build:lambda": "node lambda/asset-transform/build.mjs",
     "build:test-fixtures": "pnpm run build:worker && node lambda/asset-transform/build.mjs --skip-native",
@@ -43,6 +43,7 @@
     "node": ">=18"
   },
   "peerDependencies": {
+    "canopycms": "workspace:*",
     "aws-cdk-lib": "^2.260.0",
     "constructs": "^10.0.0"
   },

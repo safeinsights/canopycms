@@ -46,7 +46,6 @@ describe('useEntryManager', () => {
     collectionName: 'posts',
     slug: 'test',
     type: 'entry',
-    apiPath: '/api/canopycms/main/content/posts/test',
     format: 'mdx',
     schema: [],
     contentId: unsafeAsContentId('test123456789'),
@@ -235,6 +234,35 @@ describe('useEntryManager', () => {
         color: 'yellow',
       }),
     )
+  })
+
+  it('reuses a stable notification id across repeat saves so a permanent warning replaces in place instead of stacking', async () => {
+    const { notifications } = await import('@mantine/notifications')
+    mockClient.content.write.mockResolvedValue({
+      ok: true,
+      status: 200,
+      data: {
+        title: 'Saved',
+        validationWarnings: [{ level: 'warning', message: 'Unknown key: legacyField' }],
+      } as any,
+    })
+
+    const { result } = renderHook(() => useEntryManager(defaultOptions), { wrapper })
+
+    // Same permanent condition (e.g. an unknown schema key) fires on every
+    // save. Without a stable `id`, Mantine appends a new toast each time --
+    // five saves would leave five identical sticky notifications on screen.
+    await result.current.saveEntry(mockEntry, { title: 'Saved' })
+    await result.current.saveEntry(mockEntry, { title: 'Saved' })
+    await result.current.saveEntry(mockEntry, { title: 'Saved' })
+
+    expect(notifications.show).toHaveBeenCalledTimes(3)
+    const ids = (notifications.show as ReturnType<typeof vi.fn>).mock.calls.map(
+      (call) => call[0].id,
+    )
+    expect(ids[0]).toBeTruthy()
+    expect(ids[0]).toBe(ids[1])
+    expect(ids[1]).toBe(ids[2])
   })
 
   it('handles save entry error', async () => {

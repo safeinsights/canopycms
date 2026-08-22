@@ -32,6 +32,28 @@ export interface TraversalContext {
 export type FieldVisitor<T> = (context: TraversalContext) => T[]
 
 /**
+ * Context for a CONTAINER — one data record together with the field list that governs it.
+ *
+ * The field visitor is driven by the schema, so it can only ever see keys the schema already
+ * knows about. A container visitor sees the record itself, which is what a check on the data's
+ * OWN keys needs (`findUnknownKeys` in entry-validator.ts).
+ */
+export interface ContainerContext {
+  /** The schema fields governing this record. Inline groups are NOT flattened. */
+  fields: readonly FieldConfig[]
+  /** The data record those fields govern. */
+  data: Record<string, unknown>
+  /** Path to the record itself ('' at the top level, e.g. `blocks[0]` inside a block). */
+  path: string
+}
+
+/**
+ * Visitor called once per container, before its fields are walked.
+ * Return an empty array to collect nothing.
+ */
+export type ContainerVisitor<T> = (context: ContainerContext) => T[]
+
+/**
  * A block item resolved to its template fields and the data record that
  * holds the nested field values.
  */
@@ -94,7 +116,12 @@ export function resolveBlockItem(
  * @param data - The data object to traverse
  * @param visitor - Function called for each field, returns items to collect
  * @param pathPrefix - Current path prefix for nested fields
- * @returns Array of all items returned by the visitor
+ * @param onContainer - Optional, called once per container (this record plus the fields
+ *   governing it) before its fields are walked: the top level, each object value, each
+ *   object-list item, and each block item's resolved data. Inline groups do NOT fire it — a
+ *   group is transparent to the data and shares its parent's record, so its children are already
+ *   covered by the parent's container call.
+ * @returns Array of all items returned by the visitors
  *
  * @example
  * ```ts
@@ -112,8 +139,31 @@ export function traverseFields<T>(
   data: Record<string, unknown>,
   visitor: FieldVisitor<T>,
   pathPrefix = '',
+  onContainer?: ContainerVisitor<T>,
+): T[] {
+  return walkFields(fields, data, visitor, pathPrefix, onContainer, true)
+}
+
+/**
+ * The traversal itself. `fireContainer` is what keeps an inline group from being mistaken for a
+ * container: a group re-enters the walk with the SAME data record, so firing the hook there would
+ * report the record twice AND hand the visitor only the group's own field list — under which
+ * every sibling of the group reads as an unknown key. The hook still propagates INTO the group,
+ * so a nested object or block below it is reported normally.
+ */
+function walkFields<T>(
+  fields: readonly FieldConfig[],
+  data: Record<string, unknown>,
+  visitor: FieldVisitor<T>,
+  pathPrefix: string,
+  onContainer: ContainerVisitor<T> | undefined,
+  fireContainer: boolean,
 ): T[] {
   const results: T[] = []
+
+  if (onContainer && fireContainer) {
+    results.push(...onContainer({ fields, data, path: pathPrefix }))
+  }
 
   for (const field of fields) {
     const fieldPath = pathPrefix ? `${pathPrefix}.${field.name}` : field.name
@@ -123,7 +173,14 @@ export function traverseFields<T>(
     // data level, not under field.name, so skip the null/undefined guard for them.
     if (field.type === 'group') {
       results.push(
-        ...traverseFields((field as InlineGroupFieldConfig).fields, data, visitor, pathPrefix),
+        ...walkFields(
+          (field as InlineGroupFieldConfig).fields,
+          data,
+          visitor,
+          pathPrefix,
+          onContainer,
+          false,
+        ),
       )
       continue
     }
@@ -143,22 +200,26 @@ export function traverseFields<T>(
           value.forEach((item, index) => {
             if (typeof item === 'object' && item !== null) {
               results.push(
-                ...traverseFields(
+                ...walkFields(
                   objectField.fields!,
                   item as Record<string, unknown>,
                   visitor,
                   `${fieldPath}[${index}]`,
+                  onContainer,
+                  true,
                 ),
               )
             }
           })
         } else if (typeof value === 'object' && value !== null) {
           results.push(
-            ...traverseFields(
+            ...walkFields(
               objectField.fields,
               value as Record<string, unknown>,
               visitor,
               fieldPath,
+              onContainer,
+              true,
             ),
           )
         }
@@ -171,11 +232,13 @@ export function traverseFields<T>(
             const resolved = resolveBlockItem(blockField, item as Record<string, unknown>)
             if (resolved) {
               results.push(
-                ...traverseFields(
+                ...walkFields(
                   resolved.fields,
                   resolved.data,
                   visitor,
                   `${fieldPath}[${index}]`,
+                  onContainer,
+                  true,
                 ),
               )
             }

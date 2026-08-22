@@ -12,8 +12,21 @@
  * decided now (rather than switching every raster URL over once transforms
  * ship) so content written by this PR stays valid without a migration.
  *
- * Always root-relative - `media.publicBaseUrl` is editor-display-only (PR 6's
- * concern) and must never be baked into stored/served content URLs.
+ * Always root-relative, and this is the value that gets STORED in content.
+ * Content moves between branches and environments, so a stored src must not
+ * name an origin or a deployment prefix - it names only the asset's position
+ * in the `/assets` URL space.
+ *
+ * Prefixing is a separate, render-time concern: `assetUrl()`'s `baseUrl` option
+ * (assets/asset-url.ts) puts the mount point in front, and is the ONLY place a
+ * prefix is applied. Do not confuse the two:
+ *
+ * - `assetSrc()` (here)        -> stored, always root-relative, no prefix ever.
+ * - `assetUrl(ref, {baseUrl})` -> rendered, prefix applied, never written back.
+ *
+ * `media.publicBaseUrl` is one source of that render-time prefix (the editor's,
+ * for when the editor is served from a different origin) - it is config for
+ * display, not a property of the asset.
  */
 
 import { ASSET_PREFIXES } from './asset-prefixes'

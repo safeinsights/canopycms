@@ -122,13 +122,13 @@ const readPersistedDrafts = (branch: string): Record<string, unknown> => {
 
 describe('Editor integration', () => {
   it('loads an entry and persists changes via the content API', async () => {
+    const entryApiPath = '/api/canopycms/main/content/content/posts/hello'
     const entry: EditorEntry = {
       path: unsafeAsLogicalPath('content/posts/hello'),
       contentId: unsafeAsContentId('def456ABC123'), // 12-char content ID (must match API response)
       label: 'Hello',
       status: 'entry',
       schema: [{ name: 'title', type: 'string' }],
-      apiPath: '/api/canopycms/main/content/content/posts/hello',
       collectionPath: unsafeAsLogicalPath('content/posts'),
       collectionName: 'posts',
       slug: 'hello',
@@ -227,10 +227,10 @@ describe('Editor integration', () => {
           }),
         )
       }
-      if (url === entry.apiPath && (!init || !init.method || init.method === 'GET')) {
+      if (url === entryApiPath && (!init || !init.method || init.method === 'GET')) {
         return Promise.resolve(okJson({ ok: true, status: 200, data: { title: 'Loaded title' } }))
       }
-      if (url.startsWith(entry.apiPath) && init?.method === 'PUT') {
+      if (url.startsWith(entryApiPath) && init?.method === 'PUT') {
         const body = JSON.parse(init.body as string)
         return Promise.resolve(okJson({ ok: true, status: 200, data: body.data }))
       }
@@ -279,7 +279,7 @@ describe('Editor integration', () => {
       expect(
         fetchMock.mock.calls.some(
           ([url, init]) =>
-            (url as string).startsWith(entry.apiPath) &&
+            (url as string).startsWith(entryApiPath) &&
             (init as RequestInit | undefined)?.method === 'PUT',
         ),
       ).toBe(true),
@@ -287,7 +287,7 @@ describe('Editor integration', () => {
 
     const saveCall = fetchMock.mock.calls.find(
       ([url, init]) =>
-        (url as string).startsWith(entry.apiPath) &&
+        (url as string).startsWith(entryApiPath) &&
         (init as RequestInit | undefined)?.method === 'PUT',
     )
     expect(saveCall).toBeTruthy()
@@ -308,13 +308,13 @@ describe('Editor integration', () => {
     // dirty) -- reporting phantom "N files modified", prompting on branch
     // switch, and, worst, letting a stale snapshot be saved over a
     // colleague's intervening work under a freshly captured OCC token.
+    const entryApiPath = '/api/canopycms/main/content/content/posts/hello'
     const entry: EditorEntry = {
       path: unsafeAsLogicalPath('content/posts/hello'),
       contentId: unsafeAsContentId('def456ABC123'),
       label: 'Hello',
       status: 'entry',
       schema: [{ name: 'title', type: 'string' }],
-      apiPath: '/api/canopycms/main/content/content/posts/hello',
       collectionPath: unsafeAsLogicalPath('content/posts'),
       collectionName: 'posts',
       slug: 'hello',
@@ -407,7 +407,7 @@ describe('Editor integration', () => {
           }),
         )
       }
-      if (url === entry.apiPath && (!init || !init.method || init.method === 'GET')) {
+      if (url === entryApiPath && (!init || !init.method || init.method === 'GET')) {
         return Promise.resolve(
           okJson({ ok: true, status: 200, data: { title: 'Loaded title', version: 100 } }),
         )
@@ -465,7 +465,6 @@ describe('Editor integration', () => {
       label: 'Hello',
       status: 'entry',
       schema: [{ name: 'title', type: 'string' }],
-      apiPath: mainRead,
       collectionPath: unsafeAsLogicalPath('content/posts'),
       collectionName: 'posts',
       slug: 'hello',
@@ -680,25 +679,25 @@ describe('Editor integration', () => {
     // wrap with mockConsole() so that expected error doesn't fail CI's
     // no-stderr-output check.
     const consoleSpy = mockConsole()
+    const entryAApiPath = '/api/canopycms/main/content/content/posts/hello'
     const entryA: EditorEntry = {
       path: unsafeAsLogicalPath('content/posts/hello'),
       contentId: unsafeAsContentId('def456ABC123'),
       label: 'Hello',
       status: 'entry',
       schema: [{ name: 'title', type: 'string' }],
-      apiPath: '/api/canopycms/main/content/content/posts/hello',
       collectionPath: unsafeAsLogicalPath('content/posts'),
       collectionName: 'posts',
       slug: 'hello',
       format: 'json',
       type: 'entry',
     }
+    const entryBApiPath = '/api/canopycms/main/content/content/posts/world'
     const entryB: EditorEntry = {
       ...entryA,
       path: unsafeAsLogicalPath('content/posts/world'),
       contentId: unsafeAsContentId('ghi789DEF456'),
       label: 'World',
-      apiPath: '/api/canopycms/main/content/content/posts/world',
       slug: 'world',
     }
 
@@ -800,7 +799,7 @@ describe('Editor integration', () => {
         )
       }
       if (
-        (url === entryA.apiPath || url === entryB.apiPath) &&
+        (url === entryAApiPath || url === entryBApiPath) &&
         (!init || !init.method || init.method === 'GET')
       ) {
         return pending(url)
@@ -822,7 +821,7 @@ describe('Editor integration', () => {
     )
 
     // Entry A's load starts (parked, not yet resolved).
-    await waitFor(() => expect(resolvers[entryA.apiPath]).toBeDefined())
+    await waitFor(() => expect(resolvers[entryAApiPath]).toBeDefined())
 
     // Navigate to entry B via the File menu -> All Files -> entry click,
     // while A is still in flight.
@@ -833,16 +832,16 @@ describe('Editor integration', () => {
     fireEvent.click(screen.getByTestId('entry-nav-item-world'))
 
     // Entry B's load starts too (also parked) -- both now in flight.
-    await waitFor(() => expect(resolvers[entryB.apiPath]).toBeDefined())
+    await waitFor(() => expect(resolvers[entryBApiPath]).toBeDefined())
 
     // Settle A -- the ABANDONED entry -- with a failure, after B has already
     // started loading.
-    resolvers[entryA.apiPath](okJson({ ok: false, status: 500 }, 500))
+    resolvers[entryAApiPath](okJson({ ok: false, status: 500 }, 500))
 
     // Give the rejected loadEntry() promise a tick to propagate to the
     // effect's .catch() handler.
     await waitFor(() => {
-      expect(fetchMock.mock.calls.some(([u]) => u === entryB.apiPath)).toBe(true)
+      expect(fetchMock.mock.calls.some(([u]) => u === entryBApiPath)).toBe(true)
     })
 
     const { notifications } = await import('@mantine/notifications')
@@ -853,7 +852,7 @@ describe('Editor integration', () => {
     )
 
     // Now settle B successfully.
-    resolvers[entryB.apiPath](okJson({ ok: true, status: 200, data: { title: 'World title' } }))
+    resolvers[entryBApiPath](okJson({ ok: true, status: 200, data: { title: 'World title' } }))
 
     // B's field renders with its own loaded value -- the load pipeline
     // recovered correctly and wasn't left in a broken state by A's stale
@@ -879,13 +878,13 @@ describe('Editor integration', () => {
     // undefined, which made dirty-tracking meaningless (a draft with no
     // loaded value is conservatively treated as dirty everywhere) and meant
     // the entry's real server content was never fetched this session.
+    const entryApiPath = '/api/canopycms/main/content/content/posts/hello'
     const entry: EditorEntry = {
       path: unsafeAsLogicalPath('content/posts/hello'),
       contentId: unsafeAsContentId('def456ABC123'),
       label: 'Hello',
       status: 'entry',
       schema: [{ name: 'title', type: 'string' }],
-      apiPath: '/api/canopycms/main/content/content/posts/hello',
       collectionPath: unsafeAsLogicalPath('content/posts'),
       collectionName: 'posts',
       slug: 'hello',
@@ -991,10 +990,10 @@ describe('Editor integration', () => {
           }),
         )
       }
-      if (url === entry.apiPath && (!init || !init.method || init.method === 'GET')) {
+      if (url === entryApiPath && (!init || !init.method || init.method === 'GET')) {
         return Promise.resolve(okJson({ ok: true, status: 200, data: { title: 'Loaded title' } }))
       }
-      if (url.startsWith(entry.apiPath) && init?.method === 'PUT') {
+      if (url.startsWith(entryApiPath) && init?.method === 'PUT') {
         const body = JSON.parse(init.body as string)
         return Promise.resolve(okJson({ ok: true, status: 200, data: body.data }))
       }
@@ -1019,7 +1018,7 @@ describe('Editor integration', () => {
         expect(
           fetchMock.mock.calls.some(
             ([url, init]) =>
-              url === entry.apiPath &&
+              url === entryApiPath &&
               (!init || !(init as RequestInit).method || (init as RequestInit).method === 'GET'),
           ),
         ).toBe(true)
@@ -1046,13 +1045,13 @@ describe('Editor integration', () => {
   })
 
   it('shows the read-only banner, keeps Save disabled despite unsaved changes, and hides Submit on the protected base branch', async () => {
+    const entryApiPath = '/api/canopycms/main/content/content/posts/hello'
     const entry: EditorEntry = {
       path: unsafeAsLogicalPath('content/posts/hello'),
       contentId: unsafeAsContentId('def456ABC123'),
       label: 'Hello',
       status: 'entry',
       schema: [{ name: 'title', type: 'string' }],
-      apiPath: '/api/canopycms/main/content/content/posts/hello',
       collectionPath: unsafeAsLogicalPath('content/posts'),
       collectionName: 'posts',
       slug: 'hello',
@@ -1155,7 +1154,7 @@ describe('Editor integration', () => {
           }),
         )
       }
-      if (url === entry.apiPath && (!init || !init.method || init.method === 'GET')) {
+      if (url === entryApiPath && (!init || !init.method || init.method === 'GET')) {
         return Promise.resolve(okJson({ ok: true, status: 200, data: { title: 'Loaded title' } }))
       }
       return Promise.resolve(okJson({ ok: true, status: 200, data: {} }))
@@ -1302,13 +1301,13 @@ describe('Editor integration', () => {
     // exists for. Before Change 1, `currentBranch?.writeBlocked ?? false`
     // would render this branch UNLOCKED and let Save send a request the
     // server has no basis to accept.
+    const entryApiPath = '/api/canopycms/main/content/content/posts/hello'
     const entry: EditorEntry = {
       path: unsafeAsLogicalPath('content/posts/hello'),
       contentId: unsafeAsContentId('def456ABC123'),
       label: 'Hello',
       status: 'entry',
       schema: [{ name: 'title', type: 'string' }],
-      apiPath: '/api/canopycms/main/content/content/posts/hello',
       collectionPath: unsafeAsLogicalPath('content/posts'),
       collectionName: 'posts',
       slug: 'hello',
@@ -1390,7 +1389,7 @@ describe('Editor integration', () => {
           }),
         )
       }
-      if (url === entry.apiPath && (!init || !init.method || init.method === 'GET')) {
+      if (url === entryApiPath && (!init || !init.method || init.method === 'GET')) {
         return Promise.resolve(okJson({ ok: true, status: 200, data: { title: 'Loaded title' } }))
       }
       return Promise.resolve(okJson({ ok: true, status: 200, data: {} }))

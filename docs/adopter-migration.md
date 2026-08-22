@@ -37,7 +37,605 @@ supersedes an earlier one's workaround entirely.
 
 ## Unreleased
 
-_Entries land here as changes merge; they move to a release section when published._
+_Entries land here as changes merge._
+
+**Promoting them is a manual step, and it is easy to miss.** `main` auto-publishes a patch
+on every push, so an entry written here is usually released within hours — while the heading
+still says "Unreleased". When you next touch this file, check `npm view canopycms version`
+and move anything already published down into `## Released` under its version heading,
+demoting each entry from `###` to `####`. An adopter reading "Unreleased" about a feature
+they already have installed cannot tell whether they are missing something.
+
+### `basePath` deployments are supported, and `assetUrl`'s `baseUrl` is now safe for path prefixes (#24)
+
+**What changed.** Three things, all pointing at the same failure — deploying under a Next.js
+`basePath` (the usual shape for per-branch preview builds), where Next auto-prefixes only its own
+`Image`/`Link`/`Script` and leaves every raw string URL resolving at the origin root.
+
+1. `assetUrl()` / `assetSrcSet()`'s existing `baseUrl` option is now a documented contract that
+   accepts a **same-origin path prefix** (`'/preview-123'`), not just an absolute origin. It also
+   got two bug fixes it needed before that was safe to recommend: an already-absolute `src` is now
+   returned untouched instead of being concatenated onto the prefix (which produced
+   `/preview-123/https://cdn.example.com/x.png`), and a prefix without a leading slash is
+   normalized instead of producing a _document-relative_ URL that resolved differently on every
+   page. There is deliberately **no** new `basePath` parameter — `baseUrl` is the one prefix
+   concept for asset URLs.
+2. A new top-level `basePath` config key makes the **editor** work under a `basePath`. Its API
+   route base and preview pane were hardcoded to the origin root, so the editor previously loaded
+   no API response at all on such a deployment.
+3. `media.publicBaseUrl`'s documentation was wrong about what it is for (it described an editor
+   origin while showing an asset-host value). It is the editor's own answer to "where is `/assets`
+   mounted", and is editor-display-only.
+
+**To adopt.** Nothing is required if you deploy at the origin root — all of this is additive and
+the default behaviour is unchanged.
+
+If you deploy under a `basePath`, state it in your Canopy config as well as `next.config`
+(CanopyCMS cannot read `next.config`):
+
+```typescript
+// canopycms.config.ts
+basePath: process.env.NEXT_PUBLIC_BASE_PATH,
+```
+
+Then decide whether your **asset** space actually moved, which is not the same question:
+
+- Next serves `/assets` (local adapter, `next dev`, S3 with no distribution) → it moved. Pass your
+  prefix: `assetUrl(image, { width: 960, baseUrl: BASE_PATH })`.
+- Assets are on CloudFront via `canopycms-cdk`'s `AssetSupport` → it did **not** move. Those
+  behaviors are anchored at the distribution root. Pass no `baseUrl`.
+
+Deriving `baseUrl` from `next.config`'s `basePath` unconditionally breaks the second case. See the
+mount table under "Where `/assets` is mounted" in the project README.
+
+Two traps worth checking for explicitly:
+
+- **Do not pass a deployment `basePath` to `contentStaticParams({ basePath })`.** That option is
+  the route prefix of a nested catch-all and _filters_ entries by it — a deployment prefix matches
+  nothing, emits zero static params, and still builds green.
+- **Body images bypass `assetUrl()` entirely.** Images inserted into markdown/MDX bodies are
+  stored as raw srcs and rendered by your own renderer. Under a `basePath` they need an `img`
+  override; the README shows one. It is safe to put on every image in a body: `assetUrl()` hands
+  back off-site srcs and `data:` URIs byte-identical. Note it DOES root a **page-relative** src
+  (`images/x.png`) onto the base you pass, so make those root-relative first.
+
+**Now deletable.** Any hand-rolled prefixing wrapper around `assetUrl` — the shape is a module
+exporting a re-bound `assetUrl`/`assetSrcSet` that injects a prefix read from an env var. The
+option it was working around is first-class and now handles the cases such a wrapper usually gets
+wrong: an off-site src, a prefix missing its leading slash, and a prefix that is nothing but
+slashes. Also deletable: any local copy of a "strip trailing slashes from a base URL" helper —
+`stripTrailingSlashes` is exported from `canopycms/server` and is the linear, non-ReDoS version.
+
+### `select` fields now infer their own options — **breaking (type-level)**
+
+_Adopter request log item 23._
+
+**What changed.** `TypeFromEntrySchema` used to infer every `select` field as
+`string | number`. It now infers the literal union of that field's own `options`:
+
+```diff
+- status: string | number
++ status: 'draft' | 'published'
+```
+
+The `number` half was never reachable. `SelectOption` carries `value: string` in both
+of its arms, the editor's option normalizer emits strings, and the entry validator
+rejects any select value that is not a string — so `number` was a type-level fiction
+that every adopter had to launder back out by hand.
+
+Both option forms work, including a single array that mixes them: a bare string option
+contributes itself, and a `{ label, value }` option contributes its **`value`**, not its
+label and not the whole object.
+
+**To adopt.** Nothing, if your schema goes through `defineEntrySchema` (or is declared
+`as const`) and your code already treats select values as strings. The narrowing is
+inferred from the schema you already wrote.
+
+Two things determine whether you get the narrow type:
+
+- **The options must still be literals at the type level.** `defineEntrySchema` and
+  `as const` preserve them. An options array annotated as the runtime type
+  (`const options: SelectOption[] = [...]`) has no literals left, so the field falls
+  back to `string`. That fallback is deliberate, not an error — but if you expected a
+  union and got `string`, this is why.
+- **A `select` with no `options`, or with `options: []`, also falls back to `string`.**
+  Both are schema mistakes, rejected with a clear message by
+  `ensureSelectFieldsHaveOptions` — which runs from `createEntrySchemaRegistry`, not
+  from `validateCanopyConfig`. So a schema you only ever feed to `TypeFromEntrySchema`
+  and never register gets no runtime rejection at all. Either way the inferred type
+  stays usable rather than collapsing to `never`.
+
+**`''` is deliberately not in the union.** The validator accepts an empty string as
+"not filled in" for any field that is not explicitly `required: true`, so a select can
+hold `''` on disk. Like the rest of `TypeFromEntrySchema`, this models the schema's
+declared shape rather than everything the validator tolerates — the same stance that
+already types a field omitting `required` as a required property. If your content has
+cleared selects and you branch on that, compare before the value reaches the typed
+surface, or add `''` to your own schema's options so it becomes a declared state.
+
+_Broken (act on these):_
+
+- **Comparing a select value against a string that is not one of its options.** This
+  now fails to compile with "no overlap" instead of silently being dead code. That is
+  usually a real bug being surfaced — a renamed option, or a comparison against a
+  label instead of a value. Fix the comparison; do not widen the type to silence it.
+- **Assigning a schema-derived select value to a hand-written `string` field.** Still
+  fine — the union is assignable to `string`. The reverse is not: assigning a plain
+  `string` **into** a schema-derived select value is now an error. Derive the type from
+  the schema instead of re-declaring it.
+- **A custom field type that uses the property name `options` for something other than
+  select options.** `options` is now a reserved, typed key on the schema field shape
+  (alongside `fields`, `templates`, `entryTypes` and `collections`), so a custom field
+  declaring e.g. `options: [1, 2, 3]` stops compiling, even though the runtime still
+  accepts it — custom field configs are validated with a passthrough schema. Rename the
+  property on your custom field; there is no way to keep the name and the shape.
+- **Anything that relied on the `number` half.** A `typeof value === 'number'` branch on
+  a select value now narrows to `never` — correctly, since it never ran. Note this is
+  silent: TypeScript reports nothing for a `typeof` check that cannot match, so grep for
+  these rather than expecting the compiler to list them. (An `===` comparison against a
+  non-option string _does_ error, with "no overlap".)
+
+**Now deletable.** Any local shim that re-narrows a schema-derived select value back to
+the app's own union before use — typically a helper or an inline cast that takes the
+value, checks it against a hand-maintained allowlist of the same option strings (or
+just asserts `as 'a' | 'b'`), and returns the narrow type. That allowlist was a second
+copy of the schema's `options`, free to drift from it silently; the schema is now the
+single source. Also deletable: `typeof v === 'string'` guards that existed only to
+strip the impossible `number`.
+
+### `listEntries()` and `buildContentTree()` can now resolve `reference` fields (#16)
+
+_Adopter request log item 16. This supersedes the caveat shipped in `0.0.63` under
+"Shared/referenced blocks", whose "Now deletable" list said, correctly at the time, that
+there was nothing to delete because the gap was real. There is now._
+
+**What changed.** Both batch listing surfaces take a `resolveReferences` option. Turn it on
+and every `reference` field in the returned `data` is resolved to the referenced entry —
+including references nested inside `object` fields, inline `group`s and block templates, so a
+shared/referenced block finally carries its snippet's content in a listing. Off (the default),
+they stay what they have always been: a bare id string, or `null`.
+
+`collectRoutableEntries` takes the same option and forwards it. `collectStaticPaths` does not,
+because it discards `data` outright.
+
+**The default is `false`, and `read()`'s is `true`.** That asymmetry is deliberate. A resolved
+reference changes from `'a1b2c3d4e5f6'` to `{ id, slug, collection, ...data }`, and a listing's
+`data` is your own generic parameter while `extract` receives an untyped record — so a flipped
+default would have changed the shape under every existing call site with no compile error to
+catch it, turning an `/authors/${data.author}` template into `/authors/[object Object]` at
+runtime. Opting in per call site keeps that decision next to the code that reads the field.
+
+**Cost.** Resolution needs the ContentId index, so an opted-in call adds one index scan plus
+one read per **distinct** referenced entry — not per referencing entry. A single per-call cache
+spans the whole batch, so a shared block referenced from 40 pages is read once, and a
+search-index build over thousands of entries does not multiply by its reference count. Nothing
+is constructed and nothing is scanned when the option is off, so existing calls are unaffected.
+
+Two things worth knowing before you switch it on. Path ACLs are **not** applied to the resolved
+targets — matching `read()` exactly, so a reference can resolve to an entry the current user
+could not `read()` directly; the entries being listed are still ACL-filtered as always, and a
+filtered-out entry is never resolved at all. And within one call, a given id resolves once and
+every occurrence shares that answer, so a batch is internally consistent rather than
+re-deciding per page. Each occurrence still gets its own copy of the resolved object,
+so the shared lookup cannot turn into shared mutable state between entries.
+
+The admin entries API (`GET /:branch/entries`) deliberately does not resolve: it is a paginated
+table that never reads inside a reference, and resolution there would run before pagination on
+a request path.
+
+**To adopt.**
+
+```ts
+// A search index that must see shared-block content:
+const entries = await ctx.listEntries({ resolveReferences: true })
+
+// Or through the static helper:
+const routable = await collectRoutableEntries(await getCanopyForBuild(), {
+  resolveReferences: true,
+})
+```
+
+Leave it off for `generateStaticParams`, sitemaps, and anything else that only needs paths,
+slugs or `updatedAt`.
+
+**Now deletable.**
+
+- **A second `read()` pass bolted onto a `listEntries()`-derived surface.** The shape is a
+  build script or route that lists entries, walks the results looking for id-shaped strings or
+  empty block values, then issues a follow-up single-entry read per hit to fill them in —
+  usually with its own ad-hoc memo table so a shared block is not fetched repeatedly. All of it
+  goes: pass the option, delete the second pass and the memo.
+- **A surface deliberately rebuilt on `read()`/`readByUrlPath()` to dodge the gap** — a search
+  index or feed that enumerates paths and then reads each entry individually, purely because
+  the listing could not resolve references. It can go back to a single listing call.
+- **Nothing where the listing never touched a reference field.** Leaving the option off is the
+  right answer there, not an oversight to correct.
+
+### Resolved references now carry `urlPath`, and can carry the target's body — **breaking (type-level)**
+
+_Follows the `listEntries` entry above; together they close what a resolved reference is for._
+
+**What changed.** A resolved reference used to be `{ id, slug, collection, ...frontmatter }`,
+which served neither job it gets used for. Two additions:
+
+- **`urlPath`, on every resolved reference, always.** The referenced entry's URL, following the
+  same rule `listEntries` publishes as `item.urlPath` (an `index` entry collapses to its parent
+  path). Both now come from one shared function, so a link built from a resolved reference
+  reaches the entry the listing enumerates, by construction rather than by coincidence.
+- **`includeBody` on the reference field**, default `false`. When set, the resolved value also
+  carries the target's body, under the _target_ entry type's own body field name (`isBody: true`,
+  else `body`). Only meaningful for md/mdx targets — a json/yaml document is already all data.
+
+```diff
+  {
+    name: 'snippet',
+    type: 'reference',
+    entryTypes: ['ctaSnippet'],
++   includeBody: true,     // this reference EMBEDS its target, so it wants the prose
+  }
+```
+
+**Why `includeBody` sits on the field and not on the call.** A reference either **embeds** its
+target (a shared call-to-action rendered inline — wants the prose) or **links** to it (related
+posts, an author byline — wants a URL and a title, and definitely not the target's full body
+inlined into every page read). That is a property of your content model, not of the call site,
+and a single `listEntries()` call routinely contains both kinds — a page with a shared CTA _and_
+a related-posts list cannot be served by one call-level setting. Declaring it on the field means
+every caller (`read()`, `readByUrlPath()`, `listEntries()`, `buildContentTree()`) gets the right
+shape without being told.
+
+**The type-level break.** `TypeFromEntrySchema` used to infer a resolved reference as just the
+target's content shape. It now intersects the resolution metadata that was always returned at
+runtime but missing from the type:
+
+```diff
+- author: { name: string; bio: string } | null
++ author: ({ name: string; bio: string } & ResolvedReferenceMeta) | null
++   // ResolvedReferenceMeta = { id: string; slug: string; collection: string; urlPath: string }
+```
+
+Reads keep compiling — this is a widening, and `ref.id` no longer needs a cast. What can break
+is an exact-shape assignment: a variable annotated with the old literal object type, an
+`Exact<>`-style helper, or a test asserting the inferred type equals a hand-written shape. If
+you have any, add `& ResolvedReferenceMeta` (exported from `canopycms`) or widen the annotation.
+
+**One thing to know.** If a field's `resolvedSchema` declares a body field but you have not set
+`includeBody`, the inferred type still promises that field while the runtime omits it. Setting
+`includeBody: true` makes the promise true; alternatively, leave the body field out of the
+`resolvedSchema` you pass, which is inference-only and need not be the target's full schema.
+
+**Two things to know.** `id`, `slug`, `collection` and `urlPath` are **reserved** on a resolved
+reference: the resolution value now wins over a target that models one of them as a real content
+field. That ordering is a fix, not a preference — the write boundary recovers a reference's id
+from `value.id`, so a target with its own `id` frontmatter field used to make a re-save persist
+that value and silently repoint the reference. If a target of yours legitimately carries one of
+those four names as content, read that entry directly to get it.
+
+And `includeBody: true` carries the target's body into every referencing entry's resolved value,
+so a long document embedded by many pages is carried once per page. Fine for a snippet; think
+twice for a full article, which probably wanted a link.
+
+**A save no longer freezes a resolved reference into your content.** Separately fixed here: the
+editor reads a document with references already resolved, so a plain open-and-save posted those
+resolved objects back, and the write boundary persisted them verbatim into the content file.
+Because resolution only re-resolves a bare string, the frozen snapshot then survived every later
+read and save — the reference was silently severed from its target for good, and renaming or
+editing the target changed nothing. Reference fields are now collapsed back to their ID at the
+write boundary, not just in the copy handed to validation.
+
+The mechanism predates this release; `includeBody` is what made it urgent, since the snapshot
+would otherwise carry the target's entire prose. **If you have edited entries with reference
+fields through the editor on an earlier version, check your content files**: a reference field
+holding an object rather than a 12-character ID string is a severed reference. Replacing the
+object with its own `id` value restores it.
+
+One case this does **not** cover, so you know the boundary: if a reference's target has been
+deleted, resolution yields `null` and a save persists that `null` over the ID — there is no
+object left to collapse back. Open-and-save is lossless only while every reference still
+resolves. Tracked separately; if you see `null` where a reference should be, the ID it used to
+hold is not recoverable from the file.
+
+**To adopt.** Nothing is required — `urlPath` simply appears. Add `includeBody: true` to
+reference fields whose target's prose you actually render or index.
+
+**Now deletable.**
+
+- **A contentId → URL index built by a second content pass.** The shape is a helper that walks
+  `listEntries()` (or the content tree) a second time purely to map ids to URLs, so referenced
+  entries can be linked — usually memoised, usually built per request or per build. Delete it;
+  read `urlPath` off the resolved reference.
+- **The `resolveReferences: false` escape hatch that index forced.** Pages that turned resolution
+  off because paying for resolution _and_ a separate URL lookup was worse than hand-rolling both
+  can turn it back on.
+- **A follow-up `read()` of a referenced entry purely to get its body**, in code that renders a
+  shared/referenced block. Set `includeBody: true` on the field instead.
+
+### Editor saves no longer delete comments in content files
+
+**What changed.** `ContentStore` used to write an entry by re-serialising a fresh plain object
+(`yaml.stringify` for `.yaml`, `gray-matter` for `md`/`mdx` frontmatter). Comments are in neither
+the object nor that round trip, so the first CMS save of a hand-authored entry silently deleted
+every comment in it — with no warning, and no recovery outside git. `canopycms sync` copies files
+byte-for-byte, so a dev team never saw this; an editorial team hit it on their first save.
+
+Writes now re-serialise onto the file's own parsed document, so a node whose value did not change
+keeps its comments (and its original quoting and block style). Both YAML entries and md/mdx
+frontmatter are covered. Reordering a list carries each comment with the content it was written
+about rather than leaving it on whatever now sits at that index. JSON is unaffected — it has no
+comment syntax.
+
+The payload is still authoritative about _content_: a key the editor removed is removed from the
+file, and a client that posts a partial payload still replaces the document, exactly as before.
+Comments are the only thing inherited from what was on disk.
+
+**To adopt.** Nothing. It applies to every save automatically.
+
+**Now deletable.** Any convention your team adopted to work around it — moving explanatory notes
+out of content files into a sidecar doc or a README, or a rule that comment-bearing entries must
+never be opened in the CMS. Content files can carry comments again, including notes that code
+elsewhere refers to by name.
+
+### Saves and builds now report content keys the schema does not define (#29)
+
+**What changed.** Entry validation walked the schema, so it could only ever report fields the
+schema already knew about. A key in the content with no schema counterpart was reported nowhere:
+rename or reshape a field and there was no editor error, no 422 and no build failure, while the
+old key persisted on disk indefinitely. The only symptom was a component receiving `undefined`.
+
+Two non-fatal reports now exist:
+
+- **On save**, unknown keys come back in the write response's `validationWarnings`, which the
+  editor already surfaces as a "Saved with warnings" notification. The save still succeeds.
+- **During a production build**, `collectStaticPaths` / `collectRoutableEntries` print a single
+  warning naming the offending entries and their key paths. The count is exact; the listing stops
+  after the first 20 and summarises the rest. The build still passes.
+
+Both report paths, not just names — `hero.kicker`, `blocks[2].headline` — and neither fires for an
+entry type with no schema at all, or for a block item's `template` discriminator. This is
+reporting only: nothing is rejected and nothing is stripped, and with the comment-preserving write
+above, an unknown key and its comments are still written back on every save.
+
+**To adopt.** Nothing to wire up. Expect the first build after upgrading to list keys you no
+longer use — that list is the point. For each one, either add the field to the entry type's schema
+or delete the key from the content.
+
+**Now deletable.** Any hand-rolled script that diffs content keys against a schema to catch drift
+after a rename, and any defensive `?? fallback` a component carries purely because nobody could
+tell whether a field was still populated.
+
+### An `index` entry no longer answers at a second URL, and a contested URL now fails the build — **breaking (routing)**
+
+_Adopter request log item 22._
+
+**What changed.** Two things, from one root cause in the URL → entry resolver.
+
+`readByUrlPath` no longer resolves an index entry at its literal `.../index` URL. An index entry's
+URL is its collection's path — that is what `listEntries` publishes as `item.urlPath`, what
+`buildContentTree` uses for node paths, and what a resolved reference's `urlPath` carries. The
+resolver disagreed: it tried "last segment is the slug" first, so the same entry also answered at
+`/x/index`, a URL no other API ever emits.
+
+```diff
+  await readByUrlPath('/guides')        // the index entry — unchanged
+- await readByUrlPath('/guides/index')  // ALSO the index entry
++ await readByUrlPath('/guides/index')  // null
+```
+
+The round-trip guarantee now excludes the `.../index` spelling for index entries: `item.urlPath`
+reaches the entry, and no `.../index` spelling does, in any case (`/x/Index` and `/x/INDEX` return
+null too). It is not yet exclusive in general — an index entry still also answers at
+`/<collection>/<entryTypeName>`, a separate open hole (see the Unreleased entry below). Ordinary
+entries are unchanged — their final slug segment stays case-insensitive.
+A collection literally _named_ `index` is unaffected and in fact fixed — `/docs/index` now resolves
+to that collection's own index entry instead of being shadowed by its parent's.
+
+Separately, a **production build** (`isBuildMode()` — not `next dev`) now fails when two entries
+compute the same `urlPath`, listing each contested URL and its claimants. Previously one entry got
+the route and the other silently had no page anywhere. The usual causes are an entry whose slug
+matches a sibling collection that _also_ has an `index` entry, and two slugs differing only by
+case (URL paths are lowercased). An entry beside a sibling collection with **no** index entry is
+untouched — a landing page plus a folder of children is a legitimate shape and nothing about it
+is contested.
+
+**To adopt.** Mostly nothing: the resolver change removes URLs no API ever advertised. Three
+exceptions worth checking.
+
+**If you route a collection through a single-segment `[slug]` route** — `shape: 'single'` static
+params, typically the scaffolded `contentStaticParams({ shape: 'single' })` — that helper no
+longer emits the collection's **index** entry. It never had a param that could address it (its
+URL is the collection's own path, not a slug under it), and the URL it did emit is one of the
+`.../index` URLs that now return null. **This is the one case where a page can silently stop
+being generated**, so check for it: if a collection has an index entry and you were relying on
+that route to render it, move it to the collection's own route (`app/posts/page.tsx`). Catch-all
+routes are unaffected — they use the already-collapsed segments. If you have a collection literally _named_ `index`, `/x/index` was
+advertised and now resolves to a **different** entry (that collection's own index, rather than its
+parent's — the previous answer was a bug). And if a build starts failing on a contested URL, the
+error names every colliding entry; rename or remove one of each pair. Note the build only fails if
+it enumerates through Canopy's own helpers — `collectStaticPaths` / `collectRoutableEntries`,
+or the bound wrappers over them that `createNextCanopyContext` returns (`generateContentStaticParams`
+and `generateContentSitemap` — the scaffolded `lib/canopy.ts` re-exports the first as
+`contentStaticParams`; if you wired the sitemap yourself, it is whatever you named it). A hand-rolled
+`generateStaticParams` over `listEntries` does not fail; call `findDuplicateUrlPaths` yourself
+there.
+To check before upgrading:
+
+```ts
+import { findDuplicateUrlPaths } from 'canopycms/server'
+
+const canopy = await getCanopyForBuild()
+const duplicates = findDuplicateUrlPaths(await canopy.listEntries())
+```
+
+Scan `listEntries()`, not `collectRoutableEntries()` — the latter reduces each entry to what static
+generation needs and drops the `entryPath` that names the offenders.
+
+**Also changed, smaller.** The `path` field on a `read()` / `readByUrlPath()` result now collapses
+an index slug and strips the content root from root-level entries, so it is a URL that actually
+resolves. It previously returned `/guides/index` for an index entry — a URL this release stops resolving —
+and `/content` / `/content/about` for root-level ones, which never resolved at all. If you were
+working around either, stop.
+
+**Now deletable.**
+
+- **A route-level guard whose only job is to reject a `.../index` URL.** The shape is a check at
+  the top of a `[slug]` route — usually on `entryType`, sometimes on the slug itself — that exists
+  because the collection's index entry resolved through a template meant for its children and
+  rendered with every field undefined. That URL is now a 404 on its own, in every case spelling.
+  Delete the check; keep any `entryType` narrowing you rely on for real type safety.
+- **A hand-rolled duplicate-URL integrity test.** The shape is a test that enumerates content and
+  asserts no two entries share a URL, written because nothing in the package checked. The build
+  now enforces it; if you want the assertion kept locally, call `findDuplicateUrlPaths` instead of
+  re-implementing the scan.
+
+### Sitemap `pathFor`, and modelling a page served at `/` as a root `index` entry
+
+_Adopter request log items 20 and 20b._
+
+**What changed.** Two changes answering one question — "the URL my app serves this entry at isn't
+the entry's own `urlPath`" — in the order you should try them.
+
+1. **Modelling, which needs no API at all.** An entry whose slug is `index` collapses onto its
+   collection's path; at the content root that path is `/`. So a home page stored as
+   `content/home.index.<id>.json` has `urlPath: '/'` — already the URL its route serves. Nothing to
+   reconcile anywhere. This was always true and always documented; what was missing is that the
+   reference app in this repo modelled `home` as an ordinary root entry (`urlPath: '/home'`) and
+   then papered over the mismatch in its own sitemap, so the workaround was what adopters actually
+   had in front of them. It no longer does that.
+
+2. **`generateContentSitemap` gained `pathFor`**, for the cases where modelling is not available —
+   a URL fixed by published history you cannot change, or a route prefix that deliberately differs
+   from the content layout:
+
+   ```ts
+   pathFor: (entry) =>
+     entry.entryType === 'article' ? entry.urlPath.replace(/^\/articles\//, '/blog/') : null,
+   ```
+
+   It overrides the URL while keeping the entry **inside** the entry walk, so the `isNoindexEntry`
+   gate, the `updatedAt` `lastModified` default and `priority` all still apply.
+
+   `null` (or `undefined`) means **"keep the structural path", not "drop this entry"** — so the
+   callback above reroutes articles and leaves every other entry at its own URL. Dropping is still
+   `exclude`'s job. An empty string throws rather than silently resolving to `/`.
+
+   `extraUrls` is unchanged and now means only what its name says: URLs with **no entry behind
+   them**, like a feed or a hand-written route. It still inherits neither the `noindex` gate nor
+   the `lastModified` default, which is exactly why rerouting a real entry through it was always
+   hand-managed.
+
+**To adopt.** Nothing is required — `pathFor` is additive and the modelling change is a
+recommendation. If you do re-model a singleton you serve at a collection's own path:
+
+1. Rename the file so its slug segment is `index` (`git mv home.home.<id>.json
+home.index.<id>.json`). Entry type and ID are unchanged, so references, `order` arrays and
+   editor position all survive.
+2. **Fix any read that addresses the entry by entry-type path.** This is the step that bites:
+   `read({ entryPath: 'content/home' })` passes no `slug`, and a slugless read defaults the slug to
+   the entry-type _name_ (`effectiveSlug = slug || schemaItem.name`), so it looks for slug `home`
+   and stops resolving once the slug is `index`. Passing `slug: 'index'` explicitly keeps that call
+   working. Prefer switching to `readByUrlPath('/')` and handling its `null` return (it
+   returns `null` where `read` throws). Skipping this yields a **green build with a 404 at `/`** —
+   a static build prerenders the not-found boundary and reports success either way, so verify by
+   reading the emitted HTML, not the build's exit code.
+3. Drop the sitemap workaround (below), and re-check the emitted `sitemap.xml` for the new URL.
+4. If the old URL was publicly indexed, add a redirect from it — the entry's URL genuinely changes.
+
+**One known caveat, if you serve a root catch-all.** An entry-type name is currently still
+resolvable as a URL segment: with home modelled at the root, `readByUrlPath('/home')` returns the
+home entry as well as `readByUrlPath('/')`. Nothing advertises `/home` (it is absent from the
+sitemap and from `generateContentStaticParams`), so on a route-per-page app it simply 404s. But an
+`app/[[...slug]]` catch-all resolves whatever it is handed, so it would serve a duplicate homepage
+there — filter it until this is fixed.
+
+**Now deletable.**
+
+- **The `exclude` + `extraUrls` pair that re-adds a page's real URL by hand.** The shape is an
+  exclusion by entry type (or slug) in `generateContentSitemap`, paired with an `extraUrls` item
+  putting the same page back at the URL the route actually serves — two lines that exist only
+  because the entry's structural URL and its served URL disagree. Re-model the entry and both go;
+  the page is then advertised on its own merits, carrying a real `lastModified` instead of
+  whichever value was hand-copied into the extra URL, or none at all.
+- **Hand-derived `noindex` and `lastModified` beside an `extraUrls` entry.** The shape is a
+  re-implementation of the SEO-flag read, or a date threaded in from elsewhere, sitting next to an
+  extra URL that stands in for a real entry — written because an extra URL inherits neither. If the
+  entry exists, `pathFor` gives you both back; delete the re-derivation rather than keeping a second
+  copy of the rule to drift.
+- **Nothing on the `pathFor` side if you were not already working around this.** It is a new option
+  for an existing gap, not a replacement for a supported API.
+
+### The CMS now refuses to author a contested URL
+
+_The write-boundary half of the previous entry._
+
+**What changed.** Creating or renaming an entry (or renaming a collection) is refused when it
+would give a second entry a URL another entry already holds. Previously only a production build
+caught this, after the fact.
+
+Refused in two shapes, both of which leave exactly one of the pair unreachable:
+
+- an entry whose slug matches a sibling collection **that has an index entry** — both compute the
+  same URL;
+- an index entry added to a collection whose **parent** already holds an entry with that
+  collection's name — the same collision from the other side.
+
+**Deliberately not refused:** an entry beside a same-named sibling collection that has _no_ index
+entry. That is a landing page plus a folder of children, nothing is contested, and it keeps
+working. The guard keys on the URL, never on the name.
+
+It is also create/rename **only**. An ordinary save of an entry already in a contested pair still
+succeeds — blocking it would trap you in an entry you could no longer fix. Pre-existing collisions
+(from a merge, a retrofit, or a direct commit) are the build guard's business, and it still runs.
+
+**To adopt.** Nothing. Creating or renaming an entry into a contested URL returns **409** with a
+message naming the other entry and its path; renaming a _collection_ into one returns **400**,
+matching that endpoint's existing refusals. Both messages say which entry is in the way and what
+to do about it — they are not the generic "modified by another editor", which would be advice you
+cannot act on.
+
+**Now deletable.** Nothing — this closes a gap rather than replacing local code. If you added your
+own editor-side check for this after hitting it, it is now redundant.
+
+### A slug that cannot round-trip through a URL now fails the build, and the CMS refuses to create one — **breaking (build)**
+
+**What changed.** Content file names are `{type}.{slug}.{id}.{ext}`, and the parse is anchored on
+the type and the ID — so the `slug` segment is allowed to contain characters that are not valid in
+a URL segment. A dot is the common one: `post.getting.started.guide.<id>.md` parses fine and lists
+with `slug: 'getting.started.guide'`. An underscore or a leading hyphen does the same. But
+`readByUrlPath()` runs every URL-resolution candidate through a stricter rule — lowercase letters,
+numbers and hyphens, starting with a letter or number — and skips anything that fails it. Such an
+entry **built, got a `generateStaticParams` entry and a sitemap `<loc>`, and then 404'd on every
+actual visit.** Silently.
+
+Two changes, both aimed at that:
+
+- A **production build now fails** on it, listing every offending entry by path. This is the part
+  most likely to turn a previously-green build red on upgrade: nothing about your content changed,
+  but a page you did not know was broken is now loud instead of silent.
+- The **write API refuses to mint one**. A `PUT` creating an entry with a non-conforming slug is
+  rejected with `400`, and so is a rename to one — enforced in `ContentStore` itself, so it holds
+  for any client, not just the editor UI. Previously only `renameEntry`'s `newSlug` was checked;
+  a create was accepted, and the build failed afterwards for whoever built next.
+
+It is **create/rename only**, deliberately. An entry that already has a non-conforming slug stays
+readable, stays saveable, and can be renamed — renaming it is the only way to clear the build
+failure, so refusing to read or edit it would convert a red build into unreachable data. That is
+also why enforcement is not in the path-resolution layer, which reads and writes share.
+
+**To adopt.** Build once and read the failure list. For each entry it names, rename the file's
+**slug segment** — the part between the type and the ID — to lowercase letters, numbers and
+hyphens (`post.getting-started-guide.<id>.md`), leaving the type, the ID and the extension alone.
+Renaming through the editor does the same thing and updates nothing else, since the ID is what
+identifies the entry. If the old URL was reachable in practice it was not reachable through
+CanopyCMS, so there is no redirect to preserve — but check any hand-written links to it.
+
+If you generate content with a script, slugify with the same rule before writing; the CLI's
+`canopycms migrate` already does. A script that writes files directly (rather than through the
+write API) is not covered by the new refusal, which is exactly the case the build guard exists for.
+
+**Now deletable.** Any local build-time or CI check you wrote that walks content filenames looking
+for slugs your routing could not serve, and any editor-side slug-format check you added in front of
+the create form — the package now rejects those at the write boundary and fails the build on the
+ones that arrive some other way.
 
 <!--
 Template for each entry — copy, don't improvise:
@@ -56,7 +654,18 @@ repos generally are not. If nothing becomes deletable, say so explicitly — tha
 real and useful answer.
 -->
 
-### `required: false` now infers an optional property (#14) — **breaking (type-level)**
+---
+
+## Released
+
+### 0.0.63
+
+Every entry below shipped in `0.0.63`. They were promoted from `## Unreleased` on
+2026-08-20, after an adopter reported that the section had been describing already-released
+features as unreleased — see the note under `## Unreleased` for why that happens and what to
+check before trusting the heading.
+
+#### `required: false` now infers an optional property (#14) — **breaking (type-level)**
 
 **What changed.** `TypeFromEntrySchema` used to emit every field as a _required_
 property, adding `| undefined` to the value type for `required: false` fields. It now
@@ -125,7 +734,7 @@ the code below.
   optional property still yields `| undefined`; and `Required<...>` applied to a
   _local_ type rather than a schema-derived one is untouched.
 
-### Sitemap and SEO metadata helpers (#10, #10a)
+#### Sitemap and SEO metadata helpers (#10, #10a)
 
 **What changed.** CanopyCMS now ships the two static-export surfaces it previously told you
 were "coming separately", and they ship **together on purpose** (see the `noindex` note below).
@@ -261,7 +870,7 @@ pass `{ fields: { title: 'yourName' } }` to the read side — do not keep both.
   entry above; `collectRoutableEntries` now carries it, with the same mtime caveat.
 - **Nothing, for `robots.txt`.** It stays hand-written; that is deliberate, not an oversight.
 
-### Static-generation review follow-ups: siteUrl validation, one shared SEO field location, sitemap dedup
+#### Static-generation review follow-ups: siteUrl validation, one shared SEO field location, sitemap dedup
 
 **What changed.** A static-generation review of the sitemap/SEO helpers above found four gaps
 before they shipped to any adopter, all fixed here, plus one silent-content-loss gap one layer
@@ -301,7 +910,7 @@ placement bug), and the dedup/build-failure behaviors only fire on inputs that w
 keep the two surfaces in sync by hand — the shared `seo` option replaces the discipline of
 remembering to update both.
 
-### The build guard now ignores files that were never entry-shaped
+#### The build guard now ignores files that were never entry-shaped
 
 **What changed.** Item 5 above (the content-entry build guard) turned out to be too broad: it
 fired on _any_ file inside a collection directory that shared a recognized content extension but
@@ -345,7 +954,7 @@ begin with, so relocating it may have silently broken the `entryTransforms` call
 **Now deletable.** Any workaround that relocated or renamed a colocated sibling artifact solely
 to avoid tripping the build guard.
 
-### `canopycms init` scaffolds `defaultBranchAccess: 'deny'` and public read by default
+#### `canopycms init` scaffolds `defaultBranchAccess: 'deny'` and public read by default
 
 **What changed.** The generated `canopycms.config.ts.template` used to write
 `defaultBranchAccess: 'allow'`, which no longer matches the package's fail-closed schema default
@@ -381,7 +990,7 @@ in your own `canopycms.config.ts`:
 
 **Now deletable.** Nothing — this only affects newly generated files.
 
-### `parseTypedFilename` exported from `canopycms/server` (#1)
+#### `parseTypedFilename` exported from `canopycms/server` (#1)
 
 **What changed.** `parseTypedFilename` — parses a content filename
 `{type}.{slug}.{id}.{ext}` into `{ type, slug, id }` — existed in `content-listing.ts`
@@ -427,7 +1036,7 @@ Typical homes for a copy:
   by the `meta.entryType` entry below, which removes the need to parse at all.
 - Route-level `{type}.{slug}.{id}` hand-splits.
 
-### `defaultBuildPath` exported from `canopycms/server` (#2)
+#### `defaultBuildPath` exported from `canopycms/server` (#2)
 
 **What changed.** `buildContentTree`'s default URL path builder (strip the content
 root prefix, collapse an entry's `index` slug to its parent collection path, lowercase)
@@ -462,7 +1071,7 @@ top of it instead of reimplementing it.
   default changes. Replace with a call to `defaultBuildPath`, or drop the custom
   `buildPath` entirely if you were not actually extending the default.
 
-### `read()` / `readByUrlPath()` return `meta.entryType` and `meta.entryId` (#3, `.claude/future-tasks/resolved/readbyurlpath-entry-type.md`)
+#### `read()` / `readByUrlPath()` return `meta.entryType` and `meta.entryId` (#3, `.claude/future-tasks/resolved/readbyurlpath-entry-type.md`)
 
 **What changed.** `CanopyContext.read()` and `.readByUrlPath()` now include
 `entryType: string` and `entryId?: ContentId` on the returned `meta`, alongside the
@@ -519,7 +1128,7 @@ Purely additive — no change to the input side of either function.
   Each collapses to a `switch` on `result.meta.entryType`, often letting several
   near-duplicate route files become one catch-all.
 
-### Build-context factory, title derivation, and a Markdown-to-plaintext primitive (#17)
+#### Build-context factory, title derivation, and a Markdown-to-plaintext primitive (#17)
 
 **What changed.** An adopter asked for a single `extractSearchDocuments(registry, opts)`
 helper so two sites building their own search indexes could share one implementation.
@@ -595,7 +1204,7 @@ top-level-`await` boot block, which can never be imported by anything.
   keeping the children's text. If your search results are missing content that you can
   see is present in the source file, this is the pattern to look for.
 
-### `listEntries` carries `updatedAt` (#4)
+#### `listEntries` carries `updatedAt` (#4)
 
 **What changed.** `listCollectionEntries` already ran an unconditional `fs.stat` on
 every entry file and set `updatedAt` on its `CollectionListItem` result; `listEntries`
@@ -621,7 +1230,7 @@ wherever `listEntries` is already called.
   instead — and note that deleting such a module usually removes a duplicate filename
   parser too (see the `parseTypedFilename` entry above).
 
-### `BlockValueOf` / `BlockComponentRegistry` — exhaustive block → component types (#13)
+#### `BlockValueOf` / `BlockComponentRegistry` — exhaustive block → component types (#13)
 
 **What changed.** Two new exported types, `BlockValueOf<Blocks, N>` and
 `BlockComponentRegistry<Blocks, ExtraProps>`, make a block-field → React-component
@@ -668,7 +1277,7 @@ Purely additive — no existing API changes.
   `BlockComponentRegistry` now catches at compile time — the runtime guard becomes
   redundant once the registry is in place.
 
-### Reusable field fragments — documented, plus `defineFieldFragment()` (#15)
+#### Reusable field fragments — documented, plus `defineFieldFragment()` (#15)
 
 **What changed.** No new runtime behavior — this closes a documentation gap. Two
 patterns for sharing a field cluster across schemas already worked and now have a
@@ -711,7 +1320,7 @@ the full example.
   spread it everywhere it's used; for schemas that need one field to differ, override
   just that field per the pattern above instead of retyping the whole cluster.
 
-### Shared/referenced blocks: documented recipe, plus a `listEntries` caveat (#16)
+#### Shared/referenced blocks: documented recipe, plus a `listEntries` caveat (#16)
 
 **What changed.** No new runtime behavior. A block template can already hold a
 `reference` field pointing at another entry — so a "shared content block" (a call to
@@ -760,7 +1369,7 @@ const sharedCtaBlock = defineBlockTemplate({
   silently empty there today; resolve them with a follow-up `read()` call, or build
   that surface from `read()`/`readByUrlPath()` results instead.
 
-### `checkPathAccess` removed from `CanopyServices`
+#### `checkPathAccess` removed from `CanopyServices`
 
 **What changed.** The `CanopyServices` interface (reachable via `context.services` from
 `getCanopy()`/`createBuildCanopy()`) no longer exposes `checkPathAccess`. It was bound
@@ -778,10 +1387,6 @@ If you did, it was never evaluating your actual path-permission rules — replac
 
 **Now deletable.** Nothing new — an adopter integration would not have built anything
 around this, since it never returned a real answer to begin with.
-
----
-
-## Released
 
 ### 0.0.62 and earlier
 

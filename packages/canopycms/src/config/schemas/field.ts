@@ -74,6 +74,11 @@ export const referenceFieldSchema = fieldBaseSchema.extend({
   entryTypes: z.array(z.string().min(1)).min(1).optional(),
   displayField: z.string().min(1).optional(),
   options: z.array(referenceOptionSchema).optional(),
+  // Must be listed here, not just on ReferenceFieldConfig: zod strips unknown keys by
+  // default, so a consumer that adopts this schema's parse output would silently delete a
+  // runtime-consumed flag and the feature would no-op with no error. (`resolvedSchema` is
+  // absent on purpose — it is type-inference-only and stripping it changes no behavior.)
+  includeBody: z.boolean().optional(),
 })
 
 // Use a mutable holder to enable forward references in recursive z.lazy() closures.

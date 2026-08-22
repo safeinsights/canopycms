@@ -55,6 +55,7 @@ export function defineCanopyConfig(config: CanopyConfigInput | CanopyConfigAutho
         mode,
         entryLinkUrl,
         media,
+        basePath,
       } = validated
       const clientConfig: CanopyClientConfig = {
         defaultBaseBranch,
@@ -64,6 +65,7 @@ export function defineCanopyConfig(config: CanopyConfigInput | CanopyConfigAutho
         mode,
         entryLinkUrl,
         assetBaseUrl: media?.publicBaseUrl,
+        basePath,
         flatSchema: [], // Loaded dynamically by editor via API
       }
 

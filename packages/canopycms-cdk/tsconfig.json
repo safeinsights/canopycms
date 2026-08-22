@@ -4,8 +4,16 @@
     "outDir": "dist",
     "rootDir": "src",
     "declaration": true,
-    "declarationMap": true,
-    "sourceMap": true
+    // Maps off: unlike the other packages this one has no separate
+    // tsconfig.build.json — the "build" script is a bare `tsc` against this
+    // same file, so this IS the publish config, not just a dev/typecheck
+    // config (typecheck always passes --noEmit, so these settings never
+    // affected it either way). We ship "files" that don't include src/, so
+    // dist/*.js.map and dist/*.d.ts.map would point at ../src/... paths not
+    // in the tarball — dead weight nobody can resolve. Don't re-enable these
+    // without also shipping src/.
+    "declarationMap": false,
+    "sourceMap": false
   },
   "include": ["src/**/*"],
   "exclude": ["node_modules", "dist", "**/*.test.ts"]

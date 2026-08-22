@@ -17,12 +17,14 @@ import {
   ContentStore,
   ContentStoreError,
   ContentConflictError,
+  createReferenceResolveCache,
   DuplicateContentIdError,
+  UrlPathConflictError,
 } from './content-store'
 import { tryAcquireContentWriteLock } from './utils/content-write-lock'
 import { getErrorMessage } from './utils/error'
 import { generateId } from './id'
-import { unsafeAsLogicalPath, unsafeAsSlug } from './paths/test-utils'
+import { unsafeAsContentId, unsafeAsLogicalPath, unsafeAsSlug } from './paths/test-utils'
 import { mockConsole } from './test-utils/console-spy'
 
 const tmpDir = async () => fs.mkdtemp(path.join(os.tmpdir(), 'canopycms-'))
@@ -322,6 +324,112 @@ describe('ContentStore', () => {
         body: 'Content',
       }),
     ).rejects.toThrow('Slugs cannot contain backslashes')
+  })
+
+  // [SLUG] The store is the authoritative layer for this: api/content.ts has a
+  // matching fast-path check, so an API-level test alone cannot tell you whether
+  // the store would have caught a create from a non-API caller (a script, the
+  // build context, a future editor path).
+  describe('unroutable slugs', () => {
+    const postsSchema = {
+      collections: [
+        {
+          name: 'posts',
+          path: 'posts',
+          entries: [
+            {
+              name: 'post',
+              format: 'md' as const,
+              schema: [{ name: 'title', type: 'string' as const }],
+            },
+          ],
+        },
+      ],
+    } as const
+
+    const newStore = async () => {
+      const root = await tmpDir()
+      const config = defineCanopyTestConfig({ schema: postsSchema })
+      return { root, store: new ContentStore(root, flattenSchema(postsSchema, config.contentRoot)) }
+    }
+
+    const body = { format: 'md' as const, data: { title: 'T' }, body: 'Content' }
+
+    // The filename grammar accepts each of these; readByUrlPath cannot resolve any of them.
+    it.each(['my_post', 'getting.started.guide', '-leading-hyphen'])(
+      'refuses to create an entry with slug %j',
+      async (slug) => {
+        const { store } = await newStore()
+        await expect(
+          store.write(unsafeAsLogicalPath('content/posts'), unsafeAsSlug(slug), body),
+        ).rejects.toThrow(/Cannot create entry/)
+      },
+    )
+
+    it('still saves an entry that already has a non-conforming slug', async () => {
+      const { root, store } = await newStore()
+      // Content that arrived some other way: written straight to disk, as a hand-authored
+      // file, an import script or a git merge would. It must stay editable -- renaming it
+      // is the only way to clear the build failure it causes.
+      await store.write(unsafeAsLogicalPath('content/posts'), unsafeAsSlug('legacy-post'), body)
+      const dir = path.join(root, 'content', 'posts')
+      const filename = (await fs.readdir(dir)).find((name) => name.includes('.legacy-post.'))
+      if (!filename) throw new Error(`No legacy-post entry in ${dir}`)
+      await fs.rename(
+        path.join(dir, filename),
+        path.join(dir, filename.replace('.legacy-post.', '.legacy_post.')),
+      )
+
+      await expect(
+        store.write(unsafeAsLogicalPath('content/posts'), unsafeAsSlug('legacy_post'), {
+          ...body,
+          data: { title: 'Edited' },
+        }),
+      ).resolves.toBeDefined()
+    })
+
+    it('refuses to rename an entry to an unroutable slug', async () => {
+      const { store } = await newStore()
+      await store.write(unsafeAsLogicalPath('content/posts'), unsafeAsSlug('good-slug'), body)
+
+      await expect(
+        store.renameEntry(
+          unsafeAsLogicalPath('content/posts'),
+          unsafeAsSlug('good-slug'),
+          unsafeAsSlug('bad.slug'),
+        ),
+      ).rejects.toThrow(/Cannot rename to "bad\.slug"/)
+    })
+
+    it('accepts the singleton shape, where buildPaths substitutes the entry type name', async () => {
+      // write(collection, '') resolves the slug from the entry type's own name, so the guard
+      // must check the slug buildPaths CHOSE -- checking the caller's raw '' would reject this.
+      const schema = {
+        collections: [
+          {
+            name: 'settings',
+            path: 'settings',
+            entries: [
+              {
+                name: 'setting',
+                format: 'json' as const,
+                schema: [{ name: 'siteName', type: 'string' as const }],
+              },
+            ],
+          },
+        ],
+      } as const
+      const root = await tmpDir()
+      const config = defineCanopyTestConfig({ schema })
+      const store = new ContentStore(root, flattenSchema(schema, config.contentRoot))
+
+      await expect(
+        store.write(unsafeAsLogicalPath('content/settings/setting'), '', {
+          format: 'json',
+          data: { siteName: 'CanopyCMS' },
+        }),
+      ).resolves.toBeDefined()
+    })
   })
 
   it('resolves paths using trivial algorithm: collection + slug', async () => {
@@ -753,8 +861,16 @@ describe('ContentStore', () => {
         ),
       ).rejects.toThrow('cannot contain forward slashes')
 
-      // Uppercase slugs are normalized by parseSlug at the API boundary,
-      // so renameEntry receives already-validated Slug branded types
+      // [SLUG] renameEntry does NOT trust the Slug brand for this: the API's slugSchema
+      // runs parseSlug, but `Slug` is also reachable by cast (resolvePath, unsafeAsSlug),
+      // so the store re-checks routability itself.
+      await expect(
+        store.renameEntry(
+          unsafeAsLogicalPath('content/posts'),
+          unsafeAsSlug('test-post'),
+          unsafeAsSlug('invalid_slug'),
+        ),
+      ).rejects.toThrow(/Cannot rename to "invalid_slug"/)
     })
 
     it('handles no-op when slug is unchanged', async () => {
@@ -2473,6 +2589,196 @@ describe('ContentStore cross-process index consistency', () => {
     }
   })
 
+  describe('resolveReferences with a batch cache', () => {
+    const refSchema = {
+      collections: [
+        {
+          name: 'authors',
+          path: 'authors',
+          entries: [
+            {
+              name: 'author',
+              format: 'md' as const,
+              schema: [{ name: 'name', type: 'string' as const }],
+            },
+          ],
+        },
+        {
+          name: 'posts',
+          path: 'posts',
+          entries: [
+            {
+              name: 'post',
+              format: 'md' as const,
+              schema: [
+                { name: 'title', type: 'string' as const },
+                { name: 'author', type: 'reference' as const },
+              ],
+            },
+          ],
+        },
+      ],
+    } as const
+
+    /** A store holding one author, plus that author's content ID and the post field list. */
+    const makeRefStore = async () => {
+      const root = await tmpDir()
+      const config = defineCanopyTestConfig({ schema: refSchema })
+      const store = new ContentStore(root, flattenSchema(refSchema, config.contentRoot))
+      const authorsPath = unsafeAsLogicalPath('content/authors')
+
+      await store.write(authorsPath, unsafeAsSlug('ada'), {
+        format: 'md',
+        data: { name: 'Ada' },
+        body: '',
+      })
+      const authorId = await store.getIdForEntry(authorsPath, unsafeAsSlug('ada'))
+      if (!authorId) throw new Error('expected an id for the author')
+
+      const postFields = refSchema.collections[1].entries[0].schema
+      return { store, authorId, postFields }
+    }
+
+    it('reads a repeated reference once across separate calls sharing one cache', async () => {
+      const { store, authorId, postFields } = await makeRefStore()
+      const cache = createReferenceResolveCache()
+
+      const readSpy = vi.spyOn(store, 'read')
+      try {
+        const first = await store.resolveReferences({ author: authorId }, postFields, cache)
+        const second = await store.resolveReferences({ author: authorId }, postFields, cache)
+
+        expect(first.author).toMatchObject({ slug: 'ada', name: 'Ada' })
+        expect(second.author).toMatchObject({ slug: 'ada', name: 'Ada' })
+        // This is the whole point of the cache: one shared block, one read, however
+        // many entries in the batch reference it.
+        expect(readSpy).toHaveBeenCalledTimes(1)
+      } finally {
+        readSpy.mockRestore()
+      }
+    })
+
+    it('reads independently when no cache is passed, preserving read() behavior', async () => {
+      const { store, authorId, postFields } = await makeRefStore()
+
+      const readSpy = vi.spyOn(store, 'read')
+      try {
+        await store.resolveReferences({ author: authorId }, postFields)
+        await store.resolveReferences({ author: authorId }, postFields)
+        // read() passes no cache, so it must keep resolving unmemoized exactly as before.
+        expect(readSpy).toHaveBeenCalledTimes(2)
+      } finally {
+        readSpy.mockRestore()
+      }
+    })
+
+    it('memoizes a miss too, so one batch answers the same id consistently', async () => {
+      const { store, postFields } = await makeRefStore()
+      const cache = createReferenceResolveCache()
+      const danglingId = generateId()
+
+      // Warm the index so the spy below counts only lookup work, not the initial build.
+      await store.idIndex()
+
+      const findSpy = vi.spyOn(ContentIdIndex.prototype, 'findById')
+      try {
+        const first = await store.resolveReferences({ author: danglingId }, postFields, cache)
+        expect(first.author).toBeNull()
+        const afterFirst = findSpy.mock.calls.length
+        expect(afterFirst).toBeGreaterThan(0)
+
+        const second = await store.resolveReferences({ author: danglingId }, postFields, cache)
+        expect(second.author).toBeNull()
+        // No further index work: the null is memoized alongside hits, so a shared block
+        // cannot resolve to data on one entry and null on another within one batch.
+        expect(findSpy.mock.calls.length).toBe(afterFirst)
+        expect(cache.size).toBe(1)
+      } finally {
+        findSpy.mockRestore()
+      }
+    })
+
+    it('keys the cache by includeBody, so two fields sharing a target get their own shapes', async () => {
+      // Two fields referencing the SAME entry, one linking and one embedding. Keyed by id
+      // alone, whichever the walk reached first would decide the shape for both -- the same
+      // traversal-order nondeterminism the per-occurrence copy exists to prevent.
+      const refSchemaBothWays = {
+        collections: [
+          {
+            name: 'authors',
+            path: 'authors',
+            entries: [
+              {
+                name: 'author',
+                format: 'md' as const,
+                schema: [{ name: 'name', type: 'string' as const }],
+              },
+            ],
+          },
+        ],
+      } as const
+
+      const root = await tmpDir()
+      const config = defineCanopyTestConfig({ schema: refSchemaBothWays })
+      const store = new ContentStore(root, flattenSchema(refSchemaBothWays, config.contentRoot))
+      const authorsPath = unsafeAsLogicalPath('content/authors')
+
+      await store.write(authorsPath, unsafeAsSlug('ada'), {
+        format: 'md',
+        data: { name: 'Ada' },
+        body: 'ADA BIO PROSE',
+      })
+      const authorId = await store.getIdForEntry(authorsPath, unsafeAsSlug('ada'))
+      if (!authorId) throw new Error('expected an id for the author')
+
+      const fields = [
+        { name: 'linked', type: 'reference' as const },
+        { name: 'embedded', type: 'reference' as const, includeBody: true },
+      ]
+      const cache = createReferenceResolveCache()
+
+      const resolved = await store.resolveReferences(
+        { linked: authorId, embedded: authorId },
+        fields,
+        cache,
+      )
+
+      const linked = resolved.linked as Record<string, unknown>
+      const embedded = resolved.embedded as Record<string, unknown>
+      expect(linked).not.toHaveProperty('body')
+      // Trimmed: the write path serialises through matter.stringify, which terminates the
+      // document with a newline. The point here is which field carries the prose, not
+      // round-trip whitespace.
+      expect(String(embedded.body).trim()).toBe('ADA BIO PROSE')
+      // Both still carry the shared metadata, and both point at the same entry.
+      expect(linked.urlPath).toBe('/authors/ada')
+      expect(embedded.urlPath).toBe('/authors/ada')
+      // Two distinct shapes means two cache entries, not one shape overwriting the other.
+      expect(cache.size).toBe(2)
+    })
+
+    it('collapses concurrent lookups of the same id onto a single read', async () => {
+      const { store, authorId, postFields } = await makeRefStore()
+      const cache = createReferenceResolveCache()
+
+      const readSpy = vi.spyOn(store, 'read')
+      try {
+        // Started together, so neither has settled when the other consults the cache --
+        // this is why the cache stores the in-flight promise rather than the value.
+        const [a, b] = await Promise.all([
+          store.resolveReferences({ author: authorId }, postFields, cache),
+          store.resolveReferences({ author: authorId }, postFields, cache),
+        ])
+
+        expect(a.author).toMatchObject({ name: 'Ada' })
+        expect(b.author).toMatchObject({ name: 'Ada' })
+        expect(readSpy).toHaveBeenCalledTimes(1)
+      } finally {
+        readSpy.mockRestore()
+      }
+    })
+  })
+
   it('write() with existingId refuses to recreate an entry another store renamed', async () => {
     const { root, store: storeA } = await makeStore()
     // Large interval: models a store whose probe hasn't fired (residual window).
@@ -3013,5 +3319,431 @@ describe('ContentStore duplicate content ID resilience (August 2026 baseline rev
         consoleSpy.restore()
       }
     })
+  })
+})
+
+/**
+ * An editor save used to re-serialise a fresh plain object over the file, so every comment in a
+ * content file was silently deleted the first time anyone edited it. Fixtures here are shaped
+ * like real adopter content: a top-of-file block comment, a comment on a nested key, and a
+ * comment inside a list — including a load-bearing `FLAG:` block that the adopter's own page
+ * code cites by name.
+ *
+ * See `.claude/future-tasks/resolved/content-comment-loss-on-editor-save.md`.
+ */
+describe('ContentStore comment preservation', () => {
+  const yamlSchema = {
+    collections: [
+      {
+        name: 'landing',
+        path: 'landing',
+        entries: [
+          {
+            name: 'page',
+            format: 'yaml' as const,
+            schema: [
+              { name: 'title', type: 'string' as const },
+              {
+                name: 'intro',
+                type: 'object' as const,
+                fields: [
+                  { name: 'heading', type: 'string' as const },
+                  { name: 'blurb', type: 'string' as const },
+                ],
+              },
+              { name: 'cards', type: 'string' as const, list: true },
+            ],
+          },
+        ],
+      },
+    ],
+  } as const
+
+  const COMMENTED_YAML = `# Landing page media rail.
+# Curated by hand — the CMS list order is the render order.
+
+title: Resources # shown in the hero
+intro:
+  # FLAG: these post cards are placeholders until the blog ships.
+  # The site's resources page cites this block by name — do not delete it.
+  heading: Latest from the blog
+  blurb: Placeholder copy.
+cards:
+  # First card is pinned to the top of the rail.
+  - Getting started
+  - Release notes # updated every Friday
+`
+
+  it('keeps every comment in a YAML entry across an editor save', async () => {
+    const root = await tmpDir()
+    const config = defineCanopyTestConfig({ schema: yamlSchema })
+    const store = new ContentStore(root, flattenSchema(yamlSchema, config.contentRoot))
+    const landing = unsafeAsLogicalPath('content/landing')
+
+    // Create the entry, then replace it on disk with the hand-authored, comment-bearing version
+    // an adopter would have committed.
+    const created = await store.write(landing, unsafeAsSlug('resources'), {
+      format: 'yaml',
+      data: { title: 'Resources' },
+    })
+    await fs.writeFile(created.absolutePath, COMMENTED_YAML, 'utf8')
+
+    // A save exactly like the editor's: the whole record back, with one field edited.
+    await store.write(landing, unsafeAsSlug('resources'), {
+      format: 'yaml',
+      data: {
+        title: 'Resources',
+        intro: { heading: 'Latest from the blog', blurb: 'Real copy now.' },
+        cards: ['Getting started', 'Release notes'],
+      },
+    })
+
+    const saved = await fs.readFile(created.absolutePath, 'utf8')
+    expect(saved).toContain('# Landing page media rail.')
+    expect(saved).toContain('# Curated by hand')
+    expect(saved).toContain('# FLAG: these post cards are placeholders until the blog ships.')
+    expect(saved).toContain("# The site's resources page cites this block by name")
+    expect(saved).toContain('# First card is pinned to the top of the rail.')
+    expect(saved).toContain('title: Resources # shown in the hero')
+    expect(saved).toContain('- Release notes # updated every Friday')
+    // ...and the edit actually landed.
+    expect(saved).toContain('blurb: Real copy now.')
+    expect(saved).not.toContain('Placeholder copy.')
+  })
+
+  it('removes a key the save dropped, comment and all', async () => {
+    const root = await tmpDir()
+    const config = defineCanopyTestConfig({ schema: yamlSchema })
+    const store = new ContentStore(root, flattenSchema(yamlSchema, config.contentRoot))
+    const landing = unsafeAsLogicalPath('content/landing')
+
+    const created = await store.write(landing, unsafeAsSlug('resources'), {
+      format: 'yaml',
+      data: { title: 'Resources' },
+    })
+    await fs.writeFile(created.absolutePath, COMMENTED_YAML, 'utf8')
+
+    await store.write(landing, unsafeAsSlug('resources'), {
+      format: 'yaml',
+      data: { title: 'Resources', cards: ['Getting started', 'Release notes'] },
+    })
+
+    const saved = await fs.readFile(created.absolutePath, 'utf8')
+    expect(saved).not.toContain('intro:')
+    expect(saved).not.toContain('# FLAG:')
+    expect(saved).not.toContain('Placeholder copy.')
+    // Untouched neighbours keep theirs.
+    expect(saved).toContain('# Landing page media rail.')
+    expect(saved).toContain('# First card is pinned to the top of the rail.')
+  })
+
+  it('keeps md/mdx frontmatter comments across an editor save', async () => {
+    const root = await tmpDir()
+    const schema = {
+      collections: [
+        {
+          name: 'posts',
+          path: 'posts',
+          entries: [
+            {
+              name: 'post',
+              format: 'md' as const,
+              schema: [
+                { name: 'draft', type: 'boolean' as const },
+                { name: 'title', type: 'string' as const },
+                { name: 'tags', type: 'string' as const, list: true },
+              ],
+            },
+          ],
+        },
+      ],
+    } as const
+
+    const config = defineCanopyTestConfig({ schema })
+    const store = new ContentStore(root, flattenSchema(schema, config.contentRoot))
+    const posts = unsafeAsLogicalPath('content/posts')
+
+    const created = await store.write(posts, unsafeAsSlug('hello'), {
+      format: 'md',
+      data: { title: 'Hello' },
+      body: 'Body.',
+    })
+    await fs.writeFile(
+      created.absolutePath,
+      `---
+# Post metadata. Keep \`draft\` first — the build reads it.
+draft: false
+title: Hello # displayed in the card
+tags:
+  # Order matters: the first tag is the primary category.
+  - guides
+  - release
+---
+
+Body text here.
+`,
+      'utf8',
+    )
+
+    await store.write(posts, unsafeAsSlug('hello'), {
+      format: 'md',
+      data: { draft: false, title: 'Goodbye', tags: ['guides', 'release'] },
+      body: 'Rewritten body.',
+    })
+
+    const saved = await fs.readFile(created.absolutePath, 'utf8')
+    expect(saved).toContain('# Post metadata. Keep `draft` first')
+    expect(saved).toContain('# Order matters: the first tag is the primary category.')
+    expect(saved).toContain('title: Goodbye # displayed in the card')
+    expect(saved).toContain('Rewritten body.')
+    expect(saved).not.toContain('Body text here.')
+  })
+
+  it('does not disturb a JSON entry', async () => {
+    const root = await tmpDir()
+    const schema = {
+      collections: [
+        {
+          name: 'settings',
+          path: 'settings',
+          entries: [
+            {
+              name: 'config',
+              format: 'json' as const,
+              schema: [{ name: 'title', type: 'string' as const }],
+            },
+          ],
+        },
+      ],
+    } as const
+
+    const config = defineCanopyTestConfig({ schema })
+    const store = new ContentStore(root, flattenSchema(schema, config.contentRoot))
+    const settings = unsafeAsLogicalPath('content/settings')
+
+    const created = await store.write(settings, unsafeAsSlug('site'), {
+      format: 'json',
+      data: { title: 'One' },
+    })
+    await store.write(settings, unsafeAsSlug('site'), {
+      format: 'json',
+      data: { title: 'Two' },
+    })
+
+    expect(await fs.readFile(created.absolutePath, 'utf8')).toBe(
+      `${JSON.stringify({ title: 'Two' }, null, 2)}\n`,
+    )
+  })
+})
+
+// ---------------------------------------------------------------------------
+// [URL] Contested-URL guard at the write boundary
+// ---------------------------------------------------------------------------
+//
+// The write-boundary half of "no two entries may claim the same urlPath"; the build-time half is
+// `assertNoDuplicateUrlPaths` in static/index.ts. The load-bearing distinction these pin is that
+// the guard keys on the URL, NOT on the name: an entry beside a same-named collection is only
+// contested once that collection has an index entry.
+describe('contested-URL guard', () => {
+  const schema = {
+    collections: [
+      {
+        name: 'docs',
+        path: 'docs',
+        entries: [
+          {
+            name: 'doc',
+            format: 'json' as const,
+            default: true,
+            schema: [{ name: 'title', type: 'string' as const }],
+          },
+        ],
+        collections: [
+          {
+            name: 'guides',
+            path: 'docs/guides',
+            entries: [
+              {
+                name: 'guide',
+                format: 'json' as const,
+                default: true,
+                schema: [{ name: 'title', type: 'string' as const }],
+              },
+            ],
+          },
+        ],
+      },
+    ],
+  } as const
+
+  const setup = async () => {
+    const root = await tmpDir()
+    const config = defineCanopyTestConfig({ schema })
+    const store = new ContentStore(root, flattenSchema(schema, config.contentRoot))
+    return { root, store }
+  }
+
+  const docs = unsafeAsLogicalPath('content/docs')
+  const guides = unsafeAsLogicalPath('content/docs/guides')
+
+  it('ALLOWS an entry beside a same-named collection that has no index entry', async () => {
+    // The legitimate shape: a landing page plus a folder of children. Nothing is contested, and a
+    // name-based rule would wrongly forbid this.
+    const { store } = await setup()
+    await store.write(guides, unsafeAsSlug('getting-started'), {
+      format: 'json',
+      data: { title: 'Getting Started' },
+    })
+
+    await expect(
+      store.write(docs, unsafeAsSlug('guides'), { format: 'json', data: { title: 'Guides' } }),
+    ).resolves.toBeDefined()
+  })
+
+  it('REFUSES an entry whose URL a sibling collection index already holds', async () => {
+    const { store } = await setup()
+    await store.write(guides, unsafeAsSlug('index'), {
+      format: 'json',
+      data: { title: 'Guides Landing' },
+    })
+
+    await expect(
+      store.write(docs, unsafeAsSlug('guides'), { format: 'json', data: { title: 'Guides' } }),
+    ).rejects.toThrow(/share a URL with the index entry/)
+  })
+
+  it('REFUSES an index entry whose URL a parent entry already holds (the other direction)', async () => {
+    const { store } = await setup()
+    await store.write(docs, unsafeAsSlug('guides'), {
+      format: 'json',
+      data: { title: 'Guides' },
+    })
+
+    await expect(
+      store.write(guides, unsafeAsSlug('index'), { format: 'json', data: { title: 'Landing' } }),
+    ).rejects.toThrow(/share a URL with the "guides" entry in the parent/)
+  })
+
+  it('throws UrlPathConflictError, so the API maps it to the existing 409', async () => {
+    const { store } = await setup()
+    await store.write(guides, unsafeAsSlug('index'), { format: 'json', data: { title: 'L' } })
+
+    const err = await store
+      .write(docs, unsafeAsSlug('guides'), { format: 'json', data: { title: 'G' } })
+      .then(
+        () => null,
+        (e: unknown) => e,
+      )
+    expect(err).toBeInstanceOf(UrlPathConflictError)
+    expect(err).toBeInstanceOf(ContentConflictError)
+  })
+
+  it('does not block an ordinary SAVE of an entry already in a contested pair', async () => {
+    // Blocking the edit would trap the author in an entry they can no longer fix. The guard is
+    // create/rename only; a pre-existing collision is the build guard's business.
+    const { root, store } = await setup()
+    await store.write(docs, unsafeAsSlug('guides'), { format: 'json', data: { title: 'Guides' } })
+    // Land the collision directly on disk, the way a git merge would.
+    const guidesDir = path.join(root, 'content/docs/guides')
+    await fs.mkdir(guidesDir, { recursive: true })
+    await fs.writeFile(
+      path.join(guidesDir, `guide.index.${generateId()}.json`),
+      JSON.stringify({ title: 'Landing' }),
+    )
+
+    await expect(
+      store.write(docs, unsafeAsSlug('guides'), { format: 'json', data: { title: 'Edited' } }),
+    ).resolves.toBeDefined()
+  })
+
+  it('REFUSES a rename onto a contested URL, in both directions', async () => {
+    const { store } = await setup()
+    await store.write(guides, unsafeAsSlug('index'), { format: 'json', data: { title: 'L' } })
+    await store.write(docs, unsafeAsSlug('overview'), { format: 'json', data: { title: 'O' } })
+
+    // Renaming a plain entry ONTO the collection's URL.
+    await expect(
+      store.renameEntry(docs, unsafeAsSlug('overview'), unsafeAsSlug('guides')),
+    ).rejects.toThrow(/share a URL with the index entry/)
+  })
+
+  it('REFUSES renaming an entry TO `index` when the parent holds that URL', async () => {
+    // How an existing collection acquires a landing page — so the rename path needs the check
+    // just as much as create does.
+    const { store } = await setup()
+    await store.write(docs, unsafeAsSlug('guides'), { format: 'json', data: { title: 'G' } })
+    await store.write(guides, unsafeAsSlug('landing'), { format: 'json', data: { title: 'L' } })
+
+    await expect(
+      store.renameEntry(guides, unsafeAsSlug('landing'), unsafeAsSlug('index')),
+    ).rejects.toThrow(/share a URL with the "guides" entry in the parent/)
+  })
+
+  it("checks the slug that will be WRITTEN, not the caller's raw argument", async () => {
+    // buildPaths strips leading slashes and lowercases before choosing the filename, so a guard
+    // reading the raw argument compared "/GUIDES" against nothing and let the write through.
+    const { store } = await setup()
+    await store.write(guides, unsafeAsSlug('index'), { format: 'json', data: { title: 'L' } })
+
+    await expect(
+      store.write(docs, unsafeAsSlug('/GUIDES'), { format: 'json', data: { title: 'G' } }),
+    ).rejects.toThrow(/share a URL with the index entry/)
+  })
+
+  it('guards an id-addressed write that is a create in fact, not just per the caller', async () => {
+    // `buildPaths`' `existed` is `foundExisting || Boolean(existingId)`, and the existingId half
+    // is a caller ASSERTION. Recreating an entry deleted out from under the store (git, another
+    // process) is a create in fact, and must be guarded like one.
+    const { root, store } = await setup()
+    await store.write(docs, unsafeAsSlug('guides'), { format: 'json', data: { title: 'Guides' } })
+
+    const docsDir = path.join(root, 'content/docs')
+    const file = (await fs.readdir(docsDir)).find((f) => f.includes('.guides.'))!
+    // {type}.{slug}.{id}.{ext} — the id is the second-to-last segment.
+    const id = unsafeAsContentId(file.split('.').at(-2)!)
+
+    // The file vanishes behind the store's back (git, another process), which frees the URL...
+    await fs.rm(path.join(docsDir, file))
+    // ...so the collection legitimately acquires a landing page at that URL.
+    await store.write(guides, unsafeAsSlug('index'), { format: 'json', data: { title: 'L' } })
+
+    await expect(
+      store.write(
+        docs,
+        unsafeAsSlug('guides'),
+        { format: 'json', data: { title: 'G' } },
+        undefined,
+        id,
+      ),
+    ).rejects.toThrow(/share a URL with the index entry/)
+  })
+
+  it('ALLOWS a root index entry, which claims "/" and cannot be contested from above', async () => {
+    const rootSchema = {
+      collections: [
+        {
+          name: 'root',
+          path: '',
+          entries: [
+            {
+              name: 'page',
+              format: 'json' as const,
+              default: true,
+              schema: [{ name: 'title', type: 'string' as const }],
+            },
+          ],
+        },
+      ],
+    } as const
+    const root = await tmpDir()
+    const config = defineCanopyTestConfig({ schema: rootSchema })
+    const store = new ContentStore(root, flattenSchema(rootSchema, config.contentRoot))
+
+    await expect(
+      store.write(unsafeAsLogicalPath('content'), unsafeAsSlug('index'), {
+        format: 'json',
+        data: { title: 'Home' },
+      }),
+    ).resolves.toBeDefined()
   })
 })

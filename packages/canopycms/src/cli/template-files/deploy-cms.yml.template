@@ -37,7 +37,7 @@
 #      update-function-code pipeline needed -- `cdk deploy` mutates
 #      infrastructure.
 #   3. Install the CDK dependencies the app entry point needs:
-#      `{{ADD_DEV}} canopycms-cdk aws-cdk-lib constructs tsx aws-cdk`
+#      `{{ADD_DEV}} canopycms canopycms-cdk aws-cdk-lib constructs tsx aws-cdk`
 #   4. Set these repository secrets (Settings -> Secrets and variables ->
 #      Actions -> Secrets). Every one of them is read by `required()` in
 #      infrastructure/bin/app.ts, so a missing value fails the deploy at synth:
@@ -99,9 +99,11 @@ jobs:
         run: {{CI_INSTALL}}
 
       # cdk.json runs `node --import tsx infrastructure/bin/app.ts`, which
-      # imports canopycms-cdk, aws-cdk-lib and constructs. Missing any of them
-      # otherwise surfaces as an ERR_MODULE_NOT_FOUND buried in `cdk deploy`
-      # output, several minutes in.
+      # imports canopycms-cdk, aws-cdk-lib and constructs -- and canopycms-cdk
+      # itself peer-depends on canopycms (its worker re-export), so that one is
+      # checked too even though the app entry point never imports it directly.
+      # Missing any of them otherwise surfaces as an ERR_MODULE_NOT_FOUND
+      # buried in `cdk deploy` output, several minutes in.
       #
       # aws-cdk is checked too even though nothing imports it: it is the CLI
       # the Deploy step invokes as `npx cdk`. Absent from node_modules, npx
@@ -112,12 +114,12 @@ jobs:
       - name: Check CDK dependencies are installed
         run: |
           missing=""
-          for pkg in tsx aws-cdk-lib constructs canopycms-cdk aws-cdk; do
+          for pkg in tsx aws-cdk-lib constructs canopycms canopycms-cdk aws-cdk; do
             [ -e "node_modules/$pkg" ] || missing="$missing $pkg"
           done
           if [ -n "$missing" ]; then
             echo "::error::Missing CDK dependencies:$missing"
-            echo "::error::Install them with: {{ADD_DEV}} canopycms-cdk aws-cdk-lib constructs tsx aws-cdk"
+            echo "::error::Install them with: {{ADD_DEV}} canopycms canopycms-cdk aws-cdk-lib constructs tsx aws-cdk"
             exit 1
           fi
 

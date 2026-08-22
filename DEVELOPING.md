@@ -1723,6 +1723,42 @@ next -- and Vitest warns that such errors can cause false positives elsewhere in
 run. If you see an unhandled error blamed on a test that plainly can't have caused it,
 suspect a missing jsdom shim in the test that ran before it.
 
+`test-setup.ts` also registers React Testing Library's `cleanup()` in an `afterEach`,
+and that registration has to be explicit here. RTL normally installs its own automatic
+cleanup, but only when it finds a **global** `afterEach` -- and this package runs vitest
+with `globals: false`, so that global does not exist and RTL's auto-registration
+silently no-ops. Importing `afterEach` from `vitest` in the setup file is what makes it
+real. Two things follow for contributors:
+
+- **Every test starts without the previous test's rendered trees.** `cleanup()` unmounts
+  the containers RTL itself mounted; nodes a test appended to `document.body` by hand
+  are its own to remove. Don't write a test that depends on a tree an earlier test in
+  the same file rendered; render what you need.
+- **A new jsdom vitest project, or a second editor setup file, must register `cleanup()`
+  too.** Nothing else will do it for you.
+
+This is not just tidiness. Without the unmount, components stay mounted for the whole
+file and their timers outlive the test: Mantine's `useTransition` cancels its pending
+`setTimeout(setState)` from an unmount effect, so an un-unmounted transition can fire
+after the jsdom environment is torn down and blow up inside React with
+`ReferenceError: window is not defined`. That lands as exactly the kind of
+misattributed "Unhandled Error" described above -- a run that exits non-zero while every
+single test passes. Before this was fixed, 17 of the 53 editor test files ended with
+components still mounted (252 trees in total).
+
+**A second, unrelated bug had the identical symptom.** In the same fix, a provisioning-lock
+race (see [docs/concurrency.md](docs/concurrency.md)) turned out to alias every branch under
+one shared `proper-lockfile` registry entry, so releasing one branch's lock could tear down
+another's refresh timer and later crash the process with an uncaught `ECOMPROMISED` from
+inside that timer -- also surfacing as "every test passed, but the run exited 1," blamed on
+whichever file happened to be running when the timer fired. Both leaks now have regression
+coverage (`provisioning-lock.test.ts` for the lock race, the `cleanup()` registration above
+for the mount leak), and the root cause in both cases was a real bug, not a test artifact.
+**If you see an unhandled error with zero test failures today, treat it as a genuine new leak
+and investigate it -- it is not a known, ignorable flake.** That used to be different advice:
+both of the above shipped unnoticed for a while precisely because "unhandled error, but
+everything passed" looked like noise.
+
 ### Diagnosing a Test Failure
 
 **Attribute the failure to the base before blaming your diff.** Run the suite at the
@@ -3030,6 +3066,45 @@ Read the file in full before extending it or writing a similar "shell out to a r
 
 **Local-run gotcha:** the live-server test's request-time content read resolves against the last git commit (dev-mode branch-workspace resolution), not uncommitted working-tree edits. Running this test locally against WIP changes (to the fixture app or to `withCanopy()`) can make the cms server's `/` return a non-200 until you commit (or run `canopycms sync push`) -- that's expected dev-mode behavior, not a build-shape regression, and the test's own assertion message explains this inline. Read the failure message before assuming a real regression.
 
+### `apps/example1` Build Verification (`example1-build` CI Gate)
+
+`apps/example1` -- the reference app most doc snippets and e2e expectations are written
+against -- used to be built by nothing in CI: `validate` only type-checks/lints it, and
+`dual-build` above builds a different app (`apps/dual-build-fixture`). A path-gated
+`example1-build` job in `.github/workflows/ci.yml` closes that gap by running the app's own
+`verify:build` script (`apps/example1/build-verify.test.ts`, vitest):
+
+```bash
+pnpm --filter canopycms-example-one run verify:build
+```
+
+(`--filter example1` matches nothing -- `example1` is the directory name, the package is
+`canopycms-example-one`.)
+
+Two things about this gate are easy to miss:
+
+- **It asserts on the build's OUTPUT, not its exit code.** The incident that motivated it:
+  re-modelling the `home` entry as a root `index` entry changed its on-disk slug while
+  `app/page.tsx` still read the old one, so `readByUrlPath('/')` resolved nothing and Next
+  prerendered the not-found boundary -- AT `/` -- while the build's exit code stayed 0 the
+  whole time; `sitemap.xml` kept advertising the stale `/home` URL alongside it. "The build
+  passed" was not evidence of anything. `build-verify.test.ts` instead greps the emitted
+  `.next/server/app/index.html` for the home entry's actual hero title (read from its content
+  file, not hardcoded) and checks `sitemap.xml.body` for `/` while asserting the stale `/home`
+  is absent, plus a floor against a near-empty sitemap. Duplicate-URL collisions aren't
+  re-checked separately here -- `assertNoDuplicateUrlPaths` already runs during a normal
+  `next build` via the sitemap and static-params calls, so a real collision already fails the
+  build outright.
+- **The CI job needs a `git checkout -B main` step, for a build-time reason, not just a
+  request-time one.** `apps/example1` is always CanopyCMS `mode: 'dev'`, and dev mode's
+  base-branch resolution (`resolveBaseBranch`/`detectHeadBranch` in `utils/git.ts`) falls back
+  to the literal branch name `main` on a detached HEAD -- exactly what `actions/checkout`
+  leaves it as. That fallback fires for this app's build-time content read too. Without
+  attaching HEAD to a real branch pointing at the checked-out commit first (the same fix
+  `dual-build` above already needed), the job would silently build against whatever `main`
+  happens to resolve to instead of the PR's own content, defeating the gate while still
+  reporting green.
+
 ### Scaffold-and-Synth Verification (`canopycms-cdk/src/scaffold-synth.test.ts`)
 
 `scaffold-synth.test.ts` verifies `canopycms init-deploy aws` end to end: it runs the real CLI into a scratch project, then executes the generated `cdk.json`'s own `app` command, and requires a CloudFormation template to come out the other end. It exists because the bug it fixes -- the generated GitHub Actions workflow deployed against a `cdk.json` that nothing had created -- was invisible to `init.test.ts`'s template-string assertions, which passed the whole time. The lesson generalizes past this one test: for generated/scaffolded output, assert on what the output _does_ (does it synth?), not on what it _contains_ (does the string look right?).
@@ -3312,6 +3387,55 @@ error client-bundle-no-node-builtins: packages/canopycms/src/client.ts → fs/pr
 ```
 
 The fix is normally to import the dependency-free sibling instead of the node-importing module -- `paths/branch-name` (not `paths/branch` or the `paths` barrel), `assets/asset-prefixes` (not `assets/keys`), `assets/transform-directives` (not `assets/transform`) -- or to make the import `import type`. If a client-reachable module genuinely needs new browser-safe logic that currently lives in a node-importing file, extract that logic into its own dependency-free module rather than widening the rule.
+
+### Published-Package ESM Import Check
+
+`tsc` with `moduleResolution: "Bundler"` emits extensionless relative specifiers (`from './adapter'`), which `tsc` and bundlers both tolerate but Node's native ESM resolver rejects outright (`ERR_MODULE_NOT_FOUND`). Four of five published packages shipped that way, undetected, until a real adopter hit it:
+
+```bash
+pnpm check:esm
+```
+
+This **requires a build first** -- it resolves each published package's entry points against real built `dist/` output, not `src/`. It runs in CI (`.github/workflows/ci.yml`) right after a step that builds the four non-core published packages (CI previously only built `packages/canopycms`, so nothing ever built `canopycms-next`, `canopycms-auth-clerk`, `canopycms-auth-dev`, or `canopycms-cdk` to check).
+
+Each package's `build` script runs `rm -rf dist` before `tsc`: bare `tsc` never removes output it no longer emits, so narrowing a `tsconfig.build.json`'s `exclude` list (or deleting a source file) leaves the old compiled file behind in `dist/` on top of a fresh build. If you ever see `check:esm` report an "undeclared runtime dependency" for something like `vitest` or `@testing-library/react` that nothing in current `src/` imports, that is almost always a stale `dist/` from before this clean step existed, or from a `tsc` invocation that bypassed the package's `build` script -- delete `dist/` by hand and rebuild before trusting the guard's output.
+
+**Why it can't just `import('canopycms')` in-repo:** this is a pnpm workspace, so `node_modules/canopycms` is a symlink that resolves through the package's _dev_ `exports` field (raw `.ts`, meant for bundlers/tsx) -- never through `publishConfig.exports`, the field a real npm consumer actually gets. A naive in-repo smoke test would pass while the published tarball was broken. The guard ([scripts/check-esm-imports.mjs](scripts/check-esm-imports.mjs)) instead builds a sandbox `node_modules`, merging each package's `publishConfig` over its `package.json` (the same merge `npm publish`/`pnpm pack` perform) and pointing the result at the real built `dist/`, then imports every entry point from there under a real Node subprocess.
+
+**A third thing the check enforces: publish-status coverage.** Every `exports` subpath of
+every published package must be declared in [scripts/check-esm-imports.mjs](scripts/check-esm-imports.mjs)'s
+`PACKAGES` list as exactly one of `test` (imported live under Node), `skip: <reason>`
+(published, but can't be exercised this way -- e.g. a client-only entry that pulls in CSS),
+or `devOnly: <reason>` (present in the package's dev `exports` map so sibling workspace
+packages can import it, but deliberately absent from `publishConfig.exports`). `checkCoverage()`
+enforces both directions: a `devOnly` subpath that reappears in `publishConfig.exports` fails,
+and so does a subpath in `publishConfig.exports` that isn't declared here at all. This is what
+now catches the shape of bug that shipped `canopycms/test-utils` broken for a while:
+`publishConfig.exports` advertised the subpath while `tsconfig.build.json` excluded
+`src/test-utils/**` from the build (its sources import `vitest` at module scope and augment
+its global types, so it can't be published as-is), so an external `import 'canopycms/test-utils'`
+hit `ERR_MODULE_NOT_FOUND` while in-repo consumers resolved it fine through the dev exports map
+and never noticed. If you add a new workspace-internal-only subpath to a published package,
+declare it `devOnly` here -- leaving it out of `publishConfig.exports` without declaring it is
+exactly the gap that let this ship. See [ARCHITECTURE.md](ARCHITECTURE.md#package-architecture)
+for the full rationale on why `test-utils` stays unpublished.
+
+**Fix:** run [scripts/add-js-extensions.mjs](scripts/add-js-extensions.mjs), the shared post-build step that rewrites extensionless relative specifiers to explicit `.js` (or `/index.js` for directory and bare `.`/`..` specifiers). It is now wired into all five published packages' `build` scripts (`packages/canopycms` via `scripts/postbuild.mjs`; the other four inline as `tsc ... && node ../../scripts/add-js-extensions.mjs dist`). If you add a new published package, wire its `build` script the same way -- `check:esm` will fail on the omission the next time CI runs.
+
+**The check has a second pass, for `.d.ts`.** The same missing extension in a declaration file does not throw, so the runtime probe above cannot see it: an adopter on `moduleResolution: "node16"`/`"nodenext"` fails to resolve `export * from './x'` inside a `.d.ts`, and TypeScript's recovery is to type the whole import as `any`. Their build stays green while every type we export silently becomes `any` -- and under `skipLibCheck: true`, which most scaffolds set, there is no diagnostic at all. So `check:esm` also typechecks a generated consumer against the same sandbox with `module`/`moduleResolution: nodenext` and `skipLibCheck` deliberately **off**. Two classes of diagnostic fail it, and both are needed:
+
+- **Anything attributed to the generated `consumer.ts`.** It imports nothing but our own packages, so every diagnostic in it is ours by construction -- a missing `.d.ts` (`TS7016`), a `publishConfig` `types`/exports path pointing at output that was never built (`TS2307`). Filtering these out by path was this guard's own first bug: `dist/server.d.ts` could be deleted outright and the check still passed green.
+- **`TS2834`/`TS2835`/`TS2307`/`TS7016` whose path points into one of our own `dist/` directories** -- the declaration-kept-an-extensionless-import case, which surfaces inside our declarations rather than at the consumer.
+
+Diagnostics attributed to third-party paths are ignored: the probe sets `types: []`, so ambient `@types` are not auto-included and dependency declarations emit unrelated noise (missing `NodeJS` namespace, `Buffer`, bare `child_process` specifiers, Next's own extensionless imports). Note the sandbox _does_ have `@types/node` symlinked in -- `types: []` is what excludes the globals, not its absence. `TS2503`/`TS2591` are deliberately not in the list, since they say nothing about resolution.
+
+This pass covers **every published subpath, not just the runtime-testable ones**. Each `skip` in the `PACKAGES` list is a _runtime_ limitation (a CSS import Node's loader rejects, a `next/server` specifier only a bundler resolves), and none of them apply to `import type`, which never executes the module. Restricting the type pass to `test` entries left canopycms's entire `editor/` declaration subtree unguarded, because only `./client` reaches it.
+
+`addJsExtensions` rewrites `.d.ts` alongside `.js` for this reason; note it appends the **runtime** extension (`./x.js`, never `./x.d.ts`), which is what TypeScript expects to see in a declaration file.
+
+The rewrite pattern is the most fragile part and fails silently in both directions -- too narrow and a relative specifier ships unrewritten (a bare `.` did exactly that), too wide and a bare package name gets a spurious `.js` welded on. `node scripts/add-js-extensions.mjs --self-test` asserts the pattern's classification table plus an end-to-end rewrite (directory expansion, bare dot, already-suffixed specifiers, `.d.ts` alongside `.js`, and idempotence). `pnpm check:esm` runs it first, so it executes in CI.
+
+When changing either the rewrite or the guard, verify the guard still fails. Strip a `.js` off one relative specifier in a built `dist/**/*.d.ts` and re-run `pnpm check:esm`: the runtime probe should stay green and the type pass should go red. Deleting a built `.d.ts` outright should also go red. If either stays green, the guard is not testing what it claims -- and confirm any mutation you make to test this actually landed before trusting the result.
 
 ### Future-Tasks Backlog Check
 

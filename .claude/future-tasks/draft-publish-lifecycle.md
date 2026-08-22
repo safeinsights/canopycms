@@ -143,5 +143,5 @@ forget about them.** The guardrails to design are therefore staleness
   `noindex`, which this decision makes the *sole* per-entry visibility lever.
 - [listentries-acl-awareness.md](resolved/listentries-acl-awareness.md) — its
   unpublished-data concern is about *branch* content, not draft-flagged entries.
-- [resolved-references-url.md](resolved-references-url.md) — its "is this
+- [resolved-reference-shape.md](resolved/resolved-reference-shape.md) — its "is this
   visible" question dissolves: within a branch, everything is equally visible.

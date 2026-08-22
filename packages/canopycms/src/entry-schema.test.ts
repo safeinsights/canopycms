@@ -8,11 +8,14 @@ import {
   defineSeoFieldGroup,
   type BlockComponentRegistry,
   type BlockValueOf,
+  buildResolvedReference,
+  RESOLVED_REFERENCE_KEYS,
   type EntryTypesFromRegistry,
+  type ResolvedReferenceMeta,
   type TypeFromEntrySchema,
 } from './entry-schema'
 import { validateEntryData } from './validation/entry-validator'
-import type { EntrySchema } from './config/types'
+import type { EntrySchema, SelectOption } from './config/types'
 
 describe('TypeFromEntrySchema', () => {
   describe('block discriminated union', () => {
@@ -200,10 +203,17 @@ describe('TypeFromEntrySchema', () => {
 
       type PostContent = TypeFromEntrySchema<typeof postSchema>
 
-      expectTypeOf<PostContent['author']>().toEqualTypeOf<{
-        name: string
-        bio: string
-      } | null>()
+      // The resolution metadata is part of the shape, not an extra the type omits: the
+      // runtime has always injected id/slug/collection, and urlPath joined them so a
+      // resolved reference can be linked to without a second lookup.
+      expectTypeOf<PostContent['author']>().toEqualTypeOf<
+        | ({
+            name: string
+            bio: string
+          } & ResolvedReferenceMeta)
+        | null
+      >()
+      expectTypeOf<NonNullable<PostContent['author']>['urlPath']>().toEqualTypeOf<string>()
 
       void postSchema
     })
@@ -247,10 +257,13 @@ describe('TypeFromEntrySchema', () => {
 
       type Content = TypeFromEntrySchema<typeof schema>
 
-      expectTypeOf<Content['meta']['author']>().toEqualTypeOf<{
-        name: string
-        bio: string
-      } | null>()
+      expectTypeOf<Content['meta']['author']>().toEqualTypeOf<
+        | ({
+            name: string
+            bio: string
+          } & ResolvedReferenceMeta)
+        | null
+      >()
 
       void schema
     })
@@ -272,7 +285,9 @@ describe('TypeFromEntrySchema', () => {
 
       type Content = TypeFromEntrySchema<typeof schema>
 
-      expectTypeOf<Content['tags']>().toEqualTypeOf<({ label: string } | null)[]>()
+      expectTypeOf<Content['tags']>().toEqualTypeOf<
+        (({ label: string } & ResolvedReferenceMeta) | null)[]
+      >()
 
       void schema
     })
@@ -293,6 +308,167 @@ describe('TypeFromEntrySchema', () => {
       }>()
 
       void schema
+    })
+  })
+
+  describe('select field', () => {
+    it('infers the literal union of its own options, not a bare string', () => {
+      const schema = defineEntrySchema([
+        { name: 'status', type: 'select', options: ['draft', 'published'] },
+      ])
+
+      type Content = TypeFromEntrySchema<typeof schema>
+
+      expectTypeOf<Content['status']>().toEqualTypeOf<'draft' | 'published'>()
+
+      void schema
+    })
+
+    it('rejects a string that is not one of the options, and any number', () => {
+      const schema = defineEntrySchema([
+        { name: 'status', type: 'select', options: ['draft', 'published'] },
+      ])
+
+      type Content = TypeFromEntrySchema<typeof schema>
+
+      const valid: Content = { status: 'published' }
+      // @ts-expect-error - 'archived' is not one of the declared options
+      const notAnOption: Content = { status: 'archived' }
+      // @ts-expect-error - no select value can ever be a number: SelectOption carries
+      // `value: string` in both arms and validateEntryData rejects a non-string
+      const aNumber: Content = { status: 42 }
+
+      expect(valid.status).toBe('published')
+      expect(notAnOption.status).toBe('archived')
+      expect(aNumber.status).toBe(42)
+
+      void schema
+    })
+
+    it('takes `value` off an object option, not the whole option object', () => {
+      const schema = defineEntrySchema([
+        {
+          name: 'status',
+          type: 'select',
+          options: [
+            { label: 'Draft', value: 'draft' },
+            { label: 'Published', value: 'published' },
+          ],
+        },
+      ])
+
+      type Content = TypeFromEntrySchema<typeof schema>
+
+      expectTypeOf<Content['status']>().toEqualTypeOf<'draft' | 'published'>()
+
+      const valid: Content = { status: 'draft' }
+      // @ts-expect-error - 'Draft' is the option's label, not its value
+      const usingLabel: Content = { status: 'Draft' }
+
+      expect(valid.status).toBe('draft')
+      expect(usingLabel.status).toBe('Draft')
+
+      void schema
+    })
+
+    it('handles an options array mixing bare strings and object options', () => {
+      const schema = defineEntrySchema([
+        {
+          name: 'status',
+          type: 'select',
+          options: ['draft', { label: 'Published', value: 'published' }, 'archived'],
+        },
+      ])
+
+      type Content = TypeFromEntrySchema<typeof schema>
+
+      expectTypeOf<Content['status']>().toEqualTypeOf<'draft' | 'published' | 'archived'>()
+
+      // @ts-expect-error - 'Published' is the object option's label, not its value
+      const usingLabel: Content = { status: 'Published' }
+
+      expect(usingLabel.status).toBe('Published')
+
+      void schema
+    })
+
+    it('a list select becomes an array of the option union', () => {
+      const schema = defineEntrySchema([
+        { name: 'tags', type: 'select', list: true, options: ['a', 'b'] },
+      ])
+
+      type Content = TypeFromEntrySchema<typeof schema>
+
+      expectTypeOf<Content['tags']>().toEqualTypeOf<Array<'a' | 'b'>>()
+
+      // @ts-expect-error - 'c' is not one of the declared options
+      const wrong: Content = { tags: ['a', 'c'] }
+
+      expect(wrong.tags).toEqual(['a', 'c'])
+
+      void schema
+    })
+
+    it('the inferred union agrees with what validateEntryData accepts at runtime', () => {
+      const schema = defineEntrySchema([
+        { name: 'status', type: 'select', options: ['draft', { label: 'Live', value: 'live' }] },
+      ])
+
+      type Content = TypeFromEntrySchema<typeof schema>
+
+      const live: Content = { status: 'live' }
+
+      expect(validateEntryData(schema as EntrySchema, live)).toEqual([])
+      expect(validateEntryData(schema as EntrySchema, { status: 'Live' })).toEqual([
+        { fieldPath: 'status', message: 'Must be one of: draft, live' },
+      ])
+      expect(validateEntryData(schema as EntrySchema, { status: 42 })).toEqual([
+        { fieldPath: 'status', message: 'Expected a selection' },
+      ])
+    })
+
+    it('accepts a shared `as const` options array, reused across schemas', () => {
+      // This is what pins `readonly` on InferableField['options']. A mutable constraint
+      // would NOT collapse the union (const inference keeps the literals either way) —
+      // it would reject this call outright with TS4104, because a `readonly` tuple is
+      // not assignable to a mutable array. Declaring options once and sharing them is
+      // the natural way to reuse an option list, so that break would be a loud one.
+      const STATUSES = ['draft', 'published'] as const
+
+      const postSchema = defineEntrySchema([{ name: 'status', type: 'select', options: STATUSES }])
+      const pageSchema = defineEntrySchema([{ name: 'state', type: 'select', options: STATUSES }])
+
+      expectTypeOf<TypeFromEntrySchema<typeof postSchema>['status']>().toEqualTypeOf<
+        'draft' | 'published'
+      >()
+      expectTypeOf<TypeFromEntrySchema<typeof pageSchema>['state']>().toEqualTypeOf<
+        'draft' | 'published'
+      >()
+
+      expect(postSchema[0].options).toBe(STATUSES)
+
+      void pageSchema
+    })
+
+    it('degrades to string when there is no literal option list to infer', () => {
+      // No `options` key at all, and an empty one — both are schema mistakes that
+      // validateCanopyConfig rejects at runtime. Neither should type as `never`.
+      const noOptions = defineEntrySchema([{ name: 'status', type: 'select' }])
+      const emptyOptions = defineEntrySchema([{ name: 'status', type: 'select', options: [] }])
+
+      expectTypeOf<TypeFromEntrySchema<typeof noOptions>['status']>().toEqualTypeOf<string>()
+      expectTypeOf<TypeFromEntrySchema<typeof emptyOptions>['status']>().toEqualTypeOf<string>()
+
+      // An options array annotated as the runtime SelectOption[] has no literals left,
+      // so it widens to `string` rather than failing to compile.
+      const options: SelectOption[] = ['draft', { label: 'Live', value: 'live' }]
+      const widened = defineEntrySchema([{ name: 'status', type: 'select', options }])
+
+      expectTypeOf<TypeFromEntrySchema<typeof widened>['status']>().toEqualTypeOf<string>()
+
+      void noOptions
+      void emptyOptions
+      void widened
     })
   })
 
@@ -425,11 +601,11 @@ describe('defineSeoFieldGroup', () => {
       metaTitle?: string
       metaDescription?: string
       ogImage?: string
-      // select fields infer as string | number (TypeFromEntrySchema does not narrow options).
-      ogType?: string | number
+      // The two select fields narrow to their own declared options, not a bare string.
+      ogType?: 'website' | 'article' | 'profile'
       canonical?: string
       noindex?: boolean
-      twitterCard?: string | number
+      twitterCard?: 'summary' | 'summary_large_image'
     }>()
 
     // An entry that sets no SEO fields at all is still a valid literal.
@@ -458,10 +634,10 @@ describe('defineSeoFieldGroup', () => {
         metaTitle?: string
         metaDescription?: string
         ogImage?: string
-        ogType?: string | number
+        ogType?: 'website' | 'article' | 'profile'
         canonical?: string
         noindex?: boolean
-        twitterCard?: string | number
+        twitterCard?: 'summary' | 'summary_large_image'
       }
     }>()
     expect(schema[1]).toMatchObject({ name: 'seo', type: 'object', required: false })
@@ -691,5 +867,63 @@ describe('EntryTypesFromRegistry', () => {
     expectTypeOf<PartnerContent>().toEqualTypeOf<TypeFromEntrySchema<typeof partnerSchema>>()
 
     expect(true).toBe(true)
+  })
+})
+
+describe('buildResolvedReference', () => {
+  const meta: ResolvedReferenceMeta = {
+    id: 'aB3cD4eF5gH6',
+    slug: 'signup',
+    collection: 'content/snippets',
+    urlPath: '/snippets/signup',
+  }
+
+  it('carries the target data alongside the metadata', () => {
+    const result = buildResolvedReference({ title: 'Sign up', ctaText: 'Go' }, meta)
+    expect(result).toEqual({ title: 'Sign up', ctaText: 'Go', ...meta })
+  })
+
+  it.each(RESOLVED_REFERENCE_KEYS)('does not let target data shadow %s', (key) => {
+    // The write boundary recovers a reference's id from `value.id`, so a target modelling one
+    // of these as content used to make a re-save persist the wrong value and silently repoint
+    // the reference. Metadata is applied last precisely to prevent that.
+    const result = buildResolvedReference({ [key]: 'CONTENT-VALUE', title: 'Sign up' }, meta)
+    expect(result[key]).toBe(meta[key])
+    expect(result.title).toBe('Sign up')
+  })
+
+  it.each(RESOLVED_REFERENCE_KEYS)('does not let an embedded body shadow %s either', (key) => {
+    // The body is assigned by KEY rather than spread, so it was the one way around the
+    // ordering above. (The entry schema registry also rejects such a schema outright; this
+    // pins the structural guarantee independently of that check.)
+    const result = buildResolvedReference({ title: 'Sign up' }, meta, {
+      fieldName: key,
+      value: 'THE PROSE',
+    })
+    expect(result[key]).toBe(meta[key])
+  })
+
+  it('places an embedded body under its own field name', () => {
+    const result = buildResolvedReference({ title: 'Sign up' }, meta, {
+      fieldName: 'prose',
+      value: 'THE PROSE',
+    })
+    expect(result.prose).toBe('THE PROSE')
+  })
+
+  it('omits an empty body rather than writing an empty string', () => {
+    // Matches `readEntryData`, which merges a body only when truthy -- so a listed md entry
+    // with no prose and a resolved reference to it agree on having no body key at all.
+    const result = buildResolvedReference({ title: 'Sign up' }, meta, {
+      fieldName: 'prose',
+      value: '',
+    })
+    expect('prose' in result).toBe(false)
+  })
+
+  it('does not mutate the data it was given', () => {
+    const data = { title: 'Sign up' }
+    buildResolvedReference(data, meta, { fieldName: 'prose', value: 'THE PROSE' })
+    expect(data).toEqual({ title: 'Sign up' })
   })
 })

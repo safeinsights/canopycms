@@ -73,7 +73,6 @@ export interface EditorEntry {
   label: string
   status?: string
   schema: EntrySchema
-  apiPath: string
   previewSrc?: string
   collectionPath?: LogicalPath
   collectionName?: string
@@ -130,6 +129,13 @@ export interface EditorProps {
   /** `media.publicBaseUrl` from config - prefixed onto asset URLs the editor builds (MediaLibrary/ImageField/MDX image dialog). Undefined means root-relative (editor and site share an origin). */
   assetBaseUrl?: string
   /**
+   * `CanopyClientConfig.basePath` - the deployment prefix the host Next.js app is served under
+   * (e.g. `/preview-123`). Prefixed onto every preview iframe `src` this component builds via
+   * `buildPreviewSrc`, so the iframe navigates to the entry's real served URL instead of the
+   * un-prefixed root. Undefined means the app is served at its origin's root (no-op).
+   */
+  basePath?: string
+  /**
    * Adopter-supplied overrides for how specific field types render, keyed by
    * field `type` (see `FormRenderer`'s `customRenderers` prop). Threaded
    * straight through to `FormRenderer` so this documented extension point is
@@ -167,6 +173,7 @@ export const Editor: React.FC<EditorProps> = ({
   currentUser = 'current-user',
   canResolveComments = true,
   assetBaseUrl,
+  basePath,
   AccountComponent,
   onAccountClick,
   onLogoutClick,
@@ -308,9 +315,9 @@ export const Editor: React.FC<EditorProps> = ({
         branchName: branchNameState,
         previewBaseByCollection,
         contentRoot,
+        basePath,
       }),
     setBusy: setEntriesLoading,
-    contentRoot,
   })
 
   // Keep the entry-type list referentially stable for as long as the create
@@ -765,7 +772,7 @@ export const Editor: React.FC<EditorProps> = ({
     // such collection" the same (correct) not-found outcome, so the guard
     // below is reachable again. See the correction to PR #196's "unreachable
     // with entries empty" claim in
-    // .claude/future-tasks/program-b-final-review-followups.md for the write
+    // .claude/future-tasks/resolved/program-b-final-review-followups.md for the write
     // hazard this closes -- found by the 2026-08-12 adversarial review.
     const collection = findCollection(collectionsFromApi, collectionPath)
     if (!collection) {
@@ -1014,7 +1021,8 @@ export const Editor: React.FC<EditorProps> = ({
 
   return (
     <CanopyCMSProvider {...(themeOptions ?? {})}>
-      <AssetContextProvider baseUrl={assetBaseUrl}>
+      {/* Precedence (baseUrl wins, basePath is the fallback) lives in AssetContextProvider. */}
+      <AssetContextProvider baseUrl={assetBaseUrl} basePath={basePath}>
         <Box bg="gray.0" style={{ minHeight: '100vh', width: '100%' }}>
           <EditorHeader
             ref={headerRef}

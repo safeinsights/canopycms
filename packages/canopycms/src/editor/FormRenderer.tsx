@@ -410,7 +410,7 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
           const items = Array.isArray(currentValue)
             ? (currentValue as Record<string, unknown>[])
             : []
-          return (
+          return wrapWithComments(
             <Paper key={fieldKey(path)} withBorder radius="md" p="md" shadow="xs">
               <Stack gap="sm">
                 <Group justify="space-between">
@@ -465,21 +465,43 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
                   )}
                 </Stack>
               </Stack>
-            </Paper>
+            </Paper>,
           )
         }
 
-        return (
+        // Non-list object: unlike the list branch above (where each item has
+        // its own Remove button), this field had no way to return to
+        // `undefined` once given a value. That mattered because a required
+        // child field inside it can be filled and then cleared back to `''`,
+        // which `isEmptyForRequired` treats as empty (entry-validator.ts) --
+        // but the object as a whole only reads as "absent" when it is
+        // `undefined`/`null`, not when its children are individually empty.
+        // Without a way to unset the object, that state was permanently
+        // invalid. The Clear button (wired through ObjectField's onRemove)
+        // fixes that by resetting to `undefined`, never `{}` (which would
+        // still carry a required-but-empty child into validation).
+        //
+        // Shown only when the field is optional (a required object should
+        // not be clearable back to a missing state) and only once it
+        // actually has a value (nothing to clear otherwise). Labeled
+        // "Clear" rather than "Remove" so it doesn't read as deleting the
+        // field from the schema, the way "Remove" correctly does for a list
+        // item above.
+        const hasValue = currentValue !== undefined && currentValue !== null
+        const canClear = objectField.required !== true && hasValue
+
+        return wrapWithComments(
           <ObjectField
             key={fieldKey(path)}
             label={label}
             fields={objectField.fields}
             value={currentValue as Record<string, unknown> | undefined}
             onChange={(next) => update(next)}
+            onRemove={canClear ? () => update(undefined) : undefined}
             renderField={renderField}
             path={path}
             dataCanopyField={normalizeCanopyPath(path)}
-          />
+          />,
         )
       }
       case 'code':

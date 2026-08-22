@@ -2,16 +2,54 @@
   "extends": "./tsconfig.json",
   "compilerOptions": {
     "declaration": true,
-    "declarationMap": true,
-    "sourceMap": true,
+    // Maps off for the PUBLISHED build: we ship "files": ["dist"], not src/,
+    // so dist/*.js.map and dist/*.d.ts.map would point at ../src/... paths
+    // that aren't in the tarball — dead weight nobody can resolve. tsconfig.json
+    // (dev/typecheck) still inherits sourceMap:true from tsconfig.base.json,
+    // which is fine since typecheck never emits. Don't re-enable these without
+    // also shipping src/.
+    "declarationMap": false,
+    "sourceMap": false,
     "noEmit": false
   },
   "exclude": [
     "**/*.test.ts",
     "**/*.test.tsx",
     "**/__tests__/**",
+    // Singular sibling of the plural glob above: two directories
+    // (src/api/__test__, src/editor/hooks/__test__) are named __test__, not
+    // __tests__, so the plural-only pattern missed them and their contents
+    // (a generated mock API client + a hook test helper) shipped in the
+    // published tarball. See .claude/future-tasks/resolved/
+    // tarball-ships-test-dirs-named-singular.md.
+    "**/__test__/**",
     "src/__integration__/**",
+    // Workspace-internal only, and deliberately so: these sources import vitest
+    // (a devDependency) at module scope, console-spy.ts runs expect.extend() as
+    // an import side effect, and it declares a global `declare module 'vitest'`
+    // augmentation. Building them would put all three into the published
+    // package. The matching half of this decision is that "./test-utils" is
+    // absent from package.json's publishConfig.exports while remaining in the
+    // dev exports map, so sibling packages can still import it — don't remove
+    // this line without also re-reading that. scripts/check-esm-imports.mjs
+    // enforces the pairing (its `devOnly` subpath mode).
     "src/test-utils/**",
-    "**/*.stories.tsx"
+    "**/*.stories.tsx",
+    // Loose workspace-internal test helpers that live outside src/test-utils/
+    // and src/__integration__/ and don't match *.test.ts, so none of the
+    // patterns above catch them. Each is imported only from an excluded tree
+    // (a .test.ts, src/__integration__/**, or a .stories.tsx) or, for the two
+    // editor setup files, only by path from vitest.config.ts — never from
+    // production code — verified by grepping every importer before adding
+    // these lines. config-test.ts imports vitest transitively (via
+    // ./services' createTestCanopyServices); authorization/test-utils.ts and
+    // paths/test-utils.ts exist only to expose branded-type constructors
+    // (unsafeAsXxx) to tests and stories; editor/test-setup.ts and
+    // editor/setup-test-dom.ts are vitest setupFiles / jsdom polyfills.
+    "src/config-test.ts",
+    "src/authorization/test-utils.ts",
+    "src/paths/test-utils.ts",
+    "src/editor/test-setup.ts",
+    "src/editor/setup-test-dom.ts"
   ]
 }

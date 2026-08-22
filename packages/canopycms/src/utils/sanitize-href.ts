@@ -12,7 +12,7 @@ const SENTINEL_BASE = 'https://relative.invalid'
  * equivalent to forward slash for special schemes, so `/\evil.com`, `\\evil.com` and `\/evil.com`
  * are all protocol-relative in effect despite declaring no scheme). Exported so every "is this
  * URL off-site" check in the package shares one answer instead of re-deriving it -- see
- * `isImplicitlyOffOrigin` below and `static/seo.ts`'s `isAbsoluteUrl`.
+ * `isImplicitlyOffOrigin` below and `utils/url-prefix.ts`'s `isAbsoluteUrl`.
  */
 export function declaresScheme(url: string): boolean {
   return /^[a-z][a-z0-9+.-]*:/i.test(url.trim())
@@ -30,7 +30,7 @@ export function declaresScheme(url: string): boolean {
  * (`declaresScheme` already identifies those as intentionally off-site on their own).
  *
  * Callers that want to treat a LITERAL `//host` as an intentionally-supported off-site pointer
- * (e.g. `static/seo.ts`'s `isAbsoluteUrl`, for a CDN-hosted `ogImage`) should check that
+ * (e.g. `utils/url-prefix.ts`'s `isAbsoluteUrl`, for a CDN-hosted `ogImage`) should check that
  * separately and only fall back to this function to catch the spellings that slip past a
  * `startsWith('//')` check.
  */

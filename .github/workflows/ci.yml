@@ -65,6 +65,26 @@ jobs:
         run: pnpm run build
         working-directory: packages/canopycms
 
+      # Builds every OTHER published package (not the example/test apps —
+      # those get their own dedicated build coverage in the dual-build and
+      # e2e jobs below). Needed so check:esm below has real dist/ output to
+      # resolve for canopycms-next, canopycms-auth-clerk, canopycms-auth-dev
+      # and canopycms-cdk, none of which the step above builds.
+      - name: Build other published packages
+        run: >-
+          pnpm --filter canopycms-next --filter canopycms-auth-clerk
+          --filter canopycms-auth-dev --filter canopycms-cdk run build
+
+      # Regression guard for the extensionless-relative-import defect (see
+      # scripts/add-js-extensions.mjs): actually resolves each published
+      # package's entry points under Node's native ESM resolver. Catches the
+      # class of bug that shipped silently for four of five packages until a
+      # real adopter hit it — `tsc` with moduleResolution:"Bundler" preserves
+      # bare relative specifiers, which only Node's resolver (not tsc, not a
+      # bundler) rejects.
+      - name: Check published packages import under Node ESM
+        run: pnpm check:esm
+
       # Runs at the workspace ROOT (`pnpm -r run test`), deliberately: pinning
       # this to packages/canopycms meant `pnpm test` resolved to that one
       # package's script, so canopycms-cdk, canopycms-next, canopycms-auth-clerk
@@ -206,6 +226,213 @@ jobs:
       - name: Skipped (no dual-build-relevant changes)
         if: steps.filter.outputs.relevant != 'true'
         run: echo "No changes under the dual-build-relevant paths -- skipping the two next builds."
+
+  example1-build:
+    name: Example1 Build & Content Gate
+    # apps/example1 is the reference app most doc snippets and e2e
+    # expectations are written against, but until now it was never built in
+    # CI at all -- `validate` above only type-checks/lints it, and
+    # `dual-build`'s two builds are apps/dual-build-fixture, a different app.
+    # See .claude/future-tasks/resolved/example1-next-build-not-in-ci.md.
+    #
+    # A green `next build` is NOT sufficient evidence by itself: Next happily
+    # prerenders the not-found boundary into a route and still calls that a
+    # successful build, and a sitemap can silently advertise a stale URL
+    # while the exit code stays 0. build-verify.test.ts's own doc comment
+    # has the incident that motivated this job. So this job doesn't just run
+    # `next build` -- it runs apps/example1's `verify:build` script, which
+    # asserts on the prerendered OUTPUT (real home content at "/", "/" and
+    # not "/home" in sitemap.xml).
+    #
+    # This is a separate job from `dual-build` above rather than extra steps
+    # in it: that job verifies a structurally different thing (the
+    # static-export/CMS deploy-shape split, via a different fixture app that
+    # is not `mode: 'dev'` for its static flavor), and folding a third
+    # `next build` with an unrelated pass/fail meaning into it would make a
+    # red `dual-build` ambiguous about which regression actually fired.
+    #
+    # Path-gated the same way `dual-build` is above, and for the same
+    # reason: the job always RUNS (so it always reports a conclusion --  a
+    # `paths:` filter on the trigger itself would leave a "required" check
+    # stuck pending on PRs that don't touch these paths), and only the
+    # expensive build+verify step is skipped via per-step `if:` when nothing
+    # relevant changed.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # paths-filter diffs against the PR base/previous push
+
+      - name: Check for example1-relevant changes
+        id: filter
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            # The app itself, plus the shared code its build actually
+            # exercises. This has to cover more than static/ and build/:
+            # build-verify.test.ts's own doc comment names the historical
+            # incident as a URL-resolution bug (readByUrlPath('/') missing
+            # the re-modelled home entry, so Next silently prerendered the
+            # not-found boundary at '/' with exit code 0) plus a base-branch
+            # resolution hazard specific to this app's dev-mode build-time
+            # reads -- neither mechanism lives under static/ or build/, so a
+            # regression there used to pass this gate on both the PR AND the
+            # push to main. This gate has two halves that go through
+            # different code, traced separately.
+            #
+            # Half 1 -- the page-render assertions (home, plus a non-home
+            # route, actually prerendering content instead of the not-found
+            # boundary). Traced the dependency chain from context.ts's
+            # readByUrlPath down to what it actually calls:
+            #   - context.ts (readByUrlPath/read) and url-path-resolver.ts
+            #     (URL -> entry candidates -- the literal mechanism that
+            #     broke)
+            #   - content-reader.ts, the glue read()/readByUrlPath route
+            #     through (imports utils/entry-url's isIndexSlug directly)
+            #   - branch-workspace.ts, which resolves/provisions the dev-mode
+            #     branch workspace this build reads from, and imports both
+            #     utils/git's resolveBaseBranch (the base-branch fallback
+            #     named above) and operating-mode's strategy selection
+            #   - utils/git.ts and operating-mode/** themselves
+            #   - utils/entry-url.ts, the index-slug rule url-path-resolver.ts
+            #     and static/'s own duplicate-URL guard must keep agreeing on
+            #     (see AGENTS.md)
+            #   - content-store.ts, whose resolvePath/read content-reader.ts
+            #     calls directly for every entry this build serves
+            #
+            # Half 2 -- the sitemap assertions (advertises '/', never the
+            # stale '/home' -- the OTHER historical incident this job exists
+            # to catch). These run entirely through listEntries, not
+            # readByUrlPath: generateContentSitemap -> collectRoutableEntries
+            # -> ctx.listEntries -> content-listing.ts, which is where
+            # `urlPath` is actually computed per listed entry.
+            # content-listing.ts is a SIBLING of content-store.ts here, not a
+            # caller of it -- content-store.ts's own doc comment on
+            # `resolveReferences` says the listing primitives "read entry
+            # files straight off disk and never touch this store", so having
+            # content-store.ts in this filter does nothing for a regression
+            # in content-listing.ts. collectStaticPaths and
+            # collectRoutableEntries share one internal pass (see AGENTS.md)
+            # that also runs three build-time guards over every listed entry
+            # before either returns; two of those reach outside static/:
+            #   - assertRoutableSlugs, which runs paths/validation.ts's
+            #     parseSlug over every entry's slug (paths/** also covers
+            #     content-listing.ts's own validateAndNormalizePath import)
+            #   - assertBuildEntriesValid, which calls
+            #     validation/entry-validator.ts's validateEntryData /
+            #     findUnknownKeys (which in turn import sibling files under
+            #     validation/**, e.g. field-traversal.ts)
+            #   - assertNoDuplicateUrlPaths, already covered -- it lives in
+            #     static/index.ts itself
+            # content-listing.ts also parses each filename into
+            # {type, slug, id} via utils/typed-filename.ts's
+            # parseTypedFilename before computeEntryUrl (already covered via
+            # utils/entry-url.ts) ever runs, so that file joins the list too.
+            # Checked and deliberately NOT added: content-tree.ts. Its
+            # buildContentTree is a different primitive from listEntries and
+            # nothing in this app's actual build calls it (the only hit
+            # anywhere under apps/example1 is a generic-signature mention in
+            # a doc comment, not a call site) -- content-tree.ts backs the
+            # editor's tree view, not static generation.
+            #
+            # Deliberately NOT adding url-collision.ts: that guard runs at
+            # the content-WRITE boundary (create/rename via
+            # content-store.ts's assertUrlPathAvailable), which a `next
+            # build` never exercises -- the build-time duplicate-URL check
+            # this job actually relies on is static/'s assertNoDuplicateUrlPaths,
+            # already covered above. Everything else under
+            # packages/canopycms/src/** stays out to keep this job rare
+            # (content-listing.ts's own generic utility imports --
+            # content-id-index.ts, utils/body-field.ts, utils/format.ts --
+            # are left out for the same reason content-store.ts's identical
+            # imports of those same files were never added here); it is
+            # covered by lint:bundle and the unit suite. Manifest/lockfile
+            # changes DO run it -- a dependency resolution change can break
+            # this build shape on its own.
+            relevant:
+              - 'apps/example1/**'
+              - 'packages/canopycms-next/**'
+              - 'packages/canopycms/src/static/**'
+              - 'packages/canopycms/src/build/**'
+              - 'packages/canopycms/src/context.ts'
+              - 'packages/canopycms/src/url-path-resolver.ts'
+              - 'packages/canopycms/src/content-reader.ts'
+              - 'packages/canopycms/src/content-listing.ts'
+              - 'packages/canopycms/src/branch-workspace.ts'
+              - 'packages/canopycms/src/content-store.ts'
+              - 'packages/canopycms/src/utils/git.ts'
+              - 'packages/canopycms/src/utils/entry-url.ts'
+              - 'packages/canopycms/src/utils/typed-filename.ts'
+              - 'packages/canopycms/src/paths/**'
+              - 'packages/canopycms/src/validation/**'
+              - 'packages/canopycms/src/operating-mode/**'
+              - 'packages/canopycms/package.json'
+              - 'pnpm-lock.yaml'
+              - '.github/workflows/ci.yml'
+
+      - uses: pnpm/action-setup@v4
+        if: steps.filter.outputs.relevant == 'true'
+
+      - uses: actions/setup-node@v4
+        if: steps.filter.outputs.relevant == 'true'
+        with:
+          node-version-file: '.nvmrc'
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        if: steps.filter.outputs.relevant == 'true'
+        run: pnpm install --frozen-lockfile
+
+      # apps/example1 is always CanopyCMS `mode: 'dev'` (see its
+      # canopycms.config.ts) -- there is no separate static-export flavor
+      # here, unlike apps/dual-build-fixture. Dev mode's base-branch
+      # resolution (`resolveBaseBranch` / `detectHeadBranch` in canopycms's
+      # utils/git.ts) falls back to the literal name 'main' whenever HEAD is
+      # detached, which is exactly what actions/checkout leaves it as. That
+      # is true for this BUILD-TIME read too, not only a request-time one --
+      # verified empirically while building this job: without this step, a
+      # detached HEAD alongside any pre-existing local `main` makes the
+      # build silently read `main`'s (older/different) content instead of
+      # the checked-out commit's, which reproduces BOTH halves of the
+      # historical bug this job exists to catch (empty home page, stale
+      # "/home" in the sitemap) regardless of whether this PR's own code and
+      # content are fine. Pointing `main` at the checked-out commit and
+      # attaching HEAD to it (not merely creating it -- see
+      # apps/dual-build-fixture's identical step above) is what makes dev
+      # mode read this commit's actual content.
+      - name: Attach HEAD to a real branch for dev-mode content reads
+        if: steps.filter.outputs.relevant == 'true'
+        run: git checkout -B main
+
+      # canopycms-next's "./config" export (what apps/example1's
+      # next.config.mjs imports) resolves to a pre-bundled
+      # dist/config.{cjs,mjs} -- esbuild-bundled because Next's own config
+      # loader can't process raw TS -- unlike the rest of the package, which
+      # workspace consumers import straight from src/ via transpilePackages.
+      # Nothing else in this job builds this package.
+      - name: Build canopycms-next
+        if: steps.filter.outputs.relevant == 'true'
+        run: pnpm --filter canopycms-next run build
+
+      # Next.js incremental build cache, same pattern as the dual-build and
+      # e2e jobs' own caches.
+      - name: Cache Next.js build cache
+        if: steps.filter.outputs.relevant == 'true'
+        uses: actions/cache@v4
+        with:
+          path: apps/example1/.next/cache
+          key: nextjs-example1-${{ hashFiles('pnpm-lock.yaml') }}-${{ github.sha }}
+          restore-keys: |
+            nextjs-example1-${{ hashFiles('pnpm-lock.yaml') }}-
+
+      - name: Build apps/example1 and verify its output
+        if: steps.filter.outputs.relevant == 'true'
+        working-directory: apps/example1
+        run: pnpm run verify:build
+
+      - name: Skipped (no example1-relevant changes)
+        if: steps.filter.outputs.relevant != 'true'
+        run: echo "No changes under example1-relevant paths -- skipping the next build + output assertions."
 
   e2e:
     name: E2E Tests (shard ${{ matrix.shard }}/4)

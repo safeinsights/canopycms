@@ -1,9 +1,11 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import os from 'node:os'
 
 import { buildContentTree, defaultBuildPath, type ContentTreeNode } from './content-tree'
+import { computeEntryUrl } from './utils/entry-url'
+import { ContentStore } from './content-store'
 import type { CanopyBuildContext } from './context'
 import { flattenSchema } from './config/flatten'
 import { generateId } from './id'
@@ -1086,6 +1088,162 @@ describe('buildContentTree', () => {
     void _typecheckOnly
     expect(true).toBe(true)
   })
+
+  // -------------------------------------------------------------------------
+  // resolveReferences (adopter request #16)
+  // -------------------------------------------------------------------------
+
+  describe('resolveReferences', () => {
+    /**
+     * A `snippets` collection with one shared entry, and a `docs` collection whose `doc`
+     * type references it. `docs` gets an `index` entry too, so the same run covers the
+     * `meta.indexEntry` handed to a collection's `extract` as well as the entry nodes.
+     */
+    async function createReferencingTree() {
+      const contentDir = path.join(tempDir, 'content')
+      await fs.mkdir(contentDir)
+
+      const { dir: snippetsDir } = await createCollection(contentDir, 'snippets')
+      const snippetId = await createEntry(snippetsDir, 'ctaSnippet', 'signup', 'json', {
+        title: 'Sign up today',
+      })
+
+      const { dir: docsDir } = await createCollection(contentDir, 'docs')
+      await createEntry(docsDir, 'doc', 'index', 'json', { title: 'Docs', snippet: snippetId })
+      await createEntry(docsDir, 'doc', 'guide', 'json', { title: 'Guide', snippet: snippetId })
+
+      const schema: RootCollectionConfig = {
+        collections: [
+          {
+            name: 'snippets',
+            path: 'snippets',
+            entries: [
+              {
+                name: 'ctaSnippet',
+                format: 'json',
+                schema: [{ name: 'title', type: 'string' }],
+              },
+            ],
+          },
+          {
+            name: 'docs',
+            path: 'docs',
+            entries: [
+              {
+                name: 'doc',
+                format: 'json',
+                schema: [
+                  { name: 'title', type: 'string' },
+                  { name: 'snippet', type: 'reference', entryTypes: ['ctaSnippet'] },
+                ],
+              },
+            ],
+          },
+        ],
+      }
+
+      return { snippetId, flat: flattenSchema(schema, 'content') }
+    }
+
+    it('leaves references as bare ids by default', async () => {
+      const { snippetId, flat } = await createReferencingTree()
+
+      const tree = await buildContentTree<{ snippet: unknown }>(tempDir, flat, 'content', {
+        extract: (data) => ({ snippet: data.snippet }),
+      })
+
+      const docs = tree.find((n) => n.logicalPath === 'content/docs')!
+      const guide = docs.children!.find((n) => n.logicalPath === 'content/docs/guide')!
+      expect(guide.fields!.snippet).toBe(snippetId)
+    })
+
+    it('resolves references in both entry nodes and meta.indexEntry when opted in', async () => {
+      const { flat } = await createReferencingTree()
+
+      let indexEntrySnippet: unknown
+      const tree = await buildContentTree<{ snippet: unknown }>(tempDir, flat, 'content', {
+        resolveReferences: true,
+        extract: (data, meta) => {
+          if (meta.kind === 'collection' && meta.logicalPath === 'content/docs') {
+            const indexData = meta.indexEntry?.data as Record<string, unknown> | undefined
+            indexEntrySnippet = indexData?.snippet
+          }
+          return { snippet: data.snippet }
+        },
+      })
+
+      const docs = tree.find((n) => n.logicalPath === 'content/docs')!
+      const guide = docs.children!.find((n) => n.logicalPath === 'content/docs/guide')!
+      expect(guide.fields!.snippet).toMatchObject({ slug: 'signup', title: 'Sign up today' })
+      // The index entry reaches `extract` through a different path than the entry nodes;
+      // resolving at the shared listVisibleEntries choke point is what covers both.
+      expect(indexEntrySnippet).toMatchObject({ slug: 'signup', title: 'Sign up today' })
+    })
+
+    it('reads a block shared across collections once for the whole tree', async () => {
+      // The store and cache are built once in buildContentTree's outer scope rather than per
+      // collection, which is the only reason a block referenced from several collections costs
+      // one read for the entire recursive walk. Both other tree tests reference from a single
+      // collection, so neither would notice the cache being moved inside listVisibleEntries.
+      const contentDir = path.join(tempDir, 'content')
+      await fs.mkdir(contentDir)
+
+      const { dir: snippetsDir } = await createCollection(contentDir, 'snippets')
+      const snippetId = await createEntry(snippetsDir, 'ctaSnippet', 'signup', 'json', {
+        title: 'Sign up today',
+      })
+
+      const snippetEntries = [
+        {
+          name: 'ctaSnippet',
+          format: 'json' as const,
+          schema: [{ name: 'title', type: 'string' as const }],
+        },
+      ]
+      const docEntries = [
+        {
+          name: 'doc',
+          format: 'json' as const,
+          schema: [
+            { name: 'title', type: 'string' as const },
+            { name: 'snippet', type: 'reference' as const, entryTypes: ['ctaSnippet'] },
+          ],
+        },
+      ]
+
+      // Two sibling collections, each with an entry pointing at the same snippet.
+      for (const name of ['guides', 'articles']) {
+        const { dir } = await createCollection(contentDir, name)
+        await createEntry(dir, 'doc', `${name}-entry`, 'json', { title: name, snippet: snippetId })
+      }
+
+      const schema: RootCollectionConfig = {
+        collections: [
+          { name: 'snippets', path: 'snippets', entries: snippetEntries },
+          { name: 'guides', path: 'guides', entries: docEntries },
+          { name: 'articles', path: 'articles', entries: docEntries },
+        ],
+      }
+      const flat = flattenSchema(schema, 'content')
+
+      const readSpy = vi.spyOn(ContentStore.prototype, 'read')
+      try {
+        const tree = await buildContentTree<{ snippet: unknown }>(tempDir, flat, 'content', {
+          resolveReferences: true,
+          extract: (data) => ({ snippet: data.snippet }),
+        })
+
+        for (const collection of ['guides', 'articles']) {
+          const node = tree.find((n) => n.logicalPath === `content/${collection}`)!
+          const entry = node.children!.find((n) => n.kind === 'entry')!
+          expect(entry.fields!.snippet).toMatchObject({ title: 'Sign up today' })
+        }
+        expect(readSpy).toHaveBeenCalledTimes(1)
+      } finally {
+        readSpy.mockRestore()
+      }
+    })
+  })
 })
 
 // ---------------------------------------------------------------------------
@@ -1111,6 +1269,21 @@ describe('defaultBuildPath', () => {
 
   it('collapses the root index entry to "/"', () => {
     expect(defaultBuildPath('content/index' as LogicalPath, 'content', 'entry')).toBe('/')
+  })
+
+  it('collapses a case-variant index slug, agreeing with computeEntryUrl', () => {
+    // These two implement the same forward rule and must not disagree. A string
+    // `endsWith('/index')` test made them diverge for an adopter-supplied `Index`:
+    // defaultBuildPath said /docs/index (which does NOT round-trip) while computeEntryUrl
+    // said /docs. Both now route the decision through the shared isIndexSlug.
+    for (const variant of ['Index', 'INDEX', 'InDeX']) {
+      expect(defaultBuildPath(`content/docs/${variant}` as LogicalPath, 'content', 'entry')).toBe(
+        '/docs',
+      )
+      expect(computeEntryUrl('content/docs', variant, 'content')).toBe('/docs')
+    }
+    // A collection is still not collapsed, whatever its case.
+    expect(defaultBuildPath('content/Index' as LogicalPath, 'content', 'collection')).toBe('/index')
   })
 
   it('lowercases the result unconditionally', () => {

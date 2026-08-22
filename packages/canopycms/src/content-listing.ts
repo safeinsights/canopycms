@@ -13,14 +13,19 @@ import { parse as yamlParse } from 'yaml'
 
 import type { ContentFormat, FlatSchemaItem, EntryTypeConfig, EntrySchema } from './config'
 import { findBodyFieldName } from './utils/body-field'
+import { computeEntryUrl } from './utils/entry-url'
 import { asRecord, getFormatExtension } from './utils/format'
 import { resolveCollectionPath } from './content-id-index'
 import { validateAndNormalizePath } from './paths'
 import { isNotFoundError, getErrorMessage } from './utils/error'
 import { createDebugLogger } from './utils/debug'
-import { isValidId } from './id'
 import type { LogicalPath, PhysicalPath, Slug, ContentId } from './paths/types'
-import { ContentStoreError } from './content-store'
+import {
+  ContentStore,
+  ContentStoreError,
+  createReferenceResolveCache,
+  type ReferenceResolveCache,
+} from './content-store'
 import { isBuildMode } from './build-mode'
 
 const log = createDebugLogger({ prefix: 'ContentListing' })
@@ -76,7 +81,17 @@ export const readEntryData = async (
       return asRecord(yamlParse(raw))
     }
     const parsed = matter(raw)
-    const data = (parsed.data as Record<string, unknown>) ?? {}
+    // Copy before writing the body in. gray-matter keeps a PROCESS-GLOBAL cache keyed by file
+    // content and hands every caller the same `data` object instance, so mutating it in place
+    // wrote the body into a shared object that later, unrelated `matter()` calls then saw as
+    // frontmatter. Concretely, before this copy: listing a collection that contains an md entry
+    // poisoned the cache, and a subsequent reference resolution to that same entry — which goes
+    // through `ContentStore.read()`, whose md branch calls `matter()` again — returned the body
+    // as a frontmatter field. So a resolved md snippet came back WITH `body` on a whole-site
+    // listing and WITHOUT it on one scoped past its own collection: the same entry, two shapes,
+    // decided by unrelated scoping. Regression coverage lives with the reference-resolution
+    // tests in content-listing.test.ts.
+    const data = { ...((parsed.data as Record<string, unknown>) ?? {}) }
     if (parsed.content) {
       data[bodyFieldName] = parsed.content
     }
@@ -88,90 +103,11 @@ export const readEntryData = async (
   }
 }
 
-/**
- * Parse a Canopy content filename into its `{type}.{slug}.{id}.{ext}` parts.
- *
- * ## Filename grammar
- *
- * Every entry file on disk is named `{type}.{slug}.{id}.{ext}`:
- * - `type` — the entry type name (a key in the collection's `entries` config).
- * - `slug` — the entry's URL slug. May itself contain dots (e.g. a slug of
- *   `getting.started.guide`), so the type and ID anchor the split: the ID is
- *   always the second-to-last dot-separated segment, and the slug is
- *   everything between the type and the ID. The returned `slug` is
- *   lowercased.
- * - `id` — a 12-character Base58 content ID (`generateId()`/`isValidId()`).
- *   Base58 excludes the ambiguous characters `0`, `O`, `I`, `l` so IDs are
- *   unambiguous when read aloud or hand-transcribed. A filename whose
- *   would-be ID segment doesn't pass `isValidId` is rejected — the whole
- *   parse returns `null`, even if the rest of the shape looks right.
- * - `ext` — the format extension (`.md`, `.mdx`, `.json`, `.yaml`), stripped
- *   before parsing and not part of the returned result.
- *
- * @param filename - The bare filename (no directory component). **This precondition is
- *   not enforced.** The parser splits purely on `.`, so a `/` or `\` you pass in is not
- *   rejected and is not treated as special — it becomes part of whichever segment it
- *   falls in, most often the `type` segment (e.g. `'foo/bar.slug.<validId>.md'` parses
- *   to `type: 'foo/bar'`). Strip any directory component yourself (e.g.
- *   `path.basename(filePath)`) before calling this — every internal caller already does.
- * @param entryTypes - When provided, the parsed `type` segment must match one
- *   of these entry types by name, or the parse is rejected (this is how
- *   `listCollectionEntries` filters out files that don't belong to the
- *   collection's configured entry types). Omit this argument to parse
- *   structurally without validating the type against a known list — useful
- *   for adopter code that needs to recover `{type, slug, id}` from a
- *   filename without having a schema/entry-types list on hand (e.g. a
- *   filesystem walk over content for tooling or diagnostics). Even without
- *   `entryTypes`, a leading-dot filename (dotfile, editor swap/backup file)
- *   is always rejected — an empty string is never a legal type, matching the
- *   `filename.startsWith('.')` guard `extractEntryTypeFromFilename` in
- *   `content-id-index.ts` already applies.
- * @returns `{ type, slug, id }`, or `null` if `filename` doesn't match the
- *   `{type}.{slug}.{id}.{ext}` shape (too few segments, no extension, a
- *   leading dot, an invalid ID, or — when `entryTypes` is given — an
- *   unrecognized type). `id` is validated (`isValidId`) and safe to trust. **`slug` is
- *   not** — it is the raw dot-joined middle segment(s), lowercased, cast to the branded
- *   `Slug` type without running `parseSlug`'s validation. A filename with an
- *   unconventional slug segment (e.g. containing a space) still parses and still
- *   receives the `Slug` brand. Callers that need a validated slug must run the result
- *   through `parseSlug` themselves; this function's contract is "split the filename
- *   grammar apart," not "validate every part."
- */
-export const parseTypedFilename = (
-  filename: string,
-  entryTypes?: readonly EntryTypeConfig[],
-): { type: string; slug: Slug; id: ContentId } | null => {
-  // Reject dotfiles outright (matching extractEntryTypeFromFilename's guard in
-  // content-id-index.ts): a leading dot can never be a legal entry type, and this
-  // is exactly the shape of the files a structural (no-entryTypes) parse would
-  // otherwise misparse -- e.g. '.hidden.file.aB3cD4eF5gH6.md' -> potentialType ''.
-  if (filename.startsWith('.')) return null
-
-  // Remove extension
-  const lastDot = filename.lastIndexOf('.')
-  if (lastDot === -1) return null
-  const nameWithoutExt = filename.slice(0, lastDot)
-
-  // Parse: {type}.{slug}.{id}
-  const parts = nameWithoutExt.split('.')
-  if (parts.length < 3) return null
-
-  const potentialType = parts[0]
-  // When a known-types list is supplied, the first segment must match one of
-  // them. Without it, any non-empty first segment is accepted as the type.
-  if (entryTypes && !entryTypes.some((e) => e.name === potentialType)) {
-    return null
-  }
-
-  const id = parts[parts.length - 1]
-  if (!isValidId(id)) return null
-  const slug = parts.slice(1, -1).join('.').toLowerCase()
-  return {
-    type: potentialType,
-    slug: slug as Slug,
-    id: id as ContentId,
-  }
-}
+// `parseTypedFilename` now lives in utils/typed-filename.ts so dependency-light modules can
+// use it without importing this one (which pulls in ContentStore). Re-exported here because
+// this is where callers -- and `canopycms/server` -- have always imported it from.
+export { parseTypedFilename } from './utils/typed-filename'
+import { parseTypedFilename } from './utils/typed-filename'
 
 // ---------------------------------------------------------------------------
 // Batch listing types and function
@@ -190,7 +126,12 @@ export interface ListEntriesItem<T = Record<string, unknown>> {
    * For regular entries: '/guides/glossary-of-terms'.
    * For a root index entry: '/'.
    *
-   * Round-trip safe: `readByUrlPath(item.urlPath)` resolves to the same entry.
+   * Round-trip safe: `readByUrlPath(item.urlPath)` resolves to the same entry. That guarantee
+   * depends on `slug` passing `parseSlug` — the filename grammar (`utils/typed-filename.ts`)
+   * allows a slug to contain characters `parseSlug` rejects (a dot, most commonly), and an entry
+   * whose slug does is listed here same as any other but can never be read back by URL.
+   * `static/index.ts`'s `assertRoutableSlugs` is the build-time guard that catches this outside
+   * this doc comment's promise.
    */
   urlPath: string
   /** Entry slug within its collection */
@@ -245,6 +186,33 @@ export interface ListEntriesOptions<T = Record<string, unknown>> {
   rootPath?: string
   /** Custom sort. */
   sort?: (a: ListEntriesItem<T>, b: ListEntriesItem<T>) => number
+  /**
+   * Resolve `reference` fields to the referenced entry's data, the way
+   * `read()`/`readByUrlPath()` do — including references nested inside `object` fields,
+   * inline `group`s and block templates (so a shared/referenced block finally carries its
+   * snippet's content here). Off leaves them as the bare id string, or `null`.
+   *
+   * **Defaults to `false`, unlike `read()`, which defaults to `true`.** The asymmetry is
+   * deliberate rather than an oversight. `data` is `T` and `extract` receives an untyped
+   * `Record<string, unknown>`, so turning this on changes a reference from `'a1b2c3d4e5f6'`
+   * to `{ ...data, id, slug, collection, urlPath }` with no compile error anywhere to catch it — an
+   * `/authors/${data.author}` template silently becomes `/authors/[object Object]`. Opting
+   * in is a decision you make per call site, next to the code that reads the field. It also
+   * keeps the common batch uses free: `collectStaticPaths` discards `data` outright, and
+   * `build/generate-ai-content.ts` lists purely to validate entry shapes.
+   *
+   * **Cost, and why it is bounded.** Resolution needs a `ContentStore` and its ContentId
+   * index, so turning it on adds one index scan per call plus one read per DISTINCT
+   * referenced entry — not per referencing entry. A single {@link ReferenceResolveCache}
+   * spans the whole call, so a shared block referenced by 40 pages is read once, not 40
+   * times. Nothing is constructed and nothing is scanned when this is off.
+   *
+   * **Path ACLs are not applied to the resolved targets**, matching `read()` exactly: a
+   * reference can resolve to an entry the user could not `read()` directly. The entries
+   * being LISTED are still ACL-filtered as always, and a filtered-out entry is never
+   * resolved at all.
+   */
+  resolveReferences?: boolean
 }
 
 /**
@@ -264,6 +232,63 @@ export interface ContentVisibilityOptions {
   /** Return false to drop an entry. Receives the entry's branch-root-relative physical path. */
   shouldInclude?: (physicalPath: PhysicalPath) => boolean
 }
+
+/** A collection node from the flattened schema. */
+export type CollectionSchemaItem = Extract<FlatSchemaItem, { type: 'collection' }>
+
+// ---------------------------------------------------------------------------
+// Reference resolution for batch listings
+// ---------------------------------------------------------------------------
+
+/**
+ * Build the `ContentStore` + shared cache that a batch listing resolves references through.
+ *
+ * Unrelated to the `ReferenceResolver` class in reference-resolver.ts despite the adjacent
+ * name — that one resolves an id to a human-readable *display label* for the editor UI. This
+ * resolves a reference to the referenced entry's *data* for server-side listings.
+ *
+ * Constructed lazily by each listing surface, and ONLY when the caller opted in — a store
+ * builds a ContentId index on first use, which is a full scan of the content tree, and the
+ * default (`resolveReferences` off) must stay a pure filesystem walk with no index at all.
+ *
+ * One store and one cache per listing call, not per collection: the cache is the reason a
+ * shared block referenced from 40 pages costs one read instead of 40, so it has to span the
+ * whole batch. Per-call construction is the established shape here — content-reader.ts's
+ * `resolveStore` builds a store per read, and content-index-registry.ts holds stores through
+ * `WeakRef` + a `FinalizationRegistry` precisely so short-lived instances stay collectable.
+ */
+export const createReferenceResolver = (
+  branchRoot: string,
+  flatSchema: FlatSchemaItem[],
+  contentRootName: string,
+): { store: ContentStore; cache: ReferenceResolveCache } => ({
+  store: new ContentStore(branchRoot, flatSchema, { contentRootName }),
+  cache: createReferenceResolveCache(),
+})
+
+/**
+ * Resolve `reference` fields in a collection's listed entries, in place of their raw data.
+ *
+ * Shared by `listEntries` and `buildContentTree` so both opt into resolution through one
+ * implementation. Each entry resolves against its OWN entry type's field list, since that is
+ * what says which fields are references at all; an entry whose type has no resolvable schema
+ * is returned untouched rather than guessed at.
+ */
+export const resolveCollectionItemReferences = async (
+  items: CollectionListItem[],
+  collection: CollectionSchemaItem,
+  resolver: { store: ContentStore; cache: ReferenceResolveCache },
+): Promise<CollectionListItem[]> =>
+  Promise.all(
+    items.map(async (item) => {
+      const fields = collection.entries?.find((e) => e.name === item.entryType)?.schema
+      if (!fields) return item
+      return {
+        ...item,
+        data: await resolver.store.resolveReferences(item.data, fields, resolver.cache),
+      }
+    }),
+  )
 
 /**
  * List all content entries as a flat array.
@@ -291,7 +316,7 @@ export interface ContentVisibilityOptions {
  * @param branchRoot - Absolute path to the branch workspace root
  * @param flatSchema - Flattened schema items (from flattenSchema)
  * @param contentRootName - The content root name (e.g. "content")
- * @param options - Listing options (extract, filter, rootPath, sort)
+ * @param options - Listing options (extract, filter, rootPath, sort, resolveReferences)
  * @param visibility - Internal path-ACL predicate; see `ContentVisibilityOptions`
  */
 export async function listEntries<T = Record<string, unknown>>(
@@ -308,7 +333,7 @@ export async function listEntries<T = Record<string, unknown>>(
 
   // Find all collections under rootPath
   const collections = flatSchema.filter(
-    (item): item is Extract<FlatSchemaItem, { type: 'collection' }> =>
+    (item): item is CollectionSchemaItem =>
       item.type === 'collection' &&
       item.entries !== undefined &&
       (item.logicalPath === rootPath || item.logicalPath.startsWith(`${rootPath}/`)),
@@ -319,13 +344,24 @@ export async function listEntries<T = Record<string, unknown>>(
   // data never reaches `extract` (let alone the returned items).
   const shouldInclude = visibility?.shouldInclude
   const skippedFiles: SkippedListingFile[] = []
+  // One store + cache for the whole call, or nothing at all when the caller did not opt in.
+  // See the `resolveReferences` option for the cost this buys back.
+  const resolver = options?.resolveReferences
+    ? createReferenceResolver(branchRoot, flatSchema, contentRootName)
+    : null
   const collectionResults = await Promise.all(
     collections.map(async (collection) => {
       const entries = await listCollectionEntries(branchRoot, collection, (file) =>
         skippedFiles.push(file),
       )
       const visible = shouldInclude ? entries.filter((e) => shouldInclude(e.physicalPath)) : entries
-      return visible.map((entry) => ({ entry, collection }))
+      // Resolve AFTER the visibility filter (a denied entry is never resolved, so its
+      // references cost nothing and leak nothing) and BEFORE the mapping below, so
+      // `extract` and `filter` both see resolved data — which is the entire point.
+      const resolved = resolver
+        ? await resolveCollectionItemReferences(visible, collection, resolver)
+        : visible
+      return resolved.map((entry) => ({ entry, collection }))
     }),
   )
 
@@ -363,9 +399,17 @@ export async function listEntries<T = Record<string, unknown>>(
         : entry.logicalPath
       const pathSegments = pathWithoutRoot.split('/').filter(Boolean)
 
-      // Compute urlPath: collapse index entries to parent collection path
-      const urlSegments = entry.slug === 'index' ? pathSegments.slice(0, -1) : pathSegments
-      const urlPath = urlSegments.length > 0 ? `/${urlSegments.join('/')}`.toLowerCase() : '/'
+      // Compute urlPath (collapses an `index` entry to its parent collection path) through
+      // the SHARED rule rather than a local copy of it. A resolved reference now carries a
+      // `urlPath` too, and the whole point of that field is that it addresses the same entry
+      // this listing does, so the two must not be free to drift apart.
+      //
+      // One deliberate copy of this rule remains: `content-tree.ts`'s `defaultBuildPath`,
+      // which is exported for adopters to extend and also handles the collection case
+      // `computeEntryUrl` does not model. It agrees today; folding it in is tracked in
+      // `.claude/future-tasks/default-build-path-url-rule-copy.md`.
+      // `content-listing.test.ts` pins the listing-vs-resolved-reference agreement.
+      const urlPath = computeEntryUrl(entry.collectionPath, entry.slug, contentRootName)
 
       const raw = entry.data
       const meta = {

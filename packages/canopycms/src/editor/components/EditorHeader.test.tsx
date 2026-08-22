@@ -15,7 +15,6 @@ const currentEntry: EditorEntry = {
   contentId: unsafeAsContentId('abc123def456'),
   label: 'Hello',
   schema: [],
-  apiPath: '/api/canopy',
 }
 
 const defaultProps: EditorHeaderProps = {

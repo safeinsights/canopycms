@@ -42,7 +42,6 @@ export interface UseEntryManagerOptions {
   previewBaseByCollection?: Record<string, string>
   resolvePreviewSrc: (entry: Partial<EditorEntry>) => string | undefined
   setBusy: (busy: boolean) => void
-  contentRoot?: string
 }
 
 export interface UseEntryManagerReturn {
@@ -378,6 +377,14 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
     const validationWarnings = result.data?.validationWarnings
     if (validationWarnings && validationWarnings.length > 0) {
       notifications.show({
+        // Stable per-entry id: the underlying condition (e.g. an unknown
+        // schema key) is typically permanent until a developer edits the
+        // schema, so every save on this entry re-fires this notification.
+        // Mantine treats a missing `id` as "always append" -- without one,
+        // five saves left five identical sticky (autoClose: false) toasts
+        // stacked on screen. A stable id makes each subsequent call REPLACE
+        // the prior toast in place instead.
+        id: `save-warnings-${entry.contentId}`,
         title: 'Saved with warnings',
         // '; '-joined: the notification collapses newlines, so '\n' would run the
         // issues together (matches the '; ' join the save-rejection path uses).
@@ -406,7 +413,6 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
     const seq = claimRefreshSeq(branch)
     const fetched = await fetchEntriesAndSchema(apiClient, branch, {
       resolvePreviewSrc: options.resolvePreviewSrc,
-      contentRoot: options.contentRoot,
     })
     if (seq >= committedRefreshSeq(branch)) {
       // Warm the SWR cache for this branch (it's this branch's own slot, so
@@ -601,7 +607,6 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
     const seq = claimRefreshSeq(branch)
     return fetchEntriesAndSchema(apiClient, branch, {
       resolvePreviewSrc: options.resolvePreviewSrc,
-      contentRoot: options.contentRoot,
     }).then((fetched) => ({ fetched, seq, branch }))
   })
 

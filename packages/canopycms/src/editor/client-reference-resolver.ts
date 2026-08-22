@@ -1,11 +1,21 @@
 import type { EntrySchema, FieldConfig, ReferenceFieldConfig } from '../config'
 import type { FormValue } from './FormRenderer'
 import { createApiClient } from '../api/client'
+import type { ApiClient } from './context'
 import { flattenGroupFields } from '../utils/flatten-group-fields'
 
 /**
  * Client-side utility for incrementally resolving reference fields in form data.
  * Used by FormRenderer to transform draft data before sending to preview.
+ *
+ * This module is a plain function file, not a hook/component -- it's invoked from inside a
+ * `setTimeout` callback in `useReferenceResolution`'s effect, well after that render has
+ * finished, where calling a React hook would violate the rules of hooks. So the API client
+ * can't be sourced here via `useApiClient()`/`useOptionalApiClient()` directly; instead every
+ * entry point takes an optional `apiClient`, which the caller (a hook, which CAN call
+ * `useOptionalApiClient()` during render) resolves and passes down. Falls back to a
+ * default-configured `createApiClient()` when no client is supplied, so direct callers/tests
+ * that predate this DI path keep working unchanged.
  */
 
 /**
@@ -43,6 +53,7 @@ export async function resolveChangedReferences(
   schema: EntrySchema,
   branch: string,
   cache: Map<string, unknown>,
+  apiClient?: ApiClient,
 ): Promise<Partial<FormValue>> {
   const changedFields = findChangedFields(prevValue, currentValue, schema)
   const updates: Partial<FormValue> = {}
@@ -56,12 +67,12 @@ export async function resolveChangedReferences(
       if (refField.list && Array.isArray(fieldValue)) {
         // List of references
         const resolved = await Promise.all(
-          fieldValue.map((id) => resolveReferenceId(id, branch, cache)),
+          fieldValue.map((id) => resolveReferenceId(id, branch, cache, apiClient)),
         )
         updates[field.name] = resolved
       } else if (fieldValue) {
         // Single reference
-        const resolved = await resolveReferenceId(fieldValue, branch, cache)
+        const resolved = await resolveReferenceId(fieldValue, branch, cache, apiClient)
         updates[field.name] = resolved
       }
     }
@@ -79,6 +90,7 @@ async function resolveReferenceId(
   id: unknown,
   branch: string,
   cache: Map<string, unknown>,
+  apiClient?: ApiClient,
 ): Promise<unknown> {
   // Only resolve string IDs
   if (typeof id !== 'string') {
@@ -98,9 +110,11 @@ async function resolveReferenceId(
   }
 
   try {
-    // Fetch from API (single ID)
-    const apiClient = createApiClient()
-    const result = await apiClient.content.resolveReferences({ branch }, { ids: [id] })
+    // Fetch from API (single ID) -- use the caller-supplied (context-sourced) client when
+    // available, so requests carry the deployment's configured basePath; fall back to a
+    // default-configured client for direct callers that don't have one to hand.
+    const client = apiClient ?? createApiClient()
+    const result = await client.content.resolveReferences({ branch }, { ids: [id] })
 
     if (result.ok && result.data && result.data.resolved[id]) {
       // Cache and return resolved object
