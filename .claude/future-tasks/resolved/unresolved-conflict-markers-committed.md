@@ -1,6 +1,13 @@
 # Unresolved git conflict markers are committed on `epic/adopter-request-intake`
 
-**Status:** Open. **Priority: P1.** Found 2026-08-22 in passing, while fixing the slug write-boundary
+**Status:** RESOLVED 2026-08-22. **Priority: P1 (was).**
+
+The markers themselves are gone — `AGENTS.md` and the task file were both unioned (neither side
+was disposable) in PR #271, and a repo-wide sweep keyed on `^=======$` independently found nothing
+else. What this file described was the INCIDENT. The standing gap it exposed — that prettier
+reformats markers into valid-looking Markdown so a commit passes every check — is tracked
+separately in [git-conflict-markers-silently-normalized-by-prettier.md](../git-conflict-markers-silently-normalized-by-prettier.md),
+which is the one to act on. Found 2026-08-22 in passing, while fixing the slug write-boundary
 seam (`fix/write-boundary-slug-validation`). Pre-existing on the epic branch — not introduced by that
 work, and deliberately not fixed there because resolving the merge is a judgement call that belongs to
 whoever made it.
