@@ -29,12 +29,9 @@ Three properties compound into a bad failure:
 2. **The break can ship green.** A Next production build will happily prerender the 404 boundary
    into a route and report success. The first build after an example-app slug rename was green
    **with a 404 homepage and a sitemap still advertising the old URL**. So neither the build nor CI
-   is a backstop here — and `apps/example1` is not built in CI at all, filed separately as
-<<<<<<< HEAD
-   [example1-next-build-not-in-ci.md](resolved/example1-next-build-not-in-ci.md) (now resolved).
-=======
-   [example1-next-build-not-in-ci.md](resolved/example1-next-build-not-in-ci.md).
->>>>>>> origin/epic/adopter-request-intake
+   is a backstop here — and, at the time, `apps/example1` was not built in CI at all, filed
+   separately as [example1-next-build-not-in-ci.md](resolved/example1-next-build-not-in-ci.md)
+   (now resolved: see the `example1-build` job in `.github/workflows/ci.yml`).
 3. **Renaming a slug is an ordinary editorial act**, not an exotic refactor — and it is exactly
    what the `index`-entry modelling recommendation asks adopters to do to their singletons.
 

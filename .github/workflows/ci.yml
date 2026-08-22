@@ -277,8 +277,13 @@ jobs:
             # resolution hazard specific to this app's dev-mode build-time
             # reads -- neither mechanism lives under static/ or build/, so a
             # regression there used to pass this gate on both the PR AND the
-            # push to main. Traced the dependency chain from
-            # context.ts's readByUrlPath down to what it actually calls:
+            # push to main. This gate has two halves that go through
+            # different code, traced separately.
+            #
+            # Half 1 -- the page-render assertions (home, plus a non-home
+            # route, actually prerendering content instead of the not-found
+            # boundary). Traced the dependency chain from context.ts's
+            # readByUrlPath down to what it actually calls:
             #   - context.ts (readByUrlPath/read) and url-path-resolver.ts
             #     (URL -> entry candidates -- the literal mechanism that
             #     broke)
@@ -294,14 +299,54 @@ jobs:
             #     (see AGENTS.md)
             #   - content-store.ts, whose resolvePath/read content-reader.ts
             #     calls directly for every entry this build serves
+            #
+            # Half 2 -- the sitemap assertions (advertises '/', never the
+            # stale '/home' -- the OTHER historical incident this job exists
+            # to catch). These run entirely through listEntries, not
+            # readByUrlPath: generateContentSitemap -> collectRoutableEntries
+            # -> ctx.listEntries -> content-listing.ts, which is where
+            # `urlPath` is actually computed per listed entry.
+            # content-listing.ts is a SIBLING of content-store.ts here, not a
+            # caller of it -- content-store.ts's own doc comment on
+            # `resolveReferences` says the listing primitives "read entry
+            # files straight off disk and never touch this store", so having
+            # content-store.ts in this filter does nothing for a regression
+            # in content-listing.ts. collectStaticPaths and
+            # collectRoutableEntries share one internal pass (see AGENTS.md)
+            # that also runs three build-time guards over every listed entry
+            # before either returns; two of those reach outside static/:
+            #   - assertRoutableSlugs, which runs paths/validation.ts's
+            #     parseSlug over every entry's slug (paths/** also covers
+            #     content-listing.ts's own validateAndNormalizePath import)
+            #   - assertBuildEntriesValid, which calls
+            #     validation/entry-validator.ts's validateEntryData /
+            #     findUnknownKeys (which in turn import sibling files under
+            #     validation/**, e.g. field-traversal.ts)
+            #   - assertNoDuplicateUrlPaths, already covered -- it lives in
+            #     static/index.ts itself
+            # content-listing.ts also parses each filename into
+            # {type, slug, id} via utils/typed-filename.ts's
+            # parseTypedFilename before computeEntryUrl (already covered via
+            # utils/entry-url.ts) ever runs, so that file joins the list too.
+            # Checked and deliberately NOT added: content-tree.ts. Its
+            # buildContentTree is a different primitive from listEntries and
+            # nothing in this app's actual build calls it (the only hit
+            # anywhere under apps/example1 is a generic-signature mention in
+            # a doc comment, not a call site) -- content-tree.ts backs the
+            # editor's tree view, not static generation.
+            #
             # Deliberately NOT adding url-collision.ts: that guard runs at
             # the content-WRITE boundary (create/rename via
             # content-store.ts's assertUrlPathAvailable), which a `next
             # build` never exercises -- the build-time duplicate-URL check
             # this job actually relies on is static/'s assertNoDuplicateUrlPaths,
-            # already covered below. Everything else under
-            # packages/canopycms/src/** stays out to keep this job rare; it
-            # is covered by lint:bundle and the unit suite. Manifest/lockfile
+            # already covered above. Everything else under
+            # packages/canopycms/src/** stays out to keep this job rare
+            # (content-listing.ts's own generic utility imports --
+            # content-id-index.ts, utils/body-field.ts, utils/format.ts --
+            # are left out for the same reason content-store.ts's identical
+            # imports of those same files were never added here); it is
+            # covered by lint:bundle and the unit suite. Manifest/lockfile
             # changes DO run it -- a dependency resolution change can break
             # this build shape on its own.
             relevant:
@@ -312,10 +357,14 @@ jobs:
               - 'packages/canopycms/src/context.ts'
               - 'packages/canopycms/src/url-path-resolver.ts'
               - 'packages/canopycms/src/content-reader.ts'
+              - 'packages/canopycms/src/content-listing.ts'
               - 'packages/canopycms/src/branch-workspace.ts'
               - 'packages/canopycms/src/content-store.ts'
               - 'packages/canopycms/src/utils/git.ts'
               - 'packages/canopycms/src/utils/entry-url.ts'
+              - 'packages/canopycms/src/utils/typed-filename.ts'
+              - 'packages/canopycms/src/paths/**'
+              - 'packages/canopycms/src/validation/**'
               - 'packages/canopycms/src/operating-mode/**'
               - 'packages/canopycms/package.json'
               - 'pnpm-lock.yaml'

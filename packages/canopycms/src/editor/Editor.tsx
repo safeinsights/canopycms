@@ -772,7 +772,7 @@ export const Editor: React.FC<EditorProps> = ({
     // such collection" the same (correct) not-found outcome, so the guard
     // below is reachable again. See the correction to PR #196's "unreachable
     // with entries empty" claim in
-    // .claude/future-tasks/program-b-final-review-followups.md for the write
+    // .claude/future-tasks/resolved/program-b-final-review-followups.md for the write
     // hazard this closes -- found by the 2026-08-12 adversarial review.
     const collection = findCollection(collectionsFromApi, collectionPath)
     if (!collection) {

@@ -459,7 +459,7 @@ looked — and acting on that stale sample is exactly the destructive path.
 > ⚠️ Do not "simplify" this by running the identity check only once, under the lock, or
 > by gating it on any "did I acquire it" flag. Both readings have been proposed before;
 > see
-> [`.claude/future-tasks/settings-workspace-init-lock-uncatalogued.md`](../.claude/future-tasks/resolved/settings-workspace-init-lock-uncatalogued.md)
+> [`.claude/future-tasks/resolved/settings-workspace-init-lock-uncatalogued.md`](../.claude/future-tasks/resolved/settings-workspace-init-lock-uncatalogued.md)
 > for the history of that trap.
 
 **August 2026 (baseline review, B2): the settings-workspace init lock became a real

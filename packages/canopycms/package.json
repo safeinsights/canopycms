@@ -92,7 +92,7 @@
   "scripts": {
     "prepack": "pnpm run build",
     "prebuild": "npx tsx scripts/generate-client.ts",
-    "build": "tsc -p tsconfig.build.json",
+    "build": "rm -rf dist && tsc -p tsconfig.build.json",
     "postbuild": "node scripts/postbuild.mjs",
     "lint": "eslint src/",
     "test": "vitest run",
