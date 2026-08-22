@@ -210,6 +210,19 @@ export async function findUrlPathClaimant(opts: {
     if (path.resolve(collectionDir) === resolvedRoot) return null // a root index claims '/', uncontestable
     const parentDir = path.dirname(collectionDir)
     const ownName = extractSlugFromFilename(path.basename(collectionDir))
+
+    // A collection literally NAMED "index" collapses onto ITS OWN path (`<parentPath>/index`),
+    // not onto `<parentPath>` -- see `computeEntryUrl`. So the only thing that could contest it
+    // is another entry in the parent whose slug is ALSO the literal string "index" -- but per
+    // that same forward rule, such an entry IS the parent's own index/landing entry, which
+    // collapses onto `<parentPath>` itself, a different URL. Nothing in the parent can ever claim
+    // `<parentPath>/index`, so skip the lookup below rather than let it match the parent's own
+    // index entry and report a collision that does not exist. Without this, a collection named
+    // "index" could never have a landing page under any parent that has one of its own --
+    // ironic, since `resolveUrlPathCandidates`' candidate 2 was deliberately engineered to keep a
+    // collection named "index" addressable in the first place.
+    if (isIndexSlug(ownName)) return null
+
     const claimant = await findEntryBySlugIn(parentDir, ownName)
     return claimant ? { kind: 'parent-entry', physicalPath: claimant, name: ownName } : null
   }

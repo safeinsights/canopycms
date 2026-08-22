@@ -52,10 +52,15 @@ import type { ContentId, Slug } from '../paths/types'
  *   unrecognized type). `id` is validated (`isValidId`) and safe to trust. **`slug` is
  *   not** — it is the raw dot-joined middle segment(s), lowercased, cast to the branded
  *   `Slug` type without running `parseSlug`'s validation. A filename with an
- *   unconventional slug segment (e.g. containing a space) still parses and still
+ *   unconventional slug segment (e.g. containing a space, or a dot) still parses and still
  *   receives the `Slug` brand. Callers that need a validated slug must run the result
  *   through `parseSlug` themselves; this function's contract is "split the filename
- *   grammar apart," not "validate every part."
+ *   grammar apart," not "validate every part." `listCollectionEntries` (content-listing.ts)
+ *   is exactly such a caller that does NOT re-validate — it lists the file and computes a
+ *   `urlPath` for it regardless — so a dotted slug listed this way builds and gets
+ *   advertised (sitemap, `generateStaticParams`) but can never be read back through
+ *   `readByUrlPath`, which does run every URL-resolution candidate through `parseSlug`.
+ *   `static/index.ts`'s `assertRoutableSlugs` is the build-time guard that catches this.
  */
 export const parseTypedFilename = (
   filename: string,
