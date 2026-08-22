@@ -46,6 +46,16 @@ to fix it — at the cost of shipping that subtree to the browser. For static pr
 build-time renderer (`remark`/`rehype`, or MDX compiled at build time) keeps the component on
 the server instead.
 
+**Comments survive editing.** YAML entries and md/mdx frontmatter can carry hand-written
+comments, and a CMS save keeps them — a value the editor didn't touch keeps its comment, its
+quoting, and its block style. JSON has no comment syntax and is unaffected.
+
+**Content keys your schema no longer defines are reported, not silently dropped.** Rename or
+remove a field and its old key lingers in every content file that had it; CanopyCMS surfaces
+that on save (a "Saved with warnings" notification) and again during a production build (a
+warning naming the entries and key paths). Neither report rejects the save or fails the build,
+and nothing is stripped — clean up the key or add it back to the schema at your own pace.
+
 ## How it works (behind the scenes)
 
 When a user makes an edit in CanopyCMS, they do so on a branch they choose (or are defaulted into). That branch represents an underlying git branch that they don't see. Behind the scenes, CanopyCMS manages a set of git clones, each tuned to a different branch supporting the branches your users see in the editing interface. When a user saves a change, that change is written to disk. A user can change multiple files on a branch, e.g. to work on changes across files that work together. When they click a button to publish their branch, the changes are committed in git, and a pull request is made. Reviewers can comment on the submission within the editor and users can make changes and resubmit. Reviewers finally accept the change on GitHub by merging the pull request. CanopyCMS then marks the change as complete and archives the branch. Sync jobs refresh clones when upstream changes happen and surface conflicts without dropping a branch's changes. Authorization information for users and groups is stored on disk and managed by CanopyCMS.
@@ -145,6 +155,21 @@ export type PostContent = TypeFromEntrySchema<typeof postSchema>
 ```
 
 If no field has `isBody: true`, the markdown content defaults to a field named `body`. The `isBody` flag is validated at schema registry load time: at most one per schema, and only on `markdown` or `mdx` fields.
+
+**Select fields:**
+
+A `select` field infers the **literal union of its own `options`**, not a bare `string` — this is a breaking change if your code was widening a select value into a plain `string`:
+
+```ts
+const postSchema = defineEntrySchema([
+  { name: 'status', type: 'select', options: ['draft', 'published'] },
+])
+
+export type PostContent = TypeFromEntrySchema<typeof postSchema>
+// { status: 'draft' | 'published' }
+```
+
+Options can also be `{ label, value }` objects, in which case the union is built from `value`, not `label`. A field falls back to a bare `string` only when there is nothing literal to infer — no `options`, an empty `options: []`, or an options array typed as the runtime `SelectOption[]` shape rather than inferred by `defineEntrySchema`.
 
 _TODO_ show how schemas can be defined across multiple files. Show all the configuration options for schemas.
 
@@ -296,6 +321,15 @@ The round-trip property holds in both directions: for every item from `listEntri
 One known exception, still open: an entry-type name is also resolvable as a URL segment, so an index entry additionally answers at `/<collection>/<entryTypeName>` -- e.g. a root index entry at both `/` and `/home`. Nothing advertises that URL (it is absent from `listEntries` and from static-param generation), so it only matters if you serve a catch-all route. See the `readbyurlpath-entry-type-candidate-phantom-url` task in the CanopyCMS repo.
 
 Two different entries can still compute the same `urlPath` — an entry whose slug matches a sibling collection that also has an `index` entry, or two slugs differing only by case. Only one of them can be served, so a production build fails and names them. `findDuplicateUrlPaths` (exported from `canopycms/server`) runs the same scan on demand.
+
+**Resolving references in listings:** `listEntries` and `buildContentTree` read content straight off disk, so by default a `reference` field comes back as a bare id string (or `null`) -- including inside shared/referenced blocks. Pass `resolveReferences: true` and every reference resolves to the referenced entry's data, at any nesting depth, exactly as `read`/`readByUrlPath` return it:
+
+```ts
+const entries = await canopy.listEntries({ resolveReferences: true })
+// entries[0].data.snippet -> { id, slug, collection, urlPath, title, ... }
+```
+
+Every resolved reference carries a `urlPath` -- the same one `listEntries` publishes for that entry -- so you can build a link without a second lookup. A resolved md/mdx target's body is opt-in **per field**: set `includeBody: true` on the `reference` field definition to pull its prose in too, rather than just its frontmatter. Leave `resolveReferences` off for anything that only needs paths and timestamps, such as a sitemap or `generateStaticParams`.
 
 **Collections without index entries:** `readByUrlPath` returns `null` for URLs that map to collections with no index entry. This is by design — Canopy resolves content, not routes. For collection-level pages, use the content tree:
 
