@@ -1394,7 +1394,13 @@ The type inference covers all field types: `string` and `markdown` fields become
 
 #### Select Fields
 
-A `select` field infers the **literal union of its own `options`**, not a bare `string`:
+A `select` field infers the **literal union of its own `options`**, not a bare `string`.
+
+**Breaking change (type-level):** this narrows what `select` fields used to infer
+(`string | number` — the `number` half was never reachable, since a select value is
+always a string). Code that widened a select value into a plain `string`, or compared
+it against a value outside its `options`, may now fail to type-check; narrow to the
+inferred union instead.
 
 ```typescript
 const postSchema = defineEntrySchema([
