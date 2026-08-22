@@ -158,6 +158,67 @@ describe('buildPreviewSrc', () => {
       expect(result).toBe('/custom-about?branch=main')
     })
   })
+
+  describe('with a basePath (deployment under a Next.js basePath)', () => {
+    it('prefixes the default collection/slug URL', () => {
+      const result = buildPreviewSrc(
+        { collectionPath: 'content/docs', slug: 'overview', itemType: 'entry' },
+        { branchName: 'main', previewBaseByCollection: undefined, basePath: '/preview-123' },
+      )
+      expect(result).toBe('/preview-123/docs/overview?branch=main')
+    })
+
+    it('prefixes the root-entry default path', () => {
+      const result = buildPreviewSrc(
+        { collectionPath: 'content', slug: 'home', itemType: 'entry' },
+        {
+          branchName: 'main',
+          previewBaseByCollection: undefined,
+          contentRoot: 'content',
+          basePath: '/preview-123',
+        },
+      )
+      expect(result).toBe('/preview-123/?branch=main')
+    })
+
+    it('prefixes a previewBaseByCollection override -- the collection escape hatch still applies, basePath still wraps it', () => {
+      const result = buildPreviewSrc(
+        { collectionPath: 'content/docs', slug: 'index', itemType: 'entry' },
+        {
+          branchName: 'main',
+          previewBaseByCollection: { 'content/docs': '/preview/docs' },
+          basePath: '/preview-123',
+        },
+      )
+      expect(result).toBe('/preview-123/preview/docs?branch=main')
+    })
+
+    it('is a no-op when basePath is unset (regression guard)', () => {
+      const result = buildPreviewSrc(
+        { collectionPath: 'content/docs', slug: 'overview', itemType: 'entry' },
+        { branchName: 'main', previewBaseByCollection: undefined },
+      )
+      expect(result).toBe('/docs/overview?branch=main')
+    })
+
+    it('matches what resolvePreviewPath would compute from a basePath-prefixed window.location', () => {
+      // preview-bridge.tsx's resolvePreviewPath falls back to
+      // `${window.location.pathname}${window.location.search}` -- and Next.js does NOT strip
+      // `basePath` from the raw browser URL, so the served page's location.pathname literally
+      // includes it. The two independently-derived strings must match exactly, or draft sync
+      // and click-to-focus silently stop working (see usePreviewData's path check).
+      const src = buildPreviewSrc(
+        { collectionPath: 'content/docs', slug: 'overview', itemType: 'entry' },
+        { branchName: 'main', previewBaseByCollection: undefined, basePath: '/preview-123' },
+      )
+      const windowLocation = {
+        pathname: '/preview-123/docs/overview',
+        search: '?branch=main',
+      }
+      const resolvedFromWindow = `${windowLocation.pathname}${windowLocation.search}`
+      expect(src).toBe(resolvedFromWindow)
+    })
+  })
 })
 
 describe('normalizeContentPayload', () => {
@@ -291,7 +352,7 @@ describe('buildEntriesFromListResponse', () => {
     pagination: { hasMore: false, limit: 50 },
   }
 
-  it('maps entries with schema, status, preview, and api paths', () => {
+  it('maps entries with schema, status, and preview src', () => {
     const resolvePreviewSrc = vi.fn(
       (entry: {
         collectionPath?: string
@@ -302,9 +363,7 @@ describe('buildEntriesFromListResponse', () => {
     )
     const result = buildEntriesFromListResponse({
       response,
-      branchName: 'feature-branch',
       resolvePreviewSrc,
-      contentRoot: 'content',
       flatSchema,
     })
 
@@ -314,13 +373,11 @@ describe('buildEntriesFromListResponse', () => {
     expect(post?.label).toBe('Hello Title')
     expect(post?.schema).toEqual(postsSchema)
     expect(post?.status).toBe('post')
-    expect(post?.apiPath).toBe('/api/canopycms/feature-branch/content/posts/hello%20world')
     expect(post?.previewSrc).toBe('preview-hello world')
 
     const page = result.find((item) => item.collectionPath === 'pages')
     expect(page?.schema).toEqual(pagesSchema)
     expect(page?.status).toBe('missing')
-    expect(page?.apiPath).toBe('/api/canopycms/feature-branch/content/pages/home')
     expect(page?.slug).toBe('home')
 
     expect(resolvePreviewSrc).toHaveBeenCalledTimes(2)
@@ -329,9 +386,7 @@ describe('buildEntriesFromListResponse', () => {
   it('resolves schema from flatSchema by matching parentPath and entryType', () => {
     const result = buildEntriesFromListResponse({
       response,
-      branchName: 'feature-branch',
       resolvePreviewSrc: () => 'preview',
-      contentRoot: 'content',
       flatSchema,
     })
 
@@ -360,9 +415,7 @@ describe('buildEntriesFromListResponse', () => {
         ],
         pagination: { hasMore: false, limit: 50 },
       },
-      branchName: 'main',
       resolvePreviewSrc: () => '',
-      contentRoot: 'content',
       flatSchema,
     })
 
@@ -386,9 +439,7 @@ describe('buildEntriesFromListResponse', () => {
         ],
         pagination: { hasMore: false, limit: 50 },
       },
-      branchName: 'main',
       resolvePreviewSrc: () => '',
-      contentRoot: 'content',
       flatSchema,
     })
 
@@ -473,7 +524,6 @@ describe('buildBreadcrumbSegments', () => {
       path: unsafeAsLogicalPath('test'),
       label: 'Test',
       schema: [],
-      apiPath: '/api/test',
       contentId: unsafeAsContentId('test123456789'),
     }
     const labels = new Map<string, string>()
@@ -485,7 +535,6 @@ describe('buildBreadcrumbSegments', () => {
       path: unsafeAsLogicalPath('posts/hello'),
       label: 'Hello',
       schema: [],
-      apiPath: '/api/test',
       collectionPath: unsafeAsLogicalPath('posts'),
       slug: 'hello',
       contentId: unsafeAsContentId('test123456789'),
@@ -500,7 +549,6 @@ describe('buildBreadcrumbSegments', () => {
       path: unsafeAsLogicalPath('content/docs/guides/config'),
       label: 'Configuration Guide',
       schema: [],
-      apiPath: '/api/test',
       collectionPath: unsafeAsLogicalPath('content/docs/guides'),
       slug: 'config',
       contentId: unsafeAsContentId('test123456789'),
@@ -522,7 +570,6 @@ describe('buildBreadcrumbSegments', () => {
       path: unsafeAsLogicalPath('content/docs/api/v2/endpoint'),
       label: 'Endpoint',
       schema: [],
-      apiPath: '/api/test',
       collectionPath: unsafeAsLogicalPath('content/docs/api/v2'),
       slug: 'endpoint',
       contentId: unsafeAsContentId('test123456789'),
@@ -544,7 +591,6 @@ describe('buildBreadcrumbSegments', () => {
       path: unsafeAsLogicalPath('content/docs/guides/config'),
       label: 'Configuration Guide',
       schema: [],
-      apiPath: '/api/test',
       collectionPath: unsafeAsLogicalPath('content/docs/guides'),
       slug: 'config',
       contentId: unsafeAsContentId('test123456789'),
@@ -566,7 +612,6 @@ describe('buildBreadcrumbSegments', () => {
       path: unsafeAsLogicalPath('posts/2024/01/new-year'),
       label: 'New Year Post',
       schema: [],
-      apiPath: '/api/test',
       collectionPath: unsafeAsLogicalPath('posts'),
       slug: '2024/01/new-year',
       contentId: unsafeAsContentId('test123456789'),
@@ -584,7 +629,6 @@ describe('buildBreadcrumbSegments', () => {
       path: unsafeAsLogicalPath('content/posts/2024/01/new-year'),
       label: 'New Year Post',
       schema: [],
-      apiPath: '/api/test',
       collectionPath: unsafeAsLogicalPath('content/posts'),
       slug: '2024/01/new-year',
       contentId: unsafeAsContentId('test123456789'),
@@ -605,7 +649,6 @@ describe('buildBreadcrumbSegments', () => {
       path: unsafeAsLogicalPath('content/settings'),
       label: 'Site Settings',
       schema: [],
-      apiPath: '/api/test',
       collectionPath: unsafeAsLogicalPath('content/settings'),
       type: 'entry',
       contentId: unsafeAsContentId('test123456789'),

@@ -51,7 +51,6 @@ const entries = [
     label: 'Hello Post',
     status: 'page',
     schema: schema.collections[0].entries[0].schema,
-    apiPath: '/api/canopycms/main/content/posts/hello',
     collectionPath: unsafeAsLogicalPath('content/posts'),
     collectionName: 'posts',
     slug: 'hello',

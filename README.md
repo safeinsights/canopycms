@@ -636,21 +636,22 @@ Available schemas: author, home, doc
 
 ### `defineCanopyConfig` Options
 
-| Option                | Type                                             | Required | Default     | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
-| --------------------- | ------------------------------------------------ | -------- | ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `gitBotAuthorName`    | `string`                                         | Yes      | -           | Name used for git commits made by CanopyCMS                                                                                                                                                                                                                                                                                                                                                                                                                                  |
-| `gitBotAuthorEmail`   | `string`                                         | Yes      | -           | Email used for git commits made by CanopyCMS                                                                                                                                                                                                                                                                                                                                                                                                                                 |
-| `mode`                | `'dev' \| 'prod'`                                | **Yes**  | -           | Operating mode (see below). No default — a deploy that omits `mode` fails config validation at startup with a clear error, rather than silently running insecure dev auth semantics in production.                                                                                                                                                                                                                                                                           |
-| `contentRoot`         | `string`                                         | No       | `'content'` | Root directory for content files relative to project root                                                                                                                                                                                                                                                                                                                                                                                                                    |
-| `defaultBaseBranch`   | `string`                                         | No       | `'main'`    | Git branch used as the fork point for CMS content branches (typically `main`). This branch can never be submitted for review, and in `prod` mode it's read-only in the editor — see [Submitting for Review](#submitting-for-review).                                                                                                                                                                                                                                         |
-| `defaultActiveBranch` | `string`                                         | No       | (see below) | Which workspace the dev server serves content from and which branch the editor opens by default. In dev mode, auto-detected from the current git branch. In prod mode, falls back to `defaultBaseBranch`                                                                                                                                                                                                                                                                     |
-| `defaultBranchAccess` | `'allow' \| 'deny'`                              | No       | `'deny'`    | Fallback access policy for a branch with no ACL — what `canopycms init` scaffolds. Three grants are exempt from it: admins/reviewers, the creator of an un-ACL'd branch, and the protected base branch (which takes no ACL and is where every user lands). So `'deny'` means "branches you neither created nor were invited to", not a lockout. An explicit ACL outranks the creator and base-branch grants, which is how an admin locks down a branch someone else created. |
-| `defaultPathAccess`   | `'allow' \| 'deny' \| { read?, edit?, review? }` | No       | `'deny'`    | Default access policy for content paths when no permission rule matches. The object form scopes the default per permission level (e.g. `{ read: 'allow' }` for public read without opening edit/review). An unspecified level resolves to `'deny'`. See [Public read on server deployments](#public-read-on-server-deployments).                                                                                                                                             |
-| `deployedAs`          | `'server' \| 'static'`                           | No       | `'server'`  | Deployment shape. `'static'`: site is pre-built with no live editor; all CMS API requests return 401 and `authPlugin` is not required. `'server'`: normal server-rendered deployment with auth enforced.                                                                                                                                                                                                                                                                     |
-| `media`               | `MediaConfig`                                    | No       | -           | Asset storage configuration (local, s3, or lfs)                                                                                                                                                                                                                                                                                                                                                                                                                              |
-| `editor`              | `EditorConfig`                                   | No       | -           | Editor UI customization options                                                                                                                                                                                                                                                                                                                                                                                                                                              |
-| `dev`                 | `DevConfig`                                      | No       | -           | Dev-mode-only behavior. `dev.contentSync: 'off' \| 'warn'` (default `'warn'`) controls how the dev server detects/reports working-tree edits vs. the served branch clone (see [Local Development Sync](#local-development-sync)). Ignored when `mode !== 'dev'`.                                                                                                                                                                                                             |
-| `validateEntry`       | `ValidateEntryHook`                              | No       | -           | Save-time validation hook, run server-side before the entry file is written. Return `level: 'error'` issues to reject the save, or `'warning'` issues to surface alongside it. See [Save-Time Validation](#save-time-validation-validateentry).                                                                                                                                                                                                                              |
+| Option                | Type                                             | Required | Default     | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| --------------------- | ------------------------------------------------ | -------- | ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `gitBotAuthorName`    | `string`                                         | Yes      | -           | Name used for git commits made by CanopyCMS                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| `gitBotAuthorEmail`   | `string`                                         | Yes      | -           | Email used for git commits made by CanopyCMS                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| `mode`                | `'dev' \| 'prod'`                                | **Yes**  | -           | Operating mode (see below). No default — a deploy that omits `mode` fails config validation at startup with a clear error, rather than silently running insecure dev auth semantics in production.                                                                                                                                                                                                                                                                                    |
+| `contentRoot`         | `string`                                         | No       | `'content'` | Root directory for content files relative to project root                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| `basePath`            | `string`                                         | No       | -           | The deployment prefix your Next app is served under (e.g. `'/preview-123'`), matching `next.config`'s `basePath`. CanopyCMS cannot read `next.config`, so state it here or the editor's API requests and preview pane target the un-prefixed root. Omit when the app is served at its origin's root. **Not** `contentStaticParams`'s `basePath`, and **not** necessarily the right value for `assetUrl`'s `baseUrl` — see [Deploying under a `basePath`](#deploying-under-a-basepath) |
+| `defaultBaseBranch`   | `string`                                         | No       | `'main'`    | Git branch used as the fork point for CMS content branches (typically `main`). This branch can never be submitted for review, and in `prod` mode it's read-only in the editor — see [Submitting for Review](#submitting-for-review).                                                                                                                                                                                                                                                  |
+| `defaultActiveBranch` | `string`                                         | No       | (see below) | Which workspace the dev server serves content from and which branch the editor opens by default. In dev mode, auto-detected from the current git branch. In prod mode, falls back to `defaultBaseBranch`                                                                                                                                                                                                                                                                              |
+| `defaultBranchAccess` | `'allow' \| 'deny'`                              | No       | `'deny'`    | Fallback access policy for a branch with no ACL — what `canopycms init` scaffolds. Three grants are exempt from it: admins/reviewers, the creator of an un-ACL'd branch, and the protected base branch (which takes no ACL and is where every user lands). So `'deny'` means "branches you neither created nor were invited to", not a lockout. An explicit ACL outranks the creator and base-branch grants, which is how an admin locks down a branch someone else created.          |
+| `defaultPathAccess`   | `'allow' \| 'deny' \| { read?, edit?, review? }` | No       | `'deny'`    | Default access policy for content paths when no permission rule matches. The object form scopes the default per permission level (e.g. `{ read: 'allow' }` for public read without opening edit/review). An unspecified level resolves to `'deny'`. See [Public read on server deployments](#public-read-on-server-deployments).                                                                                                                                                      |
+| `deployedAs`          | `'server' \| 'static'`                           | No       | `'server'`  | Deployment shape. `'static'`: site is pre-built with no live editor; all CMS API requests return 401 and `authPlugin` is not required. `'server'`: normal server-rendered deployment with auth enforced.                                                                                                                                                                                                                                                                              |
+| `media`               | `MediaConfig`                                    | No       | -           | Asset storage configuration (local, s3, or lfs)                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| `editor`              | `EditorConfig`                                   | No       | -           | Editor UI customization options                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| `dev`                 | `DevConfig`                                      | No       | -           | Dev-mode-only behavior. `dev.contentSync: 'off' \| 'warn'` (default `'warn'`) controls how the dev server detects/reports working-tree edits vs. the served branch clone (see [Local Development Sync](#local-development-sync)). Ignored when `mode !== 'dev'`.                                                                                                                                                                                                                      |
+| `validateEntry`       | `ValidateEntryHook`                              | No       | -           | Save-time validation hook, run server-side before the entry file is written. Return `level: 'error'` issues to reject the save, or `'warning'` issues to surface alongside it. See [Save-Time Validation](#save-time-validation-validateentry).                                                                                                                                                                                                                                       |
 
 **Note**: Schemas are declared in TypeScript with `defineEntrySchema`, registered with `createEntrySchemaRegistry`, and referenced from `.collection.json` files alongside your content. See the [Schema Registry and References](#schema-registry-and-references) section for details.
 
@@ -1767,6 +1768,12 @@ export const generateStaticParams = () =>
 
 **Catch-all nested under a URL prefix** (`app/docs/[[...slug]]/page.tsx`) — pass `basePath` so the emitted `segments` are relative to that prefix and match the route:
 
+> **This `basePath` is a route prefix inside your app, not Next's deployment `basePath`.** It
+> _filters_ entries to those whose URL starts with it, so passing a deployment prefix here matches
+> no content and emits zero static params — a green build that ships an empty site. If you deploy
+> under a Next `basePath`, set it in `next.config` and in your Canopy config, and leave this alone.
+> See [Deploying under a `basePath`](#deploying-under-a-basepath).
+
 ```typescript
 // app/docs/[[...slug]]/page.tsx
 import { contentStaticParams } from '../../lib/canopy'
@@ -1777,13 +1784,13 @@ export const generateStaticParams = () =>
 
 **Options:**
 
-| Option      | Type                      | Default       | Description                                                                                                                                                                            |
-| ----------- | ------------------------- | ------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `shape`     | `'catch-all' \| 'single'` | `'catch-all'` | `'catch-all'` emits the URL `segments` array; `'single'` emits the entry `slug`                                                                                                        |
-| `paramName` | `string`                  | `'slug'`      | Route param name (matches your `[...name]` / `[name]` folder)                                                                                                                          |
-| `rootPath`  | `string`                  | Content root  | Scope to a subtree (e.g., `'content/posts'`), useful with `shape: 'single'`                                                                                                            |
-| `basePath`  | `string`                  | -             | For a catch-all nested under a URL prefix (e.g. `app/docs/[[...slug]]`): set to the route base (`'/docs'`) so entries are scoped to that prefix and `segments` are made relative to it |
-| `filter`    | `(entry) => boolean`      | -             | Exclude entries; e.g. drop the root index from a non-optional catch-all: `(e) => e.segments.length > 0`                                                                                |
+| Option      | Type                      | Default       | Description                                                                                                                                                                                                                                          |
+| ----------- | ------------------------- | ------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `shape`     | `'catch-all' \| 'single'` | `'catch-all'` | `'catch-all'` emits the URL `segments` array; `'single'` emits the entry `slug`                                                                                                                                                                      |
+| `paramName` | `string`                  | `'slug'`      | Route param name (matches your `[...name]` / `[name]` folder)                                                                                                                                                                                        |
+| `rootPath`  | `string`                  | Content root  | Scope to a subtree (e.g., `'content/posts'`), useful with `shape: 'single'`                                                                                                                                                                          |
+| `basePath`  | `string`                  | -             | For a catch-all nested under a URL prefix (e.g. `app/docs/[[...slug]]`): set to the route base (`'/docs'`) so entries are scoped to that prefix and `segments` are made relative to it. **Not** Next's deployment `basePath` — see the warning below |
+| `filter`    | `(entry) => boolean`      | -             | Exclude entries; e.g. drop the root index from a non-optional catch-all: `(e) => e.segments.length > 0`                                                                                                                                              |
 
 > A root index (`/`) produces empty `segments` — keep it only for an optional catch-all `[[...slug]]`, otherwise exclude it with `filter`.
 >
@@ -2130,8 +2137,12 @@ media: {
   adapter: 's3',
   bucket: 'my-site-assets',
   region: 'us-east-1',
-  // Optional: absolute base URL when the editor is served from a different origin
-  // than the public site (e.g. a dedicated editor domain). Omit for same-origin.
+  // Optional: absolute base URL of the origin serving /assets, for the EDITOR's own
+  // image previews -- set it when the editor cannot reach assets at its own root
+  // (a dedicated asset host, or an editor served from a different origin than the
+  // site). Must be absolute; omit for same-origin. This is editor display only and
+  // is never stored in content -- see "Where /assets is mounted" below for the
+  // public site's side of the same question.
   publicBaseUrl: 'https://assets.example.com',
   // Optional: max upload size for presigned direct uploads (default 50 MiB).
   maxUploadBytes: 52_428_800,
@@ -2174,6 +2185,92 @@ media: { adapter: 'local', directory: '.canopy-dev/assets' }
   ```
 
   SVGs and PDFs are served statically (no transform).
+
+**Where `/assets` is mounted**
+
+Stored asset URLs are always root-relative (`/assets/…`). That is deliberate and load-bearing:
+the stored value is what moves between branches and environments, so it names the asset's
+position in the `/assets` URL space and nothing else. When your renderer sees that space
+somewhere other than the root, supply the mount point at render time with `baseUrl`:
+
+```typescript
+<img src={assetUrl(image, { width: 960, baseUrl: ASSET_BASE })} />
+<img srcSet={assetSrcSet(image, [480, 960], { baseUrl: ASSET_BASE })} />
+```
+
+| Your deployment                                              | `baseUrl`                                         |
+| ------------------------------------------------------------ | ------------------------------------------------- |
+| Site served at the root (the usual case)                     | omit it                                           |
+| Site under a Next.js `basePath`, with Next serving `/assets` | your `basePath` — e.g. `'/preview-123'`           |
+| Assets on CloudFront via `canopycms-cdk`'s `AssetSupport`    | omit it — a `basePath` does not move them         |
+| Assets on a separate host or CDN origin                      | that origin — e.g. `'https://assets.example.com'` |
+
+`baseUrl` is the **one** prefix concept for asset URLs, and the two shapes above are
+alternatives rather than things you compose: a cross-origin asset host serves at its own root
+and does not also live under your site's `basePath`. It is a per-render option rather than a
+config key precisely because the editor and the public site can legitimately have different
+answers — which is what `media.publicBaseUrl` is, the editor's answer.
+
+The prefix is applied at render time only and is **never** written into content.
+
+### Deploying under a `basePath`
+
+Next.js auto-prefixes only its own `Image`, `Link`, `Script` and router navigations. Any raw
+string URL — including an `<img src>` built from `assetUrl()` — is left alone and resolves at the
+origin root, so it 404s. Deploying CanopyCMS under a `basePath` (commonly, preview builds
+namespaced per branch) needs three things:
+
+1. **Tell CanopyCMS.** It cannot read your `next.config`, so state the same value in your Canopy
+   config as `basePath`. The editor uses it for its API route and for the preview pane.
+
+   ```typescript
+   // next.config.ts and canopycms.config.ts must agree
+   basePath: process.env.NEXT_PUBLIC_BASE_PATH,
+   ```
+
+2. **Decide whether your asset space moved.** Use the table above — it moves when Next serves
+   `/assets` (the local adapter, `next dev`, or S3 with no distribution), because the rewrite
+   Next auto-prefixes is `withCanopy`'s own. It does **not** move on a CloudFront deployment,
+   where the asset behaviors are anchored at the distribution root. Do not derive `baseUrl` from
+   `next.config`'s `basePath` unconditionally — on the AWS topology that breaks working URLs.
+
+3. **Do not pass your `basePath` to `contentStaticParams`.** That helper's own `basePath` option
+   is an unrelated thing: the route prefix of a _nested catch-all_ (`app/docs/[[...slug]]`), used
+   to scope and relativize `segments`. It **filters** entries by that prefix, so passing a
+   deployment `basePath` matches no content, emits zero static params, and still builds green —
+   an empty site with no error. See
+   [Static Export with generateStaticParams](#static-export-with-generatestaticparams).
+
+> Serving `/assets` un-prefixed under a `basePath` by adding a `basePath: false` rewrite does not
+> work — Next rejects a `basePath: false` rewrite whose destination is not an absolute
+> `http(s)://` URL, and `withCanopy`'s asset rewrite points at an internal route. Prefix the URLs
+> instead.
+
+Markdown and MDX body content is a separate case: images inserted into a body are stored as raw
+srcs and rendered by your own markdown renderer, which never calls `assetUrl()`. If you deploy
+under a `basePath`, give your renderer an `img` override so body images get the same treatment as
+`image` fields:
+
+```tsx
+<ReactMarkdown
+  components={{
+    img: ({ src, alt, ...rest }) => (
+      <img
+        src={assetUrl({ src: String(src ?? '') }, { baseUrl: ASSET_BASE })}
+        alt={alt}
+        {...rest}
+      />
+    ),
+  }}
+/>
+```
+
+`assetUrl()` hands back anything a mount point cannot apply to — an off-site src (`https://…`,
+`//…`) or a `data:` URI — byte-identical, so the override is safe to put on every image in a body.
+Two things it does change, both deliberate: a value a browser would read as pointing off-origin
+despite looking site-relative (`/\evil.com/x`) is neutralized rather than emitted, and a
+**page-relative** src (`images/x.png`) is rooted onto `ASSET_BASE` like any other path. If a body
+carries page-relative image srcs, make them root-relative before adopting this.
 
 **`image` fields** hold a structured value — `{ src, alt, width, height, crop? }` — so alt
 text is enforced, intrinsic dimensions prevent layout shift, and crops are stored as a

@@ -576,6 +576,30 @@ media: { adapter: 's3', bucket: 'my-site-assets', region: 'us-east-1' }
 
   SVGs and PDFs are served statically, with no transform.
 
+- **Where `/assets` is mounted** — the URLs above are root-relative, because that is what gets
+  stored in content and content moves between branches and environments. If your renderer sees
+  the asset space somewhere other than the root, pass `baseUrl` and it is applied at render time:
+
+  ```typescript
+  <img src={assetUrl(image, { width: 960, baseUrl: ASSET_BASE })} />
+  ```
+
+  | Your deployment                                           | `baseUrl`                                         |
+  | --------------------------------------------------------- | ------------------------------------------------- |
+  | Site at the root (the usual case)                         | omit it                                           |
+  | Site under a Next.js `basePath`, assets served by Next    | your `basePath` — e.g. `'/preview-123'`           |
+  | Assets on CloudFront via `canopycms-cdk`'s `AssetSupport` | omit it — see below                               |
+  | Assets on a separate host or CDN origin                   | that origin — e.g. `'https://assets.example.com'` |
+
+  **A `basePath` does not always move the asset space.** Next only auto-prefixes its own
+  `Image`/`Link`/`Script`, never a raw string URL — so under `basePath` a plain
+  `<img src={assetUrl(image)}>` 404s and needs the prefix. But that is only true when Next is
+  what serves `/assets` (the local adapter, `next dev`, or S3 without a distribution), because
+  the rewrite Next auto-prefixes is `withCanopy`'s. On a CloudFront deployment the asset
+  behaviors are anchored at the distribution root and a `basePath` never moves them, so the
+  correct value there is no `baseUrl` at all. Never derive it from `next.config`'s `basePath`
+  unconditionally.
+
 An `image` field holds a structured value — `{ src, alt, width, height, crop? }` — so alt text
 is enforced and intrinsic dimensions prevent layout shift. Declare an `aspect` (e.g. `'16:9'`)
 to enable the interactive crop step, or `altOptional: true` for decorative images.

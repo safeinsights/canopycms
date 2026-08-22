@@ -177,6 +177,7 @@ The core package organizes code into focused modules, each with a single respons
 - Content-addressed key builders (sha-256 hashing, filename slugging) and the fixed set of bucket prefixes
 - Finalize pipeline (magic-byte sniffing, SVG sanitization, dimension extraction, dedup ordering)
 - Isomorphic transform-directive parser and canonical formatter, a server-only image transform (sharp), and the isomorphic `assetUrl`/`assetSrcSet` URL helpers
+- A hard split between the stored src (always root-relative) and the rendered URL (mount point applied at render time only)
 - See [Asset & Media System](#asset--media-system) for the full subsystem
 
 **Validation** - Content validation utilities:
@@ -192,6 +193,7 @@ The core package organizes code into focused modules, each with a single respons
 - Debug logging utilities
 - Formatting helpers
 - URL sanitization for safe rendering of CMS-sourced links
+- The single URL-prefix join shared by SEO URL resolution and asset URL building — pure and node-free, since it is reachable from the editor's client bundle (see [Render-Time URL Prefixes](#render-time-url-prefixes))
 
 ### Top-Level Files
 
@@ -1927,6 +1929,8 @@ The editor provides a rich editing experience with schema-driven forms, block-ba
 
 **Live preview**: The editor can show a live preview of content changes. The preview is an iframe that loads your actual site pages, and the editor communicates with it via postMessage. When you edit a field, the preview updates immediately. Clicking on elements in the preview focuses the corresponding form field. This preview bridge enables real-time feedback without page reloads.
 
+**Deployment prefix**: When the host app is served under a deployment prefix, the editor's API base URL and the preview iframe's `src` both have to carry it — and the preview URL in particular must carry it exactly once, because the same string is also matched against the browser-reported location path to drive draft sync. See [Preview Path Identity](#preview-path-identity).
+
 ### Preview Bridge Trust Model
 
 The preview bridge is a postMessage channel between two windows, and the site side of that channel feeds incoming draft data straight into the host site's renderer (often MDX evaluation). An unvalidated message listener would therefore let any window with a handle on a preview page (e.g. via `window.open`) execute arbitrary content in the site's origin. Trust is explicit on both sides of the bridge:
@@ -2079,6 +2083,14 @@ The Function URL is locked to CloudFront (OAC / IAM) so the transform Lambda can
 
 **One transform engine, two runtimes.** The directive parser and the sharp-based transform live in the core package. The prod transform Lambda imports that engine verbatim; dev mode emulates `/assets/t/*` with the same engine on the fly (the dev route serves through the store abstraction, and `withCanopy` rewrites `/assets/*` to the CMS API route). Identical URLs resolve in every mode, and there is exactly one implementation of "what does this directive do to this image." This is a modernized redesign of OpenStax's `image-cdn`: S3-sourced instead of HTTP-pull, and sync-on-miss via origin-group failover instead of an S3-website-redirect + queue dance (which does not work under OAC anyway).
 
+### Stored vs Rendered Asset URLs
+
+A stored asset reference is **always root-relative** (`/assets/…`), and this is structural rather than conventional: both write paths — finalize and the editor's own field writes — store the raw computed src, and nothing that writes content is allowed to bake a prefix into it. The reason is that content moves. The same entry is read from a draft branch workspace, a PR preview, a staging deployment, and production; a stored value that named an origin or a deployment prefix would be correct in exactly one of those places and quietly wrong in the rest, with no way to fix it short of rewriting content.
+
+So a stored src names only the asset's **position in the `/assets` URL space** and nothing else. Putting a mount point in front of that space is strictly a **render-time** concern, applied in exactly one place — the `baseUrl` option on the URL builders (`assetUrl` / `assetSrcSet`) — and never written back. `media.publicBaseUrl` is one _source_ of that render-time value (the editor's own answer, for when the editor is served from a different origin than the site); it is display configuration, not a property of the asset.
+
+Where that mount point should point is a question about deployment topology, not about the site's route prefix — see [Render-Time URL Prefixes](#render-time-url-prefixes).
+
 ### Structured Image Field
 
 The schema gains a first-class structured `image` field type whose value is `{ src, alt, width, height, crop? }` rather than a raw string path. The field definition can require a fixed aspect ratio (which triggers a crop step in the editor) and can make alt text optional. The stored value is validated at the authoritative server write boundary by the shared isomorphic entry validator, the same validator the editor uses, so a malformed image value cannot be saved.
@@ -2103,6 +2115,8 @@ The asset store is defined by a contract that supports both direct-signed and pr
 ### Delivery Infrastructure
 
 The delivery-side infrastructure is packaged as the `AssetSupport` CDK construct in `canopycms-cdk`, so each site provisions its own asset stack rather than depending on an org-wide shared deployment (the construct is the unit of reuse, avoiding cross-account IAM). It supports both a standalone bucket and a bring-your-own existing content bucket, attaches the `/assets/*` and `/assets/t/*` CloudFront behaviors, and deploys the transform Lambda (bundled with sharp's platform-specific binaries, no Docker required).
+
+Those two behaviors are anchored at the **distribution root**, and the transform Lambda refuses any request outside the transform prefix. That is what makes the asset URL space independent of whatever prefix the app itself is served under on this topology — see [Routes and Assets Are Two URL Spaces](#routes-and-assets-are-two-url-spaces).
 
 Landing this construct also required fixing the CMS service construct: the isolated-VPC CMS Lambda previously had no route to S3 at all. It now reaches S3 through a gateway VPC endpoint (with a corresponding security-group egress rule), which is what makes networkless presign generation and finalize possible without a NAT gateway. See [Deployment Architecture](#deployment-architecture).
 
@@ -2276,7 +2290,7 @@ It applies **no publish filtering**, deliberately: publish state is branch-only,
 
 ### Thin Framework Adapter
 
-The `canopycms-next` package provides `collectStaticParams()`, a framework-agnostic free helper built on the core's `collectStaticPaths()`. It maps the neutral descriptors into the array Next.js's `generateStaticParams` expects, supporting both catch-all routes (param value is the `segments` array) and single-segment routes (param value is the entry `slug`, paired with a collection scope). A `basePath` option supports catch-all routes nested under a URL prefix (e.g. `app/docs/[[...slug]]`): entries are scoped to that prefix and `segments` are made relative to it, so the params match the route.
+The `canopycms-next` package provides `collectStaticParams()`, a framework-agnostic free helper built on the core's `collectStaticPaths()`. It maps the neutral descriptors into the array Next.js's `generateStaticParams` expects, supporting both catch-all routes (param value is the `segments` array) and single-segment routes (param value is the entry `slug`, paired with a collection scope). A `basePath` option supports catch-all routes nested under a URL prefix (e.g. `app/docs/[[...slug]]`): entries are scoped to that prefix and `segments` are made relative to it, so the params match the route. This option is a _route_ prefix inside the app and is not the deployment prefix of the same name — it filters entries, so handing it a deployment prefix silently enumerates nothing. See [Render-Time URL Prefixes](#render-time-url-prefixes).
 
 The adapter is deliberately minimal — it only knows the shape Next.js wants. A future `canopycms-<framework>` adapter would reuse the same `collectStaticPaths()` core and provide its own thin mapping, exactly as the auth-plugin and context adapters do.
 
@@ -2302,6 +2316,46 @@ This guard is deliberately build-only, not runtime:
 - **The AI content build utility** enforces it unconditionally, since it is only ever invoked as an explicit build step (the CLI command or a build script), never incidentally by a dev server.
 
 Publishing and saving remain permissive by design -- this guard only runs at the point content is about to be exported for public consumption, not while an editor is still working on a branch.
+
+## Render-Time URL Prefixes
+
+A CanopyCMS site is not always served at an origin's root. It may live under a deployment prefix (per-branch preview builds are the common case), its assets may live on a separate CDN origin, or both. Everything CanopyCMS **stores** is written as though the site were at the root; a prefix is put on only at **render time**. This section covers where that join happens, and the two independent URL spaces it applies to.
+
+### One Prefix Join, Shared
+
+Two surfaces need the identical operation: SEO URL resolution puts a site origin in front of an entry's URL path, and asset URL building puts an asset mount point in front of a stored `/assets/…` src. These had drifted into two implementations, and the asset copy was the weaker one — it checked neither the absoluteness of the path (so an off-site src became `/prefix/https://cdn.example.com/x.png`) nor the shape of the prefix (so a prefix without a leading slash produced a _document-relative_ URL that resolves somewhere different on every page — an intermittent failure that is harder to diagnose than the plain 404 it replaced). Both bugs had already been solved on the SEO side.
+
+There is now one prefix-join primitive, and both surfaces use it. Its rules:
+
+- **An already-absolute or protocol-relative path passes through untouched.** That value is a deliberate off-site pointer — a syndicated canonical, a partner-hosted copy, a CDN image — and prefixing it corrupts it.
+- **Order matters**: the absoluteness check runs _before_ prefix normalization. The reverse order is what rewrites an off-site canonical into a same-site path.
+- **An empty prefix, or one that is nothing but slashes, is a clean no-op**, so the unset case stays root-relative. This also rules out a bare `//` prefix, which browsers read as protocol-relative — i.e. a request to a host literally named `assets`.
+- **Anything else is normalized** to either a declared off-origin prefix (used as-is) or a leading-slash same-origin path prefix.
+
+The primitive is deliberately pure and dependency-free, because asset URL building is reachable from the editor's client bundle; the client-bundle boundary check fails the build if a node built-in ever creeps into it. Sharing one function is what stops a third caller from inheriting the weaker half of the behavior again.
+
+### Routes and Assets Are Two URL Spaces
+
+This is the part that resists a simple rule. A deployment prefix always moves the **route** space. Whether it also moves the **asset** space is a property of the deployment topology, not of the prefix:
+
+- **On a CloudFront deployment** (the `AssetSupport` construct in `canopycms-cdk`), the app moves under the prefix but the asset space does **not**. The CDN's `/assets/*` and `/assets/t/*` behaviors are anchored at the distribution root, and the transform function rejects any request that is not under the transform prefix. Deriving the asset mount point from the deployment prefix here breaks URLs that were working.
+- **Where the framework itself serves `/assets`** — the local/LFS store adapter, `next dev`, or S3 with no distribution in front of it — the `/assets` rewrite belongs to `withCanopy()`, so Next.js auto-prefixes it and the deployment prefix _does_ apply.
+
+Two consequences follow. First, adopter guidance is a **mount table keyed on where assets are served**, not a rule keyed on whether a deployment prefix is set. Second, the asset mount point is a **per-render option rather than a config field**, because the editor and the public site can legitimately have different answers — the editor's answer is `media.publicBaseUrl`, and the public site's answer comes from the table.
+
+### The Deployment Prefix (`basePath`)
+
+The configuration carries a top-level deployment prefix naming where the host app is served (e.g. `/preview-123`). CanopyCMS cannot read the host framework's config at runtime, so this must be stated explicitly; it is threaded through to the client config and drives three things: the editor's API base URL, the preview iframe's `src`, and the preview↔editor path matching described below. Unset means the app is served at its origin's root, and every use site runs it through the shared join, so unset is a no-op everywhere.
+
+It is deliberately **not** the asset mount point, for the topology reason above.
+
+It is also deliberately **not** an argument to the static-params helper, even though that helper has an option of the same name. There, `basePath` means "the route prefix of a nested catch-all route" and it _filters_ enumerated entries down to that prefix. Passing a deployment prefix to it matches no content at all, which yields zero static params and a build that goes green having shipped an empty site. Because that failure is silent, the URL builders take no `basePath` argument at all — there is only the mount point — rather than offering a same-named option a reader could plausibly reach for.
+
+### Preview Path Identity
+
+The preview URL an editor builds for an entry is used **twice**: as the iframe's `src`, and as the string compared against the browser-reported location path to decide which entry a framed page is showing, which is what drives draft sync and click-to-focus. Browsers report that path _with_ the deployment prefix included. So an unprefixed value 404s the iframe, and a value that is prefixed on some code paths but not others breaks draft sync even when the iframe itself happens to resolve.
+
+The builder is therefore split into an unprefixed core plus a thin wrapper that applies the prefix exactly once, at the end, uniformly across every branch of the builder — including the fully-custom per-entry preview override, whose absolute form passes through untouched by the join's own rule. One prefix, applied in one place, is what keeps the two uses of that string in agreement. See [Editor Architecture](#editor-architecture) for the rest of the preview bridge.
 
 ## Extensibility Points
 
@@ -2372,6 +2426,14 @@ Git history is append-only, so every replaced image version would live forever, 
 ### Why transform images on demand instead of a fixed width ladder at upload?
 
 An upload-time width ladder (the rejected Plan A) was simpler to build but aged badly: it needed sharp in the CMS request path, per-field width hints for odd sizes, derived assets for cropping, and worker back-fill jobs whenever the ladder or quality changed. On-demand transforms move all of that behind a deterministic URL: any size is available, crop is a re-editable rectangle rather than a derived asset, and changing the pipeline just changes cache keys. The cost is one Lambda per site and a sub-second first-hit per new variant, both of which the origin-group cache absorbs. Full trade-off table in the design record.
+
+### Why is the asset mount point a render-time option instead of part of the stored URL?
+
+Because content outlives the place it is being rendered from. A stored src is read from a draft branch workspace, a PR preview, a staging deployment, and production, and increasingly from an editor served at a different origin than the site. A prefix baked in at write time is correct in exactly one of those and silently wrong in the rest, fixable only by rewriting content. Keeping the stored value root-relative makes the asset reference a pure statement of position in the `/assets` URL space, and pushes the "where is that space, as seen from here?" question to the one place that actually knows the answer: the renderer. It is an option rather than a config key for the same reason — the editor and the public site can legitimately disagree.
+
+### Why doesn't the deployment `basePath` move the asset URL space?
+
+Because it depends on who is serving `/assets`, and that varies by topology. On a CloudFront deployment the app moves under the prefix but the CDN's asset behaviors stay anchored at the distribution root (and the transform function rejects anything outside the transform prefix), so deriving the asset mount point from the deployment prefix breaks URLs that were working. Where the framework itself serves `/assets`, the rewrite is `withCanopy()`'s own and Next.js auto-prefixes it, so the prefix does apply. Since neither answer is universally right, CanopyCMS refuses to guess: the deployment prefix drives only the route space (editor API, preview frame), the asset mount point stays an explicit render-time value, and adopter guidance is a table keyed on where assets are served rather than a rule keyed on the prefix. Relatedly, the URL builders expose no `basePath` argument at all — the same word already means a _filtering_ route prefix on the static-params helper, where a deployment prefix would enumerate nothing and produce a green build with no pages. See [Render-Time URL Prefixes](#render-time-url-prefixes).
 
 ### Why branch-per-workspace?
 

@@ -42,7 +42,6 @@ export interface UseEntryManagerOptions {
   previewBaseByCollection?: Record<string, string>
   resolvePreviewSrc: (entry: Partial<EditorEntry>) => string | undefined
   setBusy: (busy: boolean) => void
-  contentRoot?: string
 }
 
 export interface UseEntryManagerReturn {
@@ -406,7 +405,6 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
     const seq = claimRefreshSeq(branch)
     const fetched = await fetchEntriesAndSchema(apiClient, branch, {
       resolvePreviewSrc: options.resolvePreviewSrc,
-      contentRoot: options.contentRoot,
     })
     if (seq >= committedRefreshSeq(branch)) {
       // Warm the SWR cache for this branch (it's this branch's own slot, so
@@ -601,7 +599,6 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
     const seq = claimRefreshSeq(branch)
     return fetchEntriesAndSchema(apiClient, branch, {
       resolvePreviewSrc: options.resolvePreviewSrc,
-      contentRoot: options.contentRoot,
     }).then((fetched) => ({ fetched, seq, branch }))
   })
 

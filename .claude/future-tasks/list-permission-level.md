@@ -96,7 +96,6 @@ export interface EditorEntry {
   label: string
   status?: string
   schema: readonly FieldConfig[]
-  apiPath: string
   previewSrc?: string
   collectionId?: string
   collectionName?: string

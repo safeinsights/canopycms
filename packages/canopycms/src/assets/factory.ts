@@ -29,7 +29,6 @@ export function createAssetStore(
       return new S3AssetStore({
         bucket: media.bucket,
         region: media.region,
-        publicBaseUrl: media.publicBaseUrl,
         maxUploadBytes: media.maxUploadBytes,
       })
     case 'local': {

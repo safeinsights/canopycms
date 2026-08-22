@@ -46,6 +46,66 @@ and move anything already published down into `## Released` under its version he
 demoting each entry from `###` to `####`. An adopter reading "Unreleased" about a feature
 they already have installed cannot tell whether they are missing something.
 
+### `basePath` deployments are supported, and `assetUrl`'s `baseUrl` is now safe for path prefixes (#24)
+
+**What changed.** Three things, all pointing at the same failure — deploying under a Next.js
+`basePath` (the usual shape for per-branch preview builds), where Next auto-prefixes only its own
+`Image`/`Link`/`Script` and leaves every raw string URL resolving at the origin root.
+
+1. `assetUrl()` / `assetSrcSet()`'s existing `baseUrl` option is now a documented contract that
+   accepts a **same-origin path prefix** (`'/preview-123'`), not just an absolute origin. It also
+   got two bug fixes it needed before that was safe to recommend: an already-absolute `src` is now
+   returned untouched instead of being concatenated onto the prefix (which produced
+   `/preview-123/https://cdn.example.com/x.png`), and a prefix without a leading slash is
+   normalized instead of producing a _document-relative_ URL that resolved differently on every
+   page. There is deliberately **no** new `basePath` parameter — `baseUrl` is the one prefix
+   concept for asset URLs.
+2. A new top-level `basePath` config key makes the **editor** work under a `basePath`. Its API
+   route base and preview pane were hardcoded to the origin root, so the editor previously loaded
+   no API response at all on such a deployment.
+3. `media.publicBaseUrl`'s documentation was wrong about what it is for (it described an editor
+   origin while showing an asset-host value). It is the editor's own answer to "where is `/assets`
+   mounted", and is editor-display-only.
+
+**To adopt.** Nothing is required if you deploy at the origin root — all of this is additive and
+the default behaviour is unchanged.
+
+If you deploy under a `basePath`, state it in your Canopy config as well as `next.config`
+(CanopyCMS cannot read `next.config`):
+
+```typescript
+// canopycms.config.ts
+basePath: process.env.NEXT_PUBLIC_BASE_PATH,
+```
+
+Then decide whether your **asset** space actually moved, which is not the same question:
+
+- Next serves `/assets` (local adapter, `next dev`, S3 with no distribution) → it moved. Pass your
+  prefix: `assetUrl(image, { width: 960, baseUrl: BASE_PATH })`.
+- Assets are on CloudFront via `canopycms-cdk`'s `AssetSupport` → it did **not** move. Those
+  behaviors are anchored at the distribution root. Pass no `baseUrl`.
+
+Deriving `baseUrl` from `next.config`'s `basePath` unconditionally breaks the second case. See the
+mount table under "Where `/assets` is mounted" in the project README.
+
+Two traps worth checking for explicitly:
+
+- **Do not pass a deployment `basePath` to `contentStaticParams({ basePath })`.** That option is
+  the route prefix of a nested catch-all and _filters_ entries by it — a deployment prefix matches
+  nothing, emits zero static params, and still builds green.
+- **Body images bypass `assetUrl()` entirely.** Images inserted into markdown/MDX bodies are
+  stored as raw srcs and rendered by your own renderer. Under a `basePath` they need an `img`
+  override; the README shows one. It is safe to put on every image in a body: `assetUrl()` hands
+  back off-site srcs and `data:` URIs byte-identical. Note it DOES root a **page-relative** src
+  (`images/x.png`) onto the base you pass, so make those root-relative first.
+
+**Now deletable.** Any hand-rolled prefixing wrapper around `assetUrl` — the shape is a module
+exporting a re-bound `assetUrl`/`assetSrcSet` that injects a prefix read from an env var. The
+option it was working around is first-class and now handles the cases such a wrapper usually gets
+wrong: an off-site src, a prefix missing its leading slash, and a prefix that is nothing but
+slashes. Also deletable: any local copy of a "strip trailing slashes from a base URL" helper —
+`stripTrailingSlashes` is exported from `canopycms/server` and is the linear, non-ReDoS version.
+
 ### `select` fields now infer their own options — **breaking (type-level)**
 
 _Adopter request log item 23._
