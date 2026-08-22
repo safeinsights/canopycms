@@ -15,11 +15,20 @@
  *
  * All logic lives here in the core package; framework adapters just call startDevContentWatcher() once
  * at dev startup. See packages/canopycms-next/src/context-wrapper.ts for the Next wiring.
+ *
+ * ## Divergence is a CONDITION, not an event
+ *
+ * It stays true until someone runs `sync push`, so the two things this module has to get right are
+ * (a) not re-printing the same condition into a scrolling request log, and (b) making the one printing
+ * of it hard to scroll past. Both are handled below by `reportOnce` + the gutter formatting; see
+ * `.claude/future-tasks/dev-divergence-in-app-surface.md` for the in-app surface that would replace
+ * the terminal as the primary home for this.
  */
 
 import fsSync from 'node:fs'
 import path from 'node:path'
 import chokidar from 'chokidar'
+import pc from 'picocolors'
 import type { CanopyServices } from './services'
 import type { DevContentSyncMode } from './config/types'
 import { operatingStrategy } from './operating-mode'
@@ -37,31 +46,106 @@ export interface StartDevContentWatcherOptions {
   warn?: (message: string) => void
 }
 
-const MAX_LISTED_FILES = 10
+/**
+ * Per-category cap on listed files. Deliberately small: the block is a prompt to run `sync push`,
+ * not a diff viewer, and a 30-line wall of paths is exactly as easy to scroll past as a 1-line
+ * warning. Each list carries its true count, so nothing is hidden -- only elided.
+ */
+const MAX_LISTED_FILES = 5
 
-// Dedupe watchers by working-tree content dir so HMR re-evaluating the adapter module (which discards
-// the disposer) doesn't accumulate watchers. This module lives in canopycms/server, so its state
-// survives app-side HMR. Each new start disposes any prior watcher for the same dir.
-const activeWatchers = new Map<string, () => void>()
+/**
+ * Cross-module-instance state for one working-tree content directory.
+ *
+ * `lastMessage`/`reportedDivergence` MUST outlive `dispose`: an HMR restart tears the watcher down
+ * and immediately arms a new one, whose startup check re-finds the same divergence. Dropping the
+ * state with the watcher is what makes the identical block print again.
+ */
+interface DevWatcherState {
+  /** Disposer for the currently-armed watcher, or null when none is armed. */
+  dispose: (() => void) | null
+  /** Last message handed to `warn`, so a verbatim repeat is suppressed. */
+  lastMessage: string | null
+  /** True while a divergence has been reported and not since observed clean. */
+  reportedDivergence: boolean
+}
 
-function formatList(label: string, files: string[]): string | null {
-  if (files.length === 0) return null
-  const shown = files.slice(0, MAX_LISTED_FILES).join(', ')
-  const extra =
-    files.length > MAX_LISTED_FILES ? `, …(+${files.length - MAX_LISTED_FILES} more)` : ''
-  return `  ${label}: ${shown}${extra}`
+/**
+ * The registry lives on `globalThis`, NOT in module scope.
+ *
+ * Next's dev server compiles the server graph per route bundle and evaluates each copy in its own
+ * module scope, so a module-level `Map` is re-created empty per bundle -- every copy then believes it
+ * is the first watcher, arms its own, and re-prints the startup warning. (The duplicated
+ * "CanopyCMS dev-auth: Auto-configured ..." line in a dev log is the same effect on a different
+ * module-level latch.) A `globalThis` property is the one thing shared across those evaluations.
+ */
+const REGISTRY_KEY = '__canopycmsDevContentWatchers__'
+
+interface DevWatcherRegistryHost {
+  [REGISTRY_KEY]?: Map<string, DevWatcherState>
+}
+
+function watcherRegistry(): Map<string, DevWatcherState> {
+  const host = globalThis as typeof globalThis & DevWatcherRegistryHost
+  const existing = host[REGISTRY_KEY]
+  if (existing) return existing
+  const created = new Map<string, DevWatcherState>()
+  host[REGISTRY_KEY] = created
+  return created
+}
+
+/** Test-only: dispose every armed watcher and drop all cross-module dedupe state. */
+export function resetDevContentWatchersForTests(): void {
+  const registry = watcherRegistry()
+  for (const state of registry.values()) state.dispose?.()
+  registry.clear()
+}
+
+/**
+ * One body line of the notice block. The left gutter (rather than a full box) is deliberate: content
+ * paths are long and unpredictable, and a right border would force either wrapping math or truncation
+ * of the very filenames the block exists to name.
+ */
+function body(line: string): string {
+  const gutter = pc.yellow('|')
+  return line ? `${gutter} ${line}` : gutter
+}
+
+function formatList(label: string, files: string[]): string[] {
+  if (files.length === 0) return []
+  const shown = files.slice(0, MAX_LISTED_FILES)
+  const lines = [body(pc.bold(`${label} (${files.length})`)), ...shown.map((f) => body(`  ${f}`))]
+  if (files.length > shown.length) {
+    lines.push(body(pc.dim(`  +${files.length - shown.length} more`)))
+  }
+  return lines
 }
 
 function formatDivergenceWarning(branch: string, diff: ContentTreeDiff): string {
-  const lines = [
-    `CanopyCMS: working-tree content has diverged from the dev branch clone "${branch}" — the dev ` +
-      'server is serving stale content. Run `npx canopycms sync push` to update it ' +
-      "(set dev.contentSync: 'off' to silence this).",
-    formatList('changed', diff.changed),
-    formatList('only in working tree', diff.added),
-    formatList('only in branch clone', diff.removed),
-  ].filter((line): line is string => line !== null)
-  return lines.join('\n')
+  const total = diff.changed.length + diff.added.length + diff.removed.length
+  // Blank lines top and bottom: the block's job is to be findable in a scrolling request log, and
+  // whitespace separation does more for that than any amount of in-block decoration.
+  return [
+    '',
+    `${pc.bgYellow(pc.black(' CanopyCMS '))} ${pc.bold(pc.yellow('working-tree content has diverged'))}`,
+    body(`The dev server is serving ${pc.bold('stale content')}: ${total} file(s) differ from the`),
+    body(`dev branch clone "${branch}".`),
+    body(''),
+    ...formatList('changed', diff.changed),
+    ...formatList('only in working tree', diff.added),
+    ...formatList('only in branch clone', diff.removed),
+    body(''),
+    body(`Fix:     ${pc.bold('npx canopycms sync push')}`),
+    body(pc.dim("Silence: set dev.contentSync: 'off' in your Canopy config")),
+    '',
+  ].join('\n')
+}
+
+function formatResolvedNotice(branch: string): string {
+  return [
+    '',
+    `${pc.bgGreen(pc.black(' CanopyCMS '))} ${pc.green(`working-tree content is back in sync with "${branch}"`)}`,
+    '',
+  ].join('\n')
 }
 
 /**
@@ -98,6 +182,28 @@ export function startDevContentWatcher(
     services.config.defaultBaseBranch ??
     'main'
 
+  const registry = watcherRegistry()
+  let state = registry.get(workingTreeContentDir)
+  if (!state) {
+    state = { dispose: null, lastMessage: null, reportedDivergence: false }
+    registry.set(workingTreeContentDir, state)
+  }
+  const watcherState = state
+  // Dispose any prior watcher for this dir (HMR re-start) before creating a new one. The registry
+  // ENTRY deliberately survives, carrying lastMessage/reportedDivergence into the new watcher.
+  watcherState.dispose?.()
+
+  /**
+   * Emit `message` unless it is verbatim what was emitted last for this directory. Covers the
+   * divergence block, the resolved notice and the error paths alike: in every case a repeat means
+   * "the condition is unchanged", which the reader already knows.
+   */
+  const reportOnce = (message: string): void => {
+    if (watcherState.lastMessage === message) return
+    watcherState.lastMessage = message
+    warn(message)
+  }
+
   let running = false
   let pending = false
   const check = async (): Promise<void> => {
@@ -112,13 +218,24 @@ export function startDevContentWatcher(
         strategy.getContentBranchRoot(branch, sourceRoot),
         contentRoot,
       )
-      // No branch clone yet (e.g. before the first editor/dev request created it) → nothing to compare.
+      // No branch clone yet (e.g. before the first editor/dev request created it) -> nothing to
+      // compare. Deliberately leaves reportedDivergence alone: "cannot tell" is not "resolved".
       if (!fsSync.existsSync(branchContentDir)) return
       const diff = await diffContentTrees(workingTreeContentDir, branchContentDir)
-      if (isContentTreeDiffEmpty(diff)) return
-      warn(formatDivergenceWarning(branch, diff))
+      if (isContentTreeDiffEmpty(diff)) {
+        // Close the loop: a condition that was announced needs its retraction announced too, or the
+        // reader is left believing the dev server is still serving stale content.
+        if (watcherState.reportedDivergence) {
+          watcherState.reportedDivergence = false
+          reportOnce(formatResolvedNotice(branch))
+        }
+        return
+      }
+      // Set BEFORE reporting so a deduped repeat still leaves the condition marked as outstanding.
+      watcherState.reportedDivergence = true
+      reportOnce(formatDivergenceWarning(branch, diff))
     } catch (err) {
-      warn(`CanopyCMS: dev content-sync check failed: ${getErrorMessage(err)}`)
+      reportOnce(`CanopyCMS: dev content-sync check failed: ${getErrorMessage(err)}`)
     } finally {
       running = false
       if (pending) {
@@ -128,16 +245,13 @@ export function startDevContentWatcher(
     }
   }
 
-  // Dispose any prior watcher for this dir (HMR re-start) before creating a new one.
-  activeWatchers.get(workingTreeContentDir)?.()
-
   const watcher = chokidar.watch(workingTreeContentDir, { ignoreInitial: true })
   watcher.on('add', () => void check())
   watcher.on('change', () => void check())
   watcher.on('unlink', () => void check())
   // Handle watcher errors (e.g. inotify ENOSPC/EMFILE) so an unhandled 'error' event can't crash dev.
   watcher.on('error', (err) =>
-    warn(`CanopyCMS: dev content-sync watcher error: ${getErrorMessage(err)}`),
+    reportOnce(`CanopyCMS: dev content-sync watcher error: ${getErrorMessage(err)}`),
   )
 
   // Initial divergence check at startup.
@@ -145,10 +259,8 @@ export function startDevContentWatcher(
 
   const dispose = () => {
     void watcher.close()
-    if (activeWatchers.get(workingTreeContentDir) === dispose) {
-      activeWatchers.delete(workingTreeContentDir)
-    }
+    if (watcherState.dispose === dispose) watcherState.dispose = null
   }
-  activeWatchers.set(workingTreeContentDir, dispose)
+  watcherState.dispose = dispose
   return dispose
 }
