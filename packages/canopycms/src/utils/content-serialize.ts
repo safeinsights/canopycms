@@ -35,6 +35,8 @@ import {
   type YAMLSeq,
 } from 'yaml'
 
+import { isBlockStructuralKey } from '../validation/block-structural-keys'
+
 /** The comment metadata every `yaml` node carries (see `NodeBase` in the `yaml` types). */
 interface CommentCarrier {
   commentBefore?: string | null
@@ -125,6 +127,79 @@ function nodeIdentityKey(node: unknown): string | undefined {
 }
 
 /**
+ * How far {@link sharesFieldEvidence} descends into nested records before giving up.
+ *
+ * Termination does not actually depend on this — it is defence in depth, deliberately kept
+ * because the alternative is depending on two other layers behaving as expected, which is the
+ * shape of assumption that produced the bug {@link looksLikeSameItem} documents. Spelling out
+ * what the cap is and is not doing, since the obvious guess is wrong in both directions:
+ *
+ * - A cyclic PAYLOAD is genuinely reachable (`ContentStore.write` is callable server-side with
+ *   arbitrary objects, which is why `identityKey` guards `JSON.stringify` at all). It cannot run
+ *   away here on its own, because the descent below only happens when BOTH sides are records.
+ * - The on-disk side cannot supply the matching cycle: `existing` comes from `yaml`'s `toJSON()`,
+ *   and a self-referential anchor (`- &b {self: *b}`) does not round-trip into a cyclic JS
+ *   object — `toJSON` degrades the unresolvable alias to a plain `{ source }` marker (verified
+ *   against the `yaml` version pinned here; the cycle case `identityKey`'s comment describes is
+ *   the `JSON.stringify` hazard, not this one).
+ *
+ * So the real bound today is the finite depth of the parsed document — a guarantee owned by
+ * `yaml`, not by this module. The cap makes it local and explicit, and incidentally bounds cost
+ * on pathologically nested content. Real content bottoms out far shallower: a block is item ->
+ * `value` -> fields, and an object field inside one adds a level. Exceeding the cap simply means
+ * "no evidence found", which drops a comment rather than risking a move — the safe direction.
+ */
+const EVIDENCE_MAX_DEPTH = 6
+
+/**
+ * Does `value` share at least one non-structural leaf with `existing` — i.e. is there any field
+ * whose value an edit left alone?
+ *
+ * Two things this looks past, both learned the hard way:
+ *
+ * - **Block discriminators are not evidence.** `template` (and the inline shape's `_type`) names
+ *   a block's TEMPLATE, so every `hero` on the page carries the same one. Counting it made the
+ *   check below true for any two blocks of the same kind. See `../validation/block-structural-keys`.
+ * - **A block's real fields are one level down.** The canonical shape is
+ *   `{ template, value: { ...fields } }`, so comparing top-level values compares `value` whole —
+ *   which differs the moment ANY field in it changes. Together with the point above that left a
+ *   block with no reachable evidence at all, i.e. "drop every block comment on every edit". So
+ *   nested records are descended into.
+ *
+ * Arrays are compared whole rather than element-wise, deliberately. A list has no item identity
+ * — that is the premise `reconcileSeq` is built on — so pairing elements by index to harvest
+ * evidence would be the same positional guess this module exists to refuse, just one level down.
+ * The cost is that a record whose only field is a list loses its comment when that list changes,
+ * which is the single-field residual documented on {@link looksLikeSameItem}, not a new class.
+ */
+function sharesFieldEvidence(
+  existing: Record<string, unknown>,
+  value: Record<string, unknown>,
+  depth: number,
+): boolean {
+  for (const key of Object.keys(value)) {
+    if (isBlockStructuralKey(key)) continue
+    if (!Object.prototype.hasOwnProperty.call(existing, key)) continue
+    const before = existing[key]
+    const after = value[key]
+    // Descending is only ever an EXTRA chance to find evidence: the whole-value comparison below
+    // still runs, so a pair of structurally-empty records ({} vs {}) still matches on identity
+    // even though there is no leaf inside them to match on.
+    if (
+      depth < EVIDENCE_MAX_DEPTH &&
+      isPlainRecord(before) &&
+      isPlainRecord(after) &&
+      sharesFieldEvidence(before, after, depth + 1)
+    ) {
+      return true
+    }
+    const beforeKey = identityKey(before)
+    if (beforeKey !== undefined && beforeKey === identityKey(after)) return true
+  }
+  return false
+}
+
+/**
  * Is `value` plausibly an EDITED version of the item currently at this index, rather than a
  * different item that merely landed on the same index?
  *
@@ -135,26 +210,39 @@ function nodeIdentityKey(node: unknown): string | undefined {
  * them, because a lost comment reads as a deletion in review while a moved one reads as intact.
  *
  * Records carry usable evidence: an edit changes some fields and leaves others alone, so one
- * surviving key/value pair means "same item, edited". A wholesale replacement shares nothing.
+ * surviving field value means "same item, edited". The evidence has to be a real FIELD, though.
+ * An earlier version of this rule accepted any shared key/value pair on the reasoning that "a
+ * wholesale replacement shares nothing" — true of arbitrary records, false of this CMS's block
+ * shape, where `template: <name>` is a category label every block of that kind carries. A save
+ * that deleted one `hero` and edited the next shifted the survivor onto the deleted item's
+ * index, and the discriminator alone was enough to pair them: the deleted block's "keep this
+ * verbatim" comment silently migrated onto unrelated content. So the module was failing in the
+ * exact direction it declared unacceptable, through the case it assumed could not arise.
+ * {@link sharesFieldEvidence} is therefore discriminator-blind and record-deep.
+ *
  * Scalars carry no evidence at all, so they keep the plain same-index rule — an edited string in
  * a list is overwhelmingly the common case there, and a short annotation on a scalar is far less
- * load-bearing than a block comment.
+ * load-bearing than a block comment. That residual is unchanged by the above and is pinned as
+ * accepted rather than fixed: giving scalars the same treatment would drop the comment on every
+ * ordinary one-line edit, which is a large, certain loss traded against a small, speculative one.
  *
- * The residual, deliberately accepted: a single-field record whose only field changed shares
- * nothing, so its comment is dropped rather than risked.
+ * One shared field is still the bar, not two. Raising it would take a two-field block — the
+ * common size — from "keeps its comment when one field is edited" to "never keeps it", which
+ * empties the rule out for the shape it was just repaired for; the discriminator was the thing
+ * making one pair meaningless, and it is now excluded.
+ *
+ * The residuals, deliberately accepted: a record whose every field changed shares nothing, so
+ * its comment is dropped rather than risked (this now includes a block edited in ALL its fields,
+ * which previously kept its comment via the discriminator — a deliberate move toward the losing
+ * side of the trade-off); and a genuine schema field NAMED `template` or `_type` is not counted
+ * as evidence, which can only ever drop a comment, never move one.
  */
 function looksLikeSameItem(node: unknown, value: unknown): boolean {
   const existing = nodePlainValue(node)
   // No record evidence available on either side — fall back to position.
   if (!isPlainRecord(existing) || !isPlainRecord(value)) return true
 
-  for (const key of Object.keys(value)) {
-    if (!Object.prototype.hasOwnProperty.call(existing, key)) continue
-    const before = identityKey(existing[key])
-    const after = identityKey(value[key])
-    if (before !== undefined && before === after) return true
-  }
-  return false
+  return sharesFieldEvidence(existing, value, 0)
 }
 
 /**
