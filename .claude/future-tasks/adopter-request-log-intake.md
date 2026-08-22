@@ -22,6 +22,10 @@ section first**, and record the disposition of anything acted on back into this 
 
 ## Triage of 2026-08-20 — all 16 open items
 
+**Status refreshed 2026-08-22.** This table had gone stale — it still listed #16, #24, #26, #27 and #28
+as open after all five were fixed, which is the exact failure mode the file exists to prevent. Every
+row now names what actually landed.
+
 Verified against `v0.0.63` (= `origin/main` at the time, so their 2026-08-18 verification was
 against current `main`, not a stale pin). `#18` is declined upstream and marked do-not-relitigate —
 left alone.
@@ -34,15 +38,15 @@ left alone.
 | 21 | Published sourcemaps point at unshipped sources | Confirmed | Fixed on this branch |
 | 25 | `adopter-migration.md`'s `## Unreleased` is stale | Confirmed | Fixed on this branch |
 | 6 | `react-markdown`-in-RSC trap undocumented | Confirmed | Fixed on this branch |
-| 24 | Assets/media system undiscoverable | Confirmed (docs), plus one real behaviour gap | Docs fixed; behaviour split out |
+| 24 | Assets/media system undiscoverable | Confirmed (docs), plus one real behaviour gap | Fixed — docs, then the basePath behaviour half in PR #261 |
 | 22 | Enumeration and resolution disagree on URL count | **Confirmed, plus a second consequence they did not find** | [url-resolver-index-entry-extra-url.md](resolved/url-resolver-index-entry-extra-url.md) |
 | 20b | `extraUrls` bypasses `isNoindexEntry`, no `lastModified` | Confirmed, both halves | **Shipped 2026-08-21** — docs earlier, `pathFor` on `feat/sitemap-path-for-index-entries` |
-| 27 | Non-list `object` field can be entered but never cleared | Confirmed | Open, small |
-| 28 | `object` fields drop comment support | **Partially true** — see below | Open, small |
-| 26 | `generate-ai-content` never prunes previous output | Confirmed | Open, small-medium |
+| 27 | Non-list `object` field can be entered but never cleared | Confirmed | Fixed — Clear control, clears to `undefined` |
+| 28 | `object` fields drop comment support | **Partially true** — see below | Fixed — container-level wrap; children always worked |
+| 26 | `generate-ai-content` never prunes previous output | Confirmed | Fixed — record-based prune, never a directory sweep |
 | 23 | `select` infers `string \| number` | Confirmed, and the literal-union fix is **verified reachable** | Fixed on this branch |
 | 29 | Unknown keys never reported | Confirmed; cheaper than they framed it | Fixed on this branch |
-| 16 | `listEntries()` never resolves `reference` fields | Confirmed; blast radius **differs** from their account | Open, medium |
+| 16 | `listEntries()` never resolves `reference` fields | Confirmed; blast radius **differs** from their account | Fixed — PRs #242, #245 |
 | 20 | Reference app teaches index singletons the hard way | Confirmed but **narrower** than framed | **Shipped 2026-08-21** on `feat/sitemap-path-for-index-entries` |
 
 ### Where our verification disagreed with theirs
