@@ -35,6 +35,7 @@ import type {
 } from '../config'
 import { fieldTypes } from '../config'
 import { isValidCropRect } from '../assets/transform-directives'
+import { BLOCK_STRUCTURAL_KEYS } from './block-structural-keys'
 import { resolveBlockItem, traverseFields } from './field-traversal'
 import { findBodyFieldName } from '../utils/body-field'
 import { flattenGroupFields } from '../utils/flatten-group-fields'
@@ -338,15 +339,6 @@ export function validateEntryFormValue(
   }
   return validateEntryData(fields, value)
 }
-
-/**
- * Structural keys a block item carries that are not schema fields.
- *
- * `resolveBlockItem` hands back `item.value` for the canonical `{ template, value }` shape — so
- * neither key is in the record it walks — but for the defensive inline `_type` shape the record
- * IS the item, and the discriminator would otherwise read as an unknown key.
- */
-const BLOCK_STRUCTURAL_KEYS = new Set(['template', '_type'])
 
 /**
  * Find data keys that have no counterpart in the schema, as canonical field paths
