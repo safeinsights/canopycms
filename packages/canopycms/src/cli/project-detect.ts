@@ -247,8 +247,13 @@ export async function readPackageJson(projectDir: string): Promise<PackageJson |
  * `cdk.json` runs `node --import tsx infrastructure/bin/app.ts`, which imports
  * `canopycms-cdk` / `aws-cdk-lib` / `constructs`; CI resolves `cdk` itself
  * through `npx`, but pinning it is what makes a deploy reproducible.
+ * `canopycms` is included too: `canopycms-cdk`'s worker re-export
+ * (`canopycms/worker/cms-worker`) is a `peerDependency` of `canopycms-cdk`,
+ * not a transitive dependency, so an adopter's manifest can otherwise satisfy
+ * every other entry here and still fail with `ERR_MODULE_NOT_FOUND`.
  */
 export const CDK_DEPENDENCIES = [
+  'canopycms',
   'canopycms-cdk',
   'aws-cdk-lib',
   'constructs',
