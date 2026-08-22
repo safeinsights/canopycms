@@ -2265,11 +2265,12 @@ under a `basePath`, give your renderer an `img` override so body images get the 
 />
 ```
 
-This is safe to apply to every image in a body. `assetUrl()` hands back anything it does not own
-byte-identical — an off-site src (`https://…`, `//…`), a `data:` URI, and a page-relative path all
-come through untouched — so the override only ever changes URLs in the `/assets` space. The one
-thing it does rewrite is a value a browser would read as pointing off-origin despite looking
-site-relative (`/\evil.com/x`), which it neutralizes rather than emitting.
+`assetUrl()` hands back anything a mount point cannot apply to — an off-site src (`https://…`,
+`//…`) or a `data:` URI — byte-identical, so the override is safe to put on every image in a body.
+Two things it does change, both deliberate: a value a browser would read as pointing off-origin
+despite looking site-relative (`/\evil.com/x`) is neutralized rather than emitted, and a
+**page-relative** src (`images/x.png`) is rooted onto `ASSET_BASE` like any other path. If a body
+carries page-relative image srcs, make them root-relative before adopting this.
 
 **`image` fields** hold a structured value — `{ src, alt, width, height, crop? }` — so alt
 text is enforced, intrinsic dimensions prevent layout shift, and crops are stored as a

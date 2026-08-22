@@ -81,24 +81,34 @@ export function toSameOriginPath(url: string): string {
 }
 
 /**
+ * Whether `url` is something a prefix cannot meaningfully be put in front of.
+ *
+ * Two kinds: **scheme-bearing** (`data:`, `blob:`, `mailto:`, `https://…`) and **literal
+ * protocol-relative** (`//cdn.example.com/x`). Neither is a site-relative path, so rooting or
+ * prefixing them only corrupts them (`data:image/png;…` → `/data:image/png;…`, a broken
+ * `<img src>`).
+ *
+ * NOTE this is deliberately NOT consulted by `joinUrlPrefix` for the scheme half. A URL-space
+ * mount point (`assetUrl`) wants scheme-bearing values handed back untouched; a site ORIGIN
+ * (`resolveSeoUrl`) does not - it must still produce an absolute URL, because a non-absolute
+ * sitemap `<loc>` invalidates the whole sitemap. Letting the two share one rule silently made
+ * `resolveSeoUrl('mailto:a@b.c', { siteUrl })` return `mailto:a@b.c` and drop the origin. Callers
+ * that want the pass-through opt in by checking this themselves.
+ */
+export function isUnprefixablePath(url: string): boolean {
+  return declaresScheme(url) || isAbsoluteUrl(url)
+}
+
+/**
  * Make `url` safe to emit AS-IS, changing nothing else.
  *
- * The safety half of `joinUrlPrefix`, without the prefixing or the leading-slash rooting - for a
- * caller that has no mount point to apply and must hand a value back byte-identical wherever it
- * legitimately can. Two kinds pass through untouched:
- *
- * - **Scheme-bearing** (`data:`, `blob:`, `mailto:`, `https://…`). Not a site-relative path, so
- *   rooting it just corrupts it (`data:image/png;…` → `/data:image/png;…`, a broken `<img src>`).
- *   Whether a given scheme is SAFE to render is a separate question that belongs to the caller -
- *   see `sanitize-href.ts`'s `sanitizeHref` for href contexts.
- * - **Literal protocol-relative** (`//cdn.example.com/x`), an intentionally-supported off-site
- *   pointer.
- *
- * Everything else goes through `toSameOriginPath`, so a value that merely *reads* as off-origin to
- * a browser (the backslash spellings) is still neutralized rather than passed along.
+ * For a caller with no mount point to apply, which must hand a value back byte-identical wherever
+ * it legitimately can: an `isUnprefixablePath` value passes straight through, and everything else
+ * goes through `toSameOriginPath`, so a value that merely *reads* as off-origin to a browser (the
+ * backslash spellings) is still neutralized rather than passed along.
  */
 export function sanitizeUnprefixedPath(url: string): string {
-  if (declaresScheme(url) || isAbsoluteUrl(url)) return url
+  if (isUnprefixablePath(url)) return url
   return toSameOriginPath(url)
 }
 
@@ -133,10 +143,12 @@ export function sanitizeUnprefixedPath(url: string): string {
  * neutralizing it would silently rewrite a legitimate protocol-relative CDN base into a path.
  */
 export function joinUrlPrefix(prefix: string | undefined, path: string): string {
-  const safePath = sanitizeUnprefixedPath(path)
-  // Pass-throughs are returned verbatim: there is no meaningful way to prefix them.
-  if (declaresScheme(safePath) || isAbsoluteUrl(safePath)) return safePath
+  // Only a DECLARED off-site pointer passes through. A scheme-bearing but non-absolute value
+  // (`mailto:x`, `data:…`) is rooted, which is what a site origin needs - see
+  // `isUnprefixablePath` for why this deliberately differs from the asset-mount case.
+  if (isAbsoluteUrl(path)) return path
 
+  const safePath = toSameOriginPath(path)
   const normalizedPath = safePath.startsWith('/') ? safePath : `/${safePath}`
 
   if (!prefix) return normalizedPath

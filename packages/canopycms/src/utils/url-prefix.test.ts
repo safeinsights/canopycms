@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest'
 
-import { isAbsoluteUrl, joinUrlPrefix, stripTrailingSlashes, toSameOriginPath } from './url-prefix'
+import {
+  isAbsoluteUrl,
+  isUnprefixablePath,
+  joinUrlPrefix,
+  sanitizeUnprefixedPath,
+  stripTrailingSlashes,
+  toSameOriginPath,
+} from './url-prefix'
 
 describe('joinUrlPrefix - path side', () => {
   it('passes a declared off-site path through untouched, prefix or not', () => {
@@ -42,17 +49,36 @@ describe('joinUrlPrefix - path side', () => {
     expect(toSameOriginPath('a/b')).toBe('a/b')
   })
 
-  it('returns a scheme-bearing value untouched rather than rooting it', () => {
-    // '/data:image/png;…' is a broken <img src>. Prefixing or slash-normalizing any scheme-bearing
-    // value is meaningless; judging whether the scheme is safe to render is the caller's job.
-    expect(joinUrlPrefix(undefined, 'data:image/png;base64,AAA')).toBe('data:image/png;base64,AAA')
-    expect(joinUrlPrefix('/preview-123', 'data:image/png;base64,AAA')).toBe(
+  // joinUrlPrefix ROOTS a scheme-bearing but non-absolute value, and must keep doing so: its
+  // `prefix` can be a site ORIGIN (resolveSeoUrl), where the output has to end up absolute -- a
+  // non-absolute sitemap <loc> invalidates the whole sitemap. Sharing a scheme pass-through with
+  // the asset-mount case is what silently made resolveSeoUrl('mailto:a@b.c', { siteUrl }) return
+  // 'mailto:a@b.c' with the origin dropped.
+  it('roots a scheme-bearing but non-absolute value rather than passing it through', () => {
+    expect(joinUrlPrefix('https://example.com', 'mailto:a@b.c')).toBe(
+      'https://example.com/mailto:a@b.c',
+    )
+    expect(joinUrlPrefix('https://example.com', 'data:text/html,x')).toBe(
+      'https://example.com/data:text/html,x',
+    )
+    expect(joinUrlPrefix(undefined, 'mailto:a@b.c')).toBe('/mailto:a@b.c')
+  })
+
+  // The pass-through the asset-mount case wants lives here instead, so only callers that opt in
+  // get it. '/data:image/png;…' would be a broken <img src>.
+  it('isUnprefixablePath / sanitizeUnprefixedPath keep scheme-bearing values byte-identical', () => {
+    for (const value of [
       'data:image/png;base64,AAA',
-    )
-    expect(joinUrlPrefix('/preview-123', 'blob:https://example.com/abc')).toBe(
       'blob:https://example.com/abc',
-    )
-    expect(joinUrlPrefix('/preview-123', 'mailto:a@b.c')).toBe('mailto:a@b.c')
+      'mailto:a@b.c',
+      '//cdn.example.com/x.png',
+      'https://other.org/page',
+    ]) {
+      expect(isUnprefixablePath(value)).toBe(true)
+      expect(sanitizeUnprefixedPath(value)).toBe(value)
+    }
+    expect(isUnprefixablePath('/assets/x.png')).toBe(false)
+    expect(isUnprefixablePath('images/x.png')).toBe(false)
   })
 })
 

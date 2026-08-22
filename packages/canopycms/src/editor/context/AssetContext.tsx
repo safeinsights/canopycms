@@ -40,9 +40,17 @@ export interface AssetContextProviderProps extends AssetContextValue {
  * on top of it. Where the two differ is topology, not precedence - see the asset-mount table in
  * the README.
  *
- * The fallback is load-bearing rather than cosmetic: without it the editor's own thumbnails,
- * previews and crop images stay root-relative on a basePath deployment where Next serves
- * `/assets`, and NO config value can fix it, because `publicBaseUrl` cannot express a bare path.
+ * The fallback exists because `publicBaseUrl` cannot express a bare path (it is validated
+ * absolute-only), so without it the editor's thumbnails, previews and crop images stay
+ * root-relative on a basePath deployment where Next serves `/assets` — and 404.
+ *
+ * KNOWN LIMITATION: the fallback assumes that topology, and consults none. On a CloudFront/CDK
+ * deployment a basePath does NOT move the asset space (behaviors are anchored at the distribution
+ * root), so prefixing is wrong there — the requests still resolve, because `withCanopy`'s
+ * auto-prefixed `/assets/:path*` rewrite catches them and serves through the CMS Lambda, but they
+ * bypass the CDN cache and the dedicated transform Lambda. The workaround is real though not
+ * obvious: set `media.publicBaseUrl` to the distribution origin, which takes precedence here.
+ * Tracked in `.claude/future-tasks/editor-asset-mount-topology.md`.
  */
 export function AssetContextProvider({ baseUrl, basePath, children }: AssetContextProviderProps) {
   const resolved = baseUrl ?? basePath

@@ -203,6 +203,14 @@ describe('assetUrl - an already-absolute src is never prefixed', () => {
     expect(assetUrl({ src: dataUri }, { baseUrl: '/preview-123' })).toBe(dataUri)
   })
 
+  it('treats every spelling of "no mount point" the same', () => {
+    // '' and '/' disagreed: '' took the byte-identical path while '/' went through the join and
+    // rooted the src. joinUrlPrefix's own contract says '', '/', '///' and '//' all mean root.
+    for (const baseUrl of ['', '/', '///', '//']) {
+      expect(assetUrl({ src: 'images/x.png' }, { baseUrl })).toBe('images/x.png')
+    }
+  })
+
   it('leaves a page-relative src alone when no baseUrl is given', () => {
     // Rooting it would change which URL it resolves to.
     expect(assetUrl({ src: 'images/x.png' })).toBe('images/x.png')
