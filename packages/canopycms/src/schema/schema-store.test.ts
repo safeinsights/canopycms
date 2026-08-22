@@ -296,6 +296,24 @@ describe('SchemaOps', () => {
         store.updateCollection(unsafeAsLogicalPath('content/guides'), { slug: 'docs' }),
       ).resolves.toBeUndefined()
     })
+
+    // A collection renamed TO "index" collapses onto ITS OWN new path (`<parent>/index`), not
+    // onto `<parent>` -- see `computeEntryUrl`/`isIndexSlug`. The check used to look for a parent
+    // entry whose slug is the literal string "index", which matches the PARENT's own index/landing
+    // entry (also slug "index", but collapsing onto `<parent>` itself -- a different URL: "/" for
+    // the root here). That is a false collision: nothing actually contests "/guides" -> "/index".
+    it("ALLOWS renaming to 'index' even though the parent has its own index entry (different URLs)", async () => {
+      await seedCollection('guides', 'index') // guides' own landing page -> /guides
+      // The root content directory's own index entry (site homepage) -> "/"
+      await fs.writeFile(
+        path.join(contentRoot, 'page.index.zZ9yY8xX7wW6.json'),
+        JSON.stringify({ title: 'Home' }),
+      )
+
+      await expect(
+        store.updateCollection(unsafeAsLogicalPath('content/guides'), { slug: 'index' }),
+      ).resolves.toBeUndefined()
+    })
   })
 
   describe('createCollection', () => {
