@@ -69,6 +69,13 @@ jobs:
       - name: Lint future-tasks backlog
         run: pnpm lint:tasks
 
+      # Root-level node tooling. `pnpm lint` is `pnpm -r`, which recurses over
+      # workspace PACKAGES only -- scripts/ is not one, so until 2026-08-22
+      # nothing linted the seven scripts here, four of which gate CI or
+      # pre-commit themselves (lint:tasks, lint:actions, check:esm).
+      - name: Lint root scripts (ESLint)
+        run: pnpm lint:scripts
+
       # Supply chain: every third-party action must be pinned to a commit SHA.
       # A sweep only covers the tree it runs on -- a job merged in from a
       # sibling branch afterwards arrived unpinned and nothing noticed, which
