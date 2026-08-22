@@ -13,6 +13,8 @@ import { useState, useEffect, useRef } from 'react'
 import { Modal, Stack, TextInput, Group, Button, Alert, Text, Select } from '@mantine/core'
 import { IconAlertCircle } from '@tabler/icons-react'
 
+import { parseSlug } from '../../paths/validation'
+
 /** Slug the form is seeded with each time the modal opens. */
 const DEFAULT_SLUG = 'untitled'
 
@@ -98,20 +100,31 @@ export function EntryCreateModal({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen])
 
-  // Validate slug format
+  // Validate slug format.
+  //
+  // Delegates to `parseSlug` rather than restating its rule: the server refuses to CREATE an
+  // entry whose slug fails it (api/content.ts and ContentStore.write's [SLUG] guards), and the
+  // static build fails outright on one that slipped through (static/index.ts's
+  // assertRoutableSlugs). A second, hand-maintained copy of the charset/length/separator rules
+  // here could only ever drift out of agreement with the boundary that actually decides.
+  //
+  // Imported from '../../paths/validation' directly, NOT the `paths` barrel, which pulls
+  // node:fs into the browser bundle (pnpm lint:bundle enforces this).
   const validateSlug = (value: string): string | null => {
     if (!value.trim()) {
       return 'Slug cannot be empty'
     }
-    if (value.includes('/')) {
-      return 'Slug cannot contain slashes'
+    const parsed = parseSlug(value)
+    if (!parsed.ok) {
+      return parsed.error
     }
-    // Simple validation - lowercase, alphanumeric + hyphens
-    if (!/^[a-z0-9][-a-z0-9]*$/.test(value)) {
-      return 'Slug must start with letter/number and contain only lowercase letters, numbers, and hyphens'
-    }
-    if (value.length > 64) {
-      return 'Slug must be 64 characters or less'
+    // `parseSlug` lowercases before testing, so it accepts 'My-Post' and hands back 'my-post'.
+    // Keep the field itself strict: the value typed here is what the duplicate check below and
+    // the create request are keyed on, so silently normalizing would let 'My-Post' sail past a
+    // collision with an existing 'my-post' and land as a 409 from the server instead of an
+    // inline message here.
+    if (parsed.slug !== value) {
+      return 'Slug must be lowercase'
     }
     if (existingSlugs?.has(value)) {
       return 'An entry with this slug already exists'

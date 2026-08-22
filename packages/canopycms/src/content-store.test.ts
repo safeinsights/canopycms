@@ -326,6 +326,112 @@ describe('ContentStore', () => {
     ).rejects.toThrow('Slugs cannot contain backslashes')
   })
 
+  // [SLUG] The store is the authoritative layer for this: api/content.ts has a
+  // matching fast-path check, so an API-level test alone cannot tell you whether
+  // the store would have caught a create from a non-API caller (a script, the
+  // build context, a future editor path).
+  describe('unroutable slugs', () => {
+    const postsSchema = {
+      collections: [
+        {
+          name: 'posts',
+          path: 'posts',
+          entries: [
+            {
+              name: 'post',
+              format: 'md' as const,
+              schema: [{ name: 'title', type: 'string' as const }],
+            },
+          ],
+        },
+      ],
+    } as const
+
+    const newStore = async () => {
+      const root = await tmpDir()
+      const config = defineCanopyTestConfig({ schema: postsSchema })
+      return { root, store: new ContentStore(root, flattenSchema(postsSchema, config.contentRoot)) }
+    }
+
+    const body = { format: 'md' as const, data: { title: 'T' }, body: 'Content' }
+
+    // The filename grammar accepts each of these; readByUrlPath cannot resolve any of them.
+    it.each(['my_post', 'getting.started.guide', '-leading-hyphen'])(
+      'refuses to create an entry with slug %j',
+      async (slug) => {
+        const { store } = await newStore()
+        await expect(
+          store.write(unsafeAsLogicalPath('content/posts'), unsafeAsSlug(slug), body),
+        ).rejects.toThrow(/Cannot create entry/)
+      },
+    )
+
+    it('still saves an entry that already has a non-conforming slug', async () => {
+      const { root, store } = await newStore()
+      // Content that arrived some other way: written straight to disk, as a hand-authored
+      // file, an import script or a git merge would. It must stay editable -- renaming it
+      // is the only way to clear the build failure it causes.
+      await store.write(unsafeAsLogicalPath('content/posts'), unsafeAsSlug('legacy-post'), body)
+      const dir = path.join(root, 'content', 'posts')
+      const filename = (await fs.readdir(dir)).find((name) => name.includes('.legacy-post.'))
+      if (!filename) throw new Error(`No legacy-post entry in ${dir}`)
+      await fs.rename(
+        path.join(dir, filename),
+        path.join(dir, filename.replace('.legacy-post.', '.legacy_post.')),
+      )
+
+      await expect(
+        store.write(unsafeAsLogicalPath('content/posts'), unsafeAsSlug('legacy_post'), {
+          ...body,
+          data: { title: 'Edited' },
+        }),
+      ).resolves.toBeDefined()
+    })
+
+    it('refuses to rename an entry to an unroutable slug', async () => {
+      const { store } = await newStore()
+      await store.write(unsafeAsLogicalPath('content/posts'), unsafeAsSlug('good-slug'), body)
+
+      await expect(
+        store.renameEntry(
+          unsafeAsLogicalPath('content/posts'),
+          unsafeAsSlug('good-slug'),
+          unsafeAsSlug('bad.slug'),
+        ),
+      ).rejects.toThrow(/Cannot rename to "bad\.slug"/)
+    })
+
+    it('accepts the singleton shape, where buildPaths substitutes the entry type name', async () => {
+      // write(collection, '') resolves the slug from the entry type's own name, so the guard
+      // must check the slug buildPaths CHOSE -- checking the caller's raw '' would reject this.
+      const schema = {
+        collections: [
+          {
+            name: 'settings',
+            path: 'settings',
+            entries: [
+              {
+                name: 'setting',
+                format: 'json' as const,
+                schema: [{ name: 'siteName', type: 'string' as const }],
+              },
+            ],
+          },
+        ],
+      } as const
+      const root = await tmpDir()
+      const config = defineCanopyTestConfig({ schema })
+      const store = new ContentStore(root, flattenSchema(schema, config.contentRoot))
+
+      await expect(
+        store.write(unsafeAsLogicalPath('content/settings/setting'), '', {
+          format: 'json',
+          data: { siteName: 'CanopyCMS' },
+        }),
+      ).resolves.toBeDefined()
+    })
+  })
+
   it('resolves paths using trivial algorithm: collection + slug', async () => {
     const root = await tmpDir()
     const schema = {
@@ -755,8 +861,16 @@ describe('ContentStore', () => {
         ),
       ).rejects.toThrow('cannot contain forward slashes')
 
-      // Uppercase slugs are normalized by parseSlug at the API boundary,
-      // so renameEntry receives already-validated Slug branded types
+      // [SLUG] renameEntry does NOT trust the Slug brand for this: the API's slugSchema
+      // runs parseSlug, but `Slug` is also reachable by cast (resolvePath, unsafeAsSlug),
+      // so the store re-checks routability itself.
+      await expect(
+        store.renameEntry(
+          unsafeAsLogicalPath('content/posts'),
+          unsafeAsSlug('test-post'),
+          unsafeAsSlug('invalid_slug'),
+        ),
+      ).rejects.toThrow(/Cannot rename to "invalid_slug"/)
     })
 
     it('handles no-op when slug is unchanged', async () => {

@@ -1735,7 +1735,9 @@ Scan `listEntries()` rather than `collectRoutableEntries()` — the latter reduc
 
 Content file names follow `{type}.{slug}.{id}.{ext}`, and the `slug` segment is allowed to contain dots -- the type and ID anchor the parse, not dots, so a file named e.g. `post.getting.started.guide.<id>.md` parses fine and lists with `slug: 'getting.started.guide'`. But `readByUrlPath()` only accepts slugs matching lowercase letters, numbers and hyphens (starting with a letter or number), because that is the rule it runs every URL-resolution candidate through before attempting a read. A slug outside that shape builds, gets a `generateStaticParams` entry and a sitemap `<loc>` -- and then 404s on every actual visit, silently breaking the round-trip guarantee above.
 
-A **production build** fails loudly on this instead, listing every offending entry by path. The editor cannot create such a slug -- it validates with the same rule -- so this only reaches a production build through hand-authored files, scripted content, or a repo being retrofitted onto CanopyCMS. Rename the file's slug segment to letters, numbers and hyphens only, then rebuild.
+A **production build** fails loudly on this instead, listing every offending entry by path. Rename the file's slug segment to letters, numbers and hyphens only, then rebuild.
+
+The write API refuses to create one in the first place: a `PUT` that would mint an entry with a non-conforming slug is rejected with `400`, as is a rename to one -- so this applies to any client, not just the editor UI. That enforcement is **create-only by design**. An entry that already carries a non-conforming slug (hand-authored, imported by a script, merged in over git, or created before this rule existed) stays readable, saveable and renameable, because renaming it is the only way to clear the build failure. So a production build can still hit this, and the guard still exists to make it loud.
 
 ### Static Export with generateStaticParams
 

@@ -555,10 +555,16 @@ type SlugScanItem = Pick<ListEntriesItem, 'entryPath' | 'urlPath' | 'slug'>
  * entry) and is exactly the silent-page-loss failure mode this guard's siblings
  * (`assertBuildEntriesValid`, `assertNoDuplicateUrlPaths`) exist to make loud instead.
  *
- * Not reachable through the editor — the API write boundary validates slugs with `parseSlug`
- * itself — so this only fires for content that arrived some other way: hand-authored files,
- * scripted migrations, or a repo being retrofitted onto CanopyCMS, which is this guard's intended
- * audience (same as its siblings).
+ * The write boundary refuses to MINT such a slug: `api/content.ts` and `ContentStore.write()`
+ * both run `parseSlug` on a create, and `renameEntry()` runs it on the new slug (the [SLUG]
+ * guards). That enforcement is deliberately create-only — an entry that already carries a
+ * non-conforming slug stays saveable and renameable, because renaming it is the only way to fix
+ * this build failure, and refusing reads or edits would turn a red build into unreachable data.
+ *
+ * So this guard still fires, and is still needed, for every slug the write boundary never saw:
+ * hand-authored files, scripted migrations, content merged in over git, a repo being retrofitted
+ * onto CanopyCMS (this guard's intended audience, same as its siblings), and entries created
+ * before the write-time rule existed.
  */
 export function findUnroutableSlugs(items: readonly SlugScanItem[]): UnroutableSlugEntry[] {
   const found: UnroutableSlugEntry[] = []
