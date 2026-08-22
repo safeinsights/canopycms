@@ -57,6 +57,7 @@ import type { ContentFormat } from '../config'
 import type { EntrySchemaRegistry } from './types'
 import { resolveCollectionPath } from '../content-id-index'
 import { findIndexEntryIn, findEntryBySlugIn } from '../url-collision'
+import { isIndexSlug } from '../utils/entry-url'
 import { invalidateBranchContentCaches } from '../content-index-generation'
 import { generateId, isValidId } from '../id'
 import {
@@ -809,7 +810,15 @@ export class SchemaOps {
         // See .claude/future-tasks/collection-sibling-name-uniqueness.md, which tracks both the
         // missing create-side check and this case hole.
         if (await findIndexEntryIn(physicalPath)) {
-          const conflicting = await findEntryBySlugIn(parentDir, updates.slug)
+          // Renaming TO "index" collapses this collection onto ITS OWN new path
+          // (`<parentPath>/index`), not onto `<parentPath>` -- see `computeEntryUrl`. An entry in
+          // the parent whose slug is the literal string "index" is the PARENT's own index/landing
+          // entry, which collapses onto `<parentPath>` itself -- a different URL, not a collision.
+          // Skip the lookup in that case; see url-collision.ts's `findUrlPathClaimant` for the
+          // create-time version of this same false positive.
+          const conflicting = isIndexSlug(updates.slug)
+            ? null
+            : await findEntryBySlugIn(parentDir, updates.slug)
           if (conflicting) {
             throw new Error(
               `Renaming this collection to "${updates.slug}" would make its landing page share a ` +

@@ -126,7 +126,12 @@ export interface ListEntriesItem<T = Record<string, unknown>> {
    * For regular entries: '/guides/glossary-of-terms'.
    * For a root index entry: '/'.
    *
-   * Round-trip safe: `readByUrlPath(item.urlPath)` resolves to the same entry.
+   * Round-trip safe: `readByUrlPath(item.urlPath)` resolves to the same entry. That guarantee
+   * depends on `slug` passing `parseSlug` — the filename grammar (`utils/typed-filename.ts`)
+   * allows a slug to contain characters `parseSlug` rejects (a dot, most commonly), and an entry
+   * whose slug does is listed here same as any other but can never be read back by URL.
+   * `static/index.ts`'s `assertRoutableSlugs` is the build-time guard that catches this outside
+   * this doc comment's promise.
    */
   urlPath: string
   /** Entry slug within its collection */
