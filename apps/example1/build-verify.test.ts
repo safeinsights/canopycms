@@ -15,6 +15,24 @@
  * the prerendered home page contains real content (not an empty not-found
  * shell), and the sitemap advertises `/` and never the stale `/home`.
  *
+ * The home-page and sitemap checks only cover the root route. A NON-home route regressing to
+ * the not-found boundary is the identical failure mechanism, and the sitemap assertion cannot
+ * catch it either way: it verifies what content ENUMERATES to, not what any given route
+ * actually rendered, and a non-home page falling through to notFound() does not change the
+ * sitemap's output at all. So this suite also asserts on the rendered output of one non-home
+ * prerendered route (`/posts/hello-world`), exercising a second, independent `readByUrlPath`
+ * call and `generateStaticParams` path (`app/posts/[slug]/page.tsx`) from the home route above.
+ * Verified empirically while adding it: reproducing the historical incident's shape scoped to
+ * just this route (pointing its `readByUrlPath` call at a URL that resolves to nothing) left
+ * `builds successfully` and both checks above GREEN -- confirming they cannot see this class of
+ * regression on a non-home route -- while the new check caught it.
+ *
+ * This does not extend to every route: one additional route per content shape (a single-entry
+ * collection route here; `app/docs/[[...slug]]` covers the catch-all shape, which
+ * `assertNoDuplicateUrlPaths` and this route's own build already exercise structurally) buys
+ * most of the coverage a full per-entry sweep would, for one extra prerendered page's worth of
+ * build time rather than the whole content tree's.
+ *
  * Duplicate-URL collisions are NOT re-checked here: `app/sitemap.ts`'s
  * `contentSitemap()` call (via `generateContentSitemap` ->
  * `collectRoutableEntries`) and both content routes' `generateStaticParams`
@@ -122,16 +140,63 @@ function readHomeHeroTitle(): string {
   return title
 }
 
+/**
+ * A non-home post's hero-block headline, read from its markdown frontmatter rather than
+ * hardcoded (same reasoning as `readHomeHeroTitle` above). Exercises app/posts/[slug]/page.tsx
+ * -- a DIFFERENT `readByUrlPath` call and a DIFFERENT `generateStaticParams` path from the home
+ * route, so a regression scoped to only one of them (as the historical incident's re-modelling
+ * was scoped to only the home entry) would not necessarily show up on the other.
+ *
+ * Deliberately the block headline, NOT the post's top-level `title` field: `title` also feeds
+ * `generateMetadata`'s `fallbackTitle` (see page.tsx), which renders into `<head>` even when the
+ * PAGE BODY itself resolves nothing and falls through to notFound() -- exactly the false
+ * negative that using `hero.title` (not the page's own `title` field) sidesteps for the home
+ * check above. The headline only ever reaches the rendered body, via PostView's block registry.
+ *
+ * Plain regex over the raw frontmatter, not a real YAML parser: this reads our own fixture
+ * content, not untrusted input, and both fixture posts' first block is a `hero` template with a
+ * single unquoted `headline:` scalar.
+ */
+function readPostHeroHeadline(slug: string): string {
+  const contentDir = path.join(APP_DIR, 'content')
+  const postsDir = readdirSync(contentDir).find((f) => /^posts\.[^.]+$/.test(f))
+  if (!postsDir) {
+    throw new Error(`Could not find the posts collection directory under ${contentDir}`)
+  }
+  const postFileRe = new RegExp(`^post\\.${slug}\\.[^.]+\\.md$`)
+  const postFile = readdirSync(path.join(contentDir, postsDir)).find((f) => postFileRe.test(f))
+  if (!postFile) {
+    throw new Error(
+      `Could not find post '${slug}' under ${path.join(contentDir, postsDir)} -- did it move or get renamed?`,
+    )
+  }
+  const raw = readFileSync(path.join(contentDir, postsDir, postFile), 'utf8')
+  const match = /^\s*headline:\s*(.+)$/m.exec(raw)
+  if (!match) {
+    throw new Error(
+      `content/${postsDir}/${postFile} has no 'headline:' in its frontmatter -- did its first block stop being a hero block?`,
+    )
+  }
+  return match[1].trim()
+}
+
 /** `<loc>` values from a Next sitemap route's emitted XML body. */
 function sitemapLocs(xml: string): string[] {
   return [...xml.matchAll(/<loc>(.*?)<\/loc>/g)].map((m) => m[1])
 }
 
+// Arbitrary but stable choice among the two fixture posts -- see the
+// non-home-route test below for why a second, unrelated route is worth
+// asserting on at all.
+const NON_HOME_POST_SLUG = 'hello-world'
+
 let build: BuildResult
 let homeHeroTitle: string
+let nonHomePostHeadline: string
 
 beforeAll(() => {
   homeHeroTitle = readHomeHeroTitle()
+  nonHomePostHeadline = readPostHeroHeadline(NON_HOME_POST_SLUG)
   cleanNextOutputKeepCache()
   build = runNextBuild()
 }, 300_000)
@@ -154,6 +219,28 @@ describe('apps/example1 `next build`', () => {
       `"/" did not contain the home entry's hero title (${JSON.stringify(homeHeroTitle)}) -- ` +
         "this is exactly how the historical bug looked: the build stays green while readByUrlPath('/') " +
         'resolves nothing and the page renders notFound() instead of the real home entry.',
+    ).toBe(true)
+  })
+
+  // The two checks above only cover "/". A NON-home route regressing to the not-found
+  // boundary is the identical failure mechanism -- a bad readByUrlPath candidate, a broken
+  // slug, a base-branch mismatch -- and would still exit 0 with no assertion above catching
+  // it: the sitemap check only verifies what content ENUMERATES to, not what any given route
+  // actually rendered, and a non-home page dropping to notFound() does not change the
+  // sitemap's output at all. This exercises a second, independent readByUrlPath call
+  // (app/posts/[slug]/page.tsx) and generateStaticParams path from the home route above.
+  it('prerenders real content at a non-home route ("/posts/hello-world"), not the not-found boundary', () => {
+    const htmlPath = path.join(SERVER_APP_DIR, 'posts', `${NON_HOME_POST_SLUG}.html`)
+    expect(
+      existsSync(htmlPath),
+      `expected a prerendered "/posts/${NON_HOME_POST_SLUG}" at ${htmlPath} -- found nothing under .next/server/app/posts`,
+    ).toBe(true)
+
+    const html = readFileSync(htmlPath, 'utf8')
+    expect(
+      html.includes(nonHomePostHeadline),
+      `"/posts/${NON_HOME_POST_SLUG}" did not contain the post's hero headline (${JSON.stringify(nonHomePostHeadline)}) -- ` +
+        'same failure shape as the home-route check above, on a route the sitemap assertions below cannot catch.',
     ).toBe(true)
   })
 

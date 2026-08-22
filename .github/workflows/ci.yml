@@ -269,20 +269,54 @@ jobs:
         with:
           filters: |
             # The app itself, plus the shared code its build actually
-            # exercises: canopycms-next (generateContentSitemap,
-            # generateContentStaticParams, entryToMetadata) and the
-            # static-generation/build-time guards in canopycms's own
-            # static/ and build/ (the same core-package scoping `dual-build`
-            # above uses, for the same reason -- everything else in
-            # packages/canopycms/src/** is covered by lint:bundle and the
-            # unit suite without needing a real Next build). Manifest/
-            # lockfile changes DO run it -- a dependency resolution change
-            # can break this build shape on its own.
+            # exercises. This has to cover more than static/ and build/:
+            # build-verify.test.ts's own doc comment names the historical
+            # incident as a URL-resolution bug (readByUrlPath('/') missing
+            # the re-modelled home entry, so Next silently prerendered the
+            # not-found boundary at '/' with exit code 0) plus a base-branch
+            # resolution hazard specific to this app's dev-mode build-time
+            # reads -- neither mechanism lives under static/ or build/, so a
+            # regression there used to pass this gate on both the PR AND the
+            # push to main. Traced the dependency chain from
+            # context.ts's readByUrlPath down to what it actually calls:
+            #   - context.ts (readByUrlPath/read) and url-path-resolver.ts
+            #     (URL -> entry candidates -- the literal mechanism that
+            #     broke)
+            #   - content-reader.ts, the glue read()/readByUrlPath route
+            #     through (imports utils/entry-url's isIndexSlug directly)
+            #   - branch-workspace.ts, which resolves/provisions the dev-mode
+            #     branch workspace this build reads from, and imports both
+            #     utils/git's resolveBaseBranch (the base-branch fallback
+            #     named above) and operating-mode's strategy selection
+            #   - utils/git.ts and operating-mode/** themselves
+            #   - utils/entry-url.ts, the index-slug rule url-path-resolver.ts
+            #     and static/'s own duplicate-URL guard must keep agreeing on
+            #     (see AGENTS.md)
+            #   - content-store.ts, whose resolvePath/read content-reader.ts
+            #     calls directly for every entry this build serves
+            # Deliberately NOT adding url-collision.ts: that guard runs at
+            # the content-WRITE boundary (create/rename via
+            # content-store.ts's assertUrlPathAvailable), which a `next
+            # build` never exercises -- the build-time duplicate-URL check
+            # this job actually relies on is static/'s assertNoDuplicateUrlPaths,
+            # already covered below. Everything else under
+            # packages/canopycms/src/** stays out to keep this job rare; it
+            # is covered by lint:bundle and the unit suite. Manifest/lockfile
+            # changes DO run it -- a dependency resolution change can break
+            # this build shape on its own.
             relevant:
               - 'apps/example1/**'
               - 'packages/canopycms-next/**'
               - 'packages/canopycms/src/static/**'
               - 'packages/canopycms/src/build/**'
+              - 'packages/canopycms/src/context.ts'
+              - 'packages/canopycms/src/url-path-resolver.ts'
+              - 'packages/canopycms/src/content-reader.ts'
+              - 'packages/canopycms/src/branch-workspace.ts'
+              - 'packages/canopycms/src/content-store.ts'
+              - 'packages/canopycms/src/utils/git.ts'
+              - 'packages/canopycms/src/utils/entry-url.ts'
+              - 'packages/canopycms/src/operating-mode/**'
               - 'packages/canopycms/package.json'
               - 'pnpm-lock.yaml'
               - '.github/workflows/ci.yml'

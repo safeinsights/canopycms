@@ -377,6 +377,14 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
     const validationWarnings = result.data?.validationWarnings
     if (validationWarnings && validationWarnings.length > 0) {
       notifications.show({
+        // Stable per-entry id: the underlying condition (e.g. an unknown
+        // schema key) is typically permanent until a developer edits the
+        // schema, so every save on this entry re-fires this notification.
+        // Mantine treats a missing `id` as "always append" -- without one,
+        // five saves left five identical sticky (autoClose: false) toasts
+        // stacked on screen. A stable id makes each subsequent call REPLACE
+        // the prior toast in place instead.
+        id: `save-warnings-${entry.contentId}`,
         title: 'Saved with warnings',
         // '; '-joined: the notification collapses newlines, so '\n' would run the
         // issues together (matches the '; ' join the save-rejection path uses).

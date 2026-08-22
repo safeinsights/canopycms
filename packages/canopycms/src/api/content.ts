@@ -53,13 +53,12 @@ export type ContentWriteResponse = ApiResponse<{
   body?: string
   /** OCC version token: file mtime after the write. Pass back as `expectedVersion` on next write. */
   version?: number
-  entryLinkWarnings?: Array<{
-    field: string
-    fieldPath: string
-    id: string
-    message: string
-  }>
-  /** Warning-level issues from the adopter's validateEntry hook (save succeeded). */
+  /**
+   * Warning-level issues surfaced from a successful save: the adopter's `validateEntry`
+   * hook, unknown-schema-key detection, and broken `entry:ID` links in body/markdown
+   * content are all folded into this one channel (see the write handler below) so the
+   * editor has exactly one save-warnings notification to render (useEntryManager.ts).
+   */
   validationWarnings?: EntryValidationIssue[]
 }>
 
@@ -547,13 +546,23 @@ const writeContentHandler = async (
     const result = await store.write(schemaItem.logicalPath, slug, writeInput, entryTypeName)
 
     // Validate entry links in body content (warnings only, don't block save).
-    // Reuses the entry-type fields resolved above for schema validation.
+    // Reuses the entry-type fields resolved above for schema validation. Folded into
+    // `validationWarnings` (not a separate `entryLinkWarnings` field) so the editor's one
+    // save-warnings notification (useEntryManager.ts) is the single place any save-time
+    // warning surfaces -- a broken `entry:ID` link used to be computed and returned here
+    // with no consumer anywhere in the editor, so it was silently discarded.
     const idIndex = await store.idIndex()
     const linkValidation = validateEntryLinks(normalizedData ?? {}, fields, idIndex, body.body)
-    const entryLinkWarnings =
-      linkValidation.warnings.length > 0 ? linkValidation.warnings : undefined
+    if (linkValidation.warnings.length > 0) {
+      const linkWarnings: EntryValidationIssue[] = linkValidation.warnings.map((warning) => ({
+        level: 'warning',
+        message: warning.message,
+        fieldPath: warning.fieldPath,
+      }))
+      validationWarnings = [...(validationWarnings ?? []), ...linkWarnings]
+    }
 
-    return { ok: true, status: 200, data: { ...result, entryLinkWarnings, validationWarnings } }
+    return { ok: true, status: 200, data: { ...result, validationWarnings } }
   } catch (err) {
     if (err instanceof ContentConflictError) {
       // [SYNC-C1] Not an editor-vs-editor collision at all: the branch's
