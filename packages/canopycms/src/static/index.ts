@@ -8,6 +8,7 @@ import {
 } from '../validation/entry-validator'
 import { findBodyFieldName } from '../utils/body-field'
 import { isDataOnlyFormat } from '../utils/format'
+import { parseSlug } from '../paths'
 
 /**
  * Framework-agnostic helpers for static-site generation. These produce neutral data structures
@@ -128,18 +129,23 @@ async function enumerateRoutableEntries<T>(
   // an abandoned schema-invalid scaffold shipping into a static build silently drops that page's
   // route (or worse, renders broken), which is worse than a red build.
   //
-  // The unknown-key warning runs BEFORE both throwing guards, so a build about to go red still
-  // prints everything it found rather than dying on the first problem.
+  // The unknown-key warning runs BEFORE all three throwing guards, so a build about to go red
+  // still prints everything it found rather than dying on the first problem.
   //
-  // All three run on the RAW listing, before the caller's `filter` — a filtered-out entry still
+  // All four run on the RAW listing, before the caller's `filter` — a filtered-out entry still
   // occupies its URL as far as every other route is concerned. `rootPath` scoping does narrow
   // them, since that happens inside `listEntries`; that is the intended escape hatch, `filter`
   // is not.
   //
-  // Schema validity is asserted before duplicate URLs deliberately: a schema-invalid entry is
-  // the more fundamental problem, and an adopter fixing it may remove the duplicate on the way.
+  // Slug routability is asserted first, ahead of schema validity and duplicate URLs: an entry
+  // whose slug cannot round-trip through `readByUrlPath` has no URL at all as far as any OTHER
+  // guard is concerned, so it is the most fundamental of the three problems a listed entry can
+  // have. Schema validity is asserted before duplicate URLs for the same reason one level down:
+  // a schema-invalid entry is the more fundamental problem, and an adopter fixing it may remove
+  // the duplicate on the way.
   if (isBuildMode()) {
     warnUnknownEntryKeys(entries, phaseLabel)
+    assertRoutableSlugs(entries, phaseLabel)
     assertBuildEntriesValid(entries, phaseLabel)
     assertNoDuplicateUrlPaths(entries, phaseLabel)
   }
@@ -509,5 +515,89 @@ export function assertNoDuplicateUrlPaths(items: readonly UrlScanItem[], phaseLa
       "an entry whose slug matches a sibling collection that also has an 'index' entry (the index " +
       "collapses onto the collection's path), or two slugs differing only by case (URL paths are " +
       'lowercased). Rename or remove one of the colliding entries, then rebuild.',
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Build-time slug-routability guard
+// ---------------------------------------------------------------------------
+
+/** An entry whose slug cannot round-trip through `readByUrlPath`. */
+export interface UnroutableSlugEntry {
+  entryPath: string
+  urlPath: string
+  slug: string
+  /** Why `parseSlug` rejected it, e.g. "Slug must start with a letter or number...". */
+  error: string
+}
+
+/** What the slug-routability scan needs off a listing item. */
+type SlugScanItem = Pick<ListEntriesItem, 'entryPath' | 'urlPath' | 'slug'>
+
+/**
+ * Find every listed entry whose `slug` cannot pass `parseSlug` — the validation `readByUrlPath`
+ * runs on every URL-resolution candidate it tries (`context.ts`).
+ *
+ * The filename grammar `parseTypedFilename` parses (`{type}.{slug}.{id}.{ext}`) deliberately
+ * allows a slug to contain dots, anchoring the split on the type and ID instead (see that
+ * function's doc comment) — and it does not run the parsed slug through `parseSlug` before
+ * handing it back, by design: recovering `{type, slug, id}` structurally, without validating
+ * every part, is its whole contract. `listCollectionEntries` inherits that: it lists the file and
+ * computes a `urlPath` for it, same as any other entry.
+ *
+ * But `parseSlug` requires `^[a-z0-9][a-z0-9-]*$` — no dots — so a listed entry whose slug
+ * contains one is unreachable through the one path everything else assumes works:
+ * `readByUrlPath` tries the URL's last segment as a candidate slug and skips any candidate that
+ * fails `parseSlug` (treating it as a miss, not an error) before it ever calls `read()`. The
+ * entry still builds, still gets a `generateStaticParams` entry, still gets a sitemap `<loc>` —
+ * and 404s the moment anything actually visits it. That breaks the `Round-trip safe` contract
+ * `content-listing.ts` documents on `urlPath` (`readByUrlPath(item.urlPath)` resolves to the same
+ * entry) and is exactly the silent-page-loss failure mode this guard's siblings
+ * (`assertBuildEntriesValid`, `assertNoDuplicateUrlPaths`) exist to make loud instead.
+ *
+ * Not reachable through the editor — the API write boundary validates slugs with `parseSlug`
+ * itself — so this only fires for content that arrived some other way: hand-authored files,
+ * scripted migrations, or a repo being retrofitted onto CanopyCMS, which is this guard's intended
+ * audience (same as its siblings).
+ */
+export function findUnroutableSlugs(items: readonly SlugScanItem[]): UnroutableSlugEntry[] {
+  const found: UnroutableSlugEntry[] = []
+  for (const item of items) {
+    const result = parseSlug(item.slug)
+    if (!result.ok) {
+      found.push({
+        entryPath: item.entryPath,
+        urlPath: item.urlPath,
+        slug: item.slug,
+        error: result.error,
+      })
+    }
+  }
+  return found
+}
+
+/**
+ * Throw a single, descriptive Error if any listed entry's slug cannot round-trip through
+ * `readByUrlPath`.
+ *
+ * Fails the build for the same reason its siblings do: an entry that builds and gets advertised
+ * (sitemap, `generateStaticParams`) but 404s on every actual visit is a worse failure mode than a
+ * red build.
+ */
+export function assertRoutableSlugs(items: readonly SlugScanItem[], phaseLabel: string): void {
+  const unroutable = findUnroutableSlugs(items)
+  if (unroutable.length === 0) return
+
+  const lines = unroutable.map(
+    ({ entryPath, urlPath, slug }) => `  - ${entryPath} (slug "${slug}", urlPath "${urlPath}")`,
+  )
+
+  throw new Error(
+    `CanopyCMS static build: found ${unroutable.length} ${unroutable.length === 1 ? 'entry' : 'entries'} whose slug cannot resolve back through a URL during ${phaseLabel}:\n${lines.join('\n')}\n` +
+      'The filename grammar allows a slug to contain characters readByUrlPath cannot accept back ' +
+      "(most commonly a dot, e.g. a slug of 'getting.started.guide') — a valid slug for parseSlug is " +
+      'lowercase letters, numbers and hyphens only, starting with a letter or number. Each entry ' +
+      'above would build, appear in generateStaticParams and any sitemap, and then 404 on every ' +
+      'visit. Rename the slug (the file itself, not just its content), then rebuild.',
   )
 }
