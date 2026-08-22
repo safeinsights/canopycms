@@ -107,7 +107,8 @@ reading at all.
     working; either way it had to change in the same commit, not as a follow-up.
   - **Nothing in CI would have caught that.** `apps/example1` is typechecked but never built, so a
     404 homepage ships green. Split out to
-    [example1-next-build-not-in-ci.md](example1-next-build-not-in-ci.md); it was verified here only
+    [example1-next-build-not-in-ci.md](resolved/example1-next-build-not-in-ci.md) (now resolved);
+    it was verified here only
     because the build was run by hand.
 
   `pathFor` is deliberately NOT demonstrated in `apps/example1`: the reference app's job is to teach

@@ -227,6 +227,130 @@ jobs:
         if: steps.filter.outputs.relevant != 'true'
         run: echo "No changes under the dual-build-relevant paths -- skipping the two next builds."
 
+  example1-build:
+    name: Example1 Build & Content Gate
+    # apps/example1 is the reference app most doc snippets and e2e
+    # expectations are written against, but until now it was never built in
+    # CI at all -- `validate` above only type-checks/lints it, and
+    # `dual-build`'s two builds are apps/dual-build-fixture, a different app.
+    # See .claude/future-tasks/resolved/example1-next-build-not-in-ci.md.
+    #
+    # A green `next build` is NOT sufficient evidence by itself: Next happily
+    # prerenders the not-found boundary into a route and still calls that a
+    # successful build, and a sitemap can silently advertise a stale URL
+    # while the exit code stays 0. build-verify.test.ts's own doc comment
+    # has the incident that motivated this job. So this job doesn't just run
+    # `next build` -- it runs apps/example1's `verify:build` script, which
+    # asserts on the prerendered OUTPUT (real home content at "/", "/" and
+    # not "/home" in sitemap.xml).
+    #
+    # This is a separate job from `dual-build` above rather than extra steps
+    # in it: that job verifies a structurally different thing (the
+    # static-export/CMS deploy-shape split, via a different fixture app that
+    # is not `mode: 'dev'` for its static flavor), and folding a third
+    # `next build` with an unrelated pass/fail meaning into it would make a
+    # red `dual-build` ambiguous about which regression actually fired.
+    #
+    # Path-gated the same way `dual-build` is above, and for the same
+    # reason: the job always RUNS (so it always reports a conclusion --  a
+    # `paths:` filter on the trigger itself would leave a "required" check
+    # stuck pending on PRs that don't touch these paths), and only the
+    # expensive build+verify step is skipped via per-step `if:` when nothing
+    # relevant changed.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # paths-filter diffs against the PR base/previous push
+
+      - name: Check for example1-relevant changes
+        id: filter
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            # The app itself, plus the shared code its build actually
+            # exercises: canopycms-next (generateContentSitemap,
+            # generateContentStaticParams, entryToMetadata) and the
+            # static-generation/build-time guards in canopycms's own
+            # static/ and build/ (the same core-package scoping `dual-build`
+            # above uses, for the same reason -- everything else in
+            # packages/canopycms/src/** is covered by lint:bundle and the
+            # unit suite without needing a real Next build). Manifest/
+            # lockfile changes DO run it -- a dependency resolution change
+            # can break this build shape on its own.
+            relevant:
+              - 'apps/example1/**'
+              - 'packages/canopycms-next/**'
+              - 'packages/canopycms/src/static/**'
+              - 'packages/canopycms/src/build/**'
+              - 'packages/canopycms/package.json'
+              - 'pnpm-lock.yaml'
+              - '.github/workflows/ci.yml'
+
+      - uses: pnpm/action-setup@v4
+        if: steps.filter.outputs.relevant == 'true'
+
+      - uses: actions/setup-node@v4
+        if: steps.filter.outputs.relevant == 'true'
+        with:
+          node-version-file: '.nvmrc'
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        if: steps.filter.outputs.relevant == 'true'
+        run: pnpm install --frozen-lockfile
+
+      # apps/example1 is always CanopyCMS `mode: 'dev'` (see its
+      # canopycms.config.ts) -- there is no separate static-export flavor
+      # here, unlike apps/dual-build-fixture. Dev mode's base-branch
+      # resolution (`resolveBaseBranch` / `detectHeadBranch` in canopycms's
+      # utils/git.ts) falls back to the literal name 'main' whenever HEAD is
+      # detached, which is exactly what actions/checkout leaves it as. That
+      # is true for this BUILD-TIME read too, not only a request-time one --
+      # verified empirically while building this job: without this step, a
+      # detached HEAD alongside any pre-existing local `main` makes the
+      # build silently read `main`'s (older/different) content instead of
+      # the checked-out commit's, which reproduces BOTH halves of the
+      # historical bug this job exists to catch (empty home page, stale
+      # "/home" in the sitemap) regardless of whether this PR's own code and
+      # content are fine. Pointing `main` at the checked-out commit and
+      # attaching HEAD to it (not merely creating it -- see
+      # apps/dual-build-fixture's identical step above) is what makes dev
+      # mode read this commit's actual content.
+      - name: Attach HEAD to a real branch for dev-mode content reads
+        if: steps.filter.outputs.relevant == 'true'
+        run: git checkout -B main
+
+      # canopycms-next's "./config" export (what apps/example1's
+      # next.config.mjs imports) resolves to a pre-bundled
+      # dist/config.{cjs,mjs} -- esbuild-bundled because Next's own config
+      # loader can't process raw TS -- unlike the rest of the package, which
+      # workspace consumers import straight from src/ via transpilePackages.
+      # Nothing else in this job builds this package.
+      - name: Build canopycms-next
+        if: steps.filter.outputs.relevant == 'true'
+        run: pnpm --filter canopycms-next run build
+
+      # Next.js incremental build cache, same pattern as the dual-build and
+      # e2e jobs' own caches.
+      - name: Cache Next.js build cache
+        if: steps.filter.outputs.relevant == 'true'
+        uses: actions/cache@v4
+        with:
+          path: apps/example1/.next/cache
+          key: nextjs-example1-${{ hashFiles('pnpm-lock.yaml') }}-${{ github.sha }}
+          restore-keys: |
+            nextjs-example1-${{ hashFiles('pnpm-lock.yaml') }}-
+
+      - name: Build apps/example1 and verify its output
+        if: steps.filter.outputs.relevant == 'true'
+        working-directory: apps/example1
+        run: pnpm run verify:build
+
+      - name: Skipped (no example1-relevant changes)
+        if: steps.filter.outputs.relevant != 'true'
+        run: echo "No changes under example1-relevant paths -- skipping the next build + output assertions."
+
   e2e:
     name: E2E Tests (shard ${{ matrix.shard }}/4)
     # Re-enabled 2026-07-24 after the stabilization fix batch (see
