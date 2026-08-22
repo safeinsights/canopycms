@@ -41,6 +41,7 @@ import { filePathExists, readFileIfExists } from './utils/fs'
 import { asRecord, getFormatExtension } from './utils/format'
 import {
   normalizeFilesystemPath,
+  parseSlug,
   type LogicalPath,
   type PhysicalPath,
   type Slug,
@@ -234,6 +235,13 @@ export function getDefaultEntryType(
 /**
  * Validates that a slug doesn't contain slashes or backslashes.
  * Slugs must be simple filenames (last path segment only).
+ *
+ * Deliberately WEAKER than `parseSlug`, and deliberately not merged with it: this runs on every
+ * resolution, reads included (`buildPaths`), so it can only enforce what must be true of content
+ * that already exists on disk -- i.e. path safety. Content whose slug predates CanopyCMS, or was
+ * hand-authored, or came in over git, has to stay readable. `parseSlug`'s stricter URL-addressable
+ * rule is enforced only where a NEW filename is minted (see the [SLUG] guards in `write()` and
+ * `renameEntry()`); applying it here would convert a build-time failure into unreachable data.
  */
 function validateSlug(slug: string): void {
   if (slug.includes('/')) {
@@ -1123,10 +1131,37 @@ export class ContentStore {
           // different entry-lock keys. The branch lock is what makes check-then-write atomic
           // against the other half landing concurrently.
           if (!(await filePathExists(absolutePath))) {
-            await this.assertUrlPathAvailable(
-              path.dirname(absolutePath),
-              extractSlugFromFilename(path.basename(absolutePath)),
-            )
+            const chosenSlug = extractSlugFromFilename(path.basename(absolutePath))
+
+            // [SLUG] Routability guard, create only. `validateSlug` above (in buildPaths) is the
+            // path-traversal check -- it only rejects `/` and `\`, and it has to stay that weak
+            // because it also runs on every READ. So the filename grammar accepts slugs that
+            // `parseSlug` does not (a dot, an underscore, a leading hyphen), and `readByUrlPath`
+            // runs every URL candidate through `parseSlug` before trying a read -- meaning such
+            // an entry writes fine, builds fine, gets a `generateStaticParams` entry and a
+            // sitemap `<loc>`, and then 404s on every actual visit. `assertRoutableSlugs`
+            // (static/index.ts) now fails the whole production build over it.
+            //
+            // Refuse at the moment the unroutable entry is CREATED, so the failure lands on the
+            // caller that caused it rather than on whoever builds next. Create-only, keyed on the
+            // target file not existing, for exactly the reason the [URL] guard below is: content
+            // that already has a non-conforming slug (hand-authored, imported, or predating this
+            // guard) must stay editable -- and must stay renameable, which is the only way out.
+            // Tightening the read path instead would turn a red build into unreachable data.
+            //
+            // Checked against the slug `buildPaths` actually chose, not the caller's raw
+            // argument: buildPaths lowercases, strips leading slashes, and substitutes the entry
+            // type's name for an empty slug (the singleton shape, e.g. write('content/home', '')).
+            const routable = parseSlug(chosenSlug)
+            if (!routable.ok) {
+              throw new ContentStoreError(
+                `Cannot create entry "${chosenSlug}": ${routable.error}. An entry whose slug is ` +
+                  'not addressable as a URL segment would build and then 404 on every visit.',
+                'VALIDATION',
+              )
+            }
+
+            await this.assertUrlPathAvailable(path.dirname(absolutePath), chosenSlug)
           }
 
           await fs.mkdir(path.dirname(absolutePath), { recursive: true })
@@ -1509,7 +1544,7 @@ export class ContentStore {
     await this.idIndex()
     const collection = this.assertCollection(collectionPath)
 
-    // Validate new slug format (Slug branded type guarantees lowercase alphanumeric+hyphens via parseSlug)
+    // Path-traversal check (rejects separators only).
     validateSlug(newSlug)
     const safeNewSlug = newSlug.replace(/^\/+/, '')
     if (!safeNewSlug) {
@@ -1519,6 +1554,25 @@ export class ContentStore {
     // If slugs are the same, no-op
     if (currentSlug === safeNewSlug) {
       return { newPath: `${collectionPath}/${currentSlug}` as LogicalPath }
+    }
+
+    // [SLUG] Routability check, run here rather than trusted from the caller. The `Slug` branded
+    // type does NOT guarantee it: `ContentStore.resolvePath` casts a raw path segment to `Slug`
+    // with only `.toLowerCase()`, and tests/callers reach for `unsafeAsSlug`. The API's
+    // `slugSchema` does run `parseSlug` on `newSlug`, but that is one caller of an exported
+    // method -- and a rename mints a new filename, so it is a write that can create an
+    // unroutable entry just as a create can. See write()'s [SLUG] guard for what goes wrong.
+    //
+    // Deliberately AFTER the no-op short-circuit above: a rename to the slug the entry already
+    // has mints nothing, so refusing it would only take an existing non-conforming entry and
+    // make one more operation on it fail, for no gain.
+    const routable = parseSlug(safeNewSlug)
+    if (!routable.ok) {
+      throw new ContentStoreError(
+        `Cannot rename to "${safeNewSlug}": ${routable.error}. An entry whose slug is not ` +
+          'addressable as a URL segment would build and then 404 on every visit.',
+        'VALIDATION',
+      )
     }
 
     // Pre-pass: classify via a directory scan (local ground truth, not the

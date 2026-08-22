@@ -23,7 +23,7 @@ import {
 } from '../validation/entry-validator'
 import { validateEntryLinks } from '../validation/entry-link-validator'
 import { branchNameSchema, logicalPathSchema, slugSchema } from './validators'
-import type { Slug, PhysicalPath } from '../paths'
+import { parseSlug, type Slug, type PhysicalPath } from '../paths'
 import type { BranchContextWithSchema } from '../types'
 import { getErrorMessage, isNotFoundError, sanitizeErrorMessage } from '../utils/error'
 import { isDataOnlyFormat } from '../utils/format'
@@ -362,6 +362,31 @@ const writeContentHandler = async (
         ok: false,
         status: 409,
         error: `An entry with slug "${slug}" already exists`,
+      }
+    }
+
+    // [SLUG] Create-only routability check. `writeContentParamsSchema.path` runs
+    // `parseLogicalPath`, which has no charset rule, and `ContentStore.resolvePath` casts the
+    // last segment to `Slug` with only `.toLowerCase()` — so nothing on the write chain applied
+    // `parseSlug` (only `renameEntry`'s `newSlug` did). A create with, say, `my_post` was
+    // accepted, and `assertRoutableSlugs` then failed the adopter's next production build over
+    // an entry that would 404 anyway. `store.write()` enforces this authoritatively inside its
+    // per-entry lock; this is the cheaper, clearer-messaged fast path — without it a create that
+    // is ALSO missing a required field reports the field, never the slug that is the real
+    // problem (same reasoning as the create-intent guard above).
+    //
+    // Create-only on purpose: an entry that already carries a non-conforming slug must stay
+    // saveable and renameable, since renaming it is the only way to fix the build.
+    if (!exists) {
+      const routable = parseSlug(slug)
+      if (!routable.ok) {
+        return {
+          ok: false,
+          status: 400,
+          error:
+            `Cannot create entry "${slug}": ${routable.error}. An entry whose slug is not ` +
+            'addressable as a URL segment would build and then 404 on every visit.',
+        }
       }
     }
 

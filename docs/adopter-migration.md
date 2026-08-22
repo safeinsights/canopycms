@@ -595,6 +595,48 @@ cannot act on.
 **Now deletable.** Nothing — this closes a gap rather than replacing local code. If you added your
 own editor-side check for this after hitting it, it is now redundant.
 
+### A slug that cannot round-trip through a URL now fails the build, and the CMS refuses to create one — **breaking (build)**
+
+**What changed.** Content file names are `{type}.{slug}.{id}.{ext}`, and the parse is anchored on
+the type and the ID — so the `slug` segment is allowed to contain characters that are not valid in
+a URL segment. A dot is the common one: `post.getting.started.guide.<id>.md` parses fine and lists
+with `slug: 'getting.started.guide'`. An underscore or a leading hyphen does the same. But
+`readByUrlPath()` runs every URL-resolution candidate through a stricter rule — lowercase letters,
+numbers and hyphens, starting with a letter or number — and skips anything that fails it. Such an
+entry **built, got a `generateStaticParams` entry and a sitemap `<loc>`, and then 404'd on every
+actual visit.** Silently.
+
+Two changes, both aimed at that:
+
+- A **production build now fails** on it, listing every offending entry by path. This is the part
+  most likely to turn a previously-green build red on upgrade: nothing about your content changed,
+  but a page you did not know was broken is now loud instead of silent.
+- The **write API refuses to mint one**. A `PUT` creating an entry with a non-conforming slug is
+  rejected with `400`, and so is a rename to one — enforced in `ContentStore` itself, so it holds
+  for any client, not just the editor UI. Previously only `renameEntry`'s `newSlug` was checked;
+  a create was accepted, and the build failed afterwards for whoever built next.
+
+It is **create/rename only**, deliberately. An entry that already has a non-conforming slug stays
+readable, stays saveable, and can be renamed — renaming it is the only way to clear the build
+failure, so refusing to read or edit it would convert a red build into unreachable data. That is
+also why enforcement is not in the path-resolution layer, which reads and writes share.
+
+**To adopt.** Build once and read the failure list. For each entry it names, rename the file's
+**slug segment** — the part between the type and the ID — to lowercase letters, numbers and
+hyphens (`post.getting-started-guide.<id>.md`), leaving the type, the ID and the extension alone.
+Renaming through the editor does the same thing and updates nothing else, since the ID is what
+identifies the entry. If the old URL was reachable in practice it was not reachable through
+CanopyCMS, so there is no redirect to preserve — but check any hand-written links to it.
+
+If you generate content with a script, slugify with the same rule before writing; the CLI's
+`canopycms migrate` already does. A script that writes files directly (rather than through the
+write API) is not covered by the new refusal, which is exactly the case the build guard exists for.
+
+**Now deletable.** Any local build-time or CI check you wrote that walks content filenames looking
+for slugs your routing could not serve, and any editor-side slug-format check you added in front of
+the create form — the package now rejects those at the write boundary and fails the build on the
+ones that arrive some other way.
+
 <!--
 Template for each entry — copy, don't improvise:
 
