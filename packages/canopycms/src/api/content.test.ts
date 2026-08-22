@@ -1511,3 +1511,55 @@ describe('unknown content keys', () => {
     ])
   })
 })
+
+/**
+ * A broken `entry:ID` link in body/markdown content used to come back as a separate
+ * `entryLinkWarnings` field on the write response with zero consumers anywhere in the editor
+ * (useEntryManager.ts only ever rendered `validationWarnings`) -- so this was the one save-time
+ * warning that was silently discarded. It is now folded into `validationWarnings` so it reaches
+ * the same notification as every other warning.
+ */
+describe('entry link warnings', () => {
+  const writeReq = { user: { type: 'authenticated' as const, userId: 'u1', groups: [] } }
+  const writeParams = {
+    branch: unsafeAsBranchName('feature/x'),
+    path: unsafeAsLogicalPath('posts/hello'),
+  }
+
+  it('folds a broken entry link into validationWarnings instead of a separate discarded field', async () => {
+    // The default mocked ContentStore's idIndex.findById returns null, i.e. "not found".
+    const res = await writeContent(allowedCtx(), writeReq, writeParams, {
+      format: 'mdx',
+      data: {},
+      body: 'See entry:AbCdEfGh1234 for details.',
+    })
+
+    expect(res.ok).toBe(true)
+    expect(res.data?.validationWarnings).toEqual([
+      expect.objectContaining({
+        level: 'warning',
+        fieldPath: 'body',
+        message: expect.stringContaining('entry:AbCdEfGh1234'),
+      }),
+    ])
+    // The dead channel is gone, not merely unused -- nothing should reintroduce it.
+    expect(res.data).not.toHaveProperty('entryLinkWarnings')
+  })
+
+  it('appends the broken-link warning alongside other validation warnings rather than replacing them', async () => {
+    const ctx = allowedCtx()
+    ctx.services.config.validateEntry = () => [{ level: 'warning', message: 'Hook says hi' }]
+
+    const res = await writeContent(ctx, writeReq, writeParams, {
+      format: 'mdx',
+      data: {},
+      body: 'See entry:AbCdEfGh1234 for details.',
+    })
+
+    expect(res.ok).toBe(true)
+    expect(res.data?.validationWarnings?.map((issue) => issue.message)).toEqual([
+      'Hook says hi',
+      expect.stringContaining('entry:AbCdEfGh1234'),
+    ])
+  })
+})
