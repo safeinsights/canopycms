@@ -25,9 +25,15 @@
  */
 
 import { readFileSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { join, dirname } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
-const ROOT = new URL('..', import.meta.url).pathname
+// fileURLToPath, not `new URL(...).pathname`: the latter leaves percent-encoding
+// intact (a checkout under a path with a space resolves to `.../my%20repo/...`
+// and every read fails) and yields a leading-slash-prefixed drive path on
+// Windows. This script rewrites six manifests and gates every release, so it
+// should not be the thing that breaks on a directory name.
+const ROOT = dirname(dirname(fileURLToPath(import.meta.url)))
 
 const PACKAGES = [
   'packages/canopycms',

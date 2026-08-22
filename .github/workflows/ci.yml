@@ -69,6 +69,13 @@ jobs:
       - name: Lint future-tasks backlog
         run: pnpm lint:tasks
 
+      # Supply chain: every third-party action must be pinned to a commit SHA.
+      # A sweep only covers the tree it runs on -- a job merged in from a
+      # sibling branch afterwards arrived unpinned and nothing noticed, which
+      # is what this check exists to make impossible.
+      - name: Lint GitHub Action pins
+        run: pnpm lint:actions
+
       - name: Format check (Prettier)
         run: pnpm exec prettier --check .
 
@@ -273,13 +280,13 @@ jobs:
     # relevant changed.
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0 # paths-filter diffs against the PR base/previous push
 
       - name: Check for example1-relevant changes
         id: filter
-        uses: dorny/paths-filter@v3
+        uses: dorny/paths-filter@0e4a8c6effa4802afeda77dc8d303f8176d7dfad # v3
         with:
           filters: |
             # The app itself, plus the shared code its build actually
@@ -384,10 +391,10 @@ jobs:
               - 'pnpm-lock.yaml'
               - '.github/workflows/ci.yml'
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
         if: steps.filter.outputs.relevant == 'true'
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         if: steps.filter.outputs.relevant == 'true'
         with:
           node-version-file: '.nvmrc'
@@ -432,7 +439,7 @@ jobs:
       # e2e jobs' own caches.
       - name: Cache Next.js build cache
         if: steps.filter.outputs.relevant == 'true'
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: apps/example1/.next/cache
           key: nextjs-example1-${{ hashFiles('pnpm-lock.yaml') }}-${{ github.sha }}
