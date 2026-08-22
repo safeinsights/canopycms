@@ -595,6 +595,8 @@ The collapse is **exclusive for the `/docs/index` spelling**: `readByUrlPath('/d
 
 Each entry gets exactly one `urlPath`, but two _different_ entries can still compute the same one — an entry whose slug matches a sibling collection that also has an index entry, or two slugs differing only by case. Only one is then reachable and the other silently has no route, so `assertNoDuplicateUrlPaths` (`static/index.ts`) fails a production build naming every contested URL. An entry beside a sibling collection with **no** index entry is a different, legitimate shape (a landing page plus a folder of children) and is untouched.
 
+That build-time guard has a write-time counterpart, `url-collision.ts`, consulted by `ContentStore` on entry create and rename and by the schema store on collection rename — the three write paths that can newly contest a `urlPath`. Neither guard subsumes the other: content also arrives by merge, by direct commit, and by adopters retrofitting an existing repo, none of which pass through the write boundary, while the build guard cannot stop an author from creating the collision in the first place. Both are keyed on the same invariant (no two entries may share a `urlPath`), deliberately not on name — an entry beside a same-named sibling collection with no index entry is the legitimate shape above, and a name-based rule would forbid it.
+
 ### Schema Registry and References
 
 The schema registry is a centralized location for field definitions that can be referenced by collection meta files:
@@ -2265,6 +2267,12 @@ The listing supports the same customization pattern as the content tree builder:
 
 The generic `<T>` parameter flows through, giving adopters type safety on extracted fields.
 
+### Opt-In Reference Resolution
+
+Both `listEntries()` and `buildContentTree()` accept a `resolveReferences` option that expands a reference field's stored ID(s) into the target entry's `id`/`slug`/`collection`/`urlPath`, and — per-field, via `includeBody` — its body. It defaults to `false` on both, unlike `read()`'s always-on resolution: `data` here is the caller's own generic and `extract` takes an untyped record, so flipping the default would silently reshape a reference from a bare ID string to an object under every existing call site with no compile error. Resolution runs after the batch ACL filter and before `extract`/`filter`, so a filtered-out target cannot leak through a sibling's resolved reference.
+
+Two invariants hold the in-flight resolve cache safe as a pure performance optimization rather than a source of cross-entry bugs, both found and closed within this feature: every occurrence gets its own clone of a resolved reference, never a shared object instance, because an `extract` that mutates one (truncating a body for a search index, say) would otherwise silently rewrite it for every other entry pointing at the same target; and the reader that assembles an entry's own data must copy before merging in a body, never mutate in place, because gray-matter's parse result for md/mdx is cached process-globally and handed to every caller by reference — an in-place merge corrupts that shared cache for the rest of the process. See [docs/concurrency.md](docs/concurrency.md) for the cache's full contract (per-call lifetime, in-flight dedup, why it must never be hoisted).
+
 ### Relationship to Content Tree Builder
 
 Both `listEntries()` and `buildContentTree()` share the same underlying content listing layer for entry discovery, filename parsing, and data reading. They differ in output shape: the tree builder produces a nested hierarchy preserving parent-child relationships, while `listEntries()` produces a flat array with path segments for adopters who need to reconstruct structure themselves or do not need hierarchy at all.
@@ -2304,7 +2312,9 @@ The adapter is deliberately minimal — it only knows the shape Next.js wants. A
 
 Ordinary page code reaches for enumeration or phase-selecting reads; only advanced build-time work uses `getCanopyForBuild` directly.
 
-**Deferred work:** Sitemap generation and SEO metadata extraction are intended to follow the same core-plus-adapter pattern but are tracked as separate future tasks. Only static path collection ships today.
+**Sitemap generation and SEO metadata extraction** follow the same core-plus-adapter pattern: the core's `collectRoutableEntries()` (enumeration plus each entry's `data`/`updatedAt`) backs the Next adapter's `generateContentSitemap()` and `entryToMetadata()`. Both read `noindex` through the same `isNoindexEntry` predicate `extractSeoFields` derives, so a page cannot be suppressed from one advertising surface (the sitemap) while still appearing in the other (`robots: {index: false}`).
+
+`generateContentSitemap`'s `pathFor` override — for advertising an entry at a URL other than its own `urlPath` — is a seam in the "no two entries share a URL" invariant (see the index-entries discussion under [Schema-Driven Content Model](#schema-driven-content-model)), not an exception to it: `assertNoDuplicateUrlPaths` runs inside `collectRoutableEntries`, on the raw enumeration, before `pathFor` ever gets to rewrite anything — so a `pathFor` that maps two entries onto the same path is invisible to that guard. The only backstop for that specific case is `dedupeSitemapItems`'s warn-and-drop-the-rest, a console warning rather than a failed build. Treat a `pathFor` collision as caught by convention, not by the guarantee the base invariant has.
 
 ### Build-Time Content Validity Guard
 
@@ -2989,6 +2999,8 @@ Entry types with `maxItems: 1` store their files using the entry type name as pa
 - No separate code paths for cardinality-constrained types
 
 This approach treats `maxItems: 1` as a schema constraint, not a fundamentally different content model.
+
+**Open footgun in the same corner:** `read({ entryPath })` called with no `slug` at all falls back to the entry TYPE's name as the effective slug, for every entry type, not only `maxItems: 1` ones — it happens to resolve for a singleton only because that entry's on-disk slug was itself set to the type name. Rename that entry's slug (exactly what the index-entry modelling recommendation above asks adopters to do to a singleton being turned into a collection's landing page) and the read silently stops finding it — no thrown error, no type error, and a static build can still go green having prerendered a 404. Not yet fixed; see [`.claude/future-tasks/entrypath-read-resolves-by-entry-type-name.md`](.claude/future-tasks/entrypath-read-resolves-by-entry-type-name.md).
 
 ### Why async service initialization?
 
