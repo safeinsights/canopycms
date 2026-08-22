@@ -56,6 +56,8 @@ import { withOccFileLock, OccWriteConflictError } from '../utils/occ-json-write'
 import type { ContentFormat } from '../config'
 import type { EntrySchemaRegistry } from './types'
 import { resolveCollectionPath } from '../content-id-index'
+import { findIndexEntryIn, findEntryBySlugIn } from '../url-collision'
+import { isIndexSlug } from '../utils/entry-url'
 import { invalidateBranchContentCaches } from '../content-index-generation'
 import { generateId, isValidId } from '../id'
 import {
@@ -790,6 +792,40 @@ export class SchemaOps {
             throw err
           }
           // Ignore other errors (e.g., ENOENT if parent dir doesn't exist somehow)
+        }
+
+        // [URL] Contested-URL guard. Renaming a collection re-paths every entry beneath it, so
+        // its index entry -- the one whose URL is the collection's own path -- lands on the new
+        // name. If an entry with that slug already sits in the parent, the two would contest one
+        // URL and only one could be served. See url-collision.ts.
+        //
+        // Only the index entry can collide: the sibling-name check above has already established
+        // that no `{slug}.{id}` directory exists at the destination, so no descendant DEEPER than
+        // the index entry has anything to collide with.
+        //
+        // That holds only as far as the check above does, and it is narrower than it looks: it
+        // compares case-SENSITIVELY (so `guides` beside an existing `Guides.{id}` passes it) and
+        // it requires `parts.length === 2 && isValidId(parts[1])` (so a plain, ID-less `docs/`
+        // directory at the destination passes it too). Descendants CAN then contest.
+        // See .claude/future-tasks/collection-sibling-name-uniqueness.md, which tracks both the
+        // missing create-side check and this case hole.
+        if (await findIndexEntryIn(physicalPath)) {
+          // Renaming TO "index" collapses this collection onto ITS OWN new path
+          // (`<parentPath>/index`), not onto `<parentPath>` -- see `computeEntryUrl`. An entry in
+          // the parent whose slug is the literal string "index" is the PARENT's own index/landing
+          // entry, which collapses onto `<parentPath>` itself -- a different URL, not a collision.
+          // Skip the lookup in that case; see url-collision.ts's `findUrlPathClaimant` for the
+          // create-time version of this same false positive.
+          const conflicting = isIndexSlug(updates.slug)
+            ? null
+            : await findEntryBySlugIn(parentDir, updates.slug)
+          if (conflicting) {
+            throw new Error(
+              `Renaming this collection to "${updates.slug}" would make its landing page share a ` +
+                `URL with the "${updates.slug}" entry already in the parent collection, and only ` +
+                `one of them could be served there. Rename or remove that entry first.`,
+            )
+          }
         }
 
         // Atomically rename the directory — this re-paths every entry beneath

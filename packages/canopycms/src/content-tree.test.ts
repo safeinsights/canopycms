@@ -4,6 +4,7 @@ import path from 'node:path'
 import os from 'node:os'
 
 import { buildContentTree, defaultBuildPath, type ContentTreeNode } from './content-tree'
+import { computeEntryUrl } from './utils/entry-url'
 import { ContentStore } from './content-store'
 import type { CanopyBuildContext } from './context'
 import { flattenSchema } from './config/flatten'
@@ -1268,6 +1269,21 @@ describe('defaultBuildPath', () => {
 
   it('collapses the root index entry to "/"', () => {
     expect(defaultBuildPath('content/index' as LogicalPath, 'content', 'entry')).toBe('/')
+  })
+
+  it('collapses a case-variant index slug, agreeing with computeEntryUrl', () => {
+    // These two implement the same forward rule and must not disagree. A string
+    // `endsWith('/index')` test made them diverge for an adopter-supplied `Index`:
+    // defaultBuildPath said /docs/index (which does NOT round-trip) while computeEntryUrl
+    // said /docs. Both now route the decision through the shared isIndexSlug.
+    for (const variant of ['Index', 'INDEX', 'InDeX']) {
+      expect(defaultBuildPath(`content/docs/${variant}` as LogicalPath, 'content', 'entry')).toBe(
+        '/docs',
+      )
+      expect(computeEntryUrl('content/docs', variant, 'content')).toBe('/docs')
+    }
+    // A collection is still not collapsed, whatever its case.
+    expect(defaultBuildPath('content/Index' as LogicalPath, 'content', 'collection')).toBe('/index')
   })
 
   it('lowercases the result unconditionally', () => {

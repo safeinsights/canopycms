@@ -3,8 +3,9 @@ import path from 'node:path'
 import type { Dirent } from 'node:fs'
 
 import matter from 'gray-matter'
-import { parse as yamlParse, stringify as yamlStringify } from 'yaml'
+import { parse as yamlParse } from 'yaml'
 import { atomicWriteFile } from './utils/atomic-write'
+import { serializeFrontmatter, serializeYaml } from './utils/content-serialize'
 import { withLock } from './utils/async-mutex'
 import {
   ContentWriteLockBusyError,
@@ -12,6 +13,9 @@ import {
   withContentWriteLock,
 } from './utils/content-write-lock'
 import { findBodyFieldName } from './utils/body-field'
+import { buildResolvedReference } from './entry-schema'
+import { computeEntryUrl } from './utils/entry-url'
+import { findUrlPathClaimant } from './url-collision'
 import type {
   BlockFieldConfig,
   ContentFormat,
@@ -20,6 +24,7 @@ import type {
   EntryTypeConfig,
   InlineGroupFieldConfig,
   ObjectFieldConfig,
+  ReferenceFieldConfig,
 } from './config'
 import {
   ContentIdIndex,
@@ -32,10 +37,11 @@ import { registerContentIndexForInvalidation } from './content-index-registry'
 import { bumpContentIndexGeneration, readContentIndexGeneration } from './content-index-generation'
 import { generateId } from './id'
 import { isNodeError } from './utils/error'
-import { filePathExists } from './utils/fs'
+import { filePathExists, readFileIfExists } from './utils/fs'
 import { asRecord, getFormatExtension } from './utils/format'
 import {
   normalizeFilesystemPath,
+  parseSlug,
   type LogicalPath,
   type PhysicalPath,
   type Slug,
@@ -191,6 +197,31 @@ export class DuplicateContentIdError extends ContentConflictError {
 }
 
 /**
+ * Thrown when a create or rename would give a SECOND entry a `urlPath` another entry already
+ * holds -- the write-boundary half of the invariant `assertNoDuplicateUrlPaths` enforces at build
+ * time (see url-collision.ts for which shapes count and, just as importantly, which do not).
+ *
+ * Why refuse rather than write: only one of the two entries can be served at that URL, so the
+ * other silently has no route anywhere. Allowing the write trades a clear error now for a page
+ * that quietly does not exist later -- and, because the loser is picked by resolver precedence
+ * rather than by the author, not necessarily the page they were editing.
+ *
+ * A `ContentConflictError` subclass so every existing 409 mapping keeps working; the distinct
+ * type exists so the API can surface THIS message rather than the generic "modified by another
+ * editor", which would send the editor into a reload-and-retry loop that cannot succeed.
+ */
+export class UrlPathConflictError extends ContentConflictError {
+  /** Absolute path of the entry already holding the contested URL. */
+  readonly conflictingPath: string
+
+  constructor(message: string, conflictingPath: string) {
+    super(message)
+    this.name = 'UrlPathConflictError'
+    this.conflictingPath = conflictingPath
+  }
+}
+
+/**
  * Get the default entry type from a collection's entries array.
  * Returns the entry marked as default, or the first one, or undefined if no entries.
  */
@@ -204,6 +235,13 @@ export function getDefaultEntryType(
 /**
  * Validates that a slug doesn't contain slashes or backslashes.
  * Slugs must be simple filenames (last path segment only).
+ *
+ * Deliberately WEAKER than `parseSlug`, and deliberately not merged with it: this runs on every
+ * resolution, reads included (`buildPaths`), so it can only enforce what must be true of content
+ * that already exists on disk -- i.e. path safety. Content whose slug predates CanopyCMS, or was
+ * hand-authored, or came in over git, has to stay readable. `parseSlug`'s stricter URL-addressable
+ * rule is enforced only where a NEW filename is minted (see the [SLUG] guards in `write()` and
+ * `renameEntry()`); applying it here would convert a build-time failure into unreachable data.
  */
 function validateSlug(slug: string): void {
   if (slug.includes('/')) {
@@ -603,6 +641,35 @@ export class ContentStore {
   ): string {
     if (!prePass.existed) return this.createLockKey(schemaItem, slug)
     return prePass.id ? this.idLockKey(prePass.id) : prePass.absolutePath
+  }
+
+  /**
+   * Refuse a create/rename that would give a second entry a `urlPath` another entry already
+   * holds. See url-collision.ts for the two shapes that count, and the legitimate
+   * landing-page-beside-a-collection shape that deliberately does not.
+   *
+   * @param collectionDir Absolute physical directory the entry will live in.
+   * @param slug The entry's slug, as it will be written.
+   */
+  private async assertUrlPathAvailable(collectionDir: string, slug: string): Promise<void> {
+    const claimant = await findUrlPathClaimant({
+      collectionDir,
+      slug,
+      contentRoot: path.resolve(this.root, this.contentRootName),
+    })
+    if (!claimant) return
+
+    const relative = path.relative(this.root, claimant.physicalPath)
+    const message =
+      claimant.kind === 'sibling-collection-index'
+        ? `An entry with slug "${slug}" would share a URL with the index entry of the ` +
+          `"${claimant.name}" collection beside it ("${relative}"), and only one of them could ` +
+          `be served there. Rename this entry, or remove that collection's index entry.`
+        : `An index entry here would share a URL with the "${claimant.name}" entry in the parent ` +
+          `collection ("${relative}"), and only one of them could be served there. Rename that ` +
+          `entry, or give this collection's landing page a different slug.`
+
+    throw new UrlPathConflictError(message, claimant.physicalPath)
   }
 
   /**
@@ -1043,6 +1110,60 @@ export class ContentStore {
             }
           }
 
+          // [URL] Contested-URL guard, create only: an ordinary save cannot contest a URL it
+          // already holds, and blocking it would trap the author in an entry they can no longer
+          // edit.
+          //
+          // Keyed on whether the target file actually EXISTS, not on `inLock.existed`. That flag
+          // is `foundExisting || Boolean(options.existingId)`, and the `existingId` half is a
+          // caller ASSERTION rather than disk truth -- so an id-addressed write recreating an
+          // entry that was deleted out from under it (git, another process) would skip the guard
+          // while in fact creating one.
+          //
+          // The slug is read back off the filename `buildPaths` actually chose, never the
+          // caller's raw argument: `buildPaths` strips leading slashes and lowercases, and for
+          // the entry-type delegation shape substitutes the type name for an empty slug. Checking
+          // the raw value let `write(collection, '/guides', ...)` sail past a `guides` claimant.
+          //
+          // Serialization comes from `withContentWriteExclusion` (the branch-wide, cross-host
+          // content-write lock wrapping this whole reclassification loop), NOT from the per-entry
+          // lock: the two halves of a contested pair live in DIFFERENT collections and so take
+          // different entry-lock keys. The branch lock is what makes check-then-write atomic
+          // against the other half landing concurrently.
+          if (!(await filePathExists(absolutePath))) {
+            const chosenSlug = extractSlugFromFilename(path.basename(absolutePath))
+
+            // [SLUG] Routability guard, create only. `validateSlug` above (in buildPaths) is the
+            // path-traversal check -- it only rejects `/` and `\`, and it has to stay that weak
+            // because it also runs on every READ. So the filename grammar accepts slugs that
+            // `parseSlug` does not (a dot, an underscore, a leading hyphen), and `readByUrlPath`
+            // runs every URL candidate through `parseSlug` before trying a read -- meaning such
+            // an entry writes fine, builds fine, gets a `generateStaticParams` entry and a
+            // sitemap `<loc>`, and then 404s on every actual visit. `assertRoutableSlugs`
+            // (static/index.ts) now fails the whole production build over it.
+            //
+            // Refuse at the moment the unroutable entry is CREATED, so the failure lands on the
+            // caller that caused it rather than on whoever builds next. Create-only, keyed on the
+            // target file not existing, for exactly the reason the [URL] guard below is: content
+            // that already has a non-conforming slug (hand-authored, imported, or predating this
+            // guard) must stay editable -- and must stay renameable, which is the only way out.
+            // Tightening the read path instead would turn a red build into unreachable data.
+            //
+            // Checked against the slug `buildPaths` actually chose, not the caller's raw
+            // argument: buildPaths lowercases, strips leading slashes, and substitutes the entry
+            // type's name for an empty slug (the singleton shape, e.g. write('content/home', '')).
+            const routable = parseSlug(chosenSlug)
+            if (!routable.ok) {
+              throw new ContentStoreError(
+                `Cannot create entry "${chosenSlug}": ${routable.error}. An entry whose slug is ` +
+                  'not addressable as a URL segment would build and then 404 on every visit.',
+                'VALIDATION',
+              )
+            }
+
+            await this.assertUrlPathAvailable(path.dirname(absolutePath), chosenSlug)
+          }
+
           await fs.mkdir(path.dirname(absolutePath), { recursive: true })
 
           // OCC: undefined means no opinion (skip entirely, back-compat blind
@@ -1119,14 +1240,36 @@ export class ContentStore {
             }
           }
 
+          // Comment preservation: re-serialise onto the file's OWN parsed document rather than
+          // a fresh one, so nodes the payload did not change -- and the comments attached to
+          // them -- survive the write. Without this every editor save silently deleted every
+          // comment in the file (JSON has no comment syntax, so it is unaffected and skips the
+          // read). See utils/content-serialize.ts.
+          //
+          // This makes the write a genuine read-modify-write of the content file, so WHERE the
+          // read happens matters: it is inside withLock(lockKey), inside
+          // withContentWriteExclusion ([SYNC-C1]), and after the expectedVersion stat above --
+          // so the bytes read here are the bytes that OCC check validated, and no rebase can be
+          // running against this branch. Do not hoist it out of the critical section.
+          //
+          // INVARIANT, and the one case that does NOT preserve comments: this reads the path
+          // being WRITTEN. A relocating write -- one where the ID resolves to a different
+          // relativePath, so the block below unlinks `staleOldAbsPath` -- finds nothing at the
+          // new path and falls back to a plain stringify, losing the old file's comments. Latent
+          // today: the editor renames through renameEntry(), which link()s the bytes across
+          // intact, and no caller passes `existingId`. If a relocating write ever becomes
+          // reachable, read the ID's current path here instead of `absolutePath`.
+          const existingRaw =
+            input.format === 'json' ? undefined : await readFileIfExists(absolutePath)
+
           // Serialize content string
           let content: string
           if (input.format === 'json') {
             content = `${JSON.stringify(input.data ?? {}, null, 2)}\n`
           } else if (input.format === 'yaml') {
-            content = yamlStringify(input.data ?? {})
+            content = serializeYaml(input.data ?? {}, existingRaw)
           } else {
-            content = matter.stringify(input.body, input.data ?? {})
+            content = serializeFrontmatter(input.body, input.data ?? {}, existingRaw)
           }
 
           await atomicWriteFile(absolutePath, content)
@@ -1401,7 +1544,7 @@ export class ContentStore {
     await this.idIndex()
     const collection = this.assertCollection(collectionPath)
 
-    // Validate new slug format (Slug branded type guarantees lowercase alphanumeric+hyphens via parseSlug)
+    // Path-traversal check (rejects separators only).
     validateSlug(newSlug)
     const safeNewSlug = newSlug.replace(/^\/+/, '')
     if (!safeNewSlug) {
@@ -1411,6 +1554,25 @@ export class ContentStore {
     // If slugs are the same, no-op
     if (currentSlug === safeNewSlug) {
       return { newPath: `${collectionPath}/${currentSlug}` as LogicalPath }
+    }
+
+    // [SLUG] Routability check, run here rather than trusted from the caller. The `Slug` branded
+    // type does NOT guarantee it: `ContentStore.resolvePath` casts a raw path segment to `Slug`
+    // with only `.toLowerCase()`, and tests/callers reach for `unsafeAsSlug`. The API's
+    // `slugSchema` does run `parseSlug` on `newSlug`, but that is one caller of an exported
+    // method -- and a rename mints a new filename, so it is a write that can create an
+    // unroutable entry just as a create can. See write()'s [SLUG] guard for what goes wrong.
+    //
+    // Deliberately AFTER the no-op short-circuit above: a rename to the slug the entry already
+    // has mints nothing, so refusing it would only take an existing non-conforming entry and
+    // make one more operation on it fail, for no gain.
+    const routable = parseSlug(safeNewSlug)
+    if (!routable.ok) {
+      throw new ContentStoreError(
+        `Cannot rename to "${safeNewSlug}": ${routable.error}. An entry whose slug is not ` +
+          'addressable as a URL segment would build and then 404 on every visit.',
+        'VALIDATION',
+      )
     }
 
     // Pre-pass: classify via a directory scan (local ground truth, not the
@@ -1515,6 +1677,17 @@ export class ContentStore {
               if (err instanceof ContentStoreError) throw err
               // Ignore filesystem errors (e.g. ENOENT if parent dir doesn't exist)
             }
+
+            // [URL] Contested-URL guard. A rename moves the entry to a NEW url, so the same
+            // check a create gets applies here -- including the index direction, since renaming
+            // an entry TO `index` is how an existing collection acquires a landing page.
+            //
+            // Runs AFTER the same-slug scan above, deliberately. In an already-contested tree
+            // both refusals apply, and the same-slug one is the more immediate and more
+            // actionable of the two -- reporting the URL conflict first sent the author to fix
+            // the other claimant, only to hit the same-slug refusal on the retry. Still before
+            // link(), so either refusal leaves the tree untouched.
+            await this.assertUrlPathAvailable(parentDir, safeNewSlug)
 
             // Use link()+unlink() instead of rename() so a concurrent cross-process rename to the
             // exact same destination path fails with EEXIST rather than silently overwriting.
@@ -1701,15 +1874,26 @@ export class ContentStore {
       const value = data[field.name]
 
       if (field.type === 'reference') {
+        // Whether this reference EMBEDS its target (wants the target's body) or merely LINKS
+        // to it is a property of the field, declared once in the schema -- not of the call,
+        // which routinely contains both kinds at once. See ReferenceFieldConfig.includeBody.
+        const includeBody = (field as ReferenceFieldConfig).includeBody === true
         // Single reference
         if (typeof value === 'string' && value) {
-          resolved[field.name] = await this.resolveSingleReference(value, idIndex, cache)
+          resolved[field.name] = await this.resolveSingleReference(
+            value,
+            idIndex,
+            includeBody,
+            cache,
+          )
         }
         // Array of references (list: true)
         else if (field.list && Array.isArray(value)) {
           resolved[field.name] = await Promise.all(
             value.map((id) =>
-              typeof id === 'string' ? this.resolveSingleReference(id, idIndex, cache) : null,
+              typeof id === 'string'
+                ? this.resolveSingleReference(id, idIndex, includeBody, cache)
+                : null,
             ),
           )
         }
@@ -1791,9 +1975,13 @@ export class ContentStore {
    * JSON target is ~0.8x, i.e. cloning is marginally SLOWER than reparsing it. So the win is
    * large in the case this exists for and roughly a wash at the pathological end, never a
    * blow-up. Two things keep the bad end narrow: an md/mdx target resolves to its FRONTMATTER
-   * only (`read()` puts the body on `doc.body`, which is not spread in
-   * `resolveSingleReferenceOnce`), so body size is irrelevant no matter how long the document
-   * — only a genuinely huge JSON/YAML target reaches the wash. And in the deployment this
+   * only *unless the field sets `includeBody`* (`read()` puts the body on `doc.body`, which
+   * `resolveSingleReferenceOnce` spreads in only for an embedding field), so by default body
+   * size is irrelevant no matter how long the document and only a genuinely huge JSON/YAML
+   * target reaches the wash. **`includeBody: true` is the case that CAN reach it on markdown**:
+   * the body then sits inside the memoized object and is cloned once per referencing entry, so
+   * a long document embedded by many pages pays that repeatedly — the reason `includeBody`
+   * exists as an opt-in per field rather than as resolution's default. And in the deployment this
    * targets, content lives on EFS/NFS where the syscall the memo removes dominates parse and
    * clone alike, which the local-disk numbers above understate badly. Correctness is the
    * reason for the copy regardless; the numbers are here so nobody has to re-derive them
@@ -1802,17 +1990,23 @@ export class ContentStore {
   private resolveSingleReference(
     id: string,
     idIndex: ContentIdIndex,
+    includeBody: boolean,
     cache?: ReferenceResolveCache,
   ): Promise<Record<string, unknown> | null> {
-    if (!cache) return this.resolveSingleReferenceUncached(id, idIndex)
-    let pending = cache.get(id)
+    if (!cache) return this.resolveSingleReferenceUncached(id, idIndex, includeBody)
+    // The key carries `includeBody`, not just the id: two fields can reference the SAME target
+    // with different settings, and sharing one entry between them would make the shape depend
+    // on which field the walk reached first -- the traversal-order nondeterminism the
+    // per-occurrence copy already exists to prevent.
+    const key = includeBody ? `${id}:body` : id
+    let pending = cache.get(key)
     if (!pending) {
       // Store the in-flight promise, and do it with no `await` in between: the whole point is
       // that concurrent lookups from one Promise.all batch find it and collapse onto a single
       // read. Memoizing the promise also keeps the self-healing retry below shared rather than
       // repeated — see ReferenceResolveCache for why misses are cached too.
-      pending = this.resolveSingleReferenceUncached(id, idIndex)
-      cache.set(id, pending)
+      pending = this.resolveSingleReferenceUncached(id, idIndex, includeBody)
+      cache.set(key, pending)
     }
     // The cached promise always has this handler attached, so it is never an unhandled
     // rejection; entry data is plain parsed JSON/YAML/frontmatter, so it is always cloneable
@@ -1844,21 +2038,23 @@ export class ContentStore {
   private async resolveSingleReferenceUncached(
     id: string,
     idIndex: ContentIdIndex,
+    includeBody: boolean,
   ): Promise<Record<string, unknown> | null> {
-    const first = await this.resolveSingleReferenceOnce(id, idIndex)
+    const first = await this.resolveSingleReferenceOnce(id, idIndex, includeBody)
     if (first !== STALE_LOOKUP) return first
     // Force a rebuild (throttled). Even when this caller loses the throttle,
     // retry against the live index: a sibling lookup in the same batch may have
     // won it and invalidated/rebuilt (idIndex() dedupes in-flight builds), so
     // every miss in a Promise.all batch heals, not just the first.
     await this.refreshIndexForSuspiciousLookup()
-    const second = await this.resolveSingleReferenceOnce(id, await this.idIndex())
+    const second = await this.resolveSingleReferenceOnce(id, await this.idIndex(), includeBody)
     return second === STALE_LOOKUP ? null : second
   }
 
   private async resolveSingleReferenceOnce(
     id: string,
     idIndex: ContentIdIndex,
+    includeBody: boolean,
   ): Promise<Record<string, unknown> | null | typeof STALE_LOOKUP> {
     try {
       const location = idIndex.findById(id)
@@ -1873,12 +2069,44 @@ export class ContentStore {
         resolveReferences: false,
       })
 
-      return {
-        id,
-        slug: location.slug,
-        collection: location.collection,
-        ...doc.data,
-      }
+      // `urlPath` is what makes a resolved reference linkable. Without it, a page rendering
+      // "see also: <Target>" as a real anchor had no way to get an href from the resolution
+      // it had already paid for — one adopter ran a SECOND full listEntries pass over the
+      // whole tree purely to build a contentId -> url table, and set `resolveReferences:
+      // false` on pages where paying for both was worse than hand-rolling it.
+      //
+      // Deliberately `computeEntryUrl` (utils/entry-url.ts), the same forward
+      // collection+slug -> url rule `listEntries` publishes as `item.urlPath` and
+      // `entry-link-resolver.ts` already uses for `entry:ID` links — NOT the reverse
+      // url -> entry resolver in url-path-resolver.ts. The two agree today (the reverse
+      // resolver was taught to skip its direct-entry candidate for a literal `index` slug,
+      // precisely so it stops answering at URLs this rule never emits — see
+      // .claude/future-tasks/resolved/url-resolver-index-entry-extra-url.md), but the
+      // direction still matters: this is the surface that DEFINES an entry's URL, and
+      // sourcing it from the resolver that consumes that definition would invert the
+      // dependency and let any future divergence propagate into every resolved reference.
+      //
+      // The assembly itself — data, then the embedded body, then the reserved metadata — is
+      // `buildResolvedReference`'s job rather than this function's, because the editor's
+      // live-preview endpoint (api/resolve-references.ts) builds the same object and the two
+      // had already drifted. That doc comment carries the reasoning for the ordering.
+      //
+      // `'body' in doc` is what narrows the ContentDocument union to its markdown variant, so
+      // `doc.body`/`doc.bodyFieldName` are reachable at all — a type guard, not a redundant
+      // runtime check. Only a field that asked to EMBED its target passes a body at all.
+      const bodyForEmbed =
+        includeBody && 'body' in doc ? { fieldName: doc.bodyFieldName, value: doc.body } : undefined
+
+      return buildResolvedReference(
+        doc.data,
+        {
+          id,
+          slug: location.slug,
+          collection: location.collection,
+          urlPath: computeEntryUrl(location.collection, location.slug, this.contentRootName),
+        },
+        bodyForEmbed,
+      )
     } catch (error) {
       // Index hit but the file is gone — the typical symptom of an external
       // rename/delete this store hasn't observed yet.

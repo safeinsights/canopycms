@@ -7,6 +7,7 @@ import {
   ContentStoreError,
   ContentConflictError,
   DuplicateContentIdError,
+  UrlPathConflictError,
   getDefaultEntryType,
   type WriteInput,
 } from '../content-store'
@@ -14,6 +15,7 @@ import type { EntrySchema, EntryTypeConfig, EntryValidationIssue, FlatSchemaItem
 import { defineEndpoint } from './route-builder'
 import { ReferenceValidator } from '../validation/reference-validator'
 import {
+  findUnknownKeys,
   mergeBodyIntoData,
   normalizeReferenceValues,
   validateEntryData,
@@ -21,7 +23,7 @@ import {
 } from '../validation/entry-validator'
 import { validateEntryLinks } from '../validation/entry-link-validator'
 import { branchNameSchema, logicalPathSchema, slugSchema } from './validators'
-import type { Slug, PhysicalPath } from '../paths'
+import { parseSlug, type Slug, type PhysicalPath } from '../paths'
 import type { BranchContextWithSchema } from '../types'
 import { getErrorMessage, isNotFoundError, sanitizeErrorMessage } from '../utils/error'
 import { isDataOnlyFormat } from '../utils/format'
@@ -51,13 +53,12 @@ export type ContentWriteResponse = ApiResponse<{
   body?: string
   /** OCC version token: file mtime after the write. Pass back as `expectedVersion` on next write. */
   version?: number
-  entryLinkWarnings?: Array<{
-    field: string
-    fieldPath: string
-    id: string
-    message: string
-  }>
-  /** Warning-level issues from the adopter's validateEntry hook (save succeeded). */
+  /**
+   * Warning-level issues surfaced from a successful save: the adopter's `validateEntry`
+   * hook, unknown-schema-key detection, and broken `entry:ID` links in body/markdown
+   * content are all folded into this one channel (see the write handler below) so the
+   * editor has exactly one save-warnings notification to render (useEntryManager.ts).
+   */
   validationWarnings?: EntryValidationIssue[]
 }>
 
@@ -76,6 +77,13 @@ export type ReferenceValidationResponse = ApiResponse<{
 export type RenameEntryResponse = ApiResponse<{
   newPath: string
 }>
+
+/**
+ * How many stale field paths the unknown-key warning names before summarising the rest. The
+ * editor shows warnings in one notification, so this bounds a schema-wide rename to a readable
+ * sentence rather than a wall of paths.
+ */
+const UNKNOWN_KEY_WARNING_LIMIT = 10
 
 export interface WriteContentBody {
   format: 'json' | 'md' | 'mdx' | 'yaml'
@@ -357,6 +365,31 @@ const writeContentHandler = async (
       }
     }
 
+    // [SLUG] Create-only routability check. `writeContentParamsSchema.path` runs
+    // `parseLogicalPath`, which has no charset rule, and `ContentStore.resolvePath` casts the
+    // last segment to `Slug` with only `.toLowerCase()` — so nothing on the write chain applied
+    // `parseSlug` (only `renameEntry`'s `newSlug` did). A create with, say, `my_post` was
+    // accepted, and `assertRoutableSlugs` then failed the adopter's next production build over
+    // an entry that would 404 anyway. `store.write()` enforces this authoritatively inside its
+    // per-entry lock; this is the cheaper, clearer-messaged fast path — without it a create that
+    // is ALSO missing a required field reports the field, never the slug that is the real
+    // problem (same reasoning as the create-intent guard above).
+    //
+    // Create-only on purpose: an entry that already carries a non-conforming slug must stay
+    // saveable and renameable, since renaming it is the only way to fix the build.
+    if (!exists) {
+      const routable = parseSlug(slug)
+      if (!routable.ok) {
+        return {
+          ok: false,
+          status: 400,
+          error:
+            `Cannot create entry "${slug}": ${routable.error}. An entry whose slug is not ` +
+            'addressable as a URL segment would build and then 404 on every visit.',
+        }
+      }
+    }
+
     // SCH-H3: enforce maxItems server-side at the create boundary. The editor
     // only gates its "Add" button; a direct API create could otherwise exceed
     // the cap. Best-effort under concurrency: the count-then-create below is
@@ -422,6 +455,65 @@ const writeContentHandler = async (
   // 'warning' issues are returned alongside the successful write.
   let validationWarnings: EntryValidationIssue[] | undefined
   const validateEntry = ctx.services.config.validateEntry
+  // Collapse resolved reference objects back to bare ID strings before PERSISTING, not just
+  // before validating (the reference validator gets its own normalized copy above).
+  //
+  // The editor round-trips whole documents: its GET reads through `store.read()`, whose
+  // `resolveReferences` defaults to TRUE, so form state holds `{...target data, id, slug,
+  // collection, urlPath}` for every reference field, and a save posts that straight back. Left
+  // unnormalized it lands in the content file verbatim — and because resolution only re-resolves
+  // a `typeof value === 'string'`, every later read passes the frozen snapshot through and every
+  // later save rewrites it. The reference is then permanently severed from its target: renaming
+  // or editing the target changes nothing, silently.
+  //
+  // The mechanism predates reference resolution reaching listings, but `includeBody` makes it
+  // materially worse — the snapshot now carries the target's entire prose — and `urlPath` adds a
+  // value that goes stale the moment the target is renamed. Normalizing here is schema-driven and
+  // idempotent: a payload that already holds ID strings is unchanged.
+  const normalizedData =
+    body.data === undefined ? undefined : normalizeReferenceValues(fields, body.data)
+  //
+  // Computed BEFORE the validateEntry hook and the entry-link scan, not just before the write,
+  // so every consumer of the payload agrees with the bytes that land on disk. Otherwise an
+  // adopter's hook inspecting a reference field saw a resolved object while the file got an ID
+  // string -- and saw it only when the post came from the editor, since a client posting bare
+  // IDs already gave the hook bare IDs. Normalizing first makes the hook's input deterministic
+  // regardless of caller.
+
+  // Keys with no counterpart in the schema. validateEntryData iterates the SCHEMA, so nothing
+  // reported the inverse: a renamed or reshaped field left its old key on disk forever (the
+  // editor round-trips the whole record, so every save rewrote it) and the only symptom was a
+  // component receiving `undefined`. Adopter request log item 29.
+  //
+  // Run against normalizedData -- the shape that will actually be persisted -- so the report
+  // matches the bytes, and so a resolved reference collapsed back to an ID string cannot be
+  // mistaken for anything. A warning, never a rejection: the key is still written (with its
+  // comments, see utils/content-serialize.ts), it is just not editable and nothing reads it.
+  //
+  // ONE issue, not one per key. The editor joins every warning into a single non-auto-closing
+  // notification (useEntryManager.ts), so one-per-key repeated the same explanatory sentence
+  // once per stale key, on every save, for a condition that is permanent until someone edits the
+  // schema. The keys are listed in the message instead, capped so a schema-wide rename cannot
+  // produce an unreadable wall of text. Worded for who can actually act: an editor cannot remove
+  // a key the form does not render, and cannot change the schema.
+  if (normalizedData !== undefined) {
+    const unknownKeys = findUnknownKeys(fields, normalizedData)
+    if (unknownKeys.length > 0) {
+      const shown = unknownKeys.slice(0, UNKNOWN_KEY_WARNING_LIMIT)
+      const overflow = unknownKeys.length - shown.length
+      const list = overflow > 0 ? `${shown.join(', ')} (and ${overflow} more)` : shown.join(', ')
+      validationWarnings = [
+        {
+          level: 'warning',
+          message:
+            `Saved. ${unknownKeys.length === 1 ? 'One field is' : `${unknownKeys.length} fields are`} ` +
+            `not part of this entry type’s schema: ${list}. They are kept in the file, but nothing ` +
+            `reads them — ask a developer to add them to the schema or remove them from the content.`,
+        },
+      ]
+    }
+  }
+
   if (validateEntry) {
     let issues: EntryValidationIssue[]
     try {
@@ -430,7 +522,7 @@ const writeContentHandler = async (
         branch: params.branch,
         ...(params.entryType ? { entryType: params.entryType } : {}),
         format: body.format,
-        data: body.data ?? {},
+        data: normalizedData ?? {},
         body: body.body,
       })
     } catch (err) {
@@ -453,20 +545,22 @@ const writeContentHandler = async (
           .join('; '),
       }
     }
+    // Appended, not assigned: the unknown-key scan above may already have found some, and the
+    // editor shows the channel as one notification.
     const warnings = issues.filter((issue) => issue.level === 'warning')
-    if (warnings.length > 0) validationWarnings = warnings
+    if (warnings.length > 0) validationWarnings = [...(validationWarnings ?? []), ...warnings]
   }
 
   try {
     const writeInput: WriteInput = isDataOnlyFormat(body.format)
       ? {
           format: body.format as 'json' | 'yaml',
-          data: body.data ?? {},
+          data: normalizedData ?? {},
           expectedVersion: body.expectedVersion,
         }
       : {
           format: body.format as 'md' | 'mdx',
-          data: body.data,
+          data: normalizedData,
           body: body.body ?? '',
           expectedVersion: body.expectedVersion,
         }
@@ -477,13 +571,23 @@ const writeContentHandler = async (
     const result = await store.write(schemaItem.logicalPath, slug, writeInput, entryTypeName)
 
     // Validate entry links in body content (warnings only, don't block save).
-    // Reuses the entry-type fields resolved above for schema validation.
+    // Reuses the entry-type fields resolved above for schema validation. Folded into
+    // `validationWarnings` (not a separate `entryLinkWarnings` field) so the editor's one
+    // save-warnings notification (useEntryManager.ts) is the single place any save-time
+    // warning surfaces -- a broken `entry:ID` link used to be computed and returned here
+    // with no consumer anywhere in the editor, so it was silently discarded.
     const idIndex = await store.idIndex()
-    const linkValidation = validateEntryLinks(body.data ?? {}, fields, idIndex, body.body)
-    const entryLinkWarnings =
-      linkValidation.warnings.length > 0 ? linkValidation.warnings : undefined
+    const linkValidation = validateEntryLinks(normalizedData ?? {}, fields, idIndex, body.body)
+    if (linkValidation.warnings.length > 0) {
+      const linkWarnings: EntryValidationIssue[] = linkValidation.warnings.map((warning) => ({
+        level: 'warning',
+        message: warning.message,
+        fieldPath: warning.fieldPath,
+      }))
+      validationWarnings = [...(validationWarnings ?? []), ...linkWarnings]
+    }
 
-    return { ok: true, status: 200, data: { ...result, entryLinkWarnings, validationWarnings } }
+    return { ok: true, status: 200, data: { ...result, validationWarnings } }
   } catch (err) {
     if (err instanceof ContentConflictError) {
       // [SYNC-C1] Not an editor-vs-editor collision at all: the branch's
@@ -503,6 +607,17 @@ const writeContentHandler = async (
       // to reload and retry, which cannot help and would have them hammering
       // a save that stays refused until an admin runs repair-content-duplicates.
       if (err instanceof DuplicateContentIdError) {
+        return { ok: false, status: 409, error: err.message }
+      }
+      // [URL] Also not an editor-vs-editor collision, and critically NOT the
+      // same-slug case the branch below reports: no entry with this slug
+      // exists in this collection (the early `exists` check passed). What
+      // exists is a DIFFERENT entry claiming the same URL -- a sibling
+      // collection's index entry, or the parent entry this index entry would
+      // collide with. Falling through would tell the editor to look for an
+      // entry that is not there, and discard the one message that names the
+      // actual offender and what to do about it.
+      if (err instanceof UrlPathConflictError) {
         return { ok: false, status: 409, error: err.message }
       }
       // The early `exists` short-circuit above catches this in the common
@@ -675,13 +790,16 @@ const renameEntryHandler = async (
     // [SYNC-C1] The rename was refused because the branch is mid-rebase, not
     // because the request was bad -- 409 + retry, never a 400.
     if (err instanceof ContentConflictError) {
+      // [URL] A contested-URL refusal must carry its own message. The generic
+      // one below tells the editor to reload and retry, which cannot succeed
+      // here -- the rename stays refused until they pick a different slug or
+      // remove the other claimant -- which is exactly the loop
+      // UrlPathConflictError's doc comment exists to prevent.
+      const passThrough = err instanceof BranchSyncingError || err instanceof UrlPathConflictError
       return {
         ok: false,
         status: 409,
-        error:
-          err instanceof BranchSyncingError
-            ? err.message
-            : 'Content conflict: entry was modified by another editor',
+        error: passThrough ? err.message : 'Content conflict: entry was modified by another editor',
       }
     }
     // C2: same distinction as writeContentHandler above - a ContentStoreError

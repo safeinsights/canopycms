@@ -8,6 +8,7 @@ import {
   type Slug,
 } from './paths'
 import { trimSlashes } from './paths/normalize'
+import { isIndexSlug } from './utils/entry-url'
 import { type OperatingMode } from './operating-mode'
 import type { CanopyServices } from './services'
 import type { BranchContext } from './types'
@@ -184,8 +185,21 @@ export const createContentReader = (options: ContentReaderOptions): ContentReade
 
   // Build preview paths using simple path construction
   const contentRoot = trimSlashes(services.config.contentRoot ?? 'content')
+  // The `val === contentRoot` branch matters as much as the prefix one: a root-level entry's
+  // collectionPath IS the content root, which does not start with `${contentRoot}/`, so without
+  // it the root index reported `path: '/content'` (and a root entry `/content/about`) -- paths
+  // that resolve to nothing. `computeEntryUrl` has always had both branches; this had one.
+  //
+  // Both branches stay guarded on `contentRoot` so an empty one passes the value through
+  // unchanged, exactly as `computeEntryUrl` does. Unreachable today (`contentRootSchema` is
+  // `relativePathSchema.default('content')` with `.min(1)`), but a blanket short-circuit would
+  // be the WRONG answer if it ever were reachable -- it would flatten every entry to root.
   const stripRoot = (val: string) =>
-    contentRoot && val.startsWith(`${contentRoot}/`) ? val.slice(contentRoot.length + 1) : val
+    contentRoot && val === contentRoot
+      ? ''
+      : contentRoot && val.startsWith(`${contentRoot}/`)
+        ? val.slice(contentRoot.length + 1)
+        : val
 
   const buildEntryPath = (opts: {
     collectionPath: LogicalPath
@@ -201,7 +215,13 @@ export const createContentReader = (options: ContentReaderOptions): ContentReade
         ? `${url}${url.includes('?') ? '&' : '?'}branch=${encodeURIComponent(opts.branch)}`
         : url
     const trimmed = base.endsWith('/') ? base.slice(0, -1) : base
-    const encodedSlug = encodeSlug(opts.slug)
+    // An index entry's URL is its COLLECTION's path. Without this collapse `path` handed back
+    // `/docs/index` for an entry advertised at `/docs` -- `resolveUrlPathCandidates`
+    // deliberately does not resolve the former, so a caller linking `path` linked to a 404.
+    // Same index decision as computeEntryUrl/listEntries/buildPreviewSrc, through the same
+    // predicate. NOTE this builder still keeps its own content-root strip and its own encoding
+    // rather than delegating wholesale -- see .claude/future-tasks/default-build-path-url-rule-copy.md.
+    const encodedSlug = isIndexSlug(opts.slug) ? '' : encodeSlug(opts.slug)
     const url = encodedSlug ? `${trimmed}/${encodedSlug}` : trimmed || '/'
     return appendBranch(url)
   }

@@ -67,6 +67,15 @@ vi.mock('../content-store', () => {
         )
       }
     },
+    // [URL] Same reasoning again: a real ContentConflictError subclass so the
+    // handler's instanceof chain behaves as it does in production.
+    UrlPathConflictError: class UrlPathConflictError extends MockContentConflictError {
+      readonly conflictingPath: string
+      constructor(message: string, conflictingPath: string) {
+        super(message)
+        this.conflictingPath = conflictingPath
+      }
+    },
     getDefaultEntryType: (entries: Array<{ default?: boolean }> | undefined) =>
       entries && entries.length > 0 ? entries.find((e) => e.default) || entries[0] : undefined,
   }
@@ -428,6 +437,52 @@ describe('content api', () => {
       }
     })
 
+    it('[URL] surfaces the contested-URL refusal, NOT the false "slug already exists"', async () => {
+      // The create path's fallback for `expectedVersion: null` reports that an entry with this
+      // slug already exists. For a URL conflict that is factually WRONG -- no entry with this
+      // slug is in this collection, which is why the handler's early `exists` check passed. The
+      // offender is a different entry claiming the same URL, and only this message names it.
+      const ctx = allowedCtx()
+      const { ContentStore, UrlPathConflictError } = await import('../content-store')
+
+      const urlError = new UrlPathConflictError(
+        'An entry with slug "guides" would share a URL with the index entry of the "guides" ' +
+          'collection beside it ("content/posts/guides/doc.index.aB3cD4eF5gH6.json").',
+        'content/posts/guides/doc.index.aB3cD4eF5gH6.json',
+      )
+      const mockStore = {
+        resolvePath: vi.fn().mockReturnValue({
+          schemaItem: { logicalPath: 'content/posts', type: 'collection', entries: [] },
+          slug: 'guides',
+        }),
+        resolveDocumentPath: vi.fn().mockReturnValue({ relativePath: 'content/posts/guides' }),
+        write: vi.fn().mockRejectedValue(urlError),
+        idIndex: vi.fn().mockResolvedValue({ findById: vi.fn().mockReturnValue(null) }),
+        documentExists: vi.fn().mockResolvedValue(false),
+        getExistingEntryType: vi.fn().mockResolvedValue(undefined),
+        countEntriesOfType: vi.fn().mockResolvedValue(0),
+      }
+      vi.mocked(ContentStore).mockImplementationOnce(function () {
+        return mockStore as unknown as InstanceType<typeof ContentStore>
+      })
+
+      const res = await writeContent(
+        ctx,
+        { user: { type: 'authenticated', userId: 'u1', groups: [] } },
+        { branch: unsafeAsBranchName('feature/x'), path: unsafeAsLogicalPath('posts/guides') },
+        // expectedVersion: null is create intent -- the exact case whose fallback lies.
+        { format: 'json', data: {}, expectedVersion: null },
+      )
+      expect(res.ok).toBe(false)
+      expect(res.status).toBe(409)
+      if (!res.ok) {
+        expect(res.error).toBe(urlError.message)
+        expect(res.error).toContain('share a URL')
+        expect(res.error).not.toContain('already exists')
+        expect(res.error).not.toContain('modified by another editor')
+      }
+    })
+
     it('[F1] surfaces the duplicate-content-ID refusal instead of the generic conflict message', async () => {
       const ctx = allowedCtx()
       const { ContentStore, DuplicateContentIdError } = await import('../content-store')
@@ -587,6 +642,47 @@ describe('content api', () => {
       expect(res.ok).toBe(true)
       if (res.ok && res.data) {
         expect(res.data.newPath).toBe('content/posts/new-slug')
+      }
+    })
+
+    it('[URL] surfaces the contested-URL refusal instead of "modified by another editor"', async () => {
+      // The worst of the three sites before this was wired: a contested-URL rename was flattened
+      // into the generic conflict message, whose advice is "reload and retry" -- a loop that
+      // cannot succeed, since the rename stays refused until the author picks a different slug
+      // or removes the other claimant. That loop is the exact thing UrlPathConflictError's doc
+      // comment says the distinct type exists to prevent.
+      const ctx = allowedCtx()
+      const { ContentStore, UrlPathConflictError } = await import('../content-store')
+
+      const urlError = new UrlPathConflictError(
+        'An entry with slug "guides" would share a URL with the index entry of the "guides" ' +
+          'collection beside it ("content/posts/guides/doc.index.aB3cD4eF5gH6.json").',
+        'content/posts/guides/doc.index.aB3cD4eF5gH6.json',
+      )
+      vi.mocked(ContentStore).mockImplementationOnce(function () {
+        return {
+          resolvePath: vi.fn().mockReturnValue({
+            schemaItem: { logicalPath: 'content/posts', type: 'collection', entries: [] },
+            slug: 'old-slug',
+          }),
+          resolveDocumentPath: vi
+            .fn()
+            .mockResolvedValue({ relativePath: 'content/posts/old-slug' }),
+          renameEntry: vi.fn().mockRejectedValue(urlError),
+        } as unknown as InstanceType<typeof ContentStore>
+      })
+
+      const res = await renameEntry(
+        ctx,
+        { user: { type: 'authenticated', userId: 'u1', groups: [] } },
+        { branch: unsafeAsBranchName('feature/x'), path: unsafeAsLogicalPath('posts/old-slug') },
+        { newSlug: unsafeAsSlug('guides') },
+      )
+      expect(res.ok).toBe(false)
+      expect(res.status).toBe(409)
+      if (!res.ok) {
+        expect(res.error).toBe(urlError.message)
+        expect(res.error).not.toContain('modified by another editor')
       }
     })
 
@@ -869,6 +965,97 @@ describe('content api', () => {
       return { writeSpy }
     }
 
+    it('persists reference fields as bare IDs when the editor posts resolved objects', async () => {
+      // The editor's own GET reads through `store.read()`, whose `resolveReferences` defaults
+      // to TRUE, so its form state holds fully resolved objects and a save posts them straight
+      // back. Unnormalized, that blob landed in the content file verbatim — and since
+      // resolution only re-resolves a `typeof value === 'string'`, every later read passed the
+      // frozen snapshot through, permanently severing the reference from its target.
+      const ctx = allowedCtx()
+      const { writeSpy } = await mockStoreOnce({ knownIds: [AUTHOR_ID] })
+      const res = await writeContent(ctx, writeReq, writeParams, {
+        format: 'json',
+        data: {
+          title: 'Hello',
+          // Exactly what `buildResolvedReference` returns, including an embedded body.
+          author: {
+            name: 'Alice',
+            body: 'THE WHOLE TARGET DOCUMENT',
+            id: AUTHOR_ID,
+            slug: 'alice',
+            collection: 'content/authors',
+            urlPath: '/authors/alice',
+          },
+        },
+      })
+
+      expect(res.ok).toBe(true)
+      expect(writeSpy).toHaveBeenCalledTimes(1)
+      expect(writeSpy.mock.calls[0][2].data.author).toBe(AUTHOR_ID)
+    })
+
+    it('normalizes a resolved reference nested inside a block template', async () => {
+      const ctx = allowedCtx()
+      const { writeSpy } = await mockStoreOnce({ knownIds: [AUTHOR_ID] })
+      const res = await writeContent(ctx, writeReq, writeParams, {
+        format: 'json',
+        data: {
+          title: 'Hello',
+          author: AUTHOR_ID,
+          blocks: [
+            {
+              template: 'quote',
+              value: {
+                text: 'Quoted',
+                source: { name: 'Alice', id: AUTHOR_ID, slug: 'alice', urlPath: '/authors/alice' },
+              },
+            },
+          ],
+        },
+      })
+
+      expect(res.ok).toBe(true)
+      const written = writeSpy.mock.calls[0][2].data as Record<string, unknown>
+      const blocks = written.blocks as Array<{ value: { source: unknown } }>
+      expect(blocks[0].value.source).toBe(AUTHOR_ID)
+    })
+
+    it('leaves an already-bare reference ID untouched (normalization is idempotent)', async () => {
+      const ctx = allowedCtx()
+      const { writeSpy } = await mockStoreOnce({ knownIds: [AUTHOR_ID] })
+      const res = await writeContent(ctx, writeReq, writeParams, {
+        format: 'json',
+        data: { title: 'Hello', author: AUTHOR_ID },
+      })
+
+      expect(res.ok).toBe(true)
+      expect(writeSpy.mock.calls[0][2].data.author).toBe(AUTHOR_ID)
+    })
+
+    it('shows the validateEntry hook the shape that will be persisted', async () => {
+      // The hook validates what is being saved, so it must see what is saved. Before the
+      // normalization moved above it, an adopter hook inspecting a reference field saw a
+      // resolved object while the file received an ID string -- and saw it only when the post
+      // came from the editor, since any client posting bare IDs already gave the hook bare IDs.
+      const ctx = allowedCtx()
+      const hook = vi.fn().mockResolvedValue([])
+      ctx.services.config.validateEntry = hook
+      const { writeSpy } = await mockStoreOnce({ knownIds: [AUTHOR_ID] })
+
+      const res = await writeContent(ctx, writeReq, writeParams, {
+        format: 'json',
+        data: {
+          title: 'Hello',
+          author: { name: 'Alice', id: AUTHOR_ID, slug: 'alice', urlPath: '/authors/alice' },
+        },
+      })
+
+      expect(res.ok).toBe(true)
+      expect(hook).toHaveBeenCalledTimes(1)
+      expect(hook.mock.calls[0][0].data.author).toBe(AUTHOR_ID)
+      expect(writeSpy.mock.calls[0][2].data.author).toBe(AUTHOR_ID)
+    })
+
     it('rejects a save missing a required field with a per-field error', async () => {
       const ctx = allowedCtx()
       const { writeSpy } = await mockStoreOnce({ knownIds: [AUTHOR_ID] })
@@ -1136,5 +1323,243 @@ describe('content api', () => {
       expect(res.ok).toBe(true)
       expect(writeSpy).toHaveBeenCalled()
     })
+  })
+})
+
+/**
+ * `validateEntryData` iterates the schema, so nothing ever reported the inverse: a key in the
+ * data with no schema counterpart. Renaming or reshaping a field left the old key on disk
+ * forever — the editor round-trips the whole record — and the only symptom was a component
+ * receiving `undefined`. Adopter request log item 29.
+ */
+describe('unknown content keys', () => {
+  const writeReq = { user: { type: 'authenticated' as const, userId: 'u1', groups: [] } }
+  const writeParams = {
+    branch: unsafeAsBranchName('feature/x'),
+    path: unsafeAsLogicalPath('posts/hello'),
+  }
+
+  const storeWithSchema = async (fields: unknown[]) => {
+    const { ContentStore } = await import('../content-store')
+    vi.mocked(ContentStore).mockImplementationOnce(function () {
+      return {
+        resolvePath: vi.fn().mockReturnValue({
+          schemaItem: {
+            logicalPath: 'content/posts',
+            type: 'collection',
+            entries: [{ name: 'post', format: 'json', schema: fields }],
+          },
+          slug: 'hello',
+        }),
+        resolveDocumentPath: vi.fn().mockReturnValue({ relativePath: 'content/posts/hello' }),
+        write: vi.fn().mockResolvedValue({ collection: 'posts', format: 'json', data: {} }),
+        idIndex: vi.fn().mockResolvedValue({ findById: vi.fn().mockReturnValue(null) }),
+        documentExists: vi.fn().mockResolvedValue(true),
+        getExistingEntryType: vi.fn().mockResolvedValue('post'),
+        countEntriesOfType: vi.fn().mockResolvedValue(0),
+        resolveCollectionItem: vi.fn().mockReturnValue(undefined),
+      } as never
+    })
+  }
+
+  it('warns about a stale key but still saves', async () => {
+    await storeWithSchema([{ name: 'title', type: 'string' }])
+    const res = await writeContent(allowedCtx(), writeReq, writeParams, {
+      format: 'json',
+      data: { title: 'hi', subtitle: 'renamed away three releases ago' },
+    })
+
+    expect(res.ok).toBe(true)
+    expect(res.status).toBe(200)
+    // ONE warning naming the keys, not one warning per key: the editor renders them all into a
+    // single non-auto-closing notification.
+    expect(res.data?.validationWarnings).toHaveLength(1)
+    expect(res.data?.validationWarnings?.[0].level).toBe('warning')
+    expect(res.data?.validationWarnings?.[0].message).toContain('subtitle')
+    expect(res.data?.validationWarnings?.[0].message).toContain('schema')
+    expect(res.data?.validationWarnings?.[0].message).toContain('One field is')
+  })
+
+  it('names every stale key in one warning rather than repeating itself', async () => {
+    await storeWithSchema([{ name: 'title', type: 'string' }])
+    const res = await writeContent(allowedCtx(), writeReq, writeParams, {
+      format: 'json',
+      data: { title: 'hi', alpha: 1, beta: 2, gamma: 3 },
+    })
+
+    expect(res.ok).toBe(true)
+    expect(res.data?.validationWarnings).toHaveLength(1)
+    const message = res.data?.validationWarnings?.[0].message ?? ''
+    expect(message).toContain('alpha')
+    expect(message).toContain('beta')
+    expect(message).toContain('gamma')
+    expect(message).toContain('3 fields are')
+    // The explanatory sentence appears once, not once per key.
+    expect(message.split('nothing').length - 1).toBe(1)
+  })
+
+  it('summarises the tail when a schema-wide rename leaves many stale keys', async () => {
+    await storeWithSchema([{ name: 'title', type: 'string' }])
+    const data: Record<string, unknown> = { title: 'hi' }
+    for (let i = 0; i < 25; i++) data[`stale${i}`] = i
+    const res = await writeContent(allowedCtx(), writeReq, writeParams, {
+      format: 'json',
+      data,
+    })
+
+    expect(res.ok).toBe(true)
+    const message = res.data?.validationWarnings?.[0].message ?? ''
+    expect(message).toContain('25 fields are')
+    expect(message).toContain('(and 15 more)')
+    expect(message).not.toContain('stale24')
+  })
+
+  it('reports a nested stale key with its full path', async () => {
+    await storeWithSchema([
+      { name: 'hero', type: 'object', fields: [{ name: 'headline', type: 'string' }] },
+    ])
+    const res = await writeContent(allowedCtx(), writeReq, writeParams, {
+      format: 'json',
+      data: { hero: { headline: 'Hi', kicker: 'stale' } },
+    })
+
+    expect(res.ok).toBe(true)
+    expect(res.data?.validationWarnings?.[0].message).toContain('hero.kicker')
+  })
+
+  it('says nothing when every key matches the schema', async () => {
+    await storeWithSchema([{ name: 'title', type: 'string' }])
+    const res = await writeContent(allowedCtx(), writeReq, writeParams, {
+      format: 'json',
+      data: { title: 'hi' },
+    })
+
+    expect(res.ok).toBe(true)
+    expect(res.data?.validationWarnings).toBeUndefined()
+  })
+
+  it('does not mistake a resolved reference for a set of unknown keys', async () => {
+    // Reads resolve references by default, so the editor posts back
+    // `{ ...target data, id, slug, collection, urlPath }` for a reference field. Two independent
+    // reasons this is clean, and this pins the end-to-end result rather than either one: the scan
+    // runs on the normalized (id-string) shape, AND a schema-driven walk never descends into a
+    // reference value in the first place.
+    const { ContentStore } = await import('../content-store')
+    vi.mocked(ContentStore).mockImplementationOnce(function () {
+      return {
+        resolvePath: vi.fn().mockReturnValue({
+          schemaItem: {
+            logicalPath: 'content/posts',
+            type: 'collection',
+            entries: [
+              {
+                name: 'post',
+                format: 'json',
+                schema: [{ name: 'author', type: 'reference', collections: ['authors'] }],
+              },
+            ],
+          },
+          slug: 'hello',
+        }),
+        resolveDocumentPath: vi.fn().mockReturnValue({ relativePath: 'content/posts/hello' }),
+        write: vi.fn().mockResolvedValue({ collection: 'posts', format: 'json', data: {} }),
+        idIndex: vi.fn().mockResolvedValue({
+          findById: vi.fn().mockReturnValue({
+            type: 'entry',
+            relativePath: 'content/authors/author.jane.5NVkkrB1MJUv.json',
+            collection: 'content/authors',
+            slug: 'jane',
+          }),
+        }),
+        documentExists: vi.fn().mockResolvedValue(true),
+        getExistingEntryType: vi.fn().mockResolvedValue('post'),
+        countEntriesOfType: vi.fn().mockResolvedValue(0),
+        resolveCollectionItem: vi.fn().mockReturnValue({ logicalPath: 'content/authors' }),
+      } as never
+    })
+    const res = await writeContent(allowedCtx(), writeReq, writeParams, {
+      format: 'json',
+      data: {
+        author: {
+          id: '5NVkkrB1MJUv',
+          slug: 'jane',
+          collection: 'content/authors',
+          urlPath: '/authors/jane',
+          name: 'Jane',
+        },
+      },
+    })
+
+    expect(res.ok).toBe(true)
+    expect(res.data?.validationWarnings).toBeUndefined()
+  })
+
+  it('keeps the adopter hook’s own warnings alongside its findings', async () => {
+    await storeWithSchema([{ name: 'title', type: 'string' }])
+    const ctx = allowedCtx()
+    ctx.services.config.validateEntry = () => [{ level: 'warning', message: 'Hook says hi' }]
+
+    const res = await writeContent(ctx, writeReq, writeParams, {
+      format: 'json',
+      data: { title: 'hi', subtitle: 'stale' },
+    })
+
+    expect(res.ok).toBe(true)
+    expect(res.data?.validationWarnings?.map((issue) => issue.message)).toEqual([
+      expect.stringContaining('subtitle'),
+      'Hook says hi',
+    ])
+  })
+})
+
+/**
+ * A broken `entry:ID` link in body/markdown content used to come back as a separate
+ * `entryLinkWarnings` field on the write response with zero consumers anywhere in the editor
+ * (useEntryManager.ts only ever rendered `validationWarnings`) -- so this was the one save-time
+ * warning that was silently discarded. It is now folded into `validationWarnings` so it reaches
+ * the same notification as every other warning.
+ */
+describe('entry link warnings', () => {
+  const writeReq = { user: { type: 'authenticated' as const, userId: 'u1', groups: [] } }
+  const writeParams = {
+    branch: unsafeAsBranchName('feature/x'),
+    path: unsafeAsLogicalPath('posts/hello'),
+  }
+
+  it('folds a broken entry link into validationWarnings instead of a separate discarded field', async () => {
+    // The default mocked ContentStore's idIndex.findById returns null, i.e. "not found".
+    const res = await writeContent(allowedCtx(), writeReq, writeParams, {
+      format: 'mdx',
+      data: {},
+      body: 'See entry:AbCdEfGh1234 for details.',
+    })
+
+    expect(res.ok).toBe(true)
+    expect(res.data?.validationWarnings).toEqual([
+      expect.objectContaining({
+        level: 'warning',
+        fieldPath: 'body',
+        message: expect.stringContaining('entry:AbCdEfGh1234'),
+      }),
+    ])
+    // The dead channel is gone, not merely unused -- nothing should reintroduce it.
+    expect(res.data).not.toHaveProperty('entryLinkWarnings')
+  })
+
+  it('appends the broken-link warning alongside other validation warnings rather than replacing them', async () => {
+    const ctx = allowedCtx()
+    ctx.services.config.validateEntry = () => [{ level: 'warning', message: 'Hook says hi' }]
+
+    const res = await writeContent(ctx, writeReq, writeParams, {
+      format: 'mdx',
+      data: {},
+      body: 'See entry:AbCdEfGh1234 for details.',
+    })
+
+    expect(res.ok).toBe(true)
+    expect(res.data?.validationWarnings?.map((issue) => issue.message)).toEqual([
+      'Hook says hi',
+      expect.stringContaining('entry:AbCdEfGh1234'),
+    ])
   })
 })

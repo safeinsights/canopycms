@@ -31,8 +31,10 @@
 > mtime-based OCC 409 ("modified by another editor") when saving immediately
 > after branch create/switch — which test hits it varies per run and it never
 > reproduces in isolation. Filed as
-> `.claude/future-tasks/e2e-occ-save-race-after-branch-create.md` with the
-> established mechanism and suspects. Other remaining follow-ups: console
+> `.claude/future-tasks/resolved/e2e-occ-save-race-after-branch-create.md` with
+> the established mechanism and suspects. **RESOLVED 2026-07-25**: root cause
+> was client-side (a stale-key bug in `useEntryManager.ts`'s OCC version map),
+> fixed there — see that file for detail. Other remaining follow-ups: console
 > noise (§6), CI gating (§7).
 
 Handoff brief for a follow-up session. Captures why `pnpm test:e2e` currently

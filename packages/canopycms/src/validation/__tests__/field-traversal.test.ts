@@ -517,3 +517,84 @@ describe('inline group transparency', () => {
     expect(refs[0].value).toBe('author-1')
   })
 })
+
+describe('traverseFields onContainer', () => {
+  const schema: FieldConfig[] = [
+    { name: 'title', type: 'string', label: 'Title' },
+    {
+      name: 'hero',
+      type: 'object',
+      label: 'Hero',
+      fields: [{ name: 'headline', type: 'string', label: 'Headline' }],
+    },
+    {
+      name: 'cards',
+      type: 'object',
+      label: 'Cards',
+      list: true,
+      fields: [{ name: 'label', type: 'string', label: 'Label' }],
+    },
+    {
+      name: 'blocks',
+      type: 'block',
+      label: 'Blocks',
+      templates: [{ name: 'quote', fields: [{ name: 'text', type: 'string', label: 'Text' }] }],
+    },
+  ] as FieldConfig[]
+
+  const data = {
+    title: 'Post',
+    hero: { headline: 'Hi' },
+    cards: [{ label: 'One' }, { label: 'Two' }],
+    blocks: [{ template: 'quote', value: { text: 'Quoted' } }],
+  }
+
+  it('fires once per container, at the top level and every nested record', () => {
+    const paths = traverseFields<string>(
+      schema,
+      data,
+      () => [],
+      '',
+      ({ path }) => [path],
+    )
+    expect(paths).toEqual(['', 'hero', 'cards[0]', 'cards[1]', 'blocks[0]'])
+  })
+
+  it('hands each container the fields that govern it', () => {
+    const seen = traverseFields<string>(
+      schema,
+      data,
+      () => [],
+      '',
+      ({ path, fields }) => [`${path || '<root>'}:${fields.map((f) => f.name).join(',')}`],
+    )
+    expect(seen).toContain('<root>:title,hero,cards,blocks')
+    expect(seen).toContain('hero:headline')
+    expect(seen).toContain('blocks[0]:text')
+  })
+
+  it('does not fire for an inline group, which shares its parent record', () => {
+    const grouped: FieldConfig[] = [
+      { name: 'title', type: 'string', label: 'Title' },
+      {
+        name: 'seo',
+        type: 'group',
+        fields: [{ name: 'metaTitle', type: 'string', label: 'Meta title' }],
+      } as FieldConfig,
+    ]
+    const paths = traverseFields<string>(
+      grouped,
+      { title: 'Post', metaTitle: 'Meta' },
+      () => [],
+      '',
+      ({ path }) => [path],
+    )
+    expect(paths).toEqual([''])
+  })
+
+  it('is optional — existing callers are unaffected', () => {
+    const visited = traverseFields<string>(schema, data, ({ path }) => [path])
+    expect(visited).toContain('title')
+    expect(visited).toContain('hero.headline')
+  })
+})

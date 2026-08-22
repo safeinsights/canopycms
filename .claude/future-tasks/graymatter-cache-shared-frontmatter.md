@@ -74,8 +74,8 @@ does its own `fs.readFile` — gray-matter's cache only skips the *parse*, not t
 
 ## Related
 
-- [resolved-references-url.md](resolved-references-url.md) — the other open gap in resolved
-  references.
+- [resolved-reference-shape.md](resolved/resolved-reference-shape.md) — the resolved-reference
+  shape question (`urlPath` + `includeBody`), resolved 2026-08-21.
 - [shared-blocks-listentries-caveat.md](resolved/shared-blocks-listentries-caveat.md) — the
   documentation half of #16.
 

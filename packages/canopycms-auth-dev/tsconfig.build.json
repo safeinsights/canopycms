@@ -11,5 +11,11 @@
     // shipping src/.
     "declarationMap": false,
     "sourceMap": false
-  }
+  },
+  // No exclude existed at all before this — dev-plugin.test.ts compiled straight
+  // into dist/dev-plugin.test.{js,d.ts} and shipped in the published tarball
+  // (not reachable via the package's exports map, but dead weight all the
+  // same). Matches the pattern canopycms-auth-clerk's tsconfig.build.json
+  // already uses.
+  "exclude": ["node_modules", "dist", "**/*.test.ts", "**/*.test.tsx"]
 }

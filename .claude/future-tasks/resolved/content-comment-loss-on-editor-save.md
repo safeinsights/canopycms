@@ -1,8 +1,45 @@
 # Editor saves silently delete every comment in a content file
 
-**Status:** Open. **Priority: P1.** Found 2026-08-20 reviewing the marketing site's
-`int-official-content` branch (PR #80). Not previously filed on either side — it is **not** the
-adopter's #28, which is about CMS *review-thread* comments, a different thing entirely.
+**Status: RESOLVED** 2026-08-21 on branch `fix/content-comment-preservation`, epic
+`adopter-request-intake`. Found 2026-08-20 reviewing the marketing site's `int-official-content`
+branch (PR #80). Not previously filed on either side — it is **not** the adopter's #28, which is
+about CMS *review-thread* comments, a different thing entirely.
+
+## What shipped
+
+`utils/content-serialize.ts` — `serializeYaml` / `serializeFrontmatter`. `ContentStore.write`
+re-serialises onto the file's OWN parsed document rather than a fresh one, so a node whose value
+did not change is left untouched and keeps its comments (and its original quoting/block style).
+md/mdx frontmatter is covered too, as the suggested fix's first option rather than its documented
+limitation. Every fallback — new file, unparseable bytes, no frontmatter — emits the exact
+pre-fix output, so creates are byte-identical to before.
+
+Answers to the two things the fix "must get right":
+
+1. **Removal is explicit.** The reconciler makes the document's key set match `input.data`
+   exactly. Data authority stays with the payload; comments are the only thing inherited from
+   disk. That also settles the interaction with #29 without the writer needing any schema
+   knowledge — see below.
+2. **The #29 interaction resolved as: the writer never decides.** An unknown key present in the
+   payload is carried (with its comments); one absent from the payload is dropped, exactly as
+   before. Whether a surviving key *should* be there is a schema question, answered one layer up
+   by `findUnknownKeys` at the API boundary and by `warnUnknownEntryKeys` at build time — both
+   shipped in the same branch.
+
+Two things found while implementing that were not in the analysis:
+
+- **Sequences align by value, not position.** Index-wise reconciliation would leave a list's
+  comments where they were after a reorder, so `# first card is pinned` would end up describing
+  whatever now sits at index 0. Items are matched by value first and position second, so a
+  comment travels with the content it was written about.
+- **gray-matter's cache made this a two-save bug.** `matter(str)` with no options reads and
+  writes a process-global content-keyed cache, and the object it returns on a HIT has lost
+  `.matter`. Splitting frontmatter through that path preserved comments on a file's FIRST save
+  and silently dropped them on every save after. Passing an options object skips the cache in
+  both directions, which also stops the write path polluting it — the same class of problem as
+  `42aede48`. Covered by a named regression test.
+
+Verified red-before-green: the acceptance tests fail on the pre-fix serialisation and pass after.
 
 ## Problem
 
@@ -48,7 +85,7 @@ while leaving the placeholder content it describes.
 They have not been bitten yet only because the site is pre-launch and edits still come through
 `sync`. Their editorial team is the trigger.
 
-## Suggested fix (the direction chosen 2026-08-20)
+## Suggested fix (the direction chosen 2026-08-20, and taken)
 
 Preserve comments in the package rather than declaring content files comment-hostile.
 

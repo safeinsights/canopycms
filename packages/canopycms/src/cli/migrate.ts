@@ -62,8 +62,11 @@ type MigrateOp =
 /**
  * Normalize a file/directory base name into a slug the whole CMS accepts.
  * Must satisfy parseSlug (/^[a-z0-9][a-z0-9-]*$/) — underscores are NOT allowed:
- * the editor would save them but the public read path (readByUrlPath/read)
- * rejects them, leaving migrated pages unreachable.
+ * the public read path (readByUrlPath/read) rejects them, so a migrated page
+ * carrying one is unreachable and now fails the production build outright
+ * (static/index.ts's assertRoutableSlugs). Migration writes files directly
+ * rather than through the write API, so its [SLUG] create guard does not cover
+ * this — normalizing here is what keeps the migrated tree buildable.
  */
 export function slugifyName(name: string): string {
   const slug = name

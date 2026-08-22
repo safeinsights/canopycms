@@ -138,6 +138,37 @@ describe('createEntrySchemaRegistry', () => {
     ).toThrow('isBody is only valid on markdown or mdx fields')
   })
 
+  it.each(['id', 'slug', 'collection', 'urlPath'])(
+    'throws when the body field is named the reserved key %s',
+    (name) => {
+      // Reference resolution applies these four to a resolved reference AFTER the target's
+      // data, so a plain field of the same name is simply shadowed. The body is the one value
+      // assigned by key rather than spread, which made it the single way around that -- and
+      // since the write boundary recovers a reference's id from `value.id`, a body field named
+      // `id` meant re-saving persisted the prose as the reference. Rejected loudly here rather
+      // than silently dropped at resolution.
+      expect(() =>
+        createEntrySchemaRegistry({
+          postSchema: [
+            { type: 'string', name: 'title' },
+            { type: 'markdown', name, isBody: true },
+          ],
+        }),
+      ).toThrow(/is reserved/)
+    },
+  )
+
+  it('allows a body field with any non-reserved name', () => {
+    expect(() =>
+      createEntrySchemaRegistry({
+        postSchema: [
+          { type: 'string', name: 'title' },
+          { type: 'markdown', name: 'prose', isBody: true },
+        ],
+      }),
+    ).not.toThrow()
+  })
+
   // The 4 field-shape validators are wired in here from ./config/validation —
   // these tests lock in that wiring so a future refactor that drops the calls
   // can't silently pass green.

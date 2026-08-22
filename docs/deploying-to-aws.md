@@ -218,15 +218,17 @@ you hand-edit the stack or the Dockerfile. Two things to know if you do:
 Step 2 scaffolded the CDK app. Install what it needs to run:
 
 ```bash
-npm install --save-dev canopycms-cdk aws-cdk-lib constructs tsx aws-cdk
+npm install --save-dev canopycms canopycms-cdk aws-cdk-lib constructs tsx aws-cdk
 ```
 
-All five are load-bearing: `cdk.json` runs
-`node --import tsx infrastructure/bin/app.ts`, which imports the first three,
-and pinning `aws-cdk` keeps the deploying CLI version reproducible instead of
-whatever `npx` fetches that day. The generated workflow checks for them before
-deploying, so a missing one fails with a named error rather than an
-`ERR_MODULE_NOT_FOUND` several minutes into `cdk deploy`.
+All six are load-bearing: `cdk.json` runs
+`node --import tsx infrastructure/bin/app.ts`, which imports `canopycms-cdk`,
+`aws-cdk-lib` and `constructs` — and `canopycms-cdk` itself peer-depends on
+`canopycms` (its worker re-export) — and pinning `aws-cdk` keeps the deploying
+CLI version reproducible instead of whatever `npx` fetches that day. The
+generated workflow checks for them before deploying, so a missing one fails
+with a named error rather than an `ERR_MODULE_NOT_FOUND` several minutes into
+`cdk deploy`.
 
 ### What to fill in
 
@@ -457,9 +459,13 @@ get their own dedicated log group too, on the same convention.
   every time the spot worker is replaced (including by the rolling update
   described in [Redeploying updates the worker too](#redeploying-updates-the-worker-too)
   below). The Lambdas use their usual per-container-instance streams.
-- **Timestamps**: log events carry ingestion timestamps (the worker doesn't emit
-  its own yet — see
-  [`.claude/future-tasks/worker-log-timestamps.md`](../.claude/future-tasks/worker-log-timestamps.md)).
+- **Timestamps**: the worker emits its own ISO-8601 UTC timestamp (plus a level
+  tag) on every line, via `workerLog`/`workerLogWarn`/`workerLogError` in
+  `packages/canopycms/src/worker/log.ts` — see
+  [`.claude/future-tasks/resolved/worker-log-timestamps.md`](../.claude/future-tasks/resolved/worker-log-timestamps.md)
+  for how CloudWatch's own `multi_line_start_pattern` is keyed on that prefix,
+  which is why all worker code must log through those helpers rather than bare
+  `console.*`.
 - **On-instance file**: `/var/log/canopy-worker/worker.log`, bounded by a
   logrotate policy (10 MB, 5 rotations, compressed). The CloudWatch agent tails
   this file — `journalctl -u canopy-worker` no longer carries the worker's

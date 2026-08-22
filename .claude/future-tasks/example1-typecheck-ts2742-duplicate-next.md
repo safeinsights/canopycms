@@ -1,8 +1,30 @@
 # `apps/example1` typecheck fails: TS2742 on the two `canopycms-next` static helpers
 
-**Status:** Open, small-medium. Found 2026-08-20 while fixing adopter-request-log item
-`#23` (`select` field inference) — entirely unrelated to that change, and confirmed
-present at the unmodified base commit before any edit was made.
+**Status:** Open, small-medium, downgraded to P3-ish (see 2026-08-21 re-check below) — **does not
+currently reproduce**. Found 2026-08-20 while fixing adopter-request-log item `#23` (`select`
+field inference) — entirely unrelated to that change, and confirmed present at the unmodified base
+commit before any edit was made.
+
+**Re-checked 2026-08-21** while building the `apps/example1` CI build gate
+([resolved/example1-next-build-not-in-ci.md](resolved/example1-next-build-not-in-ci.md)), which
+made "does this actually fail typecheck" directly relevant to scoping that work. Answer: **no.**
+`pnpm install --frozen-lockfile` followed by `pnpm typecheck` at the repo root (recursive, the same
+invocation CI runs) passes cleanly for `apps/example1` today, with zero TS2742s. Checked why: both
+`apps/example1/node_modules/next` and `packages/canopycms-next/node_modules/next` are symlinks into
+the SAME pnpm store path — `next@15.5.21` with an identical peer-dependency hash suffix (both pull
+in the same `@babel/core`/`@playwright/test`/`react`/`react-dom` versions) — so pnpm deduplicates
+them to one physical module, and `tsc` never has to name a type by reaching across two distinct
+copies. This answers the file's own "open question" below: it is not a CI-vs-local install-layout
+difference (the file's original guess), it is that the two installs currently happen to resolve
+identically everywhere.
+
+**Why this stays open rather than moving to resolved/:** nothing was fixed, and nothing prevents
+the two `next` installs from re-diverging — a version bump to either package's dependents that
+changes just one side's peer resolution (an unrelated devDependency bump, a canopycms-next-only
+peer range change, etc.) reproduces this with no warning, since neither install is pinned to force
+alignment. If it recurs, prefer fix option 2 below (re-export the surfaced Next types from
+`canopycms-next`) over option 1 — it is the one that survives either install layout, not just
+today's.
 
 ## What happens
 

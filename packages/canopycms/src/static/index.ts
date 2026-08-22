@@ -1,7 +1,14 @@
 import type { CanopyBuildContext } from '../context'
 import { isBuildMode } from '../build-mode'
 import type { ListEntriesItem } from '../content-listing'
-import { validateEntryData, type EntryFieldError } from '../validation/entry-validator'
+import {
+  findUnknownKeys,
+  validateEntryData,
+  type EntryFieldError,
+} from '../validation/entry-validator'
+import { findBodyFieldName } from '../utils/body-field'
+import { isDataOnlyFormat } from '../utils/format'
+import { parseSlug } from '../paths'
 
 /**
  * Framework-agnostic helpers for static-site generation. These produce neutral data structures
@@ -121,7 +128,27 @@ async function enumerateRoutableEntries<T>(
   // fresh create-scaffolds legitimately exist mid-edit. Only fail the actual production build —
   // an abandoned schema-invalid scaffold shipping into a static build silently drops that page's
   // route (or worse, renders broken), which is worse than a red build.
-  if (isBuildMode()) assertBuildEntriesValid(entries, phaseLabel)
+  //
+  // The unknown-key warning runs BEFORE all three throwing guards, so a build about to go red
+  // still prints everything it found rather than dying on the first problem.
+  //
+  // All four run on the RAW listing, before the caller's `filter` — a filtered-out entry still
+  // occupies its URL as far as every other route is concerned. `rootPath` scoping does narrow
+  // them, since that happens inside `listEntries`; that is the intended escape hatch, `filter`
+  // is not.
+  //
+  // Slug routability is asserted first, ahead of schema validity and duplicate URLs: an entry
+  // whose slug cannot round-trip through `readByUrlPath` has no URL at all as far as any OTHER
+  // guard is concerned, so it is the most fundamental of the three problems a listed entry can
+  // have. Schema validity is asserted before duplicate URLs for the same reason one level down:
+  // a schema-invalid entry is the more fundamental problem, and an adopter fixing it may remove
+  // the duplicate on the way.
+  if (isBuildMode()) {
+    warnUnknownEntryKeys(entries, phaseLabel)
+    assertRoutableSlugs(entries, phaseLabel)
+    assertBuildEntriesValid(entries, phaseLabel)
+    assertNoDuplicateUrlPaths(entries, phaseLabel)
+  }
   return entries.map((entry) => ({
     urlPath: entry.urlPath,
     segments: entry.urlPath === '/' ? [] : entry.urlPath.replace(/^\//, '').split('/'),
@@ -212,7 +239,15 @@ export interface InvalidBuildEntry {
  * `collectRoutableEntries<PostContent>`) can still be scanned — the scan re-guards the value
  * anyway, since on-disk data is never trusted.
  */
-type BuildScanItem = Pick<ListEntriesItem, 'entryPath' | 'schema'> & { data: unknown }
+type BuildScanItem = Pick<ListEntriesItem, 'entryPath' | 'schema'> & {
+  data: unknown
+  /**
+   * Only the unknown-key scan reads this, to recognise the md/mdx body key that `listEntries`
+   * merges into `data`. Optional so a caller assembling items by hand still typechecks; an
+   * absent format is treated as markdown-shaped, which errs toward under-reporting.
+   */
+  format?: ListEntriesItem['format']
+}
 
 /**
  * Deep-walk a plain data value (objects and arrays only — the shapes YAML/JSON parsing can
@@ -274,6 +309,86 @@ export function findInvalidEntries(items: readonly BuildScanItem[]): InvalidBuil
 }
 
 /**
+ * How many offending entries `warnUnknownEntryKeys` lists before summarising the rest. Bounds CI
+ * output for a schema-wide rename across a large content tree; the reported COUNT is never capped.
+ */
+const UNKNOWN_KEY_REPORT_LIMIT = 20
+
+/** An entry carrying data keys the schema no longer defines. */
+export interface EntryWithUnknownKeys {
+  entryPath: string
+  /** Canonical field paths, e.g. `author.nickname` or `blocks[2].headline`. */
+  fieldPaths: string[]
+}
+
+/**
+ * Scan listEntries-shaped items for data keys with no schema counterpart.
+ *
+ * The inverse of `findInvalidEntries`, and non-fatal by design: an unknown key is stale data,
+ * not broken data. A build must not go red for it — the page still renders, it is just quietly
+ * missing whatever the renamed field used to supply. `warnUnknownEntryKeys` is the reporting
+ * half. Both sit at module scope alongside `findInvalidEntries`/`assertBuildEntriesValid` and
+ * are deliberately NOT on `canopycms/server`, matching those two — the build wires them itself.
+ *
+ * Skips items with no resolved schema, and items whose schema is empty — "no schema" is not
+ * "every key is unknown". Same `normalizeDatesDeep` pass as the validity scan, so a hand-authored
+ * `date: 2024-01-15` is a plain value here too.
+ */
+export function findEntriesWithUnknownKeys(
+  items: readonly BuildScanItem[],
+): EntryWithUnknownKeys[] {
+  const found: EntryWithUnknownKeys[] = []
+  for (const item of items) {
+    if (!item.schema || item.schema.length === 0) continue
+    const data = normalizeDatesDeep(item.data) as Record<string, unknown>
+    // For md/mdx, `listEntries` merges the file's body into `data` under
+    // `findBodyFieldName(schema)` (readEntryData in content-listing.ts). When the schema declares
+    // an `isBody` field that name IS a schema field and this is a no-op -- but declaring one is
+    // optional, and with none the merge key falls back to the literal 'body', which the schema
+    // legitimately does not define. Without this the scan told every adopter whose md entry types
+    // omit `isBody` that their prose was a stale key to delete.
+    const bodyKey = isDataOnlyFormat(item.format ?? 'md')
+      ? undefined
+      : findBodyFieldName(item.schema)
+    const fieldPaths = findUnknownKeys(item.schema, data).filter((path) => path !== bodyKey)
+    if (fieldPaths.length > 0) {
+      found.push({ entryPath: item.entryPath, fieldPaths })
+    }
+  }
+  return found
+}
+
+/**
+ * Warn — never throw — about entries carrying keys the schema no longer defines.
+ *
+ * A production build is the one place that sees every entry at once, which makes it the only
+ * place a schema reshape's leftovers show up as a list rather than one mysteriously undefined
+ * value at a time.
+ */
+export function warnUnknownEntryKeys(items: readonly BuildScanItem[], phaseLabel: string): void {
+  const found = findEntriesWithUnknownKeys(items)
+  if (found.length === 0) return
+
+  // Capped, unlike the sibling assert. That one throws, so it prints once and the build stops;
+  // this one returns, and a Next build runs the enumeration several times (every catch-all route
+  // plus the sitemap). A schema-wide rename across a large tree would otherwise bury CI output
+  // under the same thousands of lines two or three times over. The count is always exact.
+  const shown = found.slice(0, UNKNOWN_KEY_REPORT_LIMIT)
+  const lines = shown.map(
+    ({ entryPath, fieldPaths }) => `  - ${entryPath} — ${fieldPaths.join(', ')}`,
+  )
+  if (found.length > shown.length) {
+    lines.push(`  …and ${found.length - shown.length} more`)
+  }
+
+  console.warn(
+    `CanopyCMS static build: ${found.length} ${found.length === 1 ? 'entry has' : 'entries have'} content keys not defined in their schema during ${phaseLabel}:\n${lines.join('\n')}\n` +
+      `These are usually left over from a renamed or reshaped field. Nothing reads them, and they are kept in the file on every save. ` +
+      `Add them to the schema or remove them from the content.`,
+  )
+}
+
+/**
  * Throw a single, descriptive Error if any item is schema-invalid.
  *
  * Fails the build rather than silently skipping the offending entry: a page that silently
@@ -297,5 +412,198 @@ export function assertBuildEntriesValid(items: readonly BuildScanItem[], phaseLa
     `CanopyCMS static build: found ${invalid.length} schema-invalid ${invalid.length === 1 ? 'entry' : 'entries'} during ${phaseLabel}:\n${lines.join('\n')}\n` +
       `These are likely abandoned create-scaffolds (empty entries left behind when a create was started but never finished). ` +
       `Finish editing the entry (fill in its required fields) or delete the abandoned draft, then rebuild.`,
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Build-time duplicate-URL guard
+// ---------------------------------------------------------------------------
+
+/**
+ * One URL claimed by more than one entry.
+ */
+export interface DuplicateUrlPath {
+  /** The contested URL path, exactly as `listEntries` computed it. */
+  urlPath: string
+  /** Logical paths of every entry claiming it, sorted. Always length >= 2. */
+  entryPaths: string[]
+}
+
+/** What the duplicate-URL scan needs off a listing item. */
+type UrlScanItem = Pick<ListEntriesItem, 'entryPath' | 'urlPath'>
+
+/**
+ * Find every `urlPath` claimed by two or more entries.
+ *
+ * `listEntries` assigns each entry exactly one `urlPath` and documents it as round-trip safe with
+ * `readByUrlPath`. That guarantee is per-entry, not per-URL: nothing stops two DIFFERENT entries
+ * computing the same one, and when they do exactly one of them is reachable while the other
+ * silently has no route at all. The known ways to get there:
+ *
+ * - An entry whose slug matches a sibling collection that also has an `index` entry — the index
+ *   collapses onto the collection's path, which is the entry's path too. The write boundary now
+ *   refuses to author this too (url-collision.ts), so reaching it means the content arrived some
+ *   other way — the same merge/PR/retrofit routes as the same-slug case below. (An entry beside a
+ *   sibling collection with NO index entry is a different, legitimate shape: a landing page plus
+ *   a folder of children, nothing contested.)
+ * - Two entries whose slugs differ only by case, since `urlPath` is lowercased.
+ * - Two entries with the same slug in one collection. The write boundary already refuses this
+ *   (`ContentStore.buildPaths` resolves by slug across entry types, and the create-intent guard
+ *   turns a hit into a conflict), but content also arrives by merge, by PR, and by adopters
+ *   retrofitting an existing repo — none of which pass through that boundary.
+ *
+ * Exported so adopters can assert on it directly instead of hand-rolling a content-integrity
+ * test; `assertNoDuplicateUrlPaths` is what the build itself uses.
+ *
+ * Pure. Results are sorted by `urlPath`, with each `entryPaths` sorted too, so messages are
+ * stable across runs (`listEntries` resolves collections in parallel, so its own order is not).
+ */
+export function findDuplicateUrlPaths(items: readonly UrlScanItem[]): DuplicateUrlPath[] {
+  const byUrl = new Map<string, string[]>()
+  for (const item of items) {
+    const existing = byUrl.get(item.urlPath)
+    if (existing) existing.push(item.entryPath)
+    else byUrl.set(item.urlPath, [item.entryPath])
+  }
+
+  const duplicates: DuplicateUrlPath[] = []
+  for (const [urlPath, entryPaths] of byUrl) {
+    if (entryPaths.length > 1) {
+      duplicates.push({ urlPath, entryPaths: [...entryPaths].sort() })
+    }
+  }
+  return duplicates.sort((a, b) => a.urlPath.localeCompare(b.urlPath))
+}
+
+/**
+ * Throw a single, descriptive Error if any URL is claimed by more than one entry.
+ *
+ * Fails the build for the same reason its sibling `assertBuildEntriesValid` does: a page that
+ * silently disappears from a static build is a worse failure mode than a red build, and that is
+ * precisely what a contested URL produces — `generateStaticParams` emits the path once, one entry
+ * renders, and the other never appears anywhere with no error to notice.
+ *
+ * Runs on the RAW listing, before the caller's `filter`, and that will produce the first "why is
+ * my build red, that entry isn't even routed?" question — so: a contested `urlPath` is a real
+ * collision at RESOLUTION time regardless of routing. `readByUrlPath` picks one of the two
+ * whatever any `generateStaticParams` filter says, so the un-routed entry is not innocent; it is
+ * shadowing (or being shadowed by) the routed one at the same URL. `rootPath` narrows the scan
+ * because it narrows what was loaded at all; `filter` deliberately does not.
+ *
+ * Related but not redundant: `canopycms-next`'s `dedupeSitemapItems` warns on the same collision
+ * at the sitemap. It stays, because it also covers entry-vs-`extraUrls` collisions (adopter-supplied
+ * paths this content enumeration never sees) and non-build-mode calls, where this guard is silent.
+ */
+export function assertNoDuplicateUrlPaths(items: readonly UrlScanItem[], phaseLabel: string): void {
+  const duplicates = findDuplicateUrlPaths(items)
+  if (duplicates.length === 0) return
+
+  const lines = duplicates.map(({ urlPath, entryPaths }) => {
+    // Identical entryPaths means ONE entry was enumerated more than once, not two entries
+    // colliding — the remedy below ("rename or remove one of them") is unfollowable, since
+    // there is only one file. The known cause is two sibling collections sharing a name: both
+    // resolve to the same directory, so its entries are listed once per sibling.
+    const selfCollision = entryPaths.every((entryPath) => entryPath === entryPaths[0])
+    return selfCollision
+      ? `  - ${urlPath} — ${entryPaths.length}x ${entryPaths[0]} (the same entry, enumerated more than once — usually two sibling collections sharing one name)`
+      : `  - ${urlPath} — claimed by ${entryPaths.join(', ')}`
+  })
+
+  throw new Error(
+    `CanopyCMS static build: found ${duplicates.length} ${duplicates.length === 1 ? 'URL' : 'URLs'} claimed by more than one entry during ${phaseLabel}:\n${lines.join('\n')}\n` +
+      'Only one entry can be served at each URL, so the rest have no route at all. This usually means ' +
+      "an entry whose slug matches a sibling collection that also has an 'index' entry (the index " +
+      "collapses onto the collection's path), or two slugs differing only by case (URL paths are " +
+      'lowercased). Rename or remove one of the colliding entries, then rebuild.',
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Build-time slug-routability guard
+// ---------------------------------------------------------------------------
+
+/** An entry whose slug cannot round-trip through `readByUrlPath`. */
+export interface UnroutableSlugEntry {
+  entryPath: string
+  urlPath: string
+  slug: string
+  /** Why `parseSlug` rejected it, e.g. "Slug must start with a letter or number...". */
+  error: string
+}
+
+/** What the slug-routability scan needs off a listing item. */
+type SlugScanItem = Pick<ListEntriesItem, 'entryPath' | 'urlPath' | 'slug'>
+
+/**
+ * Find every listed entry whose `slug` cannot pass `parseSlug` — the validation `readByUrlPath`
+ * runs on every URL-resolution candidate it tries (`context.ts`).
+ *
+ * The filename grammar `parseTypedFilename` parses (`{type}.{slug}.{id}.{ext}`) deliberately
+ * allows a slug to contain dots, anchoring the split on the type and ID instead (see that
+ * function's doc comment) — and it does not run the parsed slug through `parseSlug` before
+ * handing it back, by design: recovering `{type, slug, id}` structurally, without validating
+ * every part, is its whole contract. `listCollectionEntries` inherits that: it lists the file and
+ * computes a `urlPath` for it, same as any other entry.
+ *
+ * But `parseSlug` requires `^[a-z0-9][a-z0-9-]*$` — no dots — so a listed entry whose slug
+ * contains one is unreachable through the one path everything else assumes works:
+ * `readByUrlPath` tries the URL's last segment as a candidate slug and skips any candidate that
+ * fails `parseSlug` (treating it as a miss, not an error) before it ever calls `read()`. The
+ * entry still builds, still gets a `generateStaticParams` entry, still gets a sitemap `<loc>` —
+ * and 404s the moment anything actually visits it. That breaks the `Round-trip safe` contract
+ * `content-listing.ts` documents on `urlPath` (`readByUrlPath(item.urlPath)` resolves to the same
+ * entry) and is exactly the silent-page-loss failure mode this guard's siblings
+ * (`assertBuildEntriesValid`, `assertNoDuplicateUrlPaths`) exist to make loud instead.
+ *
+ * The write boundary refuses to MINT such a slug: `api/content.ts` and `ContentStore.write()`
+ * both run `parseSlug` on a create, and `renameEntry()` runs it on the new slug (the [SLUG]
+ * guards). That enforcement is deliberately create-only — an entry that already carries a
+ * non-conforming slug stays saveable and renameable, because renaming it is the only way to fix
+ * this build failure, and refusing reads or edits would turn a red build into unreachable data.
+ *
+ * So this guard still fires, and is still needed, for every slug the write boundary never saw:
+ * hand-authored files, scripted migrations, content merged in over git, a repo being retrofitted
+ * onto CanopyCMS (this guard's intended audience, same as its siblings), and entries created
+ * before the write-time rule existed.
+ */
+export function findUnroutableSlugs(items: readonly SlugScanItem[]): UnroutableSlugEntry[] {
+  const found: UnroutableSlugEntry[] = []
+  for (const item of items) {
+    const result = parseSlug(item.slug)
+    if (!result.ok) {
+      found.push({
+        entryPath: item.entryPath,
+        urlPath: item.urlPath,
+        slug: item.slug,
+        error: result.error,
+      })
+    }
+  }
+  return found
+}
+
+/**
+ * Throw a single, descriptive Error if any listed entry's slug cannot round-trip through
+ * `readByUrlPath`.
+ *
+ * Fails the build for the same reason its siblings do: an entry that builds and gets advertised
+ * (sitemap, `generateStaticParams`) but 404s on every actual visit is a worse failure mode than a
+ * red build.
+ */
+export function assertRoutableSlugs(items: readonly SlugScanItem[], phaseLabel: string): void {
+  const unroutable = findUnroutableSlugs(items)
+  if (unroutable.length === 0) return
+
+  const lines = unroutable.map(
+    ({ entryPath, urlPath, slug }) => `  - ${entryPath} (slug "${slug}", urlPath "${urlPath}")`,
+  )
+
+  throw new Error(
+    `CanopyCMS static build: found ${unroutable.length} ${unroutable.length === 1 ? 'entry' : 'entries'} whose slug cannot resolve back through a URL during ${phaseLabel}:\n${lines.join('\n')}\n` +
+      'The filename grammar allows a slug to contain characters readByUrlPath cannot accept back ' +
+      "(most commonly a dot, e.g. a slug of 'getting.started.guide') — a valid slug for parseSlug is " +
+      'lowercase letters, numbers and hyphens only, starting with a letter or number. Each entry ' +
+      'above would build, appear in generateStaticParams and any sitemap, and then 404 on every ' +
+      'visit. Rename the slug (the file itself, not just its content), then rebuild.',
   )
 }

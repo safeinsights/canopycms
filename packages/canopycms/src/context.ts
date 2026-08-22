@@ -122,6 +122,10 @@ export interface CanopyBuildContext {
    * Tries direct entry match first (last segment = slug, rest = collection path),
    * then falls back to index entry (full path = collection, slug = 'index').
    * Root path '/' resolves to the content root's index entry.
+   *
+   * The direct-entry attempt is SKIPPED when the last segment is an index slug (any case), so
+   * `/x/index` returns null rather than a second URL for the entry that already answers at `/x`.
+   * A collection literally named `index` is unaffected — the fallback resolves it.
    * Returns null if no content matches the path — including collection URLs that have no
    * index entry (use buildContentTree for those) and non-entry/invalid paths such as
    * `/favicon.ico` or Next internals (the slug validator rejects them, treated as a miss).

@@ -150,8 +150,11 @@ export {
 
 export type { EntryLinkUrlResolver } from './entry-link-resolver'
 
-/** Compute the canonical URL for an entry given its logical path + slug. */
-export { computeEntryUrl } from './utils/entry-url'
+/**
+ * Compute the canonical URL for an entry given its logical path + slug, and the shared
+ * "is this the collection-index slug?" predicate that decides whether it collapses.
+ */
+export { computeEntryUrl, isIndexSlug } from './utils/entry-url'
 
 /** Collect static paths for `generateStaticParams` / sitemap emission. */
 export { collectStaticPaths } from './static'
@@ -162,6 +165,15 @@ export type { StaticPathEntry, CollectStaticPathsOptions } from './static'
 export { collectRoutableEntries } from './static'
 
 export type { RoutableEntry, CollectRoutableEntriesOptions } from './static'
+
+/**
+ * Find every URL claimed by more than one entry — the check a production build already runs
+ * (and fails on). Exported so a content-integrity test can assert it directly rather than
+ * hand-rolling the same scan over `listEntries`.
+ */
+export { findDuplicateUrlPaths } from './static'
+
+export type { DuplicateUrlPath } from './static'
 
 /**
  * SEO field extraction and URL shaping (framework-agnostic). `isNoindexEntry` is the single

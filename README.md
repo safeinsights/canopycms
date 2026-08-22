@@ -638,21 +638,22 @@ Available schemas: author, home, doc
 
 ### `defineCanopyConfig` Options
 
-| Option                | Type                                             | Required | Default     | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
-| --------------------- | ------------------------------------------------ | -------- | ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `gitBotAuthorName`    | `string`                                         | Yes      | -           | Name used for git commits made by CanopyCMS                                                                                                                                                                                                                                                                                                                                                                                                                                  |
-| `gitBotAuthorEmail`   | `string`                                         | Yes      | -           | Email used for git commits made by CanopyCMS                                                                                                                                                                                                                                                                                                                                                                                                                                 |
-| `mode`                | `'dev' \| 'prod'`                                | **Yes**  | -           | Operating mode (see below). No default — a deploy that omits `mode` fails config validation at startup with a clear error, rather than silently running insecure dev auth semantics in production.                                                                                                                                                                                                                                                                           |
-| `contentRoot`         | `string`                                         | No       | `'content'` | Root directory for content files relative to project root                                                                                                                                                                                                                                                                                                                                                                                                                    |
-| `defaultBaseBranch`   | `string`                                         | No       | `'main'`    | Git branch used as the fork point for CMS content branches (typically `main`). This branch can never be submitted for review, and in `prod` mode it's read-only in the editor — see [Submitting for Review](#submitting-for-review).                                                                                                                                                                                                                                         |
-| `defaultActiveBranch` | `string`                                         | No       | (see below) | Which workspace the dev server serves content from and which branch the editor opens by default. In dev mode, auto-detected from the current git branch. In prod mode, falls back to `defaultBaseBranch`                                                                                                                                                                                                                                                                     |
-| `defaultBranchAccess` | `'allow' \| 'deny'`                              | No       | `'deny'`    | Fallback access policy for a branch with no ACL — what `canopycms init` scaffolds. Three grants are exempt from it: admins/reviewers, the creator of an un-ACL'd branch, and the protected base branch (which takes no ACL and is where every user lands). So `'deny'` means "branches you neither created nor were invited to", not a lockout. An explicit ACL outranks the creator and base-branch grants, which is how an admin locks down a branch someone else created. |
-| `defaultPathAccess`   | `'allow' \| 'deny' \| { read?, edit?, review? }` | No       | `'deny'`    | Default access policy for content paths when no permission rule matches. The object form scopes the default per permission level (e.g. `{ read: 'allow' }` for public read without opening edit/review). An unspecified level resolves to `'deny'`. See [Public read on server deployments](#public-read-on-server-deployments).                                                                                                                                             |
-| `deployedAs`          | `'server' \| 'static'`                           | No       | `'server'`  | Deployment shape. `'static'`: site is pre-built with no live editor; all CMS API requests return 401 and `authPlugin` is not required. `'server'`: normal server-rendered deployment with auth enforced.                                                                                                                                                                                                                                                                     |
-| `media`               | `MediaConfig`                                    | No       | -           | Asset storage configuration (local, s3, or lfs)                                                                                                                                                                                                                                                                                                                                                                                                                              |
-| `editor`              | `EditorConfig`                                   | No       | -           | Editor UI customization options                                                                                                                                                                                                                                                                                                                                                                                                                                              |
-| `dev`                 | `DevConfig`                                      | No       | -           | Dev-mode-only behavior. `dev.contentSync: 'off' \| 'warn'` (default `'warn'`) controls how the dev server detects/reports working-tree edits vs. the served branch clone (see [Local Development Sync](#local-development-sync)). Ignored when `mode !== 'dev'`.                                                                                                                                                                                                             |
-| `validateEntry`       | `ValidateEntryHook`                              | No       | -           | Save-time validation hook, run server-side before the entry file is written. Return `level: 'error'` issues to reject the save, or `'warning'` issues to surface alongside it. See [Save-Time Validation](#save-time-validation-validateentry).                                                                                                                                                                                                                              |
+| Option                | Type                                             | Required | Default     | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| --------------------- | ------------------------------------------------ | -------- | ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `gitBotAuthorName`    | `string`                                         | Yes      | -           | Name used for git commits made by CanopyCMS                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| `gitBotAuthorEmail`   | `string`                                         | Yes      | -           | Email used for git commits made by CanopyCMS                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| `mode`                | `'dev' \| 'prod'`                                | **Yes**  | -           | Operating mode (see below). No default — a deploy that omits `mode` fails config validation at startup with a clear error, rather than silently running insecure dev auth semantics in production.                                                                                                                                                                                                                                                                                    |
+| `contentRoot`         | `string`                                         | No       | `'content'` | Root directory for content files relative to project root                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| `basePath`            | `string`                                         | No       | -           | The deployment prefix your Next app is served under (e.g. `'/preview-123'`), matching `next.config`'s `basePath`. CanopyCMS cannot read `next.config`, so state it here or the editor's API requests and preview pane target the un-prefixed root. Omit when the app is served at its origin's root. **Not** `contentStaticParams`'s `basePath`, and **not** necessarily the right value for `assetUrl`'s `baseUrl` — see [Deploying under a `basePath`](#deploying-under-a-basepath) |
+| `defaultBaseBranch`   | `string`                                         | No       | `'main'`    | Git branch used as the fork point for CMS content branches (typically `main`). This branch can never be submitted for review, and in `prod` mode it's read-only in the editor — see [Submitting for Review](#submitting-for-review).                                                                                                                                                                                                                                                  |
+| `defaultActiveBranch` | `string`                                         | No       | (see below) | Which workspace the dev server serves content from and which branch the editor opens by default. In dev mode, auto-detected from the current git branch. In prod mode, falls back to `defaultBaseBranch`                                                                                                                                                                                                                                                                              |
+| `defaultBranchAccess` | `'allow' \| 'deny'`                              | No       | `'deny'`    | Fallback access policy for a branch with no ACL — what `canopycms init` scaffolds. Three grants are exempt from it: admins/reviewers, the creator of an un-ACL'd branch, and the protected base branch (which takes no ACL and is where every user lands). So `'deny'` means "branches you neither created nor were invited to", not a lockout. An explicit ACL outranks the creator and base-branch grants, which is how an admin locks down a branch someone else created.          |
+| `defaultPathAccess`   | `'allow' \| 'deny' \| { read?, edit?, review? }` | No       | `'deny'`    | Default access policy for content paths when no permission rule matches. The object form scopes the default per permission level (e.g. `{ read: 'allow' }` for public read without opening edit/review). An unspecified level resolves to `'deny'`. See [Public read on server deployments](#public-read-on-server-deployments).                                                                                                                                                      |
+| `deployedAs`          | `'server' \| 'static'`                           | No       | `'server'`  | Deployment shape. `'static'`: site is pre-built with no live editor; all CMS API requests return 401 and `authPlugin` is not required. `'server'`: normal server-rendered deployment with auth enforced.                                                                                                                                                                                                                                                                              |
+| `media`               | `MediaConfig`                                    | No       | -           | Asset storage configuration (local, s3, or lfs)                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| `editor`              | `EditorConfig`                                   | No       | -           | Editor UI customization options                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| `dev`                 | `DevConfig`                                      | No       | -           | Dev-mode-only behavior. `dev.contentSync: 'off' \| 'warn'` (default `'warn'`) controls how the dev server detects/reports working-tree edits vs. the served branch clone (see [Local Development Sync](#local-development-sync)). Ignored when `mode !== 'dev'`.                                                                                                                                                                                                                      |
+| `validateEntry`       | `ValidateEntryHook`                              | No       | -           | Save-time validation hook, run server-side before the entry file is written. Return `level: 'error'` issues to reject the save, or `'warning'` issues to surface alongside it. See [Save-Time Validation](#save-time-validation-validateentry).                                                                                                                                                                                                                                       |
 
 **Note**: Schemas are declared in TypeScript with `defineEntrySchema`, registered with `createEntrySchemaRegistry`, and referenced from `.collection.json` files alongside your content. See the [Schema Registry and References](#schema-registry-and-references) section for details.
 
@@ -687,6 +688,30 @@ export default defineCanopyConfig({
 ```
 
 The hook receives `{ entryPath, branch, entryType?, format, data, body }` for every editor content save (`entryType` is set when the editor specifies one, e.g. in collections with multiple entry types). `error` issues reject the save with the message shown to the editor; `warning` issues let the save through and appear as a notification. The hook gates content writes only — renames and deletes do not invoke it. Pair it with the preview error channel (see [Live Preview](#live-preview)) so authors see compile failures while typing, not just at save time.
+
+### Comments in Content Files Survive Editing
+
+Content files can carry YAML comments — including explanatory notes that code elsewhere refers to by name — and a CMS save keeps them. Writes re-serialise onto the file's own parsed document, so a value the editor did not change keeps its comments and its original quoting and block style. This covers `.yaml` entries and `md`/`mdx` frontmatter alike; JSON has no comment syntax and is unaffected.
+
+The content itself is still fully determined by the save: a field the editor cleared is cleared in the file. Only comments are carried across from what was already on disk.
+
+Some limits worth knowing:
+
+- A comment written **before the first item of a list** belongs to the list, not to that item, and stays at the head of the list however the items change. That is the right reading of "curated by hand, order matters"; comments before any _later_ item travel with their item.
+- A comment on a list item survives that item being **edited or moved**, but not being **replaced**. Nothing in a save says a new item is the old one edited, so CanopyCMS looks for evidence: an item that still matches exactly is recognised wherever it moved to, and an item whose fields partly survive is recognised as an edit in the position it already occupied. An item both edited _and_ moved in the same save satisfies neither test, so it starts fresh. An item sharing nothing with what it replaced is treated as new and starts with no comment — leaving a "do not delete this" note above unrelated content is worse than losing it. The trade-off shows up on a list item with a **single** field: change that field and there is nothing left to recognise it by, so its comment is dropped rather than risked. Lists whose items are not mappings — plain values, or nested lists — keep the simpler rule that the item in a given position is the same item edited.
+- A value that **changes shape entirely** — a mapping or list replaced by a single value — loses the comments that were written inside it, because the structure those described is gone. A comment written above the field's _name_ is unaffected. A plain value that merely changes type keeps its comment, since that comment is about the field, not about a structure.
+- If a file's existing bytes **do not parse as YAML**, the save still succeeds by rewriting the file from scratch, which loses the comments. The alternative would be an editor unable to save at all.
+
+### Content Keys Not in the Schema
+
+A field renamed or removed from a schema leaves its old key behind in every content file that had it. Nothing reads that key any more, so the only symptom is a component quietly receiving `undefined`. CanopyCMS reports these rather than leaving you to find them:
+
+- **On save**, they come back with the write and appear to the editor as a "Saved with warnings" notification. The save succeeds.
+- **During a production build**, `collectStaticPaths` and `collectRoutableEntries` print one warning naming the offending entries and their key paths (`hero.kicker`, `blocks[2].headline`). The entry count is always exact; the listing itself stops after the first 20 and summarises the rest, so a schema-wide rename across a large tree cannot bury the build log. The build passes.
+
+Neither report rejects a save or fails a build, and neither strips anything — an unrecognised key stays in the file, comments and all. Expect the first build after upgrading to name keys you no longer use; for each, either add the field to the entry type's schema or delete it from the content.
+
+This is separate from the `validateEntry` hook above: that one is yours to define, this one comes from the schema you already wrote.
 
 ### Operating Modes
 
@@ -1371,7 +1396,13 @@ The type inference covers all field types: `string` and `markdown` fields become
 
 #### Select Fields
 
-A `select` field infers the **literal union of its own `options`**, not a bare `string`:
+A `select` field infers the **literal union of its own `options`**, not a bare `string`.
+
+**Breaking change (type-level):** this narrows what `select` fields used to infer
+(`string | number` — the `number` half was never reachable, since a select value is
+always a string). Code that widened a select value into a plain `string`, or compared
+it against a value outside its `options`, may now fail to type-check; narrow to the
+inferred union instead.
 
 ```typescript
 const postSchema = defineEntrySchema([
@@ -1658,6 +1689,11 @@ export default async function Page({ params }) {
 2. If that fails, tries `content/docs/getting-started` + slug `"index"` (index entry fallback)
 3. `/docs/guides` -- resolves to the index entry of the `guides` collection (if one exists)
 4. `/` -- resolves to the root index entry at the content root (if one exists)
+5. `/docs/guides/index` -- returns `null`. When the last segment is literally `index`, step 1 is
+   skipped: an index entry's advertised URL is its collection's path (step 3), so it never answers
+   at the literal `.../index` URL as well. Step 2 still runs, which is what resolves a collection
+   actually _named_ `index`. (Step 2 is also the open hole below — it still lets an index entry
+   answer at `/<collection>/<entryTypeName>`.)
 
 Returns `null` when no content matches the path, or when the current user is not permitted to read it (a `FORBIDDEN` denial renders as a 404 via your existing `if (!result) return notFound()`, rather than throwing). The strict `read()` API still throws on permission errors.
 
@@ -1666,11 +1702,44 @@ Returns `null` when no content matches the path, or when the current user is not
 Index entries (entries with slug `"index"`) represent the default content for a collection URL. All three content APIs -- `readByUrlPath`, `listEntries`, and `buildContentTree` -- treat index entries consistently:
 
 - **`readByUrlPath('/guides')`** resolves to the index entry in the `guides` collection
+- **`readByUrlPath('/guides/index')`** returns `null` -- the `.../index` spelling is not a second URL for the entry, in any case variant (`/guides/Index`, `/guides/INDEX`). Its advertised URL is `/guides`
 - **`readByUrlPath('/')`** resolves to the index entry at the content root
 - **`listEntries()`** returns `urlPath: '/guides'` (not `'/guides/index'`) for index entries, and `urlPath: '/'` for a root index entry
 - **`buildContentTree()`** generates `path: '/guides'` (not `'/guides/index'`) for index entries by default
 
-This means `entry.urlPath` from `listEntries()` is round-trip safe: `readByUrlPath(entry.urlPath)` always resolves back to the same entry.
+**Model your home page this way.** (One caveat first, because this recommendation is what exposes it: an entry-type name is currently also resolvable as a URL segment, so with home modelled at the root, `readByUrlPath('/home')` still returns the home entry even though nothing advertises that URL. It is harmless unless you serve a root catch-all -- if you do, filter it, and see [`readbyurlpath-entry-type-candidate-phantom-url.md`](.claude/future-tasks/readbyurlpath-entry-type-candidate-phantom-url.md).) A singleton stored as an ordinary root entry (`content/home.home.<id>.json`) has `urlPath: '/home'`, so a route serving it at `/` leaves the entry's own URL disagreeing with the served one -- which every URL-derived surface then has to be told about separately, starting with the sitemap. Stored as a root index entry (`content/home.index.<id>.json`) its `urlPath` is `/`, the route reads `readByUrlPath('/')`, and nothing needs special-casing. Note what happens to a read that addresses the entry by entry-type path. `read({ entryPath: 'content/home' })` with no `slug` defaults the slug to the entry-type _name_ (`content-store.ts`'s `effectiveSlug = slug || schemaItem.name`), so it looks for slug `home` and stops resolving once the slug is `index`. Passing the slug explicitly -- `read({ entryPath: 'content/home', slug: 'index' })` -- keeps working, and is the smaller migration if you want one. Prefer `readByUrlPath('/')`.
+
+This means `entry.urlPath` from `listEntries()` is round-trip safe: `readByUrlPath(entry.urlPath)` always resolves back to the same entry. For an index entry, `/docs/index` no longer reaches it in any case spelling -- though `/docs/<entryTypeName>` still does, which is the open hole the caveat above points at. (For an ordinary entry the final slug segment stays case-insensitive, so `/docs/OVERVIEW` still resolves `/docs/overview` -- collection path segments do not.)
+
+### One URL, one entry
+
+Each entry gets exactly one `urlPath`, but nothing stops two _different_ entries computing the same one. When that happens only one of them can be served and the other silently has no route at all, so a **production build** fails with the contested URLs and their claimants listed. (`next dev` and the admin UI are unaffected -- mid-edit trees are allowed to be temporarily broken.)
+
+The usual causes:
+
+- An entry whose slug matches a sibling collection **that also has an `index` entry** -- the index collapses onto the collection's path, which is the entry's path too. An entry beside a sibling collection with no index entry is fine: a landing page plus a folder of children is a normal shape, and nothing is contested.
+- Two slugs differing only by case, since URL paths are lowercased.
+- Two entries with the same slug in one collection. The write boundary refuses this, but content also arrives by merge, by PR, and by retrofit onto an existing repo.
+
+To check your own content, `findDuplicateUrlPaths` (exported from `canopycms/server`) is the same scan the build runs:
+
+```typescript
+import { findDuplicateUrlPaths } from 'canopycms/server'
+
+const canopy = await getCanopyForBuild()
+const duplicates = findDuplicateUrlPaths(await canopy.listEntries())
+// [{ urlPath: '/docs/guides', entryPaths: ['content/docs/guides', 'content/docs/guides/index'] }]
+```
+
+Scan `listEntries()` rather than `collectRoutableEntries()` — the latter reduces each entry to what static generation needs and drops `entryPath`, which is what names the offenders.
+
+### Every slug must round-trip through a URL
+
+Content file names follow `{type}.{slug}.{id}.{ext}`, and the `slug` segment is allowed to contain dots -- the type and ID anchor the parse, not dots, so a file named e.g. `post.getting.started.guide.<id>.md` parses fine and lists with `slug: 'getting.started.guide'`. But `readByUrlPath()` only accepts slugs matching lowercase letters, numbers and hyphens (starting with a letter or number), because that is the rule it runs every URL-resolution candidate through before attempting a read. A slug outside that shape builds, gets a `generateStaticParams` entry and a sitemap `<loc>` -- and then 404s on every actual visit, silently breaking the round-trip guarantee above.
+
+A **production build** fails loudly on this instead, listing every offending entry by path. Rename the file's slug segment to letters, numbers and hyphens only, then rebuild.
+
+The write API refuses to create one in the first place: a `PUT` that would mint an entry with a non-conforming slug is rejected with `400`, as is a rename to one -- so this applies to any client, not just the editor UI. That enforcement is **create-only by design**. An entry that already carries a non-conforming slug (hand-authored, imported by a script, merged in over git, or created before this rule existed) stays readable, saveable and renameable, because renaming it is the only way to clear the build failure. So a production build can still hit this, and the guard still exists to make it loud.
 
 ### Static Export with generateStaticParams
 
@@ -1715,6 +1784,12 @@ export const generateStaticParams = () =>
 
 **Catch-all nested under a URL prefix** (`app/docs/[[...slug]]/page.tsx`) — pass `basePath` so the emitted `segments` are relative to that prefix and match the route:
 
+> **This `basePath` is a route prefix inside your app, not Next's deployment `basePath`.** It
+> _filters_ entries to those whose URL starts with it, so passing a deployment prefix here matches
+> no content and emits zero static params — a green build that ships an empty site. If you deploy
+> under a Next `basePath`, set it in `next.config` and in your Canopy config, and leave this alone.
+> See [Deploying under a `basePath`](#deploying-under-a-basepath).
+
 ```typescript
 // app/docs/[[...slug]]/page.tsx
 import { contentStaticParams } from '../../lib/canopy'
@@ -1725,13 +1800,13 @@ export const generateStaticParams = () =>
 
 **Options:**
 
-| Option      | Type                      | Default       | Description                                                                                                                                                                            |
-| ----------- | ------------------------- | ------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `shape`     | `'catch-all' \| 'single'` | `'catch-all'` | `'catch-all'` emits the URL `segments` array; `'single'` emits the entry `slug`                                                                                                        |
-| `paramName` | `string`                  | `'slug'`      | Route param name (matches your `[...name]` / `[name]` folder)                                                                                                                          |
-| `rootPath`  | `string`                  | Content root  | Scope to a subtree (e.g., `'content/posts'`), useful with `shape: 'single'`                                                                                                            |
-| `basePath`  | `string`                  | -             | For a catch-all nested under a URL prefix (e.g. `app/docs/[[...slug]]`): set to the route base (`'/docs'`) so entries are scoped to that prefix and `segments` are made relative to it |
-| `filter`    | `(entry) => boolean`      | -             | Exclude entries; e.g. drop the root index from a non-optional catch-all: `(e) => e.segments.length > 0`                                                                                |
+| Option      | Type                      | Default       | Description                                                                                                                                                                                                                                          |
+| ----------- | ------------------------- | ------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `shape`     | `'catch-all' \| 'single'` | `'catch-all'` | `'catch-all'` emits the URL `segments` array; `'single'` emits the entry `slug`                                                                                                                                                                      |
+| `paramName` | `string`                  | `'slug'`      | Route param name (matches your `[...name]` / `[name]` folder)                                                                                                                                                                                        |
+| `rootPath`  | `string`                  | Content root  | Scope to a subtree (e.g., `'content/posts'`), useful with `shape: 'single'`                                                                                                                                                                          |
+| `basePath`  | `string`                  | -             | For a catch-all nested under a URL prefix (e.g. `app/docs/[[...slug]]`): set to the route base (`'/docs'`) so entries are scoped to that prefix and `segments` are made relative to it. **Not** Next's deployment `basePath` — see the warning below |
+| `filter`    | `(entry) => boolean`      | -             | Exclude entries; e.g. drop the root index from a non-optional catch-all: `(e) => e.segments.length > 0`                                                                                                                                              |
 
 > A root index (`/`) produces empty `segments` — keep it only for an optional catch-all `[[...slug]]`, otherwise exclude it with `filter`.
 >
@@ -1818,6 +1893,7 @@ export default function sitemap(): Promise<MetadataRoute.Sitemap> {
 | `exclude`       | `(entry) => boolean`                     | -             | Drop entries, on top of the non-optional `noindex` exclusion                                                                          |
 | `lastModified`  | `(entry) => Date \| string \| undefined` | `updatedAt`   | `<lastmod>` per entry; return `undefined` to omit it                                                                                  |
 | `priority`      | `(entry) => number \| undefined`         | -             | `<priority>` per entry                                                                                                                |
+| `pathFor`       | `(entry) => string \| null`              | -             | Advertise an entry at a different URL, keeping it inside the entry walk (so `noindex`/`lastModified`/`priority` still apply)          |
 | `extraUrls`     | `SitemapExtraUrl[]`                      | -             | URLs with no entry behind them (hand-written routes, feeds)                                                                           |
 | `seo`           | `{ fields?, group? }`                    | flat defaults | Where the SEO fields live, when they aren't the defaults                                                                              |
 
@@ -1827,7 +1903,26 @@ export default function sitemap(): Promise<MetadataRoute.Sitemap> {
 >
 > **`robots.txt` is out of scope** -- it is a few static lines with no CMS content behind it. Write `app/robots.ts` yourself and point its `sitemap` field at this route.
 >
-> **Colliding URLs are deduped, not silently doubled.** Two entries resolving to the same `<loc>` -- an index entry collapsing onto a sibling's path, or two `urlPath`s that only differ by case (`urlPath` is always lowercased) -- is not fatal to a crawler, but it almost always means two entries are unintentionally sharing one URL. `generateContentSitemap` keeps the first and drops the rest, and warns on the duplicate so you notice instead of shipping a sitemap with fewer URLs than you expect.
+> **Colliding URLs are deduped, not silently doubled.** Two entries resolving to the same `<loc>` is not fatal to a crawler, but it almost always means two entries are unintentionally sharing one URL. `generateContentSitemap` keeps the first and drops the rest, and warns on the duplicate so you notice instead of shipping a sitemap with fewer URLs than you expect.
+>
+> In a **production build** the entry-vs-entry case no longer gets this far: enumeration fails the build first (see [One URL, one entry](#one-url-one-entry)). This dedupe still covers the cases that guard cannot see -- a collision involving an `extraUrls` path, which you supply here and which never appears in the content enumeration, a collision created by `pathFor`, which rewrites URLs after that guard has run on the raw listing -- and any call outside a production build.
+
+**When the URL you serve isn't the entry's `urlPath`.** Three answers, in the order to try them:
+
+1. **Re-model the entry, which needs no option at all.** An entry whose slug is `index` collapses onto its collection's path, and at the content root that path is `/`. A home page stored as `content/home.index.<id>.json` therefore has `urlPath: '/'` already -- nothing to reconcile, and nothing to keep in sync later. The example app in this repo does exactly this.
+2. **`pathFor`, when re-modelling isn't available** -- a URL fixed by published history you cannot change, or a route prefix that deliberately differs from your content layout:
+
+   ```typescript
+   // Content lives under content/articles/*, but the site has always published /blog/*.
+   pathFor: (entry) =>
+     entry.entryType === 'article' ? entry.urlPath.replace(/^\/articles\//, '/blog/') : null,
+   ```
+
+   Returning `null` (or `undefined`) means **"keep this entry's own URL", not "drop it"** -- so the callback above reroutes articles and leaves everything else alone. Dropping an entry is still `exclude`'s job. Because the entry never leaves the walk, it keeps the `noindex` gate, the `updatedAt` `lastModified` default and its `priority`.
+
+   It changes what is **advertised**, not what is **built**: `generateContentStaticParams` still enumerates the entry at its structural path, so the URL you return must be one your app actually routes.
+
+3. **`extraUrls`, only for URLs with no entry behind them** -- a feed, a hand-written route. An extra URL inherits neither the `noindex` gate nor the `lastModified` default, because there is no entry to read either from; using it to re-advertise a real entry means re-deriving both by hand, and keeping them in sync forever.
 
 #### `generateMetadata`
 
@@ -2058,8 +2153,12 @@ media: {
   adapter: 's3',
   bucket: 'my-site-assets',
   region: 'us-east-1',
-  // Optional: absolute base URL when the editor is served from a different origin
-  // than the public site (e.g. a dedicated editor domain). Omit for same-origin.
+  // Optional: absolute base URL of the origin serving /assets, for the EDITOR's own
+  // image previews -- set it when the editor cannot reach assets at its own root
+  // (a dedicated asset host, or an editor served from a different origin than the
+  // site). Must be absolute; omit for same-origin. This is editor display only and
+  // is never stored in content -- see "Where /assets is mounted" below for the
+  // public site's side of the same question.
   publicBaseUrl: 'https://assets.example.com',
   // Optional: max upload size for presigned direct uploads (default 50 MiB).
   maxUploadBytes: 52_428_800,
@@ -2102,6 +2201,92 @@ media: { adapter: 'local', directory: '.canopy-dev/assets' }
   ```
 
   SVGs and PDFs are served statically (no transform).
+
+**Where `/assets` is mounted**
+
+Stored asset URLs are always root-relative (`/assets/…`). That is deliberate and load-bearing:
+the stored value is what moves between branches and environments, so it names the asset's
+position in the `/assets` URL space and nothing else. When your renderer sees that space
+somewhere other than the root, supply the mount point at render time with `baseUrl`:
+
+```typescript
+<img src={assetUrl(image, { width: 960, baseUrl: ASSET_BASE })} />
+<img srcSet={assetSrcSet(image, [480, 960], { baseUrl: ASSET_BASE })} />
+```
+
+| Your deployment                                              | `baseUrl`                                         |
+| ------------------------------------------------------------ | ------------------------------------------------- |
+| Site served at the root (the usual case)                     | omit it                                           |
+| Site under a Next.js `basePath`, with Next serving `/assets` | your `basePath` — e.g. `'/preview-123'`           |
+| Assets on CloudFront via `canopycms-cdk`'s `AssetSupport`    | omit it — a `basePath` does not move them         |
+| Assets on a separate host or CDN origin                      | that origin — e.g. `'https://assets.example.com'` |
+
+`baseUrl` is the **one** prefix concept for asset URLs, and the two shapes above are
+alternatives rather than things you compose: a cross-origin asset host serves at its own root
+and does not also live under your site's `basePath`. It is a per-render option rather than a
+config key precisely because the editor and the public site can legitimately have different
+answers — which is what `media.publicBaseUrl` is, the editor's answer.
+
+The prefix is applied at render time only and is **never** written into content.
+
+### Deploying under a `basePath`
+
+Next.js auto-prefixes only its own `Image`, `Link`, `Script` and router navigations. Any raw
+string URL — including an `<img src>` built from `assetUrl()` — is left alone and resolves at the
+origin root, so it 404s. Deploying CanopyCMS under a `basePath` (commonly, preview builds
+namespaced per branch) needs three things:
+
+1. **Tell CanopyCMS.** It cannot read your `next.config`, so state the same value in your Canopy
+   config as `basePath`. The editor uses it for its API route and for the preview pane.
+
+   ```typescript
+   // next.config.ts and canopycms.config.ts must agree
+   basePath: process.env.NEXT_PUBLIC_BASE_PATH,
+   ```
+
+2. **Decide whether your asset space moved.** Use the table above — it moves when Next serves
+   `/assets` (the local adapter, `next dev`, or S3 with no distribution), because the rewrite
+   Next auto-prefixes is `withCanopy`'s own. It does **not** move on a CloudFront deployment,
+   where the asset behaviors are anchored at the distribution root. Do not derive `baseUrl` from
+   `next.config`'s `basePath` unconditionally — on the AWS topology that breaks working URLs.
+
+3. **Do not pass your `basePath` to `contentStaticParams`.** That helper's own `basePath` option
+   is an unrelated thing: the route prefix of a _nested catch-all_ (`app/docs/[[...slug]]`), used
+   to scope and relativize `segments`. It **filters** entries by that prefix, so passing a
+   deployment `basePath` matches no content, emits zero static params, and still builds green —
+   an empty site with no error. See
+   [Static Export with generateStaticParams](#static-export-with-generatestaticparams).
+
+> Serving `/assets` un-prefixed under a `basePath` by adding a `basePath: false` rewrite does not
+> work — Next rejects a `basePath: false` rewrite whose destination is not an absolute
+> `http(s)://` URL, and `withCanopy`'s asset rewrite points at an internal route. Prefix the URLs
+> instead.
+
+Markdown and MDX body content is a separate case: images inserted into a body are stored as raw
+srcs and rendered by your own markdown renderer, which never calls `assetUrl()`. If you deploy
+under a `basePath`, give your renderer an `img` override so body images get the same treatment as
+`image` fields:
+
+```tsx
+<ReactMarkdown
+  components={{
+    img: ({ src, alt, ...rest }) => (
+      <img
+        src={assetUrl({ src: String(src ?? '') }, { baseUrl: ASSET_BASE })}
+        alt={alt}
+        {...rest}
+      />
+    ),
+  }}
+/>
+```
+
+`assetUrl()` hands back anything a mount point cannot apply to — an off-site src (`https://…`,
+`//…`) or a `data:` URI — byte-identical, so the override is safe to put on every image in a body.
+Two things it does change, both deliberate: a value a browser would read as pointing off-origin
+despite looking site-relative (`/\evil.com/x`) is neutralized rather than emitted, and a
+**page-relative** src (`images/x.png`) is rooted onto `ASSET_BASE` like any other path. If a body
+carries page-relative image srcs, make them root-relative before adopting this.
 
 **`image` fields** hold a structured value — `{ src, alt, width, height, crop? }` — so alt
 text is enforced, intrinsic dimensions prevent layout shift, and crops are stored as a
@@ -2459,16 +2644,31 @@ const entries = await canopy.listEntries({ resolveReferences: true })
 
 // entries[0].data.snippet
 //   off: 'a1b2c3d4e5f6'
-//   on:  { id: 'a1b2c3d4e5f6', slug: 'signup', collection: 'content/snippets', title: '...' }
+//   on:  { id: 'a1b2c3d4e5f6', slug: 'signup', collection: 'content/snippets',
+//          urlPath: '/snippets/signup', title: '...' }
 ```
 
 `buildContentTree()` takes the same option (it also applies to the `indexEntry` handed to a collection's `extract`), and so does `collectRoutableEntries()`. `collectStaticPaths()` does not, because it discards entry data.
 
 **Why it is off by default, when `read()` resolves automatically.** A resolved reference is a different shape, and a listing's `data` is your own type parameter — so nothing in the type system would flag the change if the default flipped. An `/authors/${data.author}` template would keep compiling and start emitting `/authors/[object Object]`. Deciding per call site keeps that where the code that reads the field is.
 
-**What it costs.** Resolution needs the content ID index, so an opted-in call adds one index scan plus one read per _distinct_ referenced entry — not per referencing entry. All the resolution in one call shares a cache, so a block referenced from 40 pages is read once, not 40 times. With the option off, none of that machinery is built.
+**What it costs.** Resolution needs the content ID index, so an opted-in call adds one index scan plus one read per _distinct_ referenced entry — not per referencing entry. All the resolution in one call shares a cache, so a block referenced from 40 pages is read once, not 40 times. With the option off, none of that machinery is built. Note that the shared read is what the cache saves; each referencing entry still gets its own copy of the resolved value, which is what `includeBody` (below) makes worth thinking about for large targets.
 
-**Three caveats.** For an **md/mdx** target you get its frontmatter, not its prose — `read()` puts an entry's body on `doc.body` and a resolved reference carries `doc.data`, so a resolved markdown snippet has its `title` and other frontmatter fields but not the text below the `---`. (A _listed_ md entry's own `data` does include the body, so the two differ; if your search index needs a markdown snippet's prose, read the target directly for now.) Path permissions are not applied to the resolved _targets_, matching `read()` — a reference can resolve to an entry the current user could not open directly. (The entries being listed are still permission-filtered as always, and an entry that is filtered out is never resolved.) And within a single call, a given id is looked up once and every occurrence shares that answer, so one listing is internally consistent rather than deciding per entry — though each occurrence still gets its own copy of the resolved object, so nothing you do to one entry's resolved reference can affect another's.
+**Every resolved reference carries a `urlPath`** — the referenced entry's URL, following the same rule `listEntries` uses for `item.urlPath` (an `index` entry collapses to its parent path). Both come from one shared function, so a link built from a resolved reference reaches the entry the listing enumerates. You do not need a second pass to build an id → URL table.
+
+**A target's body is opt-in, per field.** By default a resolved **md/mdx** target gives you its frontmatter, not its prose. Set `includeBody: true` on the reference field and the body arrives too, under that target entry type's own body field name:
+
+```ts
+{ name: 'snippet', type: 'reference', entryTypes: ['ctaSnippet'], includeBody: true }
+```
+
+The distinction is embed-vs-link, and it belongs on the field because it is a property of your content model rather than of any one call. A reference that **embeds** its target — a shared CTA rendered inline — wants the prose. One that **links** to it — related posts, an author byline — wants `urlPath` and a title, and definitely not the target's whole body inlined into every page read. Since a single call routinely contains both kinds, the field is the only place the answer can differ per reference. (No-op for json/yaml targets, whose whole document is already their data.)
+
+Turning it on has a cost worth knowing: the body becomes part of every referencing entry's resolved value, so a long document embedded by many pages is carried — and copied — once per page. That is exactly why it is opt-in per field rather than resolution's default. For a snippet-sized shared block it is nothing; for a full article you probably wanted a link.
+
+**`id`, `slug`, `collection` and `urlPath` are reserved** on a resolved reference. If the target models one of them as a real content field, the resolution value wins and the content field is not visible here — read that entry directly if you need it.
+
+**Two caveats.** Path permissions are not applied to the resolved _targets_, matching `read()` — a reference can resolve to an entry the current user could not open directly. (The entries being listed are still permission-filtered as always, and an entry that is filtered out is never resolved.) And within a single call, a given id is looked up once and every occurrence shares that answer, so one listing is internally consistent rather than deciding per entry — though each occurrence still gets its own copy of the resolved object, so nothing you do to one entry's resolved reference can affect another's.
 
 ### Options Reference
 
@@ -2955,7 +3155,7 @@ Scaffolds a complete, deployable CDK app for the recommended AWS architecture (L
 Install the CDK dependencies it needs — the CLI, and the generated workflow, both warn if any are missing:
 
 ```bash
-npm install --save-dev canopycms-cdk aws-cdk-lib constructs tsx aws-cdk
+npm install --save-dev canopycms canopycms-cdk aws-cdk-lib constructs tsx aws-cdk
 ```
 
 Like `init`, this command never overwrites files you already have; pass `--force` to regenerate them.

@@ -5,13 +5,29 @@ import type { EditorEntry, EditorCollection } from './Editor'
 import type { TreeNodeData } from '@mantine/core'
 // Import directly from normalize to avoid pulling in server-only branch.ts
 import { normalizeCollectionPath } from '../paths/normalize'
+import { isIndexSlug } from '../utils/entry-url'
 import { isDataOnlyFormat } from '../utils/format'
+import { joinUrlPrefix } from '../utils/url-prefix'
 export { normalizeCollectionPath }
 
 export interface PreviewContext {
   branchName?: string
   previewBaseByCollection?: Record<string, string>
 }
+
+/**
+ * The slug portion of a preview URL, or '' for an index entry.
+ *
+ * An index entry's URL is its COLLECTION's path -- the same collapse `computeEntryUrl`,
+ * `listEntries` and `defaultBuildPath` apply. Without it this builder pointed the preview iframe
+ * at `/x/index`, which `resolveUrlPathCandidates` deliberately refuses to resolve, so the host
+ * app answered the editor's own preview with notFound().
+ *
+ * Kept separate from `computeEntryUrl` rather than delegating wholesale because this builder must
+ * percent-encode each segment and must NOT lowercase (a preview base is adopter-supplied and
+ * case-sensitive). Only the index decision is shared -- which is the part that drifted.
+ */
+const encodePreviewSlug = (slug?: string): string => (isIndexSlug(slug) ? '' : encodeSlug(slug))
 
 export const encodeSlug = (value?: string): string =>
   (value ?? '')
@@ -20,7 +36,12 @@ export const encodeSlug = (value?: string): string =>
     .map((segment) => encodeURIComponent(segment))
     .join('/')
 
-export const buildPreviewSrc = (
+/**
+ * Builds the (unprefixed) preview URL -- see `buildPreviewSrc` below, which wraps this with the
+ * deployment `basePath`. Split out so that prefixing happens exactly once, at the end, uniformly
+ * across every branch (including the `entry.previewSrc` escape hatch).
+ */
+const buildRawPreviewSrc = (
   entry: {
     collectionPath?: string
     collectionName?: string
@@ -62,15 +83,42 @@ export const buildPreviewSrc = (
     const collectionPath = entry.collectionPath
       ? normalizeCollectionPath(entry.collectionPath, contentRoot)
       : ''
-    const encoded = encodeSlug(entry.slug)
+    const encoded = encodePreviewSlug(entry.slug)
     const segments = [collectionPath, encoded].filter(Boolean)
     const url = segments.length > 0 ? `/${segments.join('/')}` : '/'
     return appendBranch(url)
   }
   const trimmed = base.endsWith('/') ? base.slice(0, -1) : base
-  const encoded = encodeSlug(entry.slug)
+  const encoded = encodePreviewSlug(entry.slug)
   const url = encoded ? `${trimmed}/${encoded}` : trimmed || '/'
   return appendBranch(url)
+}
+
+/**
+ * Builds the preview iframe `src` for an entry, prefixed with the deployment `basePath`
+ * (`CanopyClientConfig.basePath`, e.g. `/preview-123`) when configured.
+ *
+ * This matters twice: the raw `<iframe src>` (`PreviewFrame` in preview-bridge.tsx) 404s without
+ * the prefix when the host app is served under a basePath, AND `resolvePreviewPath` there compares
+ * the SAME string against `window.location.pathname` -- which browsers report WITH the basePath
+ * included -- so an unprefixed `previewSrc` also breaks draft sync / click-to-focus even when the
+ * iframe itself happens to resolve. One prefix, applied uniformly here, fixes both.
+ *
+ * Applied via `joinUrlPrefix`, so it's a no-op when `basePath` is unset (default), and it passes an
+ * already-absolute `previewSrc` (a fully custom, e.g. cross-origin, override) through untouched --
+ * matching `joinUrlPrefix`'s own absolute-URL passthrough rule.
+ */
+export const buildPreviewSrc = (
+  entry: {
+    collectionPath?: string
+    collectionName?: string
+    slug?: string
+    itemType?: string
+    previewSrc?: string
+  },
+  context: PreviewContext & { contentRoot?: string; basePath?: string },
+): string => {
+  return joinUrlPrefix(context.basePath, buildRawPreviewSrc(entry, context))
 }
 
 export const normalizeContentPayload = (raw: unknown): FormValue => {
@@ -115,19 +163,15 @@ export const buildWritePayload = (
 
 interface BuildEntriesFromListParams {
   response: ListEntriesResponse
-  branchName: string
   resolvePreviewSrc: (
     entry: Pick<CollectionItem, 'collectionPath' | 'collectionName' | 'slug' | 'entryType'>,
   ) => string
-  contentRoot: string
   flatSchema: FlatSchemaItem[]
 }
 
 export const buildEntriesFromListResponse = ({
   response,
-  branchName,
   resolvePreviewSrc,
-  contentRoot,
   flatSchema,
 }: BuildEntriesFromListParams): EditorEntry[] => {
   return response.entries.map((entry) => {
@@ -145,18 +189,12 @@ export const buildEntriesFromListResponse = ({
       }
     }
 
-    const isRootEntry = entry.collectionPath === contentRoot
-    const apiPath = isRootEntry
-      ? `/api/canopycms/${branchName}/content/${encodeURIComponent(entry.slug)}`
-      : `/api/canopycms/${branchName}/content/${encodeURIComponent(entry.collectionPath)}/${encodeURIComponent(entry.slug)}`
-
     return {
       path: entry.logicalPath,
       contentId: entry.contentId,
       label: entry.title || entry.slug || entry.collectionName || entry.collectionPath,
       status: entry.exists === false ? 'missing' : (entry.entryType ?? 'entry'),
       schema: schema,
-      apiPath,
       previewSrc: resolvePreviewSrc(entry),
       collectionPath: entry.collectionPath,
       collectionName: entry.collectionName,

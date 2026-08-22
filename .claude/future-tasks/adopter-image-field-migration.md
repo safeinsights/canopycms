@@ -52,6 +52,20 @@ to its heavy unoptimized images.
 > finishing, commit per the repo's conventions. Show me the field mapping (step 2) before
 > touching content.
 
+## Sequencing against the basePath fix (added 2026-08-21)
+
+**Yes — this migration should run AFTER
+[assets-basepath-deployments.md](resolved/assets-basepath-deployments.md), which is now resolved.**
+That file and this one collided: completing this migration is what turns asset URLs from strings
+the adopter controls into `assetUrl()` output, which is exactly when a root-relative-URL bug
+becomes visible. With the fix landed, the ordering constraint is satisfied and this is free to run.
+
+One thing to carry into step 4 for any repo that deploys preview builds under a Next `basePath`:
+`assetUrl()` does not know your deployment prefix, so pass it as `baseUrl`. This applies even at
+step 3, where `src` still points into `public/` — Next serves `public/` under the basePath too, so
+those URLs need the prefix as much as transform URLs do. But check the mount table in the README
+first: the prefix is correct only where Next serves the assets, not on a CloudFront deployment.
+
 ## Notes
 
 - The one epic gate not yet exercised anywhere — **presigned upload from a dev editor

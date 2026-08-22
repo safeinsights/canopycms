@@ -35,6 +35,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import type { EntrySchema } from '../../config'
 import { resolveChangedReferences } from '../client-reference-resolver'
 import { flattenGroupFields } from '../../utils/flatten-group-fields'
+import { useOptionalApiClient } from '../context'
 
 export type FormValue = Record<string, unknown>
 
@@ -58,6 +59,11 @@ export function useReferenceResolution({
   onResolvedValueChange,
   onLoadingStateChange,
 }: UseReferenceResolutionOptions): UseReferenceResolutionResult {
+  // Context-provided client (configured with the deployment's basePath) when this hook is
+  // rendered inside an ApiClientProvider -- which it always is in the real Editor tree. `null`
+  // outside one (e.g. FormRenderer.stories.tsx, or this hook's own unwrapped unit tests);
+  // resolveChangedReferences falls back to a default-configured client in that case.
+  const apiClient = useOptionalApiClient()
   const resolvedCache = useRef<Map<string, unknown>>(new Map())
   const prevValueRef = useRef<FormValue>({}) // Track previous value for change detection
   const lastNotifiedValueRef = useRef<string>('') // Track last notified value to prevent infinite loops
@@ -198,6 +204,7 @@ export function useReferenceResolution({
           fields,
           branch,
           resolvedCache.current,
+          apiClient ?? undefined,
         )
 
         // A newer value/branch superseded this attempt, or the component
@@ -239,7 +246,7 @@ export function useReferenceResolution({
       // unmount, where there IS no next run to bump the counter otherwise.
       ++resolveGenerationRef.current
     }
-  }, [value, fields, branch, referenceFieldNames])
+  }, [value, fields, branch, referenceFieldNames, apiClient])
 
   // Clear cache when branch changes
   useEffect(() => {
