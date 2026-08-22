@@ -83,6 +83,62 @@ const eslintConfig = [
       'no-console': 'off',
     },
   },
+  // Node tooling: every .mjs file in this repo is a node script or config, and
+  // none of them were linted at all until 2026-08-22. `pnpm lint` is
+  // `pnpm -r run lint`, which recurses over the five workspace PACKAGES -- the
+  // repo-root `scripts/` directory is not one, so nothing in it was ever
+  // reached. lint-staged did not reach them either: its glob listed
+  // `js,jsx,ts,tsx,md,html,css,json,yaml,yml` and omitted `mjs`. The result was
+  // 90 eslint errors sitting in seven root scripts, four of which now gate CI
+  // or the pre-commit hook (lint:tasks, lint:actions, check:esm) -- the repo was
+  // gating merges on scripts nothing linted. See `lint:scripts` in package.json.
+  //
+  // 69 of those 90 were one cause: no node globals were declared, so every
+  // `console`/`process`/`setTimeout` read as `no-undef`. Declared explicitly
+  // rather than via the `globals` package, which is NOT a dependency here and
+  // does not resolve (pnpm's strict node_modules does not hoist eslint's copy);
+  // adding it would mean a lockfile change for a list this short. If a future
+  // script uses a node global not listed here it fails as `no-undef` with the
+  // name in the message, and the fix is one line below.
+  //
+  // Scoped to all `**/*.mjs` rather than just `scripts/**` because the same gap
+  // was open in apps/dual-build-fixture/next.config.mjs and
+  // packages/canopycms-cdk/lambda/asset-transform/build.mjs. This is safe
+  // because `.mjs` is used exclusively for node tooling and config here --
+  // browser code is .ts/.tsx compiled by Next -- and what actually guards
+  // browser reachability is `pnpm lint:bundle`, not this globals list.
+  //
+  // Deliberately placed BEFORE the `**/worker/**` blocks below so their stricter
+  // console ban still wins; no worker file is .mjs today, and this ordering is
+  // what keeps that true if one ever is.
+  {
+    files: ['**/*.mjs'],
+    languageOptions: {
+      globals: {
+        AbortController: 'readonly',
+        AbortSignal: 'readonly',
+        Buffer: 'readonly',
+        TextDecoder: 'readonly',
+        TextEncoder: 'readonly',
+        URL: 'readonly',
+        URLSearchParams: 'readonly',
+        clearInterval: 'readonly',
+        clearTimeout: 'readonly',
+        console: 'readonly',
+        fetch: 'readonly',
+        process: 'readonly',
+        queueMicrotask: 'readonly',
+        setInterval: 'readonly',
+        setTimeout: 'readonly',
+        structuredClone: 'readonly',
+      },
+    },
+    rules: {
+      // Terminal output is the entire point of a build/CLI script, same
+      // rationale as the `**/cli/**` override above.
+      'no-console': 'off',
+    },
+  },
   // Worker daemon: bare console is BANNED here, which is the exact opposite of
   // what this override used to say ('no-console': 'off').
   //

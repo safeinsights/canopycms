@@ -69,6 +69,13 @@ function collectLinks(file) {
         return
       }
       if (inFence) return
+      // safe-regex flags star height only: `[^"]*` is inside the optional
+      // `(?:\s+"...")?` group, which matches at most once, and `[^)\s]+`
+      // before it excludes whitespace while `\s+` requires it -- disjoint, so
+      // they cannot ambiguate. Measured 2026-08-22 at 0.5ms against a 60KB
+      // adversarial input. This runs in the pre-commit hook, so it was worth
+      // confirming by timing rather than by reading.
+      // eslint-disable-next-line security/detect-unsafe-regex
       for (const m of raw.matchAll(/\[[^\]]*\]\(([^)\s]+)(?:\s+"[^"]*")?\)/g)) {
         links.push({ target: m[1], line: i + 1, raw })
       }

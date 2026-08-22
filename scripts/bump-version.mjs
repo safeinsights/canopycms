@@ -50,6 +50,9 @@ const corePkg = JSON.parse(readFileSync(corePkgPath, 'utf8'))
 // Leading zeros are rejected deliberately: npm treats `01.2.3` as invalid
 // semver, so accepting it here would only move the failure to `npm publish`.
 const CORE_VERSION = String.raw`(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)`
+// Not user input: the interpolated pieces are String.raw constants declared
+// directly above, so there is no injection surface for the rule to protect.
+// eslint-disable-next-line security/detect-non-literal-regexp
 const STRICT_VERSION_RE = new RegExp(`^${CORE_VERSION}$`)
 // Semver's optional `-prerelease` and `+build`, following the spec's identifier
 // rules rather than a loose character class: dot-separated identifiers, none
@@ -60,6 +63,9 @@ const STRICT_VERSION_RE = new RegExp(`^${CORE_VERSION}$`)
 // `npm publish`.) Build metadata has no leading-zero rule.
 const PRERELEASE_ID = String.raw`(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*)`
 const BUILD_ID = String.raw`[0-9A-Za-z-]+`
+// Not user input: the interpolated pieces are String.raw constants declared
+// directly above, so there is no injection surface for the rule to protect.
+// eslint-disable-next-line security/detect-non-literal-regexp
 const EXPLICIT_VERSION_RE = new RegExp(
   `^${CORE_VERSION}` +
     String.raw`(?:-${PRERELEASE_ID}(?:\.${PRERELEASE_ID})*)?` +
