@@ -1,4 +1,4 @@
-import { existsSync, renameSync } from 'node:fs'
+import { existsSync, readFileSync, renameSync } from 'node:fs'
 import * as path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { App, Duration, Stack } from 'aws-cdk-lib'
@@ -261,6 +261,105 @@ describe('AssetSupport - standalone mode (creates its own bucket)', () => {
   })
 })
 
+describe('AssetSupport - transform origin read timeout', () => {
+  it('passes readTimeout explicitly rather than relying on CloudFront’s default', () => {
+    // CloudFront's 30s default happens to equal TRANSFORM_LAMBDA_TIMEOUT today,
+    // so an accidental match would look correct while raising the Lambda's
+    // timeout alone silently started 504ing the slow transforms the raise was
+    // meant to allow. The CMS origin has this assertion; this one did not.
+    const stack = makeStack()
+    const assetSupport = new AssetSupport(stack, 'Assets', { ...BASE_PROPS })
+    const template = synthWithDistribution(assetSupport, stack)
+
+    const dists = template.findResources('AWS::CloudFront::Distribution')
+    // Only CUSTOM origins have a read timeout at all -- the S3 primary of the
+    // transform behavior's origin group has no CustomOriginConfig, so filter to
+    // the ones that can carry the property before asserting on it.
+    const customOrigins = Object.values(dists).flatMap((d) =>
+      (
+        (d.Properties.DistributionConfig.Origins ?? []) as {
+          CustomOriginConfig?: { OriginReadTimeout?: number }
+        }[]
+      ).filter((o) => o.CustomOriginConfig !== undefined),
+    )
+    expect(customOrigins.length).toBeGreaterThan(0)
+    for (const origin of customOrigins) {
+      expect(origin.CustomOriginConfig?.OriginReadTimeout).toBe(30)
+    }
+  })
+})
+
+describe('AssetSupport - bounding the anonymous transform path', () => {
+  it('caps the transform Lambda with a reserved-concurrency limit', () => {
+    const stack = makeStack()
+    new AssetSupport(stack, 'Assets', { ...BASE_PROPS })
+    const template = Template.fromStack(stack)
+
+    // /assets/t/* is anonymous and `crop` is an unbounded float rect, so
+    // without a cap a scripted loop is an uncapped sharp/S3 amplifier. This is
+    // a RESERVATION (a cap), not provisioned concurrency -- it costs nothing.
+    template.hasResourceProperties(
+      'AWS::Lambda::Function',
+      Match.objectLike({ ReservedConcurrentExecutions: 10 }),
+    )
+  })
+
+  it('honours an overridden transform concurrency cap', () => {
+    const stack = makeStack()
+    new AssetSupport(stack, 'Assets', { ...BASE_PROPS, transformReservedConcurrency: 3 })
+    Template.fromStack(stack).hasResourceProperties(
+      'AWS::Lambda::Function',
+      Match.objectLike({ ReservedConcurrentExecutions: 3 }),
+    )
+  })
+
+  it('expires generated derivatives under assets/t/ while keeping originals forever', () => {
+    const stack = makeStack()
+    new AssetSupport(stack, 'Assets', { ...BASE_PROPS })
+    const template = Template.fromStack(stack)
+
+    template.hasResourceProperties(
+      'AWS::S3::Bucket',
+      Match.objectLike({
+        LifecycleConfiguration: {
+          Rules: Match.arrayWith([
+            Match.objectLike({
+              Status: 'Enabled',
+              Prefix: 'assets/t/',
+              ExpirationInDays: 180,
+            }),
+          ]),
+        },
+      }),
+    )
+
+    // Source assets and metadata must NOT be swept -- they are not
+    // regenerable, unlike everything under assets/t/.
+    const buckets = Object.values(template.findResources('AWS::S3::Bucket'))
+    const prefixes = buckets.flatMap(
+      (b) =>
+        (b.Properties.LifecycleConfiguration?.Rules ?? []).map(
+          (r: { Prefix?: string }) => r.Prefix,
+        ) as (string | undefined)[],
+    )
+    expect(prefixes).not.toContain('asset-originals/')
+    expect(prefixes).not.toContain('asset-meta/')
+  })
+
+  it('leaves lifecycle rules to the caller in BYO-bucket mode', () => {
+    const stack = makeStack()
+    const existing = new s3.Bucket(stack, 'Existing')
+    new AssetSupport(stack, 'Assets', { ...BASE_PROPS, bucket: existing })
+    const template = Template.fromStack(stack)
+
+    // A default `s3.Bucket` emits no Properties at all, so this reads through
+    // optional chaining rather than asserting the key's container exists.
+    const buckets = Object.values(template.findResources('AWS::S3::Bucket'))
+    expect(buckets).toHaveLength(1)
+    expect(buckets[0].Properties?.LifecycleConfiguration).toBeUndefined()
+  })
+})
+
 describe('AssetSupport - transform Lambda CloudWatch log group', () => {
   it('creates a dedicated transform log group named /canopycms/<stackName>/transform with 90-day default retention and DESTROY removal', () => {
     const stack = makeStack()
@@ -414,5 +513,47 @@ describe('deployable-bundle guard', () => {
         renameSync(backupPath, deployableMarkerPath)
       }
     }
+  })
+})
+
+describe('cms-stack template: the media block names a real API', () => {
+  // The scaffold's "uncomment to enable media" block previously named
+  // a member that did not exist, and omitted the
+  // REQUIRED `editorOrigins` prop -- so an adopter who followed the template's
+  // own instructions hit two type errors plus a nonexistent property, then had
+  // to reverse-engineer the construct's real API. Template text cannot be
+  // type-checked while it is commented out, so assert the API surface it
+  // references actually exists.
+  // BOTH copies of this block. The scaffold template and the checked-in
+  // example stack teach the same thing, and a fix applied to only one is how
+  // the dead-API version survived: the template was corrected while
+  // examples/aws-deployment/ went on instructing adopters to wire a member
+  // that does not exist.
+  const repoRoot = path.join(__dirname, '..', '..', '..', '..')
+  const MEDIA_BLOCK_SOURCES = [
+    path.join(repoRoot, 'packages/canopycms/src/cli/template-files/cms-stack.ts.template'),
+    path.join(repoRoot, 'examples/aws-deployment/infrastructure/lib/cms-stack.ts'),
+  ]
+
+  it.each(MEDIA_BLOCK_SOURCES)('%s references only members AssetSupport actually has', (file) => {
+    const source = readFileSync(file, 'utf-8')
+    const referenced = [...source.matchAll(/assetSupport\.([A-Za-z_$][\w$]*)/g)].map((m) => m[1])
+    expect(referenced.length).toBeGreaterThan(0)
+
+    const stack = makeStack()
+    const assetSupport = new AssetSupport(stack, 'Assets', { ...BASE_PROPS })
+    for (const member of new Set(referenced)) {
+      expect(
+        member in assetSupport ||
+          member in (Object.getPrototypeOf(assetSupport) as Record<string, unknown>),
+        `${file} references assetSupport.${member}, which AssetSupport does not have`,
+      ).toBe(true)
+    }
+  })
+
+  it.each(MEDIA_BLOCK_SOURCES)('%s passes the required editorOrigins prop', (file) => {
+    const source = readFileSync(file, 'utf-8')
+    expect(/new AssetSupport\(/.test(source)).toBe(true)
+    expect(source).toContain('editorOrigins')
   })
 })

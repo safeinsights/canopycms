@@ -209,6 +209,42 @@ describe('FileBasedAuthCache', () => {
       expect(users2[0].name).toBe('Charlie')
     })
 
+    // The prod topology, which no other test in this file has: the EC2 worker
+    // writes the snapshot through CANOPYCMS_WORKSPACE_ROOT=/mnt/efs/workspace
+    // (so its cachePath is /mnt/efs/workspace/.cache) while the CMS Lambda
+    // reads the SAME EFS directory as /mnt/efs/.cache, having mounted the
+    // /workspace access point at /mnt/efs. An absolute `current` target is
+    // meaningless across that boundary; a relative one resolves from either
+    // side. Reproduced here with a symlinked alias directory, which gives the
+    // reader a different path string for the same bytes on disk.
+    it('reads a snapshot written under a different path to the same directory', async () => {
+      const realDir = path.join(tmpDir, 'real-cache')
+      const aliasDir = path.join(tmpDir, 'alias-cache')
+      await fs.mkdir(realDir, { recursive: true })
+      await fs.symlink(realDir, aliasDir)
+
+      // Writer's view of the cache directory...
+      await writeAuthCacheSnapshot(realDir, {
+        'users.json': testUsers,
+        'orgs.json': testGroups,
+        'memberships.json': testMemberships,
+      })
+
+      // ...reader's view of the very same directory.
+      const crossMountCache = new FileBasedAuthCache(aliasDir)
+      const users = await crossMountCache.getAllUsers()
+      expect(users).toHaveLength(2)
+      expect(users[0].name).toBe('Alice')
+
+      const groups = await crossMountCache.getAllGroups()
+      expect(groups).toHaveLength(2)
+      expect(await crossMountCache.getUserExternalGroups('user_1')).toEqual(['org_1', 'org_2'])
+    })
+
+    // NOTE: this asserts the escape guard's fallback, which is correct
+    // behaviour for a genuinely escaping link. It does NOT cover the
+    // cross-mount case above - before the relative-target fix, the guard fired
+    // on every prod Lambda read and this test still passed.
     it('falls back to flat layout when symlink target escapes cache directory', async () => {
       // Create a symlink pointing outside the cache directory
       const currentLink = path.join(tmpDir, 'current')

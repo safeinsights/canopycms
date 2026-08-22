@@ -347,6 +347,16 @@ async function serveLazyTransform(
     return { ok: false, status: 400, error: 'Not a raster asset - svg/pdf are served statically' }
   }
 
+  // The slug is decorative in the URL but load-bearing in the stored key, so
+  // it must equal the asset's real slug: `[a-z0-9-]+` is all the parser can
+  // enforce, and every other string that passes it aliases the same image into
+  // a new cache key and a new stored object. Canopy's own URLs always carry
+  // `meta.slug` (assets/asset-url.ts). Mirrors the prod transform Lambda's
+  // handler.ts check - the two paths must agree, or dev accepts URLs prod 404s.
+  if (parsed.slug !== meta.slug) {
+    return { ok: false, status: 404, error: 'Not found' }
+  }
+
   // When the URL omits an explicit `f=` format, the transform preserves the
   // source format, so the URL's `{ext}` must match the source's real ext
   // exactly - the parser alone can't check this (it doesn't know the source

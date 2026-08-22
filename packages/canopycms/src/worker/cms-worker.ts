@@ -32,7 +32,7 @@ import { resolveDeploymentName } from '../operating-mode/deployment-name'
 import type { PullRequestState, WorkerStatusReport } from '../types'
 import { tryAcquireContentWriteLock } from '../utils/content-write-lock'
 import { getErrorMessage, isNodeError, redactCredentials } from '../utils/error'
-import { isNonFastForwardRejection, isStaleLeaseRejection } from '../utils/git'
+import { isNonFastForwardRejection, isRebaseInProgress, isStaleLeaseRejection } from '../utils/git'
 import { writeWorkerStatus } from './worker-status'
 import { workerLog, workerLogWarn, workerLogError } from './log'
 
@@ -646,6 +646,96 @@ export class CmsWorker {
   }
 
   /**
+   * Guarantee a bare repo's config carries NO `remote.origin.url`, and so no
+   * embedded bot token.
+   *
+   * `git clone https://x-access-token:<token>@github.com/...` records that URL
+   * verbatim as `remote.origin.url`, and for `remote.git` that config lives on
+   * shared EFS. The security model in docs/deploying-to-aws.md -- "If Lambda is
+   * compromised, an attacker can read/write content on EFS but cannot push to
+   * GitHub", "Secrets stay on the worker" -- is false while that string is
+   * there: a compromised Lambda could read the token off EFS and, despite
+   * having no egress of its own, exfiltrate it by writing it into branch
+   * content the worker then pushes to GitHub.
+   *
+   * Nothing needs the remote: every push passes the URL explicitly as an
+   * argument (see the `git.push(this.buildGitHubUrl(), ...)` call sites), and
+   * `verifyBaseBranchExists` reads local refs.
+   *
+   * VERIFIES rather than assuming: it re-reads the config and throws if the URL
+   * survives, because the previous code's `.catch(() => {})` meant a failed
+   * scrub was indistinguishable from a successful one.
+   */
+  private async scrubPersistedRemote(gitDir: string): Promise<void> {
+    const git = simpleGit({ baseDir: gitDir })
+    // `git config --get` exits 1 with no output when the key is absent.
+    // simple-git does NOT reliably throw on that -- verified against
+    // simple-git 3.36: it resolves with an empty string -- so an empty result
+    // must be read as "absent" too. Treating "" as a surviving URL is what
+    // made the first version of this reject every clean scrub.
+    //
+    // 'unreadable' is deliberately distinct from 'absent'. A read that fails
+    // for any OTHER reason must not be mistaken for "no token here": that
+    // would let the pre-check below short-circuit and skip the scrub entirely,
+    // silently leaving a token-bearing config on shared EFS -- the exact
+    // outcome this function exists to prevent. Fail closed and attempt the
+    // removal instead.
+    const readOriginUrl = async (): Promise<string | null | 'unreadable'> => {
+      try {
+        const url = (await git.raw(['config', '--get', 'remote.origin.url'])).trim()
+        return url === '' ? null : url
+      } catch {
+        // ANY throw is 'unreadable', never 'absent'. The genuinely-absent case
+        // does not reach here at all -- simple-git resolves with '' (verified
+        // against 3.36: it only treats a task as failed when stderr is
+        // non-empty, and a missing key writes nothing to stderr). So a throw
+        // means something actually went wrong, and mapping that to "no token
+        // here" would be the one fail-OPEN reading available.
+        //
+        // An earlier version tried to classify git's exit-1 "key not found"
+        // from the message text. That was dead code -- simple-git's GitError
+        // message is raw stdout+stderr with no exit-code text -- and its
+        // empty-message fallback mapped a hypothetical throw to 'absent',
+        // which is exactly the direction this must not fail.
+        return 'unreadable'
+      }
+    }
+
+    const before = await readOriginUrl()
+    if (before === null) return
+    if (before === 'unreadable') {
+      workerLogWarn(
+        `  Could not read remote.origin.url in ${gitDir}; attempting the scrub anyway rather than assuming it is absent`,
+      )
+    }
+
+    try {
+      await git.removeRemote('origin')
+    } catch (err: unknown) {
+      // Reached only from the 'unreadable' path, where the remote may in fact
+      // not exist. Let the verification below decide rather than failing here:
+      // it is the authoritative check, and it fails closed.
+      workerLogWarn(
+        `  removeRemote('origin') failed in ${gitDir}: ${getErrorMessage(err)} -- verifying directly`,
+      )
+    }
+
+    // Fails closed on BOTH a surviving URL and an unverifiable read: if we
+    // cannot prove the token is gone from shared storage, we do not proceed.
+    const remaining = await readOriginUrl()
+    if (remaining !== null) {
+      throw new Error(
+        `Could not confirm the 'origin' remote is gone from ${gitDir} (${
+          remaining === 'unreadable'
+            ? 'its config was unreadable'
+            : 'its config still records a URL'
+        }). For a token-bearing clone URL that means the GitHub bot token may be persisted on ` +
+          `shared storage. Refusing to continue.`,
+      )
+    }
+  }
+
+  /**
    * Ensure remote.git bare repo exists.
    * On first run, clone from GitHub as a bare repo.
    *
@@ -670,6 +760,15 @@ export class CmsWorker {
     }
 
     if (exists) {
+      // SELF-HEAL, before anything else touches this repo. The previous
+      // already-exists path fast-returned without ever re-checking the config,
+      // so a token that survived one scrub survived forever -- and a clone
+      // interrupted by SIGKILL/power-off between `git clone` and the scrub left
+      // a repo whose config already held the token, which additionally hit the
+      // "delete remote.git and restart" refusal below and so sat on EFS until
+      // an operator acted.
+      await this.scrubPersistedRemote(this.remoteGitPath)
+
       try {
         await this.verifyBaseBranchExists(this.remoteGitPath)
       } catch (err) {
@@ -686,26 +785,36 @@ export class CmsWorker {
 
     workerLog('Initializing remote.git from GitHub...')
     const git = simpleGit()
-    await git.clone(this.buildGitHubUrl(), this.remoteGitPath, ['--bare'])
+
+    // Clone under a TEMP name and rename into place only once the token has
+    // been scrubbed and the repo verified, so `remote.git` never exists on EFS
+    // in a token-bearing state. A crash mid-clone now leaves only this staging
+    // directory, which the next boot deletes -- rather than a poisoned
+    // `remote.git` that fs.stat cannot distinguish from a healthy one.
+    const stagingPath = `${this.remoteGitPath}.cloning`
+    await fs.rm(stagingPath, { recursive: true, force: true })
 
     try {
-      await this.verifyBaseBranchExists(this.remoteGitPath)
+      await git.clone(this.buildGitHubUrl(), stagingPath, ['--bare'])
+
+      // Before the rename, so the token is gone from the config the moment the
+      // repo becomes reachable under its real name. Throws (rather than
+      // swallowing) if the scrub does not take.
+      await this.scrubPersistedRemote(stagingPath)
+
+      await this.verifyBaseBranchExists(stagingPath)
     } catch (err) {
-      workerLogError(
-        `remote.git base branch verification failed after clone: ${getErrorMessage(err)}`,
-      )
+      workerLogError(`remote.git clone failed: ${redactCredentials(getErrorMessage(err))}`)
       // Deleting before throwing is what makes this recoverable: the next
       // start() sees no remote.git and re-clones, instead of being stuck
       // forever behind a poisoned bare repo that fs.stat alone can't detect.
-      await fs.rm(this.remoteGitPath, { recursive: true, force: true })
+      await fs.rm(stagingPath, { recursive: true, force: true })
       throw new Error(
-        `remote.git clone of ${this.config.githubOwner}/${this.config.githubRepo} has no branch '${this.baseBranch}' - the GitHub repository is empty or the base branch does not exist. Push an initial commit to '${this.baseBranch}' and restart the worker (systemd will retry automatically).`,
+        `remote.git clone of ${this.config.githubOwner}/${this.config.githubRepo} failed or has no branch '${this.baseBranch}' - the GitHub repository may be empty, or the base branch may not exist. Push an initial commit to '${this.baseBranch}' and restart the worker (systemd will retry automatically).`,
       )
     }
 
-    // Remove the origin remote so the token doesn't persist in config
-    const bareGit = simpleGit({ baseDir: this.remoteGitPath })
-    await bareGit.removeRemote('origin').catch(() => {})
+    await fs.rename(stagingPath, this.remoteGitPath)
     workerLog('remote.git initialized')
   }
 
@@ -2287,6 +2396,89 @@ export class CmsWorker {
         }
 
         try {
+          // Recover an INTERRUPTED rebase before anything else looks at this
+          // tree. A clone left with .git/rebase-merge (or rebase-apply) reports
+          // uncommitted changes, so without this the dirty check below would
+          // classify it `skippedDirty` on every cycle FOREVER while
+          // branch-health scanned it as healthy -- and editors would meanwhile
+          // read, and be able to save over, conflict-marker content.
+          //
+          // An in-progress rebase is always this worker's own abandoned work:
+          // it is the only thing that ever rebases these clones, and it got
+          // here via a crash, an OOM, a spot interruption, or the ASG rolling
+          // the instance (which happens on EVERY `cdk deploy`, while `stop()`
+          // drains for at most taskTimeoutMs).
+          //
+          // NOT LOSSLESS, and it is important not to claim otherwise. `git
+          // rebase --abort` hard-resets tracked files to the pre-rebase head.
+          // While the worker was DOWN nothing held the [SYNC-C1] content-write
+          // lock, so an editor could have saved into this wedged clone and
+          // received a 200; that save is a working-tree modification, and the
+          // abort reverts it. (New, untracked entry files survive; edits to
+          // existing ones do not.) Taking the lock here stops any FURTHER save
+          // racing the abort, but cannot recover one that already landed.
+          //
+          // Aborting anyway is still the right call: the alternative is a
+          // branch wedged forever whose tree serves conflict-marker content to
+          // editors. What must not happen is doing it SILENTLY -- so anything
+          // modified beyond the rebase's own conflict state is logged by path
+          // first, which is the only record an operator would have.
+          if (await isRebaseInProgress(branchPath)) {
+            const preAbort = await branchGit.status().catch(() => null)
+            // Keyed on the WORKING-TREE column only. The two porcelain columns
+            // mean different things here, and conflating them produces a false
+            // data-loss report on essentially every conflict-wedged recovery
+            // (verified against real git, mid-rebase):
+            //
+            //   `M ` index=M, wd=' '  -- the interrupted replay's own cleanly
+            //                            merged files, already STAGED. These
+            //                            are committed history and survive the
+            //                            abort untouched. Not collateral.
+            //   ` M` index=' ', wd=M  -- a working-tree modification nothing
+            //                            staged: an editor's save landing while
+            //                            the worker was down. The abort
+            //                            discards exactly these.
+            //   `??`                  -- untracked; the abort leaves them.
+            //
+            // KNOWN GAP, stated rather than hidden: a save onto one of the
+            // rebase's own conflicted paths (the "saved over conflict-marker
+            // content" case) is excluded below, because the file reads `UU`
+            // whether or not an editor touched it -- status alone cannot tell
+            // the two apart. Those discards go unlogged.
+            const collateral = (preAbort?.files ?? [])
+              .filter((f) => !preAbort?.conflicted.includes(f.path))
+              .filter((f) => f.working_dir !== ' ' && f.working_dir !== '?')
+              .map((f) => f.path)
+            if (collateral.length > 0) {
+              workerLogWarn(
+                `  ${branchDir}: aborting the interrupted rebase will DISCARD working-tree changes to ` +
+                  `${collateral.length} file(s) saved while the worker was down: ${collateral.join(', ')}`,
+              )
+            }
+            workerLogWarn(
+              `  ${branchDir}: found an interrupted rebase (this worker's own abandoned work) -- aborting it to recover the branch`,
+            )
+            try {
+              await branchGit.rebase(['--abort'])
+            } catch (abortErr: unknown) {
+              // Leave it for the next cycle rather than pressing on: every step
+              // below assumes a clean tree.
+              const reason = redactCredentials(
+                `could not abort interrupted rebase: ${getErrorMessage(abortErr)}`,
+              )
+              workerLogWarn(`  Skipping ${branchDir}: ${reason}`)
+              failed.push({ branch: branchDir, error: reason })
+              // Record on branch metadata too, like the other two failure exits
+              // (`!completed` and the outer catch). Without this a persistently
+              // un-abortable wedge appeared in worker-status.json but never set
+              // a `syncFailureReason`, so the admin branch panel showed nothing
+              // -- and this is precisely the state that needs an operator,
+              // since it is the one the next cycle cannot fix by itself.
+              await this.recordRebaseFailure(branchPath, branchDir, reason)
+              continue
+            }
+          }
+
           // Skip dirty branches — editor has unsaved changes that can't be rebased.
           // Now inside the lock, so no write can land between this check and the
           // rebase below.
@@ -2421,10 +2613,57 @@ export class CmsWorker {
                 await this.afterConflictDetectedForTesting()
                 // During rebase, --theirs = the branch being replayed (editor's work).
                 // (git rebase reverses ours/theirs: "ours" is the rebase target, "theirs" is the branch.)
+                //
+                // MODIFY/DELETE conflicts have no "their version" to check out
+                // and must be resolved by staging a delete or an add instead.
+                // `git checkout --theirs` on one exits non-zero ("path ... does
+                // not have their version") and simple-git throws -- and because
+                // this loop body IS the round loop's catch, that throw escapes
+                // the round loop entirely, skipping BOTH `rebase --abort` sites
+                // below and leaving the clone wedged mid-rebase forever. The
+                // index/working-tree code pair identifies which side deleted
+                // (verified against real git, not inferred):
+                //
+                //   U/D  "deleted by them"  -- the BRANCH deleted it, base
+                //        modified it. Git leaves base's version in the tree.
+                //        Keep-branch-version means honouring the delete: git rm.
+                //   D/U  "deleted by us"    -- base deleted it, the BRANCH
+                //        modified it. Git leaves the branch's version in the
+                //        tree. Keep-branch-version means keeping it: git add.
+                //
+                // Any per-file resolution that STILL fails routes into the
+                // `!completed` path below (which aborts and records) instead of
+                // escaping -- deliberately NOT a rethrow, since a throw from
+                // here is exactly the bug being fixed.
+                const conflictKind = new Map(
+                  st.files.map((f) => [f.path, `${f.index}${f.working_dir}`]),
+                )
+                let resolutionFailure: string | undefined
                 for (const file of st.conflicted) {
-                  await branchGit.raw(['checkout', '--theirs', file])
-                  await branchGit.add(file)
+                  const kind = conflictKind.get(file)
+                  try {
+                    if (kind === 'UD') {
+                      await branchGit.raw(['rm', '-f', '--', file])
+                    } else if (kind === 'DU') {
+                      await branchGit.add(file)
+                    } else {
+                      await branchGit.raw(['checkout', '--theirs', file])
+                      await branchGit.add(file)
+                    }
+                  } catch (resolveErr: unknown) {
+                    resolutionFailure =
+                      `failed to resolve conflicted file '${file}' (status ${kind ?? '??'}): ` +
+                      getErrorMessage(resolveErr)
+                    break
+                  }
                   conflictedFiles.push(file)
+                }
+                if (resolutionFailure !== undefined) {
+                  // Same exit shape as the "unexpected error" branch below: set
+                  // failureReason and break, letting the `!completed` block do
+                  // the single `rebase --abort` and record the failure once.
+                  failureReason = resolutionFailure
+                  break
                 }
                 // nextAction stays 'continue'
               } else {
@@ -2636,6 +2875,38 @@ export class CmsWorker {
             }
           }
         } finally {
+          // Last-resort guarantee that NO exit path leaves this clone
+          // mid-rebase -- including an unexpected throw from any git step
+          // above, which lands in the outer catch and previously only logged.
+          //
+          // It must live HERE rather than in that outer catch: the catch runs
+          // AFTER this finally has released the content-write lock, so aborting
+          // there would hard-reset a working tree an editor's save could
+          // already be racing -- precisely the [SYNC-C1] hazard the lock
+          // exists to prevent. Inside the finally the lock is still held --
+          // EXCEPT on the narrow path where it was compromised mid-hold, in
+          // which case a newly-admitted writer may already be live and this
+          // abort carries the same exposure as the compromise path's own abort
+          // above. Not special-cased: leaving a clone wedged mid-rebase is the
+          // worse outcome, and the writer in that window is already being told
+          // to retry.
+          //
+          // Guarded on actual rebase state so the happy path and the `continue`
+          // exits cost one stat and do nothing.
+          try {
+            if (await isRebaseInProgress(branchPath)) {
+              workerLogWarn(
+                `  ${branchDir}: rebase still in progress on exit -- aborting so the clone is not left wedged`,
+              )
+              await branchGit.rebase(['--abort'])
+            }
+          } catch (abortErr: unknown) {
+            // Best effort: the next cycle's recovery check retries this.
+            workerLogWarn(
+              `  Failed to abort in-progress rebase for ${branchDir}: ${getErrorMessage(abortErr)}`,
+            )
+          }
+
           // [SYNC-C1] Released on EVERY exit -- the `continue`s above, a throw
           // into the outer catch, and the happy path alike. A stranded lock
           // would wedge every write to this branch until it went stale.

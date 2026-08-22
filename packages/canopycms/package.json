@@ -135,6 +135,7 @@
     "minimatch": "^9.0.7",
     "minimist": "^1.2.8",
     "pathe": "^1.1.2",
+    "picocolors": "^1.1.1",
     "proper-lockfile": "^4.1.2",
     "react-easy-crop": "^6.2.2",
     "react-split-pane": "^0.1.92",

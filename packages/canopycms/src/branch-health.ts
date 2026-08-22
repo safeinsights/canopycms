@@ -7,6 +7,7 @@ import { BranchMetadataFileManager, BranchMetadataCorruptError } from './branch-
 import { ContentIdIndex, type DuplicateContentId } from './content-id-index'
 import { sanitizeBranchName } from './paths/branch-name'
 import { getErrorMessage, isNodeError, isNotFoundError } from './utils/error'
+import { isRebaseInProgress } from './utils/git'
 
 /**
  * Admin-facing health classification of every directory under a branches
@@ -43,6 +44,26 @@ export interface BranchHealthEntry {
    * repair-content-duplicates admin action.
    */
   duplicateContentIds?: DuplicateContentId[]
+  /**
+   * healthy only, and only when true: this clone has an interrupted rebase on
+   * disk (`.git/rebase-merge` / `.git/rebase-apply`).
+   *
+   * Deliberately an advisory flag on `healthy` rather than its own
+   * `BranchHealthKind`, for the same reason `duplicateContentIds` is: the
+   * branch's metadata is intact and the state is USUALLY transient -- the
+   * worker's sync loop aborts an interrupted rebase at the top of its next
+   * per-branch pass. What this flag buys is visibility in the window BEFORE
+   * that pass runs, where the branch otherwise scanned as unqualified
+   * `healthy` while being skipped as dirty every cycle.
+   *
+   * NOT self-recovering in every case, so a persisting value is the real
+   * signal and needs an operator. Two ways it sticks: the abort itself keeps
+   * failing, or the branch's status moved off `editing` after it wedged --
+   * the rebase loop filters by status BEFORE reaching the recovery step, so a
+   * clone that crashed mid-rebase and was then submitted or archived is never
+   * revisited, and this flag is the only thing that surfaces it.
+   */
+  rebaseInProgress?: boolean
   /** corrupt-metadata only: message describing why the file failed to load. */
   parseError?: string
   /** corrupt-metadata only: branch.json's mtime, ISO. Omitted if branch.json itself couldn't be stat'd. */
@@ -213,13 +234,17 @@ export async function scanBranchHealth(
     }
 
     if (meta) {
-      const duplicateContentIds = await scanDuplicateContentIds(branchRoot, contentRootName)
+      const [duplicateContentIds, rebaseInProgress] = await Promise.all([
+        scanDuplicateContentIds(branchRoot, contentRootName),
+        isRebaseInProgress(branchRoot),
+      ])
       entries.push({
         dirName,
         kind: 'healthy',
         ...(isBaseBranch ? { isBaseBranch } : {}),
         branch: meta.branch,
         ...(duplicateContentIds.length ? { duplicateContentIds } : {}),
+        ...(rebaseInProgress ? { rebaseInProgress } : {}),
       })
       continue
     }

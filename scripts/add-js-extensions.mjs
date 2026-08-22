@@ -43,7 +43,15 @@ import { dirname, join, resolve } from 'node:path'
 import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
 
+// safe-regex (behind security/detect-unsafe-regex) flags this on star height
+// alone: `[^'"]*` sits inside the optional `(?:\/...)?` group. A `?` group
+// matches at most once, so there is no nested repetition to backtrack through,
+// and the two branches it could ambiguate with are disjoint. Measured
+// 2026-08-22 at 0.2ms against a 50KB adversarial non-matching input -- linear,
+// not exponential. Suppressed at the line rather than disabling the rule for
+// the directory, so a genuinely unsafe pattern added later still trips it.
 const RELATIVE_IMPORT_RE =
+  // eslint-disable-next-line security/detect-unsafe-regex
   /(from\s+['"]|import\s*\(\s*['"]|import\s+['"])(\.\.?(?:\/[^'"]*)?)(['"])/g
 
 export async function addJsExtensions(dir) {

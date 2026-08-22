@@ -1,3 +1,6 @@
+import fs from 'node:fs/promises'
+import path from 'node:path'
+import type { Stats } from 'node:fs'
 import { simpleGit } from 'simple-git'
 
 import type { OperatingMode } from '../operating-mode'
@@ -142,6 +145,66 @@ const MISSING_REMOTE_REF_REASONS = ["couldn't find remote ref", "Couldn't find r
  */
 export function isMissingRemoteRefFailure(message: string): boolean {
   return MISSING_REMOTE_REF_REASONS.some((reason) => message.includes(reason))
+}
+
+/**
+ * Resolve a repository's git directory from its working-tree root, handling
+ * both layouts: a real `.git` directory, and a `.git` FILE containing a
+ * `gitdir: <path>` pointer (linked worktrees, submodules).
+ *
+ * Deliberately fs-only rather than `git rev-parse --git-dir`: the callers are
+ * a per-branch sync loop and an admin-facing health scan that already walk
+ * every branch directory, and neither should pay a subprocess per branch just
+ * to find a path.
+ */
+async function resolveGitDir(repoPath: string): Promise<string | null> {
+  const dotGit = path.join(repoPath, '.git')
+  let stat: Stats
+  try {
+    stat = await fs.stat(dotGit)
+  } catch {
+    return null
+  }
+  if (stat.isDirectory()) return dotGit
+  try {
+    const pointer = await fs.readFile(dotGit, 'utf-8')
+    const match = /^gitdir:\s*(.+)$/m.exec(pointer)
+    if (!match) return null
+    const target = match[1].trim()
+    return path.isAbsolute(target) ? target : path.resolve(repoPath, target)
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Whether a repository has an INTERRUPTED rebase on disk — the `rebase-merge`
+ * (interactive/merge backend) or `rebase-apply` (am backend) state directory
+ * git leaves behind when a rebase stops for conflicts or the process dies
+ * mid-way.
+ *
+ * This state is invisible to every other check the worker makes: a clone left
+ * mid-rebase reports uncommitted changes, so the sync loop's dirty check skips
+ * it as `skippedDirty` on every cycle forever, and `branch-health` sees valid
+ * branch.json and scans it as healthy. Nothing self-heals, and recovery
+ * previously meant an operator running `git rebase --abort` on EFS by hand.
+ *
+ * Never throws — a missing or unreadable repo is reported as "no rebase",
+ * which is the safe direction for both callers (the worker only ever uses a
+ * `true` to justify an abort it holds the content-write lock for).
+ */
+export async function isRebaseInProgress(repoPath: string): Promise<boolean> {
+  const gitDir = await resolveGitDir(repoPath)
+  if (!gitDir) return false
+  const results = await Promise.all(
+    ['rebase-merge', 'rebase-apply'].map((dir) =>
+      fs
+        .stat(path.join(gitDir, dir))
+        .then(() => true)
+        .catch(() => false),
+    ),
+  )
+  return results.some(Boolean)
 }
 
 /**

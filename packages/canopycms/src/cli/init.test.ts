@@ -300,6 +300,54 @@ describe('canopycms init', () => {
     expect(gitignore).toContain('.canopy-dev/')
   })
 
+  it('CREATES .gitignore when absent, instead of silently doing nothing', async () => {
+    // Without this, `git init && canopycms init && next dev && git add .`
+    // commits the whole .canopy-dev workspace -- full git working trees with
+    // their own .git dirs, which git records as GITLINKS, producing broken
+    // submodule-like entries with no .gitmodules. Collaborators then clone
+    // empty directories where the CMS expects working trees.
+    await init(defaultOpts(tmpDir))
+
+    const gitignore = await fs.readFile(path.join(tmpDir, '.gitignore'), 'utf-8')
+    expect(gitignore).toContain('.canopy-dev/')
+  })
+
+  it('writes middleware.ts beside the app dir, where Next actually loads it', async () => {
+    // Next only loads middleware from the PARENT of app/pages. `init`
+    // documents --app-dir src/app, so a project-root middleware.ts is never
+    // loaded there: the Clerk variant's auth.protect() silently does nothing
+    // and /edit loses its edge protection.
+    await init(defaultOpts(tmpDir, { appDir: 'src/app' }))
+
+    const stat = await fs.stat(path.join(tmpDir, 'src', 'middleware.ts'))
+    expect(stat.isFile()).toBe(true)
+    await expect(fs.stat(path.join(tmpDir, 'middleware.ts'))).rejects.toThrow()
+  })
+
+  it('keeps middleware.ts at the project root for the plain app dir', async () => {
+    await init(defaultOpts(tmpDir))
+
+    const stat = await fs.stat(path.join(tmpDir, 'middleware.ts'))
+    expect(stat.isFile()).toBe(true)
+  })
+
+  for (const existing of ['next.config.js', 'next.config.mjs']) {
+    it(`does not write next.config.ts beside an existing ${existing}`, async () => {
+      // Next resolves exactly one config (.js, then .mjs, then .ts) and the
+      // first match wins, so a parallel .ts file is silently never loaded --
+      // taking withCanopy with it. `CANOPY_BUILD=static` then quietly produces
+      // a normal server build WITH the editor in it.
+      const existingPath = path.join(tmpDir, existing)
+      await fs.writeFile(existingPath, 'module.exports = { reactStrictMode: true }\n', 'utf-8')
+
+      await init(defaultOpts(tmpDir))
+
+      await expect(fs.stat(path.join(tmpDir, 'next.config.ts'))).rejects.toThrow()
+      // And the adopter's own config is left exactly as it was.
+      expect(await fs.readFile(existingPath, 'utf-8')).toContain('reactStrictMode')
+    })
+  }
+
   it('creates files in custom app-dir', async () => {
     await init(defaultOpts(tmpDir, { appDir: 'src/app' }))
 

@@ -513,6 +513,33 @@ describe('Task Queue', () => {
       const cleaned = await cleanupOldTasks(tmpDir, 60 * 60_000)
       expect(cleaned).toBe(0)
     })
+
+    it('sweeps the corrupt/ quarantine too, under the same retention', async () => {
+      // corrupt/ is written by dequeue and orphan recovery and surfaced in
+      // admin listing, but the retention sweep never covered it -- so it grew
+      // forever, with deletion available only as a manual per-file action.
+      const corruptDir = path.join(tmpDir, 'corrupt')
+      await fs.mkdir(corruptDir, { recursive: true })
+      await fs.writeFile(path.join(corruptDir, 'broken-task.json'), '{ not json')
+
+      // Same wait as the completed/failed case above: with maxAgeMs 0 the
+      // check is `now - mtimeMs >= 0`, which a just-written file can fail on
+      // sub-millisecond filesystem timestamps.
+      await new Promise((r) => setTimeout(r, 10))
+      const cleaned = await cleanupOldTasks(tmpDir, 0)
+
+      expect(cleaned).toBe(1)
+      await expect(fs.stat(path.join(corruptDir, 'broken-task.json'))).rejects.toThrow()
+    })
+
+    it('keeps a recent corrupt file, so it can still be diagnosed', async () => {
+      const corruptDir = path.join(tmpDir, 'corrupt')
+      await fs.mkdir(corruptDir, { recursive: true })
+      await fs.writeFile(path.join(corruptDir, 'broken-task.json'), '{ not json')
+
+      expect(await cleanupOldTasks(tmpDir, 60 * 60_000)).toBe(0)
+      expect((await fs.stat(path.join(corruptDir, 'broken-task.json'))).isFile()).toBe(true)
+    })
   })
 
   // ========================================================================

@@ -39,10 +39,15 @@
 #   3. Install the CDK dependencies the app entry point needs:
 #      `{{ADD_DEV}} canopycms canopycms-cdk aws-cdk-lib constructs tsx aws-cdk`
 #   4. Set these repository secrets (Settings -> Secrets and variables ->
-#      Actions -> Secrets). Every one of them is read by `required()` in
-#      infrastructure/bin/app.ts, so a missing value fails the deploy at synth:
+#      Actions -> Secrets). All but AWS_DEPLOY_ROLE_ARN are read by `required()`
+#      in infrastructure/bin/app.ts, so a missing value fails the deploy at
+#      synth; a missing role ARN fails earlier, at the AWS credentials step:
 #        AWS_DEPLOY_ROLE_ARN            OIDC role ARN from step 2
-#        GITHUB_TOKEN_SECRET_ARN        FULL Secrets Manager ARN (with suffix)
+#        CANOPY_GITHUB_TOKEN_SECRET_ARN  FULL Secrets Manager ARN (with suffix)
+#          NOTE: the CANOPY_ prefix is required, not cosmetic. GitHub rejects any
+#          Actions secret whose name starts with GITHUB_ (a reserved prefix), so
+#          the otherwise-obvious GITHUB_TOKEN_SECRET_ARN cannot be created at all.
+#          The env var handed to CDK below keeps the unprefixed name.
 #        CLERK_SECRET_KEY_SECRET_ARN    FULL Secrets Manager ARN (with suffix)
 #        CLERK_JWT_KEY                  Clerk's public JWKS PEM
 #   5. Set these repository variables (same page -> Variables):
@@ -64,6 +69,14 @@ on:
       - 'src/**'
       - 'content/**'
       - 'canopycms.config.ts'
+      # The Next config is what `init-deploy aws` itself tells you to edit for
+      # the dual build, and `public/**` is copied into the runner image (and is
+      # load-bearing for editor/public preview parity). Omitting them meant an
+      # edit shipped days later, piggybacked on an unrelated content change --
+      # so any breakage was attributed to the wrong commit.
+      - 'next.config.*'
+      - 'middleware.ts'
+      - 'public/**'
       - 'Dockerfile.cms'
       - 'infrastructure/**'
       - 'cdk.json'
@@ -89,11 +102,11 @@ jobs:
       contents: read
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
-          node-version: 20
+          node-version: 22
 
       - name: Install dependencies
         run: {{CI_INSTALL}}
@@ -124,7 +137,7 @@ jobs:
           fi
 
       - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4
         with:
           role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION }}
@@ -138,7 +151,7 @@ jobs:
       # in one place and not the other fails the deploy at synth.
       - name: Deploy
         env:
-          GITHUB_TOKEN_SECRET_ARN: ${{ secrets.GITHUB_TOKEN_SECRET_ARN }}
+          GITHUB_TOKEN_SECRET_ARN: ${{ secrets.CANOPY_GITHUB_TOKEN_SECRET_ARN }}
           CLERK_SECRET_KEY_SECRET_ARN: ${{ secrets.CLERK_SECRET_KEY_SECRET_ARN }}
           CLERK_JWT_KEY: ${{ secrets.CLERK_JWT_KEY }}
           NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${{ vars.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY }}

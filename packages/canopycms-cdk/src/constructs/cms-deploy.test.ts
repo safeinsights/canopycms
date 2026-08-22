@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { App, Stack } from 'aws-cdk-lib'
+import { App, Duration, Stack } from 'aws-cdk-lib'
 import { Template, Match } from 'aws-cdk-lib/assertions'
 import { RetentionDays } from 'aws-cdk-lib/aws-logs'
 import {
@@ -7,9 +7,10 @@ import {
   aws_lambda as lambda,
   aws_route53 as route53,
   aws_certificatemanager as acm,
+  aws_cloudfront_origins as origins,
   aws_s3 as s3,
 } from 'aws-cdk-lib'
-import { CanopyCmsService } from './cms-service'
+import { CanopyCmsService, DEFAULT_CMS_LAMBDA_TIMEOUT } from './cms-service'
 import type { CanopyCmsServiceProps } from './cms-service'
 import { CanopyCmsDistribution } from './cms-distribution'
 // Test-only imports across the package boundary, deliberately: the construct
@@ -134,6 +135,254 @@ describe('CanopyCmsService deploy blockers', () => {
     for (const url of Object.values(urls)) {
       expect(url.Properties.AuthType).not.toBe('NONE')
     }
+  })
+})
+
+describe('CanopyCmsDistribution: origin read timeout matches the Lambda timeout', () => {
+  /** Every CloudFront origin's OriginReadTimeout, keyed by origin id. */
+  function originReadTimeouts(template: Template): (number | undefined)[] {
+    const dists = template.findResources('AWS::CloudFront::Distribution')
+    return Object.values(dists).flatMap((d) =>
+      (d.Properties.DistributionConfig.Origins ?? []).map(
+        (o: { CustomOriginConfig?: { OriginReadTimeout?: number } }) =>
+          o.CustomOriginConfig?.OriginReadTimeout,
+      ),
+    )
+  }
+
+  it('emits OriginReadTimeout equal to the CMS Lambda timeout, not CloudFront’s 30s default', () => {
+    const template = synth(true)
+    // Left unset, aws-cdk-lib omits the property entirely and CloudFront
+    // applies 30s -- halving the Lambda's 60s budget and 504ing at the edge on
+    // requests that actually succeed (first-touch branch provisioning clones
+    // onto EFS inside the request).
+    const lambdaTimeout = Object.values(
+      template.findResources('AWS::Lambda::Function', {
+        Properties: { Timeout: Match.anyValue() },
+      }),
+    ).find((fn) => fn.Properties.Timeout === DEFAULT_CMS_LAMBDA_TIMEOUT.toSeconds())
+    expect(lambdaTimeout).toBeDefined()
+
+    expect(originReadTimeouts(template)).toContain(DEFAULT_CMS_LAMBDA_TIMEOUT.toSeconds())
+    expect(originReadTimeouts(template)).not.toContain(undefined)
+  })
+
+  it('follows an overridden Lambda timeout when the pair is wired through', () => {
+    const app = new App()
+    const stack = new Stack(app, 'PairStack', {
+      env: { account: '123456789012', region: 'us-east-1' },
+    })
+    const service = new CanopyCmsService(stack, 'Cms', {
+      cmsDockerImage: lambda.DockerImageCode.fromEcr(
+        ecr.Repository.fromRepositoryName(stack, 'Repo', 'cms'),
+      ),
+      githubOwner: 'acme',
+      githubRepo: 'site',
+      timeout: Duration.seconds(45),
+    })
+    new CanopyCmsDistribution(stack, 'Dist', {
+      functionUrl: service.functionUrl,
+      domainName: 'cms.example.org',
+      hostedZoneDomain: 'example.org',
+      originReadTimeout: service.timeout,
+      hostedZone: route53.HostedZone.fromHostedZoneAttributes(stack, 'Zone', {
+        hostedZoneId: 'Z123456789',
+        zoneName: 'example.org',
+      }),
+      certificate: acm.Certificate.fromCertificateArn(
+        stack,
+        'Cert',
+        'arn:aws:acm:us-east-1:123456789012:certificate/abc',
+      ),
+    })
+
+    expect(originReadTimeouts(Template.fromStack(stack))).toContain(45)
+  })
+
+  it('fails at synth rather than deploying a timeout CloudFront would reject', () => {
+    const app = new App()
+    const stack = new Stack(app, 'TooLongStack', {
+      env: { account: '123456789012', region: 'us-east-1' },
+    })
+    const service = new CanopyCmsService(stack, 'Cms', {
+      cmsDockerImage: lambda.DockerImageCode.fromEcr(
+        ecr.Repository.fromRepositoryName(stack, 'Repo', 'cms'),
+      ),
+      githubOwner: 'acme',
+      githubRepo: 'site',
+      timeout: Duration.seconds(120),
+    })
+    expect(
+      () =>
+        new CanopyCmsDistribution(stack, 'Dist', {
+          functionUrl: service.functionUrl,
+          domainName: 'cms.example.org',
+          hostedZoneDomain: 'example.org',
+          originReadTimeout: service.timeout,
+          hostedZone: route53.HostedZone.fromHostedZoneAttributes(stack, 'Zone', {
+            hostedZoneId: 'Z123456789',
+            zoneName: 'example.org',
+          }),
+          certificate: acm.Certificate.fromCertificateArn(
+            stack,
+            'Cert',
+            'arn:aws:acm:us-east-1:123456789012:certificate/abc',
+          ),
+        }),
+    ).toThrow(/service-quota increase/)
+  })
+})
+
+describe('CanopyCmsDistribution: us-east-1 certificate restriction', () => {
+  function distInRegion(region: string, withCertificate: boolean) {
+    const app = new App()
+    const stack = new Stack(app, `RegionStack${region.replace(/-/g, '')}`, {
+      env: { account: '123456789012', region },
+    })
+    const service = new CanopyCmsService(stack, 'Cms', {
+      cmsDockerImage: lambda.DockerImageCode.fromEcr(
+        ecr.Repository.fromRepositoryName(stack, 'Repo', 'cms'),
+      ),
+      githubOwner: 'acme',
+      githubRepo: 'site',
+    })
+    return () =>
+      new CanopyCmsDistribution(stack, 'Dist', {
+        functionUrl: service.functionUrl,
+        domainName: 'cms.example.org',
+        hostedZoneDomain: 'example.org',
+        hostedZone: route53.HostedZone.fromHostedZoneAttributes(stack, 'Zone', {
+          hostedZoneId: 'Z123456789',
+          zoneName: 'example.org',
+        }),
+        ...(withCertificate
+          ? {
+              certificate: acm.Certificate.fromCertificateArn(
+                stack,
+                'Cert',
+                'arn:aws:acm:us-east-1:123456789012:certificate/abc',
+              ),
+            }
+          : {}),
+      })
+  }
+
+  it('throws at synth outside us-east-1, naming both workarounds', () => {
+    // CloudFront requires its certificate in us-east-1; this construct creates
+    // one in the STACK's region. The restriction was documented nowhere, so an
+    // adopter in eu-west-1 got an opaque error and had to research the fix.
+    expect(distInRegion('eu-west-1', false)).toThrow(/us-east-1/)
+    expect(distInRegion('eu-west-1', false)).toThrow(/certificate` prop/)
+  })
+
+  it('allows any region when the caller supplies its own certificate', () => {
+    // A pre-created us-east-1 certificate is one of the two documented
+    // workarounds, so it must not be rejected.
+    expect(distInRegion('eu-west-1', true)).not.toThrow()
+  })
+
+  it('allows us-east-1', () => {
+    expect(distInRegion('us-east-1', false)).not.toThrow()
+  })
+})
+
+describe('CanopyCmsDistribution: additionalBehaviors', () => {
+  it('merges caller behaviors alongside the built-in ones', () => {
+    // Without this prop there was no way to attach AssetSupport's behaviors to
+    // the distribution the scaffold generates, so its own "uncomment to enable
+    // media" instructions were a dead end.
+    const app = new App()
+    const stack = new Stack(app, 'BehaviorStack', {
+      env: { account: '123456789012', region: 'us-east-1' },
+    })
+    const service = new CanopyCmsService(stack, 'Cms', {
+      cmsDockerImage: lambda.DockerImageCode.fromEcr(
+        ecr.Repository.fromRepositoryName(stack, 'Repo', 'cms'),
+      ),
+      githubOwner: 'acme',
+      githubRepo: 'site',
+    })
+    new CanopyCmsDistribution(stack, 'Dist', {
+      functionUrl: service.functionUrl,
+      domainName: 'cms.example.org',
+      hostedZoneDomain: 'example.org',
+      hostedZone: route53.HostedZone.fromHostedZoneAttributes(stack, 'Zone', {
+        hostedZoneId: 'Z123456789',
+        zoneName: 'example.org',
+      }),
+      certificate: acm.Certificate.fromCertificateArn(
+        stack,
+        'Cert',
+        'arn:aws:acm:us-east-1:123456789012:certificate/abc',
+      ),
+      additionalBehaviors: {
+        '/custom/*': {
+          origin: origins.FunctionUrlOrigin.withOriginAccessControl(service.functionUrl),
+        },
+      },
+    })
+
+    const template = Template.fromStack(stack)
+    const dist = Object.values(template.findResources('AWS::CloudFront::Distribution'))[0]
+    const patterns = (
+      dist.Properties.DistributionConfig.CacheBehaviors as { PathPattern: string }[]
+    ).map((b) => b.PathPattern)
+    // Both the construct's own behavior and the caller's survive the merge.
+    expect(patterns).toContain('/_next/static/*')
+    expect(patterns).toContain('/custom/*')
+  })
+
+  it('preserves the CALLER’s ordering even for a key that collides with a default', () => {
+    // CloudFront matches path patterns in order, so a more specific pattern
+    // must precede a more general one that also matches. A plain object spread
+    // keeps an overridden key at its FIRST-insertion index, which would pin an
+    // overridden `/_next/static/*` ahead of everything else the caller passed
+    // -- silently making their more specific pattern unreachable, which is
+    // exactly what the prop's own doc warns them to avoid.
+    const app = new App()
+    const stack = new Stack(app, 'OrderStack', {
+      env: { account: '123456789012', region: 'us-east-1' },
+    })
+    const service = new CanopyCmsService(stack, 'Cms', {
+      cmsDockerImage: lambda.DockerImageCode.fromEcr(
+        ecr.Repository.fromRepositoryName(stack, 'Repo', 'cms'),
+      ),
+      githubOwner: 'acme',
+      githubRepo: 'site',
+    })
+    const anyOrigin = origins.FunctionUrlOrigin.withOriginAccessControl(service.functionUrl)
+    new CanopyCmsDistribution(stack, 'Dist', {
+      functionUrl: service.functionUrl,
+      domainName: 'cms.example.org',
+      hostedZoneDomain: 'example.org',
+      hostedZone: route53.HostedZone.fromHostedZoneAttributes(stack, 'Zone', {
+        hostedZoneId: 'Z123456789',
+        zoneName: 'example.org',
+      }),
+      certificate: acm.Certificate.fromCertificateArn(
+        stack,
+        'Cert',
+        'arn:aws:acm:us-east-1:123456789012:certificate/abc',
+      ),
+      additionalBehaviors: {
+        // Specific first, as the caller intends and the docs instruct.
+        '/_next/static/chunks/*': { origin: anyOrigin },
+        // Collides with the construct's own default.
+        '/_next/static/*': { origin: anyOrigin },
+      },
+    })
+
+    const dist = Object.values(
+      Template.fromStack(stack).findResources('AWS::CloudFront::Distribution'),
+    )[0]
+    const patterns = (
+      dist.Properties.DistributionConfig.CacheBehaviors as { PathPattern: string }[]
+    ).map((b) => b.PathPattern)
+
+    expect(patterns.indexOf('/_next/static/chunks/*')).toBeGreaterThanOrEqual(0)
+    expect(patterns.indexOf('/_next/static/chunks/*')).toBeLessThan(
+      patterns.indexOf('/_next/static/*'),
+    )
   })
 })
 
@@ -503,8 +752,125 @@ describe('CanopyCmsService worker UserData: ESM bundle bootstrapping', () => {
   it('installs unzip and writes a type:module package.json next to the ESM worker bundle', () => {
     const template = synth()
     const all = workerUserDataBlobs(template)
-    expect(all).toContain('yum install -y git unzip')
+    expect(all).toContain('dnf install -y git unzip')
     expect(all).toContain('{\\"type\\":\\"module\\"}')
+  })
+})
+
+describe('CanopyCmsService: worker boot cannot fail silently', () => {
+  it('installs Node from AL2023 rather than piping a third-party installer into bash', () => {
+    const all = workerUserDataBlobs(synth())
+    // `curl https://rpm.nodesource.com/... | bash -` under `set -e` made every
+    // instance replacement -- which the ASG performs on every `cdk deploy` --
+    // depend on a third party being reachable.
+    expect(all).not.toContain('rpm.nodesource.com')
+    expect(all).toContain('dnf install -y nodejs22')
+  })
+
+  it('runs the worker from the version-pinned node binary, not the alternatives symlink', () => {
+    const all = workerUserDataBlobs(synth())
+    // AL2023 installs /usr/bin/node-22 and points /usr/bin/node at some
+    // installed version via `alternatives`, whose selection AWS documents as
+    // able to change at any time.
+    expect(all).toContain('ExecStart=/usr/bin/node-22 index.js')
+    expect(all).not.toContain('ExecStart=/usr/bin/node index.js')
+  })
+
+  it('shuts the instance down when user-data fails, so the ASG replaces it', () => {
+    const all = workerUserDataBlobs(synth())
+    // Without this, a failed boot script left an instance that runs, passes the
+    // EC2-only health check forever, and does nothing -- while `cdk deploy`
+    // reported success.
+    expect(all).toContain('trap ')
+    expect(all).toContain('shutdown -h now')
+    expect(all).toContain('ERR')
+  })
+
+  it('disarms the fail-fast trap before the best-effort CloudWatch section', () => {
+    // The trap must cover everything the worker needs to EXIST, and nothing
+    // after that. Left armed, a package-mirror outage during the agent install
+    // would shut down an already-healthy worker, and the ASG would relaunch
+    // straight into the same outage -- turning degraded log shipping into a
+    // replacement loop. That silently revokes the "shipping is best-effort"
+    // invariant this section has always documented, while the ordering test
+    // below still passed.
+    const all = workerUserDataBlobs(synth())
+    const trapIdx = all.indexOf('trap ')
+    const disarmIdx = all.indexOf('trap - ERR')
+    const workerStartIdx = all.indexOf('systemctl start canopy-worker')
+    const agentIdx = all.indexOf('dnf install -y amazon-cloudwatch-agent')
+
+    expect(trapIdx).toBeGreaterThanOrEqual(0)
+    // Asserted explicitly: without it, a reworded start command would make
+    // indexOf return -1 and the `disarmIdx > workerStartIdx` check below pass
+    // vacuously.
+    expect(workerStartIdx).toBeGreaterThanOrEqual(0)
+    expect(agentIdx).toBeGreaterThanOrEqual(0)
+    expect(disarmIdx).toBeGreaterThan(trapIdx)
+    // Disarmed only AFTER the worker is running, and BEFORE the agent install.
+    expect(disarmIdx).toBeGreaterThan(workerStartIdx)
+    expect(disarmIdx).toBeLessThan(agentIdx)
+  })
+
+  it('retries the network-dependent boot steps', () => {
+    const all = workerUserDataBlobs(synth())
+    expect(all).toContain('retry()')
+    for (const step of [
+      'retry dnf install -y git unzip',
+      'retry dnf install -y nodejs22',
+      'retry dnf install -y amazon-efs-utils',
+      'retry aws s3 cp',
+      'retry dnf install -y amazon-cloudwatch-agent',
+    ]) {
+      expect(all).toContain(step)
+    }
+  })
+})
+
+describe('CanopyCmsService: secret ARN props feed the IAM policy', () => {
+  /** Resources on every GetSecretValue statement in the template. */
+  function secretResources(template: Template): string[] {
+    const policies = template.findResources('AWS::IAM::Policy')
+    return Object.values(policies).flatMap((p) =>
+      (p.Properties.PolicyDocument.Statement as { Action?: unknown; Resource?: unknown }[])
+        .filter((s) => JSON.stringify(s.Action).includes('secretsmanager:GetSecretValue'))
+        .flatMap((s) => (Array.isArray(s.Resource) ? s.Resource : [s.Resource]))
+        .filter((r): r is string => typeof r === 'string'),
+    )
+  }
+
+  const GITHUB_ARN = 'arn:aws:secretsmanager:us-east-1:123456789012:secret:gh-AbCdEf'
+  const CLERK_ARN = 'arn:aws:secretsmanager:us-east-1:123456789012:secret:clerk-AbCdEf'
+
+  it('grants the individual ARN props even when secretsArns is omitted', () => {
+    // The construct carried two disconnected representations of "the secrets
+    // the worker reads": secretsArns fed IAM, the individual props fed only the
+    // worker's .env. Setting the latter alone deployed clean and produced a
+    // worker that knew WHICH secret to read and had no permission to read it --
+    // AccessDenied, exit, systemd restart-loop every 5s, forever.
+    const template = synthUncached(false, {
+      githubTokenSecretArn: GITHUB_ARN,
+      clerkSecretKeySecretArn: CLERK_ARN,
+    })
+    expect(secretResources(template)).toEqual(expect.arrayContaining([GITHUB_ARN, CLERK_ARN]))
+  })
+
+  it('does not list an ARN twice when it is passed both ways', () => {
+    const template = synthUncached(false, {
+      secretsArns: [GITHUB_ARN],
+      githubTokenSecretArn: GITHUB_ARN,
+    })
+    const occurrences = secretResources(template).filter((r) => r === GITHUB_ARN)
+    expect(occurrences).toHaveLength(1)
+  })
+
+  it('still grants extra ARNs that only secretsArns names', () => {
+    const other = 'arn:aws:secretsmanager:us-east-1:123456789012:secret:other-AbCdEf'
+    const template = synthUncached(false, {
+      secretsArns: [other],
+      githubTokenSecretArn: GITHUB_ARN,
+    })
+    expect(secretResources(template)).toEqual(expect.arrayContaining([other, GITHUB_ARN]))
   })
 })
 
@@ -652,7 +1018,7 @@ describe('CanopyCmsService: worker CloudWatch log shipping', () => {
     const blobs = JSON.stringify(template.findResources('AWS::AutoScaling::LaunchConfiguration'))
     const ltBlobs = JSON.stringify(template.findResources('AWS::EC2::LaunchTemplate'))
     const all = blobs + ltBlobs
-    expect(all).toContain('yum install -y amazon-cloudwatch-agent')
+    expect(all).toContain('dnf install -y amazon-cloudwatch-agent')
     expect(all).toContain('/var/log/canopy-worker/worker.log')
     expect(all).toContain('\\"log_stream_name\\": \\"{instance_id}\\"')
     expect(all).toContain('amazon-cloudwatch-agent-ctl -a fetch-config -m ec2 -s')
@@ -706,10 +1072,10 @@ describe('CanopyCmsService: worker CloudWatch log shipping', () => {
     for (const blob of blobs) {
       const startIdx = blob.indexOf('systemctl start canopy-worker')
       // The failure-isolation invariant is that the ENTIRE agent block runs
-      // after worker start under set -euo pipefail — the yum install is the
+      // after worker start under set -euo pipefail — the dnf install is the
       // first (and most failure-prone: network + repo) command of that block,
       // so pin it explicitly, not just the final ctl call.
-      const yumIdx = blob.indexOf('yum install -y amazon-cloudwatch-agent')
+      const yumIdx = blob.indexOf('dnf install -y amazon-cloudwatch-agent')
       const agentIdx = blob.indexOf('amazon-cloudwatch-agent-ctl')
       expect(startIdx).toBeGreaterThanOrEqual(0)
       expect(yumIdx).toBeGreaterThanOrEqual(0)

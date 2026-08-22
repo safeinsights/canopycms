@@ -75,6 +75,18 @@ function configImportPath(appDir: string, subdirs: number): string {
 }
 
 /**
+ * The first of `candidates` that exists under `projectDir`, as a bare
+ * filename, or null. Order is the caller's: for Next config files it must be
+ * Next's own resolution order.
+ */
+async function firstExistingPath(projectDir: string, candidates: string[]): Promise<string | null> {
+  for (const candidate of candidates) {
+    if (await filePathExists(path.join(projectDir, candidate))) return candidate
+  }
+  return null
+}
+
+/**
  * Framework integration: generates the files needed to add CanopyCMS
  * editing to a Next.js app. Cloud-agnostic.
  */
@@ -172,25 +184,89 @@ export async function init(options: InitOptions): Promise<void> {
       writeOpts,
     )
   }
+  // Next resolves exactly ONE config, in the fixed order next.config.js,
+  // .mjs, .ts -- first match wins. Writing next.config.ts beside an existing
+  // .js/.mjs therefore produces a file Next silently never loads, taking
+  // `withCanopy` with it: no `/assets/:path*` rewrite (media URLs 404), no
+  // `transpilePackages`, and for --dual-build no `pageExtensions` split and no
+  // `output: 'export'`/'standalone' switching -- so `CANOPY_BUILD=static`
+  // quietly produces a normal server build WITH the editor in it. Nothing in
+  // the build output names the cause.
+  //
+  // Mirrors initDeployAws's own probe, which already knows configs come as
+  // .mjs too.
+  //
+  // Exactly Next's own CONFIG_FILES list, in its order (verified in
+  // next@15.5.21's shared/lib/constants). `.cjs` is deliberately NOT here:
+  // Next never loads it, so treating a stray next.config.cjs as the winner
+  // would skip writing next.config.ts AND print a note falsely claiming Next
+  // prefers the .cjs -- leaving the project with no loaded config at all.
+  const existingJsConfig = await firstExistingPath(projectDir, [
+    'next.config.js',
+    'next.config.mjs',
+  ])
+  if (existingJsConfig) {
+    p.note(
+      [
+        `Found ${existingJsConfig}, which Next loads in preference to next.config.ts.`,
+        'Left it untouched rather than writing a second config Next would ignore.',
+        '',
+        'Wrap your existing config by hand:',
+        '',
+        "  import { withCanopy } from 'canopycms-next/config'",
+        '  export default withCanopy(yourConfig)',
+      ].join('\n'),
+      'Manual step',
+    )
+  } else {
+    await writeFile(
+      path.join(projectDir, 'next.config.ts'),
+      await nextConfig({ staticBuild }),
+      writeOpts,
+    )
+  }
+
+  // Next only loads middleware from the PARENT of the app/pages directory
+  // (verified in next@15.5.21: build uses `rootDir = path.join(pagesDir ||
+  // appDir, '..')`, dev uses getPossibleMiddlewareFilenames on the same).
+  // `init` supports multi-segment app dirs -- `--app-dir src/app` is
+  // documented -- so a project-root middleware.ts is never loaded there, with
+  // no warning from Next or from us. The Clerk variant's `auth.protect()` then
+  // silently does nothing: /edit and /api/canopycms/* lose their edge
+  // protection, and an unauthenticated visitor loads the editor shell and sees
+  // failed API calls instead of a sign-in redirect. The API's own Clerk
+  // enforcement still holds, so this is a lost defence-in-depth layer plus
+  // broken sign-in UX, not an authz bypass.
+  //
+  // `path.dirname('app')` is '.', which path.join collapses, so the plain case
+  // is unchanged.
   await writeFile(
-    path.join(projectDir, 'next.config.ts'),
-    await nextConfig({ staticBuild }),
-    writeOpts,
-  )
-  await writeFile(
-    path.join(projectDir, 'middleware.ts'),
+    path.join(projectDir, path.dirname(appDir), 'middleware.ts'),
     await middleware({ authProvider }),
     writeOpts,
   )
 
-  // Update .gitignore
+  // Update .gitignore -- creating it when absent.
+  //
+  // The no-file branch previously did nothing, silently. An adopter running
+  // `git init && canopycms init && next dev` then `git add .` commits the
+  // entire `.canopy-dev` workspace: full git working trees with their own
+  // `.git` directories, which git records as GITLINKS. That produces
+  // broken submodule-like entries with no `.gitmodules`, so collaborators
+  // cloning get empty directories where the CMS expects working trees --
+  // and the embedded-repository warning is easy to miss in a large `git add`.
+  // Recovering needs an understanding of gitlinks well beyond this tool's
+  // audience.
   const gitignorePath = path.join(projectDir, '.gitignore')
+  const CANOPY_GITIGNORE_BLOCK = '# CanopyCMS\n.canopy-dev/\n'
   if (await filePathExists(gitignorePath)) {
     const content = await fs.readFile(gitignorePath, 'utf-8')
     if (!content.includes('.canopy-dev')) {
-      await fs.appendFile(gitignorePath, '\n# CanopyCMS\n.canopy-dev/\n')
+      await fs.appendFile(gitignorePath, `\n${CANOPY_GITIGNORE_BLOCK}`)
       p.log.success('updated: .gitignore')
     }
+  } else {
+    await writeFile(gitignorePath, CANOPY_GITIGNORE_BLOCK, writeOpts)
   }
 
   const packages =
