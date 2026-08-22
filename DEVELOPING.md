@@ -3550,6 +3550,49 @@ When you retire a task, do all three things together or the check will tell you 
 
 One limit worth knowing: the check does not follow into `node_modules`, so a server-only npm package (`sharp`, `simple-git`, the S3 SDK) imported from client code slips past it. The e2e production `next build` remains the backstop for that.
 
+### Waiting on PR Checks
+
+Watching a PR's CI by hand -- or worse, by inline bash loop -- is how a session loses twenty minutes and then merges on a result it misread. Use the watcher instead:
+
+```bash
+node scripts/wait-for-pr-checks.mjs 272
+```
+
+It polls until the situation is decided and then prints exactly one verdict, which is also its exit code: `0 PASSED`, `1 FAILED` (naming the checks and linking the jobs), `2 BLOCKED` (merge conflicts), `3 NO_CHECKS`, `4 TIMED_OUT`, `5 ERROR`. Defaults are a 30s poll, a 25 minute budget, and a 120s grace period for checks to first appear; `--interval`, `--timeout`, `--grace`, `--repo`, `--required`, `--fail-fast` and `--verbose` adjust that. Omit the PR number to watch the current branch's PR. It emits one line per **state change** rather than per poll, so it is quiet enough to sit behind a `Monitor` command.
+
+#### Why not just loop on `gh pr checks`
+
+Because the naive loop --
+
+```bash
+# Do not do this.
+for i in $(seq 1 50); do
+  s=$(gh pr checks "$PR" 2>/dev/null | awk -F'\t' '{print $1"\t"$2}')
+  if [ -n "$s" ] && [ "$(echo "$s" | grep -c pending)" = "0" ]; then
+    echo "COMPLETE"; break
+  fi
+  sleep 30
+done
+```
+
+-- has six failure modes that all present identically, as "still waiting". Every one of them was hit in a single working day (2026-08-22), and each maps to something the script now does:
+
+- **It goes silent when it gives up.** Running out of iterations exits 0 with no output, which is indistinguishable from still polling. This caused a false "checks are still running" belief twice in one day. The watcher's loudest path is its give-up path, and `TIMED_OUT` prints the current state and the words `this is NOT a pass`.
+- **It cannot see a conflicted PR.** When a PR is `CONFLICTING`/`DIRTY`, GitHub cannot build the merge ref, so `pull_request` workflows never run and there is nothing to poll. `gh pr checks` says `no checks reported`, the loop's `[ -n "$s" ]` guard treats that as "not yet", and it spins the full 25 minutes. Verified on a deliberately conflicted throwaway PR: the naive loop would have waited 25 minutes for CI that was never coming; the watcher returned `BLOCKED` in 1.5 seconds. Mergeability is checked **before** check state for this reason, via `gh pr view --json mergeable,mergeStateStatus`.
+- **It cannot tell "no checks yet" from "no checks ever".** Right after a push nothing has registered; on a branch no workflow triggers for, nothing ever will. A bounded `--grace` window separates them, after which `NO_CHECKS` is its own verdict.
+- **It swallows `gh` failures.** `2>/dev/null` plus an empty-output guard turns an expired token, a rate limit or a network blip into "still pending", permanently. The watcher classifies gh's stderr: permanent errors (bad PR number, auth) stop immediately, everything else gets a bounded retry with backoff, and exhausting that budget is a reported `ERROR`.
+- **Green can be stale.** Re-running a check replays it against the base it originally ran against, and a `pull_request` workflow is not re-triggered when the base moves -- so a PR whose base has advanced can report green from a run that never saw the current base. A merge was made on exactly that basis. `PASSED` is annotated with a `STALE WARNING` when the base has advanced past the PR head.
+- **Tab-delimited output is not a data format.** `awk -F'\t'` broke on a check name with unexpected spacing. The script uses `gh pr checks --json` and its pre-classified `bucket` field (`pass`/`fail`/`pending`/`skipping`/`cancel`), and fails closed on a bucket it does not recognize rather than counting it as passing.
+
+Two things worth knowing about what `gh` actually exposes, both established by checking rather than assuming:
+
+- **`gh pr checks --json` has no head-SHA field.** As of gh 2.97 the full set is `bucket, completedAt, description, event, link, name, startedAt, state, workflow`. Staleness therefore cannot be answered from the check runs at all, and is derived from the commit graph instead: `gh api repos/{slug}/compare/{headRefOid}...{baseTip}` reports `ahead_by` as the number of base commits the PR head has never contained. When the base commit dates are also newer than the last check completion, the warning says so explicitly.
+- **`baseRefOid` is a snapshot, not the current base tip.** This one is a trap, because the field name reads like it means "where the base is". It is where the base pointed when the PR was last synced. Measured on 2026-08-22: a PR whose base had just advanced still reported the pre-advance SHA, and comparing against it returned `ahead_by: 0` for every PR tried -- an implementation using it looks correct, runs clean, and silently reports every stale green as fresh. The base tip is resolved from `gh api repos/{slug}/git/ref/heads/{baseRefName}` instead, with `baseRefOid` kept only as a fallback if that lookup fails.
+- **Staleness is only meaningful on an OPEN PR.** On a merged or closed PR the base has almost always moved on by definition, so the same comparison fires constantly and its advice ("update the branch to re-verify") is nonsense for something already merged. The check is skipped unless the PR is open.
+- **`mergeStateStatus: BLOCKED` is not a reason to stop waiting.** It means "required reviews or required checks are not satisfied yet", which is the normal state of a healthy PR mid-CI. Only `CONFLICTING`/`DIRTY` terminates the watch. Conflating the two would make the watcher give up on every PR in this repo, since branch protection puts open PRs in `BLOCKED` while checks run.
+
+A merged or closed PR is evaluated once rather than polled, because no further results can arrive -- so the watcher is also a quick way to ask "what did CI say about that PR" after the fact.
+
 ### Public re-exports: attach JSDoc at the entrypoint
 
 When you add a new top-level public symbol re-exported from `packages/canopycms/src/server.ts` (or `index.ts`) via a named `export { X } from './module'` statement, **attach JSDoc above the re-export site too**, even if the source file already documents the original declaration. TypeScript's JSDoc propagation through `export { X } from './module'` is inconsistent across LSP versions and module-resolution modes, so adopters hovering over `import { X } from 'canopycms/server'` in VSCode can lose the documentation if it only lives on the original. Duplicating it at the re-export site is the reliable fix and the convention this codebase follows. Wildcard `export *` re-exports propagate more reliably and don't need duplication.
