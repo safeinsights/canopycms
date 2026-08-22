@@ -4,6 +4,9 @@
  * Tests go through the HTTP API layer.
  */
 
+import fs from 'node:fs/promises'
+import path from 'node:path'
+
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 
 import { createTestWorkspace, type TestWorkspace } from '../test-utils/test-workspace'
@@ -161,6 +164,130 @@ describe('Input Validation', () => {
 
       expect(response.status).toBe(404)
       expect(response.ok).toBe(false)
+    })
+  })
+
+  // -------------------------------------------------------------------------
+  // Slug routability at the write boundary
+  //
+  // Drives the real HTTP write path (no mocked ContentStore): the request goes
+  // through logicalPathSchema -> parseApiPath -> ContentStore.resolvePath ->
+  // buildPaths -> the file on disk. `parseSlug` is NOT on that chain by itself,
+  // which is why a create used to be accepted with a slug the build guard
+  // (static/index.ts's assertRoutableSlugs) later fails the whole build over.
+  // -------------------------------------------------------------------------
+  describe('Content Slug Routability', () => {
+    const BRANCH = 'slug-guard'
+
+    const postBody = (title: string) => ({
+      format: 'mdx' as const,
+      data: { title },
+      body: 'Body text.',
+    })
+
+    /** Absolute path of the branch clone's posts collection directory. */
+    const findPostsDir = async (): Promise<string> => {
+      const contentDir = path.join(
+        workspace.tmpRoot,
+        '.canopy-dev',
+        'content-branches',
+        BRANCH,
+        'content',
+      )
+      // `posts` when the collection has no content ID yet, `posts.{id}` once it does.
+      const names = await fs.readdir(contentDir)
+      const dir = names.find((name) => name === 'posts' || name.startsWith('posts.'))
+      if (!dir) throw new Error(`No posts collection directory in ${contentDir}: ${names}`)
+      return path.join(contentDir, dir)
+    }
+
+    beforeEach(async () => {
+      const created = await editorClient.post('/api/canopycms/branches', {
+        branch: BRANCH,
+        title: 'Slug guard',
+      })
+      expect(created.status).toBe(200)
+    })
+
+    it('refuses to create an entry whose slug cannot resolve back through a URL', async () => {
+      const response = await editorClient.put(
+        `/api/canopycms/${BRANCH}/content/posts/my_post`,
+        postBody('My Post'),
+      )
+
+      expect(response.status).toBe(400)
+      expect(response.ok).toBe(false)
+      const error = await response.json<ApiResponse>()
+      expect(error.error).toMatch(/lowercase letters, numbers, and hyphens/)
+
+      // Refused, not written-then-reported: nothing landed on disk.
+      const read = await editorClient.get(`/api/canopycms/${BRANCH}/content/posts/my_post`)
+      expect(read.status).toBe(404)
+    })
+
+    it('creates an entry whose slug is routable', async () => {
+      const response = await editorClient.put(
+        `/api/canopycms/${BRANCH}/content/posts/my-post`,
+        postBody('My Post'),
+      )
+
+      expect(response.status).toBe(200)
+      expect(response.ok).toBe(true)
+    })
+
+    it('still saves an entry that already has a non-conforming slug on disk', async () => {
+      // Content that predates the guard, or arrived by git/import/hand-authoring.
+      // The write-time rule is scoped to CREATES precisely so this stays editable —
+      // locking the author out of an entry they need to rename would turn a red
+      // build into an unfixable one.
+      const created = await editorClient.put(
+        `/api/canopycms/${BRANCH}/content/posts/legacy-post`,
+        postBody('Legacy Post'),
+      )
+      expect(created.status).toBe(200)
+
+      const postsDir = await findPostsDir()
+      const filename = (await fs.readdir(postsDir)).find((name) => name.includes('.legacy-post.'))
+      if (!filename) throw new Error(`No legacy-post entry in ${postsDir}`)
+      await fs.rename(
+        path.join(postsDir, filename),
+        path.join(postsDir, filename.replace('.legacy-post.', '.legacy_post.')),
+      )
+
+      const saved = await editorClient.put(
+        `/api/canopycms/${BRANCH}/content/posts/legacy_post`,
+        postBody('Legacy Post, edited'),
+      )
+      expect(saved.status).toBe(200)
+      expect(saved.ok).toBe(true)
+    })
+
+    it('lets a rename move a non-conforming slug back to a routable one', async () => {
+      const created = await editorClient.put(
+        `/api/canopycms/${BRANCH}/content/posts/rescue-me`,
+        postBody('Rescue Me'),
+      )
+      expect(created.status).toBe(200)
+
+      const postsDir = await findPostsDir()
+      const filename = (await fs.readdir(postsDir)).find((name) => name.includes('.rescue-me.'))
+      if (!filename) throw new Error(`No rescue-me entry in ${postsDir}`)
+      await fs.rename(
+        path.join(postsDir, filename),
+        path.join(postsDir, filename.replace('.rescue-me.', '.rescue_me.')),
+      )
+
+      // The escape hatch out of an unroutable slug: address the entry by the
+      // slug it actually has, rename it to one that resolves.
+      const renamed = await editorClient.patch(
+        `/api/canopycms/${BRANCH}/rename-entry/content/posts/rescue_me`,
+        { newSlug: 'rescued' },
+      )
+      expect(renamed.status).toBe(200)
+      expect(renamed.ok).toBe(true)
+
+      const read = await editorClient.get(`/api/canopycms/${BRANCH}/content/posts/rescued`)
+      expect(read.status).toBe(200)
     })
   })
 })
