@@ -83,8 +83,11 @@ export const entryToMetadata = async (entryData: unknown, options?: EntryToMetad
 //
 // The 'http://localhost:3000' fallback is DEV-ONLY / example-app-only: this app's canopycms.config
 // is pinned to `mode: 'dev'` and its own `next build` is a local smoke test, not a real deploy, so
-// a missing env var here must not fail the build. (Note this app is NOT built in CI at all today —
-// see .claude/future-tasks/example1-next-build-not-in-ci.md.) A real adopter shipping a production site should
+// a missing env var here must not fail the build. (This app's own `next build` now runs in CI via
+// the `example1-build` job in .github/workflows/ci.yml, which intentionally leaves
+// NEXT_PUBLIC_SITE_URL unset so this fallback path is what actually gets exercised there — see
+// .claude/future-tasks/resolved/example1-next-build-not-in-ci.md for the history.) A real adopter
+// shipping a production site should
 // NOT keep a fallback like this — omit it (leave SITE_URL required) so a production build missing
 // NEXT_PUBLIC_SITE_URL fails loudly instead of silently baking a localhost sitemap into what ships.
 // (`isAbsoluteUrl` in generateContentSitemap will not catch this for you: 'http://localhost:3000'

@@ -65,9 +65,8 @@ const CONTENT_EXTENSIONS = ['.md', '.mdx', '.json', '.yaml'] as const
  * that `computeEntryUrl` derives and `listEntries` publishes. It is NOT "every URL the site
  * serves", and the two are not the same set. A framework adapter can route an entry somewhere
  * else — adopters add hand-written routes Canopy knows nothing about, and a framework adapter can
- * rewrite a sitemap `<loc>` after enumeration (an in-flight `pathFor` option on
- * `generateContentSitemap` does exactly that; not on this branch, so treat it as illustrative
- * rather than as a symbol to go read). Those URLs are
+ * rewrite a sitemap `<loc>` after enumeration (`generateContentSitemap`'s `pathFor` option, in
+ * `canopycms-next/src/static.ts`, does exactly that). Those URLs are
  * invisible here by design -- there is no filesystem state to check them against at write time.
  * A future change that tries to make this the authority on "the set of URLs this site claims"
  * would be reaching past what the write boundary can actually see.
