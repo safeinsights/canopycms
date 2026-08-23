@@ -1,6 +1,6 @@
 import type { Octokit } from '@octokit/rest'
 import type { SanitizedBranchName } from '../paths/types'
-import type { TaskQueueLogger } from './task-queue'
+import type { Task, TaskQueueLogger } from './task-queue'
 import type { WorkerStatusReport } from '../types'
 
 /**
@@ -31,6 +31,9 @@ import type { WorkerStatusReport } from '../types'
  *   instead of github.com;
  * - `cms-worker-merge-poll.test.ts` and `cms-worker.test.ts` ASSIGN a mock over
  *   the `octokit` field;
+ * - `cms-worker.test.ts` REPLACES `executeTask` (to drive the retry/timeout
+ *   paths without real work) and `pushBranchToGitHub` (to exercise the PR
+ *   actions with no git remote), then asserts on the replacement;
  * - several set `running` directly instead of calling `start()`;
  * - `cms-worker-content-lock.test.ts` SUBCLASSES `CmsWorker` to override the two
  *   `afterConflictDetectedForTesting`/`afterRebaseCompletedForTesting` hooks.
@@ -96,6 +99,26 @@ export interface WorkerContext {
    * payloads carry. Sanitizes; `feature/x` lives in `feature-x`.
    */
   branchWorkspacePath(branchRefName: string): string
+  /**
+   * Run one task, read at call time.
+   *
+   * Routed back through the instance even though the implementation lives in
+   * task-runner.ts beside its only caller, because cms-worker.test.ts REPLACES
+   * this method on the instance to drive the retry and timeout paths without
+   * doing real work. `executeTaskWithTimeout` must therefore call
+   * `ctx.executeTask(...)`, never the module-level function directly -- doing
+   * the latter silently bypasses the stub and the tests go red.
+   */
+  executeTask(task: Task, signal: AbortSignal): Promise<Record<string, unknown>>
+  /**
+   * Push a branch from remote.git to GitHub, read at call time.
+   *
+   * Routed through the instance for the same reason as `executeTask`:
+   * cms-worker.test.ts replaces it with a spy so the PR actions can be
+   * exercised with no git remote, and then asserts the spy was NOT called on
+   * the base-branch-refusal path.
+   */
+  pushBranchToGitHub(branch: string): Promise<void>
   /** Whether the worker is still running; both poll loops bail when false. */
   isRunning(): boolean
   /** The worker's self-reported status object, lazily initialized. */
