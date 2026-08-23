@@ -39,7 +39,7 @@ left alone.
 | 25 | `adopter-migration.md`'s `## Unreleased` is stale | Confirmed | Fixed on this branch |
 | 6 | `react-markdown`-in-RSC trap undocumented | Confirmed | Fixed on this branch |
 | 24 | Assets/media system undiscoverable | Confirmed (docs), plus one real behaviour gap | Fixed — docs, then the basePath behaviour half in PR #261 |
-| 22 | Enumeration and resolution disagree on URL count | **Confirmed, plus a second consequence they did not find** | [url-resolver-index-entry-extra-url.md](resolved/url-resolver-index-entry-extra-url.md) |
+| 22 | Enumeration and resolution disagree on URL count | **Confirmed, plus a second consequence they did not find** | Half fixed 2026-08-21 ([url-resolver-index-entry-extra-url.md](resolved/url-resolver-index-entry-extra-url.md)); remainder fixed 2026-08-22 as **#34** below |
 | 20b | `extraUrls` bypasses `isNoindexEntry`, no `lastModified` | Confirmed, both halves | **Shipped 2026-08-21** — docs earlier, `pathFor` on `feat/sitemap-path-for-index-entries` |
 | 27 | Non-list `object` field can be entered but never cleared | Confirmed | Fixed — Clear control, clears to `undefined` |
 | 28 | `object` fields drop comment support | **Partially true** — see below | Fixed — container-level wrap; children always worked |
@@ -48,6 +48,65 @@ left alone.
 | 29 | Unknown keys never reported | Confirmed; cheaper than they framed it | Fixed on this branch |
 | 16 | `listEntries()` never resolves `reference` fields | Confirmed; blast radius **differs** from their account | Fixed — PRs #242, #245 |
 | 20 | Reference app teaches index singletons the hard way | Confirmed but **narrower** than framed | **Shipped 2026-08-21** on `feat/sitemap-path-for-index-entries` |
+
+### Item 34 — the remainder of #22, filed 2026-08-22
+
+**Shipped 2026-08-22** on `fix/readbyurlpath-url-addressable-only`. Their framing was right, their
+measurement was right, and their table was under-scoped in the same direction our own docs were —
+which is the useful part of this item.
+
+| # | Their claim | Verdict | Disposition |
+| - | ----------- | ------- | ----------- |
+| 34.1 | Drop the entry-type-name candidate from `resolveUrlPathCandidates`; confirm nothing that round-trips breaks | **Confirmed, and the fix is wider than requested** | Fixed — but NOT in that module, and covering two more shapes |
+| 34.2 | Add the invariant as a property test over your own fixtures | Confirmed; the right ask | Fixed — `url-exclusivity-fixtures.ts`, run over fixtures AND `apps/example1`'s real tree |
+| 34.3 | If the candidate must stay, widen the caveat in `adopter-migration.md` | Moot | The two under-scoped caveats were corrected in place anyway, rather than shipped falsified |
+| 34.4 | `/site` resolves the settings singleton, unenumerated | **Not this bug**, and we think not a bug | See below — no change |
+| 34.5 | Check whether `apps/example1` reproduces it | Confirmed, and **worse than they predicted** | Fixed; now covered by a test over that app's real tree |
+
+**Where the fix diverges from what they asked for.** They asked us to drop the candidate.
+`resolveUrlPathCandidates` cannot tell an entry-type path from a collection path — it is pure and
+schema-free on purpose — so dropping the candidate there would also have closed the collection
+literally *named* `index`, which that candidate exists to answer. The rule is instead enforced one
+layer down, in the reader, which already holds the branch's schema: for a read by published URL,
+every candidate's `entryPath` must be a collection. Their diagnosis ("one shared candidate list,
+two callers with different needs") was exactly right; the fix separates the callers rather than
+the list.
+
+**What their probe did not reach.** The same delegation is available through the OTHER candidate:
+`/<collection>/<entryTypeName>/<slug>` resolves `<collection>` + `<slug>`. It needs no index entry,
+so unlike everything in their table it applies to **every entry in every collection** — their site
+will have had one of these per page. Worth telling them explicitly, since a guard written against
+their table would not have covered it.
+
+**Their `/site` row is a different mechanism and we made no change.** It resolves through the
+direct-entry candidate against the root *collection*, not through an entry-type path: a singleton
+written with no explicit slug lands on disk as `site.site.<id>.json`, so its slug genuinely is
+`site` and `computeEntryUrl` genuinely publishes `/site` for it. If their enumeration does not show
+`/site`, the question is why the listing does not include it (scope? ACL?) rather than why
+resolution does. The adjacent real issue — that a slugless `read({ entryPath })` is coupled to the
+entry-type name, so renaming a slug silently breaks it — is tracked separately in
+[entrypath-read-resolves-by-entry-type-name.md](entrypath-read-resolves-by-entry-type-name.md).
+
+**Their verification suggestion was the most valuable line in the report.** `apps/example1` does
+reproduce it, but not at `/home` as they guessed — that URL has no route there, so Next 404s it.
+It reproduces through the family they had not found, under the app's live `docs` catch-all:
+`/docs/doc/overview`, `/docs/api/doc/intro`, `/docs/api/v1/doc/authentication` and four more, seven
+duplicate pages in total, with `next build` green and the sitemap clean throughout. Their note that
+example1's emitted HTML is not inspected in CI was out of date (that gap was closed in
+`example1-next-build-not-in-ci.md`) but the underlying point stood: the build-verify suite asserts
+on three routes, and none of them is a phantom. The reference app is now held to the invariant
+directly, over its whole content tree.
+
+**One more narrowing they did not ask for, flagged because it can remove a page.** A collection
+declaring no entry types lists nothing at all (`listCollectionEntries` returns `[]` for one), so
+files sitting in a collections-only container are no longer resolvable by URL either. Same class as
+the undeclared-token case, and equally un-authorable through the CMS, but worth naming since it is
+the one part of this change that can 404 something an adopter is currently serving.
+
+**One thing we did not fix, stated plainly so they can stop looking for it.** A legacy untyped file
+(`overview.json`, not `{type}.{slug}.{id}.{ext}`) is still readable by URL and still invisible to
+every enumerating surface. Left open for test-migration cost, not disagreement — tracked in
+[legacy-untyped-files-url-addressable.md](legacy-untyped-files-url-addressable.md).
 
 ### Where our verification disagreed with theirs
 
