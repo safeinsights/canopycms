@@ -35,6 +35,7 @@ import { getErrorMessage, isNodeError, redactCredentials } from '../utils/error'
 import { isNonFastForwardRejection, isRebaseInProgress, isStaleLeaseRejection } from '../utils/git'
 import { writeWorkerStatus } from './worker-status'
 import { workerLog, workerLogWarn, workerLogError } from './log'
+import type { WorkerContext } from './worker-context'
 
 // Re-exported so the AWS entrypoint (packages/canopycms-cdk/worker/index.ts)
 // can prefix its own startup lines through the same helpers without adding a
@@ -416,6 +417,45 @@ export class CmsWorker {
         `${RESERVED_SETTINGS_BRANCH_PREFIX}${resolveDeploymentName({ deploymentName: this.config.deploymentName }, 'prod')}`
     }
     return this.settingsBranchResolved
+  }
+
+  /**
+   * Build the {@link WorkerContext} handed to the extracted clusters
+   * (task-runner.ts, git-sync.ts, rebase.ts, history-rewrite.ts).
+   *
+   * Built FRESH on every call rather than once in the constructor, and the
+   * instance-backed members are functions rather than copied values. Both
+   * choices exist for the same reason: the test suite drives this class by
+   * replacing `octokit` and `buildGitHubUrl` ON THE INSTANCE, by setting
+   * `running` directly, and by subclassing to override the two rebase test
+   * hooks. A context that captured any of those at construction time would hand
+   * the extracted code the pre-test value -- which for `buildGitHubUrl` means a
+   * test's push going to github.com for real instead of its local fixture repo.
+   * See WorkerContext's doc comment for the full list.
+   */
+  private ctx(): WorkerContext {
+    return {
+      githubOwner: this.config.githubOwner,
+      githubRepo: this.config.githubRepo,
+      baseBranch: this.baseBranch,
+      sanitizedBaseBranch: this.sanitizedBaseBranch,
+      taskDir: this.taskDir,
+      remoteGitPath: this.remoteGitPath,
+      contentBranchesPath: this.contentBranchesPath,
+      contentRoot: this.contentRoot,
+      taskTimeoutMs: this.taskTimeoutMs,
+      maxTasksPerCycle: this.maxTasksPerCycle,
+      maxRetries: this.maxRetries,
+      log: this.log,
+      octokit: () => this.octokit,
+      buildGitHubUrl: () => this.buildGitHubUrl(),
+      branchWorkspacePath: (branchRefName) => this.branchWorkspacePath(branchRefName),
+      isRunning: () => this.running,
+      ensureStatusReport: () => this.ensureStatusReport(),
+      ensureSettingsBranch: () => this.ensureSettingsBranch(),
+      afterConflictDetectedForTesting: () => this.afterConflictDetectedForTesting(),
+      afterRebaseCompletedForTesting: () => this.afterRebaseCompletedForTesting(),
+    }
   }
 
   async start(): Promise<void> {
