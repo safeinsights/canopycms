@@ -80,6 +80,9 @@ export const readEntryData = async (
     if (format === 'yaml') {
       return asRecord(yamlParse(raw))
     }
+    // Read-only here, and the result is copied immediately below before anything
+    // is written into it -- see that comment for the hazard being avoided.
+    // eslint-disable-next-line no-restricted-syntax
     const parsed = matter(raw)
     // Copy before writing the body in. gray-matter keeps a PROCESS-GLOBAL cache keyed by file
     // content and hands every caller the same `data` object instance, so mutating it in place

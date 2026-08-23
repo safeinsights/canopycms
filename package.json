@@ -15,6 +15,7 @@
     "lint": "pnpm -r run lint",
     "lint:fix": "pnpm -r run lint -- --fix",
     "lint:bundle": "depcruise packages/canopycms/src/client.ts packages/canopycms-next/src/client.tsx --output-type err-long",
+    "lint:cycles": "depcruise packages/canopycms/src packages/canopycms-next/src --output-type err-long",
     "lint:tasks": "node scripts/check-future-tasks.mjs",
     "lint:docs": "node scripts/check-docs.mjs",
     "lint:actions": "node scripts/check-action-pins.mjs",

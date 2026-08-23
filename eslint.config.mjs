@@ -176,6 +176,39 @@ const eslintConfig = [
   // relevant rule was disabled, and the project-wide rule (above) would not have
   // helped anyway: it already allows warn/error/info.
   //
+  // Two invariants that were prose-only until 2026-08-23, both with silent,
+  // data-shaped failure modes that no test would notice.
+  //
+  // `ignores` deliberately excludes `**/worker/**`: flat config REPLACES a rule's
+  // options rather than merging them, so the worker block below (which sets its
+  // own `no-restricted-syntax` for the console ban) would drop these selectors
+  // for worker files anyway. Excluding them here makes that explicit rather than
+  // accidental. Verified safe: no production file under either `worker/`
+  // directory constructs a ContentStore or calls `matter()`.
+  //
+  // Tests are excluded too. Both rules are about PRODUCTION wiring: 61 test call
+  // sites legitimately construct a ContentStore on the default content root, and
+  // forcing the argument there buys nothing.
+  {
+    files: ['packages/canopycms/src/**/*.{ts,tsx}'],
+    ignores: ['**/worker/**', '**/*.test.{ts,tsx}', '**/__tests__/**', '**/__integration__/**'],
+    rules: {
+      'no-restricted-syntax': [
+        'error',
+        {
+          selector: "NewExpression[callee.name='ContentStore'][arguments.length<3]",
+          message:
+            'Pass ContentStoreOptions with contentRootName: config.contentRoot. It defaults to "content", and when that default is wrong the failure is silent and data-shaped — the ID index scans a directory that does not exist, so every ID-based lookup (reference resolution, entry links, order cleanup, rename) misses while path-based reads keep working. See ContentStoreOptions.contentRootName.',
+        },
+        {
+          selector: "CallExpression[callee.name='matter'][arguments.length<2]",
+          message:
+            "Call matter(raw, {}) with an options object, or justify a single-argument call with an eslint-disable naming which hazard does not apply. gray-matter keeps a PROCESS-GLOBAL cache keyed by file content: (1) a cache hit returns an object with `.matter` missing, which made comment preservation a preserve-on-first-save/drop-on-every-save-after bug, and (2) every caller parsing the same bytes gets the SAME `data` instance, so mutating it in place leaks one entry's body into an unrelated later parse. Both have already shipped once.",
+        },
+      ],
+    },
+  },
+
   // Expressed as `no-restricted-syntax` rather than `no-console`, for two
   // reasons that both bit during this change:
   //   1. `no-console` cannot express "allow nothing" - its schema rejects
