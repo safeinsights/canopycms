@@ -2,7 +2,7 @@
 
 Found by the August 2026 whole-codebase baseline review (5 independent Fable reviews at
 `integration-202607-a` @ `6770327c`, verified first-hand by the lead reviewer).
-Full traces: [REVIEW-REPORT-2026-08.md](../../../REVIEW-REPORT-2026-08.md) findings 3, 4, 7, 9, 10.
+Full traces: [docs/reviews/2026-08.md](../../../docs/reviews/2026-08.md) findings 3, 4, 7, 9, 10.
 
 Grouped because they share a cause worth naming: **each is a seam where one layer is mocked in
 tests and the layer beneath is tested with different inputs**, so the suite is green while the

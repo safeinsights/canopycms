@@ -82,20 +82,32 @@ You are a documentation specialist for CanopyCMS. Your job is to keep the codeba
 
 ## Key Directories to Monitor
 
+Verify a path exists before relying on it — this list has drifted before.
+Many core modules are deliberately FLAT files at `packages/canopycms/src/*.ts`,
+not directories; do not assume a `foo/` directory exists for topic `foo`.
+
 ```
-packages/canopycms/src/api/          # API endpoints
-packages/canopycms/src/auth/         # Auth plugins
-packages/canopycms/src/permissions/  # Permission system
-packages/canopycms/src/comments/     # Comment store
-packages/canopycms/src/editor/       # UI components
-packages/canopycms/src/content/      # Content store
-packages/canopycms/src/git/          # Git operations
-packages/canopycms/src/branch/       # Branch management
-packages/canopycms/examples/one/     # Example app
+packages/canopycms/src/api/             # API endpoints
+packages/canopycms/src/auth/            # Auth plugins
+packages/canopycms/src/authorization/   # Permission system (NOT `permissions/`)
+packages/canopycms/src/editor/          # UI components (largest subsystem)
+packages/canopycms/src/schema/          # Schema loading and resolution
+packages/canopycms/src/validation/      # Field traversal, validators
+packages/canopycms/src/assets/          # Asset store + transform engine
+packages/canopycms/src/worker/          # CmsWorker daemon
+packages/canopycms/src/static/          # Static-generation helpers
+packages/canopycms/src/cli/             # CLI commands
+packages/canopycms/src/config/          # Config types and schemas
+packages/canopycms/src/operating-mode/  # prod/dev strategies
+packages/canopycms/src/*.ts             # Flat top-level modules, incl.
+                                        #   content-store.ts, content-listing.ts,
+                                        #   content-id-index.ts, git-manager.ts,
+                                        #   branch-registry.ts, branch-metadata.ts,
+                                        #   comment-store.ts, services.ts, context.ts
+apps/example1/                          # Example app (NOT packages/canopycms/examples/)
 ```
 
-or any other directory in packages/canopycms/src
-or any other example in packages/examples
+or any other directory in `packages/canopycms/src`, or any other app in `apps/`
 
 ## Style
 

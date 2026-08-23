@@ -60,7 +60,7 @@ Update DEVELOPING.md when:
 
 ## What NOT to Include
 
-- Internal architecture details (that's PROMPT.md/AGENTS.md)
+- Internal architecture details (that's ARCHITECTURE.md/AGENTS.md)
 - User-facing documentation (that's README.md)
 - API reference (that could be auto-generated or in README.md)
 

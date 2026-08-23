@@ -19,7 +19,7 @@ Key characteristics:
 
 CanopyCMS is organized as a monorepo with separate packages for extensibility:
 
-- **canopycms** (core): The main library containing content store, branch management, permissions, editor UI, API handlers, AI content generation, and the asset/media store plus its on-demand image-transform engine. This package is framework-agnostic and contains all business logic. It exposes multiple entrypoints: `canopycms/server` (content reading, API setup), `canopycms/client` (editor components), `canopycms/config` (configuration helpers), `canopycms/ai` (AI content route handler and generation), and `canopycms/build` (static file generation utilities). The main `canopycms` entry also exports the isomorphic `assetUrl`/`assetSrcSet` helpers so host apps can build transform URLs (see [Asset & Media System](#asset--media-system)).
+- **canopycms** (core): The main library containing content store, branch management, permissions, editor UI, API handlers, AI content generation, and the asset/media store plus its on-demand image-transform engine. This package is framework-agnostic and contains all business logic. It exposes multiple entrypoints: `canopycms/server` (content reading, API setup), `canopycms/client` (editor components), `canopycms/ai` (AI content route handler and generation), and `canopycms/build` (static file generation utilities). The main `canopycms` entry exports the configuration helpers (`defineCanopyConfig`, `getConfigDefaults`) and the isomorphic `assetUrl`/`assetSrcSet` helpers so host apps can build transform URLs (see [Asset & Media System](#asset--media-system)).
 
 - **canopycms-next**: Next.js adapter that provides thin integration (~10 lines of user extraction code). Wraps core context with React cache() for per-request memoization. Also provides a `withCanopy()` Next.js config wrapper that handles module transpilation and React deduplication (see [Framework Adapters](#framework-adapters) below).
 
@@ -371,7 +371,7 @@ export const getHandler = async () => {
 CanopyCMS centralizes default values in the configuration layer using Zod schemas. The `getConfigDefaults()` helper extracts default values from schemas:
 
 ```typescript
-import { getConfigDefaults } from 'canopycms/config'
+import { getConfigDefaults } from 'canopycms'
 
 const defaults = getConfigDefaults()
 // { baseBranch: 'main', remoteName: 'origin', ... }
@@ -2215,7 +2215,7 @@ This feature introduces two new package entrypoints:
 - **`canopycms/ai`**: Exports the route handler factory, the generation engine, config helpers, and all related types. This is a server-side entrypoint (uses Node.js APIs for content reading).
 - **`canopycms/build`**: Exports the static file writer. This is a build-time entrypoint (uses `node:fs` to write files to disk).
 
-These join the existing entrypoints (`canopycms/server`, `canopycms/client`, `canopycms/config`).
+These join the existing entrypoints (`canopycms/server`, `canopycms/client`).
 
 ## Content Tree Builder
 
