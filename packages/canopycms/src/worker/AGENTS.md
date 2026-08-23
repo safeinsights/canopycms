@@ -86,14 +86,18 @@ failure sets `failureReason` and breaks rather than throwing — `checkout --the
 MODIFY/DELETE conflict used to escape the round loop, skip both abort sites, and wedge the
 clone forever.
 
-**ABORT OWNERSHIP IS SPLIT, and reading it as "the caller owns the abort" invites deleting
-a live one as a duplicate.** The unexpected-error exit aborts inside `runRebaseRounds`
-itself; the conflict-resolution-failure, `MAX_REBASE_ROUNDS` and lock-compromised exits
-deliberately leave the rebase in progress and depend on the caller's `!completed` abort.
-`runRebaseRounds` can also throw — `branchGit.status()` is the first statement of the round
-catch, so a vanished `.git` or an EFS error escapes — which unwinds to `rebaseOneBranch`'s
-outer catch, where the last-resort abort in the `finally` is the backstop. None of those
-three aborts is redundant. See the function's own doc comment.
+**ABORT OWNERSHIP IS SPLIT ACROSS FOUR SITES, none redundant, and reading it as "the
+caller owns the abort" invites deleting a live one as a duplicate.** The unexpected-error
+exit aborts inside `runRebaseRounds` itself. The lock-compromised exit is aborted by
+`rebaseOneBranch`'s own `contentLockCompromised && !completed` branch, which returns
+`skippedLocked` before the `!completed` block below it is reached — that abort is a
+distinct site and cannot be folded into the `!completed` one. Only the
+conflict-resolution-failure and `MAX_REBASE_ROUNDS` exits are covered by `!completed`.
+Fourth, `runRebaseRounds` can throw — `branchGit.status()` is the first statement of the
+round catch, so a vanished `.git` or an EFS error escapes — which unwinds to
+`rebaseOneBranch`'s outer catch, where the last-resort abort in the `finally` is the
+backstop. (A fifth abort, in the interrupted-rebase recovery, cleans up a PREVIOUS run's
+abandoned rebase and is unrelated.) See the function's own doc comment.
 
 It takes `isLockCompromised` as a callback, not a boolean, because [SYNC-C1] the
 content-write lock can be lost BETWEEN rounds.

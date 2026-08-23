@@ -610,7 +610,7 @@ function BranchHealthRow({
 }) {
   if (entry.kind === 'healthy' && entry.branch) {
     const b = entry.branch
-    // Mirror rebaseActiveBranches' skip logic (worker/cms-worker.ts):
+    // Mirror the rebase loop's skip logic (worker/rebase.ts):
     // the worker rebases every branch except 'submitted'/'approved' (under an
     // active PR) and 'archived' (already merged). Stated as an exclusion list
     // rather than `status === 'editing'` so that a status added later shows its

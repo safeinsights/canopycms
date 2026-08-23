@@ -250,21 +250,32 @@ interface RebaseRoundsResult {
  * Drive `git rebase` to a finished state, resolving each conflict in favour of
  * the BRANCH's version, and report what happened.
  *
- * ABORT OWNERSHIP is split, and stating it as "the caller owns the abort"
- * would be wrong in a way that invites deleting a live abort as a duplicate:
+ * ABORT OWNERSHIP is split across four sites, none of them redundant. Stating
+ * it as "the caller owns the abort" would be wrong in a way that invites
+ * deleting a live one as a duplicate, so here is which exit each covers:
  *
  * - The **unexpected-error** exit aborts HERE, itself, before breaking. The
  *   caller's `!completed` abort is then a caught no-op for that path.
- * - The **conflict-resolution-failure**, **MAX_REBASE_ROUNDS** and
- *   **lock-compromised** exits leave the rebase IN PROGRESS on purpose, and
- *   depend on the caller's `!completed` abort. Do not remove it.
+ * - The **lock-compromised** exit leaves the rebase in progress, and is aborted
+ *   by `rebaseOneBranch`'s OWN `contentLockCompromised && !completed` branch --
+ *   which returns `skippedLocked` before the `!completed` block below it is
+ *   ever reached. That abort is not the `!completed` one and cannot be folded
+ *   into it.
+ * - The **conflict-resolution-failure** and **MAX_REBASE_ROUNDS** exits leave
+ *   the rebase in progress and are the only two the caller's `!completed`
+ *   abort actually covers.
+ *
+ * (A fifth abort, in `rebaseOneBranch`'s interrupted-rebase recovery, is a
+ * different concern entirely: it cleans up a PREVIOUS run's abandoned rebase
+ * before this one starts.)
  *
  * It can also THROW, from two places, and that is likewise covered rather than
  * prevented: `branchGit.status()` is the first statement of the round catch, so
  * a vanished `.git` or an EFS error escapes, as can the test hook beside it.
  * Such a throw unwinds to `rebaseOneBranch`'s outer catch, and the last-resort
- * abort in its `finally` is what stops the clone being left mid-rebase. That
- * `finally` is the backstop for exactly this, and is not dead code.
+ * abort in its `finally` -- the fourth site -- is what stops the clone being
+ * left mid-rebase. That `finally` is the backstop for exactly this, and is not
+ * dead code.
  *
  * What this function DOES guarantee is narrower: no per-file resolution failure
  * escapes it. `checkout --theirs` on a MODIFY/DELETE conflict used to throw
@@ -551,6 +562,17 @@ export type BranchRebaseOutcome =
        * buckets -- and it genuinely is both, because its history moved and
        * publishing the move failed. Collapsing it to `failed` alone would drop
        * a real rebase from worker-status.json.
+       *
+       * KNOWN COVERAGE GAP, stated rather than hidden: only the `false`
+       * direction is exercised (the fetch-error path in cms-worker.test.ts).
+       * Reaching the `true` direction needs `markHistoryRewritten`'s metadata
+       * save to fail AFTER a completed rebase, and there is no seam for that --
+       * the save sits between two other saves with no hook between them.
+       * Adding a production hook purely to reach it would cost more than the
+       * gap. The placement was instead verified by hand against the pre-split
+       * method: `didRebase = true` sits exactly where `rebased.push` sat, after
+       * the conflictStatus save and before the carry-forward, so a failing
+       * conflictStatus save still yields `failed` alone.
        */
       rebased?: boolean
     }

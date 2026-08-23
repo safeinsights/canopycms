@@ -12,7 +12,7 @@ Shared utilities (error handling, debug, atomic file writes, `content-serialize.
 
 ## `git.ts`
 
-dependency-light git helpers (`isNetworkRemoteUrl`, `detectHeadBranch`/`resolveBaseBranch`, `isNonFastForwardRejection` — the push-rejection classifier shared by api/branch-status.ts's 409 path and worker/cms-worker.ts's fail-fast `PermanentTaskError` path; depends on `git-manager.ts`'s `gitChildEnv` forcing `LC_ALL=C`/`LANG=C` so git's rejection text stays English; `isRebaseInProgress(repoPath)` — fs-only (no subprocess), never-throws check for an interrupted rebase (`.git/rebase-merge`/`rebase-apply`, resolving a `.git` FILE pointer as well as a directory), shared by worker/cms-worker.ts's rebase recovery and branch-health.ts's admin scan so the two cannot disagree about what "mid-rebase" means)
+dependency-light git helpers (`isNetworkRemoteUrl`, `detectHeadBranch`/`resolveBaseBranch`, `isNonFastForwardRejection` — the push-rejection classifier shared by api/branch-status.ts's 409 path and worker/task-runner.ts's fail-fast `PermanentTaskError` path; depends on `git-manager.ts`'s `gitChildEnv` forcing `LC_ALL=C`/`LANG=C` so git's rejection text stays English; `isRebaseInProgress(repoPath)` — fs-only (no subprocess), never-throws check for an interrupted rebase (`.git/rebase-merge`/`rebase-apply`, resolving a `.git` FILE pointer as well as a directory), shared by worker/rebase.ts's rebase recovery and branch-health.ts's admin scan so the two cannot disagree about what "mid-rebase" means)
 
 ## `url-prefix.ts`
 

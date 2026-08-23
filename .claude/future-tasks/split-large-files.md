@@ -37,16 +37,16 @@ per cluster entry point.
 
 | Module | Lines | Contents |
 | --- | --- | --- |
-| `cms-worker.ts` | 2,949 → **802** | lifecycle + delegators, all prior exports intact |
-| `rebase.ts` | 1,061 | the rebase loop |
-| `git-sync.ts` | 701 | `syncGit` and below, minus the rebase loop |
+| `cms-worker.ts` | 2,949 → **826** | lifecycle + delegators, all prior exports intact |
+| `rebase.ts` | 1,103 | the rebase loop |
+| `git-sync.ts` | 715 | `syncGit` and below, minus the rebase loop |
 | `task-runner.ts` | 624 | `processTaskQueue` and below |
 | `history-rewrite.ts` | 290 | the [SYNC-H1] kernel all three clusters touch |
 | `worker-context.ts` | 140 | the seam |
 
 **Actual vs estimate.** The plan predicted `cms-worker.ts` at ~780 (actual 802) and
-`~150 lines net growth, ~5%` across the package. Actual growth is **+669 lines (+23%)**,
-3,618 against 2,949 — four times the estimate. The plumbing was predicted correctly; what
+`~150 lines net growth, ~5%` across the package. Actual growth is **+749 lines (+25%)**,
+3,698 against 2,949 — four times the estimate. The plumbing was predicted correctly; what
 was not is that a `Pick<WorkerContext, ...>` alias and a module header per file, each
 documenting *why* that cluster needs what it needs, is 60–90 lines a module rather than
 the ~25 assumed. That is documentation this code did not previously have anywhere, so it

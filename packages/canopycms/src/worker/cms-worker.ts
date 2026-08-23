@@ -671,13 +671,24 @@ export class CmsWorker {
 
   // --- Task-queue cluster (worker/task-runner.ts) ------------------------
   //
-  // Thin delegators, not just a convenience: `processTaskQueue` is the public
-  // loop entry `scheduleLoop` drives, and the three below it are reached by
-  // cms-worker.test.ts through the instance (it calls `executeTask` and
-  // `updateBranchMetadata` directly, and `pushBranchToGitHub` after replacing
-  // `buildGitHubUrl` on the instance to aim the push at a local fixture repo).
-  // Routing through `this.ctx()` is what keeps that replacement visible to the
-  // extracted code -- see WorkerContext's doc comment.
+  // READ THIS BEFORE STUBBING ANY DELEGATOR BELOW. They are not all the same,
+  // and the difference is invisible from here.
+  //
+  // `processTaskQueue` is the public loop entry `scheduleLoop` drives, so it IS
+  // on the production path. The other three exist ONLY so the existing test
+  // files can reach the implementations through the instance; production never
+  // dispatches through them, because the extracted modules call each other
+  // directly at module level.
+  //
+  // The consequence: replacing one of these on an instance only affects
+  // production behaviour if the context also routes it. Two do --
+  // `executeTask` and `pushBranchToGitHub` are on `WorkerContext` precisely
+  // because cms-worker.test.ts assigns over them and then asserts on the
+  // replacement. `updateBranchMetadata` is NOT: the test calls it directly and
+  // never stubs it, so a stub installed there today would be a silent no-op.
+  // If you need to stub a method that isn't on the context, add it to
+  // WorkerContext and route the internal caller through `ctx` -- do not assume
+  // the delegator's existence means the stub takes effect.
 
   async processTaskQueue(): Promise<void> {
     return processTaskQueue(this.ctx())
@@ -744,10 +755,17 @@ export class CmsWorker {
 
   // --- Rebase loop (worker/rebase.ts) ------------------------------------
   //
-  // Both are reached by tests through the instance: four files call
-  // `rebaseActiveBranches` directly (it is the single entry point the whole
-  // rebase suite drives), and cms-worker-merge-poll.test.ts calls
-  // `pollMergeState` with a mocked `octokit`.
+  // Both are TEST-ONLY entry points -- see the task-queue block above. Nothing
+  // in production dispatches through either; `syncGit` calls `runRebaseCycle`
+  // directly and that calls `pollMergeState` directly. Four test files call
+  // `rebaseActiveBranches` (it is the single entry point the whole rebase suite
+  // drives), and cms-worker-merge-poll.test.ts calls `pollMergeState` with a
+  // mocked `octokit`. Neither is on WorkerContext, so a stub installed on
+  // either is a no-op as far as a production code path is concerned.
+  //
+  // `rebaseActiveBranches` also has a consumer outside the test files:
+  // apps/test-app/app/api/e2e-test/rebase/route.ts drives it from an e2e
+  // fixture route. Do not delete it as unused.
 
   private async rebaseActiveBranches(): Promise<RebaseSummary> {
     return runRebaseCycle(this.ctx())
@@ -755,10 +773,16 @@ export class CmsWorker {
 
   // --- Git-sync cluster (worker/git-sync.ts) -----------------------------
   //
-  // `syncGit` is the public loop entry `scheduleLoop` drives; the three
-  // private ones below it are each called directly by a test file
-  // (cms-worker-sync-reconcile for the settings push, cms-worker-base-refresh
-  // for the base workspace, cms-worker.test.ts for the trash sweep).
+  // `syncGit` is the public loop entry `scheduleLoop` drives. The three private
+  // ones below it are TEST-ONLY entry points -- see the task-queue block above
+  // -- each called directly by one test file (cms-worker-sync-reconcile for the
+  // settings push, cms-worker-base-refresh for the base workspace,
+  // cms-worker.test.ts for the trash sweep). `syncGit` reaches all three as
+  // module-level calls, so a stub installed on one of these is a no-op.
+  //
+  // `reconcileTrackedBranches` deliberately has NO delegator: no test reaches
+  // it through the instance. Comments elsewhere that point at it as living in
+  // this file are stale by definition -- it is in git-sync.ts.
 
   async syncGit(): Promise<void> {
     return syncGit(this.ctx())

@@ -25,10 +25,24 @@ import type { WorkerContext } from './worker-context'
  * workspace, rebase every branch that is behind it (rebase.ts), then sweep old
  * tasks and expired trashed branch directories.
  *
- * The ordering is deliberate but only ONE step still depends on it -- see
- * syncGit's own comments. What matters more is that the whole cycle is wrapped
- * so both outcomes record a worker-status.json snapshot, since an operator's
- * only view of this loop is the admin panel.
+ * Two of those steps are ordered by something the code enforces, and the rest
+ * are not ordered at all:
+ *
+ * - `pushSettingsBranches` consumes `trackedNames` from
+ *   `reconcileTrackedBranches`, which is a DATA dependency its signature
+ *   already enforces -- see its own comment, which says as much.
+ * - `runRebaseCycle` must follow `reconcileTrackedBranches`, and this is the
+ *   one dependency nothing enforces. Branch clones fetch the base tip from
+ *   `remote.git` (`origin`), and `reconcileTrackedBranches` is what advances
+ *   `remote.git`'s `refs/heads/*` toward what the fetch above put in the
+ *   tracking namespace. Reorder them and every branch rebases onto the
+ *   PREVIOUS cycle's base tip -- not corrupting, but silently a cycle behind.
+ *
+ * `refreshBaseBranchWorkspace` and the two sweeps are order-independent.
+ *
+ * What matters more than any of that is that the whole cycle is wrapped so
+ * both outcomes record a worker-status.json snapshot, since an operator's only
+ * view of this loop is the admin panel.
  */
 export type GitSyncContext = Pick<
   WorkerContext,

@@ -32,7 +32,7 @@ export const shouldRetrySecondaryRateLimit = (retryAfter: number, retryCount: nu
 /**
  * Create an Octokit instance with the throttling plugin attached, so it
  * proactively respects GitHub's `retry-after` guidance on rate limits
- * instead of failing immediately (see cms-worker.ts isPermanentTaskFailure
+ * instead of failing immediately (see worker/task-runner.ts's isPermanentTaskFailure
  * for the safety net this doesn't cover: exhausted plugin retries and
  * errors the plugin never sees, like non-403 network failures).
  */

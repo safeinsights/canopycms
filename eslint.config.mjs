@@ -257,7 +257,8 @@ const eslintConfig = [
   //                        resolved inside start(); its env-vs-config mismatch
   //                        warning is precisely what an operator greps for.
   //   schema/meta-loader.ts - in the worker's runtime import closure
-  //                        (worker/cms-worker.ts -> content-index-generation.ts
+  //                        (worker/git-sync.ts, worker/rebase.ts ->
+  //                        content-index-generation.ts
   //                        -> branch-schema-cache.ts -> schema/resolver.ts ->
   //                        here). Latent, not live, as of the sweep that added
   //                        it: no current worker path invokes schema

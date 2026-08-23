@@ -189,7 +189,7 @@ const getBranchHealthHandler = async (
  * Purge a corrupt-metadata or orphan branch directory by renaming it into a
  * dot-prefixed trash name (reversible -- nothing is deleted here; the worker
  * sweeps trash older than 30 days, see cleanupTrashedBranchDirs in
- * worker/cms-worker.ts).
+ * worker/rebase.ts).
  *
  * Safety rails (see the PR's design review for the finding IDs):
  * - [always] the base branch directory can never be purged.
