@@ -12,7 +12,13 @@
 //      `init-maintenance.md` pointed at `cli/templates/` (really
 //      `cli/template-files/`); the baseline-review skill sent a reviewer to
 //      `src/asset-store.ts` (really `src/assets/`).
-//   2. Import specifiers for OUR packages resolve against the real `exports`
+//   2. Relative markdown links resolve. Splitting the root AGENTS.md into
+//      per-directory files on 2026-08-23 moved prose that had been written
+//      relative to the repo root four levels down, silently breaking every
+//      `[docs/concurrency.md](docs/concurrency.md)` in it. Targets resolve
+//      against the LINKING FILE's own directory, the same rule
+//      check-future-tasks.mjs uses and for the same reason.
+//   3. Import specifiers for OUR packages resolve against the real `exports`
 //      maps. ARCHITECTURE.md advertised a `canopycms/config` entrypoint twice
 //      AND shipped a copy-pasteable fence importing from it; CODEBASE_GUIDE.md
 //      cited `canopycms/schema`; canopycms-auth-clerk's own README told
@@ -188,7 +194,25 @@ for (const file of markdownFiles) {
       }
     }
 
-    // --- check 2: our own import specifiers resolve to a real subpath export ---
+    // --- check 2: relative markdown links resolve against the linking file ---
+    for (const m of line.matchAll(/\[[^\]]*\]\(([^)]+)\)/g)) {
+      const target = m[1].trim()
+      // Skip absolute URLs, anchors, and mailto -- only in-repo links are ours.
+      if (/^[a-z][a-z0-9+.-]*:/i.test(target) || target.startsWith('#')) continue
+      const withoutAnchor = target.split('#')[0]
+      if (!withoutAnchor) continue
+      const resolved = resolve(dirname(file), withoutAnchor)
+      if (!existsSync(resolved)) {
+        problems.push({
+          kind: 'relative link target does not exist',
+          file: rel(file),
+          line: lineNo,
+          message: `${target} -> ${rel(resolved)}`,
+        })
+      }
+    }
+
+    // --- check 3: our own import specifiers resolve to a real subpath export ---
     for (const m of line.matchAll(/from '([^']+)'|require\('([^']+)'\)/g)) {
       const spec = m[1] ?? m[2]
       if (!spec) continue
@@ -222,7 +246,7 @@ for (const c of missingCandidates) {
 
 if (problems.length === 0) {
   console.log(
-    `✅ docs cite real paths and real entrypoints (${markdownFiles.length} files checked)`,
+    `✅ docs cite real paths, links and entrypoints (${markdownFiles.length} files checked)`,
   )
   process.exit(0)
 }
