@@ -144,7 +144,7 @@ The core package organizes code into focused modules, each with a single respons
 - A lifecycle shell holding only process concerns: start/stop, the cross-host single-worker lock, the poll loops, `remote.git` provisioning, and the auth-cache refresh
 - The daemon's otherwise-disjoint duty cycles as separate modules — the task queue, the git sync, and the rebase loop beneath it — reached through a worker context object rather than by sharing the daemon instance
 - A shared history-rewrite kernel (the force-push leasing described in [Publishing a Rewritten History](#publishing-a-rewritten-history)) that all three touch
-- Imports run one direction only (shell → task queue / git sync → rebase → history rewrite → context), enforced by a cycle check in lint rather than by review
+- Imports run one direction only (shell → task queue / git sync → rebase → history rewrite → context); a lint cycle check holds the weaker guarantee that the graph stays acyclic, and the layering itself is a review concern
 - See [Deployment Architecture](#deployment-architecture) for what the daemon does and [Why is the worker daemon split into free functions over a context?](#why-is-the-worker-daemon-split-into-free-functions-over-a-context) for the shape of the split
 
 **AI Content Generation** - Schema-driven content export for AI consumption:

@@ -231,7 +231,12 @@ const MAX_REBASE_ROUNDS = 50
 interface RebaseRoundsResult {
   /** Whether `git rebase` reached a finished state. */
   completed: boolean
-  /** Every path resolved --theirs across all rounds, in encounter order, with duplicates. */
+  /**
+   * Every conflicted path this loop resolved, across all rounds, in encounter
+   * order and with duplicates. Mostly `checkout --theirs`, but MODIFY/DELETE
+   * conflicts have no "their version" and are resolved by `git rm`/`git add`
+   * instead -- those land here too.
+   */
   conflictedFiles: string[]
   /**
    * Set ONLY on the "unexpected error" and "conflict resolution failed" exits.
@@ -245,11 +250,26 @@ interface RebaseRoundsResult {
  * Drive `git rebase` to a finished state, resolving each conflict in favour of
  * the BRANCH's version, and report what happened.
  *
- * Never throws, and never aborts: on every failure exit it leaves the rebase
- * in progress and returns `completed: false`, because the caller owns the
- * single `rebase --abort` (and its `finally` owns the last-resort one). An
- * escaping throw from here is the specific bug that used to skip both abort
- * sites and wedge the clone mid-rebase forever.
+ * ABORT OWNERSHIP is split, and stating it as "the caller owns the abort"
+ * would be wrong in a way that invites deleting a live abort as a duplicate:
+ *
+ * - The **unexpected-error** exit aborts HERE, itself, before breaking. The
+ *   caller's `!completed` abort is then a caught no-op for that path.
+ * - The **conflict-resolution-failure**, **MAX_REBASE_ROUNDS** and
+ *   **lock-compromised** exits leave the rebase IN PROGRESS on purpose, and
+ *   depend on the caller's `!completed` abort. Do not remove it.
+ *
+ * It can also THROW, from two places, and that is likewise covered rather than
+ * prevented: `branchGit.status()` is the first statement of the round catch, so
+ * a vanished `.git` or an EFS error escapes, as can the test hook beside it.
+ * Such a throw unwinds to `rebaseOneBranch`'s outer catch, and the last-resort
+ * abort in its `finally` is what stops the clone being left mid-rebase. That
+ * `finally` is the backstop for exactly this, and is not dead code.
+ *
+ * What this function DOES guarantee is narrower: no per-file resolution failure
+ * escapes it. `checkout --theirs` on a MODIFY/DELETE conflict used to throw
+ * straight out of the round loop, skipping both abort sites and wedging the
+ * clone forever; those now set `failureReason` and break instead.
  *
  * `isLockCompromised` is re-read every round rather than passed as a value:
  * [SYNC-C1] the content-write lock can be lost BETWEEN rounds, and

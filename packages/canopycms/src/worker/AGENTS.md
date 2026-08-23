@@ -23,7 +23,9 @@ authoritative**; this file is the map to where those rules live.
 | `log.ts`             | `workerLog`/`workerLogWarn`/`workerLogError`                                                                                                                                                                                                     |
 
 Imports run one way only — `cms-worker` → {`task-runner`, `git-sync`} → `rebase` →
-`history-rewrite` → `worker-context` — and `pnpm lint:cycles` enforces it.
+`history-rewrite` → `worker-context`. `pnpm lint:cycles` enforces that the graph stays
+ACYCLIC, which is not the same thing: a new `rebase.ts` → `task-runner.ts` edge would pass
+lint and still break the layering above. Keep the direction by review.
 
 ## `worker-context.ts`
 
@@ -79,11 +81,22 @@ keyed on the git-status WORKING-TREE column only, since the replay's own staged 
 does not.
 
 `runRebaseRounds` handles MODIFY/DELETE conflicts (`UD`/`DU`, no "their version" to check
-out) via `git rm`/`git add` instead of `checkout --theirs`. **INVARIANT: it never throws
-and never aborts** — the caller owns the single `rebase --abort` and its `finally` owns the
-last-resort one. An escaping throw from there used to skip both abort sites and wedge the
-clone forever. It takes `isLockCompromised` as a callback, not a boolean, because
-[SYNC-C1] the content-write lock can be lost BETWEEN rounds.
+out) via `git rm`/`git add` instead of `checkout --theirs`, so that a per-file resolution
+failure sets `failureReason` and breaks rather than throwing — `checkout --theirs` on a
+MODIFY/DELETE conflict used to escape the round loop, skip both abort sites, and wedge the
+clone forever.
+
+**ABORT OWNERSHIP IS SPLIT, and reading it as "the caller owns the abort" invites deleting
+a live one as a duplicate.** The unexpected-error exit aborts inside `runRebaseRounds`
+itself; the conflict-resolution-failure, `MAX_REBASE_ROUNDS` and lock-compromised exits
+deliberately leave the rebase in progress and depend on the caller's `!completed` abort.
+`runRebaseRounds` can also throw — `branchGit.status()` is the first statement of the round
+catch, so a vanished `.git` or an EFS error escapes — which unwinds to `rebaseOneBranch`'s
+outer catch, where the last-resort abort in the `finally` is the backstop. None of those
+three aborts is redundant. See the function's own doc comment.
+
+It takes `isLockCompromised` as a callback, not a boolean, because [SYNC-C1] the
+content-write lock can be lost BETWEEN rounds.
 
 `pollMergeState` lives here rather than in `git-sync.ts` because the rebase loop is its
 only caller: submitted/approved branches are skipped for rebasing but still need their PR
