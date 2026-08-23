@@ -301,7 +301,17 @@ export interface ContentStoreOptions {
    * non-default content root would otherwise get an index built from a
    * directory that does not exist: empty, so every ID-based lookup (reference
    * resolution, entry links, order cleanup, rename) silently misses while
-   * path-based reads keep working. Defaults to 'content'.
+   * path-based reads keep working.
+   *
+   * Defaults to 'content'.
+   *
+   * ENFORCED BY LINT, not by the type. Omitting it is silent and data-shaped
+   * when wrong -- nothing throws, nothing logs, and only ID-addressed lookups
+   * miss -- so every production construction must pass it. That is checked by
+   * the `no-restricted-syntax` rule on `new ContentStore(...)` in
+   * eslint.config.mjs, which is scoped to non-test sources: making the field
+   * required in the TYPE would have forced the argument on 61 test call sites
+   * that legitimately want the default, for no gain in the 11 production ones.
    */
   contentRootName?: string
   /**
@@ -1042,12 +1052,22 @@ export class ContentStore {
         absolutePath,
       }
     } else {
+      // eslint-disable-next-line no-restricted-syntax -- see the copy below
       const parsed = matter(raw)
       doc = {
         collection: schemaItem.logicalPath,
         collectionName: schemaItem.name,
         format: format,
-        data: (parsed.data as Record<string, unknown>) ?? {},
+        // Copy, never the object gray-matter hands back: its cache is
+        // process-global and keyed by file content, so every caller parsing the
+        // same bytes gets the SAME `data` instance (the hazard content-listing.ts
+        // documents at length). Assigning it straight into `doc.data` was safe
+        // only by accident -- `resolveReferencesInData` spreads its input, so the
+        // shared object got replaced a few lines down. But that only happens when
+        // resolution runs: with `resolveReferences: false` the caller was handed
+        // the shared instance itself, and one mutation would poison every later
+        // parse of those bytes.
+        data: { ...((parsed.data as Record<string, unknown>) ?? {}) },
         body: parsed.content,
         bodyFieldName: findBodyFieldName(fields),
         relativePath,

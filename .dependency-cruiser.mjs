@@ -44,6 +44,14 @@ export default {
       to: { path: NODE_BUILTIN, reachable: true },
     },
     {
+      name: 'no-circular',
+      severity: 'error',
+      comment:
+        'A runtime import cycle. Under ESM, module-init order becomes load-order dependent and the symptom (an undefined binding at first use) points nowhere near the cause. Break the edge: hoist the shared piece into a third module, or pass the collaborator in. Note `tsPreCompilationDeps` is off, so `import type` edges are erased and can never trip this — only value imports do.',
+      from: { path: OWN_SRC },
+      to: { circular: true },
+    },
+    {
       name: 'no-unresolvable-local-imports',
       severity: 'error',
       comment:

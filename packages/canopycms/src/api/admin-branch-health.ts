@@ -17,6 +17,9 @@ import { simpleGit } from 'simple-git'
 
 import type { BranchAccessControl, BranchMetadata, BranchStatus } from '../types'
 import { BranchMetadataFileManager, getBranchMetadataFileManager } from '../branch-metadata'
+// Same constants the reader uses, rather than a second copy of the two string
+// literals -- they were declared independently here until 2026-08-23.
+import { BRANCH_META_DIR, BRANCH_META_FILE } from '../branch-metadata-file'
 import { scanBranchHealth, type BranchHealthEntry } from '../branch-health'
 import { ContentIdIndex } from '../content-id-index'
 import { invalidateContentIndexesDurable } from '../content-index-generation'
@@ -41,9 +44,6 @@ const PROVISIONING_LOCK_FRESH_MS = 5 * 60_000
 
 /** An orphan dir younger than this may still be a clone in progress; corrupt dirs are exempt. */
 const ORPHAN_YOUTH_THRESHOLD_MS = 15 * 60_000
-
-const BRANCH_META_DIR = '.canopy-meta'
-const BRANCH_META_FILE = 'branch.json'
 
 // ============================================================================
 // Response types
