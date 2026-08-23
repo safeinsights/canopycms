@@ -281,6 +281,45 @@ describe('readByUrlPath resolves exactly the URLs listEntries publishes', () => 
     expect(await ctx.readByUrlPath('/docs/legacy')).toBeNull()
   })
 
+  it('does not resolve content in a collection that declares no entry types', async () => {
+    // A collections-only container is legal (the schema requires `entries` OR `collections`), and
+    // `listCollectionEntries` returns [] outright for one -- so it publishes nothing, no matter
+    // what sits in its directory. A file there cannot have been created by the CMS, since there is
+    // no entry type to create it as; it arrived by hand, by merge or by retrofit. Resolution used
+    // to serve it anyway, which is the same disagreement as the undeclared-token case above with
+    // the type list empty rather than mismatched.
+    const schema: RootCollectionConfig = {
+      collections: [
+        {
+          name: 'docs',
+          path: 'docs',
+          collections: [
+            {
+              name: 'guides',
+              path: 'docs/guides',
+              entries: [entryType('guide', { default: true })],
+            },
+          ],
+        },
+      ],
+    }
+
+    const docs = path.join(root, 'content/docs')
+    await writeEntry(docs, 'doc', 'overview', { title: 'Orphan' })
+    await writeEntry(path.join(docs, 'guides'), 'guide', 'getting-started', { title: 'Guide' })
+
+    const ctx = await createContext(schema)
+    // The container publishes nothing...
+    expect((await ctx.listEntries()).map((i) => i.urlPath)).toEqual([
+      '/docs/guides/getting-started',
+    ])
+    expect(await ctx.readByUrlPath('/docs/overview')).toBeNull()
+    // ...while its child collection, which does declare a type, is untouched.
+    expect(
+      (await ctx.readByUrlPath<{ title: string }>('/docs/guides/getting-started'))!.data.title,
+    ).toBe('Guide')
+  })
+
   it('still resolves a legacy untyped file, which carries no type token to check', async () => {
     // The undeclared-type rule reads the entry type buildPaths resolved, which for a legacy
     // `{slug}.{ext}` file is not a token from the filename at all -- extractEntryTypeFromFilename

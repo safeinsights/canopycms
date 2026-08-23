@@ -601,13 +601,22 @@ export class ContentStore {
    * was renamed out of the schema stays findable and therefore still editable, renameable and
    * deletable. Only URL resolution consults this, so what enumeration hides is not served.
    *
-   * Returns true when the collection declares no `entries` at all: that is "no type list to check
-   * against", exactly like `parseTypedFilename`'s own `if (entryTypes && ...)` guard, and not
-   * "reject everything".
+   * Returns FALSE when the collection declares no `entries` at all, which is stricter than
+   * `parseTypedFilename`'s own `if (entryTypes && ...)` guard and deliberately so: the enumerating
+   * surface is not `parseTypedFilename`, it is `listCollectionEntries`, and that returns `[]`
+   * outright for a collection with no `entries`. A collections-only container therefore publishes
+   * nothing, so a URL read that resolved a file sitting in one would be answering where nothing is
+   * advertised -- the exact disagreement this predicate exists to close. Such a file cannot have
+   * been created by the CMS (there is no entry type to create it as); it arrived by hand, by merge
+   * or by retrofit, and it is invisible to the sitemap and to static params either way.
+   *
+   * Returns true for a path that is not a collection at all, because that is rule 1's question,
+   * not this one's -- and under `urlAddressableOnly` rule 1 has already rejected it.
    */
   public declaresEntryType(collectionPath: LogicalPath, entryTypeName: string): boolean {
     const item = this.schemaIndex.get(normalizeFilesystemPath(collectionPath))
-    if (item?.type !== 'collection' || !item.entries) return true
+    if (item?.type !== 'collection') return true
+    if (!item.entries) return false
     return item.entries.some((e) => e.name === entryTypeName)
   }
 
