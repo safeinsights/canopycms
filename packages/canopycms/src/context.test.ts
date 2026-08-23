@@ -427,14 +427,14 @@ describe('readByUrlPath', () => {
   // that disagreement with per-route entryType gates whose only job was to reject the phantom.
   //
   // These pin exactly what they say and no more: item.urlPath resolves the entry, and the
-  // `.../index` spelling does not, in any case. They do NOT pin "and nothing else does" — an
-  // earlier version of this comment claimed that, and it is false: an index entry still also
-  // answers at `/<collection>/<entryTypeName>`, because the index-fallback candidate lands on a
-  // registered entry-TYPE schema item that buildPaths delegates to the parent collection. That
-  // hole is open and tracked in
-  // .claude/future-tasks/readbyurlpath-entry-type-candidate-phantom-url.md; when it closes, this
-  // block is where the exclusivity assertion belongs.
-  // See also .claude/future-tasks/resolved/url-resolver-index-entry-extra-url.md.
+  // `.../index` spelling does not, in any case. They deliberately do NOT pin "and nothing else
+  // does" — an earlier version of this comment claimed that while `/<collection>/<entryTypeName>`
+  // was still resolving, and the lesson taken was that per-spelling regression tests cannot state
+  // an invariant. The exclusivity assertion now lives in url-exclusivity.test.ts, which
+  // enumerates and then probes every adjacent URL the resolver would try; add new URL-shape
+  // findings there rather than as another `it` here.
+  // See .claude/future-tasks/resolved/url-resolver-index-entry-extra-url.md and
+  // .claude/future-tasks/resolved/readbyurlpath-entry-type-candidate-phantom-url.md.
   describe('index entries do not answer at their literal /index URL', () => {
     it('does not resolve an index entry at its literal /index URL', async () => {
       const guidesDir = path.join(root, 'content/docs/guides')
@@ -701,16 +701,48 @@ describe('readByUrlPath', () => {
     }
   })
 
-  it('falls through when first candidate resolves to a non-collection schema item', async () => {
+  it('falls through when a candidate resolves to a non-collection schema item', async () => {
     // URL /docs/doc/overview generates candidates:
     //   1. { entryPath: 'content/docs/doc', slug: 'overview' } — 'content/docs/doc' is an entry-type, not a collection
     //   2. { entryPath: 'content/docs/doc/overview', slug: 'index' } — not in schema
-    // Both should fall through gracefully, returning null (not throwing)
-    await fs.mkdir(path.join(root, 'content/docs'), { recursive: true })
+    // Both must fall through gracefully, returning null (not throwing).
+    //
+    // The `overview` file below is what makes this a test. Without it this passed for the wrong
+    // reason — candidate 1's entry-type delegation resolved `content/docs` + slug `overview`,
+    // found nothing, and returned null on "no such slug" rather than on the entry-type gate. So
+    // it went green throughout the entire period `/docs/doc/overview` really did serve a
+    // duplicate of `/docs/overview`, which is exactly the defect it is named after.
+    const docsDir = path.join(root, 'content/docs')
+    await fs.mkdir(docsDir, { recursive: true })
+    await fs.writeFile(
+      path.join(docsDir, 'doc.overview.RRMDbToFJNTf.json'),
+      JSON.stringify({ title: 'Overview' }),
+    )
 
     const ctx = await createContext()
-    const result = await ctx.readByUrlPath('/docs/doc/overview')
-    expect(result).toBeNull()
+    // The entry's own URL still resolves...
+    expect((await ctx.readByUrlPath<{ title: string }>('/docs/overview'))!.data.title).toBe(
+      'Overview',
+    )
+    // ...and the entry-type-name spelling of it is not a second one.
+    expect(await ctx.readByUrlPath('/docs/doc/overview')).toBeNull()
+  })
+
+  it("does not resolve an index entry at its collection's entry-type name either", async () => {
+    // The same gate reached through the OTHER candidate: /docs/doc's index fallback is
+    // { entryPath: 'content/docs/doc', slug: 'index' }, which buildPaths would delegate to
+    // content/docs with slug `index` — returning the collection's index entry at a URL whose last
+    // segment is a type name. This is the shape the adopter reported (/blog/article, /home).
+    const docsDir = path.join(root, 'content/docs')
+    await fs.mkdir(docsDir, { recursive: true })
+    await fs.writeFile(
+      path.join(docsDir, 'doc.index.aB3cD4eF5gH6.json'),
+      JSON.stringify({ title: 'Docs Home' }),
+    )
+
+    const ctx = await createContext()
+    expect((await ctx.readByUrlPath<{ title: string }>('/docs'))!.data.title).toBe('Docs Home')
+    expect(await ctx.readByUrlPath('/docs/doc')).toBeNull()
   })
 
   describe('case sensitivity', () => {

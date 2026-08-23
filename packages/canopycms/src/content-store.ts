@@ -572,6 +572,45 @@ export class ContentStore {
     return item
   }
 
+  /**
+   * Is this path a COLLECTION schema item?
+   *
+   * The non-throwing form of `assertCollection`, reading the same `schemaIndex` -- which is the
+   * point. A caller that gates on this cannot disagree with what `buildPaths` will then do: the
+   * Map is last-wins, so where a subcollection's path collides with a parent's entry-type name
+   * both this and `buildPaths` see the collection. A `find` over the flat schema LIST is
+   * first-wins and would not.
+   *
+   * Type-only, deliberately -- `resolvePath` additionally requires `entries`, but a collection
+   * with subcollections and no entries of its own is legal, and mirroring that stricter test here
+   * would reject something `buildPaths` accepts.
+   *
+   * Exists for `readByUrlPath`'s URL-addressability gate; see `ReadContentInput`'s
+   * `urlAddressableOnly` and the note on `buildPaths`' entry-type branch below.
+   */
+  public isCollectionPath(collectionPath: LogicalPath): boolean {
+    return this.schemaIndex.get(normalizeFilesystemPath(collectionPath))?.type === 'collection'
+  }
+
+  /**
+   * Does this collection declare `entryTypeName` in its `entries` config?
+   *
+   * Mirrors `parseTypedFilename(filename, collection.entries)`, which is how `listEntries` decides
+   * whether a file on disk is one of the collection's entries at all. `buildPaths`' own directory
+   * scan deliberately does NOT check this -- it matches on slug alone, so that an entry whose type
+   * was renamed out of the schema stays findable and therefore still editable, renameable and
+   * deletable. Only URL resolution consults this, so what enumeration hides is not served.
+   *
+   * Returns true when the collection declares no `entries` at all: that is "no type list to check
+   * against", exactly like `parseTypedFilename`'s own `if (entryTypes && ...)` guard, and not
+   * "reject everything".
+   */
+  public declaresEntryType(collectionPath: LogicalPath, entryTypeName: string): boolean {
+    const item = this.schemaIndex.get(normalizeFilesystemPath(collectionPath))
+    if (item?.type !== 'collection' || !item.entries) return true
+    return item.entries.some((e) => e.name === entryTypeName)
+  }
+
   private assertCollection(collectionPath: LogicalPath): FlatSchemaItem & { type: 'collection' } {
     const item = this.assertSchemaItem(collectionPath)
     if (item.type !== 'collection') {
@@ -718,9 +757,20 @@ export class ContentStore {
 
     // Entry-type items: delegate to their parent collection.
     // Uses the same {type}.{slug}.{id}.{ext} pattern as all entries.
-    // NOTE: The API layer always resolves paths via resolvePath(), which returns
-    // the parent collection directly, so this branch may only fire on direct
-    // ContentStore usage (e.g., store.read('content/home', '')).
+    //
+    // This branch is for DIRECT ContentStore usage -- store.read('content/home', ''), and the
+    // read({ entryPath: 'content/home' }) API built on it, where the slug defaults to the entry
+    // type's own name. The API layer resolves paths via resolvePath(), which returns the parent
+    // collection directly and so never lands here.
+    //
+    // That used to be an observation, and it was WRONG: readByUrlPath reached this branch too,
+    // because `resolveUrlPathCandidates` happily produces `content/<typeName>` for the URL
+    // `/<typeName>` and the delegation below then answered it with the parent collection's index
+    // entry -- a URL no forward surface publishes. It is now enforced rather than assumed:
+    // readByUrlPath requires every candidate's entryPath to be a collection (see
+    // `isCollectionPath` and `ReadContentInput.urlAddressableOnly`). Narrowing the delegation
+    // ITSELF was the wrong fix -- write()/renameEntry()/delete() resolve through here as well,
+    // and the by-URL rule has no business constraining them.
     if (schemaItem.type === 'entry-type') {
       const parentPath = schemaItem.parentPath || ''
       const parentCollection = this.schemaIndex.get(parentPath)

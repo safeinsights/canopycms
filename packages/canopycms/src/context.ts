@@ -120,12 +120,22 @@ export interface CanopyBuildContext {
    * Read content by URL path, resolving the collection/entry split automatically.
    *
    * Tries direct entry match first (last segment = slug, rest = collection path),
-   * then falls back to index entry (full path = collection, slug = 'index').
+   * then falls back to index entry (full path = collection, slug = 'index'). Both attempts
+   * require the collection part to be a real collection — see below.
    * Root path '/' resolves to the content root's index entry.
    *
-   * The direct-entry attempt is SKIPPED when the last segment is an index slug (any case), so
-   * `/x/index` returns null rather than a second URL for the entry that already answers at `/x`.
-   * A collection literally named `index` is unaffected — the fallback resolves it.
+   * Resolves ONLY what `listEntries` publishes — `readByUrlPath(item.urlPath)` reaches the entry,
+   * and no other spelling does. Three shapes that used to resolve are therefore null now:
+   * `/x/index` (the literal spelling of an index entry's collapsed URL, in any case),
+   * `/<collection>/<entryTypeName>` and `/<collection>/<entryTypeName>/<slug>` (an entry-type
+   * path is not a collection, so it is not part of any published URL), and an entry whose
+   * on-disk type token its collection does not declare (`listEntries` skips those too). A
+   * collection literally named `index` is unaffected — the index fallback resolves it.
+   *
+   * `read({ entryPath: 'content/home' })` is deliberately NOT narrowed: addressing an entry
+   * structurally, by its schema path, is a different question from addressing it by its
+   * published URL, and it is the only way to reach a singleton without knowing its slug.
+   *
    * Returns null if no content matches the path — including collection URLs that have no
    * index entry (use buildContentTree for those) and non-entry/invalid paths such as
    * `/favicon.ico` or Next internals (the slug validator rejects them, treated as a miss).
@@ -220,13 +230,20 @@ export function createCanopyContext(options: CanopyContextOptions) {
     // Create base content reader
     const baseReader = createContentReader({ services })
 
-    // Wrap reader to inject user automatically, validating strings → branded types at this boundary
-    const read: CanopyContext['read'] = async <T = unknown>(input: {
-      entryPath: string
-      slug?: string
-      branch?: string
-      resolveReferences?: boolean
-    }) => {
+    // Wrap reader to inject user automatically, validating strings → branded types at this
+    // boundary. `extra` carries options that are NOT part of the public `read` surface -- today
+    // just readByUrlPath's URL-addressability gate. Kept as a separate inner function rather than
+    // an optional second parameter on the `CanopyContext['read']`-typed closure so the two call
+    // sites stay visible and nobody widens the public API by accident.
+    const readWithOptions = async <T = unknown>(
+      input: {
+        entryPath: string
+        slug?: string
+        branch?: string
+        resolveReferences?: boolean
+      },
+      extra?: Pick<ReadContentInput, 'urlAddressableOnly'>,
+    ) => {
       const entryPath = createLogicalPath(input.entryPath)
       let slug: Slug | undefined
       if (input.slug) {
@@ -242,9 +259,12 @@ export function createCanopyContext(options: CanopyContextOptions) {
         branch: input.branch,
         user,
         resolveReferences: input.resolveReferences ?? true,
+        ...extra,
       }
       return baseReader.read<T>(readInput)
     }
+
+    const read: CanopyContext['read'] = (input) => readWithOptions(input)
 
     const readByUrlPath: CanopyContext['readByUrlPath'] = async <T = unknown>(
       urlPath: string,
@@ -262,12 +282,19 @@ export function createCanopyContext(options: CanopyContextOptions) {
         // treat them as a miss rather than letting read() throw an "Invalid slug" error.
         if (!parseSlug(candidate.slug).ok) continue
         try {
-          return await read<T>({
-            entryPath: candidate.entryPath,
-            slug: candidate.slug,
-            branch,
-            resolveReferences,
-          })
+          return await readWithOptions<T>(
+            {
+              entryPath: candidate.entryPath,
+              slug: candidate.slug,
+              branch,
+              resolveReferences,
+            },
+            // This is a read BY PUBLISHED URL, so it must accept only what listEntries publishes.
+            // See ReadContentInput.urlAddressableOnly for the two rules and why they live in the
+            // reader (which holds the branch-correct schema) rather than in the candidate builder
+            // (which is pure and schema-free by design).
+            { urlAddressableOnly: true },
+          )
         } catch (err) {
           // Swallow "not found" errors from trying candidate paths, and FORBIDDEN (a denied
           // or anonymous read renders as a 404 via the adopter's `if (!result) return
