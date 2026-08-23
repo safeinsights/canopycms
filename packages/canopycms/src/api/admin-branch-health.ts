@@ -198,7 +198,7 @@ const getBranchHealthHandler = async (
  * - [H1] a fresh provisioning init-lock blocks purge; a stale one does not.
  * - an orphan (not corrupt) dir younger than 15 minutes is presumed to be a
  *   clone in progress and is not purgeable yet.
- * - [H2] the purge itself runs under a zero-retry provisioning lock, so a
+ * - the purge itself runs under a zero-retry provisioning lock, so a
  *   real in-flight provisioner (whose lock is therefore fresh, and would
  *   already have 409'd above) can never race the rename; a same-instant
  *   contender simply 409s.
@@ -277,7 +277,7 @@ const purgeBranchDirHandler = async (
     }
   }
 
-  // [H2] Zero-retry provisioning lock: fails fast (409) on genuine live
+  // Zero-retry provisioning lock: fails fast (409) on genuine live
   // contention instead of hanging the request for ~5 minutes.
   let releaseProvisioningLock: (() => Promise<void>) | undefined
   try {
@@ -350,7 +350,7 @@ const purgeBranchDirHandler = async (
  * (exiting the withOccFileLock callback) before save() runs -- calling
  * save() while still holding the lock would deadlock against itself.
  *
- * [MEDIUM-1] The provisioning lock is held across the ENTIRE archive+save
+ * The provisioning lock is held across the ENTIRE archive+save
  * sequence (acquired before withOccFileLock, released only after save()
  * completes), same lock order as purge (provisioning -> branch.json) so the
  * two can never deadlock against each other. Without this, a concurrent
@@ -418,8 +418,8 @@ const repairBranchDirHandler = async (
       : { ok: false, status: 409, error: 'No metadata file -- use purge for orphans' }
   }
 
-  // [MEDIUM-1] Zero-retry provisioning lock, mirroring purge's [H2]: fails
-  // fast (409) on genuine live contention instead of hanging the request.
+  // Zero-retry provisioning lock, mirroring purge's: fails fast (409) on
+  // genuine live contention instead of hanging the request.
   // Held until the `finally` below, AFTER save() completes.
   let releaseProvisioningLock: (() => Promise<void>) | undefined
   try {
@@ -464,15 +464,15 @@ const repairBranchDirHandler = async (
       }
     }
 
-    // [MEDIUM-3] Prefer the clone's actual checked-out branch over the
+    // Prefer the clone's actual checked-out branch over the
     // (possibly sanitized) directory name -- see resolveRepairedBranchName.
     const branchName = await resolveRepairedBranchName(dirPath, params.dirName)
 
     // Lock released above (we're outside the withOccFileLock callback now) --
     // save() takes its own hold on the same lock internally. Its defaults
     // path fabricates the rest of BranchMetadata and invalidates the
-    // registry. Still under the provisioning lock acquired above -- see
-    // [MEDIUM-1] in the docstring.
+    // registry. Still under the provisioning lock acquired above -- see the
+    // lock-ordering note in this handler's docstring.
     const manager = getBranchMetadataFileManager(dirPath, baseRoot)
     const saved = await manager.save({
       branch: { name: branchName, status: 'editing', createdBy: req.user.userId },
@@ -503,7 +503,7 @@ const repairBranchDirHandler = async (
 }
 
 /**
- * [MEDIUM-3] Best-effort read of the branch actually checked out in the
+ * Best-effort read of the branch actually checked out in the
  * clone at `dirPath`, falling back to `dirName` on any failure (no `.git`,
  * detached HEAD, corrupt repo, etc.). Workspace directory names are
  * sanitized (slashes stripped, see paths/branch.ts's `sanitizeBranchName`),

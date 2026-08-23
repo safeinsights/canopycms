@@ -1,3 +1,25 @@
+/**
+ * `CanopyServices` — the long-lived, per-deployment service container.
+ *
+ * Built once by `createCanopyServices` and threaded through `ApiContext.services`
+ * to every API handler. Holds config, the schema registry and cache, the ACL
+ * checkers, the git-manager factory, the branch registry, the GitHub service, and
+ * four branch-workflow operations (`commitFiles`, `submitBranch`,
+ * `commitToSettingsBranch`, `getSettingsBranchRoot`).
+ *
+ * SCOPE WARNING: this is a service locator with 15 members, reached by every one of
+ * the 26 api modules, so adding a field is free and therefore constant — and no handler's
+ * signature reveals what it actually touches. Prefer giving a new capability its
+ * own narrow interface over a 23rd field here.
+ *
+ * Not to be confused with `context.ts`, which is the per-REQUEST facade built on
+ * top of this.
+ *
+ * `createTestCanopyServices` is test-only despite living in a production module;
+ * it reaches the published surface through a wildcard re-export.
+ *
+ * Module map: ./AGENTS.md.
+ */
 import type { CanopyConfig } from './config'
 import type { EntrySchemaRegistry } from './schema/types'
 import { getConfigDefaults } from './config'

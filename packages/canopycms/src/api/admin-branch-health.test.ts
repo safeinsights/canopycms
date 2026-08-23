@@ -110,7 +110,7 @@ describe('admin branch-health api', () => {
     })
 
     it('never leaks the absolute workspace path in the response', async () => {
-      // [MEDIUM-2] A healthy-only fixture never exercises the parseError
+      // [REDACT] A healthy-only fixture never exercises the parseError
       // path this test exists to guard, making the original version
       // vacuous. Add a corrupt-JSON dir AND an EISDIR-style dir (branch.json
       // is itself a directory) -- both previously surfaced their raw error

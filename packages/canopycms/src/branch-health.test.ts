@@ -176,7 +176,7 @@ describe('scanBranchHealth', () => {
     expect(entries[0].parseError).toBeTruthy()
     expect(entries[0].metaMtime).toBeTruthy()
     expect(entries[0].branch).toBeUndefined()
-    // [MEDIUM-2] parseError must be the raw JSON.parse cause, not the
+    // [REDACT] parseError must be the raw JSON.parse cause, not the
     // BranchMetadataCorruptError's path-qualified `message` -- never leaks
     // the absolute workspace root to a client.
     expect(entries[0].parseError).not.toMatch(/^Corrupt branch metadata/)
@@ -192,7 +192,7 @@ describe('scanBranchHealth', () => {
     expect(entries).toHaveLength(1)
     expect(entries[0].kind).toBe('corrupt-metadata')
     expect(entries[0].dirName).toBe('weird-branch')
-    // [MEDIUM-2] Node errors (EISDIR here) embed the absolute path in their
+    // [REDACT] Node errors (EISDIR here) embed the absolute path in their
     // `message` -- only the error `code` is safe to surface to a client.
     expect(entries[0].parseError).toBe('EISDIR')
     expect(entries[0].parseError).not.toContain(root)

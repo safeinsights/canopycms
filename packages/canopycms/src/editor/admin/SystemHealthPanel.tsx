@@ -67,7 +67,7 @@ function formatAgeMs(ms: number): string {
 }
 
 /**
- * [LOW-2] Whether the Purge button should be disabled for a corrupt-metadata
+ * Whether the Purge button should be disabled for a corrupt-metadata
  * or orphan row, and the tooltip explaining why.
  * - Base branch: never purgeable -- the server already 400s
  *   ('The base branch directory can never be purged', see
@@ -610,7 +610,7 @@ function BranchHealthRow({
 }) {
   if (entry.kind === 'healthy' && entry.branch) {
     const b = entry.branch
-    // [LOW-3] Mirror rebaseActiveBranches' skip logic (worker/cms-worker.ts):
+    // Mirror rebaseActiveBranches' skip logic (worker/cms-worker.ts):
     // the worker rebases every branch except 'submitted'/'approved' (under an
     // active PR) and 'archived' (already merged). Stated as an exclusion list
     // rather than `status === 'editing'` so that a status added later shows its
