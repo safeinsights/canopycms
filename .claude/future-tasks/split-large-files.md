@@ -51,9 +51,28 @@ carved along exactly these lines — `cms-worker-base-refresh`, `-content-lock`,
 plus a 1,927-line `cms-worker.test.ts`. **Seven files were split out of the test for
 a production file that was never split.**
 
-**Order:** extract the auth-cache cluster first (one isolated method), then the task
-queue into `worker/task-runner.ts`, leaving `CmsWorker` as the lifecycle shell. The
-git-sync cluster is the genuinely hard one and should go last, if at all.
+**Order — corrected 2026-08-23, hours after this was first written.** The original
+advice here was "extract the auth-cache cluster first (one isolated method)". That
+is isolated but **worthless as a first step**: `refreshAuthCache` is *12 lines*, a
+thin wrapper around an injected `config.refreshAuthCache` callback with logging and
+a `this.running` guard. Extracting it removes 12 lines from 2,949 and proves
+nothing. Measured cluster sizes:
+
+| Cluster | Approx. lines | Largest method |
+| --- | --- | --- |
+| Git sync / rebase | **~1,320** | `rebaseActiveBranches` at **667** |
+| Task queue | ~400 | `executeTask` at 130 |
+| Auth cache | **12** | — |
+
+So: **start with the task-queue cluster** (`processTaskQueue`, `executeTask`,
+`executeTaskWithTimeout`, `pushBranchToGitHub`, `updateBranchMetadata(OnFailure)`)
+into `worker/task-runner.ts`. It is the largest cluster with a genuinely clean seam
+and the one whose tests are already separated. Take the auth-cache method along
+with it as a rounding error, not as its own step.
+
+The git-sync cluster goes **last, if at all** — it is ~45% of the file, it contains
+the 667-line method, and it is exactly where the prod-readiness work lands. Splitting
+it concurrently with that work is how a recently-fixed rebase bug comes back.
 
 ### `git-manager.ts` (1,467 lines) — two modules sharing a class name
 
