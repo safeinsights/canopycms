@@ -45,6 +45,23 @@ export function getErrorMessage(err: unknown): string {
  * (CMS-internal layout like `.canopy-dev/remote.git` is useful for debugging
  * and not sensitive); absolute paths outside it are replaced with `<path>`.
  */
+/**
+ * TAG: `[REDACT]`
+ *
+ * Grep `[REDACT]` to find every site that persists or surfaces raw error text on
+ * a path that reaches a browser — worker task errors folded into
+ * `worker-status.json`, `branch.json` parse failures served by the admin
+ * branch-health endpoint, rebase-failure messages, and their tests.
+ *
+ * Those sites carried the tag `[HIGH-1]`/`[MEDIUM-2]` until 2026-08-23, IDs from
+ * a review pass whose findings list was never committed — 13 occurrences across
+ * 6 files resolving to nothing. Renamed rather than deleted because the
+ * underlying rule is real and genuinely cross-file: a Node error embeds absolute
+ * paths, and a git remote URL can embed a token, so anything on that path is
+ * redacted through the function below.
+ *
+ * The tag is a grep aid, not the rule. The rule is stated at each site.
+ */
 export function sanitizeErrorMessage(message: string): string {
   let result = redactCredentials(message)
   // Paths under the project root become relative (split/join avoids regex

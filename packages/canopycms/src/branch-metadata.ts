@@ -44,7 +44,7 @@ export class BranchMetadataConflictError extends Error {
 export class BranchMetadataCorruptError extends Error {
   readonly branchRoot: string
   /**
-   * [MEDIUM-2] The raw JSON.parse failure message (e.g. "Unexpected token
+   * [REDACT] The raw JSON.parse failure message (e.g. "Unexpected token
    * ..."), with no embedded path. `message` above deliberately keeps the
    * full `branchRoot`-qualified text for server logs; `parseCause` is what
    * callers should surface to clients (see branch-health.ts's `parseError`)

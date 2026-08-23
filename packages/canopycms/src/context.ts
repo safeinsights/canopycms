@@ -1,3 +1,25 @@
+/**
+ * `createCanopyContext` — the per-REQUEST content facade.
+ *
+ * Binds a user and a branch to the long-lived `CanopyServices` (see
+ * `services.ts`) and exposes the read surface page code and API handlers
+ * actually call: `read`, `readByUrlPath`, listing and tree helpers. This is the
+ * layer where authorization is applied, so a read that bypasses it bypasses
+ * path ACLs.
+ *
+ * PHASE-AWARE: at build time (`isBuildMode`) or for a static deployment
+ * (`isDeployedStatic`) it authorizes as `STATIC_DEPLOY_USER` instead of a real
+ * user. Note that this changes WHO the read is authorized as, not WHERE it reads
+ * from — in dev mode every read resolves to the branch clone under
+ * `.canopy-dev/content-branches/`, during `next build` exactly as during
+ * `next dev`. See DEVELOPING.md's "Dev Content Sync" section; this has cost
+ * several people real time.
+ *
+ * The Next.js adapter wraps this in React `cache()` for per-request memoization
+ * (`canopycms-next/src/context-wrapper.ts`).
+ *
+ * Module map: ./AGENTS.md.
+ */
 import type { CanopyUser } from './user'
 import type { CanopyServices } from './services'
 import type { ReadContentInput, ContentReadMeta } from './content-reader'

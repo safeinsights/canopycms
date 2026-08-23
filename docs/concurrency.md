@@ -376,6 +376,25 @@ means a duplicate can still be cleaned up by hand without an admin.
 authority to delete. Before removing a path you derived from the index rather than from
 the caller's own request, prove the ID identifies exactly one file.
 
+## Tag legend
+
+Source comments carry grep tags so every participant in a cross-file rule can be
+found with one search. A tag is only useful if it resolves to a definition — the
+`[HIGH-n]`/`[MEDIUM-n]` tags that used to appear in `worker/` and
+`api/admin-branch-health.ts` were review-pass IDs whose findings list was never
+committed, so they trained readers that tags mean nothing. They were removed or
+renamed on 2026-08-23. **If you add a tag, define it here.**
+
+| Tag         | Meaning                                                                                                                                                                                                                                                                                                                                                                             | Defined in                                       |
+| ----------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------ |
+| `[SYNC-C1]` | Cross-host exclusion between content writes and the worker's rebase loop                                                                                                                                                                                                                                                                                                            | "Content writes vs. the rebase loop" above       |
+| `[SYNC-H1]` | The history-rewrite marker and its cache invalidation                                                                                                                                                                                                                                                                                                                               | "The four layers" above                          |
+| `[SYNC-M2]` | The settings-branch reconcile loop is **per-branch best-effort**. One unreadable or partially-written ref must cost its own branch, not the whole sync cycle — an unguarded `rev-list` there once threw out of `syncGit()` entirely, skipping `pushSettingsBranches`, `refreshBaseBranchWorkspace` and `rebaseActiveBranches`, and recurred every cycle because nothing self-healed | this table, plus `worker/cms-worker.ts`          |
+| `[SYNC-M3]` | A settings branch present in `remote.git` but absent from GitHub's tracking refs was pushed **locally** and has never reached GitHub. That combination is the discriminating signature: in the supported two-deployments-one-repo case a foreign branch arrives via the GitHub fetch and therefore always has a tracking ref                                                        | this table, plus `worker/cms-worker.ts`          |
+| `[F1]`      | Duplicate content IDs vs. the write path                                                                                                                                                                                                                                                                                                                                            | "Duplicate content IDs vs. the write path" below |
+| `[SLUG]`    | Slug-routability enforcement at the write boundary                                                                                                                                                                                                                                                                                                                                  | `static/AGENTS.md`, and `ContentStore.write()`   |
+| `[REDACT]`  | Error text that is persisted or served on a path reaching a browser, and must go through `sanitizeErrorMessage`                                                                                                                                                                                                                                                                     | `utils/error.ts`                                 |
+
 ## Recipes
 
 **Adding a regenerating cache** (rebuild-by-scan): follow the marker protocol —

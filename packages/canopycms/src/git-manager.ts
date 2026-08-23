@@ -1,3 +1,28 @@
+/**
+ * Git operations for branch workspaces.
+ *
+ * This file is effectively TWO modules sharing a class name, split cleanly by
+ * line number:
+ *
+ *   Everything from `cloneRepo` down to `initializeWorkspace` is `static` —
+ *     workspace PROVISIONING (also ensureLocalSimulatedRemote, bareRemoteHasBranch,
+ *     deleteBareRemoteHead, findGitRoot, resolveRemoteUrl). These share no instance
+ *     state; the class is acting as a namespace.
+ *   Everything from `status()` onward is an INSTANCE method — per-repo operations
+ *     on one already-provisioned workspace (checkoutBranch, pullBase,
+ *     rebaseOntoBase, add/commit/push, ...), needing
+ *     `repoPath`/`baseBranch`/`remote`.
+ *
+ * `status()` is the dividing line. If you are here to change provisioning, nothing
+ * after it concerns you, and vice versa.
+ *
+ * Every git invocation is argv-based with `--end-of-options`, and `gitChildEnv`
+ * forces `LC_ALL=C`/`LANG=C` so git's own message text stays English — several
+ * callers classify errors by matching it (see `utils/git.ts`'s
+ * `isNonFastForwardRejection`). Do not remove that.
+ *
+ * Module map: ./AGENTS.md. Locking rules: ../../../docs/concurrency.md.
+ */
 import fs from 'node:fs/promises'
 import path from 'node:path'
 

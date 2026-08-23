@@ -478,7 +478,7 @@ export class CmsWorker {
       // a status-write failure must never block releasing the lock.
       const report = this.ensureStatusReport()
       report.lastFatalError = {
-        // [HIGH-1] Persisted to worker-status.json and served to the
+        // [REDACT] Persisted to worker-status.json and served to the
         // browser by the admin panel -- must never carry the bot token
         // that a poisoned/failed git URL (buildGitHubUrl()) can embed.
         message: redactCredentials(getErrorMessage(err)),
@@ -886,7 +886,7 @@ export class CmsWorker {
         const message = getErrorMessage(err)
         workerLogError(`Task ${task.id} (${task.action}) failed:`, message)
 
-        // [HIGH-1] task.error is persisted (pending/failed task JSON) and
+        // [REDACT] task.error is persisted (pending/failed task JSON) and
         // served to the browser by the admin panel's Tasks tab -- a push
         // failure's message can embed the bot token via buildGitHubUrl().
         // Console output above stays raw (journald/CloudWatch is trusted).
@@ -1139,7 +1139,7 @@ export class CmsWorker {
   /**
    * Update branch metadata after permanent task failure.
    * Sets syncStatus to 'sync-failed' and records `error` (already redacted
-   * by the caller, processTaskQueue -- see [HIGH-1] there) as
+   * by the caller, processTaskQueue -- see [REDACT] there) as
    * syncFailureReason, so the editor can show WHY, not just that it failed.
    */
   private async updateBranchMetadataOnFailure(task: Task, error: string): Promise<void> {
@@ -1906,7 +1906,7 @@ export class CmsWorker {
       )
     } catch (err) {
       const report = this.ensureStatusReport()
-      // [HIGH-1] Persisted to worker-status.json and served to the browser
+      // [REDACT] Persisted to worker-status.json and served to the browser
       // by the admin panel -- a fetch/push failure's message can embed the
       // bot token via buildGitHubUrl().
       report.lastGitSyncError = {
@@ -2203,7 +2203,7 @@ export class CmsWorker {
   ): Promise<void> {
     const RECORD_REFRESH_MS = 60 * 60 * 1000 // 1 hour
 
-    // [HIGH-1] Defense-in-depth redaction: rebaseFailure.message is
+    // [REDACT] Defense-in-depth redaction: rebaseFailure.message is
     // persisted to branch.json and served to the browser via the
     // branch-health admin endpoint. Both call sites in rebaseActiveBranches
     // already redact before passing in (the failed.push sites below),
@@ -2745,7 +2745,7 @@ export class CmsWorker {
             await branchGit.rebase(['--abort']).catch(() => {})
             const rebaseFailureMessage =
               failureReason ?? `did not complete within ${MAX_ROUNDS} rounds`
-            // [HIGH-1] failed[] folds into worker-status.json's
+            // [REDACT] failed[] folds into worker-status.json's
             // lastGitSync.failed, served to the browser -- failureReason can
             // be an arbitrary git error message that embeds the bot token.
             const redactedRebaseFailureMessage = redactCredentials(rebaseFailureMessage)
@@ -2919,7 +2919,7 @@ export class CmsWorker {
       } catch (err) {
         const message = err instanceof Error ? err.message : 'Unknown error'
         workerLogWarn(`  Failed to sync ${branchDir}: ${message}`)
-        // [HIGH-1] Same rationale as the `if (!completed)` push site above --
+        // [REDACT] Same rationale as the `if (!completed)` push site above --
         // this catches fetch/rev-list/unexpected errors, whose message can
         // embed the bot token.
         const redactedMessage = redactCredentials(message)

@@ -1,3 +1,32 @@
+/**
+ * ContentStore — the authoritative read/write boundary for entry content.
+ *
+ * Everything that creates, reads, updates, renames or deletes an entry file goes
+ * through here. `api/content.ts` is its HTTP front door.
+ *
+ * ORIENTATION — this is one of seven `content-*` modules, and picking the wrong
+ * one costs more time than reading this comment:
+ *
+ *   content-store.ts       (this file) the write boundary, plus path-and-id resolution
+ *   content-reader.ts      branch-aware read facade over this store
+ *   content-listing.ts     batch listing (`listEntries`) for adopters
+ *   content-tree.ts        the adopter-facing navigable tree
+ *   content-id-index.ts    the id -> path index this store consults
+ *   content-index-registry.ts    IN-PROCESS cache invalidation registry
+ *   content-index-generation.ts  ON-DISK generation marker  <- near-homonym of the line above,
+ *                                unrelated job; check which one you want
+ *
+ * SHAPE — the CRUD/path/lock core is genuinely interwoven (`buildPaths` alone has
+ * ~25 call sites in this file), but two clusters are only loosely attached and are the ones
+ * to read in isolation: reference resolution (`resolveReferences` and friends, at
+ * the end of the file) and ID-index coherency (`idIndex`, `recordOwnMutation`,
+ * `refreshIndexForSuspiciousLookup`).
+ *
+ * The load-bearing rules are documented at the point of the rule, not here — see
+ * in particular `ContentStoreOptions.contentRootName`, the `[SLUG]` guard in
+ * `write()`, and the read-path note on `parseSlug`. Those comments are
+ * authoritative. Module map: ./AGENTS.md.
+ */
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import type { Dirent } from 'node:fs'

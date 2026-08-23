@@ -272,7 +272,7 @@ export async function withOccFileLock<T>(filePath: string, fn: () => Promise<T>)
     // process's lockfile heartbeat stops (crash) or the lock naturally
     // expires, so this is logged rather than rethrown.
     //
-    // [NIT-1] ENOENT specifically is expected, not an error: the lock
+    // ENOENT specifically is expected, not an error: the lock
     // marker's target directory legitimately vanishes when an admin purge
     // (see api/admin-branch-health.ts) renames the branch tree out from
     // under a held lock. Every other release failure still warns.
