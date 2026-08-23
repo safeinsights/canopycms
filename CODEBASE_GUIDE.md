@@ -710,7 +710,7 @@ extract: (data, meta) => {
 ### Schema Definition
 
 ```typescript
-import { defineCanopyConfig } from 'canopycms/config'
+import { defineCanopyConfig } from 'canopycms'
 
 defineCanopyConfig({
   contentRoot: 'content',
@@ -759,7 +759,7 @@ Implemented by `startDevContentWatcher()` (src/dev-content-watcher.ts), wired on
 **Pattern**: Schema structure comes from .collection.json files (single source of truth), field schemas come from an entry schema registry for reusability.
 
 ```typescript
-import { resolveSchema } from 'canopycms/schema'
+import { resolveSchema } from 'canopycms/server'
 
 const { schema, sources } = await resolveSchema(contentRoot, entrySchemaRegistry)
 ```
