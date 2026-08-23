@@ -1,6 +1,6 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
-import { simpleGit } from 'simple-git'
+import { simpleGit, type SimpleGit } from 'simple-git'
 import {
   BranchMetadataFileManager,
   buildMergedBranchUpdate,
@@ -92,7 +92,7 @@ export interface RebaseSummary {
    *   [SYNC-H1] marker on a branch nothing will revisit.
    */
   skippedLocked: string[]
-  /** Branches whose rebase attempt failed (fetch error, unexpected rebase error, or MAX_ROUNDS exceeded). */
+  /** Branches whose rebase attempt failed (fetch error, unexpected rebase error, or MAX_REBASE_ROUNDS exceeded). */
   failed: { branch: string; error: string }[]
 }
 
@@ -221,6 +221,278 @@ export async function recordRebaseFailure(
     // any other load/save failure -- recording is best-effort
     // observability, never allowed to abort the branch loop.
     workerLogWarn(`  Failed to record rebase failure for ${branchDir}: ${getErrorMessage(err)}`)
+  }
+}
+
+/** Safety limit against a rebase that never converges. */
+const MAX_REBASE_ROUNDS = 50
+
+/** What {@link runRebaseRounds} observed. */
+interface RebaseRoundsResult {
+  /** Whether `git rebase` reached a finished state. */
+  completed: boolean
+  /** Every path resolved --theirs across all rounds, in encounter order, with duplicates. */
+  conflictedFiles: string[]
+  /**
+   * Set ONLY on the "unexpected error" and "conflict resolution failed" exits.
+   * MAX_REBASE_ROUNDS exhaustion is a distinct exit with no message of its own,
+   * and the caller's warning text must not conflate the two.
+   */
+  failureReason?: string
+}
+
+/**
+ * Drive `git rebase` to a finished state, resolving each conflict in favour of
+ * the BRANCH's version, and report what happened.
+ *
+ * Never throws, and never aborts: on every failure exit it leaves the rebase
+ * in progress and returns `completed: false`, because the caller owns the
+ * single `rebase --abort` (and its `finally` owns the last-resort one). An
+ * escaping throw from here is the specific bug that used to skip both abort
+ * sites and wedge the clone mid-rebase forever.
+ *
+ * `isLockCompromised` is re-read every round rather than passed as a value:
+ * [SYNC-C1] the content-write lock can be lost BETWEEN rounds, and
+ * `--continue`/`--skip` are as destructive as the initial rebase.
+ */
+async function runRebaseRounds(
+  ctx: Pick<RebaseContext, 'afterConflictDetectedForTesting'>,
+  branchGit: SimpleGit,
+  branchDir: string,
+  fetchedBaseTip: string,
+  isLockCompromised: () => boolean,
+): Promise<RebaseRoundsResult> {
+  // Resolve-and-continue loop: keep branch version for conflicting files, then continue
+  // Non-conflicting files get main's changes; conflicting files keep branch version.
+  const conflictedFiles: string[] = []
+  let nextAction: 'start' | 'continue' | 'skip' = 'start'
+  let completed = false
+  // PR-W1: captured only on the "unexpected error" exit below, for the
+  // failed-summary entry pushed at the `if (!completed)` check.
+  let failureReason: string | undefined
+
+  for (let round = 0; round < MAX_REBASE_ROUNDS && !completed; round++) {
+    // Re-checked every round: the compromise can land between rounds,
+    // and `--continue`/`--skip` are as destructive as the initial
+    // rebase. Handled after the loop so it cannot be mistaken for the
+    // `!completed` rebase-FAILURE path below.
+    if (isLockCompromised()) break
+    try {
+      if (nextAction === 'start') {
+        // The pinned base tip fetched above (single-branch clones have
+        // no origin/<base> remote-tracking ref for other branches).
+        await branchGit.rebase([fetchedBaseTip])
+      } else if (nextAction === 'continue') {
+        await branchGit.rebase(['--continue'])
+      } else {
+        await branchGit.rebase(['--skip'])
+      }
+      completed = true
+    } catch (rebaseErr) {
+      nextAction = 'continue'
+      const st = await branchGit.status()
+
+      if (st.conflicted.length > 0) {
+        await ctx.afterConflictDetectedForTesting()
+        // During rebase, --theirs = the branch being replayed (editor's work).
+        // (git rebase reverses ours/theirs: "ours" is the rebase target, "theirs" is the branch.)
+        //
+        // MODIFY/DELETE conflicts have no "their version" to check out
+        // and must be resolved by staging a delete or an add instead.
+        // `git checkout --theirs` on one exits non-zero ("path ... does
+        // not have their version") and simple-git throws -- and because
+        // this loop body IS the round loop's catch, that throw escapes
+        // the round loop entirely, skipping BOTH `rebase --abort` sites
+        // below and leaving the clone wedged mid-rebase forever. The
+        // index/working-tree code pair identifies which side deleted
+        // (verified against real git, not inferred):
+        //
+        //   U/D  "deleted by them"  -- the BRANCH deleted it, base
+        //        modified it. Git leaves base's version in the tree.
+        //        Keep-branch-version means honouring the delete: git rm.
+        //   D/U  "deleted by us"    -- base deleted it, the BRANCH
+        //        modified it. Git leaves the branch's version in the
+        //        tree. Keep-branch-version means keeping it: git add.
+        //
+        // Any per-file resolution that STILL fails routes into the
+        // `!completed` path below (which aborts and records) instead of
+        // escaping -- deliberately NOT a rethrow, since a throw from
+        // here is exactly the bug being fixed.
+        const conflictKind = new Map(st.files.map((f) => [f.path, `${f.index}${f.working_dir}`]))
+        let resolutionFailure: string | undefined
+        for (const file of st.conflicted) {
+          const kind = conflictKind.get(file)
+          try {
+            if (kind === 'UD') {
+              await branchGit.raw(['rm', '-f', '--', file])
+            } else if (kind === 'DU') {
+              await branchGit.add(file)
+            } else {
+              await branchGit.raw(['checkout', '--theirs', file])
+              await branchGit.add(file)
+            }
+          } catch (resolveErr: unknown) {
+            resolutionFailure =
+              `failed to resolve conflicted file '${file}' (status ${kind ?? '??'}): ` +
+              getErrorMessage(resolveErr)
+            break
+          }
+          conflictedFiles.push(file)
+        }
+        if (resolutionFailure !== undefined) {
+          // Same exit shape as the "unexpected error" branch below: set
+          // failureReason and break, letting the `!completed` block do
+          // the single `rebase --abort` and record the failure once.
+          failureReason = resolutionFailure
+          break
+        }
+        // nextAction stays 'continue'
+      } else {
+        const msg = rebaseErr instanceof Error ? rebaseErr.message : ''
+        if (
+          msg.toLowerCase().includes('nothing to commit') ||
+          msg.toLowerCase().includes('apply --skip')
+        ) {
+          // Empty commit after --theirs resolution — skip it
+          nextAction = 'skip'
+        } else {
+          // Unexpected error — abort and leave branch behind.
+          // We intentionally don't update conflictStatus/conflictFiles here:
+          // the rebase didn't complete so we can't determine the true conflict
+          // state. Previous metadata (possibly stale) is preserved until the
+          // next successful rebase cycle corrects it.
+          workerLogWarn(`  Unexpected rebase error in ${branchDir}: ${msg || 'Unknown error'}`)
+          failureReason = msg || 'Unknown error'
+          await branchGit.rebase(['--abort']).catch(() => {})
+          break
+        }
+      }
+    }
+  }
+
+  return { completed, conflictedFiles, failureReason }
+}
+
+/**
+ * Map the file paths a rebase resolved --theirs onto the ContentIds the editor
+ * shows as conflicted, deduplicated.
+ *
+ * IDs rather than paths because they are immutable: a later slug rename must
+ * not orphan a conflict marker. Paths that carry no recoverable ID are dropped
+ * rather than guessed at.
+ *
+ * Pure -- the one piece of this loop that can be tested without a git repo.
+ */
+export function conflictFilesToContentIds(
+  conflictedFiles: readonly string[],
+  contentRoot: string,
+): ContentId[] {
+  // Convert file paths to ContentIds — immutable, survives slug renames.
+  // Entry files have IDs in their filename (e.g., "post.slug.a1b2c3d4e5f6.mdx").
+  // .collection.json files have no ID themselves (extractIdFromFilename returns null
+  // for dot-prefixed files), so we extract the ID from the parent directory instead.
+  // The root content directory (e.g., "content/", or "cms/content/" for a
+  // multi-segment contentRoot) has no embedded ID, so we use ROOT_COLLECTION_ID
+  // as a sentinel — but only for the configured contentRoot.
+  //
+  // Two different notions of "parent" are needed below, and conflating them
+  // reproduces the exact bug this comparison guards against (see
+  // schema-store.ts's contentRootName doc comment for the same shape elsewhere):
+  //  - `parentDir` (a basename) recovers a SUB-collection's own embedded ID
+  //    (e.g. "posts.cNbR5xFm2Kpd" -> "cNbR5xFm2Kpd") — correct as a basename,
+  //    since a collection directory carries its ID in its own name, one path
+  //    segment.
+  //  - `parentPath` (the full relative parent path, normalized) is what must be
+  //    compared against `contentRoot`, because `contentRoot` is documented
+  //    (config/helpers.ts) as allowed to span multiple segments (e.g.
+  //    "cms/content"). Comparing a basename ("content") against that full value
+  //    is always false, which silently drops the root collection's conflict.
+  //    Git reports POSIX-style paths and the configured value may be authored
+  //    with either separator, so both sides go through normalizeFilesystemPath
+  //    before comparing.
+  const normalizedContentRoot = normalizeFilesystemPath(contentRoot)
+  const conflictIds = [...new Set(conflictedFiles)]
+    .map((f) => {
+      const fileId = extractIdFromFilename(path.basename(f))
+      if (fileId) return fileId
+      const parentDir = path.basename(path.dirname(f))
+      const dirId = extractIdFromFilename(parentDir)
+      if (dirId) return dirId
+      // Only assign ROOT_COLLECTION_ID when the file's parent directory IS the
+      // configured content root. Other unrecognized paths are filtered out.
+      const parentPath = normalizeFilesystemPath(path.dirname(f))
+      if (path.basename(f) === '.collection.json' && parentPath === normalizedContentRoot) {
+        return ROOT_COLLECTION_ID
+      }
+      return null
+    })
+    .filter((id): id is ContentId => id !== null)
+  return [...new Set(conflictIds)]
+}
+
+/**
+ * [SYNC-H1] Carry a just-rebased history forward into `remote.git`, and queue
+ * the GitHub hop.
+ *
+ * Only runs when the branch's pre-rebase history had ALREADY been published
+ * (`publishedSha !== null`); otherwise nothing downstream knows about the
+ * commits the rebase replaced and there is nothing to reconcile. Without this,
+ * the editor's next submit is simply rejected non-fast-forward forever.
+ *
+ * `preRebaseHead` and `publishedSha` must both be read BEFORE the rebase --
+ * the clone's pre-rebase tip is exactly what the rebase destroys.
+ */
+async function carryForwardRewrittenHistory(
+  ctx: RebaseContext,
+  args: {
+    branchPath: string
+    branchDir: string
+    branchRef: string
+    publishedSha: string | null
+    preRebaseHead: string
+  },
+): Promise<void> {
+  const { branchPath, branchDir, branchRef, publishedSha, preRebaseHead } = args
+  // [SYNC-H1] The rebase just rewrote this clone's history. If that
+  // history was already published, nothing else will ever reconcile
+  // remote.git (and GitHub) with it -- the editor's next submit would
+  // simply be rejected non-fast-forward. Carry the rewrite forward.
+  if (publishedSha !== null) {
+    if (publishedSha === preRebaseHead) {
+      // ARMING GUARD. remote.git holds EXACTLY what this clone just
+      // rebased away and nothing more, so a lease keyed to it can only
+      // undo our own rewrite.
+      //
+      // The inequality case below is not defensive padding: branch
+      // clones never fetch their own branch (GitManager's clone is
+      // --single-branch and checkoutBranch only checks out an existing
+      // local branch), while reconcileTrackedBranches fast-forwards
+      // remote.git to GitHub's tip. So after a reviewer pushes a fixup
+      // straight to the PR branch, remote.git legitimately holds a
+      // commit this clone has never seen. Leasing on "whatever
+      // remote.git currently holds" would be SATISFIED there and would
+      // delete that fixup from remote.git and then from GitHub,
+      // silently. Keying the lease to the pre-rebase tip turns that
+      // case into the visible divergence it should be.
+      //
+      // Order matters: mark, then push, then queue. A crash after any
+      // step leaves the marker set with the work unfinished, which
+      // reconcilePendingRewrite() completes on a later cycle. Pushing
+      // first would leave remote.git rewritten, GitHub stale and
+      // nothing recorded -- unrecoverable, and landing on exactly the
+      // false "another deployment" diagnosis this change removes.
+      await markHistoryRewritten(ctx, branchPath, branchDir, publishedSha)
+      if (await forcePublishToLocalRemote(ctx, branchPath, branchRef, publishedSha)) {
+        await enqueueGitHubPush(ctx, branchRef)
+      }
+    } else {
+      const divergence =
+        `rebased locally, but remote.git holds ${publishedSha} for ${branchRef}, which this ` +
+        `clone never had (a direct push to the branch?). Left untouched -- reconcile it ` +
+        `before submitting again.`
+      workerLogWarn(`  ${branchDir}: ${divergence}`)
+      await recordRebaseFailure(ctx, branchPath, branchDir, divergence)
+    }
   }
 }
 
@@ -617,116 +889,13 @@ async function rebaseOneBranch(
       const preRebaseHead = (await branchGit.revparse(['HEAD'])).trim()
       const publishedSha = canPublish ? await readPublishedSha(ctx, branchRef) : null
 
-      // Resolve-and-continue loop: keep branch version for conflicting files, then continue
-      // Non-conflicting files get main's changes; conflicting files keep branch version.
-      const conflictedFiles: string[] = []
-      let nextAction: 'start' | 'continue' | 'skip' = 'start'
-      let completed = false
-      // PR-W1: captured only on the "unexpected error" exit below, for the
-      // failed-summary entry pushed at the `if (!completed)` check.
-      let failureReason: string | undefined
-      const MAX_ROUNDS = 50 // safety limit against infinite loops
-
-      for (let round = 0; round < MAX_ROUNDS && !completed; round++) {
-        // Re-checked every round: the compromise can land between rounds,
-        // and `--continue`/`--skip` are as destructive as the initial
-        // rebase. Handled after the loop so it cannot be mistaken for the
-        // `!completed` rebase-FAILURE path below.
-        if (contentLockCompromised) break
-        try {
-          if (nextAction === 'start') {
-            // The pinned base tip fetched above (single-branch clones have
-            // no origin/<base> remote-tracking ref for other branches).
-            await branchGit.rebase([fetchedBaseTip])
-          } else if (nextAction === 'continue') {
-            await branchGit.rebase(['--continue'])
-          } else {
-            await branchGit.rebase(['--skip'])
-          }
-          completed = true
-        } catch (rebaseErr) {
-          nextAction = 'continue'
-          const st = await branchGit.status()
-
-          if (st.conflicted.length > 0) {
-            await ctx.afterConflictDetectedForTesting()
-            // During rebase, --theirs = the branch being replayed (editor's work).
-            // (git rebase reverses ours/theirs: "ours" is the rebase target, "theirs" is the branch.)
-            //
-            // MODIFY/DELETE conflicts have no "their version" to check out
-            // and must be resolved by staging a delete or an add instead.
-            // `git checkout --theirs` on one exits non-zero ("path ... does
-            // not have their version") and simple-git throws -- and because
-            // this loop body IS the round loop's catch, that throw escapes
-            // the round loop entirely, skipping BOTH `rebase --abort` sites
-            // below and leaving the clone wedged mid-rebase forever. The
-            // index/working-tree code pair identifies which side deleted
-            // (verified against real git, not inferred):
-            //
-            //   U/D  "deleted by them"  -- the BRANCH deleted it, base
-            //        modified it. Git leaves base's version in the tree.
-            //        Keep-branch-version means honouring the delete: git rm.
-            //   D/U  "deleted by us"    -- base deleted it, the BRANCH
-            //        modified it. Git leaves the branch's version in the
-            //        tree. Keep-branch-version means keeping it: git add.
-            //
-            // Any per-file resolution that STILL fails routes into the
-            // `!completed` path below (which aborts and records) instead of
-            // escaping -- deliberately NOT a rethrow, since a throw from
-            // here is exactly the bug being fixed.
-            const conflictKind = new Map(
-              st.files.map((f) => [f.path, `${f.index}${f.working_dir}`]),
-            )
-            let resolutionFailure: string | undefined
-            for (const file of st.conflicted) {
-              const kind = conflictKind.get(file)
-              try {
-                if (kind === 'UD') {
-                  await branchGit.raw(['rm', '-f', '--', file])
-                } else if (kind === 'DU') {
-                  await branchGit.add(file)
-                } else {
-                  await branchGit.raw(['checkout', '--theirs', file])
-                  await branchGit.add(file)
-                }
-              } catch (resolveErr: unknown) {
-                resolutionFailure =
-                  `failed to resolve conflicted file '${file}' (status ${kind ?? '??'}): ` +
-                  getErrorMessage(resolveErr)
-                break
-              }
-              conflictedFiles.push(file)
-            }
-            if (resolutionFailure !== undefined) {
-              // Same exit shape as the "unexpected error" branch below: set
-              // failureReason and break, letting the `!completed` block do
-              // the single `rebase --abort` and record the failure once.
-              failureReason = resolutionFailure
-              break
-            }
-            // nextAction stays 'continue'
-          } else {
-            const msg = rebaseErr instanceof Error ? rebaseErr.message : ''
-            if (
-              msg.toLowerCase().includes('nothing to commit') ||
-              msg.toLowerCase().includes('apply --skip')
-            ) {
-              // Empty commit after --theirs resolution — skip it
-              nextAction = 'skip'
-            } else {
-              // Unexpected error — abort and leave branch behind.
-              // We intentionally don't update conflictStatus/conflictFiles here:
-              // the rebase didn't complete so we can't determine the true conflict
-              // state. Previous metadata (possibly stale) is preserved until the
-              // next successful rebase cycle corrects it.
-              workerLogWarn(`  Unexpected rebase error in ${branchDir}: ${msg || 'Unknown error'}`)
-              failureReason = msg || 'Unknown error'
-              await branchGit.rebase(['--abort']).catch(() => {})
-              break
-            }
-          }
-        }
-      }
+      const { completed, conflictedFiles, failureReason } = await runRebaseRounds(
+        ctx,
+        branchGit,
+        branchDir,
+        fetchedBaseTip,
+        () => contentLockCompromised,
+      )
 
       // Outside the round loop's try/catch, so a throwing test hook can
       // never be misread as a rebase error.
@@ -770,16 +939,17 @@ async function rebaseOneBranch(
 
       if (!completed) {
         // PR-W2 (M1 rider): failureReason is only set on the "unexpected
-        // error" break above -- MAX_ROUNDS exhaustion is a distinct exit
+        // error" break above -- MAX_REBASE_ROUNDS exhaustion is a distinct exit
         // path with no error message of its own, so the warn text must
         // not conflate the two.
         workerLogWarn(
           failureReason !== undefined
             ? `  Rebase of ${branchDir} aborted due to unexpected error: ${failureReason}`
-            : `  Rebase of ${branchDir} did not complete within ${MAX_ROUNDS} rounds, aborting`,
+            : `  Rebase of ${branchDir} did not complete within ${MAX_REBASE_ROUNDS} rounds, aborting`,
         )
         await branchGit.rebase(['--abort']).catch(() => {})
-        const rebaseFailureMessage = failureReason ?? `did not complete within ${MAX_ROUNDS} rounds`
+        const rebaseFailureMessage =
+          failureReason ?? `did not complete within ${MAX_REBASE_ROUNDS} rounds`
         // [REDACT] failed[] folds into worker-status.json's
         // lastGitSync.failed, served to the browser -- failureReason can
         // be an arbitrary git error message that embeds the bot token.
@@ -800,47 +970,7 @@ async function rebaseOneBranch(
       // containers sharing this filesystem.
       await invalidateBranchContentCaches(branchPath)
 
-      // Convert file paths to ContentIds — immutable, survives slug renames.
-      // Entry files have IDs in their filename (e.g., "post.slug.a1b2c3d4e5f6.mdx").
-      // .collection.json files have no ID themselves (extractIdFromFilename returns null
-      // for dot-prefixed files), so we extract the ID from the parent directory instead.
-      // The root content directory (e.g., "content/", or "cms/content/" for a
-      // multi-segment contentRoot) has no embedded ID, so we use ROOT_COLLECTION_ID
-      // as a sentinel — but only for the configured contentRoot.
-      //
-      // Two different notions of "parent" are needed below, and conflating them
-      // reproduces the exact bug this comparison guards against (see
-      // schema-store.ts's contentRootName doc comment for the same shape elsewhere):
-      //  - `parentDir` (a basename) recovers a SUB-collection's own embedded ID
-      //    (e.g. "posts.cNbR5xFm2Kpd" -> "cNbR5xFm2Kpd") — correct as a basename,
-      //    since a collection directory carries its ID in its own name, one path
-      //    segment.
-      //  - `parentPath` (the full relative parent path, normalized) is what must be
-      //    compared against `ctx.contentRoot`, because `contentRoot` is documented
-      //    (config/helpers.ts) as allowed to span multiple segments (e.g.
-      //    "cms/content"). Comparing a basename ("content") against that full value
-      //    is always false, which silently drops the root collection's conflict.
-      //    Git reports POSIX-style paths and the configured value may be authored
-      //    with either separator, so both sides go through normalizeFilesystemPath
-      //    before comparing.
-      const normalizedContentRoot = normalizeFilesystemPath(ctx.contentRoot)
-      const conflictIds = [...new Set(conflictedFiles)]
-        .map((f) => {
-          const fileId = extractIdFromFilename(path.basename(f))
-          if (fileId) return fileId
-          const parentDir = path.basename(path.dirname(f))
-          const dirId = extractIdFromFilename(parentDir)
-          if (dirId) return dirId
-          // Only assign ROOT_COLLECTION_ID when the file's parent directory IS the
-          // configured content root. Other unrecognized paths are filtered out.
-          const parentPath = normalizeFilesystemPath(path.dirname(f))
-          if (path.basename(f) === '.collection.json' && parentPath === normalizedContentRoot) {
-            return ROOT_COLLECTION_ID
-          }
-          return null
-        })
-        .filter((id): id is ContentId => id !== null)
-      const conflictIdsDeduped = [...new Set(conflictIds)]
+      const conflictIdsDeduped = conflictFilesToContentIds(conflictedFiles, ctx.contentRoot)
 
       const hadConflicts = conflictIdsDeduped.length > 0
       workerLog(
@@ -864,47 +994,13 @@ async function rebaseOneBranch(
       // are deliberately not listed here.
       didRebase = true
 
-      // [SYNC-H1] The rebase just rewrote this clone's history. If that
-      // history was already published, nothing else will ever reconcile
-      // remote.git (and GitHub) with it -- the editor's next submit would
-      // simply be rejected non-fast-forward. Carry the rewrite forward.
-      if (publishedSha !== null) {
-        if (publishedSha === preRebaseHead) {
-          // ARMING GUARD. remote.git holds EXACTLY what this clone just
-          // rebased away and nothing more, so a lease keyed to it can only
-          // undo our own rewrite.
-          //
-          // The inequality case below is not defensive padding: branch
-          // clones never fetch their own branch (GitManager's clone is
-          // --single-branch and checkoutBranch only checks out an existing
-          // local branch), while reconcileTrackedBranches fast-forwards
-          // remote.git to GitHub's tip. So after a reviewer pushes a fixup
-          // straight to the PR branch, remote.git legitimately holds a
-          // commit this clone has never seen. Leasing on "whatever
-          // remote.git currently holds" would be SATISFIED there and would
-          // delete that fixup from remote.git and then from GitHub,
-          // silently. Keying the lease to the pre-rebase tip turns that
-          // case into the visible divergence it should be.
-          //
-          // Order matters: mark, then push, then queue. A crash after any
-          // step leaves the marker set with the work unfinished, which
-          // reconcilePendingRewrite() completes on a later cycle. Pushing
-          // first would leave remote.git rewritten, GitHub stale and
-          // nothing recorded -- unrecoverable, and landing on exactly the
-          // false "another deployment" diagnosis this change removes.
-          await markHistoryRewritten(ctx, branchPath, branchDir, publishedSha)
-          if (await forcePublishToLocalRemote(ctx, branchPath, branchRef, publishedSha)) {
-            await enqueueGitHubPush(ctx, branchRef)
-          }
-        } else {
-          const divergence =
-            `rebased locally, but remote.git holds ${publishedSha} for ${branchRef}, which this ` +
-            `clone never had (a direct push to the branch?). Left untouched -- reconcile it ` +
-            `before submitting again.`
-          workerLogWarn(`  ${branchDir}: ${divergence}`)
-          await recordRebaseFailure(ctx, branchPath, branchDir, divergence)
-        }
-      }
+      await carryForwardRewrittenHistory(ctx, {
+        branchPath,
+        branchDir,
+        branchRef,
+        publishedSha,
+        preRebaseHead,
+      })
 
       return { kind: 'rebased' }
     } finally {
