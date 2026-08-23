@@ -8,15 +8,26 @@ import eslintConfigPrettier from 'eslint-config-prettier'
 /** @type {import('eslint').Linter.Config[]} */
 const eslintConfig = [
   // Global ignores
+  //
+  // Every build-output pattern is `**/`-prefixed. Flat-config `ignores` resolve
+  // against the CONFIG file's directory, not the cwd, so a bare `.next/**` only
+  // ever matched the repo root -- `apps/test-app/.next/` stayed lintable. That
+  // was invisible until 2026-08-23, when apps/test-app got a lint script and
+  // `eslint .`: CI passed anyway, because the validate job lints before
+  // anything builds, so the directory did not exist yet. It fails the moment a
+  // developer lints after a local build or an e2e run.
   {
     ignores: [
-      'node_modules/**',
-      'dist/**',
-      '.next/**',
-      '.turbo/**',
-      'coverage/**',
-      'test-results/**',
-      'playwright-report/**',
+      '**/node_modules/**',
+      '**/dist/**',
+      '**/.next/**',
+      '**/.turbo/**',
+      '**/coverage/**',
+      '**/test-results/**',
+      '**/playwright-report/**',
+      // Canopy's own dev workspace: a branch CLONE of the adopter app, so
+      // linting it means linting a stale second copy of the repo's own files.
+      '**/.canopy-dev/**',
       // Next.js-generated type shim (regenerated on every build; not meant to be linted)
       '**/next-env.d.ts',
       'packages/canopycms/src/api/client.ts',
