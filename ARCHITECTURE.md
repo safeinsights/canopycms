@@ -139,6 +139,14 @@ The core package organizes code into focused modules, each with a single respons
 - Client-unsafe strategies (file system operations, git integration)
 - Type definitions for strategy interfaces
 
+**Worker** - The background daemon, split along its own call graph rather than by topic:
+
+- A lifecycle shell holding only process concerns: start/stop, the cross-host single-worker lock, the poll loops, `remote.git` provisioning, and the auth-cache refresh
+- The daemon's otherwise-disjoint duty cycles as separate modules — the task queue, the git sync, and the rebase loop beneath it — reached through a worker context object rather than by sharing the daemon instance
+- A shared history-rewrite kernel (the force-push leasing described in [Publishing a Rewritten History](#publishing-a-rewritten-history)) that all three touch
+- Imports run one direction only (shell → task queue / git sync → rebase → history rewrite → context), enforced by a cycle check in lint rather than by review
+- See [Deployment Architecture](#deployment-architecture) for what the daemon does and [Why is the worker daemon split into free functions over a context?](#why-is-the-worker-daemon-split-into-free-functions-over-a-context) for the shape of the split
+
 **AI Content Generation** - Schema-driven content export for AI consumption:
 
 - Entry-to-markdown conversion using schema field definitions
@@ -1086,6 +1094,8 @@ For low-cost AWS deployments, CanopyCMS supports splitting into two components t
 - Rebases active branch workspaces onto updated base branch (with conflict detection and resolution)
 - Refreshes auth metadata cache (Clerk users/orgs, or dev test users)
 - Ships its own stdout/stderr to a dedicated CloudWatch log group, every line prefixed with an ISO-8601 UTC timestamp and a level tag (INFO/WARN/ERROR)
+
+Those duties are independent of one another — they share a process, a lock and a filesystem, not a call path — and the daemon's internal structure follows that: a lifecycle shell that owns the process concerns, plus one module per duty cycle reached through a context object. See [Modularized Domains](#modularized-domains) for the map and [Why is the worker daemon split into free functions over a context?](#why-is-the-worker-daemon-split-into-free-functions-over-a-context) for the rationale.
 
 This architecture eliminates NAT Gateway ($32/month) and keeps all secrets on the worker (not Lambda). The worker's AWS permissions: EFS client access (managed policy), Secrets Manager reads for its specific secrets, SSM core (`AmazonSSMManagedInstanceCore`, the Session Manager observation channel for operators whose roles allow it), read access to the CDK asset bucket (its own code bundle), and write-only access to its one CloudWatch log group — no broader logging or monitoring policy (no `CloudWatchAgentServerPolicy`). Log shipping exists because production operators may not have SSM Session Manager access into the instance (an organization's SSO role can be provisioned without `ssm:StartSession`), leaving the shipped logs as the only window into worker behavior beyond the task queue's own success/failure records. Because the worker is otherwise silent — no HTTP endpoint, no health API — log delivery is treated as best-effort rather than a hard dependency: the worker daemon starts and keeps running even if the log agent fails to install or configure.
 
@@ -2562,6 +2572,18 @@ The codebase underwent a major refactoring to decompose large files (600-1100+ l
 - Editor hooks: Each major feature (branch, entry, draft, comments, etc.) has its own hook
 
 The tradeoff is slightly more complex import paths, but the improved maintainability is worth it for a codebase of this size.
+
+### Why is the worker daemon split into free functions over a context?
+
+The worker grew into a single ~3,000-line class whose one entry point fanned out into four call trees that shared almost nothing except the object they hung off. Splitting it raised the usual question of what the pieces should be, and the conventional answer — collaborator objects, each constructed at startup with the dependencies it needs — was rejected for a specific reason.
+
+The worker's contract with its own tests is that it is reachable **through the live instance**: tests aim a push at a local fixture repo by replacing the URL builder on a running worker, substitute a mock GitHub client, stub out task execution, and subclass to override protected hooks. Any collaborator constructed once at startup captures whichever of those it needs at construction time, and then hands the extracted code the pre-test value — which for the URL builder means a test pushing at GitHub for real. That is a test suite quietly losing its grip on the code, and it fails in the most expensive direction.
+
+So the daemon class stays a thin lifecycle shell with one delegating method per duty cycle, and each duty cycle is a module of free functions taking a context. Two properties of that context are load-bearing rather than stylistic: every instance-backed member is a **function**, and the shell builds a **fresh context per call**. Together they mean a replacement made on the instance after construction is still honored, and the seam between shell and clusters is a plain object rather than a mocking framework. The cost is one rule the clusters must follow — always call through the context, never a same-named module function sitting next to the caller — and that is where mistakes land.
+
+Because the pieces are functions rather than mutually-aware objects, the import graph is a DAG by construction, and a lint rule fails the build on a cycle instead of trusting review to spot one.
+
+**What deliberately did not change: the worker's configuration object.** It is a flat bag mixing GitHub credentials, three independent poll intervals, task-retry policy and a lock TTL, and grouping it would read better. But it is public API — the CDK package re-exports and constructs it, and adopters can too — so restructuring it would be a breaking change dressed up as a refactor. Each module instead narrows the shared context to the subset it actually uses at the type level, which buys the same "what does this cluster depend on" clarity with none of the blast radius.
 
 ### Why separate packages for auth and framework adapters?
 
