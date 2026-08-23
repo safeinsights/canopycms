@@ -2479,6 +2479,8 @@ const runRebase = (worker: CmsWorker): Promise<void> =>
 
 This is preferable to making the method public just for testing. Use it sparingly -- only when the private method has complex logic that warrants direct testing.
 
+Note that this cast is also used to _assign_ over an instance member, not just to call one. That form constrains any later refactor of the class -- see [Extracting from a Class Whose Tests Reach Through the Instance](#extracting-from-a-class-whose-tests-reach-through-the-instance).
+
 **Git rebase `--ours` vs `--theirs` reversal:**
 
 During `git rebase`, the meaning of `--ours` and `--theirs` is **reversed** from their usual meaning in `git merge`:
@@ -2502,6 +2504,27 @@ In CanopyCMS's rebase conflict resolution, we use `git checkout --theirs <file>`
 | `??`   | untracked                     | A new file created during the wedge; the abort leaves it alone                                                                                                         |
 
 Filter on `file.working_dir` (simple-git's name for the working-tree column), never on `file.index` or on the pair together -- keying on the wrong column reports committed, safe history as data loss. This filter was written wrong twice in this file's history (first on the wrong columns entirely, then over-reporting the replay's own staged files) before the distinction above was made explicit and asserted directly. When a test needs to assert "what changed and how" from `git status` rather than just "is the tree clean", read both columns' meanings before writing the filter.
+
+### Extracting from a Class Whose Tests Reach Through the Instance
+
+When you split a large class into module-level functions that take a context object (the seam), and its test suite drives the class by **mutating the instance**, the context has two hard requirements:
+
+1. **Every instance-backed member is a function**, resolved by calling back onto the live instance at call time -- not a field copied when the context is built.
+2. **The context is built fresh per call**, so there is no long-lived object for a stale reference to hide in.
+
+A field copied at construction (`octokit: this.octokit`) captures the pre-test value, so the extracted code runs against the real dependency while the test's mock sits unused on the instance. Plain functions rather than getters are deliberate: `ctx.octokit()` makes the late binding visible at every call site, where a getter would read like a captured field.
+
+**Pre-flight check before you extract:** grep for `as unknown as { ... }` casts and enumerate them **for assignment, not just for calls** -- and grep the whole repo, not only the class's test files. `apps/test-app/app/api/e2e-test/rebase/route.ts` reaches into `CmsWorker` this way from an e2e fixture route, so a sweep scoped to `*.test.ts` would have missed it and reported the method as unused. Anything the tests _assign to_ has to stay reachable through the seam. The [call form](#testing-with-real-git-operations) is the easy half and is already documented; the assignments are the ones that break silently. In the worker suite the assigned-to surface is `buildGitHubUrl` (aimed at a local fixture repo instead of github.com), `octokit`, `executeTask`, `pushBranchToGitHub`, `running` (set directly instead of calling `start()`), plus two `protected` test hooks that one test file overrides by subclassing.
+
+**The failure mode**, which happened mid-refactor: an extracted module called the module-level `executeTask` directly -- legal, since the function is defined in the same file as its caller -- which bypassed the instance-level stub and turned 8 tests red. Route the call through the context (`ctx.executeTask(...)`); never edit the test to accommodate the extraction. A test that stubs a method is asserting the seam exists, so making it call the real thing deletes the assertion rather than fixing it.
+
+```typescript
+// In the extracted module, where both are in scope:
+await ctx.executeTask(task, signal) // late-bound, honors the test's stub
+await executeTask(ctx, task, signal) // WRONG: bypasses it silently
+```
+
+Worked example: the `WorkerContext` interface in `src/worker/worker-context.ts` documents which members are safe to copy and which must dispatch live, and [`packages/canopycms/src/worker/AGENTS.md`](packages/canopycms/src/worker/AGENTS.md) maps the modules on the other side of that seam.
 
 ### Testing UI Conflict Indicators
 
@@ -3469,6 +3492,20 @@ error client-bundle-no-node-builtins: packages/canopycms/src/client.ts → fs/pr
 ```
 
 The fix is normally to import the dependency-free sibling instead of the node-importing module -- `paths/branch-name` (not `paths/branch` or the `paths` barrel), `assets/asset-prefixes` (not `assets/keys`), `assets/transform-directives` (not `assets/transform`) -- or to make the import `import type`. If a client-reachable module genuinely needs new browser-safe logic that currently lives in a node-importing file, extract that logic into its own dependency-free module rather than widening the rule.
+
+### Import-Cycle Check
+
+The same `dependency-cruiser` config carries a `no-circular` rule over both packages' `src/`:
+
+```bash
+pnpm lint:cycles
+```
+
+Both packages are at **zero cycles**, so any violation this reports is one you just introduced. Under ESM a runtime import cycle makes module-init order load-order dependent, and the symptom -- an undefined binding at first use -- points nowhere near the cause, so this is cheaper to catch here than to debug later.
+
+`tsPreCompilationDeps` is off (see above), which matters more for this rule than for the bundle one: `import type` edges are erased and can never trip it, so a type-only back-import from an extracted module to the one it was extracted from is legal. Only value imports count.
+
+The rule bites hardest when splitting a class whose methods called each other freely -- the extracted modules can easily end up mutually importing. Break the edge the way the worker split did: hoist the shared piece into a third module that imports neither (`worker/history-rewrite.ts`), or pass the collaborator in through a context object rather than importing it (`worker/worker-context.ts`).
 
 ### Published-Package ESM Import Check
 
