@@ -4,8 +4,6 @@ import { simpleGit } from 'simple-git'
 import lockfile from 'proper-lockfile'
 import { Octokit } from '@octokit/rest'
 import {
-  enqueueTask,
-  listTasks,
   dequeueTask,
   completeTask,
   failTask,
@@ -27,7 +25,7 @@ import { invalidateBranchContentCaches } from '../content-index-generation'
 import { type ContentId, type SanitizedBranchName, ROOT_COLLECTION_ID } from '../paths/types'
 import { sanitizeBranchName, RESERVED_SETTINGS_BRANCH_PREFIX } from '../paths/branch-name'
 import { normalizeFilesystemPath } from '../paths/normalize'
-import { GITHUB_TRACKING_REF_PREFIX, gitChildEnv, gitNetworkChildEnv } from '../git-manager'
+import { GITHUB_TRACKING_REF_PREFIX, gitNetworkChildEnv } from '../git-manager'
 import { resolveDeploymentName } from '../operating-mode/deployment-name'
 import type { PullRequestState, WorkerStatusReport } from '../types'
 import { tryAcquireContentWriteLock } from '../utils/content-write-lock'
@@ -36,6 +34,15 @@ import { isNonFastForwardRejection, isRebaseInProgress, isStaleLeaseRejection } 
 import { writeWorkerStatus } from './worker-status'
 import { workerLog, workerLogWarn, workerLogError } from './log'
 import type { WorkerContext } from './worker-context'
+import {
+  clearHistoryRewrittenMarker,
+  enqueueGitHubPush,
+  forcePublishToLocalRemote,
+  hasPendingHistoryRewrite,
+  markHistoryRewritten,
+  readPublishedSha,
+  reconcilePendingRewrite,
+} from './history-rewrite'
 
 // Re-exported so the AWS entrypoint (packages/canopycms-cdk/worker/index.ts)
 // can prefix its own startup lines through the same helpers without adding a
@@ -1230,216 +1237,6 @@ export class CmsWorker {
     return path.join(this.contentBranchesPath, sanitizeBranchName(branchRefName))
   }
 
-  /**
-   * What `remote.git` currently holds for `branchRef`, or null when this
-   * branch was never published there (never submitted) or the ref is
-   * unreadable.
-   *
-   * Uses the same explicit `--git-dir` shape as verifyBaseBranchExists()
-   * above: reading a bare repo that way does not depend on
-   * `safe.bareRepository` being permissive, which is why prod code takes
-   * this route rather than the config override the test-only `openBareRepo`
-   * helper uses.
-   */
-  private async readPublishedSha(branchRef: string): Promise<string | null> {
-    try {
-      const out = await simpleGit().raw([
-        '--git-dir',
-        this.remoteGitPath,
-        'rev-parse',
-        '--verify',
-        `refs/heads/${branchRef}`,
-      ])
-      const sha = out.trim()
-      return sha.length > 0 ? sha : null
-    } catch {
-      // Absent from remote.git: this branch was never submitted, so none of
-      // its history was ever published. Not an error.
-      return null
-    }
-  }
-
-  /**
-   * Record that this worker rewrote `expectedSha` out of a branch's already
-   * published history (see BranchMetadata.historyRewrittenFrom).
-   *
-   * Set-once: if a marker is already present it is LEFT ALONE. Across two
-   * rebases before any GitHub push lands, GitHub still holds the commit the
-   * FIRST rebase replaced, so advancing the marker would aim the lease at a
-   * commit GitHub never had and permanently wedge the branch.
-   *
-   * Re-reads metadata rather than trusting the caller's loop-top snapshot:
-   * the task loop runs concurrently with syncGit() (see scheduleLoop) and may
-   * have cleared the marker while this branch was rebasing.
-   */
-  private async markHistoryRewritten(
-    branchPath: string,
-    branchDir: string,
-    expectedSha: string,
-  ): Promise<void> {
-    const current = await BranchMetadataFileManager.loadOnly(branchPath)
-    if (typeof current?.branch.historyRewrittenFrom === 'string') return
-    const meta = getBranchMetadataFileManager(branchPath, this.contentBranchesPath)
-    await meta.save({ branch: { name: branchDir, historyRewrittenFrom: expectedSha } })
-  }
-
-  /**
-   * Clear the marker once GitHub is confirmed to hold the rewritten history.
-   *
-   * Best-effort only in the sense that a failure here destroys nothing: the
-   * lease still refuses anything unexpected, and the plain-push fallback only
-   * ever fast-forwards. It is NOT harmless. A marker that outlives its
-   * episode can wedge the NEXT one -- if the base advances before the stale
-   * marker is revisited, the queued push leases a commit GitHub has already
-   * moved off, falls back to a plain push of a rebased (non-ancestor)
-   * history, and fails permanently with a "something else moved it on
-   * GitHub" diagnosis that is false: we did.
-   *
-   * Tracked, with the concurrent-clear race that can drop a marker
-   * mid-arming, in
-   * .claude/future-tasks/worker-history-rewrite-marker-races.md.
-   */
-  private async clearHistoryRewrittenMarker(branchPath: string, branchDir: string): Promise<void> {
-    try {
-      const meta = getBranchMetadataFileManager(branchPath, this.contentBranchesPath)
-      // Explicit undefined clears the key -- save()'s merge only overwrites
-      // keys present in the update (same pattern as rebaseFailure).
-      await meta.save({ branch: { name: branchDir, historyRewrittenFrom: undefined } })
-    } catch (err) {
-      workerLogWarn(
-        `  Failed to clear history-rewrite marker for ${branchDir}: ${getErrorMessage(err)}`,
-      )
-    }
-  }
-
-  /**
-   * Publish a branch clone's rebased history into `remote.git`, replacing
-   * EXACTLY `expectedSha` and nothing else.
-   *
-   * The lease is the entire safety argument. `--force-with-lease=<ref>:<sha>`
-   * refuses unless `remote.git` still stands at `<sha>`, so this can only
-   * ever undo the commit our own rebase rewrote away. Callers must never pass
-   * "whatever remote.git currently holds" -- see the arming guard in
-   * rebaseActiveBranches() for the interleaving where that would silently
-   * delete a reviewer's direct push.
-   *
-   * Returns whether the push landed. A refused lease means a concurrent
-   * Lambda push moved the ref; that is logged and retried by the self-heal
-   * pass on a later cycle, never thrown.
-   */
-  private async forcePublishToLocalRemote(
-    branchPath: string,
-    branchRef: string,
-    expectedSha: string,
-  ): Promise<boolean> {
-    // A dedicated instance rather than the caller's: `.env()` replaces the
-    // whole child environment, and the rebase loop's instance must keep its
-    // ambient one. gitChildEnv (not gitNetworkChildEnv) because this push
-    // targets the local bare repo -- and the locale pin is what keeps
-    // isStaleLeaseRejection below from silently becoming a no-op.
-    const pushGit = simpleGit({ baseDir: branchPath, timeout: { block: this.taskTimeoutMs } })
-    pushGit.env(gitChildEnv({}))
-    try {
-      await pushGit.raw([
-        'push',
-        `--force-with-lease=${branchRef}:${expectedSha}`,
-        // Real flags must precede --end-of-options; everything after it is
-        // positional (see GitManager.push() for the same guard).
-        '--end-of-options',
-        'origin',
-        `${branchRef}:${branchRef}`,
-      ])
-      workerLog(`  Published rebased ${branchRef} into remote.git`)
-      return true
-    } catch (err) {
-      const message = redactCredentials(getErrorMessage(err))
-      workerLogWarn(
-        isStaleLeaseRejection(message)
-          ? `  Did not publish rebased ${branchRef} into remote.git: it moved since this cycle read it (concurrent submit?) -- retrying next cycle`
-          : `  Failed to publish rebased ${branchRef} into remote.git: ${message}`,
-      )
-      return false
-    }
-  }
-
-  /**
-   * Queue the GitHub hop for a branch whose rewritten history now sits in
-   * `remote.git`, so an open PR's head follows the rebase within a cycle
-   * instead of waiting for the editor's next submit.
-   *
-   * Deliberately NOT skipped when a marker is already set: inferring "a task
-   * must already be queued" from the marker starves this hop whenever a task
-   * was lost, failed permanently, or was never written. Duplicate push tasks
-   * are bounded by base-branch advances and are idempotent (a repeat push is
-   * a no-op once GitHub holds the tip).
-   */
-  private async enqueueGitHubPush(branchRef: string): Promise<void> {
-    try {
-      // Dedupe against tasks actually in flight rather than against the
-      // marker: a branch whose GitHub push keeps failing would otherwise
-      // gain one task per sync cycle forever.
-      for (const status of ['pending', 'processing'] as const) {
-        const inFlight = await listTasks(this.taskDir, status)
-        if (inFlight.some((t) => t.action === 'push-branch' && t.payload.branch === branchRef)) {
-          return
-        }
-      }
-      await enqueueTask(this.taskDir, { action: 'push-branch', payload: { branch: branchRef } })
-      workerLog(`  Queued GitHub push for ${branchRef}`)
-    } catch (err) {
-      workerLogWarn(`  Failed to queue GitHub push for ${branchRef}: ${getErrorMessage(err)}`)
-    }
-  }
-
-  /**
-   * Complete a rewrite this worker started but did not finish: get the
-   * rebased history into `remote.git` and queued for GitHub.
-   *
-   * Runs from the rebase loop for any branch carrying a marker, whether or
-   * not it is behind base this cycle, so an interrupted publish converges
-   * without waiting for the next base-branch advance.
-   *
-   * Always leases on the MARKER, never on remote.git's current tip -- the
-   * marker is the one commit we know our own rebase replaced.
-   */
-  private async reconcilePendingRewrite(options: {
-    branchPath: string
-    branchDir: string
-    branchRef: string
-    headSha: string
-    marker: string
-  }): Promise<void> {
-    const { branchPath, branchDir, branchRef, headSha, marker } = options
-    const publishedSha = await this.readPublishedSha(branchRef)
-
-    if (publishedSha === null) {
-      workerLogWarn(
-        `  ${branchDir}: a rewritten history is recorded but ${branchRef} is gone from remote.git -- nothing to publish`,
-      )
-      return
-    }
-    if (publishedSha === headSha) {
-      // remote.git already carries the rewrite; only the GitHub hop is left
-      // (a crash between the push and the queue, or a task that was lost).
-      await this.enqueueGitHubPush(branchRef)
-      return
-    }
-    if (publishedSha === marker) {
-      // The publish into remote.git never landed -- a crash right after the
-      // marker was written, or a lease refused by a concurrent submit.
-      if (await this.forcePublishToLocalRemote(branchPath, branchRef, marker)) {
-        await this.enqueueGitHubPush(branchRef)
-      }
-      return
-    }
-    // Neither this branch's rebased tip nor the commit its rewrite replaced:
-    // something else moved remote.git. Never force over that.
-    workerLogWarn(
-      `  ${branchDir}: remote.git is at ${publishedSha} for ${branchRef}, which is neither the ` +
-        `rebased tip nor the commit the rewrite replaced -- left untouched`,
-    )
-  }
-
   private async pushBranchToGitHub(branch: string): Promise<void> {
     const git = simpleGit({
       baseDir: this.remoteGitPath,
@@ -1465,7 +1262,7 @@ export class CmsWorker {
     const metaFile = await BranchMetadataFileManager.loadOnly(branchPath).catch(() => null)
     const marker = metaFile?.branch.historyRewrittenFrom
     // What this push will actually send: remote.git's tip for the branch.
-    const outgoingSha = await this.readPublishedSha(branch)
+    const outgoingSha = await readPublishedSha(this.ctx(), branch)
 
     try {
       if (marker) {
@@ -1518,7 +1315,7 @@ export class CmsWorker {
         }
         // The lease was refused, so GitHub is provably not at the marker: it
         // has moved past the rewritten commit and the marker is spent.
-        await this.clearHistoryRewrittenMarker(branchPath, branch)
+        await clearHistoryRewrittenMarker(this.ctx(), branchPath, branch)
         workerLog(`Pushed ${branch} to GitHub (GitHub had already moved past the rewritten commit)`)
         return
       }
@@ -1544,7 +1341,7 @@ export class CmsWorker {
     // still at the marker because its own publish has not landed yet) must
     // leave the marker set -- it is the sole trigger for the self-heal pass.
     if (marker && outgoingSha && outgoingSha !== marker) {
-      await this.clearHistoryRewrittenMarker(branchPath, branch)
+      await clearHistoryRewrittenMarker(this.ctx(), branchPath, branch)
     }
     workerLog(`Pushed ${branch} to GitHub`)
   }
@@ -1803,7 +1600,7 @@ export class CmsWorker {
           // Unpushed local work -- exactly what the old destructive refspec
           // used to force-rewind or delete. Leave it.
           ahead.push(name)
-        } else if (await this.hasPendingHistoryRewrite(name)) {
+        } else if (await hasPendingHistoryRewrite(this.ctx(), name)) {
           // [SYNC-H1] Our own rebase published a rewrite into remote.git and
           // the GitHub push has not landed yet. Ref-level this is identical
           // to a collision, but it is expected and self-resolving, so it must
@@ -1839,27 +1636,6 @@ export class CmsWorker {
     return {
       summary: { created, fastForwarded, ahead, diverged, rewritten },
       trackedNames: new Set(tracked.keys()),
-    }
-  }
-
-  /**
-   * Whether this branch carries a pending history rewrite -- the rebase loop
-   * rewrote already-published history and the GitHub push has not landed yet
-   * (see BranchMetadata.historyRewrittenFrom).
-   *
-   * `branchName` is a git ref name; branch workspaces are directories named
-   * with the sanitized form, hence the conversion. Best-effort: a settings
-   * branch (no workspace at all), a missing directory or an unreadable
-   * branch.json all mean "no known rewrite", which is the conservative
-   * answer -- it keeps the branch in the louder `diverged` bucket.
-   */
-  private async hasPendingHistoryRewrite(branchName: string): Promise<boolean> {
-    try {
-      const branchPath = path.join(this.contentBranchesPath, sanitizeBranchName(branchName))
-      const metaFile = await BranchMetadataFileManager.loadOnly(branchPath)
-      return typeof metaFile?.branch.historyRewrittenFrom === 'string'
-    } catch {
-      return false
     }
   }
 
@@ -2545,7 +2321,7 @@ export class CmsWorker {
           // Gated on the loop-top snapshot, so unmarked branches (nearly all
           // of them, every cycle) cost nothing extra.
           if (canPublish && metaFile?.branch.historyRewrittenFrom) {
-            await this.reconcilePendingRewrite({
+            await reconcilePendingRewrite(this.ctx(), {
               branchPath,
               branchDir,
               branchRef,
@@ -2616,7 +2392,7 @@ export class CmsWorker {
           // clone is about to rebase away. Reading them afterwards would be
           // useless -- the clone's pre-rebase tip is exactly what disappears.
           const preRebaseHead = (await branchGit.revparse(['HEAD'])).trim()
-          const publishedSha = canPublish ? await this.readPublishedSha(branchRef) : null
+          const publishedSha = canPublish ? await readPublishedSha(this.ctx(), branchRef) : null
 
           // Resolve-and-continue loop: keep branch version for conflicting files, then continue
           // Non-conflicting files get main's changes; conflicting files keep branch version.
@@ -2901,9 +2677,11 @@ export class CmsWorker {
               // first would leave remote.git rewritten, GitHub stale and
               // nothing recorded -- unrecoverable, and landing on exactly the
               // false "another deployment" diagnosis this change removes.
-              await this.markHistoryRewritten(branchPath, branchDir, publishedSha)
-              if (await this.forcePublishToLocalRemote(branchPath, branchRef, publishedSha)) {
-                await this.enqueueGitHubPush(branchRef)
+              await markHistoryRewritten(this.ctx(), branchPath, branchDir, publishedSha)
+              if (
+                await forcePublishToLocalRemote(this.ctx(), branchPath, branchRef, publishedSha)
+              ) {
+                await enqueueGitHubPush(this.ctx(), branchRef)
               }
             } else {
               const divergence =
