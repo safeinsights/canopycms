@@ -600,6 +600,151 @@ describe('createContentReader', () => {
     expect(result.meta.entryId).toBe('abc123def456')
   })
 
+  // -------------------------------------------------------------------------
+  // urlAddressableOnly -- the reader half of "resolution answers only where enumeration does"
+  // -------------------------------------------------------------------------
+  //
+  // readByUrlPath sets this; nothing else does. The two PROBE tests above document the exact
+  // behaviours it narrows, and both of those must keep passing WITHOUT the flag -- that is the
+  // point of putting the rules here rather than inside ContentStore, whose entry-type delegation
+  // and type-blind directory scan are load-bearing for read(), write() and renameEntry().
+  describe('urlAddressableOnly', () => {
+    const readerFor = async (
+      root: string,
+      schema: Parameters<typeof createTestServices>[0]['schema'],
+    ) => {
+      const config = defineCanopyTestConfig({
+        defaultBranchAccess: 'allow',
+        defaultPathAccess: 'allow',
+        schema,
+      })
+      const branchContext = buildBranchContext(root)
+      return createContentReader({
+        services: await createTestServices(
+          { ...config, schema },
+          { getSettingsBranchRoot: () => Promise.resolve(root) },
+        ),
+        allowCreateBranch: false,
+        getBranchContext: async () => branchContext,
+      })
+    }
+
+    // A root-level entry type, so `content/home` is an entry-TYPE schema item. This is the shape
+    // README recommends for a singleton, and the one that made /home resolve the root collection's
+    // index entry.
+    const singletonSchema = {
+      entries: [{ name: 'home', default: true, format: 'json' as const, schema: [] }],
+      collections: [
+        {
+          name: 'posts',
+          path: 'posts',
+          entries: [{ name: 'post', format: 'md' as const, schema: [] }],
+        },
+      ],
+    }
+
+    const expectSchemaItemRejection = async (promise: Promise<unknown>) => {
+      const err = await promise.then(
+        () => null,
+        (e: unknown) => e,
+      )
+      expect(err).toBeInstanceOf(ContentStoreError)
+      expect((err as ContentStoreError).code).toBe('NO_SCHEMA_ITEM')
+      return err as ContentStoreError
+    }
+
+    it('rejects an entry-TYPE entryPath, which buildPaths would delegate to the parent collection', async () => {
+      const root = await tmpDir()
+      await fs.mkdir(path.join(root, 'content'), { recursive: true })
+      await fs.writeFile(
+        path.join(root, 'content/home.home.abc123def456.json'),
+        JSON.stringify({ title: 'Home' }),
+        'utf8',
+      )
+      const reader = await readerFor(root, singletonSchema)
+
+      const err = await expectSchemaItemRejection(
+        reader.read({
+          entryPath: unsafeAsLogicalPath('content/home'),
+          user: ANONYMOUS_USER,
+          urlAddressableOnly: true,
+        }),
+      )
+      expect(err.message).toContain('not a collection')
+    })
+
+    it('leaves the same read alone WITHOUT the flag, so read({ entryPath }) keeps working', async () => {
+      // The delegation this gate hides from URL resolution is the only way to address a singleton
+      // structurally, is a documented API, and has its own tests in content-store.test.ts. If this
+      // ever fails, the gate has been pushed down into ContentStore, which is the wrong place.
+      const root = await tmpDir()
+      await fs.mkdir(path.join(root, 'content'), { recursive: true })
+      await fs.writeFile(
+        path.join(root, 'content/home.home.abc123def456.json'),
+        JSON.stringify({ title: 'Home' }),
+        'utf8',
+      )
+      const reader = await readerFor(root, singletonSchema)
+
+      const result = await reader.read<{ title: string }>({
+        entryPath: unsafeAsLogicalPath('content/home'),
+        user: ANONYMOUS_USER,
+      })
+      expect(result.data.title).toBe('Home')
+      expect(result.meta.entryType).toBe('home')
+    })
+
+    it('rejects a file whose on-disk type token the collection does not declare', async () => {
+      // The read the PROBE above performs, with the flag on. listEntries has always skipped this
+      // file (parseTypedFilename validates the token against the collection's entries); before
+      // this rule, resolution served it, because the directory scan matches on slug alone.
+      const root = await tmpDir()
+      const postsDir = path.join(root, 'content/posts')
+      await fs.mkdir(postsDir, { recursive: true })
+      await fs.writeFile(
+        path.join(postsDir, 'foo.strayfile.abc123def456.md'),
+        '---\ntitle: Stray\n---\nBody.\n',
+        'utf8',
+      )
+      const reader = await readerFor(root, singletonSchema)
+
+      const err = await expectSchemaItemRejection(
+        reader.read({
+          entryPath: unsafeAsLogicalPath('content/posts'),
+          slug: unsafeAsSlug('strayfile'),
+          user: ANONYMOUS_USER,
+          urlAddressableOnly: true,
+        }),
+      )
+      expect(err.message).toContain("'foo'")
+    })
+
+    it('still accepts a legacy untyped file, which carries no type token to reject', async () => {
+      // Load-bearing, and an accident of the fallback rather than something the rule states:
+      // extractEntryTypeFromFilename returns null for `{slug}.{ext}`, so buildPaths substitutes
+      // the collection's DEFAULT type -- which is declared by construction. Re-expressing this
+      // rule as a filename-grammar check would silently 404 every legacy entry.
+      const root = await tmpDir()
+      const postsDir = path.join(root, 'content/posts')
+      await fs.mkdir(postsDir, { recursive: true })
+      await fs.writeFile(
+        path.join(postsDir, 'legacy.md'),
+        '---\ntitle: Legacy\n---\nBody.\n',
+        'utf8',
+      )
+      const reader = await readerFor(root, singletonSchema)
+
+      const result = await reader.read<{ title: string }>({
+        entryPath: unsafeAsLogicalPath('content/posts'),
+        slug: unsafeAsSlug('legacy'),
+        user: ANONYMOUS_USER,
+        urlAddressableOnly: true,
+      })
+      expect(result.data.title).toBe('Legacy')
+      expect(result.meta.entryId).toBeUndefined()
+    })
+  })
+
   it('checks permissions BEFORE reading file (security)', async () => {
     const root = await tmpDir()
     const pagesDir = path.join(root, 'content/pages')

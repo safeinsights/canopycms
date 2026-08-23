@@ -423,8 +423,9 @@ resolver disagreed: it tried "last segment is the slug" first, so the same entry
 
 The round-trip guarantee now excludes the `.../index` spelling for index entries: `item.urlPath`
 reaches the entry, and no `.../index` spelling does, in any case (`/x/Index` and `/x/INDEX` return
-null too). It is not yet exclusive in general — an index entry still also answers at
-`/<collection>/<entryTypeName>`, a separate open hole (see the Unreleased entry below). Ordinary
+null too). The remaining extra URLs an entry answered at are closed by a later entry below, which
+you should read together with this one — it supersedes this entry's original caveat, and its
+"Now deletable" list is the one to act on if you wrote per-route guards. Ordinary
 entries are unchanged — their final slug segment stays case-insensitive.
 A collection literally _named_ `index` is unaffected and in fact fixed — `/docs/index` now resolves
 to that collection's own index entry instead of being shadowed by its parent's.
@@ -540,12 +541,13 @@ home.index.<id>.json`). Entry type and ID are unchanged, so references, `order` 
 3. Drop the sitemap workaround (below), and re-check the emitted `sitemap.xml` for the new URL.
 4. If the old URL was publicly indexed, add a redirect from it — the entry's URL genuinely changes.
 
-**One known caveat, if you serve a root catch-all.** An entry-type name is currently still
-resolvable as a URL segment: with home modelled at the root, `readByUrlPath('/home')` returns the
-home entry as well as `readByUrlPath('/')`. Nothing advertises `/home` (it is absent from the
-sitemap and from `generateContentStaticParams`), so on a route-per-page app it simply 404s. But an
-`app/[[...slug]]` catch-all resolves whatever it is handed, so it would serve a duplicate homepage
-there — filter it until this is fixed.
+**A caveat this entry originally carried has since been fixed, in the same release.** Modelling
+home at the root used to make `readByUrlPath('/home')` return the home entry as well as
+`readByUrlPath('/')` — harmless on a route-per-page app, a duplicate homepage on one with a root
+catch-all. The original wording also under-scoped it: it named `/home`, but _every_ entry-type name
+declared beside home answered too, so filtering `/home` alone still left `/page` and `/landing`
+serving duplicates. All of them now return `null`; see "`readByUrlPath` answers only where
+`listEntries` publishes" below, and do not write the filter.
 
 **Now deletable.**
 
@@ -636,6 +638,83 @@ write API) is not covered by the new refusal, which is exactly the case the buil
 for slugs your routing could not serve, and any editor-side slug-format check you added in front of
 the create form — the package now rejects those at the write boundary and fails the build on the
 ones that arrive some other way.
+
+### `readByUrlPath` answers only where `listEntries` publishes — **breaking (routing)**
+
+_Adopter request log item 34, and the remainder of item 22._
+
+**What changed.** `readByUrlPath` now resolves exactly the set of URLs enumeration advertises. For
+every entry, `readByUrlPath(item.urlPath)` reaches it and nothing else does. Three shapes that used
+to resolve now return `null`:
+
+```diff
+  await readByUrlPath('/blog/hello')          // the article — unchanged
+- await readByUrlPath('/blog/article')        // ALSO the blog's index entry
+- await readByUrlPath('/blog/article/hello')  // ALSO the article
++ await readByUrlPath('/blog/article')        // null
++ await readByUrlPath('/blog/article/hello')  // null
+```
+
+`article` there is an entry-type _name_. Both shapes came from one cause: an entry type is
+registered in the schema at `<collectionPath>/<typeName>`, and a read against that path is
+delegated to the parent collection — which is correct for `read({ entryPath })`, and meaningless
+for a URL, since a URL's non-slug segments are collection names by construction. The first shape
+needed the collection to have an index entry; **the second did not**, so it applied to every entry
+in every collection, at `/<collection>/<entryTypeName>/<slug>`. The reference app was serving seven
+duplicate pages through it.
+
+The third shape is an entry whose type token on disk is not one its collection declares — most
+often an entry type renamed in the schema without renaming the files. `listEntries` has always
+skipped those; resolution used to serve them anyway, so a page could stay live at a URL enumeration
+had already stopped publishing. It now 404s. **A collection that declares no entry types at all
+counts here too**: it lists nothing, whatever sits in its directory, so a file placed in a
+collections-only container is no longer served either. Neither case can arise from content the CMS
+authored — there is no entry type to have created it as — so if it describes content you have, it
+arrived by hand, by merge or by retrofit, and it was already missing from your sitemap and static
+params. The fix is to rename the files to a declared type, or declare the type. The entry remains
+fully editable, renameable and deletable in the CMS throughout, which is deliberate: only URL
+resolution was narrowed, not reading, writing or renaming — otherwise a save would create a second
+file with the same slug and the mistake would be unfixable from the editor.
+
+**Two things deliberately did not change.** `read({ entryPath: 'content/home' })` still addresses a
+singleton structurally, defaulting the slug to the entry type's own name. And two _different_
+entries claiming one `urlPath` is still a separate problem with its own guard
+(`findDuplicateUrlPaths`, and the build failure described further up).
+
+**One gap remains, and is not fixed here.** A legacy untyped content file — `overview.json` rather
+than `{type}.{slug}.{id}.{ext}` — is still readable by URL while being invisible to `listEntries`,
+`generateContentStaticParams` and the sitemap. If you have such files, they are already absent from
+every enumerating surface; rename them into the typed grammar to make them real entries.
+
+**To adopt.** Nothing, unless a route of yours depends on one of the URLs above. Two checks worth
+doing once:
+
+1. If you serve a catch-all route, request `/<collection>/<entryTypeName>` and
+   `/<collection>/<entryTypeName>/<some-slug>` for a few of your own type names and confirm you get
+   a 404 rather than a page you did not mean to publish. Under a full static export these were
+   always CDN 404s; under `next dev` or `output: 'standalone'` they were served.
+2. If you renamed an entry type without renaming files on disk, those entries stop resolving. They
+   were already missing from your sitemap and static params, so a build will not tell you —
+   `listEntries()` will.
+
+**Now deletable.**
+
+- **Per-route `entryType` gates that exist only to reject a URL that should not have resolved.**
+  The shape is a check at the top of a catch-all or `[slug]` route asserting the resolved entry is
+  the type that route renders — added because the resolver handed back an index entry, or an entry
+  from a different level, and the template rendered with every field `undefined` while
+  `if (!result) notFound()` stayed silent. Those URLs are `null` now. Keep any `entryType` branch
+  that genuinely dispatches between templates; delete the ones that only ever throw or 404.
+- **A catch-all filter that drops entry-type names before resolving.** The shape is a hard-coded
+  list of segments to reject — usually the app's own entry type names — sitting in front of
+  `readByUrlPath`. Note it was never sufficient anyway: filtering the singleton's own name left
+  every other type name declared beside it resolving.
+- **A regression test asserting a specific phantom URL returns null.** The package now asserts the
+  general invariant — enumerate, then probe every adjacent URL the resolver would attempt — over
+  both its own fixtures and its reference app, which is what stops the next shape of this bug
+  reaching you. Keep a local test only if it covers routing you own rather than resolution we own.
+
+---
 
 <!--
 Template for each entry — copy, don't improvise:
