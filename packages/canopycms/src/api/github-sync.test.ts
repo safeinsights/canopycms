@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import type { GitHubService } from '../github-service'
 import type { CanopyConfig } from '../config'
 import { createMockApiContext, createMockBranchContext } from '../test-utils'
-import { mockConsole } from '../test-utils/console-spy.js'
+import { mockConsole } from '../test-utils/console-spy'
 
 const baseConfig: CanopyConfig = {
   gitBotAuthorName: 'Canopy Bot',

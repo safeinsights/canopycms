@@ -111,6 +111,20 @@ const eslintConfig = [
   // Deliberately placed BEFORE the `**/worker/**` blocks below so their stricter
   // console ban still wins; no worker file is .mjs today, and this ordering is
   // what keeps that true if one ever is.
+  // PostCSS config files are CommonJS `.js` -- the one CJS shape left in the
+  // repo, since everything else is ESM `.mjs` or TypeScript. They were invisible
+  // until 2026-08-23, when apps/example1's lint glob widened from `app/` to `.`
+  // and apps/test-app got a lint script at all; both then failed `no-undef` on
+  // `module`. Scoped to the filename rather than `**/*.js` so a stray browser
+  // `.js` does not silently acquire node globals.
+  {
+    files: ['**/postcss.config.js'],
+    languageOptions: {
+      sourceType: 'commonjs',
+      globals: { module: 'writable', require: 'readonly', __dirname: 'readonly' },
+    },
+  },
+
   {
     files: ['**/*.mjs'],
     languageOptions: {

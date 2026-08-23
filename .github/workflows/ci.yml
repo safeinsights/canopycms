@@ -69,6 +69,14 @@ jobs:
       - name: Lint future-tasks backlog
         run: pnpm lint:tasks
 
+      # Doc factual drift: backticked repo paths that do not exist, and
+      # `canopycms*` import specifiers in code fences that are not in any
+      # exports map. Both classes shipped -- AGENTS.md documented a
+      # `src/middleware/` that never existed, and canopycms-auth-clerk's README
+      # told adopters to import from `canopycms/next`, which resolves nowhere.
+      - name: Lint doc paths and entrypoints
+        run: pnpm lint:docs
+
       # Root-level node tooling. `pnpm lint` is `pnpm -r`, which recurses over
       # workspace PACKAGES only -- scripts/ is not one, so until 2026-08-22
       # nothing linted the seven scripts here, four of which gate CI or

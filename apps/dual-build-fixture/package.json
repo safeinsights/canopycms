@@ -8,7 +8,8 @@
     "build:cms": "CANOPY_BUILD=cms next build",
     "typecheck": "tsc --noEmit",
     "verify:dual-build": "vitest run --reporter=dot",
-    "reset-sim": "rm -rf .canopy-dev"
+    "reset-sim": "rm -rf .canopy-dev",
+    "lint": "eslint ."
   },
   "dependencies": {
     "canopycms": "workspace:*",

@@ -8,7 +8,7 @@
     "devinspect": "NODE_OPTIONS='--inspect' next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint app/",
+    "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "test": "echo \"No tests for example app yet\"",
     "verify:build": "vitest run --reporter=dot",
