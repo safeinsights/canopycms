@@ -10,6 +10,11 @@ const config = {
   // whole-tree property: a link breaks in the file that did NOT change when its
   // target moved, so a per-file check would miss exactly the case that rots.
   '.claude/future-tasks/**/*.md': () => 'pnpm run lint:tasks',
+  // Doc factual drift is whole-tree for the same reason: renaming a module
+  // breaks the doc that did NOT change. Cheap enough to run on any md, or on
+  // any move/rename of a package source file.
+  '**/*.md': () => 'pnpm run lint:docs',
+  'packages/*/package.json': () => 'pnpm run lint:docs',
 }
 
 export default config

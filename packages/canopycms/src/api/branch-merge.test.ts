@@ -3,7 +3,7 @@ import { markAsMerged } from './branch-merge'
 import type { ApiContext, ApiRequest } from './types'
 import type { BranchName } from '../paths/types'
 import { RESERVED_GROUPS } from '../authorization'
-import { mockConsole } from '../test-utils/console-spy.js'
+import { mockConsole } from '../test-utils/console-spy'
 
 // Extract handler for testing
 const markAsMergedHandler = markAsMerged.handler
