@@ -93,10 +93,15 @@ export class AdminPage {
    */
   queueStat(label: 'Pending' | 'Processing' | 'Completed' | 'Failed' | 'Corrupt'): Locator {
     // Each tile is a Paper containing the label and, below it, the count.
-    return this.panel
-      .locator('div')
-      .filter({ hasText: new RegExp(`^${label}\\d+$`, 'i') })
-      .last()
+    // `label` is a five-member string-literal union, so the type system already
+    // proves no attacker-chosen pattern can reach the constructor.
+    return (
+      this.panel
+        .locator('div')
+        // eslint-disable-next-line security/detect-non-literal-regexp
+        .filter({ hasText: new RegExp(`^${label}\\d+$`, 'i') })
+        .last()
+    )
   }
 
   /** Switch the Tasks tab's status filter. */

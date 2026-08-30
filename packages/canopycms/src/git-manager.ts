@@ -1,3 +1,28 @@
+/**
+ * Git operations for branch workspaces.
+ *
+ * This file is effectively TWO modules sharing a class name, split cleanly by
+ * line number:
+ *
+ *   Everything from `cloneRepo` down to `initializeWorkspace` is `static` —
+ *     workspace PROVISIONING (also ensureLocalSimulatedRemote, bareRemoteHasBranch,
+ *     deleteBareRemoteHead, findGitRoot, resolveRemoteUrl). These share no instance
+ *     state; the class is acting as a namespace.
+ *   Everything from `status()` onward is an INSTANCE method — per-repo operations
+ *     on one already-provisioned workspace (checkoutBranch, pullBase,
+ *     rebaseOntoBase, add/commit/push, ...), needing
+ *     `repoPath`/`baseBranch`/`remote`.
+ *
+ * `status()` is the dividing line. If you are here to change provisioning, nothing
+ * after it concerns you, and vice versa.
+ *
+ * Every git invocation is argv-based with `--end-of-options`, and `gitChildEnv`
+ * forces `LC_ALL=C`/`LANG=C` so git's own message text stays English — several
+ * callers classify errors by matching it (see `utils/git.ts`'s
+ * `isNonFastForwardRejection`). Do not remove that.
+ *
+ * Module map: ./AGENTS.md. Locking rules: ../../../docs/concurrency.md.
+ */
 import fs from 'node:fs/promises'
 import path from 'node:path'
 
@@ -56,8 +81,9 @@ const GIT_ENV_PASSTHROUGH =
 const FORCE_C_LOCALE = { LC_ALL: 'C', LANG: 'C' }
 /**
  * Exported for GitManager's own use (see `this.git.env(...)` above),
- * worker/cms-worker.ts's push-rejection-classified GitHub calls
- * (`pushBranchToGitHub`, `syncGit`'s fetch/`pushSettingsBranches` instance),
+ * the worker's push-rejection-classified GitHub calls
+ * (`pushBranchToGitHub` in worker/task-runner.ts, `syncGit`'s
+ * fetch/`pushSettingsBranches` instance in worker/git-sync.ts),
  * and tests.
  */
 export function gitChildEnv(overrides: Record<string, string>): Record<string, string> {
@@ -114,8 +140,8 @@ const remoteInitLocks = new Map<string, Promise<void>>()
  * `remote.git`'s `refs/heads/*` is NOT a throwaway mirror: it's the
  * deployment's local origin. `GitManager.push()` writes editor work into it
  * (`target:target`), branch-workspace clones are cloned FROM it, and the CMS
- * worker itself pushes it on to GitHub (`pushBranchToGitHub`,
- * `pushSettingsBranches` in worker/cms-worker.ts). A fetch that force-writes
+ * worker itself pushes it on to GitHub (`pushBranchToGitHub` in
+ * worker/task-runner.ts, `pushSettingsBranches` in worker/git-sync.ts). A fetch that force-writes
  * GitHub's refs straight into `refs/heads/*` (the old
  * `+refs/heads/*:refs/heads/*` refspec) can therefore destroy work that
  * reached `remote.git` but not GitHub yet: with `--prune`, a branch pushed
@@ -128,10 +154,10 @@ const remoteInitLocks = new Map<string, Promise<void>>()
  * Fetching into this remote-tracking namespace instead makes `--prune`/`+`
  * safe again -- they now only ever affect GitHub's-view-of-the-world refs,
  * never the local heads other code depends on. `reconcileTrackedBranches()`
- * (worker/cms-worker.ts) is what subsequently, and non-destructively, brings
+ * (worker/git-sync.ts) is what subsequently, and non-destructively, brings
  * `refs/heads/*` toward what's tracked here.
  *
- * Lives here (not worker/cms-worker.ts, where this constant originated) so
+ * Lives here (not the worker, where this constant originated) so
  * `GitManager.bareRemoteHasBranch` -- which must recognize this namespace
  * too, since it's what a branch pushed by another CanopyCMS deployment (or
  * pushed directly to GitHub) shows up in before/without ever gaining a local
@@ -500,7 +526,7 @@ export class GitManager {
    * guard, which also needs the tracking namespace: `syncGit()` fetches
    * GitHub into `GITHUB_TRACKING_REF_PREFIX*` rather than `refs/heads/*`
    * directly (see that constant's doc comment above), and
-   * `reconcileTrackedBranches()` (worker/cms-worker.ts) only
+   * `reconcileTrackedBranches()` (worker/git-sync.ts) only
    * non-destructively brings `refs/heads/*` toward what's tracked there — so
    * a branch that another CanopyCMS deployment sharing this repo (or a
    * direct push to GitHub) just created can sit in the tracking namespace
@@ -603,7 +629,7 @@ export class GitManager {
    * "absent" deterministic instead of parsing update-ref's locale-dependent
    * failure text, and its captured SHA is passed to `update-ref -d` as the
    * expected old value -- same pattern as reconcileTrackedBranches'
-   * guarded updates (worker/cms-worker.ts): a concurrent Lambda push
+   * guarded updates (worker/git-sync.ts): a concurrent Lambda push
    * re-creating/moving this branch between the read and the delete makes
    * update-ref throw (surfaced as the caller's best-effort warning) instead
    * of silently deleting a commit that was just pushed. No
@@ -1131,7 +1157,7 @@ export class GitManager {
     // Merge the just-fetched tip (pinned to a SHA), not <remote>/<base>:
     // workspaces are cloned --single-branch, so the remote-tracking ref for
     // any branch other than the cloned one never exists (same fix as the
-    // worker's rebase loop — see cms-worker.ts), and FETCH_HEAD itself is a
+    // worker's rebase loop — see worker/rebase.ts), and FETCH_HEAD itself is a
     // shared mutable file repointed by any other fetch in this clone.
     const fetchedTip = (await this.git.revparse(['FETCH_HEAD'])).trim()
     try {

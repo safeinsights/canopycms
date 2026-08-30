@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { mockConsole } from './console-spy.js'
+import { mockConsole } from './console-spy'
 
 describe('mockConsole', () => {
   it('captures console.warn', () => {

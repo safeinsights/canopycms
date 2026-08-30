@@ -1,4 +1,5 @@
-import { describe, expect, it, vi, beforeEach } from 'vitest'
+import { afterEach, describe, expect, it, vi, beforeEach } from 'vitest'
+import { readFile } from 'node:fs/promises'
 import type { NextConfig } from 'next'
 
 // Track which packages should be "uninstalled" for each test
@@ -164,6 +165,123 @@ describe('withCanopy', () => {
       expect(result.pageExtensions).toContain('static.ts')
       expect(result.pageExtensions).toContain('static.tsx')
       expect(result.pageExtensions).not.toContain('server.ts')
+    })
+  })
+
+  describe('generateBuildId (static-export reproducibility)', () => {
+    const ORIGINAL_BUILD_ID = process.env.CANOPY_BUILD_ID
+
+    afterEach(() => {
+      if (ORIGINAL_BUILD_ID === undefined) delete process.env.CANOPY_BUILD_ID
+      else process.env.CANOPY_BUILD_ID = ORIGINAL_BUILD_ID
+      // This package has no vitest.config.ts, so `restoreMocks` is false. Without this, a spy
+      // installed by a test that throws before its inline restore stays installed for the rest of
+      // the file — which turns one real regression into a cascade of unrelated-looking failures.
+      vi.restoreAllMocks()
+    })
+
+    /** Invoke the pinned resolver, asserting it was installed at all. */
+    async function resolveBuildId(config: NextConfig): Promise<string | null> {
+      expect(config.generateBuildId).toBeTypeOf('function')
+      return await config.generateBuildId!()
+    }
+
+    it('is not installed at all on a non-static build', () => {
+      process.env.CANOPY_BUILD_ID = 'deadbeef'
+      // The CMS build keeps Next's random default on purpose: the two dual-build flavors have
+      // different chunk sets, and one shared id would name both.
+      expect(withCanopy({}, { staticBuild: false })).not.toHaveProperty('generateBuildId')
+      expect(withCanopy({})).not.toHaveProperty('generateBuildId')
+    })
+
+    it('returns the env value on a static build', async () => {
+      process.env.CANOPY_BUILD_ID = 'fd91b36c'
+      expect(await resolveBuildId(withCanopy({}, { staticBuild: true }))).toBe('fd91b36c')
+    })
+
+    it('passes through an id containing "ad", which Next only re-rolls on the null path', async () => {
+      // A hex tree hash routinely contains 'ad'. Next's re-roll loop runs only when the resolver
+      // returns null, so returning the string directly is what makes a tree hash usable.
+      process.env.CANOPY_BUILD_ID = 'ad0be123'
+      expect(await resolveBuildId(withCanopy({}, { staticBuild: true }))).toBe('ad0be123')
+    })
+
+    it('falls back to null when unset', async () => {
+      delete process.env.CANOPY_BUILD_ID
+      expect(await resolveBuildId(withCanopy({}, { staticBuild: true }))).toBeNull()
+    })
+
+    it('falls back to null for an empty env var rather than producing an empty build id', async () => {
+      // The `||` vs `??` case. An empty string survives `??`, then clears Next's
+      // `typeof buildId !== 'string'` guard, and the build ships with an EMPTY build id.
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      process.env.CANOPY_BUILD_ID = ''
+      expect(await resolveBuildId(withCanopy({}, { staticBuild: true }))).toBeNull()
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('NOT reproducible'))
+    })
+
+    it('falls back to null for a whitespace-only env var, and says so', async () => {
+      // `||` alone is not enough: Next trims AFTER its `typeof buildId !== 'string'` guard, so a
+      // whitespace-only value is truthy, clears the guard, and lands as an EMPTY build id.
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      process.env.CANOPY_BUILD_ID = '   '
+      expect(await resolveBuildId(withCanopy({}, { staticBuild: true }))).toBeNull()
+      // Blank-but-set is a broken pipeline, not a choice: warn rather than silently shipping a
+      // random id to someone who believes they pinned it.
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('NOT reproducible'))
+    })
+
+    it('does not warn when the env var is simply unset', async () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      delete process.env.CANOPY_BUILD_ID
+      await resolveBuildId(withCanopy({}, { staticBuild: true }))
+      expect(warn).not.toHaveBeenCalled()
+    })
+
+    it('trims a padded env var, matching what Next itself would store', async () => {
+      process.env.CANOPY_BUILD_ID = '  fd91b36c  '
+      expect(await resolveBuildId(withCanopy({}, { staticBuild: true }))).toBe('fd91b36c')
+    })
+
+    it.each(['heads/main', '..', '.', 'has space', 'v1/2', 'a\\b', 'x'.repeat(256)])(
+      'rejects %s, which Next would splice into _next/static/ unchanged',
+      async (value) => {
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+        process.env.CANOPY_BUILD_ID = value
+        expect(await resolveBuildId(withCanopy({}, { staticBuild: true }))).toBeNull()
+        expect(warn).toHaveBeenCalledWith(expect.stringContaining('[A-Za-z0-9._-]'))
+      },
+    )
+
+    it.each(['fd91b36c', 'v1.2.3', 'build_id-42', 'ad0be123', 'a..b', 'x'.repeat(255)])(
+      'accepts %s',
+      async (value) => {
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+        process.env.CANOPY_BUILD_ID = value
+        expect(await resolveBuildId(withCanopy({}, { staticBuild: true }))).toBe(value)
+        expect(warn).not.toHaveBeenCalled()
+      },
+    )
+
+    it('lets an explicit host config value win', async () => {
+      process.env.CANOPY_BUILD_ID = 'from-env'
+      const result = withCanopy({ generateBuildId: () => 'from-host' }, { staticBuild: true })
+      expect(await resolveBuildId(result)).toBe('from-host')
+    })
+  })
+
+  describe('published documentation', () => {
+    it("keeps withCanopy's JSDoc attached to withCanopy", async () => {
+      // This bug shipped once on this branch: a helper inserted between the JSDoc block and the
+      // declaration orphans the block onto the helper, and `dist/config.d.ts` loses every line of
+      // withCanopy's adopter-facing docs. Nothing in-repo notices, because workspace consumers
+      // resolve `./config` to dist and never hover the type. Asserted on source order rather than
+      // on emitted output so the check costs nothing and fails at the point of the mistake.
+      const source = await readFile(new URL('./with-canopy.ts', import.meta.url), 'utf-8')
+      const jsdocStart = source.indexOf('Wrap your Next.js config')
+      expect(jsdocStart).toBeGreaterThan(-1)
+      const afterBlock = source.slice(source.indexOf('*/', jsdocStart) + 2).trimStart()
+      expect(afterBlock.startsWith('export function withCanopy(')).toBe(true)
     })
   })
 

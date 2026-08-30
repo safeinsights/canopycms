@@ -2,7 +2,7 @@
 
 Found by the August 2026 whole-codebase baseline review (5 independent Fable reviews at
 `integration-202607-a` @ `6770327c`).
-Full detail: [REVIEW-REPORT-2026-08.md](../../../REVIEW-REPORT-2026-08.md).
+Full detail: [docs/reviews/2026-08.md](../../../docs/reviews/2026-08.md).
 
 Part A blocks the production-readiness program directly (see
 [production-readiness-program.md](../production-readiness-program.md)). Part B is the verified

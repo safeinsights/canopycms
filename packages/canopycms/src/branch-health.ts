@@ -204,7 +204,7 @@ export async function scanBranchHealth(
       // branch.json, etc.) land here: all are "needs admin attention",
       // and none may throw out of the scan.
       //
-      // [MEDIUM-2] parseError is served to the browser via the admin
+      // [REDACT] parseError is served to the browser via the admin
       // branch-health endpoint, so it must never leak the absolute
       // workspace path. BranchMetadataCorruptError carries `parseCause`
       // (the raw JSON.parse message, path-free) for exactly this --

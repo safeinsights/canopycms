@@ -7,7 +7,7 @@ import {
   shouldRetrySecondaryRateLimit,
 } from './github-service'
 import type { CanopyConfig } from './config'
-import { mockConsole } from './test-utils/console-spy.js'
+import { mockConsole } from './test-utils/console-spy'
 
 describe('GitHubService', () => {
   describe('parseRemoteUrl', () => {

@@ -8,15 +8,26 @@ import eslintConfigPrettier from 'eslint-config-prettier'
 /** @type {import('eslint').Linter.Config[]} */
 const eslintConfig = [
   // Global ignores
+  //
+  // Every build-output pattern is `**/`-prefixed. Flat-config `ignores` resolve
+  // against the CONFIG file's directory, not the cwd, so a bare `.next/**` only
+  // ever matched the repo root -- `apps/test-app/.next/` stayed lintable. That
+  // was invisible until 2026-08-23, when apps/test-app got a lint script and
+  // `eslint .`: CI passed anyway, because the validate job lints before
+  // anything builds, so the directory did not exist yet. It fails the moment a
+  // developer lints after a local build or an e2e run.
   {
     ignores: [
-      'node_modules/**',
-      'dist/**',
-      '.next/**',
-      '.turbo/**',
-      'coverage/**',
-      'test-results/**',
-      'playwright-report/**',
+      '**/node_modules/**',
+      '**/dist/**',
+      '**/.next/**',
+      '**/.turbo/**',
+      '**/coverage/**',
+      '**/test-results/**',
+      '**/playwright-report/**',
+      // Canopy's own dev workspace: a branch CLONE of the adopter app, so
+      // linting it means linting a stale second copy of the repo's own files.
+      '**/.canopy-dev/**',
       // Next.js-generated type shim (regenerated on every build; not meant to be linted)
       '**/next-env.d.ts',
       'packages/canopycms/src/api/client.ts',
@@ -111,6 +122,20 @@ const eslintConfig = [
   // Deliberately placed BEFORE the `**/worker/**` blocks below so their stricter
   // console ban still wins; no worker file is .mjs today, and this ordering is
   // what keeps that true if one ever is.
+  // PostCSS config files are CommonJS `.js` -- the one CJS shape left in the
+  // repo, since everything else is ESM `.mjs` or TypeScript. They were invisible
+  // until 2026-08-23, when apps/example1's lint glob widened from `app/` to `.`
+  // and apps/test-app got a lint script at all; both then failed `no-undef` on
+  // `module`. Scoped to the filename rather than `**/*.js` so a stray browser
+  // `.js` does not silently acquire node globals.
+  {
+    files: ['**/postcss.config.js'],
+    languageOptions: {
+      sourceType: 'commonjs',
+      globals: { module: 'writable', require: 'readonly', __dirname: 'readonly' },
+    },
+  },
+
   {
     files: ['**/*.mjs'],
     languageOptions: {
@@ -151,6 +176,39 @@ const eslintConfig = [
   // relevant rule was disabled, and the project-wide rule (above) would not have
   // helped anyway: it already allows warn/error/info.
   //
+  // Two invariants that were prose-only until 2026-08-23, both with silent,
+  // data-shaped failure modes that no test would notice.
+  //
+  // `ignores` deliberately excludes `**/worker/**`: flat config REPLACES a rule's
+  // options rather than merging them, so the worker block below (which sets its
+  // own `no-restricted-syntax` for the console ban) would drop these selectors
+  // for worker files anyway. Excluding them here makes that explicit rather than
+  // accidental. Verified safe: no production file under either `worker/`
+  // directory constructs a ContentStore or calls `matter()`.
+  //
+  // Tests are excluded too. Both rules are about PRODUCTION wiring: 61 test call
+  // sites legitimately construct a ContentStore on the default content root, and
+  // forcing the argument there buys nothing.
+  {
+    files: ['packages/canopycms/src/**/*.{ts,tsx}'],
+    ignores: ['**/worker/**', '**/*.test.{ts,tsx}', '**/__tests__/**', '**/__integration__/**'],
+    rules: {
+      'no-restricted-syntax': [
+        'error',
+        {
+          selector: "NewExpression[callee.name='ContentStore'][arguments.length<3]",
+          message:
+            'Pass ContentStoreOptions with contentRootName: config.contentRoot. It defaults to "content", and when that default is wrong the failure is silent and data-shaped — the ID index scans a directory that does not exist, so every ID-based lookup (reference resolution, entry links, order cleanup, rename) misses while path-based reads keep working. See ContentStoreOptions.contentRootName.',
+        },
+        {
+          selector: "CallExpression[callee.name='matter'][arguments.length<2]",
+          message:
+            "Call matter(raw, {}) with an options object, or justify a single-argument call with an eslint-disable naming which hazard does not apply. gray-matter keeps a PROCESS-GLOBAL cache keyed by file content: (1) a cache hit returns an object with `.matter` missing, which made comment preservation a preserve-on-first-save/drop-on-every-save-after bug, and (2) every caller parsing the same bytes gets the SAME `data` instance, so mutating it in place leaks one entry's body into an unrelated later parse. Both have already shipped once.",
+        },
+      ],
+    },
+  },
+
   // Expressed as `no-restricted-syntax` rather than `no-console`, for two
   // reasons that both bit during this change:
   //   1. `no-console` cannot express "allow nothing" - its schema rejects
@@ -199,7 +257,8 @@ const eslintConfig = [
   //                        resolved inside start(); its env-vs-config mismatch
   //                        warning is precisely what an operator greps for.
   //   schema/meta-loader.ts - in the worker's runtime import closure
-  //                        (worker/cms-worker.ts -> content-index-generation.ts
+  //                        (worker/git-sync.ts, worker/rebase.ts ->
+  //                        content-index-generation.ts
   //                        -> branch-schema-cache.ts -> schema/resolver.ts ->
   //                        here). Latent, not live, as of the sweep that added
   //                        it: no current worker path invokes schema

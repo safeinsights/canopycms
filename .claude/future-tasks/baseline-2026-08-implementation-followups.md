@@ -5,7 +5,7 @@ filed rather than folded in, so the PR under way stayed scoped. Recorded here be
 implementation session's own context is not durable — the repo is.
 
 Epic: `integration-202608-a`, branched from `integration-202607-a` @ `bfe76e1e`. See
-[REVIEW-REPORT-2026-08.md](../../REVIEW-REPORT-2026-08.md) for the findings themselves and
+[docs/reviews/2026-08.md](../../docs/reviews/2026-08.md) for the findings themselves and
 [pr172-review-followups.md](resolved/pr172-review-followups.md) for the human review's nine.
 
 Findings are struck ~~in place~~ as they resolve.

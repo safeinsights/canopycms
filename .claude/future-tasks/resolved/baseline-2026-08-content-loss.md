@@ -2,7 +2,7 @@
 
 Found by the August 2026 whole-codebase baseline review (5 independent Fable reviews at
 `integration-202607-a` @ `6770327c`, findings verified first-hand by the lead reviewer).
-Full traces: [REVIEW-REPORT-2026-08.md](../../../REVIEW-REPORT-2026-08.md) findings 1, 2, 5, 6, 8.
+Full traces: [docs/reviews/2026-08.md](../../../docs/reviews/2026-08.md) findings 1, 2, 5, 6, 8.
 
 These four are grouped because they are **one failure mode, not four bugs**: an operation
 reports success and the user's content is then silently lost or reverted. None is caught by the

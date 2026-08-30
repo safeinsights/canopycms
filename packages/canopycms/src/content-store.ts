@@ -1,3 +1,32 @@
+/**
+ * ContentStore — the authoritative read/write boundary for entry content.
+ *
+ * Everything that creates, reads, updates, renames or deletes an entry file goes
+ * through here. `api/content.ts` is its HTTP front door.
+ *
+ * ORIENTATION — this is one of seven `content-*` modules, and picking the wrong
+ * one costs more time than reading this comment:
+ *
+ *   content-store.ts       (this file) the write boundary, plus path-and-id resolution
+ *   content-reader.ts      branch-aware read facade over this store
+ *   content-listing.ts     batch listing (`listEntries`) for adopters
+ *   content-tree.ts        the adopter-facing navigable tree
+ *   content-id-index.ts    the id -> path index this store consults
+ *   content-index-registry.ts    IN-PROCESS cache invalidation registry
+ *   content-index-generation.ts  ON-DISK generation marker  <- near-homonym of the line above,
+ *                                unrelated job; check which one you want
+ *
+ * SHAPE — the CRUD/path/lock core is genuinely interwoven (`buildPaths` alone has
+ * ~25 call sites in this file), but two clusters are only loosely attached and are the ones
+ * to read in isolation: reference resolution (`resolveReferences` and friends, at
+ * the end of the file) and ID-index coherency (`idIndex`, `recordOwnMutation`,
+ * `refreshIndexForSuspiciousLookup`).
+ *
+ * The load-bearing rules are documented at the point of the rule, not here — see
+ * in particular `ContentStoreOptions.contentRootName`, the `[SLUG]` guard in
+ * `write()`, and the read-path note on `parseSlug`. Those comments are
+ * authoritative. Module map: ./AGENTS.md.
+ */
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import type { Dirent } from 'node:fs'
@@ -272,7 +301,17 @@ export interface ContentStoreOptions {
    * non-default content root would otherwise get an index built from a
    * directory that does not exist: empty, so every ID-based lookup (reference
    * resolution, entry links, order cleanup, rename) silently misses while
-   * path-based reads keep working. Defaults to 'content'.
+   * path-based reads keep working.
+   *
+   * Defaults to 'content'.
+   *
+   * ENFORCED BY LINT, not by the type. Omitting it is silent and data-shaped
+   * when wrong -- nothing throws, nothing logs, and only ID-addressed lookups
+   * miss -- so every production construction must pass it. That is checked by
+   * the `no-restricted-syntax` rule on `new ContentStore(...)` in
+   * eslint.config.mjs, which is scoped to non-test sources: making the field
+   * required in the TYPE would have forced the argument on 61 test call sites
+   * that legitimately want the default, for no gain in the 11 production ones.
    */
   contentRootName?: string
   /**
@@ -572,6 +611,54 @@ export class ContentStore {
     return item
   }
 
+  /**
+   * Is this path a COLLECTION schema item?
+   *
+   * The non-throwing form of `assertCollection`, reading the same `schemaIndex` -- which is the
+   * point. A caller that gates on this cannot disagree with what `buildPaths` will then do: the
+   * Map is last-wins, so where a subcollection's path collides with a parent's entry-type name
+   * both this and `buildPaths` see the collection. A `find` over the flat schema LIST is
+   * first-wins and would not.
+   *
+   * Type-only, deliberately -- `resolvePath` additionally requires `entries`, but a collection
+   * with subcollections and no entries of its own is legal, and mirroring that stricter test here
+   * would reject something `buildPaths` accepts.
+   *
+   * Exists for `readByUrlPath`'s URL-addressability gate; see `ReadContentInput`'s
+   * `urlAddressableOnly` and the note on `buildPaths`' entry-type branch below.
+   */
+  public isCollectionPath(collectionPath: LogicalPath): boolean {
+    return this.schemaIndex.get(normalizeFilesystemPath(collectionPath))?.type === 'collection'
+  }
+
+  /**
+   * Does this collection declare `entryTypeName` in its `entries` config?
+   *
+   * Mirrors `parseTypedFilename(filename, collection.entries)`, which is how `listEntries` decides
+   * whether a file on disk is one of the collection's entries at all. `buildPaths`' own directory
+   * scan deliberately does NOT check this -- it matches on slug alone, so that an entry whose type
+   * was renamed out of the schema stays findable and therefore still editable, renameable and
+   * deletable. Only URL resolution consults this, so what enumeration hides is not served.
+   *
+   * Returns FALSE when the collection declares no `entries` at all, which is stricter than
+   * `parseTypedFilename`'s own `if (entryTypes && ...)` guard and deliberately so: the enumerating
+   * surface is not `parseTypedFilename`, it is `listCollectionEntries`, and that returns `[]`
+   * outright for a collection with no `entries`. A collections-only container therefore publishes
+   * nothing, so a URL read that resolved a file sitting in one would be answering where nothing is
+   * advertised -- the exact disagreement this predicate exists to close. Such a file cannot have
+   * been created by the CMS (there is no entry type to create it as); it arrived by hand, by merge
+   * or by retrofit, and it is invisible to the sitemap and to static params either way.
+   *
+   * Returns true for a path that is not a collection at all, because that is rule 1's question,
+   * not this one's -- and under `urlAddressableOnly` rule 1 has already rejected it.
+   */
+  public declaresEntryType(collectionPath: LogicalPath, entryTypeName: string): boolean {
+    const item = this.schemaIndex.get(normalizeFilesystemPath(collectionPath))
+    if (item?.type !== 'collection') return true
+    if (!item.entries) return false
+    return item.entries.some((e) => e.name === entryTypeName)
+  }
+
   private assertCollection(collectionPath: LogicalPath): FlatSchemaItem & { type: 'collection' } {
     const item = this.assertSchemaItem(collectionPath)
     if (item.type !== 'collection') {
@@ -718,9 +805,20 @@ export class ContentStore {
 
     // Entry-type items: delegate to their parent collection.
     // Uses the same {type}.{slug}.{id}.{ext} pattern as all entries.
-    // NOTE: The API layer always resolves paths via resolvePath(), which returns
-    // the parent collection directly, so this branch may only fire on direct
-    // ContentStore usage (e.g., store.read('content/home', '')).
+    //
+    // This branch is for DIRECT ContentStore usage -- store.read('content/home', ''), and the
+    // read({ entryPath: 'content/home' }) API built on it, where the slug defaults to the entry
+    // type's own name. The API layer resolves paths via resolvePath(), which returns the parent
+    // collection directly and so never lands here.
+    //
+    // That used to be an observation, and it was WRONG: readByUrlPath reached this branch too,
+    // because `resolveUrlPathCandidates` happily produces `content/<typeName>` for the URL
+    // `/<typeName>` and the delegation below then answered it with the parent collection's index
+    // entry -- a URL no forward surface publishes. It is now enforced rather than assumed:
+    // readByUrlPath requires every candidate's entryPath to be a collection (see
+    // `isCollectionPath` and `ReadContentInput.urlAddressableOnly`). Narrowing the delegation
+    // ITSELF was the wrong fix -- write()/renameEntry()/delete() resolve through here as well,
+    // and the by-URL rule has no business constraining them.
     if (schemaItem.type === 'entry-type') {
       const parentPath = schemaItem.parentPath || ''
       const parentCollection = this.schemaIndex.get(parentPath)
@@ -954,12 +1052,22 @@ export class ContentStore {
         absolutePath,
       }
     } else {
+      // eslint-disable-next-line no-restricted-syntax -- see the copy below
       const parsed = matter(raw)
       doc = {
         collection: schemaItem.logicalPath,
         collectionName: schemaItem.name,
         format: format,
-        data: (parsed.data as Record<string, unknown>) ?? {},
+        // Copy, never the object gray-matter hands back: its cache is
+        // process-global and keyed by file content, so every caller parsing the
+        // same bytes gets the SAME `data` instance (the hazard content-listing.ts
+        // documents at length). Assigning it straight into `doc.data` was safe
+        // only by accident -- `resolveReferencesInData` spreads its input, so the
+        // shared object got replaced a few lines down. But that only happens when
+        // resolution runs: with `resolveReferences: false` the caller was handed
+        // the shared instance itself, and one mutation would poison every later
+        // parse of those bytes.
+        data: { ...((parsed.data as Record<string, unknown>) ?? {}) },
         body: parsed.content,
         bodyFieldName: findBodyFieldName(fields),
         relativePath,
