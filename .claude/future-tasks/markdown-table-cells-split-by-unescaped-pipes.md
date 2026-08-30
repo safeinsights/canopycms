@@ -18,12 +18,22 @@ In the instance that prompted this, the surviving row ended mid-sentence at `` �
 load-bearing half of the note was simply gone. Nothing warns, `prettier --check` passes, and
 `lint:docs` passes.
 
-## Known instances (all pre-existing, none in that branch's diff)
+## Known instances
 
-- `CODEBASE_GUIDE.md` — three rows in the `src/` core table (around the `config-test.ts`,
-  `types.ts` and neighbouring rows); the separator rows have already been widened by Prettier.
-- `.claude/future-tasks/index.md:222` — the `block-discriminator-precedence-disagreement` row
-  contains both `` `_type || template` `` and `` `||` ``.
+Counted with a separator-row-anchored, fence-aware pipe scan — an earlier hand count in this file
+was wrong in three ways, which is itself an argument for automating the check.
+
+- `CODEBASE_GUIDE.md` — **two** rows (`:62`, `:81`). The separator at `:59` has already been
+  widened by Prettier, which makes ~34 healthy rows in that table look mismatched to a naive
+  scanner and is what produced the earlier miscount of three.
+- `.claude/future-tasks/index.md:223` — the `block-discriminator-precedence-disagreement` row,
+  containing both `` `_type || template` `` and `` `||` ``.
+- `.claude/future-tasks/index.md:338` — `O_CREAT|O_EXCL`.
+
+**The branch that filed this task introduced a fourth instance and shipped it**, in the very row
+announcing the bug — caught only by a later review round. That is the strongest available
+argument for the check below: knowing about this failure mode is demonstrably not enough to avoid
+it, because the corruption is invisible in the source you are editing.
 
 Detect the rest with a cell-count comparison: for each contiguous run of table lines, compare
 each row's unescaped-pipe count against the header's, and report mismatches.

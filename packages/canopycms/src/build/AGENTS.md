@@ -13,9 +13,14 @@ Static build utilities (write AI content files to disk). `generateAIContentFiles
 `resolveBuildStamp` is the single place the environment is consulted for manifest determinism —
 `CANOPY_BUILD_ID` and `SOURCE_DATE_EPOCH` — and it lives here, at the build boundary, rather than
 in `ai/generate.ts`, precisely so a `SOURCE_DATE_EPOCH` exported in a server environment cannot
-freeze the runtime `/ai/*` route's timestamps. A malformed `SOURCE_DATE_EPOCH` warns and is
-ignored rather than failing the build (same stance as `readGeneratedRecord`) — an empty or
-whitespace-only value is not "malformed" but simply unset, so it warns about nothing,
-matching how `CANOPY_BUILD_ID` treats the same input; note that ignoring
-it while a build id is set means `generated` stays omitted, which is deliberate — a bad value
-must not resurrect a field the adopter's configuration says is meaningless.
+freeze the runtime `/ai/*` route's timestamps. Both variables follow one rule: **unset is a
+deliberate opt-out and says nothing; set-but-unusable is a broken pipeline and warns**, then falls
+back rather than failing the build (same stance as `readGeneratedRecord`). "Unusable" means blank
+for either, plus a non-`[A-Za-z0-9._-]+` shape for `CANOPY_BUILD_ID` (it becomes a path segment
+under `_next/static/`, so `heads/main` would nest that directory) and a non-decimal-seconds value
+for `SOURCE_DATE_EPOCH`.
+
+Note why the `SOURCE_DATE_EPOCH` warning earns its keep: when a build id is also set, an unpinned
+timestamp means `generated` is OMITTED rather than falling back to a live clock, so without the
+warning the field simply disappears with nothing said. A bad value must not resurrect a field the
+adopter's configuration says is meaningless — but it must not vanish silently either.

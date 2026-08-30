@@ -173,6 +173,10 @@ describe('withCanopy', () => {
     afterEach(() => {
       if (ORIGINAL_BUILD_ID === undefined) delete process.env.CANOPY_BUILD_ID
       else process.env.CANOPY_BUILD_ID = ORIGINAL_BUILD_ID
+      // This package has no vitest.config.ts, so `restoreMocks` is false. Without this, a spy
+      // installed by a test that throws before its inline restore stays installed for the rest of
+      // the file — which turns one real regression into a cascade of unrelated-looking failures.
+      vi.restoreAllMocks()
     })
 
     /** Invoke the pinned resolver, asserting it was installed at all. */
@@ -212,7 +216,7 @@ describe('withCanopy', () => {
       const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
       process.env.CANOPY_BUILD_ID = ''
       expect(await resolveBuildId(withCanopy({}, { staticBuild: true }))).toBeNull()
-      warn.mockRestore()
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('NOT reproducible'))
     })
 
     it('falls back to null for a whitespace-only env var, and says so', async () => {
@@ -224,7 +228,6 @@ describe('withCanopy', () => {
       // Blank-but-set is a broken pipeline, not a choice: warn rather than silently shipping a
       // random id to someone who believes they pinned it.
       expect(warn).toHaveBeenCalledWith(expect.stringContaining('NOT reproducible'))
-      warn.mockRestore()
     })
 
     it('does not warn when the env var is simply unset', async () => {
@@ -232,13 +235,32 @@ describe('withCanopy', () => {
       delete process.env.CANOPY_BUILD_ID
       await resolveBuildId(withCanopy({}, { staticBuild: true }))
       expect(warn).not.toHaveBeenCalled()
-      warn.mockRestore()
     })
 
     it('trims a padded env var, matching what Next itself would store', async () => {
       process.env.CANOPY_BUILD_ID = '  fd91b36c  '
       expect(await resolveBuildId(withCanopy({}, { staticBuild: true }))).toBe('fd91b36c')
     })
+
+    it.each(['heads/main', '..', '.', 'has space', 'v1/2', 'a\\b'])(
+      'rejects %s, which Next would splice into _next/static/ unchanged',
+      async (value) => {
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+        process.env.CANOPY_BUILD_ID = value
+        expect(await resolveBuildId(withCanopy({}, { staticBuild: true }))).toBeNull()
+        expect(warn).toHaveBeenCalledWith(expect.stringContaining('[A-Za-z0-9._-]+'))
+      },
+    )
+
+    it.each(['fd91b36c', 'v1.2.3', 'build_id-42', 'ad0be123', 'a..b'])(
+      'accepts %s',
+      async (value) => {
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+        process.env.CANOPY_BUILD_ID = value
+        expect(await resolveBuildId(withCanopy({}, { staticBuild: true }))).toBe(value)
+        expect(warn).not.toHaveBeenCalled()
+      },
+    )
 
     it('lets an explicit host config value win', async () => {
       process.env.CANOPY_BUILD_ID = 'from-env'

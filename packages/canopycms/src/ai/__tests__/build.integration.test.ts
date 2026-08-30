@@ -544,6 +544,30 @@ describe('manifest build stamp', () => {
     expect(typeof manifest.generated).toBe('string')
   })
 
+  it.each(['heads/main', '..', 'has space'])(
+    'rejects an unusable CANOPY_BUILD_ID (%s) and records none',
+    async (value) => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      process.env.CANOPY_BUILD_ID = value
+      const manifest = await generateManifest()
+      expect(manifest).not.toHaveProperty('buildId')
+      // Rejected, so `generated` comes back: the omission is keyed on a USABLE build id.
+      expect(typeof manifest.generated).toBe('string')
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('[A-Za-z0-9._-]+'))
+    },
+  )
+
+  it('warns when SOURCE_DATE_EPOCH is set but blank, matching CANOPY_BUILD_ID', async () => {
+    // Both variables treat set-but-unusable as a broken pipeline. This one matters more than it
+    // looks: with a build id also set, an unpinned timestamp means `generated` is OMITTED, so the
+    // field disappears with no other signal.
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    process.env.SOURCE_DATE_EPOCH = '  '
+    const manifest = await generateManifest()
+    expect(typeof manifest.generated).toBe('string')
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('SOURCE_DATE_EPOCH is set but blank'))
+  })
+
   it('tolerates surrounding whitespace in SOURCE_DATE_EPOCH', async () => {
     // Trimmed, not rejected: the intent of a shell-exported ` 1700000000 ` is unambiguous.
     process.env.SOURCE_DATE_EPOCH = ' 1700000000 '

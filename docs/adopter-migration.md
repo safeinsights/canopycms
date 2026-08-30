@@ -751,8 +751,11 @@ hex id containing the letters `ad` is safe here — Next re-rolls such ids only 
 fallback path, and a value returned from `generateBuildId` is used verbatim.
 
 **Now deletable.** A per-site `generateBuildId: () => process.env.<YOUR_VAR> || null` line in
-`next.config.ts`, added by hand to pin the build id. If you wrote one, delete it and export
-`CANOPY_BUILD_ID` instead — but check its operator first: written with `??` rather than `||`, an
+`next.config.ts`, added by hand to pin the build id — **provided you also pass
+`{ staticBuild: true }`**. On a non-static build `withCanopy` leaves `generateBuildId` alone by
+design, so deleting your line there un-pins the build id silently and Next goes back to `nanoid()`;
+keep it. If you do pass `staticBuild: true`, delete the line and export `CANOPY_BUILD_ID`
+instead — but check its operator first: written with `??` rather than `||`, an
 empty-string environment variable survives, clears Next's `typeof buildId !== 'string'` guard,
 and ships an **empty** build id. Also deletable: any post-build step that rewrites or strips the
 manifest's `generated` field to make output comparable.

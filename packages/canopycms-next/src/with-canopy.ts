@@ -148,6 +148,62 @@ function resolveReactAliases(resolve: NodeRequire['resolve']): Record<string, st
 }
 
 /**
+ * A build id Next can safely use as a single path segment.
+ *
+ * Next applies NO validation: `generateBuildId`'s return is trimmed and interpolated straight
+ * into `out/_next/static/<id>/`. So `CANOPY_BUILD_ID=$(git describe --all)` yields `heads/main`
+ * and silently nests that directory one level deeper than every emitted URL expects, and a value
+ * containing `..` climbs out of it. Both are the adopter's own pipeline misfiring rather than an
+ * injection vector, which is exactly why a clear message beats a broken deploy.
+ */
+const SAFE_BUILD_ID = /^[A-Za-z0-9._-]+$/
+
+function isUsableBuildId(value: string): boolean {
+  // `.` and `..` clear the character class but are not names — as a path segment they resolve to
+  // the static directory itself or its parent. `a..b` is an ordinary filename and stays allowed.
+  return SAFE_BUILD_ID.test(value) && value !== '.' && value !== '..'
+}
+
+/**
+ * Resolve Next's build id from `CANOPY_BUILD_ID`, or `null` to keep Next's random default.
+ *
+ * Both rejections warn rather than passing the value through or throwing. Unset means "I did not
+ * ask for a reproducible build" and says nothing; set-but-unusable almost always means a pipeline
+ * computed the id and the command failed (`CANOPY_BUILD_ID=$(git rev-parse ...)`), so the adopter
+ * believes they pinned it and would otherwise get a random — or structurally broken — artifact
+ * with nothing said. Falling back to Next's default keeps the build working; it is only the
+ * reproducibility that is lost, and the warning is what makes that recoverable.
+ *
+ * Declared above `withCanopy` deliberately: sitting between that function and its JSDoc block
+ * orphans the block onto this one, and the shipped `dist/config.d.ts` loses every line of
+ * `withCanopy`'s adopter-facing documentation.
+ */
+function resolveStaticBuildId(): string | null {
+  const raw = process.env.CANOPY_BUILD_ID
+  const trimmed = raw?.trim()
+  if (raw === undefined) return null
+
+  if (!trimmed) {
+    console.warn(
+      "CanopyCMS: CANOPY_BUILD_ID is set but blank — using Next's random build id instead. " +
+        'This export is NOT reproducible; two builds of one source tree will differ.',
+    )
+    return null
+  }
+
+  if (!isUsableBuildId(trimmed)) {
+    console.warn(
+      `CanopyCMS: ignoring CANOPY_BUILD_ID="${trimmed}" — a build id becomes a single path ` +
+        'segment under _next/static/, so it must match [A-Za-z0-9._-]+. Using Next’s random ' +
+        'build id instead; this export is NOT reproducible.',
+    )
+    return null
+  }
+
+  return trimmed
+}
+
+/**
  * Wrap your Next.js config to set up module transpilation and React
  * resolution for CanopyCMS packages.
  *
@@ -188,26 +244,6 @@ function resolveReactAliases(resolve: NodeRequire['resolve']): Record<string, st
  * })
  * ```
  */
-/**
- * Resolve Next's build id from `CANOPY_BUILD_ID`, or `null` to keep Next's random default.
- *
- * Blank-but-set is warned about rather than silently accepted. Unset means "I did not ask for a
- * reproducible build"; set-and-blank almost always means a pipeline computed the id and the
- * command failed (`CANOPY_BUILD_ID=$(git rev-parse ...)`), so the adopter believes they pinned it
- * and would otherwise get a random artifact with nothing said.
- */
-function resolveStaticBuildId(): string | null {
-  const raw = process.env.CANOPY_BUILD_ID
-  const trimmed = raw?.trim()
-  if (raw !== undefined && !trimmed) {
-    console.warn(
-      "CanopyCMS: CANOPY_BUILD_ID is set but blank — using Next's random build id instead. " +
-        'This export is NOT reproducible; two builds of one source tree will differ.',
-    )
-  }
-  return trimmed || null
-}
-
 export function withCanopy(
   nextConfig: NextConfig = {},
   options: WithCanopyOptions = {},

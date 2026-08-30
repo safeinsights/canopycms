@@ -3002,6 +3002,9 @@ rather than the content, so anything reading it as "how fresh is this content?" 
 `SOURCE_DATE_EPOCH` as well if you want a timestamp that describes the _source_. With neither
 variable set nothing changes: `generated` is present, as it always was.
 
+The example below shows the both-variables-set case, which is the only one where these two fields
+appear together:
+
 ```json
 {
   "buildId": "fd91b36c",
@@ -3196,16 +3199,27 @@ CANOPY_BUILD_ID=fd91b36c                       # Identifies the build artifact (
 { staticBuild: true })` uses it as Next.js's build id -- Next's default is random, so without it
 two builds of one source tree land in different `out/_next/static/<id>/` directories. And
 `canopycms generate-ai-content` records it as the AI manifest's `buildId`. Unset, both fall back
-to today's behaviour. Any string Next accepts works; a content hash of your source tree is the
-usual choice. Next's build id is deliberately left alone on non-static builds, so a dual-build site's two
-artifacts keep distinct ids; the AI manifest records `buildId` whenever
+to today's behaviour. Next's build id is deliberately left alone on non-static builds, so a
+dual-build site's two artifacts keep distinct ids; the AI manifest records `buildId` whenever
 `generate-ai-content` runs.
+
+The value must match `[A-Za-z0-9._-]+`, because Next splices it into `out/_next/static/<id>/` as a
+single path segment with no validation of its own -- `git describe --all` returns `heads/main`,
+which would nest that directory one level deeper than every emitted URL expects. A content hash of
+your source tree is the usual choice; note that a commit SHA is not equivalent, since a rebase or
+cherry-pick gives an identical tree a different commit. A value that is set but blank or unusable
+is ignored with a warning rather than silently producing a random id.
+
+Export it in the environment rather than in a dotenv file. Next loads those before it asks for a
+build id, but `canopycms generate-ai-content` does not, so a value living only in
+`.env.production` would pin Next's build id and leave the manifest's `buildId` absent.
 
 `SOURCE_DATE_EPOCH` (decimal seconds since the Unix epoch) pins the AI manifest's `generated`
 timestamp. It is the [Reproducible Builds](https://reproducible-builds.org/docs/source-date-epoch/)
 convention, kept under its standard name so a build harness that already exports it for other
-tools gets this for free. A malformed value is ignored with a warning rather than failing
-the build.
+tools gets this for free. Like `CANOPY_BUILD_ID`, a value that is set but blank or malformed is
+ignored with a warning rather than failing the build -- worth heeding, because when a build id is
+also set an unpinned timestamp means `generated` is omitted entirely.
 
 For Clerk authentication:
 

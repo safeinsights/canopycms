@@ -93,6 +93,25 @@ export interface GenerateAIContentFilesOptions {
 }
 
 /**
+ * A `CANOPY_BUILD_ID` usable as a build id: it becomes a single path segment under
+ * `_next/static/`, so a value like `heads/main` (what `git describe --all` returns) would nest
+ * that directory, and one containing `..` would climb out of it.
+ *
+ * Deliberately duplicated in `canopycms-next`'s `with-canopy.ts` rather than shared. That file is
+ * loaded by `next.config.ts` before any bundler runs, which is why it ships pre-built and imports
+ * nothing from this package; importing a constant from here would pull this module's graph —
+ * `node:fs` included — into a config file that must be plain executable JavaScript. The two
+ * copies must agree, and the tests on both sides assert the same set of values.
+ */
+const SAFE_BUILD_ID = /^[A-Za-z0-9._-]+$/
+
+function isUsableBuildId(value: string): boolean {
+  // `.` and `..` clear the character class but are not names — as a path segment they resolve to
+  // the static directory itself or its parent. `a..b` is an ordinary filename and stays allowed.
+  return SAFE_BUILD_ID.test(value) && value !== '.' && value !== '..'
+}
+
+/**
  * Resolve the manifest's build stamp from the environment.
  *
  * This lives at the BUILD boundary, not inside `generateAIContent`, because the same generator
@@ -105,34 +124,58 @@ export interface GenerateAIContentFilesOptions {
  * for free. `CANOPY_BUILD_ID` is ours: Next has no such variable, and the generator reading it
  * is framework-agnostic.
  *
- * A malformed `SOURCE_DATE_EPOCH` warns and is ignored rather than failing the build — same
- * stance as `readGeneratedRecord` above. Note what ignoring it means when a build id is set:
- * `generatedAt` stays undefined and `generated` is omitted. A bad value must not resurrect a
- * field the adopter's configuration says is meaningless.
+ * Every rejection warns and is ignored rather than failing the build — same stance as
+ * `readGeneratedRecord` above. Both variables treat "set but unusable" as a broken pipeline
+ * (`SOURCE_DATE_EPOCH=$(git log -1 --format=%ct)` with a failing command) and say so, while
+ * "unset" is a deliberate opt-out and says nothing.
+ *
+ * Note what ignoring a bad `SOURCE_DATE_EPOCH` means when a build id IS set: `generatedAt` stays
+ * undefined, so `generated` is omitted rather than falling back to a live clock. A bad value must
+ * not resurrect a field the adopter's configuration says is meaningless — which is also why that
+ * case warns rather than failing silently, since the field simply disappears.
  */
 function resolveBuildStamp(): { generatedAt?: string; buildId?: string } {
-  // Trimmed for the same reason SOURCE_DATE_EPOCH is, plus one specific to this value: Next
-  // trims the build id it receives, so an untrimmed value here would record a `buildId` that
-  // disagrees with the `_next/static/<id>/` directory of the very artifact it stamps.
+  // Trimmed and shape-checked with the same rule `withCanopy` applies, so that when an adopter
+  // pins BOTH halves of a build the manifest's `buildId` and Next's `_next/static/<id>/` agree.
+  // (They are independent readers of one variable: a host-supplied `generateBuildId`, or the CMS
+  // flavor of a dual build, can still leave Next on a different id — this only guarantees that
+  // the variable itself is read identically.)
   const rawBuildId = process.env.CANOPY_BUILD_ID
-  const buildId = rawBuildId?.trim() || undefined
-  if (rawBuildId !== undefined && !buildId) {
-    // Set-and-blank is almost always a pipeline that computed the id and failed, so the adopter
-    // believes they pinned it. Unset is a deliberate "not reproducible" and warrants no output.
-    console.warn('  CANOPY_BUILD_ID is set but blank — recording no buildId in the manifest.')
+  const trimmedBuildId = rawBuildId?.trim()
+  let buildId: string | undefined
+  if (rawBuildId === undefined) {
+    buildId = undefined
+  } else if (!trimmedBuildId) {
+    console.warn(
+      'CanopyCMS: CANOPY_BUILD_ID is set but blank — recording no buildId in the manifest.',
+    )
+  } else if (!isUsableBuildId(trimmedBuildId)) {
+    console.warn(
+      `CanopyCMS: ignoring CANOPY_BUILD_ID="${trimmedBuildId}": must match [A-Za-z0-9._-]+ to be usable ` +
+        'as a build id.',
+    )
+  } else {
+    buildId = trimmedBuildId
   }
-  const rawEpoch = process.env.SOURCE_DATE_EPOCH?.trim()
-  if (!rawEpoch) return { buildId }
+
+  const rawEpoch = process.env.SOURCE_DATE_EPOCH
+  const trimmedEpoch = rawEpoch?.trim()
+  if (rawEpoch !== undefined && !trimmedEpoch) {
+    console.warn(
+      'CanopyCMS: SOURCE_DATE_EPOCH is set but blank — leaving the generated timestamp unpinned.',
+    )
+  }
+  if (!trimmedEpoch) return { buildId }
 
   // Digits only, applied AFTER trimming: surrounding whitespace is a plausible accident in a
   // shell-exported variable and the intent is unambiguous, but `Number('0x10')` also parses and
-  // `0x10` is not a SOURCE_DATE_EPOCH. The range check catches values large enough to overflow
-  // to Invalid Date.
-  const seconds = /^\d+$/.test(rawEpoch) ? Number(rawEpoch) : Number.NaN
+  // `0x10` is not a SOURCE_DATE_EPOCH. The `Number.isNaN` check below also catches values large
+  // enough that `* 1000` overflows the Date range.
+  const seconds = /^\d+$/.test(trimmedEpoch) ? Number(trimmedEpoch) : Number.NaN
   const date = new Date(seconds * 1000)
   if (Number.isNaN(date.getTime())) {
     console.warn(
-      `  Ignoring SOURCE_DATE_EPOCH="${rawEpoch}": expected decimal seconds since the Unix epoch.`,
+      `CanopyCMS: ignoring SOURCE_DATE_EPOCH="${trimmedEpoch}": expected decimal seconds since the Unix epoch.`,
     )
     return { buildId }
   }
