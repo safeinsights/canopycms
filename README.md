@@ -2993,6 +2993,7 @@ seconds since the Unix epoch, the Reproducible Builds convention):
 | ------------------------- | ------------------------------- | -------------- |
 | neither set (the default) | the time of the build           | absent         |
 | `CANOPY_BUILD_ID`         | **absent**                      | the id you set |
+| `SOURCE_DATE_EPOCH`       | pinned from that value          | absent         |
 | both                      | pinned from `SOURCE_DATE_EPOCH` | the id you set |
 
 Declaring a build id omits `generated` on purpose. If you build an artifact once and promote

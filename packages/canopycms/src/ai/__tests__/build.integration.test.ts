@@ -86,6 +86,29 @@ async function setupContent(root: string, schema: RootCollectionConfig) {
   return { config, flat, store }
 }
 
+// `generateAIContentFiles` reads CANOPY_BUILD_ID / SOURCE_DATE_EPOCH from the ambient environment,
+// so EVERY test in this file — not just the build-stamp ones — is sensitive to them. Scrubbed at
+// file level because the README now tells adopters to export CANOPY_BUILD_ID, which makes "a
+// developer exercising this feature has it set in their shell" the expected case rather than an
+// exotic one; without this, unrelated pre-existing assertions fail on their machine and not in CI.
+const BUILD_STAMP_ENV = ['CANOPY_BUILD_ID', 'SOURCE_DATE_EPOCH'] as const
+const savedBuildStampEnv = new Map<string, string | undefined>()
+
+beforeEach(() => {
+  for (const key of BUILD_STAMP_ENV) {
+    savedBuildStampEnv.set(key, process.env[key])
+    delete process.env[key]
+  }
+})
+
+afterEach(() => {
+  for (const key of BUILD_STAMP_ENV) {
+    const value = savedBuildStampEnv.get(key)
+    if (value === undefined) delete process.env[key]
+    else process.env[key] = value
+  }
+})
+
 describe('generateAIContentFiles', () => {
   let contentRoot: string
   let outputDir: string
@@ -410,29 +433,20 @@ describe('generateAIContentFiles', () => {
 
 describe('manifest build stamp', () => {
   let contentRoot: string
-  const ENV_KEYS = ['CANOPY_BUILD_ID', 'SOURCE_DATE_EPOCH'] as const
-  const originalEnv = new Map<string, string | undefined>()
 
   beforeEach(async () => {
     contentRoot = await tmpDir()
-    for (const key of ENV_KEYS) {
-      originalEnv.set(key, process.env[key])
-      delete process.env[key]
-    }
   })
 
   afterEach(() => {
     vi.restoreAllMocks()
-    for (const key of ENV_KEYS) {
-      const value = originalEnv.get(key)
-      if (value === undefined) delete process.env[key]
-      else process.env[key] = value
-    }
+    // Fake timers are NOT undone by restoreAllMocks. Restored here rather than in the one test
+    // that installs them, so a throw mid-test cannot leave the rest of the file frozen in 2026.
+    vi.useRealTimers()
   })
 
-  /** Generate into a fresh output dir and return the manifest as PARSED JSON, not the in-memory
-   * object — key omission is the behaviour under test, and only the serialized form shows it. */
-  async function generateManifest(): Promise<Record<string, unknown>> {
+  /** Generate into a fresh output dir and return the manifest file's RAW bytes. */
+  async function generateManifestRaw(): Promise<string> {
     const { config, flat } = await setupContent(contentRoot, testSchema)
     vi.spyOn(process, 'cwd').mockReturnValue(contentRoot)
     const out = await tmpDir()
@@ -442,8 +456,13 @@ describe('manifest build stamp', () => {
       outputDir: out,
       _testFlatSchema: flat,
     })
-    const raw = await fs.readFile(path.join(out, 'manifest.json'), 'utf-8')
-    return JSON.parse(raw) as Record<string, unknown>
+    return await fs.readFile(path.join(out, 'manifest.json'), 'utf-8')
+  }
+
+  /** The same, parsed. Read from the FILE rather than the in-memory object: key omission is the
+   * behaviour under test, and only the serialized form can show a key is genuinely absent. */
+  async function generateManifest(): Promise<Record<string, unknown>> {
+    return JSON.parse(await generateManifestRaw()) as Record<string, unknown>
   }
 
   it('emits a live timestamp and no buildId when neither variable is set', async () => {
@@ -480,9 +499,9 @@ describe('manifest build stamp', () => {
   it('produces byte-identical manifests across two runs when pinned', async () => {
     process.env.CANOPY_BUILD_ID = 'fd91b36c'
     process.env.SOURCE_DATE_EPOCH = '1700000000'
-    const first = JSON.stringify(await generateManifest())
-    const second = JSON.stringify(await generateManifest())
-    expect(first).toBe(second)
+    // Raw bytes, not JSON.stringify(parse(...)): a round trip would hide any difference the
+    // serializer normalises away, and byte-equality on disk is the actual promise being made.
+    expect(await generateManifestRaw()).toBe(await generateManifestRaw())
   })
 
   it('differs across two runs when nothing is pinned', async () => {
@@ -493,7 +512,6 @@ describe('manifest build stamp', () => {
     const first = (await generateManifest()).generated
     vi.setSystemTime(new Date('2026-01-01T00:00:05.000Z'))
     const second = (await generateManifest()).generated
-    vi.useRealTimers()
     expect(first).not.toBe(second)
   })
 
@@ -509,6 +527,20 @@ describe('manifest build stamp', () => {
       expect(warn).toHaveBeenCalled()
     },
   )
+
+  it('trims a padded CANOPY_BUILD_ID so it matches the id Next stores for the same artifact', async () => {
+    process.env.CANOPY_BUILD_ID = '  fd91b36c  '
+    const manifest = await generateManifest()
+    expect(manifest.buildId).toBe('fd91b36c')
+  })
+
+  it('treats a whitespace-only CANOPY_BUILD_ID as unset', async () => {
+    process.env.CANOPY_BUILD_ID = '   '
+    const manifest = await generateManifest()
+    expect(manifest).not.toHaveProperty('buildId')
+    // And therefore `generated` must come back — the omission is keyed on a real build id.
+    expect(typeof manifest.generated).toBe('string')
+  })
 
   it('tolerates surrounding whitespace in SOURCE_DATE_EPOCH', async () => {
     // Trimmed, not rejected: the intent of a shell-exported ` 1700000000 ` is unambiguous.

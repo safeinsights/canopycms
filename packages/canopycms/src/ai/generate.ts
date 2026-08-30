@@ -175,7 +175,7 @@ export async function generateAIContent(options: GenerateOptions): Promise<Gener
   // is fixed (id before date) so the JSON is byte-stable across runs.
   const manifest: AIManifest = {
     ...(buildId ? { buildId } : {}),
-    ...(generatedAt || !buildId ? { generated: generatedAt ?? new Date().toISOString() } : {}),
+    ...(generatedAt || !buildId ? { generated: generatedAt || new Date().toISOString() } : {}),
     entries: rootEntries,
     collections: manifestCollections,
     bundles: manifestBundles,

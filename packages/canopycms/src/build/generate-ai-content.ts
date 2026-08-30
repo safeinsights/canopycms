@@ -111,7 +111,10 @@ export interface GenerateAIContentFilesOptions {
  * field the adopter's configuration says is meaningless.
  */
 function resolveBuildStamp(): { generatedAt?: string; buildId?: string } {
-  const buildId = process.env.CANOPY_BUILD_ID || undefined
+  // Trimmed for the same reason SOURCE_DATE_EPOCH is, plus one specific to this value: Next
+  // trims the build id it receives, so an untrimmed value here would record a `buildId` that
+  // disagrees with the `_next/static/<id>/` directory of the very artifact it stamps.
+  const buildId = process.env.CANOPY_BUILD_ID?.trim() || undefined
   const rawEpoch = process.env.SOURCE_DATE_EPOCH?.trim()
   if (!rawEpoch) return { buildId }
 

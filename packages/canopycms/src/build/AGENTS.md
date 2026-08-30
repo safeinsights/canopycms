@@ -14,6 +14,8 @@ Static build utilities (write AI content files to disk). `generateAIContentFiles
 `CANOPY_BUILD_ID` and `SOURCE_DATE_EPOCH` — and it lives here, at the build boundary, rather than
 in `ai/generate.ts`, precisely so a `SOURCE_DATE_EPOCH` exported in a server environment cannot
 freeze the runtime `/ai/*` route's timestamps. A malformed `SOURCE_DATE_EPOCH` warns and is
-ignored rather than failing the build (same stance as `readGeneratedRecord`); note that ignoring
+ignored rather than failing the build (same stance as `readGeneratedRecord`) — an empty or
+whitespace-only value is not "malformed" but simply unset, so it warns about nothing,
+matching how `CANOPY_BUILD_ID` treats the same input; note that ignoring
 it while a build id is set means `generated` stays omitted, which is deliberate — a bad value
 must not resurrect a field the adopter's configuration says is meaningless.

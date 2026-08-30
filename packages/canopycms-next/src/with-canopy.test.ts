@@ -213,6 +213,18 @@ describe('withCanopy', () => {
       expect(await resolveBuildId(withCanopy({}, { staticBuild: true }))).toBeNull()
     })
 
+    it('falls back to null for a whitespace-only env var', async () => {
+      // `||` alone is not enough: Next trims AFTER its `typeof buildId !== 'string'` guard, so a
+      // whitespace-only value is truthy, clears the guard, and lands as an EMPTY build id.
+      process.env.CANOPY_BUILD_ID = '   '
+      expect(await resolveBuildId(withCanopy({}, { staticBuild: true }))).toBeNull()
+    })
+
+    it('trims a padded env var, matching what Next itself would store', async () => {
+      process.env.CANOPY_BUILD_ID = '  fd91b36c  '
+      expect(await resolveBuildId(withCanopy({}, { staticBuild: true }))).toBe('fd91b36c')
+    })
+
     it('lets an explicit host config value win', async () => {
       process.env.CANOPY_BUILD_ID = 'from-env'
       const result = withCanopy({ generateBuildId: () => 'from-host' }, { staticBuild: true })

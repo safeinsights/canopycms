@@ -270,15 +270,18 @@ export function withCanopy(
   // between if they ever share an origin. The CMS build keeps nanoid so the ids stay distinct.
   //
   // Two details that look like style choices and are not:
-  // - `||`, not `??`. An empty-string env var survives `??`, then clears Next's
-  //   `typeof buildId !== 'string'` guard and yields an EMPTY build id.
+  // - `.trim()` then `||`, not `??`. An empty-string env var survives `??`, then clears Next's
+  //   `typeof buildId !== 'string'` guard and yields an EMPTY build id. `||` alone is still not
+  //   enough: Next trims AFTER that guard (`return buildId.trim()`), so a whitespace-only value is
+  //   truthy here, passes the guard, and lands as an empty id anyway. Trimming first also keeps
+  //   this id byte-identical to the one the AI manifest records for the same artifact.
   // - Returning the string directly matters. Next re-rolls ids containing `ad` (ad-blocker false
   //   positives) only on the `null` fallback path — a returned string is used verbatim
   //   (`next/dist/build/generate-build-id.js`) — which is what makes a hex tree hash usable here.
   //   Do not "helpfully" route this through the fallback.
   const generateBuildId =
     nextConfig.generateBuildId ??
-    (options.staticBuild ? () => process.env.CANOPY_BUILD_ID || null : undefined)
+    (options.staticBuild ? () => process.env.CANOPY_BUILD_ID?.trim() || null : undefined)
 
   return {
     ...nextConfig,
