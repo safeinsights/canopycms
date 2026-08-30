@@ -114,7 +114,13 @@ function resolveBuildStamp(): { generatedAt?: string; buildId?: string } {
   // Trimmed for the same reason SOURCE_DATE_EPOCH is, plus one specific to this value: Next
   // trims the build id it receives, so an untrimmed value here would record a `buildId` that
   // disagrees with the `_next/static/<id>/` directory of the very artifact it stamps.
-  const buildId = process.env.CANOPY_BUILD_ID?.trim() || undefined
+  const rawBuildId = process.env.CANOPY_BUILD_ID
+  const buildId = rawBuildId?.trim() || undefined
+  if (rawBuildId !== undefined && !buildId) {
+    // Set-and-blank is almost always a pipeline that computed the id and failed, so the adopter
+    // believes they pinned it. Unset is a deliberate "not reproducible" and warrants no output.
+    console.warn('  CANOPY_BUILD_ID is set but blank — recording no buildId in the manifest.')
+  }
   const rawEpoch = process.env.SOURCE_DATE_EPOCH?.trim()
   if (!rawEpoch) return { buildId }
 

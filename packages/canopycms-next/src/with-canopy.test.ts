@@ -189,7 +189,7 @@ describe('withCanopy', () => {
       expect(withCanopy({})).not.toHaveProperty('generateBuildId')
     })
 
-    it('returns the env value verbatim on a static build', async () => {
+    it('returns the env value on a static build', async () => {
       process.env.CANOPY_BUILD_ID = 'fd91b36c'
       expect(await resolveBuildId(withCanopy({}, { staticBuild: true }))).toBe('fd91b36c')
     })
@@ -209,15 +209,30 @@ describe('withCanopy', () => {
     it('falls back to null for an empty env var rather than producing an empty build id', async () => {
       // The `||` vs `??` case. An empty string survives `??`, then clears Next's
       // `typeof buildId !== 'string'` guard, and the build ships with an EMPTY build id.
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
       process.env.CANOPY_BUILD_ID = ''
       expect(await resolveBuildId(withCanopy({}, { staticBuild: true }))).toBeNull()
+      warn.mockRestore()
     })
 
-    it('falls back to null for a whitespace-only env var', async () => {
+    it('falls back to null for a whitespace-only env var, and says so', async () => {
       // `||` alone is not enough: Next trims AFTER its `typeof buildId !== 'string'` guard, so a
       // whitespace-only value is truthy, clears the guard, and lands as an EMPTY build id.
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
       process.env.CANOPY_BUILD_ID = '   '
       expect(await resolveBuildId(withCanopy({}, { staticBuild: true }))).toBeNull()
+      // Blank-but-set is a broken pipeline, not a choice: warn rather than silently shipping a
+      // random id to someone who believes they pinned it.
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('NOT reproducible'))
+      warn.mockRestore()
+    })
+
+    it('does not warn when the env var is simply unset', async () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      delete process.env.CANOPY_BUILD_ID
+      await resolveBuildId(withCanopy({}, { staticBuild: true }))
+      expect(warn).not.toHaveBeenCalled()
+      warn.mockRestore()
     })
 
     it('trims a padded env var, matching what Next itself would store', async () => {

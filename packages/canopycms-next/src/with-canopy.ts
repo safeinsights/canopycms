@@ -188,6 +188,26 @@ function resolveReactAliases(resolve: NodeRequire['resolve']): Record<string, st
  * })
  * ```
  */
+/**
+ * Resolve Next's build id from `CANOPY_BUILD_ID`, or `null` to keep Next's random default.
+ *
+ * Blank-but-set is warned about rather than silently accepted. Unset means "I did not ask for a
+ * reproducible build"; set-and-blank almost always means a pipeline computed the id and the
+ * command failed (`CANOPY_BUILD_ID=$(git rev-parse ...)`), so the adopter believes they pinned it
+ * and would otherwise get a random artifact with nothing said.
+ */
+function resolveStaticBuildId(): string | null {
+  const raw = process.env.CANOPY_BUILD_ID
+  const trimmed = raw?.trim()
+  if (raw !== undefined && !trimmed) {
+    console.warn(
+      "CanopyCMS: CANOPY_BUILD_ID is set but blank — using Next's random build id instead. " +
+        'This export is NOT reproducible; two builds of one source tree will differ.',
+    )
+  }
+  return trimmed || null
+}
+
 export function withCanopy(
   nextConfig: NextConfig = {},
   options: WithCanopyOptions = {},
@@ -280,8 +300,7 @@ export function withCanopy(
   //   (`next/dist/build/generate-build-id.js`) — which is what makes a hex tree hash usable here.
   //   Do not "helpfully" route this through the fallback.
   const generateBuildId =
-    nextConfig.generateBuildId ??
-    (options.staticBuild ? () => process.env.CANOPY_BUILD_ID?.trim() || null : undefined)
+    nextConfig.generateBuildId ?? (options.staticBuild ? resolveStaticBuildId : undefined)
 
   return {
     ...nextConfig,

@@ -534,9 +534,11 @@ describe('manifest build stamp', () => {
     expect(manifest.buildId).toBe('fd91b36c')
   })
 
-  it('treats a whitespace-only CANOPY_BUILD_ID as unset', async () => {
+  it('treats a whitespace-only CANOPY_BUILD_ID as unset, and warns that it did', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
     process.env.CANOPY_BUILD_ID = '   '
     const manifest = await generateManifest()
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('set but blank'))
     expect(manifest).not.toHaveProperty('buildId')
     // And therefore `generated` must come back — the omission is keyed on a real build id.
     expect(typeof manifest.generated).toBe('string')

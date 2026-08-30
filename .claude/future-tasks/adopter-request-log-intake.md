@@ -127,7 +127,9 @@ then clears Next's `typeof buildId !== 'string'` guard, and the build ships with
 id. And that Next re-rolls ids containing `ad` (ad-blocker false positives) **only** on the
 `null` fallback path, so a returned string is used verbatim — which is what makes a hex tree hash
 usable as a build id at all. Both are asserted by tests now, and the empty-string one was watched
-failing (flip `||` back to `??`, exactly one test goes red).
+failing (flip `||` back to `??` and two go red — the empty-string case and the whitespace-only
+one added when review found that `||` alone still shipped an empty id, because Next trims only
+AFTER its string guard).
 
 **Where the fix diverges from what they asked for.**
 

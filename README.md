@@ -3197,8 +3197,9 @@ CANOPY_BUILD_ID=fd91b36c                       # Identifies the build artifact (
 two builds of one source tree land in different `out/_next/static/<id>/` directories. And
 `canopycms generate-ai-content` records it as the AI manifest's `buildId`. Unset, both fall back
 to today's behaviour. Any string Next accepts works; a content hash of your source tree is the
-usual choice. It is deliberately ignored on non-static builds, so a dual-build site's two
-artifacts keep distinct ids.
+usual choice. Next's build id is deliberately left alone on non-static builds, so a dual-build site's two
+artifacts keep distinct ids; the AI manifest records `buildId` whenever
+`generate-ai-content` runs.
 
 `SOURCE_DATE_EPOCH` (decimal seconds since the Unix epoch) pins the AI manifest's `generated`
 timestamp. It is the [Reproducible Builds](https://reproducible-builds.org/docs/source-date-epoch/)
