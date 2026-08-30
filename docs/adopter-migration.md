@@ -714,6 +714,54 @@ doing once:
   both its own fixtures and its reference app, which is what stops the next shape of this bug
   reaching you. Keep a local test only if it covers routing you own rather than resolution we own.
 
+### Static exports are reproducible: `CANOPY_BUILD_ID` pins the build id, and the AI manifest stops baking a wall clock — **breaking (type-level)**
+
+**What changed.** Two independent sources of build-to-build variance, both reported by an adopter
+who found them by driving a real content-addressed deploy rather than by review.
+
+1. **`withCanopy(..., { staticBuild: true })` now honors `CANOPY_BUILD_ID` as Next.js's build id.**
+   Next defaults `generateBuildId` to `nanoid()`, so two builds of one source tree land under
+   different `out/_next/static/<id>/` directories and the id names two different file sets. Unset,
+   nothing changes. An explicit `generateBuildId` in your own config still wins. Deliberately
+   ignored on non-static builds: under the dual-build convention the two flavors have different
+   `pageExtensions` and therefore different chunk sets, and one shared id would name both.
+
+2. **`canopycms generate-ai-content` no longer writes an unconditional `new Date()` into
+   `public/ai/manifest.json`.** `manifest.json` now records `buildId` from `CANOPY_BUILD_ID`, and
+   pins `generated` to `SOURCE_DATE_EPOCH` (the Reproducible Builds convention) when that is set.
+   Setting a build id and no `SOURCE_DATE_EPOCH` **omits `generated` entirely** — if one artifact
+   is built once and promoted to production months later, its build clock describes the runner
+   that produced it, not the content, so a reader treating it as "how fresh is this?" is misled by
+   design. The runtime `/ai/*` route is unaffected and still uses a live clock, which is correct
+   for a response generated on demand.
+
+**Breaking, at the type level only:** `AIManifest.generated` is now `string | undefined`. If you
+read that field in TypeScript you need a guard. It is still present at runtime for every build
+that sets neither variable, so behaviour is unchanged unless you opt in.
+
+**To adopt.** Nothing is required. To make a static export reproducible, export `CANOPY_BUILD_ID`
+(it must be 1-255 characters of `[A-Za-z0-9._-]` and not `.` or `..`, because Next splices it
+into `out/_next/static/<id>/` as one path segment with no validation of its own — a content hash of
+your source tree is the usual choice; a value that is set but unusable is ignored with a warning) for both the
+`next build` and the `generate-ai-content` step, and `SOURCE_DATE_EPOCH` as well if you want the
+manifest to keep a timestamp.
+
+Two things worth knowing before you compute that id. A **commit SHA or commit date is not a
+substitute for a tree hash**: a rebase or cherry-pick gives an identical tree a different commit
+object and a different date, reintroducing exactly the variance you are trying to remove. And a
+hex id containing the letters `ad` is safe here — Next re-rolls such ids only on its internal
+fallback path, and a value returned from `generateBuildId` is used verbatim.
+
+**Now deletable.** A per-site `generateBuildId: () => process.env.<YOUR_VAR> || null` line in
+`next.config.ts`, added by hand to pin the build id — **provided you also pass
+`{ staticBuild: true }`**. On a non-static build `withCanopy` leaves `generateBuildId` alone by
+design, so deleting your line there un-pins the build id silently and Next goes back to `nanoid()`;
+keep it. If you do pass `staticBuild: true`, delete the line and export `CANOPY_BUILD_ID`
+instead — but check its operator first: written with `??` rather than `||`, an
+empty-string environment variable survives, clears Next's `typeof buildId !== 'string'` guard,
+and ships an **empty** build id. Also deletable: any post-build step that rewrites or strips the
+manifest's `generated` field to make output comparable.
+
 ---
 
 <!--

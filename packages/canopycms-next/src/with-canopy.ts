@@ -112,7 +112,8 @@ export interface WithCanopyOptions {
    *
    * When `true`: adds `static.ts` and `static.tsx` to `pageExtensions` instead, so
    * Next.js processes the static-export-only variant of a dual-build content route
-   * (e.g. `page.static.tsx`) while ignoring `.server.*` CMS-only files.
+   * (e.g. `page.static.tsx`) while ignoring `.server.*` CMS-only files. It also lets
+   * `CANOPY_BUILD_ID` pin Next's build id, so a content-addressed artifact is reproducible.
    *
    * @example
    * ```ts
@@ -147,6 +148,66 @@ function resolveReactAliases(resolve: NodeRequire['resolve']): Record<string, st
 }
 
 /**
+ * A build id Next can safely use as a single path segment.
+ *
+ * Next applies NO validation: `generateBuildId`'s return is trimmed and interpolated straight
+ * into `out/_next/static/<id>/`. So `CANOPY_BUILD_ID=$(git describe --all)` yields `heads/main`
+ * and silently nests that directory one level deeper than every emitted URL expects, and a value
+ * containing `..` climbs out of it. Both are the adopter's own pipeline misfiring rather than an
+ * injection vector, which is exactly why a clear message beats a broken deploy.
+ */
+const SAFE_BUILD_ID = /^[A-Za-z0-9._-]{1,255}$/
+
+/** The message every rejection uses, so the stated rule and the enforced rule cannot drift. */
+const BUILD_ID_RULE = 'must be 1-255 characters of [A-Za-z0-9._-] and not "." or ".."'
+
+function isUsableBuildId(value: string): boolean {
+  // `.` and `..` clear the character class but are not names — as a path segment they resolve to
+  // the static directory itself or its parent. `a..b` is an ordinary filename and stays allowed.
+  // The 255 bound is the same rule: a longer segment fails at `mkdir` with ENAMETOOLONG.
+  return SAFE_BUILD_ID.test(value) && value !== '.' && value !== '..'
+}
+
+/**
+ * Resolve Next's build id from `CANOPY_BUILD_ID`, or `null` to keep Next's random default.
+ *
+ * Both rejections warn rather than passing the value through or throwing. Unset means "I did not
+ * ask for a reproducible build" and says nothing; set-but-unusable almost always means a pipeline
+ * computed the id and the command failed (`CANOPY_BUILD_ID=$(git rev-parse ...)`), so the adopter
+ * believes they pinned it and would otherwise get a random — or structurally broken — artifact
+ * with nothing said. Falling back to Next's default keeps the build working; it is only the
+ * reproducibility that is lost, and the warning is what makes that recoverable.
+ *
+ * Declared above `withCanopy` deliberately: sitting between that function and its JSDoc block
+ * orphans the block onto this one, and the shipped `dist/config.d.ts` loses every line of
+ * `withCanopy`'s adopter-facing documentation.
+ */
+function resolveStaticBuildId(): string | null {
+  const raw = process.env.CANOPY_BUILD_ID
+  const trimmed = raw?.trim()
+  if (raw === undefined) return null
+
+  if (!trimmed) {
+    console.warn(
+      "CanopyCMS: CANOPY_BUILD_ID is set but blank — using Next's random build id instead. " +
+        'This export is NOT reproducible; two builds of one source tree will differ.',
+    )
+    return null
+  }
+
+  if (!isUsableBuildId(trimmed)) {
+    console.warn(
+      `CanopyCMS: ignoring CANOPY_BUILD_ID="${trimmed}" — a build id becomes a single path ` +
+        `segment under _next/static/, so it ${BUILD_ID_RULE}. Using Next's random ` +
+        'build id instead; this export is NOT reproducible.',
+    )
+    return null
+  }
+
+  return trimmed
+}
+
+/**
  * Wrap your Next.js config to set up module transpilation and React
  * resolution for CanopyCMS packages.
  *
@@ -160,6 +221,9 @@ function resolveReactAliases(resolve: NodeRequire['resolve']): Record<string, st
  *   of the static-export-only page variants (e.g. `page.static.tsx`).
  * - Resolves React to a single copy from your project root, preventing
  *   dual-instance crashes when using `file:` symlinks for local development
+ * - With `staticBuild: true`, honors `CANOPY_BUILD_ID` as Next's build id (Next's default is
+ *   random, which puts two builds of one source tree in different `_next/static/` directories).
+ *   Unset, or on a non-static build, Next's default is used unchanged.
  *
  * **When you need this:**
  * - Always recommended — it replaces manual `transpilePackages` configuration
@@ -255,11 +319,33 @@ export function withCanopy(
     ]),
   ]
 
+  // Static exports are routinely content-addressed (an S3/CloudFront artifact keyed on a tree
+  // hash), and Next defaults `generateBuildId` to `nanoid()` — so two builds of one source tree
+  // land under different `out/_next/static/<id>/` directories and the id names two different file
+  // sets. An explicit `generateBuildId` in the host config always wins.
+  //
+  // Deliberately gated on `staticBuild`. Under the dual-build convention the two flavors have
+  // different `pageExtensions` and therefore different chunk sets; pinning both from one env var
+  // would give two different file sets the SAME `_next/static/<id>/` path, which nothing can route
+  // between if they ever share an origin. The CMS build keeps nanoid so the ids stay distinct.
+  //
+  // `resolveStaticBuildId` (above) holds the rules for reading the variable and why each exists.
+  // One rule lives here instead, because it constrains this line rather than that function:
+  // returning the resolver's string directly matters. Next re-rolls ids containing `ad`
+  // (ad-blocker false positives) only on the `null` fallback path — a returned string is used
+  // verbatim (`next/dist/build/generate-build-id.js`) — which is what makes a hex tree hash usable
+  // as a build id at all. Do not "helpfully" route this through the fallback.
+  const generateBuildId =
+    nextConfig.generateBuildId ?? (options.staticBuild ? resolveStaticBuildId : undefined)
+
   return {
     ...nextConfig,
     transpilePackages: allPackages,
     pageExtensions,
     webpack,
     rewrites: withAssetsRewrite(nextConfig.rewrites),
+    // Spread conditionally: emitting `generateBuildId: undefined` would be a key Next has to
+    // reason about, where absence is unambiguous.
+    ...(generateBuildId ? { generateBuildId } : {}),
   }
 }
