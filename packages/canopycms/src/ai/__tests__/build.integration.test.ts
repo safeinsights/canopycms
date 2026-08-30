@@ -407,3 +407,121 @@ describe('generateAIContentFiles', () => {
     expect(result.fileCount).toBeGreaterThan(0)
   })
 })
+
+describe('manifest build stamp', () => {
+  let contentRoot: string
+  const ENV_KEYS = ['CANOPY_BUILD_ID', 'SOURCE_DATE_EPOCH'] as const
+  const originalEnv = new Map<string, string | undefined>()
+
+  beforeEach(async () => {
+    contentRoot = await tmpDir()
+    for (const key of ENV_KEYS) {
+      originalEnv.set(key, process.env[key])
+      delete process.env[key]
+    }
+  })
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+    for (const key of ENV_KEYS) {
+      const value = originalEnv.get(key)
+      if (value === undefined) delete process.env[key]
+      else process.env[key] = value
+    }
+  })
+
+  /** Generate into a fresh output dir and return the manifest as PARSED JSON, not the in-memory
+   * object — key omission is the behaviour under test, and only the serialized form shows it. */
+  async function generateManifest(): Promise<Record<string, unknown>> {
+    const { config, flat } = await setupContent(contentRoot, testSchema)
+    vi.spyOn(process, 'cwd').mockReturnValue(contentRoot)
+    const out = await tmpDir()
+    await generateAIContentFiles({
+      config: { ...config, mode: 'dev', deployedAs: 'static' },
+      entrySchemaRegistry: {},
+      outputDir: out,
+      _testFlatSchema: flat,
+    })
+    const raw = await fs.readFile(path.join(out, 'manifest.json'), 'utf-8')
+    return JSON.parse(raw) as Record<string, unknown>
+  }
+
+  it('emits a live timestamp and no buildId when neither variable is set', async () => {
+    const manifest = await generateManifest()
+    expect(typeof manifest.generated).toBe('string')
+    expect(Date.parse(manifest.generated as string)).not.toBeNaN()
+    expect(manifest).not.toHaveProperty('buildId')
+  })
+
+  it('emits buildId and OMITS generated when only CANOPY_BUILD_ID is set', async () => {
+    process.env.CANOPY_BUILD_ID = 'fd91b36c'
+    const manifest = await generateManifest()
+    // Positive assertion paired with the absence one on purpose: `not.toHaveProperty` alone also
+    // passes against a manifest that failed to build, or a renamed key.
+    expect(manifest.buildId).toBe('fd91b36c')
+    expect(manifest).not.toHaveProperty('generated')
+  })
+
+  it('emits both, with generated pinned, when SOURCE_DATE_EPOCH is also set', async () => {
+    process.env.CANOPY_BUILD_ID = 'fd91b36c'
+    process.env.SOURCE_DATE_EPOCH = '1700000000'
+    const manifest = await generateManifest()
+    expect(manifest.buildId).toBe('fd91b36c')
+    expect(manifest.generated).toBe('2023-11-14T22:13:20.000Z')
+  })
+
+  it('pins generated from SOURCE_DATE_EPOCH with no build id at all', async () => {
+    process.env.SOURCE_DATE_EPOCH = '1700000000'
+    const manifest = await generateManifest()
+    expect(manifest.generated).toBe('2023-11-14T22:13:20.000Z')
+    expect(manifest).not.toHaveProperty('buildId')
+  })
+
+  it('produces byte-identical manifests across two runs when pinned', async () => {
+    process.env.CANOPY_BUILD_ID = 'fd91b36c'
+    process.env.SOURCE_DATE_EPOCH = '1700000000'
+    const first = JSON.stringify(await generateManifest())
+    const second = JSON.stringify(await generateManifest())
+    expect(first).toBe(second)
+  })
+
+  it('differs across two runs when nothing is pinned', async () => {
+    // The control for the test above: proves byte-equality there comes from the pin rather than
+    // from the manifest being trivially stable anyway.
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'))
+    const first = (await generateManifest()).generated
+    vi.setSystemTime(new Date('2026-01-01T00:00:05.000Z'))
+    const second = (await generateManifest()).generated
+    vi.useRealTimers()
+    expect(first).not.toBe(second)
+  })
+
+  it.each(['not-a-number', '0x10', '17e8', '-1700000000', '99999999999999999999'])(
+    'ignores a malformed SOURCE_DATE_EPOCH (%s) without throwing, and does not resurrect generated',
+    async (bad) => {
+      process.env.CANOPY_BUILD_ID = 'fd91b36c'
+      process.env.SOURCE_DATE_EPOCH = bad
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      const manifest = await generateManifest()
+      expect(manifest.buildId).toBe('fd91b36c')
+      expect(manifest).not.toHaveProperty('generated')
+      expect(warn).toHaveBeenCalled()
+    },
+  )
+
+  it('tolerates surrounding whitespace in SOURCE_DATE_EPOCH', async () => {
+    // Trimmed, not rejected: the intent of a shell-exported ` 1700000000 ` is unambiguous.
+    process.env.SOURCE_DATE_EPOCH = ' 1700000000 '
+    const manifest = await generateManifest()
+    expect(manifest.generated).toBe('2023-11-14T22:13:20.000Z')
+  })
+
+  it('falls back to a live clock for a malformed value when no build id is set', async () => {
+    process.env.SOURCE_DATE_EPOCH = 'not-a-number'
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const manifest = await generateManifest()
+    expect(typeof manifest.generated).toBe('string')
+    expect(Date.parse(manifest.generated as string)).not.toBeNaN()
+  })
+})

@@ -46,6 +46,19 @@ export interface GenerateOptions {
   config?: AIContentConfig
   /** Custom URL resolver for entry links. */
   entryLinkUrl?: EntryLinkUrlResolver
+  /**
+   * ISO-8601 timestamp to record as the manifest's `generated`. Defaults to now.
+   *
+   * Passed in rather than read from the environment here so this stays a pure function of its
+   * arguments: the runtime route handler wants a live clock, the build path wants a pinned or
+   * omitted value, and only the caller knows which it is.
+   */
+  generatedAt?: string
+  /**
+   * Artifact identifier to record as the manifest's `buildId`. Supplying this WITHOUT
+   * `generatedAt` omits `generated` entirely — see `AIManifest.generated`.
+   */
+  buildId?: string
 }
 
 export interface GenerateResult {
@@ -62,7 +75,7 @@ export interface GenerateResult {
  * bundle files, and a manifest.
  */
 export async function generateAIContent(options: GenerateOptions): Promise<GenerateResult> {
-  const { store, flatSchema, contentRoot, config, entryLinkUrl } = options
+  const { store, flatSchema, contentRoot, config, entryLinkUrl, generatedAt, buildId } = options
   const files = new Map<string, string>()
 
   // Build content ID index for entry link resolution
@@ -154,9 +167,15 @@ export async function generateAIContent(options: GenerateOptions): Promise<Gener
     }
   }
 
-  // Build manifest
+  // Build manifest.
+  //
+  // `generated` is emitted unless the caller named an artifact but no timestamp: a build id says
+  // "this content is identified by an artifact, not by when a runner happened to build it", and a
+  // wall clock alongside it would be a claim the artifact cannot support months later. Key order
+  // is fixed (id before date) so the JSON is byte-stable across runs.
   const manifest: AIManifest = {
-    generated: new Date().toISOString(),
+    ...(buildId ? { buildId } : {}),
+    ...(generatedAt || !buildId ? { generated: generatedAt ?? new Date().toISOString() } : {}),
     entries: rootEntries,
     collections: manifestCollections,
     bundles: manifestBundles,

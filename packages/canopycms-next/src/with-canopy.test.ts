@@ -1,4 +1,4 @@
-import { describe, expect, it, vi, beforeEach } from 'vitest'
+import { afterEach, describe, expect, it, vi, beforeEach } from 'vitest'
 import type { NextConfig } from 'next'
 
 // Track which packages should be "uninstalled" for each test
@@ -164,6 +164,59 @@ describe('withCanopy', () => {
       expect(result.pageExtensions).toContain('static.ts')
       expect(result.pageExtensions).toContain('static.tsx')
       expect(result.pageExtensions).not.toContain('server.ts')
+    })
+  })
+
+  describe('generateBuildId (static-export reproducibility)', () => {
+    const ORIGINAL_BUILD_ID = process.env.CANOPY_BUILD_ID
+
+    afterEach(() => {
+      if (ORIGINAL_BUILD_ID === undefined) delete process.env.CANOPY_BUILD_ID
+      else process.env.CANOPY_BUILD_ID = ORIGINAL_BUILD_ID
+    })
+
+    /** Invoke the pinned resolver, asserting it was installed at all. */
+    async function resolveBuildId(config: NextConfig): Promise<string | null> {
+      expect(config.generateBuildId).toBeTypeOf('function')
+      return await config.generateBuildId!()
+    }
+
+    it('is not installed at all on a non-static build', () => {
+      process.env.CANOPY_BUILD_ID = 'deadbeef'
+      // The CMS build keeps Next's random default on purpose: the two dual-build flavors have
+      // different chunk sets, and one shared id would name both.
+      expect(withCanopy({}, { staticBuild: false })).not.toHaveProperty('generateBuildId')
+      expect(withCanopy({})).not.toHaveProperty('generateBuildId')
+    })
+
+    it('returns the env value verbatim on a static build', async () => {
+      process.env.CANOPY_BUILD_ID = 'fd91b36c'
+      expect(await resolveBuildId(withCanopy({}, { staticBuild: true }))).toBe('fd91b36c')
+    })
+
+    it('passes through an id containing "ad", which Next only re-rolls on the null path', async () => {
+      // A hex tree hash routinely contains 'ad'. Next's re-roll loop runs only when the resolver
+      // returns null, so returning the string directly is what makes a tree hash usable.
+      process.env.CANOPY_BUILD_ID = 'ad0be123'
+      expect(await resolveBuildId(withCanopy({}, { staticBuild: true }))).toBe('ad0be123')
+    })
+
+    it('falls back to null when unset', async () => {
+      delete process.env.CANOPY_BUILD_ID
+      expect(await resolveBuildId(withCanopy({}, { staticBuild: true }))).toBeNull()
+    })
+
+    it('falls back to null for an empty env var rather than producing an empty build id', async () => {
+      // The `||` vs `??` case. An empty string survives `??`, then clears Next's
+      // `typeof buildId !== 'string'` guard, and the build ships with an EMPTY build id.
+      process.env.CANOPY_BUILD_ID = ''
+      expect(await resolveBuildId(withCanopy({}, { staticBuild: true }))).toBeNull()
+    })
+
+    it('lets an explicit host config value win', async () => {
+      process.env.CANOPY_BUILD_ID = 'from-env'
+      const result = withCanopy({ generateBuildId: () => 'from-host' }, { staticBuild: true })
+      expect(await resolveBuildId(result)).toBe('from-host')
     })
   })
 

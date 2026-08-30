@@ -112,7 +112,8 @@ export interface WithCanopyOptions {
    *
    * When `true`: adds `static.ts` and `static.tsx` to `pageExtensions` instead, so
    * Next.js processes the static-export-only variant of a dual-build content route
-   * (e.g. `page.static.tsx`) while ignoring `.server.*` CMS-only files.
+   * (e.g. `page.static.tsx`) while ignoring `.server.*` CMS-only files. It also lets
+   * `CANOPY_BUILD_ID` pin Next's build id, so a content-addressed artifact is reproducible.
    *
    * @example
    * ```ts
@@ -160,6 +161,9 @@ function resolveReactAliases(resolve: NodeRequire['resolve']): Record<string, st
  *   of the static-export-only page variants (e.g. `page.static.tsx`).
  * - Resolves React to a single copy from your project root, preventing
  *   dual-instance crashes when using `file:` symlinks for local development
+ * - With `staticBuild: true`, honors `CANOPY_BUILD_ID` as Next's build id (Next's default is
+ *   random, which puts two builds of one source tree in different `_next/static/` directories).
+ *   Unset, or on a non-static build, Next's default is used unchanged.
  *
  * **When you need this:**
  * - Always recommended — it replaces manual `transpilePackages` configuration
@@ -255,11 +259,35 @@ export function withCanopy(
     ]),
   ]
 
+  // Static exports are routinely content-addressed (an S3/CloudFront artifact keyed on a tree
+  // hash), and Next defaults `generateBuildId` to `nanoid()` — so two builds of one source tree
+  // land under different `out/_next/static/<id>/` directories and the id names two different file
+  // sets. An explicit `generateBuildId` in the host config always wins.
+  //
+  // Deliberately gated on `staticBuild`. Under the dual-build convention the two flavors have
+  // different `pageExtensions` and therefore different chunk sets; pinning both from one env var
+  // would give two different file sets the SAME `_next/static/<id>/` path, which nothing can route
+  // between if they ever share an origin. The CMS build keeps nanoid so the ids stay distinct.
+  //
+  // Two details that look like style choices and are not:
+  // - `||`, not `??`. An empty-string env var survives `??`, then clears Next's
+  //   `typeof buildId !== 'string'` guard and yields an EMPTY build id.
+  // - Returning the string directly matters. Next re-rolls ids containing `ad` (ad-blocker false
+  //   positives) only on the `null` fallback path — a returned string is used verbatim
+  //   (`next/dist/build/generate-build-id.js`) — which is what makes a hex tree hash usable here.
+  //   Do not "helpfully" route this through the fallback.
+  const generateBuildId =
+    nextConfig.generateBuildId ??
+    (options.staticBuild ? () => process.env.CANOPY_BUILD_ID || null : undefined)
+
   return {
     ...nextConfig,
     transpilePackages: allPackages,
     pageExtensions,
     webpack,
     rewrites: withAssetsRewrite(nextConfig.rewrites),
+    // Spread conditionally: emitting `generateBuildId: undefined` would be a key Next has to
+    // reason about, where absence is unambiguous.
+    ...(generateBuildId ? { generateBuildId } : {}),
   }
 }

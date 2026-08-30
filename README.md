@@ -2983,10 +2983,27 @@ await generateAIContentFiles({
 
 ### Manifest Format
 
-The manifest at `manifest.json` describes all generated content for tool discovery:
+The manifest at `manifest.json` describes all generated content for tool discovery.
+
+Its first two fields are optional and controlled by the environment of the build that produced
+it. `buildId` is set from `CANOPY_BUILD_ID`, and `generated` from `SOURCE_DATE_EPOCH` (decimal
+seconds since the Unix epoch, the Reproducible Builds convention):
+
+| Environment               | `generated`                     | `buildId`      |
+| ------------------------- | ------------------------------- | -------------- |
+| neither set (the default) | the time of the build           | absent         |
+| `CANOPY_BUILD_ID`         | **absent**                      | the id you set |
+| both                      | pinned from `SOURCE_DATE_EPOCH` | the id you set |
+
+Declaring a build id omits `generated` on purpose. If you build an artifact once and promote
+that same artifact to production later, its build clock describes the machine that produced it
+rather than the content, so anything reading it as "how fresh is this content?" is misled. Set
+`SOURCE_DATE_EPOCH` as well if you want a timestamp that describes the _source_. With neither
+variable set nothing changes: `generated` is present, as it always was.
 
 ```json
 {
+  "buildId": "fd91b36c",
   "generated": "2026-03-23T12:00:00.000Z",
   "entries": [],
   "collections": [
@@ -3171,7 +3188,22 @@ For CanopyCMS:
 CANOPY_AUTH_MODE=dev                           # Auth provider: "dev" (default) or "clerk"
 CANOPY_BOOTSTRAP_ADMIN_IDS=user_123,user_456   # Comma-separated user IDs that get auto-admin access
 CANOPY_AUTH_CACHE_PATH=/mnt/efs/workspace/.cache  # Override auth cache location (prod mode only)
+CANOPY_BUILD_ID=fd91b36c                       # Identifies the build artifact (see below)
 ```
+
+`CANOPY_BUILD_ID` makes a static export reproducible, and is read in two places. `withCanopy(...,
+{ staticBuild: true })` uses it as Next.js's build id -- Next's default is random, so without it
+two builds of one source tree land in different `out/_next/static/<id>/` directories. And
+`canopycms generate-ai-content` records it as the AI manifest's `buildId`. Unset, both fall back
+to today's behaviour. Any string Next accepts works; a content hash of your source tree is the
+usual choice. It is deliberately ignored on non-static builds, so a dual-build site's two
+artifacts keep distinct ids.
+
+`SOURCE_DATE_EPOCH` (decimal seconds since the Unix epoch) pins the AI manifest's `generated`
+timestamp. It is the [Reproducible Builds](https://reproducible-builds.org/docs/source-date-epoch/)
+convention, kept under its standard name so a build harness that already exports it for other
+tools gets this for free. A malformed value is ignored with a warning rather than failing
+the build.
 
 For Clerk authentication:
 

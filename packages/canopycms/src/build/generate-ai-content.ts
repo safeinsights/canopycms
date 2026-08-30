@@ -93,6 +93,45 @@ export interface GenerateAIContentFilesOptions {
 }
 
 /**
+ * Resolve the manifest's build stamp from the environment.
+ *
+ * This lives at the BUILD boundary, not inside `generateAIContent`, because the same generator
+ * also serves the runtime route — where a live clock is the correct answer and a
+ * `SOURCE_DATE_EPOCH` that happens to be exported in a server environment must not freeze a
+ * response's timestamp.
+ *
+ * `SOURCE_DATE_EPOCH` is the Reproducible Builds convention (decimal seconds since the epoch),
+ * kept under its standard name so a harness that already exports it for tar/gzip/rpm gets this
+ * for free. `CANOPY_BUILD_ID` is ours: Next has no such variable, and the generator reading it
+ * is framework-agnostic.
+ *
+ * A malformed `SOURCE_DATE_EPOCH` warns and is ignored rather than failing the build — same
+ * stance as `readGeneratedRecord` above. Note what ignoring it means when a build id is set:
+ * `generatedAt` stays undefined and `generated` is omitted. A bad value must not resurrect a
+ * field the adopter's configuration says is meaningless.
+ */
+function resolveBuildStamp(): { generatedAt?: string; buildId?: string } {
+  const buildId = process.env.CANOPY_BUILD_ID || undefined
+  const rawEpoch = process.env.SOURCE_DATE_EPOCH?.trim()
+  if (!rawEpoch) return { buildId }
+
+  // Digits only, applied AFTER trimming: surrounding whitespace is a plausible accident in a
+  // shell-exported variable and the intent is unambiguous, but `Number('0x10')` also parses and
+  // `0x10` is not a SOURCE_DATE_EPOCH. The range check catches values large enough to overflow
+  // to Invalid Date.
+  const seconds = /^\d+$/.test(rawEpoch) ? Number(rawEpoch) : Number.NaN
+  const date = new Date(seconds * 1000)
+  if (Number.isNaN(date.getTime())) {
+    console.warn(
+      `  Ignoring SOURCE_DATE_EPOCH="${rawEpoch}": expected decimal seconds since the Unix epoch.`,
+    )
+    return { buildId }
+  }
+
+  return { generatedAt: date.toISOString(), buildId }
+}
+
+/**
  * Generate AI content files and write them to disk.
  *
  * Output written by a previous run that this run no longer produces is removed, so a renamed or
@@ -135,6 +174,7 @@ export async function generateAIContentFiles(
     contentRoot: contentRootName,
     config: aiConfig,
     entryLinkUrl: config.entryLinkUrl,
+    ...resolveBuildStamp(),
   })
 
   // Write files to disk

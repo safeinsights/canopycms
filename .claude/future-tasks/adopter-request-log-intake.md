@@ -1,6 +1,6 @@
 # Adopter request log — standing intake
 
-**Status:** Standing pointer + the 2026-08-20 triage. **Priority: P2** (the log itself; individual
+**Status:** Standing pointer + the 2026-08-20 triage, extended 2026-08-30 with items 35-36. **Priority: P2** (the log itself; individual
 items carry their own).
 
 ## What this is
@@ -107,6 +107,58 @@ the one part of this change that can 404 something an adopter is currently servi
 (`overview.json`, not `{type}.{slug}.{id}.{ext}`) is still readable by URL and still invisible to
 every enumerating surface. Left open for test-migration cost, not disagreement — tracked in
 [legacy-untyped-files-url-addressable.md](legacy-untyped-files-url-addressable.md).
+
+### Items 35 and 36 — build-artifact determinism, filed 2026-08-30
+
+**Both shipped 2026-08-30.** Filed by the marketing site while building a content-addressed
+deploy pipeline, and both are gaps every static-export adopter would hit. Their report was
+unusually good: every claim about Next's internals was re-verified here against the installed
+`next@15.5.21` and every one held, including the two subtle ones (below) that we would have got
+wrong without them.
+
+| # | Their claim | Verdict | Disposition |
+| - | ----------- | ------- | ----------- |
+| 35 | `generate-ai-content` bakes `new Date()` into `manifest.json`, no override | Confirmed | Fixed — but with omission rather than the override they asked for |
+| 36 | `withCanopy` should pin `generateBuildId` for static-export adopters | Confirmed; `generateBuildId` appeared nowhere in this repo | Fixed as requested, gated on `staticBuild` |
+
+**Two details from their report that were load-bearing, both verified in the Next source.** They
+warned that `||` and `??` are not interchangeable here: an empty-string env var survives `??`,
+then clears Next's `typeof buildId !== 'string'` guard, and the build ships with an EMPTY build
+id. And that Next re-rolls ids containing `ad` (ad-blocker false positives) **only** on the
+`null` fallback path, so a returned string is used verbatim — which is what makes a hex tree hash
+usable as a build id at all. Both are asserted by tests now, and the empty-string one was watched
+failing (flip `||` back to `??`, exactly one test goes red).
+
+**Where the fix diverges from what they asked for.**
+
+- **The env var is `CANOPY_BUILD_ID`, not `NEXT_BUILD_ID`.** Theirs reads like an official Next
+  variable and is not one — Next never consults it — and the AI generator that also reads it
+  lives in `canopycms`, which is framework-agnostic. So this one was ours to name, and it matches
+  the existing `CANOPY_BUILD` convention. `SOURCE_DATE_EPOCH` is kept under its standard name for
+  the opposite reason: it is the Reproducible Builds convention, so a harness already exporting it
+  for tar/gzip/rpm gets our behaviour for free. Renaming it would have cost that for nothing.
+- **`generated` is omitted, not overloaded.** They asked for the build id *in* that field. It goes
+  into a new optional `buildId` instead, and `generated` disappears when a build id is set with no
+  `SOURCE_DATE_EPOCH`. Overloading a field the README documents as an ISO date would change its
+  meaning for every other adopter; omission makes the field's PRESENCE meaningful instead. This
+  also answers their deeper point better than the override they proposed would have: with only an
+  override, the value they would most naturally pin is the commit date — and their own item
+  correctly warns that a rebase or cherry-pick gives an identical tree a different commit date,
+  reintroducing the variance. There is no tree-derived *date*; the tree hash is the only stable
+  content-identifying fact, and it now has a field of its own.
+- **`AIManifest.generated` is now `string | undefined`** — a type-level break for anyone reading
+  it. Nothing in this repo did; the only references were four `toBeTruthy()` assertions.
+
+**Gated on `staticBuild`, and that is not just deference to their framing.** Under the dual-build
+convention the static and CMS flavors have different `pageExtensions` and therefore different
+chunk sets. Pinning both from one env var would give two different file sets the same
+`_next/static/<id>/` path, which nothing can route between if they ever share an origin. The CMS
+build keeps nanoid so the two artifacts stay distinguishable.
+
+**One thing to tell them that is not in their report.** The runtime `/ai/*` route handler shares
+the same generator and was deliberately left on a live clock — correct for a response generated on
+demand. So a `SOURCE_DATE_EPOCH` exported in a *server* environment does not (and must not) freeze
+the CMS server's manifest timestamps. Only the build path reads it.
 
 ### Where our verification disagreed with theirs
 
