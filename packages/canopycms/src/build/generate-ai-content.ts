@@ -103,12 +103,29 @@ export interface GenerateAIContentFilesOptions {
  * `node:fs` included — into a config file that must be plain executable JavaScript. The two
  * copies must agree, and the tests on both sides assert the same set of values.
  */
-const SAFE_BUILD_ID = /^[A-Za-z0-9._-]+$/
+const SAFE_BUILD_ID = /^[A-Za-z0-9._-]{1,255}$/
+
+/** The message every rejection uses, so the stated rule and the enforced rule cannot drift. */
+const BUILD_ID_RULE = 'must be 1-255 characters of [A-Za-z0-9._-] and not "." or ".."'
 
 function isUsableBuildId(value: string): boolean {
   // `.` and `..` clear the character class but are not names — as a path segment they resolve to
   // the static directory itself or its parent. `a..b` is an ordinary filename and stays allowed.
+  // The 255 bound is the same rule: a longer segment fails at `mkdir` with ENAMETOOLONG.
   return SAFE_BUILD_ID.test(value) && value !== '.' && value !== '..'
+}
+
+/**
+ * What an unusable `SOURCE_DATE_EPOCH` actually costs, which depends on whether a build id is set.
+ *
+ * Worth spelling out rather than saying "unpinned": with a build id, `generated` is not merely
+ * un-pinned but ABSENT, and a field silently vanishing from a published artifact is the outcome an
+ * operator most needs told.
+ */
+function unpinnedConsequence(buildId: string | undefined): string {
+  return buildId
+    ? 'omitting `generated` from the manifest entirely (a build id is set, so no build clock is recorded).'
+    : 'recording the current time in `generated` instead.'
 }
 
 /**
@@ -121,8 +138,13 @@ function isUsableBuildId(value: string): boolean {
  *
  * `SOURCE_DATE_EPOCH` is the Reproducible Builds convention (decimal seconds since the epoch),
  * kept under its standard name so a harness that already exports it for tar/gzip/rpm gets this
- * for free. `CANOPY_BUILD_ID` is ours: Next has no such variable, and the generator reading it
- * is framework-agnostic.
+ * for free. `CANOPY_BUILD_ID` is ours: Next has no such variable of its own.
+ *
+ * That id is validated here against a rule justified by Next's `_next/static/<id>/` layout, even
+ * though this module is framework-agnostic. Deliberate: the variable's whole purpose is that the
+ * manifest's `buildId` and the framework's build id name the SAME artifact, so a value one reader
+ * would reject is not useful to the other. The cost is that a non-Next adopter cannot use, say, an
+ * ISO timestamp as a build id — revisit this rule, in both copies, when a second framework lands.
  *
  * Every rejection warns and is ignored rather than failing the build — same stance as
  * `readGeneratedRecord` above. Both variables treat "set but unusable" as a broken pipeline
@@ -151,8 +173,8 @@ function resolveBuildStamp(): { generatedAt?: string; buildId?: string } {
     )
   } else if (!isUsableBuildId(trimmedBuildId)) {
     console.warn(
-      `CanopyCMS: ignoring CANOPY_BUILD_ID="${trimmedBuildId}": must match [A-Za-z0-9._-]+ to be usable ` +
-        'as a build id.',
+      `CanopyCMS: ignoring CANOPY_BUILD_ID="${trimmedBuildId}": it ${BUILD_ID_RULE}, so that ` +
+        "the manifest's buildId can match the build id Next stores for the same artifact.",
     )
   } else {
     buildId = trimmedBuildId
@@ -161,9 +183,7 @@ function resolveBuildStamp(): { generatedAt?: string; buildId?: string } {
   const rawEpoch = process.env.SOURCE_DATE_EPOCH
   const trimmedEpoch = rawEpoch?.trim()
   if (rawEpoch !== undefined && !trimmedEpoch) {
-    console.warn(
-      'CanopyCMS: SOURCE_DATE_EPOCH is set but blank — leaving the generated timestamp unpinned.',
-    )
+    console.warn(`CanopyCMS: SOURCE_DATE_EPOCH is set but blank — ${unpinnedConsequence(buildId)}`)
   }
   if (!trimmedEpoch) return { buildId }
 
@@ -175,7 +195,8 @@ function resolveBuildStamp(): { generatedAt?: string; buildId?: string } {
   const date = new Date(seconds * 1000)
   if (Number.isNaN(date.getTime())) {
     console.warn(
-      `CanopyCMS: ignoring SOURCE_DATE_EPOCH="${trimmedEpoch}": expected decimal seconds since the Unix epoch.`,
+      `CanopyCMS: ignoring SOURCE_DATE_EPOCH="${trimmedEpoch}" (expected decimal seconds since ` +
+        `the Unix epoch) — ${unpinnedConsequence(buildId)}`,
     )
     return { buildId }
   }

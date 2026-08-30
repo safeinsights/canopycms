@@ -515,7 +515,7 @@ describe('manifest build stamp', () => {
     expect(first).not.toBe(second)
   })
 
-  it.each(['not-a-number', '0x10', '17e8', '-1700000000', '99999999999999999999'])(
+  it.each(['not-a-number', '0x10', '17e8', '-1700000000', '99999999999999999999', ''])(
     'ignores a malformed SOURCE_DATE_EPOCH (%s) without throwing, and does not resurrect generated',
     async (bad) => {
       process.env.CANOPY_BUILD_ID = 'fd91b36c'
@@ -524,7 +524,9 @@ describe('manifest build stamp', () => {
       const manifest = await generateManifest()
       expect(manifest.buildId).toBe('fd91b36c')
       expect(manifest).not.toHaveProperty('generated')
-      expect(warn).toHaveBeenCalled()
+      // The warning must say the field is GONE, not merely unpinned — that is the whole reason
+      // this case warns, since a vanished field has no other signal.
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('omitting `generated`'))
     },
   )
 
@@ -544,7 +546,12 @@ describe('manifest build stamp', () => {
     expect(typeof manifest.generated).toBe('string')
   })
 
-  it.each(['heads/main', '..', 'has space'])(
+  // These two lists are a LITERAL copy of the ones in `canopycms-next`'s with-canopy.test.ts.
+  // `isUsableBuildId` is deliberately duplicated across the two packages (a next.config-time file
+  // cannot import from this one), and the only thing stopping the copies drifting is that both are
+  // held to the same values. Before this parity existed, dropping the `.`/`..` exclusion or
+  // widening the regex on THIS side left this file entirely green.
+  it.each(['heads/main', '..', '.', 'has space', 'v1/2', 'a\\b', 'x'.repeat(256)])(
     'rejects an unusable CANOPY_BUILD_ID (%s) and records none',
     async (value) => {
       const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
@@ -553,7 +560,18 @@ describe('manifest build stamp', () => {
       expect(manifest).not.toHaveProperty('buildId')
       // Rejected, so `generated` comes back: the omission is keyed on a USABLE build id.
       expect(typeof manifest.generated).toBe('string')
-      expect(warn).toHaveBeenCalledWith(expect.stringContaining('[A-Za-z0-9._-]+'))
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('[A-Za-z0-9._-]'))
+    },
+  )
+
+  it.each(['fd91b36c', 'v1.2.3', 'build_id-42', 'ad0be123', 'a..b', 'x'.repeat(255)])(
+    'accepts %s',
+    async (value) => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      process.env.CANOPY_BUILD_ID = value
+      const manifest = await generateManifest()
+      expect(manifest.buildId).toBe(value)
+      expect(warn).not.toHaveBeenCalled()
     },
   )
 

@@ -740,7 +740,9 @@ read that field in TypeScript you need a guard. It is still present at runtime f
 that sets neither variable, so behaviour is unchanged unless you opt in.
 
 **To adopt.** Nothing is required. To make a static export reproducible, export `CANOPY_BUILD_ID`
-(any string Next accepts — a content hash of your source tree is the usual choice) for both the
+(it must be 1-255 characters of `[A-Za-z0-9._-]` and not `.` or `..`, because Next splices it
+into `out/_next/static/<id>/` as one path segment with no validation of its own — a content hash of
+your source tree is the usual choice; a value that is set but unusable is ignored with a warning) for both the
 `next build` and the `generate-ai-content` step, and `SOURCE_DATE_EPOCH` as well if you want the
 manifest to keep a timestamp.
 

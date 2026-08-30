@@ -252,7 +252,9 @@ export interface AIManifest {
   /**
    * When this content was generated, ISO-8601.
    *
-   * OPTIONAL, and absent when the manifest carries a `buildId` and `SOURCE_DATE_EPOCH` is unset:
+   * OPTIONAL, and absent whenever the manifest carries a `buildId` and no usable
+   * `SOURCE_DATE_EPOCH` (unset, blank, or malformed — a rejected value does not fall back to a
+   * live clock, it leaves the field absent):
    * under build-once-promote one artifact is built once and may be served months later, so a
    * build clock describes the runner that produced it rather than the content, and anything
    * reading it as "how fresh is this?" is misled by design. An adopter who has declared a build
@@ -262,7 +264,9 @@ export interface AIManifest {
   generated?: string
   /**
    * Identifies the artifact this content was built into (`CANOPY_BUILD_ID`). Absent unless that
-   * variable is set. This — not `generated` — is what a content-addressed deployment keys on.
+   * variable is set to a usable value — 1-255 characters of `[A-Za-z0-9._-]`, not `.` or `..`,
+   * since it must also serve as a single path segment. This — not `generated` — is what a
+   * content-addressed deployment keys on.
    */
   buildId?: string
   /** Root-level entries (outside any collection) */

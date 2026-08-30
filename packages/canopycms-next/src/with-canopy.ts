@@ -156,11 +156,15 @@ function resolveReactAliases(resolve: NodeRequire['resolve']): Record<string, st
  * containing `..` climbs out of it. Both are the adopter's own pipeline misfiring rather than an
  * injection vector, which is exactly why a clear message beats a broken deploy.
  */
-const SAFE_BUILD_ID = /^[A-Za-z0-9._-]+$/
+const SAFE_BUILD_ID = /^[A-Za-z0-9._-]{1,255}$/
+
+/** The message every rejection uses, so the stated rule and the enforced rule cannot drift. */
+const BUILD_ID_RULE = 'must be 1-255 characters of [A-Za-z0-9._-] and not "." or ".."'
 
 function isUsableBuildId(value: string): boolean {
   // `.` and `..` clear the character class but are not names — as a path segment they resolve to
   // the static directory itself or its parent. `a..b` is an ordinary filename and stays allowed.
+  // The 255 bound is the same rule: a longer segment fails at `mkdir` with ENAMETOOLONG.
   return SAFE_BUILD_ID.test(value) && value !== '.' && value !== '..'
 }
 
@@ -194,7 +198,7 @@ function resolveStaticBuildId(): string | null {
   if (!isUsableBuildId(trimmed)) {
     console.warn(
       `CanopyCMS: ignoring CANOPY_BUILD_ID="${trimmed}" — a build id becomes a single path ` +
-        'segment under _next/static/, so it must match [A-Za-z0-9._-]+. Using Next’s random ' +
+        `segment under _next/static/, so it ${BUILD_ID_RULE}. Using Next's random ` +
         'build id instead; this export is NOT reproducible.',
     )
     return null
@@ -325,16 +329,12 @@ export function withCanopy(
   // would give two different file sets the SAME `_next/static/<id>/` path, which nothing can route
   // between if they ever share an origin. The CMS build keeps nanoid so the ids stay distinct.
   //
-  // Two details that look like style choices and are not:
-  // - `.trim()` then `||`, not `??`. An empty-string env var survives `??`, then clears Next's
-  //   `typeof buildId !== 'string'` guard and yields an EMPTY build id. `||` alone is still not
-  //   enough: Next trims AFTER that guard (`return buildId.trim()`), so a whitespace-only value is
-  //   truthy here, passes the guard, and lands as an empty id anyway. Trimming first also keeps
-  //   this id byte-identical to the one the AI manifest records for the same artifact.
-  // - Returning the string directly matters. Next re-rolls ids containing `ad` (ad-blocker false
-  //   positives) only on the `null` fallback path — a returned string is used verbatim
-  //   (`next/dist/build/generate-build-id.js`) — which is what makes a hex tree hash usable here.
-  //   Do not "helpfully" route this through the fallback.
+  // `resolveStaticBuildId` (above) holds the rules for reading the variable and why each exists.
+  // One rule lives here instead, because it constrains this line rather than that function:
+  // returning the resolver's string directly matters. Next re-rolls ids containing `ad`
+  // (ad-blocker false positives) only on the `null` fallback path — a returned string is used
+  // verbatim (`next/dist/build/generate-build-id.js`) — which is what makes a hex tree hash usable
+  // as a build id at all. Do not "helpfully" route this through the fallback.
   const generateBuildId =
     nextConfig.generateBuildId ?? (options.staticBuild ? resolveStaticBuildId : undefined)
 

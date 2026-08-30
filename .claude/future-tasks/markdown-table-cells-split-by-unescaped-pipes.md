@@ -30,10 +30,11 @@ was wrong in three ways, which is itself an argument for automating the check.
   containing both `` `_type || template` `` and `` `||` ``.
 - `.claude/future-tasks/index.md:338` — `O_CREAT|O_EXCL`.
 
-**The branch that filed this task introduced a fourth instance and shipped it**, in the very row
+**The branch that filed this task introduced a fourth instance**, in the very row
 announcing the bug — caught only by a later review round. That is the strongest available
 argument for the check below: knowing about this failure mode is demonstrably not enough to avoid
-it, because the corruption is invisible in the source you are editing.
+it, because the corruption is invisible in the source you are editing. It was caught before merge
+by a review round, not by any tooling — which is the gap.
 
 Detect the rest with a cell-count comparison: for each contiguous run of table lines, compare
 each row's unescaped-pipe count against the header's, and report mismatches.

@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi, beforeEach } from 'vitest'
+import { readFile } from 'node:fs/promises'
 import type { NextConfig } from 'next'
 
 // Track which packages should be "uninstalled" for each test
@@ -242,17 +243,17 @@ describe('withCanopy', () => {
       expect(await resolveBuildId(withCanopy({}, { staticBuild: true }))).toBe('fd91b36c')
     })
 
-    it.each(['heads/main', '..', '.', 'has space', 'v1/2', 'a\\b'])(
+    it.each(['heads/main', '..', '.', 'has space', 'v1/2', 'a\\b', 'x'.repeat(256)])(
       'rejects %s, which Next would splice into _next/static/ unchanged',
       async (value) => {
         const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
         process.env.CANOPY_BUILD_ID = value
         expect(await resolveBuildId(withCanopy({}, { staticBuild: true }))).toBeNull()
-        expect(warn).toHaveBeenCalledWith(expect.stringContaining('[A-Za-z0-9._-]+'))
+        expect(warn).toHaveBeenCalledWith(expect.stringContaining('[A-Za-z0-9._-]'))
       },
     )
 
-    it.each(['fd91b36c', 'v1.2.3', 'build_id-42', 'ad0be123', 'a..b'])(
+    it.each(['fd91b36c', 'v1.2.3', 'build_id-42', 'ad0be123', 'a..b', 'x'.repeat(255)])(
       'accepts %s',
       async (value) => {
         const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
@@ -266,6 +267,21 @@ describe('withCanopy', () => {
       process.env.CANOPY_BUILD_ID = 'from-env'
       const result = withCanopy({ generateBuildId: () => 'from-host' }, { staticBuild: true })
       expect(await resolveBuildId(result)).toBe('from-host')
+    })
+  })
+
+  describe('published documentation', () => {
+    it("keeps withCanopy's JSDoc attached to withCanopy", async () => {
+      // This bug shipped once on this branch: a helper inserted between the JSDoc block and the
+      // declaration orphans the block onto the helper, and `dist/config.d.ts` loses every line of
+      // withCanopy's adopter-facing docs. Nothing in-repo notices, because workspace consumers
+      // resolve `./config` to dist and never hover the type. Asserted on source order rather than
+      // on emitted output so the check costs nothing and fails at the point of the mistake.
+      const source = await readFile(new URL('./with-canopy.ts', import.meta.url), 'utf-8')
+      const jsdocStart = source.indexOf('Wrap your Next.js config')
+      expect(jsdocStart).toBeGreaterThan(-1)
+      const afterBlock = source.slice(source.indexOf('*/', jsdocStart) + 2).trimStart()
+      expect(afterBlock.startsWith('export function withCanopy(')).toBe(true)
     })
   })
 
