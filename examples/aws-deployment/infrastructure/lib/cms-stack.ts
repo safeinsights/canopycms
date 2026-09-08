@@ -16,6 +16,13 @@ import * as lambda from 'aws-cdk-lib/aws-lambda'
 import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager'
 import { Platform } from 'aws-cdk-lib/aws-ecr-assets'
 import { CanopyCmsService, CanopyCmsDistribution } from 'canopycms-cdk'
+// The SAME config file the CMS Lambda reads at request time -- imported here,
+// at synth time, so `baseBranch`/`settingsBranch` below can never drift from
+// `defaultBaseBranch`/`settingsBranch` in canopycms.config.ts the way a
+// hand-copied literal could. `canopycms.config.ts` itself only imports
+// `defineCanopyConfig` from `canopycms`, so this pulls in no server-only or
+// Next.js-specific code -- safe from a plain `tsx` synth.
+import canopyConfig from '../../canopycms.config'
 
 export interface CmsStackProps extends StackProps {
   /** GitHub repository the EC2 worker pushes branches and opens PRs against. */
@@ -84,6 +91,16 @@ export class CmsStack extends Stack {
       githubOwner: props.githubOwner,
       githubRepo: props.githubRepo,
       deploymentName: props.deploymentName,
+
+      // Derived from canopycms.config.ts (imported above), not hardcoded or
+      // left to CanopyCmsService's own 'main' default. A wrong baseBranch
+      // crash-loops the worker forever: verifyBaseBranchExists throws when the
+      // named branch doesn't exist in the cloned remote, and systemd restarts
+      // into the same failure indefinitely. See CanopyCmsServiceProps.baseBranch's
+      // doc comment (packages/canopycms-cdk) for the full mechanism, and
+      // .settingsBranch's for the [SYNC-M3] warning this also prevents.
+      baseBranch: canopyConfig.server.defaultBaseBranch,
+      settingsBranch: canopyConfig.server.settingsBranch,
 
       // Secrets the EC2 worker reads. The Lambda needs none of them.
       secretsArns: [githubToken.secretArn, clerkSecretKey.secretArn],
