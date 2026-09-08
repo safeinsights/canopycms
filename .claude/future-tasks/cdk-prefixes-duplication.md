@@ -30,7 +30,7 @@ reached this independently and measured it. `canopycms-cdk` does not merely
 $ pnpm --filter canopycms-cdk run build
 $ grep worker packages/canopycms-cdk/dist/index.js
 export { CmsWorker } from './worker.js';
-$ grep from packages/canopycms-cdk/dist/worker.js
+$ grep "^export" packages/canopycms-cdk/dist/worker.js
 export { CmsWorker } from 'canopycms/worker/cms-worker';
 ```
 
@@ -44,10 +44,16 @@ package.
 
 The same false rationale was carried, verbatim, by `cms-service.ts`'s
 `isValidDeploymentName` comment and two comments in `cms-deploy.test.ts`; those
-have been corrected to point here. **Whoever takes this task should decide the
-question once for BOTH duplications** — the S3 prefix constants this file is
-about, and the `isValidDeploymentName` / `assertValidGitBranchName` rules — since
-they now rest on the same (now-retracted) premise.
+have been corrected to point here. **Phase 3 mechanical re-check (2026-09-08)
+found the same false rationale in two more places the phase-2 pass missed** —
+`deployment-name.ts`'s own `isValidDeploymentName` doc comment and
+`deployment-name-fixtures.ts`'s file-level comment, both in the `canopycms`
+package rather than `canopycms-cdk` — so the true count is five copies, not
+three; those two have now also been corrected to point here. **Whoever takes
+this task should decide the question once for BOTH duplications** — the S3
+prefix constants this file is about, and the `isValidDeploymentName` /
+`assertValidGitBranchName` rules — since they now rest on the same
+(now-retracted) premise.
 
 ## Fix direction
 

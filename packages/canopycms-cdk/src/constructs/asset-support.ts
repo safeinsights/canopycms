@@ -288,10 +288,12 @@ export const ASSET_BEHAVIOR_SPREAD_MISTAKE_KEYS = ['assets', 'assetsTransform'] 
  * there is no distribution yet to call `addBehavior` on) - but manual use
  * must still preserve the ordering shown below, and
  * `CanopyCmsDistribution`'s synth-time guard (`mergeBehaviors`) actively
- * rejects the two ways that goes wrong: `/assets/*` listed before
- * `/assets/t/*`, and the literal keys `assets`/`assetsTransform` (see
+ * rejects three ways this goes wrong: `/assets/*` listed before
+ * `/assets/t/*`; the literal keys `assets`/`assetsTransform` (see
  * `ASSET_BEHAVIOR_SPREAD_MISTAKE_KEYS`) from spreading this object directly
- * into a `Record`.
+ * into a `Record`; or an asset pattern listed here at all while
+ * `CanopyCmsDistribution`'s `assetSupport` prop is also passed. See
+ * `assertNoAssetBehaviorOrderingHazards`'s doc comment for the full list.
  *
  * ```ts
  * const behaviors = assetSupport.assetBehaviors()
