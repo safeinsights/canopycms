@@ -100,7 +100,18 @@ beforeAll(async () => {
   scaffoldDir = await fs.mkdtemp(path.join(SCAFFOLD_PARENT, 'project-'))
 
   // 1. The genuine adopter path: the real CLI, not a re-implementation of what
-  //    it is supposed to write.
+  //    it is supposed to write. `init` FIRST, matching docs/deploying-to-aws.md's
+  //    documented order (`npx canopycms init` before `npx canopycms init-deploy
+  //    aws`) -- the generated infrastructure/lib/cms-stack.ts now imports the
+  //    project's own canopycms.config.ts at synth time (to derive
+  //    baseBranch/settingsBranch without risking drift from a hand-copied
+  //    literal), so without this step the synth below would fail with
+  //    ERR_MODULE_NOT_FOUND on every real adopter's behalf.
+  await execFileAsync(
+    process.execPath,
+    ['--import', 'tsx', CLI_ENTRY, 'init', '--non-interactive', '--force'],
+    { cwd: scaffoldDir, timeout: TIMEOUT_MS },
+  )
   await execFileAsync(
     process.execPath,
     ['--import', 'tsx', CLI_ENTRY, 'init-deploy', 'aws', '--non-interactive', '--force'],
@@ -216,6 +227,77 @@ describe('canopycms init-deploy aws produces a synthesizable CDK app', () => {
     expect(dockerfile).toContain('ARG NEXT_PUBLIC_CANOPY_MODE')
     expect(dockerfile).not.toContain('ENV CANOPY_MODE=prod')
   })
+
+  /**
+   * The load-bearing half of adopter request #39. The generated stack imports
+   * the project's own `canopycms.config.ts` and derives
+   * `baseBranch`/`settingsBranch` from it, so that the worker's `.env` and the
+   * Lambda's request-time config cannot disagree. Synthesizing successfully
+   * only proves the IMPORT resolves; this proves the VALUES travel, which is
+   * the thing that was broken.
+   *
+   * Deliberately re-synths against an edited config rather than asserting on
+   * the default: with `defaultBaseBranch` unset, the expected stamp is `main`,
+   * which is also what the old hardcoded default emitted -- so a test on the
+   * default would pass just as well with the bug still in place.
+   */
+  it(
+    'carries a non-default defaultBaseBranch/settingsBranch from canopycms.config.ts into the worker .env',
+    async () => {
+      const configPath = path.join(scaffoldDir, 'canopycms.config.ts')
+      const original = await fs.readFile(configPath, 'utf-8')
+      // `mode: 'dev'` is the one field `canopycms init` is known to write; anchor
+      // on it so this fails loudly if the scaffolded shape changes, rather than
+      // silently inserting nothing.
+      expect(original).toContain("mode: 'dev'")
+      await fs.writeFile(
+        configPath,
+        original.replace(
+          "mode: 'dev'",
+          [
+            "mode: 'dev',",
+            "  defaultBaseBranch: 'release/v2',",
+            "  settingsBranch: 'canopycms-settings-scaffold-probe'",
+          ].join('\n'),
+        ),
+        'utf-8',
+      )
+
+      const outDir = 'cdk.out-branch-probe'
+      try {
+        const cdkJson: unknown = JSON.parse(
+          await fs.readFile(path.join(scaffoldDir, 'cdk.json'), 'utf-8'),
+        )
+        await execFileAsync('sh', ['-c', appCommand], {
+          cwd: scaffoldDir,
+          timeout: TIMEOUT_MS,
+          env: {
+            ...process.env,
+            ...SYNTH_ENV,
+            CDK_OUTDIR: outDir,
+            CDK_CONTEXT_JSON: JSON.stringify(readJsonField(cdkJson, 'context') ?? {}),
+          },
+        })
+
+        const probeDir = path.join(scaffoldDir, outDir)
+        const templates = (await fs.readdir(probeDir)).filter((f) => f.endsWith('.template.json'))
+        expect(templates).toHaveLength(1)
+        // The worker's .env is written by a user-data heredoc, so the values end
+        // up as literal substrings of the template rather than as structured
+        // fields. Searching the whole template is what makes this robust to how
+        // CDK chooses to chunk the UserData Fn::Join.
+        const rendered = await fs.readFile(path.join(probeDir, templates[0]), 'utf-8')
+        expect(rendered).toContain('CANOPYCMS_BASE_BRANCH=release/v2')
+        expect(rendered).toContain('CANOPYCMS_SETTINGS_BRANCH=canopycms-settings-scaffold-probe')
+        // And the old behaviour is genuinely gone, not merely accompanied.
+        expect(rendered).not.toContain('CANOPYCMS_BASE_BRANCH=main')
+      } finally {
+        await fs.writeFile(configPath, original, 'utf-8')
+        await fs.rm(path.join(scaffoldDir, outDir), { recursive: true, force: true })
+      }
+    },
+    TIMEOUT_MS,
+  )
 
   it('names the stack exactly what the generated workflow deploys', async () => {
     // `--all` would deploy any other stacks in the adopter's repo, so the

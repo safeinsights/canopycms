@@ -1116,6 +1116,92 @@ describe('CanopyCmsService: deploymentName validation', () => {
   })
 })
 
+/**
+ * Branch-name cases for `baseBranch`/`settingsBranch`, which get
+ * `assertValidGitBranchName` rather than `deploymentName`'s single-component
+ * charset.
+ *
+ * NOT the shared `deployment-name-fixtures` list, deliberately. That list
+ * declares `'team/prod'` INVALID, which is right for a value interpolated into
+ * `canopycms-settings-<name>` and wrong for a whole branch name -- reusing it
+ * here refused `cdk synth` for an adopter whose default branch is
+ * `release/v2`. The first entry below is the regression test for that.
+ *
+ * These live here rather than in a cross-package fixture because there is no
+ * runtime counterpart to drift from: nothing in `canopycms` validates a branch
+ * name, the worker uses the string as given.
+ */
+const VALID_BRANCH_NAMES = [
+  'release/v2',
+  'epic/int-202608-b',
+  'feature/a/b/c',
+  'main',
+  'trunk',
+  'release.2026',
+  'v2',
+  'canopycms-settings-prod',
+  'x.locked',
+] as const
+
+const INVALID_BRANCH_NAMES = [
+  ['whitespace', 'my branch'],
+  ['a leading dash (parses as a git option)', '-branch'],
+  ['a colon', 'branch:1'],
+  ['dot-dot', 'a..b'],
+  ['a leading dot', '.branch'],
+  ['a dot-led path component', 'feature/.hidden'],
+  ['a trailing dot', 'branch.'],
+  ['a .lock suffix', 'branch.lock'],
+  ['a .lock path component', 'feature/x.lock'],
+  ['a tilde', 'branch~1'],
+  ['a caret', 'branch^1'],
+  ['a question mark', 'branch?'],
+  ['an asterisk', 'branch*'],
+  ['an open bracket', 'branch['],
+  ['a backslash', 'branch\\1'],
+  ['a reflog selector', 'branch@{1}'],
+  ['a leading slash', '/branch'],
+  ['a trailing slash', 'branch/'],
+  ['an empty path component', 'a//b'],
+  ['a lone @', '@'],
+  ['the empty string', ''],
+  ['a newline (would inject a line into the worker .env)', 'branch\nEVIL=1'],
+] as const
+
+/**
+ * `baseBranch` gets a synth-time git-ref guard it previously lacked -- before
+ * this it went only through the generic `assertEnvSafe` newline/ENVEOF check
+ * exercised by the heredoc-safe table above, so a value git itself refuses
+ * synthesized and deployed clean and then crash-looped the worker.
+ */
+describe('CanopyCmsService: baseBranch validation', () => {
+  for (const [why, value] of INVALID_BRANCH_NAMES) {
+    it(`throws at synth for a baseBranch with ${why}: ${JSON.stringify(value)}`, () => {
+      expect(() => synth(false, { baseBranch: value })).toThrow(/invalid baseBranch/i)
+    })
+  }
+
+  for (const value of VALID_BRANCH_NAMES) {
+    it(`accepts the baseBranch ${JSON.stringify(value)}`, () => {
+      expect(() => synth(false, { baseBranch: value })).not.toThrow()
+    })
+  }
+
+  it('stamps a slash-bearing baseBranch through to the worker .env', () => {
+    // The regression this guard must not reintroduce: a slash is legal and
+    // conventional in a branch name, and the worker keeps the raw name for git
+    // refs (sanitizing only for workspace directory names).
+    const all = workerUserDataBlobs(synth(false, { baseBranch: 'release/v2' }))
+    expect(all).toContain('CANOPYCMS_BASE_BRANCH=release/v2')
+  })
+
+  it('stamps CANOPYCMS_BASE_BRANCH with a non-main value, building on the existing trunk case', () => {
+    const all = workerUserDataBlobs(synth(false, { baseBranch: 'release.2026' }))
+    expect(all).toContain('CANOPYCMS_BASE_BRANCH=release.2026')
+    expect(all).not.toContain('CANOPYCMS_BASE_BRANCH=main')
+  })
+})
+
 describe('CanopyCmsService: worker CloudWatch log shipping', () => {
   it('creates a dedicated worker log group named /canopycms/<stackName>/worker with 90-day default retention and DESTROY removal', () => {
     const template = synth()
@@ -1518,16 +1604,27 @@ describe('CanopyCmsService: worker .env values are heredoc-safe', () => {
     ['githubOwner', (value) => ({ githubOwner: value })],
     ['githubRepo', (value) => ({ githubRepo: value })],
     ['baseBranch', (value) => ({ baseBranch: value })],
+    ['settingsBranch', (value) => ({ settingsBranch: value })],
     ['deploymentName', (value) => ({ deploymentName: value })],
     ['githubTokenSecretArn', (value) => ({ githubTokenSecretArn: value })],
     ['clerkSecretKeySecretArn', (value) => ({ clerkSecretKeySecretArn: value })],
   ]
 
+  // baseBranch/settingsBranch/deploymentName each have their OWN stricter
+  // git-ref-component guard (assertValidGitBranchName, or deploymentName's
+  // own fold) that runs before assertEnvSafe's generic newline/ENVEOF checks
+  // -- a value that fails the charset never reaches assertEnvSafe at all, so
+  // these three throw "invalid <field> ..." instead of the generic message.
+  const GIT_REF_VALIDATED_FIELDS = new Set(['baseBranch', 'settingsBranch', 'deploymentName'])
+
   for (const [field, build] of fields) {
     it(`rejects a newline in ${field}`, () => {
       expect(() => synth(false, build('acme\nCANOPYCMS_DEPLOYMENT_NAME=hijacked'))).toThrow(
-        // deploymentName has its own (stricter) guard, which fires first.
-        field === 'deploymentName' ? /invalid deploymentName/i : /must not contain a newline/i,
+        // toThrow(string) is a substring match, not a regexp -- avoids
+        // constructing a RegExp from a non-literal (field names come from the
+        // fixed `fields` array above, but a dynamic RegExp still trips
+        // eslint-plugin-security's detect-non-literal-regexp).
+        GIT_REF_VALIDATED_FIELDS.has(field) ? `invalid ${field}` : 'must not contain a newline',
       )
     })
 
@@ -1544,4 +1641,41 @@ describe('CanopyCmsService: worker .env values are heredoc-safe', () => {
     expect(all).toContain('CANOPYCMS_GITHUB_REPO=site')
     expect(all).toContain('CANOPYCMS_BASE_BRANCH=trunk')
   })
+})
+
+/**
+ * `settingsBranch` -> `CANOPYCMS_SETTINGS_BRANCH` in the worker's `.env`.
+ * Mirrors the `deploymentName` -> `CANOPYCMS_DEPLOYMENT_NAME` suite above,
+ * plus the branch-name validation it shares with `baseBranch` (see
+ * `assertValidGitBranchName` in cms-service.ts).
+ */
+describe('CanopyCmsService: settingsBranch -> CANOPYCMS_SETTINGS_BRANCH', () => {
+  it('does not stamp CANOPYCMS_SETTINGS_BRANCH at all when settingsBranch is unset', () => {
+    const all = workerUserDataBlobs(synth())
+    expect(all).not.toContain('CANOPYCMS_SETTINGS_BRANCH')
+  })
+
+  it('stamps CANOPYCMS_SETTINGS_BRANCH in the worker .env when settingsBranch is set', () => {
+    const all = workerUserDataBlobs(synth(false, { settingsBranch: 'canopycms-settings-custom' }))
+    expect(all).toContain('CANOPYCMS_SETTINGS_BRANCH=canopycms-settings-custom')
+  })
+
+  it('throws at synth for an empty settingsBranch rather than silently omitting the stamp', () => {
+    expect(() => synth(false, { settingsBranch: '' })).toThrow(/invalid settingsBranch/i)
+  })
+
+  for (const [why, value] of INVALID_BRANCH_NAMES) {
+    it(`throws at synth for a settingsBranch with ${why}: ${JSON.stringify(value)}`, () => {
+      // The empty-string case is asserted on its own above with a more specific
+      // message; skip the duplicate here.
+      if (value === '') return
+      expect(() => synth(false, { settingsBranch: value })).toThrow(/invalid settingsBranch/i)
+    })
+  }
+
+  for (const value of VALID_BRANCH_NAMES) {
+    it(`accepts the settingsBranch ${JSON.stringify(value)}`, () => {
+      expect(() => synth(false, { settingsBranch: value })).not.toThrow()
+    })
+  }
 })

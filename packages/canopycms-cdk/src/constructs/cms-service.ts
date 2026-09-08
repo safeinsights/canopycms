@@ -36,6 +36,11 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
  * the shared fixture in
  * packages/canopycms/src/operating-mode/deployment-name-fixtures.ts and
  * requires them to agree. Add a case there when you change either copy.
+ *
+ * Scoped to `deploymentName` ONLY. `baseBranch` and `settingsBranch` are whole
+ * branch names rather than single ref components, so they get
+ * `assertValidGitBranchName` instead — see that function's doc comment for why
+ * reusing this charset there would refuse a legitimate `release/2026`.
  */
 const isValidDeploymentName = (name: string): boolean =>
   /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(name) &&
@@ -84,6 +89,72 @@ function assertEnvSafe(name: string, value: string): string {
         `<< '${ENV_HEREDOC_DELIMITER}' heredoc, which that value would terminate early.`,
     )
   }
+  return value
+}
+
+/**
+ * Refuse a `baseBranch`/`settingsBranch` that git itself would reject, at
+ * synth rather than at worker boot.
+ *
+ * Both values are interpolated into a git ref AND into a line of the worker's
+ * `.env` that user-data writes with a shell heredoc. `assertEnvSafe` covers
+ * the heredoc half (newlines, quotes, the ENVEOF delimiter); this covers the
+ * ref half, because a value git refuses does not fail at `cdk deploy` -- it
+ * fails inside the worker, where `verifyBaseBranchExists` throws,
+ * `worker/index.ts` exits 1, and systemd's `Restart=always` turns it into a
+ * crash loop with no signal at the deploy that caused it.
+ *
+ * DELIBERATELY NOT `isValidDeploymentName`. That rule governs a single ref
+ * COMPONENT (`deploymentName` is interpolated into
+ * `canopycms-settings-<name>`), so it forbids `/`. These two props are whole
+ * branch names, where `/` is not merely legal but conventional --
+ * `release/2026`, `epic/foo`. Reusing the component rule here would refuse
+ * `cdk synth` for an adopter whose default branch is `release/v2`, and the
+ * worker handles such names fine: it keeps the raw name for git refs and runs
+ * it through `sanitizeBranchName` only for workspace DIRECTORY names.
+ *
+ * So this implements git's `check-ref-format` rules for a branch name
+ * instead. There is no runtime counterpart to drift from (nothing in
+ * `canopycms` validates a branch name -- the worker uses the string as
+ * given), which is why this has its own tests rather than a shared fixture
+ * list like `deploymentName`'s.
+ */
+function assertValidGitBranchName(propName: string, value: string): string {
+  const reject = (why: string): never => {
+    throw new Error(
+      `CanopyCmsService: invalid ${propName} ${JSON.stringify(value)} -- ${why}. ` +
+        `It is used as a git branch name and written into the worker's .env, so it must be a ` +
+        `name git accepts: slash-separated components (a '/' is fine, and conventional), no ` +
+        `component starting with '.' or ending with '.lock', no '..', '~', '^', ':', '?', '*', ` +
+        `'[', '\\', '@{', no whitespace or control characters, no leading '-', and it may not ` +
+        `start or end with '/' or end with '.'.`,
+    )
+  }
+
+  if (value.length === 0) reject('it is empty')
+  if (value === '@') reject("a lone '@' is reserved by git")
+  if (value.startsWith('-')) reject("a leading '-' parses as a git option")
+  if (value.startsWith('/') || value.endsWith('/')) reject("it starts or ends with '/'")
+  if (value.endsWith('.')) reject("it ends with '.'")
+  if (value.includes('..')) reject("it contains '..'")
+  if (value.includes('//')) reject("it contains an empty path component ('//')")
+  if (value.includes('@{')) reject("it contains '@{', which git reads as a reflog selector")
+
+  for (const char of value) {
+    const code = char.codePointAt(0) ?? 0
+    if (code < 0x20 || code === 0x7f) reject('it contains a control character')
+    if (char === ' ') reject('it contains whitespace')
+    if ('~^:?*[\\'.includes(char))
+      reject(`it contains the git-forbidden character ${JSON.stringify(char)}`)
+  }
+
+  for (const component of value.split('/')) {
+    if (component.startsWith('.'))
+      reject(`its path component ${JSON.stringify(component)} starts with '.'`)
+    if (component.endsWith('.lock'))
+      reject(`its path component ${JSON.stringify(component)} ends with '.lock'`)
+  }
+
   return value
 }
 
@@ -174,8 +245,58 @@ export interface CanopyCmsServiceProps {
   /** Secrets Manager ARN for the Clerk secret key */
   clerkSecretKeySecretArn?: string
 
-  /** Base branch name (default: 'main') */
+  /**
+   * The GitHub repository's default branch name (default: 'main').
+   *
+   * Interpolated straight into a git ref (`refs/heads/{baseBranch}`) and into
+   * the worker's `.env` heredoc, so an invalid value is rejected at synth (see
+   * `assertValidGitBranchName` above) instead of deploying an instance that
+   * boots successfully and then fails. And fail it will, permanently:
+   * `verifyBaseBranchExists`
+   * (packages/canopycms/src/worker/cms-worker.ts) throws when the named branch
+   * does not exist in the cloned `remote.git`, `start()`'s catch records the
+   * fatal error, `worker/index.ts` exits 1, and systemd's `Restart=always`
+   * repeats that forever — there is no working worker at all until the value
+   * is fixed and the instance replaced, and `rebaseActiveBranches` fetches and
+   * rebases against the wrong lineage in the meantime.
+   *
+   * MUST match the shared repo's `canopycms.config.ts`'s `defaultBaseBranch`
+   * (both default to 'main' when unset) — the two are resolved by different
+   * processes (this stamps the worker's `.env`; the Lambda reads
+   * `config.defaultBaseBranch` at request time) with no automatic
+   * reconciliation between them. `infrastructure/lib/cms-stack.ts`, as
+   * scaffolded by `canopycms init-deploy aws`, derives this prop FROM that same
+   * config file at synth time so the two cannot drift for adopters who deploy
+   * through the generated stack; a hand-rolled stack must set this explicitly
+   * whenever `defaultBaseBranch` is anything other than 'main'.
+   */
   baseBranch?: string
+
+  /**
+   * Explicit settings-branch name, stamped into the worker's
+   * `CANOPYCMS_SETTINGS_BRANCH` environment variable (default: unset, in which
+   * case the worker falls through to the same computed name the Lambda uses,
+   * `canopycms-settings-<deploymentName>` — see `deploymentName` below).
+   *
+   * Only set this to mirror an adopter-configured `config.settingsBranch` in
+   * `canopycms.config.ts`. Leaving both unset (the default) is safe: Lambda and
+   * worker then resolve the SAME computed name independently, with nothing to
+   * keep in sync. But if the shared config sets `settingsBranch` explicitly
+   * and this prop is left unset, the worker keeps resolving the computed name
+   * while the Lambda's `getSettingsBranchName` short-circuits on
+   * `config.settingsBranch` — so the two own different branches. The PRIMARY
+   * settings-push path still reaches GitHub (its task payload carries the
+   * Lambda-resolved name), but the worker's per-cycle backstop push
+   * (`pushSettingsBranches`) targets the wrong branch and its "foreign settings
+   * branch" [SYNC-M3] warning misfires against the deployment's own branch.
+   * Validated at synth like `baseBranch` (see `assertValidGitBranchName`),
+   * since this is interpolated into a git ref and the worker's `.env` heredoc
+   * too. `infrastructure/lib/cms-stack.ts`, as scaffolded by
+   * `canopycms init-deploy aws`, derives this prop from the same
+   * `canopycms.config.ts` at synth time, so the two cannot drift for adopters
+   * who deploy through the generated stack.
+   */
+  settingsBranch?: string
 
   /**
    * Deployment name (default: 'prod'). Namespaces the settings branch
@@ -345,6 +466,24 @@ export class CanopyCmsService extends Construct {
           `and must not contain '..' or end with '.' or '.lock'.`,
       )
     }
+
+    // ------------------------------------------------------------------
+    // Base branch / settings branch: validated the same way as deploymentName
+    // ------------------------------------------------------------------
+    //
+    // Both are interpolated into a git ref and the worker's `.env` heredoc, so
+    // both are guarded at synth rather than left to fail (or silently diverge
+    // from the shared `canopycms.config.ts`) at boot. See the doc comments on
+    // `baseBranch`/`settingsBranch` above for the specific failure each guards
+    // against. `settingsBranch` stays `undefined` (not stamped at all) unless
+    // the adopter explicitly set it — an absent env var and an empty one are
+    // NOT the same to the worker, which falls through to a computed name only
+    // when `CANOPYCMS_SETTINGS_BRANCH` is unset entirely.
+    const baseBranch = assertValidGitBranchName('baseBranch', props.baseBranch ?? 'main')
+    const settingsBranch =
+      props.settingsBranch !== undefined
+        ? assertValidGitBranchName('settingsBranch', props.settingsBranch)
+        : undefined
 
     // ------------------------------------------------------------------
     // Operating mode
@@ -692,7 +831,7 @@ export class CanopyCmsService extends Construct {
       ['CANOPYCMS_WORKSPACE_ROOT', '/mnt/efs/workspace'],
       ['CANOPYCMS_GITHUB_OWNER', props.githubOwner],
       ['CANOPYCMS_GITHUB_REPO', props.githubRepo],
-      ['CANOPYCMS_BASE_BRANCH', props.baseBranch ?? 'main'],
+      ['CANOPYCMS_BASE_BRANCH', baseBranch],
       // The SAME string the Lambda's environment gets above, including an
       // `environment.CANOPYCMS_DEPLOYMENT_NAME` override - the two halves
       // resolve one settings branch (`canopycms-settings-<name>`) between them,
@@ -708,6 +847,12 @@ export class CanopyCmsService extends Construct {
     }
     if (props.clerkSecretKeySecretArn) {
       envEntries.push(['CLERK_SECRET_KEY_SECRET_ARN', props.clerkSecretKeySecretArn])
+    }
+    if (settingsBranch !== undefined) {
+      // Only when explicitly set - an absent prop must keep today's behavior
+      // (the worker falls through to the computed `canopycms-settings-<name>`),
+      // so this must never stamp an empty string either way.
+      envEntries.push(['CANOPYCMS_SETTINGS_BRANCH', settingsBranch])
     }
     const envFileContent = envEntries
       .map(([name, value]) => `${name}=${assertEnvSafe(name, value)}`)
