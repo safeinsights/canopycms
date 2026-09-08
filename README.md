@@ -206,6 +206,8 @@ If you are not doing dual-build deployment (most setups), you can ignore this op
 
 > **Note:** `withCanopy()` adds `server.ts`/`server.tsx` (or, with `staticBuild: true`, `static.ts`/`static.tsx`) to Next.js `pageExtensions`. If you already have files ending in `.server.ts`, `.server.tsx`, `.static.ts`, or `.static.tsx` inside your app directory for non-CMS purposes, they will be treated as pages/routes by Next.js. Rename them or use a different naming convention to avoid conflicts.
 
+Using Clerk (or another auth SDK) with dual-build? Its provider component can't go in the root layout above -- see [Where a Clerk provider goes](docs/deploying-to-aws.md#dual-build-support) for the `.server.tsx`-scoped layout that keeps it out of the static export, and what is (and isn't yet) verified about sharing one Docker image across Clerk instances.
+
 ### 4. Customize your schemas
 
 Edit `{appDir}/schemas.ts` with your content types. See [Schema Registry and References](#schema-registry-and-references) for details.
