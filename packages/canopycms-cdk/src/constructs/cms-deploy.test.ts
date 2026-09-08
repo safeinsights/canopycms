@@ -13,6 +13,7 @@ import {
 import { CanopyCmsService, DEFAULT_CMS_LAMBDA_TIMEOUT } from './cms-service'
 import type { CanopyCmsServiceProps } from './cms-service'
 import { CanopyCmsDistribution } from './cms-distribution'
+import { AssetSupport, ASSETS_PATH_PATTERN, ASSETS_TRANSFORM_PATH_PATTERN } from './asset-support'
 // Test-only imports across the package boundary, deliberately: the construct
 // itself must NOT import `canopycms` (this package publishes with no runtime
 // dependency on it), but its SUITE can, which is what makes the duplicated
@@ -383,6 +384,170 @@ describe('CanopyCmsDistribution: additionalBehaviors', () => {
     expect(patterns.indexOf('/_next/static/chunks/*')).toBeLessThan(
       patterns.indexOf('/_next/static/*'),
     )
+  })
+})
+
+describe('CanopyCmsDistribution: assetSupport prop', () => {
+  /** Builds a stack with a CanopyCmsService and an AssetSupport, ready to pass to CanopyCmsDistribution. */
+  function buildServiceAndAssets(stackId: string) {
+    const app = new App()
+    const stack = new Stack(app, stackId, {
+      env: { account: '123456789012', region: 'us-east-1' },
+    })
+    const service = new CanopyCmsService(stack, 'Cms', {
+      cmsDockerImage: lambda.DockerImageCode.fromEcr(
+        ecr.Repository.fromRepositoryName(stack, 'Repo', 'cms'),
+      ),
+      githubOwner: 'acme',
+      githubRepo: 'site',
+    })
+    const assetSupport = new AssetSupport(stack, 'Assets', {
+      editorOrigins: ['http://localhost:3000'],
+      // See asset-support.test.ts's BASE_PROPS doc comment - this suite
+      // synths against the cheap --skip-native fixture bundle.
+      requireDeployableBundle: false,
+    })
+    return { stack, service, assetSupport }
+  }
+
+  function distributionCommonProps(stack: Stack, functionUrl: lambda.FunctionUrl) {
+    return {
+      functionUrl,
+      domainName: 'cms.example.org',
+      hostedZoneDomain: 'example.org',
+      hostedZone: route53.HostedZone.fromHostedZoneAttributes(stack, 'Zone', {
+        hostedZoneId: 'Z123456789',
+        zoneName: 'example.org',
+      }),
+      certificate: acm.Certificate.fromCertificateArn(
+        stack,
+        'Cert',
+        'arn:aws:acm:us-east-1:123456789012:certificate/abc',
+      ),
+    }
+  }
+
+  it('attaches both AssetSupport behaviors in the right order, alongside the construct’s own /_next/static/*', () => {
+    const { stack, service, assetSupport } = buildServiceAndAssets('AssetPropStack')
+    new CanopyCmsDistribution(stack, 'Dist', {
+      ...distributionCommonProps(stack, service.functionUrl),
+      assetSupport,
+    })
+
+    const dist = Object.values(
+      Template.fromStack(stack).findResources('AWS::CloudFront::Distribution'),
+    )[0]
+    const patterns = (
+      dist.Properties.DistributionConfig.CacheBehaviors as { PathPattern: string }[]
+    ).map((b) => b.PathPattern)
+
+    expect(patterns).toContain(ASSETS_TRANSFORM_PATH_PATTERN)
+    expect(patterns).toContain(ASSETS_PATH_PATTERN)
+    expect(patterns).toContain('/_next/static/*')
+    // The whole point: the more specific transform pattern must precede the
+    // broader static one, or CloudFront's first-match-wins ordering serves
+    // every transform request off the S3-only behavior and never fails over
+    // to the transform Lambda.
+    expect(patterns.indexOf(ASSETS_TRANSFORM_PATH_PATTERN)).toBeLessThan(
+      patterns.indexOf(ASSETS_PATH_PATTERN),
+    )
+  })
+
+  it('throws at construction when a hand-written additionalBehaviors lists /assets/* before /assets/t/*', () => {
+    const { stack, service } = buildServiceAndAssets('WrongOrderStack')
+    const anyOrigin = origins.FunctionUrlOrigin.withOriginAccessControl(service.functionUrl)
+    expect(
+      () =>
+        new CanopyCmsDistribution(stack, 'Dist', {
+          ...distributionCommonProps(stack, service.functionUrl),
+          additionalBehaviors: {
+            // Wrong order: the broader pattern listed first swallows every
+            // transform request before CloudFront ever reaches the more
+            // specific one.
+            [ASSETS_PATH_PATTERN]: { origin: anyOrigin },
+            [ASSETS_TRANSFORM_PATH_PATTERN]: { origin: anyOrigin },
+          },
+        }),
+    ).toThrow(/first-match-wins|permanent 403|matches path patterns in the order/i)
+  })
+
+  it('throws at construction when additionalBehaviors carries the literal assets/assetsTransform spread-mistake keys', () => {
+    const { stack, service } = buildServiceAndAssets('SpreadMistakeStack')
+    const anyOrigin = origins.FunctionUrlOrigin.withOriginAccessControl(service.functionUrl)
+    expect(
+      () =>
+        new CanopyCmsDistribution(stack, 'Dist', {
+          ...distributionCommonProps(stack, service.functionUrl),
+          // The mistake this guards against: spreading assetBehaviors()'s
+          // return value directly into additionalBehaviors instead of keying
+          // it by path pattern.
+          additionalBehaviors: {
+            assets: { origin: anyOrigin },
+            assetsTransform: { origin: anyOrigin },
+          },
+        }),
+    ).toThrow(/literal key/i)
+  })
+
+  it('does NOT throw when additionalBehaviors uses the correct manual order (negative control)', () => {
+    // Guards against a vacuous guard: the two throwing tests above would
+    // "pass" even if the check fired on every additionalBehaviors call, so
+    // this pins that the hand-written-correct shape templates still show
+    // (assetBehaviors().assetsTransform / .assets, transform first) is
+    // accepted.
+    const { stack, service } = buildServiceAndAssets('CorrectOrderStack')
+    const anyOrigin = origins.FunctionUrlOrigin.withOriginAccessControl(service.functionUrl)
+    expect(
+      () =>
+        new CanopyCmsDistribution(stack, 'Dist', {
+          ...distributionCommonProps(stack, service.functionUrl),
+          additionalBehaviors: {
+            [ASSETS_TRANSFORM_PATH_PATTERN]: { origin: anyOrigin },
+            [ASSETS_PATH_PATTERN]: { origin: anyOrigin },
+          },
+        }),
+    ).not.toThrow()
+  })
+
+  it('throws when the assetSupport prop is combined with a hand-wired asset block', () => {
+    // The migration mistake: an adopter who already hand-wired the behaviors
+    // adopts the `assetSupport` prop without deleting the old block. Note the
+    // hand-written order here is the CORRECT one, so the ordering check above
+    // cannot catch this - and `attachTo` runs after the distribution is
+    // constructed, so its addBehavior calls never reach mergeBehaviors.
+    // Measured before this guard existed: CDK raised nothing and synthesized
+    // CacheBehaviors ['/assets/t/*','/assets/*','/assets/t/*','/assets/*'],
+    // leaving CloudFront to reject the duplicate patterns at deploy time.
+    const { stack, service, assetSupport } = buildServiceAndAssets('DoubleWiredStack')
+    const anyOrigin = origins.FunctionUrlOrigin.withOriginAccessControl(service.functionUrl)
+    expect(
+      () =>
+        new CanopyCmsDistribution(stack, 'Dist', {
+          ...distributionCommonProps(stack, service.functionUrl),
+          assetSupport,
+          additionalBehaviors: {
+            [ASSETS_TRANSFORM_PATH_PATTERN]: { origin: anyOrigin },
+            [ASSETS_PATH_PATTERN]: { origin: anyOrigin },
+          },
+        }),
+    ).toThrow(/attached twice|duplicate path pattern/i)
+  })
+
+  it('does NOT throw when the assetSupport prop is combined with unrelated additionalBehaviors', () => {
+    // Negative control for the check above: passing the prop must stay
+    // compatible with a caller who has their own, non-asset behaviors.
+    const { stack, service, assetSupport } = buildServiceAndAssets('PropPlusUnrelatedStack')
+    const anyOrigin = origins.FunctionUrlOrigin.withOriginAccessControl(service.functionUrl)
+    expect(
+      () =>
+        new CanopyCmsDistribution(stack, 'Dist', {
+          ...distributionCommonProps(stack, service.functionUrl),
+          assetSupport,
+          additionalBehaviors: {
+            '/api/*': { origin: anyOrigin },
+          },
+        }),
+    ).not.toThrow()
   })
 })
 

@@ -251,15 +251,53 @@ export interface AssetSupportProps {
 }
 
 /**
+ * The two CloudFront path patterns the asset system's behaviors are keyed
+ * under, derived from `PREFIXES` above (the single source of truth for these
+ * prefixes in this file) rather than spelled out again. Exported so
+ * `cms-distribution.ts`'s synth-time ordering guard can recognize them
+ * without a second, driftable copy of the literal strings.
+ */
+export const ASSETS_PATH_PATTERN = `/${PREFIXES.public}/*`
+export const ASSETS_TRANSFORM_PATH_PATTERN = `/${PREFIXES.transform}/*`
+
+/**
+ * The literal property names of `AssetCloudFrontBehaviors`
+ * (`assets`/`assetsTransform`). It is a natural but broken mistake to spread
+ * `assetBehaviors()`'s return value directly into `additionalBehaviors` (a
+ * `Record<pathPattern, BehaviorOptions>`) - that type-checks and deploys
+ * clean, but synthesizes two CloudFront behaviors matching the literal path
+ * patterns `assets` and `assetsTransform`, which nothing ever requests,
+ * instead of the real `/assets/*` and `/assets/t/*` patterns. Use
+ * `attachTo()` (below) or `CanopyCmsDistribution`'s `assetSupport` prop
+ * instead. Exported so `cms-distribution.ts`'s synth-time guard can
+ * recognize the mistake and name it in its error.
+ */
+export const ASSET_BEHAVIOR_SPREAD_MISTAKE_KEYS = ['assets', 'assetsTransform'] as const
+
+/**
  * The two CloudFront behavior configs the asset system needs, keyed by the
  * path pattern they belong under. Each value is a full `BehaviorOptions`
- * (origin included), so a consumer can use it either way:
+ * (origin included).
+ *
+ * Prefer `AssetSupport.attachTo(distribution)` or `CanopyCmsDistribution`'s
+ * `assetSupport` prop over consuming this directly - both encode the
+ * required attachment order in exactly one place instead of asking every
+ * caller to reproduce it correctly. This return value remains useful as an
+ * ESCAPE HATCH for a bespoke `new cloudfront.Distribution(...)` assembled
+ * entirely inline (its `additionalBehaviors` is fixed at construction, so
+ * there is no distribution yet to call `addBehavior` on) - but manual use
+ * must still preserve the ordering shown below, and
+ * `CanopyCmsDistribution`'s synth-time guard (`mergeBehaviors`) actively
+ * rejects the two ways that goes wrong: `/assets/*` listed before
+ * `/assets/t/*`, and the literal keys `assets`/`assetsTransform` (see
+ * `ASSET_BEHAVIOR_SPREAD_MISTAKE_KEYS`) from spreading this object directly
+ * into a `Record`.
  *
  * ```ts
  * const behaviors = assetSupport.assetBehaviors()
  *
- * // Building a new distribution. CloudFront matches path patterns in the
- * // order they're listed and stops at the first match, so the more
+ * // Building a new distribution inline. CloudFront matches path patterns in
+ * // the order they're listed and stops at the first match, so the more
  * // specific '/assets/t/*' MUST come before '/assets/*' - otherwise the
  * // broader S3-only pattern swallows transform requests first and they
  * // 403 with no Lambda fallback.
@@ -270,12 +308,6 @@ export interface AssetSupportProps {
  *     '/assets/*': behaviors.assets,
  *   },
  * })
- *
- * // Adding to an existing distribution: the same first-match-wins ordering
- * // applies to the resulting CacheBehaviors list, so call addBehavior for
- * // '/assets/t/*' before '/assets/*' here too.
- * distribution.addBehavior('/assets/t/*', behaviors.assetsTransform.origin, behaviors.assetsTransform)
- * distribution.addBehavior('/assets/*', behaviors.assets.origin, behaviors.assets)
  * ```
  */
 export interface AssetCloudFrontBehaviors {
@@ -310,9 +342,11 @@ export interface AssetCloudFrontBehaviors {
  *   (custom name/retention/removal policy instead of the
  *   CloudFormation-implicit `/aws/lambda/<function-name>` group), and its
  *   OAC-locked Function URL.
- * - `assetBehaviors()`, the two CloudFront behavior configs a consuming
- *   distribution attaches (see `AssetCloudFrontBehaviors`'s doc comment for
- *   both attachment shapes).
+ * - `attachTo(distribution)`, which attaches the two CloudFront behaviors a
+ *   consuming distribution needs in the only safe order (see its doc comment
+ *   for why the order is the whole point); `assetBehaviors()` is the escape
+ *   hatch for a distribution built entirely by hand (see
+ *   `AssetCloudFrontBehaviors`'s doc comment).
  * - `grantUploadAccess()`, the exact prefix-scoped grants the CMS/editor
  *   principal needs to run `S3AssetStore` (packages/canopycms/src/assets/store-s3.ts).
  */
@@ -544,9 +578,51 @@ export class AssetSupport extends Construct {
     return { assets, assetsTransform }
   }
 
-  /** The two CloudFront behavior configs this system needs - see `AssetCloudFrontBehaviors`'s doc comment for both attachment shapes. */
+  /**
+   * The two CloudFront behavior configs this system needs.
+   *
+   * Prefer `attachTo(distribution)` or `CanopyCmsDistribution`'s
+   * `assetSupport` prop, which attach these to a distribution in the only
+   * safe order automatically. This method exists as the escape hatch for a
+   * distribution assembled entirely by hand - see `AssetCloudFrontBehaviors`'s
+   * doc comment for that shape and its ordering requirements.
+   */
   public assetBehaviors(): AssetCloudFrontBehaviors {
     return this.behaviors
+  }
+
+  /**
+   * Attach both asset behaviors to a concrete CloudFront distribution, in the
+   * only safe order.
+   *
+   * THIS METHOD EXISTS BECAUSE THE ORDER IS THE WHOLE POINT.
+   * `assetBehaviors()` returns `{ assets, assetsTransform }` with no path
+   * pattern attached at all (see that method's and `AssetCloudFrontBehaviors`'s
+   * doc comments) - so nothing stops a caller from attaching the two in
+   * either order. CloudFront matches path patterns in the order given and
+   * stops at the first match. `/assets/*` is a broader, S3-only pattern that
+   * also matches every `/assets/t/*` request; `/assets/t/*` is an origin
+   * group that fails over to the transform Lambda on a miss. Attach
+   * `/assets/*` first and every never-yet-computed transform gets a
+   * permanent 403 (an OAC-signed S3 miss reports 403) while already-computed
+   * transforms keep working - silent, launch-delayed, and permanent.
+   * `'/assets/*'` also sorts BEFORE `'/assets/t/*'` lexicographically (`*` =
+   * 0x2A, `t` = 0x74), so alphabetizing the keys reproduces exactly this
+   * failure, with no synth or deploy error to catch it.
+   *
+   * Needs a concrete `cloudfront.Distribution` - `addBehavior` is an instance
+   * method on that class, not on `IDistribution` (what an imported/looked-up
+   * distribution reference gives you). For a distribution built entirely
+   * inline (its `additionalBehaviors` fixed at construction, with no
+   * distribution yet to call `addBehavior` on), call `assetBehaviors()`
+   * directly instead and list `/assets/t/*` before `/assets/*` yourself - see
+   * `AssetCloudFrontBehaviors`'s doc comment.
+   */
+  public attachTo(distribution: cloudfront.Distribution): void {
+    const { origin: transformOrigin, ...transformRest } = this.behaviors.assetsTransform
+    const { origin: assetsOrigin, ...assetsRest } = this.behaviors.assets
+    distribution.addBehavior(ASSETS_TRANSFORM_PATH_PATTERN, transformOrigin, transformRest)
+    distribution.addBehavior(ASSETS_PATH_PATTERN, assetsOrigin, assetsRest)
   }
 
   /**

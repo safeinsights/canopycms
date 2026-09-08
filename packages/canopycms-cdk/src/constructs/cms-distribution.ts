@@ -11,6 +11,12 @@ import {
   aws_lambda as lambda,
 } from 'aws-cdk-lib'
 import { DEFAULT_CMS_LAMBDA_TIMEOUT, MAX_CLOUDFRONT_ORIGIN_READ_TIMEOUT } from './cms-service'
+import type { AssetSupport } from './asset-support'
+import {
+  ASSETS_PATH_PATTERN,
+  ASSETS_TRANSFORM_PATH_PATTERN,
+  ASSET_BEHAVIOR_SPREAD_MISTAKE_KEYS,
+} from './asset-support'
 
 /**
  * Merge caller behaviors over this construct's own, preserving THE CALLER'S
@@ -30,12 +36,108 @@ import { DEFAULT_CMS_LAMBDA_TIMEOUT, MAX_CLOUDFRONT_ORIGIN_READ_TIMEOUT } from '
 function mergeBehaviors(
   defaults: Record<string, cloudfront.BehaviorOptions>,
   caller: Record<string, cloudfront.BehaviorOptions> | undefined,
+  attachingAssetSupport: boolean,
 ): Record<string, cloudfront.BehaviorOptions> {
   if (!caller) return defaults
   const uncollided = Object.fromEntries(
     Object.entries(defaults).filter(([pattern]) => !(pattern in caller)),
   )
-  return { ...uncollided, ...caller }
+  const merged = { ...uncollided, ...caller }
+  assertNoAssetBehaviorOrderingHazards(merged, attachingAssetSupport)
+  return merged
+}
+
+/**
+ * Guards against the three AssetSupport CloudFront-behavior hazards a manually
+ * assembled `additionalBehaviors` can introduce (see
+ * `AssetSupport.attachTo()`'s doc comment for the full mechanism):
+ *
+ * 1. The literal keys `assets`/`assetsTransform` present in `merged` mean
+ *    `assetSupport.assetBehaviors()`'s return value was spread directly into
+ *    `additionalBehaviors` (a `Record<pathPattern, BehaviorOptions>`) instead
+ *    of being attached via `assetSupport.attachTo(distribution)` or this
+ *    construct's `assetSupport` prop. This type-checks and deploys clean,
+ *    synthesizing two behaviors matching the literal path patterns `assets`
+ *    and `assetsTransform`, which nothing ever requests.
+ * 2. `/assets/*` listed before `/assets/t/*` means CloudFront's first-match-
+ *    wins ordering serves every transform request off the broader, S3-only
+ *    `/assets/*` behavior, permanently 403ing any derivative that has not
+ *    already been computed (an OAC-signed S3 miss reports 403).
+ * 3. Either asset pattern present in `merged` WHILE the `assetSupport` prop is
+ *    also passed means both wiring routes are active at once, so each pattern
+ *    is attached twice. This is the migration mistake specifically - keeping a
+ *    hand-wired block while adopting the prop - and hazard 2 cannot catch it,
+ *    because the hand-written order is usually the correct one.
+ *
+ * `Object.keys` insertion order is spec-guaranteed for string keys like
+ * these (none are integer-like array-index strings), so comparing index
+ * order here is sound.
+ *
+ * SCOPE LIMIT: this protects only callers going through
+ * `CanopyCmsDistribution`'s own `additionalBehaviors` merge. It cannot help a
+ * bespoke `new cloudfront.Distribution(...)` assembled elsewhere -
+ * `AssetSupport.attachTo()` is the answer there.
+ */
+function assertNoAssetBehaviorOrderingHazards(
+  merged: Record<string, cloudfront.BehaviorOptions>,
+  attachingAssetSupport: boolean,
+): void {
+  const keys = Object.keys(merged)
+
+  const spreadMistakeKeys = ASSET_BEHAVIOR_SPREAD_MISTAKE_KEYS.filter((key) => key in merged)
+  if (spreadMistakeKeys.length > 0) {
+    throw new Error(
+      `CanopyCmsDistribution: additionalBehaviors has literal key(s) ` +
+        `${spreadMistakeKeys.map((k) => JSON.stringify(k)).join(', ')}, which is not a ` +
+        `CloudFront path pattern. This usually means assetSupport.assetBehaviors()'s return ` +
+        `value was spread directly into additionalBehaviors instead of attached via ` +
+        `assetSupport.attachTo(distribution) or this construct's \`assetSupport\` prop - either ` +
+        `of which attaches the real '${ASSETS_PATH_PATTERN}' and '${ASSETS_TRANSFORM_PATH_PATTERN}' ` +
+        `path patterns in the required order.`,
+    )
+  }
+
+  // Both halves wired at once. `attachTo` runs AFTER the distribution is
+  // constructed, so its `addBehavior` calls never pass through this function -
+  // meaning a caller who keeps a hand-wired asset block AND adopts the
+  // `assetSupport` prop gets each pattern attached twice. Measured: CDK does
+  // not object, and synthesizes CacheBehaviors
+  // ['/assets/t/*','/assets/*','/assets/t/*','/assets/*'], which CloudFront
+  // then rejects at deploy time for the duplicate path patterns. That is a
+  // late failure of exactly the kind this guard exists to convert into a synth
+  // one, and it is the most likely mistake during migration: the correct
+  // hand-written order does NOT trip the check below, so nothing else would
+  // catch it.
+  if (attachingAssetSupport) {
+    const alsoWiredByHand = [ASSETS_PATH_PATTERN, ASSETS_TRANSFORM_PATH_PATTERN].filter(
+      (pattern) => pattern in merged,
+    )
+    if (alsoWiredByHand.length > 0) {
+      throw new Error(
+        `CanopyCmsDistribution: the \`assetSupport\` prop attaches ` +
+          `'${ASSETS_TRANSFORM_PATH_PATTERN}' and '${ASSETS_PATH_PATTERN}' itself, but ` +
+          `additionalBehaviors already lists ${alsoWiredByHand.map((p) => `'${p}'`).join(' and ')}. ` +
+          `Each pattern would be attached twice and CloudFront rejects duplicate path patterns at ` +
+          `deploy time. Remove the asset entries from additionalBehaviors and keep the ` +
+          `\`assetSupport\` prop, which also guarantees the required order.`,
+      )
+    }
+  }
+
+  const assetsIndex = keys.indexOf(ASSETS_PATH_PATTERN)
+  const transformIndex = keys.indexOf(ASSETS_TRANSFORM_PATH_PATTERN)
+  if (assetsIndex !== -1 && transformIndex !== -1 && assetsIndex < transformIndex) {
+    throw new Error(
+      `CanopyCmsDistribution: additionalBehaviors lists '${ASSETS_PATH_PATTERN}' before ` +
+        `'${ASSETS_TRANSFORM_PATH_PATTERN}'. CloudFront matches path patterns in the order given ` +
+        `and stops at the first match, so every '${ASSETS_TRANSFORM_PATH_PATTERN}' request would ` +
+        `be served by the broader, S3-only '${ASSETS_PATH_PATTERN}' behavior and never fail over ` +
+        `to the transform Lambda - a permanent 403 on any derivative that has not already been ` +
+        `computed. List '${ASSETS_TRANSFORM_PATH_PATTERN}' first, or use ` +
+        `assetSupport.attachTo(distribution) / this construct's \`assetSupport\` prop, which get ` +
+        `the order right automatically.`,
+    )
+  }
 }
 
 export interface CanopyCmsDistributionProps {
@@ -93,8 +195,37 @@ export interface CanopyCmsDistributionProps {
    * overridden key takes YOUR position in this object, not the position the
    * default held. (A plain object spread would do the opposite; see
    * `mergeBehaviors`.)
+   *
+   * Prefer the `assetSupport` prop over wiring `AssetSupport`'s behaviors in
+   * here by hand — but if you do it by hand anyway, `mergeBehaviors` throws
+   * at synth if it sees either AssetSupport footgun: `/assets/*` listed
+   * before `/assets/t/*`, or the literal keys `assets`/`assetsTransform`
+   * (from spreading `assetBehaviors()`'s return value directly into this
+   * object instead of keying it by path pattern).
    */
   additionalBehaviors?: Record<string, cloudfront.BehaviorOptions>
+
+  /**
+   * Attach `AssetSupport`'s CloudFront behaviors (`/assets/*` and
+   * `/assets/t/*`) to the distribution this construct builds, in the only
+   * safe order - see `AssetSupport.attachTo()`'s doc comment for why the
+   * order matters. Equivalent to calling
+   * `assetSupport.attachTo(distribution)` yourself right after construction,
+   * but with nothing to forget.
+   *
+   * Prefer this over passing `assetSupport.assetBehaviors()` through
+   * `additionalBehaviors` by hand - that stays available as an escape hatch
+   * (e.g. for behaviors that are not from `AssetSupport` at all), and this
+   * construct's synth-time guard (`mergeBehaviors`) still checks it for the
+   * two ways that manual wiring is known to go wrong: see
+   * `additionalBehaviors`'s own doc comment.
+   *
+   * No ordering logic lives in this construct beyond calling this method -
+   * ordering is encoded exactly once, in `AssetSupport.attachTo()` itself.
+   *
+   * @default - no asset behaviors are attached
+   */
+  assetSupport?: AssetSupport
 }
 
 /**
@@ -111,6 +242,8 @@ export interface CanopyCmsDistributionProps {
  * - Cache policies: no-cache for /api/* and /edit*, cache /_next/static/*
  * - Viewer-request CloudFront Function setting x-forwarded-host (redirect-URL
  *   derivation behind the Host-stripping OAC origin)
+ * - `AssetSupport`'s `/assets/*` and `/assets/t/*` behaviors, in the required
+ *   order, when the `assetSupport` prop is passed
  */
 export class CanopyCmsDistribution extends Construct {
   /** The CloudFront distribution */
@@ -260,8 +393,17 @@ export class CanopyCmsDistribution extends Construct {
           },
         },
         props.additionalBehaviors,
+        props.assetSupport !== undefined,
       ),
     })
+
+    // Attach AssetSupport's behaviors (if provided), in the only safe order -
+    // see AssetSupport.attachTo()'s doc comment. This is the ONLY place this
+    // construct deals with the asset behaviors' ordering; the actual ordering
+    // logic lives exactly once, inside attachTo() itself. Callers who instead
+    // pass `assetSupport.assetBehaviors()` through `additionalBehaviors` by
+    // hand are covered by `mergeBehaviors`'s synth-time guard above instead.
+    props.assetSupport?.attachTo(this.distribution)
 
     // ========================================================================
     // DNS Records

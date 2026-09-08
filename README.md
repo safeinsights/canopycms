@@ -2308,11 +2308,15 @@ only the library record — existing content references keep resolving.
 > in the asset store.
 
 **Infrastructure** — the `canopycms-cdk` package ships an `AssetSupport` construct that
-provisions the bucket (or attaches to an existing one) and the transform Lambda. Its
-`assetBehaviors()` method returns the two CloudFront behaviors media needs; attach them via
-`CanopyCmsDistribution`'s `additionalBehaviors` option, listing `/assets/t/*` before
-`/assets/*` -- CloudFront matches path patterns in the order given, so a more specific
-pattern listed after a more general one is never reached. See
+provisions the bucket (or attaches to an existing one) and the transform Lambda. Pass it to
+`CanopyCmsDistribution`'s `assetSupport` prop and it attaches both CloudFront behaviors
+(`/assets/*` and `/assets/t/*`) in the only order that is safe -- CloudFront matches path
+patterns in the order given, so a more specific pattern listed after a more general one is
+never reached. `assetBehaviors()` (returning the two behaviors as a plain object) and
+`attachTo(distribution)` (the same attachment `assetSupport` calls under the hood) remain
+available for a bespoke distribution built outside `CanopyCmsDistribution`; a hand-wired
+`additionalBehaviors` that gets the order wrong, or spreads `assetBehaviors()` into it
+directly, now fails `cdk synth` with an actionable error instead of deploying broken. See
 [docs/deploying-to-aws.md](docs/deploying-to-aws.md).
 
 ### Editor Customization

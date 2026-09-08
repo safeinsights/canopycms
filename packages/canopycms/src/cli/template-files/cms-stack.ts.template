@@ -113,14 +113,13 @@ export class CmsStack extends Stack {
     //   2. uncomment the block below, moving it ABOVE `cmsService` (it has to
     //      exist before you can pass its bucket);
     //   3. pass `assetBucket: assetSupport.bucket` to CanopyCmsService;
-    //   4. pass the behaviors to CanopyCmsDistribution, `/assets/t/*` FIRST
-    //      (CloudFront matches in order, so the general pattern would
-    //      otherwise swallow the transform one):
-    //
-    //        additionalBehaviors: {
-    //          '/assets/t/*': assetSupport.assetBehaviors().assetsTransform,
-    //          '/assets/*': assetSupport.assetBehaviors().assets,
-    //        },
+    //   4. pass `assetSupport` to CanopyCmsDistribution below - it attaches
+    //      both CloudFront behaviors in the only order that is safe
+    //      (`/assets/t/*` before `/assets/*`; CloudFront matches path
+    //      patterns in order, so the general pattern would otherwise
+    //      swallow the transform one). `cdk synth` fails loudly if a
+    //      hand-written `additionalBehaviors` ever gets that order wrong
+    //      instead.
     //
     // `editorOrigins` is REQUIRED: it is the S3 CORS allowlist for the
     // editor's presigned uploads, so it must list the origin the editor is
@@ -151,6 +150,8 @@ export class CmsStack extends Stack {
         // here so that raising `timeout` above cannot silently leave
         // CloudFront answering 504 at the edge on requests that succeed.
         originReadTimeout: cmsService.timeout,
+        // Uncomment alongside the `assetSupport` block above to enable media.
+        // assetSupport,
       })
     }
   }
