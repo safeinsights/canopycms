@@ -319,12 +319,23 @@ deploy at synth — before anything is changed in the account.
 | `AWS_DEPLOY_ROLE_ARN`                       | secret    | yes                                          |
 | `CANOPY_GITHUB_TOKEN_SECRET_ARN`            | secret    | yes (see note below)                         |
 | `CLERK_SECRET_KEY_SECRET_ARN`               | secret    | yes                                          |
-| `CLERK_JWT_KEY`                             | secret    | yes                                          |
 | `AWS_REGION`                                | variable  | yes                                          |
+| `CLERK_JWT_KEY`                             | variable  | yes (see note below)                         |
 | `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`         | variable  | no, but the editor cannot sign in without it |
 | `CANOPY_BOOTSTRAP_ADMIN_IDS`                | variable  | no                                           |
 | `CANOPYCMS_DEPLOYMENT_NAME`                 | variable  | no (defaults to `prod`)                      |
 | `CMS_DOMAIN_NAME`, `CMS_HOSTED_ZONE_DOMAIN` | variables | no (enables CloudFront + Route53)            |
+
+> **Why is `CLERK_JWT_KEY` a variable and not a secret?** Because it is a _public_ key —
+> Clerk's JWKS PEM, retrievable from your instance's public JWKS endpoint, and used only to
+> verify signatures. It is `required` because without it `@clerk/nextjs` falls back to
+> fetching JWKS over the network and the internet-less CMS Lambda hangs at sign-in; that
+> makes it load-bearing, not confidential. Storing it as an Actions _secret_ also works, but
+> it is worth being precise: classifying it as a secret is what invites the conclusion that
+> the CMS Lambda accepts secrets, which it does not (see
+> [Security Model](#security-model)). The genuinely sensitive Clerk value is
+> `CLERK_SECRET_KEY`, which never goes near the Lambda — it lives in Secrets Manager and is
+> read by the worker.
 
 > **Why `CANOPY_GITHUB_TOKEN_SECRET_ARN` and not `GITHUB_TOKEN_SECRET_ARN`?** GitHub
 > reserves the `GITHUB_` prefix and rejects any Actions secret or variable whose name
@@ -519,14 +530,26 @@ a worker code change), check the new instance's log stream (see
 
 ## Security Model
 
-| Lambda                           | EC2 Worker                                      |
+| CMS Lambda                       | EC2 Worker                                      |
 | -------------------------------- | ----------------------------------------------- |
 | No internet access               | Outbound HTTPS only                             |
 | No sensitive secrets             | GitHub token + Clerk key (from Secrets Manager) |
 | Public keys only (CLERK_JWT_KEY) | Full API access                                 |
 | Read/write EFS only              | Read/write EFS + internet                       |
 
-If Lambda is compromised, an attacker can read/write content on EFS but cannot exfiltrate data, push to GitHub, or access any external service.
+**The CMS Lambda receives public configuration only, and this is a deliberate design
+rather than a gap to work around.** It has no Secrets-Manager-fetch path because it needs
+none, and — having no internet access — could not use one if it had it. Every genuinely
+sensitive value goes to the worker instead: pass the GitHub token and Clerk secret key to
+`CanopyCmsService` as `githubTokenSecretArn` / `clerkSecretKeySecretArn`, and the worker
+reads them at boot with its own IAM grant. The Lambda's `environment` should carry nothing
+you would mind reading in the output of `aws lambda get-function-configuration`.
+
+Concretely, for Clerk: `CLERK_JWT_KEY` (a public PEM) belongs on the Lambda;
+`CLERK_SECRET_KEY` (full Clerk API access) does not, and putting it there gains nothing
+because no Lambda code path reads it.
+
+If the CMS Lambda is compromised, an attacker can read/write content on EFS but cannot exfiltrate data, push to GitHub, or access any external service.
 
 ### CloudFront OAC and request body signing
 

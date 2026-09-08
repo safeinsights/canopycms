@@ -49,10 +49,12 @@
 #          the otherwise-obvious GITHUB_TOKEN_SECRET_ARN cannot be created at all.
 #          The env var handed to CDK below keeps the unprefixed name.
 #        CLERK_SECRET_KEY_SECRET_ARN    FULL Secrets Manager ARN (with suffix)
-#        CLERK_JWT_KEY                  Clerk's public JWKS PEM
 #   5. Set these repository variables (same page -> Variables):
 #        AWS_REGION                          e.g. us-east-1
 #        NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY   or the editor ships unable to sign in
+#        CLERK_JWT_KEY                       Clerk's PUBLIC JWKS PEM. A variable,
+#                                            not a secret: it is public key material,
+#                                            and the CMS Lambda takes public values only
 #        CANOPY_BOOTSTRAP_ADMIN_IDS          comma-separated Clerk user IDs
 #      Optional:
 #        CANOPYCMS_DEPLOYMENT_NAME           defaults to 'prod'
@@ -136,7 +138,7 @@ jobs:
         env:
           GITHUB_TOKEN_SECRET_ARN: ${{ secrets.CANOPY_GITHUB_TOKEN_SECRET_ARN }}
           CLERK_SECRET_KEY_SECRET_ARN: ${{ secrets.CLERK_SECRET_KEY_SECRET_ARN }}
-          CLERK_JWT_KEY: ${{ secrets.CLERK_JWT_KEY }}
+          CLERK_JWT_KEY: ${{ vars.CLERK_JWT_KEY }}
           NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${{ vars.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY }}
           CANOPY_BOOTSTRAP_ADMIN_IDS: ${{ vars.CANOPY_BOOTSTRAP_ADMIN_IDS }}
           CANOPYCMS_DEPLOYMENT_NAME: ${{ vars.CANOPYCMS_DEPLOYMENT_NAME }}
