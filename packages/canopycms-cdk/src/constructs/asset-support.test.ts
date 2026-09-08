@@ -7,7 +7,7 @@ import { aws_cloudfront as cloudfront, aws_iam as iam, aws_s3 as s3 } from 'aws-
 import { RetentionDays } from 'aws-cdk-lib/aws-logs'
 import { describe, expect, it } from 'vitest'
 
-import { AssetSupport } from './asset-support'
+import { AssetSupport, ASSETS_PATH_PATTERN, ASSETS_TRANSFORM_PATH_PATTERN } from './asset-support'
 
 const EDITOR_ORIGINS = ['http://localhost:3000']
 
@@ -258,6 +258,41 @@ describe('AssetSupport - standalone mode (creates its own bucket)', () => {
     for (const prefix of ['asset-staging/*', 'asset-originals/*', 'asset-meta/*', 'assets/*']) {
       expect(resourcePatterns).toContain(prefix)
     }
+  })
+})
+
+describe('AssetSupport - attachTo()', () => {
+  it('attaches /assets/t/* before /assets/* via addBehavior (not additionalBehaviors), on the synthesized CacheBehaviors array', () => {
+    // Regression guard for the ordering footgun attachTo() exists to make
+    // unrepresentable: CloudFront matches path patterns in order and stops at
+    // the first match, so if the broader, S3-only '/assets/*' were ever
+    // attached before '/assets/t/*', every never-yet-computed transform would
+    // 403 permanently. Match.arrayWith is deliberately NOT used here - it is
+    // order-insensitive, which is exactly why the pre-existing tests in this
+    // file never caught this class of bug. Asserting on the array INDEX is
+    // the only way to pin the order.
+    const stack = makeStack()
+    const assetSupport = new AssetSupport(stack, 'Assets', { ...BASE_PROPS })
+    // A minimal concrete distribution to call addBehavior on - reuses the
+    // assets origin as the (irrelevant to this test) default behavior origin
+    // rather than importing aws_cloudfront_origins just for a placeholder.
+    const distribution = new cloudfront.Distribution(stack, 'Dist', {
+      defaultBehavior: { origin: assetSupport.assetBehaviors().assets.origin },
+    })
+
+    assetSupport.attachTo(distribution)
+
+    const template = Template.fromStack(stack)
+    const dist = Object.values(template.findResources('AWS::CloudFront::Distribution'))[0]
+    const patterns = (
+      dist.Properties.DistributionConfig.CacheBehaviors as { PathPattern: string }[]
+    ).map((b) => b.PathPattern)
+
+    expect(patterns).toContain(ASSETS_TRANSFORM_PATH_PATTERN)
+    expect(patterns).toContain(ASSETS_PATH_PATTERN)
+    expect(patterns.indexOf(ASSETS_TRANSFORM_PATH_PATTERN)).toBeLessThan(
+      patterns.indexOf(ASSETS_PATH_PATTERN),
+    )
   })
 })
 

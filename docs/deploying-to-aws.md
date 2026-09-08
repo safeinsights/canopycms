@@ -17,8 +17,10 @@ This guide walks through deploying CanopyCMS on AWS using Lambda + EFS + EC2 Wor
 > [Worker observability](#worker-observability) below) — a locked-down
 > operator role may not have SSM, and the worker was otherwise unobservable.
 > Adopters consume the published `canopycms-cdk` package; the constructs
-> referenced here also power `AssetSupport` for media (add it to give the
-> deployed editor an upload/transform backend).
+> referenced here also power `AssetSupport` for media (pass it to
+> `CanopyCmsDistribution`'s `assetSupport` prop to give the deployed editor an
+> upload/transform backend, with both CloudFront behaviors wired in the only
+> order that is safe).
 
 ## Architecture Overview
 
@@ -250,7 +252,9 @@ successful deploy.
 
 Then edit `infrastructure/lib/cms-stack.ts` for anything beyond that — memory
 and concurrency, `AssetSupport` for media (a commented block in the generated
-file), or a distribution you already own.
+file: uncomment it, then pass the resulting `assetSupport` to
+`CanopyCmsDistribution`'s `assetSupport` prop, which attaches its CloudFront
+behaviors in the only safe order for you), or a distribution you already own.
 
 `githubOwner` / `githubRepo` in `infrastructure/bin/app.ts` are prefilled from
 your `origin` remote. Check them: they decide which repository the worker

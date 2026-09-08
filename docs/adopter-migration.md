@@ -46,6 +46,74 @@ and move anything already published down into `## Released` under its version he
 demoting each entry from `###` to `####`. An adopter reading "Unreleased" about a feature
 they already have installed cannot tell whether they are missing something.
 
+### `AssetSupport.attachTo()` and `CanopyCmsDistribution`'s `assetSupport` prop make the CloudFront behavior-ordering footgun unrepresentable
+
+**What changed.** `AssetSupport.assetBehaviors()` returned `{ assets, assetsTransform }` with
+no CloudFront path pattern attached — the patterns (`/assets/*`, `/assets/t/*`) lived only in
+a doc comment, and CloudFront matches path patterns in the order given, stopping at the first
+match. Listing `/assets/*` before `/assets/t/*` (which alphabetizing the two keys does, since
+`'/assets/*'` sorts before `'/assets/t/*'` lexicographically) served every not-yet-computed
+transform off the S3-only `/assets/*` behavior and never failed over to the transform Lambda —
+a silent, launch-delayed, **permanent** 403 on any derivative that had not already been
+computed, with no synth or deploy error. A second, related mistake — spreading
+`assetBehaviors()`'s return value directly into `additionalBehaviors` — type-checked and
+deployed clean too, synthesizing two behaviors matching the literal path patterns `assets` and
+`assetsTransform`, which nothing ever requests.
+
+Two new APIs replace hand-wiring the order yourself:
+
+- `AssetSupport.attachTo(distribution)` — call it with a concrete `cloudfront.Distribution`
+  and it calls `addBehavior` for `/assets/t/*` then `/assets/*`, in that order, every time.
+- `CanopyCmsDistribution`'s new `assetSupport` prop — pass your `AssetSupport` instance and the
+  construct calls `attachTo()` for you after building its distribution.
+
+`CanopyCmsDistribution` also gained a synth-time guard on its `additionalBehaviors` merge. It
+now throws — naming the cause and pointing at `attachTo()`/the `assetSupport` prop — on any of
+three shapes:
+
+1. `/assets/*` listed before `/assets/t/*`.
+2. The literal keys `assets`/`assetsTransform` from the spread mistake above.
+3. **The `assetSupport` prop passed while `additionalBehaviors` still lists either asset
+   pattern.** This is the mistake to watch for while migrating: both wiring routes are then
+   active, each pattern is attached twice, and CloudFront rejects duplicate path patterns at
+   deploy time. Check 1 cannot catch it, because the block you are migrating away from
+   normally has the order _right_ — that is the whole reason it was working.
+
+A stack with any of the three now fails `cdk synth` with an actionable message instead of
+deploying broken. This guard only covers callers going through `CanopyCmsDistribution`; a
+bespoke `new cloudfront.Distribution(...)` built elsewhere should call `attachTo()` directly.
+
+**This is additive and opt-in.** `assetBehaviors()` and its `AssetCloudFrontBehaviors` return
+shape are unchanged — nothing is removed, and a stack that already lists the two behaviors in
+the correct manual order keeps working exactly as before (the guard's ordering check only
+fires when both patterns are present and in the wrong order). The one thing you must not do is
+_half_ the migration: adopt the prop and leave the old block in place. Delete one or the
+other — check 3 above refuses that combination at synth rather than letting it reach
+CloudFront.
+
+**To adopt.** Nothing is required to keep deploying as-is. To adopt the safer API: in your
+`infrastructure/lib/cms-stack.ts`, replace a hand-written
+
+```typescript
+additionalBehaviors: {
+  '/assets/t/*': assetSupport.assetBehaviors().assetsTransform,
+  '/assets/*': assetSupport.assetBehaviors().assets,
+},
+```
+
+with passing `assetSupport` straight to `CanopyCmsDistribution`:
+
+```typescript
+new CanopyCmsDistribution(this, 'CmsDist', {
+  // ...your existing props...
+  assetSupport,
+})
+```
+
+**Now deletable.** The hand-written `additionalBehaviors` block above, and any comment
+reminding yourself (or a teammate) which order the two patterns have to be listed in — the
+`assetSupport` prop is the one place that ordering now lives.
+
 ### `CLERK_JWT_KEY` is a repository **variable**, not a secret (#37)
 
 **What changed.** Documentation and the generated deploy workflow now classify
