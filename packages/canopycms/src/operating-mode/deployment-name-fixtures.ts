@@ -4,8 +4,10 @@
  * The rule that decides whether a `deploymentName` is usable exists TWICE, by
  * necessity: once at runtime (`deployment-name.ts`'s `isValidDeploymentName`)
  * and once at synth time (`canopycms-cdk`'s `constructs/cms-service.ts`).
- * `canopycms-cdk` publishes without a runtime dependency on `canopycms`, so
- * the construct cannot import the real thing.
+ * The construct deliberately does not import the real thing — see
+ * `isValidDeploymentName`'s doc comment in cms-service.ts for why (not, as
+ * this comment used to say, that the published construct lacks a runtime
+ * dependency on `canopycms` — it doesn't).
  *
  * The dangerous drift is asymmetric: a rule TIGHTENED at runtime but not at
  * synth produces a stack that synths clean and then crash-loops the Lambda at
