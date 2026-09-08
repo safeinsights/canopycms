@@ -114,6 +114,10 @@ For a content route shared by both builds (e.g. `app/[slug]/`, or a fixed page l
 
 Anonymous/public read on the CMS Lambda also needs `defaultPathAccess: { read: 'allow' }` in `canopycms.config.ts` (see [README Permission Model](../README.md#permission-model)); without it, forbidden reads render a 404 instead of a 500, but genuinely public content still needs the explicit allow.
 
+**Where a Clerk (or any auth SDK) provider goes.** A dual-build adopter cannot mount `<ClerkProvider>` in the app's root layout: the root layout is shared by both builds, so merely importing `@clerk/nextjs` there reaches the static export too — and in practice this is worse than dead code shipping to public visitors, because `ClerkProvider` pulls in React Server Actions internally, which `output: 'export'` rejects outright (`next build` fails with "Server Actions are not supported with static export"). Put the provider in a layout scoped to the editor subtree instead, named under the CMS-only extension, e.g. `app/edit/layout.server.tsx`. This works because `withCanopy()`'s `pageExtensions` handling is **additive, not subtractive**: `staticBuild: true` adds `static.ts`/`static.tsx` to `pageExtensions` _instead of_ `server.ts`/`server.tsx` — nothing is removed from a shared list, the two build flavors just add different extensions on top of Next's defaults. Next's app-dir loader resolves every special file (`layout`, `page`, `route`, `loading`, `error`, …) through that same `pageExtensions`-derived resolver, with no special case for `layout` — so a `layout.server.tsx` is picked up as a real layout, scoped to its subtree, exactly like `page.server.tsx` is picked up as a page, whenever `server.tsx` is present, and is invisible whenever it isn't. `apps/dual-build-fixture` enforces both halves of this in CI (`dual-build.test.ts`): the CMS build's compiled `/edit` output must reference `@clerk/nextjs`, and the static build's output must not contain a single byte of it — so this is a guarantee the build enforces, not just advice you have to trust.
+
+**The publishable key still ships per Docker image, not per request.** `<ClerkProvider>` accepts an explicit `publishableKey` prop, and `@clerk/nextjs` gives that prop precedence over `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` — so reading a plain (non-`NEXT_PUBLIC_`-prefixed) runtime environment variable inside `layout.server.tsx` and passing it explicitly is not blocked by the SDK; a real server component's `process.env` read happens at request time, not at build time. That is not the same as one Docker image working across every Clerk instance/tier, though: `clerkMiddleware` (see `middleware-clerk.ts.template`) resolves its own `publishableKey`/`secretKey` independently of whatever the provider receives — there is no shared state between Next middleware and the React render tree — and the shipped middleware template does not thread a runtime-only key through to it, so it falls back to the build-time-baked `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`. Worse, `clerkMiddleware` unconditionally requires a non-empty `secretKey` (it throws if one can't be resolved, `jwtKey` alone does not satisfy it), and `CLERK_SECRET_KEY` is deliberately kept out of the CMS Lambda today (see Step 6) — so making one image genuinely serve multiple Clerk instances would mean also passing matching explicit keys to `clerkMiddleware`, sourced the same way, and revisiting whether `CLERK_SECRET_KEY` belongs in the Lambda at all. **This is unverified** — nothing in this repo demonstrates it end-to-end, and no real Clerk instance was exercised to check it — so treat `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` as a per-tier Docker `buildArg` (see [Build-time client keys](#build-time-client-keys)) until someone does.
+
 ### Preview Support
 
 Add `useCanopyPreview` to your page components so the editor can show live previews:
@@ -604,9 +608,20 @@ sensitive value goes to the worker instead: pass the GitHub token and Clerk secr
 reads them at boot with its own IAM grant. The Lambda's `environment` should carry nothing
 you would mind reading in the output of `aws lambda get-function-configuration`.
 
-Concretely, for Clerk: `CLERK_JWT_KEY` (a public PEM) belongs on the Lambda;
-`CLERK_SECRET_KEY` (full Clerk API access) does not, and putting it there gains nothing
-because no Lambda code path reads it.
+Concretely, for Clerk: `CLERK_JWT_KEY` (a public PEM) belongs on the Lambda, and
+`CLERK_SECRET_KEY` (full Clerk API access) does not.
+
+> **Known tension, unresolved as of 2026-09-08.** The posture above is the design; the
+> shipped Clerk middleware template may not currently satisfy it. `clerkMiddleware`
+> resolves `secretKey` as `process.env.CLERK_SECRET_KEY || ''` and asserts it is non-empty
+> (`@clerk/nextjs@6.39.5`, `server/clerkMiddleware.js:62-65` via `assertKey`), while
+> `middleware-clerk.ts.template` passes only `jwtKey` and matches `/edit(.*)` and
+> `/api/canopycms(.*)`. On that reading an authenticated editor request to a Lambda with no
+> `CLERK_SECRET_KEY` throws inside middleware. This has been read from the SDK source but
+> **not confirmed on a live deploy**, so it is filed rather than fixed — see
+> `.claude/future-tasks/deploy-test-lambda-plaintext-clerk-secret.md` for the three options
+> and what to verify first. If you are standing up a Clerk-authenticated deployment now,
+> test sign-in early and treat this as the first thing to check if editor requests 500.
 
 If the CMS Lambda is compromised, an attacker can read/write content on EFS but cannot exfiltrate data, push to GitHub, or access any external service.
 

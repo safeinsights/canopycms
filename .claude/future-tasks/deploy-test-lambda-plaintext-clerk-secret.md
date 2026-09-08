@@ -38,14 +38,70 @@ not use such a path, and it is designed to need none. `docs/deploying-to-aws.md`
 Security Model section now states that posture in prose precisely so this inference
 stops being available.
 
-## The fix
+## CORRECTION 2026-09-08: do NOT simply drop the passthrough
 
-Drop the `CLERK_SECRET_KEY` passthrough entirely. **Nothing reads it** — no Lambda code
-path consumes `process.env.CLERK_SECRET_KEY`; the worker reads the secret from Secrets
-Manager via `CLERK_SECRET_KEY_SECRET_ARN` (`canopycms-cdk/worker/index.ts:81-84`). So
-removal is behaviour-preserving, not a trade-off.
+**An earlier version of this file said "nothing reads it, so removal is
+behaviour-preserving." That was wrong, and acting on it would break deploy-test's
+editor.** Recorded here rather than silently edited, because the wrong version was
+committed and may have been read.
 
-Then rewrite the comment to state the posture rather than a phantom gap, and consider
+`clerkMiddleware` reads it, and throws without it. Verified against the installed
+`@clerk/nextjs@6.39.5`:
+
+- `dist/esm/server/constants.js:7` — `const SECRET_KEY = process.env.CLERK_SECRET_KEY || ''`
+- `dist/esm/server/clerkMiddleware.js:62-65` —
+  `assertKey(resolvedParams.secretKey || SECRET_KEY || keyless?.secretKey, () => errorThrower.throwMissingSecretKeyError())`
+- `dist/esm/server/utils.js:103-108` — `assertKey` calls `onError()` when the key is
+  falsy, and `throwMissingSecretKeyError` throws.
+
+So an unset `CLERK_SECRET_KEY` makes an empty string, which is falsy, which throws — per
+request, inside middleware. And the shipped
+`cli/template-files/middleware-clerk.ts.template` passes only
+`{ jwtKey: process.env.CLERK_JWT_KEY }`, with `matcher: ['/edit(.*)', '/api/canopycms(.*)']`
+— i.e. every editor route and every API call.
+
+**This inverts the finding.** deploy-test's passthrough is not an "accepted test
+deviation" it can drop; on the evidence it is load-bearing, and the comment calling it a
+deviation is what is wrong. Meanwhile
+`examples/aws-deployment/infrastructure/lib/cms-stack.ts:110-113` passes only
+`CLERK_JWT_KEY` under "Lambda environment: public config only, never secrets" — so the
+documented reference deployment looks unable to serve an authenticated editor request at
+all, and deploy-test works precisely because it deviates.
+
+## The actual decision
+
+Not "remove the passthrough" but "reconcile the security model with the shipped
+middleware", which is a real architectural call and not a deploy-test-local cleanup:
+
+1. **Bring `CLERK_SECRET_KEY` into the CMS Lambda** and retract the "no sensitive
+   secrets" half of the Security Model. Honest, but gives up the property that makes a
+   Lambda compromise survivable, and the Lambda has no internet so it cannot fetch from
+   Secrets Manager — it would have to arrive as a plaintext environment variable, exactly
+   what request #37 objected to.
+2. **Stop using `clerkMiddleware` for gating** and protect those routes with a
+   `jwtKey`-only verification path — CanopyCMS already has one
+   (`ClerkAuthPlugin.verifyTokenOnly()`, networkless, PEM-only, no secret required). The
+   middleware would become a thin check that never constructs a Clerk backend client.
+3. **Pass an explicit dummy/derived `secretKey` to `clerkMiddleware`** purely to satisfy
+   `assertKey`, if nothing on the middleware path actually calls the backend API. Needs
+   proving rather than assuming — `auth.protect()`'s behaviour with a bogus secret is the
+   thing to establish.
+
+(2) looks right and is the only one that keeps the documented posture true, but it needs a
+deploy to confirm, and it is a change to the shipped template, not to deploy-test.
+
+**Verify before designing:** confirm on a live deploy that an authenticated editor request
+against a Lambda with no `CLERK_SECRET_KEY` really does 500. Everything above is read from
+the SDK source and the templates; no deploy was run. If it somehow does not throw, find
+out why before touching anything, because then one of these readings is wrong.
+
+See also [clerk-middleware-runtime-key-unverified.md](clerk-middleware-runtime-key-unverified.md),
+which reached the same `secretKey` requirement from the one-image-per-tier direction.
+
+## Still worth doing regardless
+
+Rewrite deploy-test's comment so it stops citing a "Secrets-Manager-fetch path" the
+Lambda is designed not to need, and consider
 whether `infra/deploy-config.ts:74-89`'s `console.warn` for a missing `CLERK_JWT_KEY`
 should be a hard failure there too — this package's own scaffold
 (`cli/template-files/cdk-app.ts.template:63`) uses `required()` and refuses the synth,

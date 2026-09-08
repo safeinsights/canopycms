@@ -43,6 +43,17 @@ const CONTENT_MARKER = 'dual-build-fixture-content-marker'
 // minifier would rename.
 const MANTINE_SIGNAL = '--mantine-'
 
+// Adopter request #40's empirical fixture: app/edit/layout.server.tsx wraps
+// the editor subtree in `<ClerkProvider>` (see that file for why this
+// arrangement -- not a root-layout provider -- is the one that survives a
+// static export). `@clerk/nextjs`'s own client ClerkProvider embeds its
+// package name as a literal string (a deprecation-warning template in
+// app-router/client/ClerkProvider.js, unconditionally constructed whenever
+// the component module is bundled) -- like MANTINE_SIGNAL, this is DATA, not
+// a JS identifier a minifier would rename, so it survives production
+// bundling verbatim in any output that pulls in ClerkProvider.
+const CLERK_SIGNAL = '@clerk/nextjs'
+
 interface BuildResult {
   ok: boolean
   output: string
@@ -235,6 +246,25 @@ describe('static build (CANOPY_BUILD=static)', () => {
     ).toEqual([])
   })
 
+  it('emits no Clerk provider code from the editor layout (adopter request #40)', () => {
+    // A leak assertion that never found any files would pass vacuously --
+    // guard against an empty/missing out/ (e.g. a broken glob) making this
+    // pass for the wrong reason. The "produces a real static export" test
+    // above already covers this for the describe block as a whole; this
+    // repeats the guard locally so this assertion alone is never vacuous.
+    const allFiles = listFiles(OUT_DIR)
+    expect(
+      allFiles.length,
+      'expected out/ to contain files -- an empty static export would make the "no Clerk leak" assertion below pass for the wrong reason',
+    ).toBeGreaterThan(0)
+
+    const hits = filesContaining(OUT_DIR, CLERK_SIGNAL)
+    expect(
+      hits,
+      `static build leaked Clerk provider code into: ${hits.join(', ')} -- app/edit/layout.server.tsx must be invisible to the static export (withCanopy()'s staticBuild pageExtensions add static.ts/tsx instead of server.ts/tsx, so a *.server.tsx layout is never resolved)`,
+    ).toEqual([])
+  })
+
   it('excludes /edit and the catch-all API route', () => {
     const files = listFiles(OUT_DIR)
     const editFiles = files.filter((f) => f === 'edit.html' || f.startsWith(`edit${path.sep}`))
@@ -282,6 +312,22 @@ describe('cms build (CANOPY_BUILD=cms)', () => {
     expect(
       apiFiles.length,
       `cms build is missing the catch-all API route under .next/server/app; found: ${files.join(', ')}`,
+    ).toBeGreaterThan(0)
+  })
+
+  it('resolves app/edit/layout.server.tsx as a real layout (adopter request #40)', () => {
+    // ClerkProvider is a "use client" component, so its code can land in
+    // either the RSC server output or a client chunk depending on Next's
+    // bundling -- search both rather than assuming one.
+    const searchDirs = [path.join(NEXT_DIR, 'server'), path.join(NEXT_DIR, 'static')]
+    const hits = searchDirs.flatMap((dir) =>
+      filesContaining(dir, CLERK_SIGNAL).map((f) => path.join(path.basename(dir), f)),
+    )
+    expect(
+      hits.length,
+      'cms build does not reference @clerk/nextjs anywhere under .next/server or .next/static -- ' +
+        "app/edit/layout.server.tsx was not resolved as a layout under withCanopy()'s CMS pageExtensions " +
+        '(server.ts/tsx), so the provider never made it into the build',
     ).toBeGreaterThan(0)
   })
 

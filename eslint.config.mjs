@@ -21,6 +21,15 @@ const eslintConfig = [
       '**/node_modules/**',
       '**/dist/**',
       '**/.next/**',
+      // The dual-build fixture's TWO build outputs, both gitignored and both
+      // minified: `next build` writes `.next-static/` and `out/` for the
+      // static flavor (see apps/dual-build-fixture/.gitignore). Only
+      // `**/.next/**` was listed, so `pnpm lint` reported ~13k errors in
+      // generated bundles for anyone who had run `verify:dual-build` locally.
+      // CI never saw it -- its lint job runs on a clean checkout, in a
+      // different job from the one that builds.
+      '**/.next-static/**',
+      '**/out/**',
       '**/.turbo/**',
       '**/coverage/**',
       '**/test-results/**',
