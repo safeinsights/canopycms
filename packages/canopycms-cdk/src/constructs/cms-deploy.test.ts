@@ -14,10 +14,12 @@ import { CanopyCmsService, DEFAULT_CMS_LAMBDA_TIMEOUT } from './cms-service'
 import type { CanopyCmsServiceProps } from './cms-service'
 import { CanopyCmsDistribution } from './cms-distribution'
 import { AssetSupport, ASSETS_PATH_PATTERN, ASSETS_TRANSFORM_PATH_PATTERN } from './asset-support'
-// Test-only imports across the package boundary, deliberately: the construct
-// itself must NOT import `canopycms` (this package publishes with no runtime
-// dependency on it), but its SUITE can, which is what makes the duplicated
-// deployment-name rule a red test on drift rather than a comment asking nicely.
+// Test-only imports across the package boundary, deliberately: the constructs
+// in this directory do not import `canopycms` (see isValidDeploymentName's doc
+// comment in cms-service.ts for the real reason, and for why the older "the
+// package has no runtime dependency on canopycms" version of it was false),
+// but this SUITE can, which is what makes the duplicated deployment-name rule
+// a red test on drift rather than a comment asking nicely.
 // Both modules are dependency-free apart from canopycms's own logger shim.
 import { isValidDeploymentName } from '../../../canopycms/src/operating-mode/deployment-name'
 import {
@@ -1138,12 +1140,12 @@ describe('CanopyCmsService: deploymentName validation', () => {
   }
 
   // The drift check the duplicated rule never had (PR #172 finding 3). The
-  // construct cannot import the runtime predicate -- `canopycms-cdk` publishes
-  // with no runtime dependency on `canopycms` -- so this TEST imports it and
-  // requires the two verdicts to match. The dangerous direction is a rule
-  // tightened at runtime but not here: the stack would synth clean and then
-  // crash-loop the Lambda at boot, which is what the synth guard exists to
-  // prevent.
+  // construct deliberately avoids importing the runtime predicate here -- see
+  // isValidDeploymentName's doc comment in cms-service.ts -- so this TEST
+  // imports it instead and requires the two verdicts to match. The dangerous
+  // direction is a rule tightened at runtime but not here: the stack would
+  // synth clean and then crash-loop the Lambda at boot, which is what the
+  // synth guard exists to prevent.
   it('agrees with the runtime predicate on every fixture name', () => {
     const candidates = [
       ...VALID_DEPLOYMENT_NAMES,
@@ -1660,10 +1662,12 @@ describe('CanopyCmsService: worker .env values are heredoc-safe', () => {
   ]
 
   // baseBranch/settingsBranch/deploymentName each have their OWN stricter
-  // git-ref-component guard (assertValidGitBranchName, or deploymentName's
-  // own fold) that runs before assertEnvSafe's generic newline/ENVEOF checks
-  // -- a value that fails the charset never reaches assertEnvSafe at all, so
-  // these three throw "invalid <field> ..." instead of the generic message.
+  // guard (assertValidGitBranchName for the first two -- a whole-ref guard,
+  // since a branch name may contain '/' -- or deploymentName's own
+  // ref-COMPONENT fold, which forbids '/') that runs before assertEnvSafe's
+  // generic newline/ENVEOF checks -- a value that fails the charset never
+  // reaches assertEnvSafe at all, so these three throw "invalid <field> ..."
+  // instead of the generic message.
   const GIT_REF_VALIDATED_FIELDS = new Set(['baseBranch', 'settingsBranch', 'deploymentName'])
 
   for (const [field, build] of fields) {
