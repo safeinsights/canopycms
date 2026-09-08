@@ -82,6 +82,21 @@ function assertEnvSafe(name: string, value: string): string {
         `extra environment line.`,
     )
   }
+  // systemd (EnvironmentFile=, see the unit below) treats a value whose FIRST
+  // character is a quote as a quoted value and keeps consuming until the
+  // matching quote -- across newlines. So a single leading quote does not
+  // corrupt one line, it swallows every line after it: the deployment name,
+  // AWS_REGION, the secret ARNs. A quote anywhere else is literal and fine,
+  // which is why this checks position 0 rather than banning the character.
+  if (value.startsWith('"') || value.startsWith("'")) {
+    throw new Error(
+      `CanopyCmsService: ${name} must not start with a quote character ` +
+        `(got ${JSON.stringify(value)}). It is written into the worker's .env file, which ` +
+        `systemd reads as EnvironmentFile -- a leading quote opens a quoted value that ` +
+        `consumes every following line until a matching quote, silently emptying the rest ` +
+        `of the worker's environment.`,
+    )
+  }
   if (value.includes(ENV_HEREDOC_DELIMITER)) {
     throw new Error(
       `CanopyCmsService: ${name} must not contain ${JSON.stringify(ENV_HEREDOC_DELIMITER)} ` +
@@ -98,7 +113,7 @@ function assertEnvSafe(name: string, value: string): string {
  *
  * Both values are interpolated into a git ref AND into a line of the worker's
  * `.env` that user-data writes with a shell heredoc. `assertEnvSafe` covers
- * the heredoc half (newlines, quotes, the ENVEOF delimiter); this covers the
+ * the `.env` half (newlines, a leading quote, the ENVEOF delimiter); this covers the
  * ref half, because a value git refuses does not fail at `cdk deploy` -- it
  * fails inside the worker, where `verifyBaseBranchExists` throws,
  * `worker/index.ts` exits 1, and systemd's `Restart=always` turns it into a
@@ -133,6 +148,11 @@ function assertValidGitBranchName(propName: string, value: string): string {
 
   if (value.length === 0) reject('it is empty')
   if (value === '@') reject("a lone '@' is reserved by git")
+  // `git check-ref-format --branch` rejects HEAD: it names the symbolic ref,
+  // not a branch. Accepting it produces the exact crash loop this guard
+  // exists to prevent -- verifyBaseBranchExists looks up refs/heads/HEAD,
+  // which never exists.
+  if (value === 'HEAD') reject("'HEAD' names the symbolic ref, not a branch")
   if (value.startsWith('-')) reject("a leading '-' parses as a git option")
   if (value.startsWith('/') || value.endsWith('/')) reject("it starts or ends with '/'")
   if (value.endsWith('.')) reject("it ends with '.'")

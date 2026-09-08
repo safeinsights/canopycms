@@ -28,8 +28,12 @@ const eslintConfig = [
       // generated bundles for anyone who had run `verify:dual-build` locally.
       // CI never saw it -- its lint job runs on a clean checkout, in a
       // different job from the one that builds.
-      '**/.next-static/**',
-      '**/out/**',
+      //
+      // Scoped to the fixture, NOT `**/out/**`: `out` is an ordinary directory
+      // name, and a repo-wide ignore would silently stop linting any future
+      // source directory that happened to be called that.
+      'apps/dual-build-fixture/.next-static/**',
+      'apps/dual-build-fixture/out/**',
       '**/.turbo/**',
       '**/coverage/**',
       '**/test-results/**',

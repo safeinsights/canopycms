@@ -78,11 +78,26 @@ function mergeBehaviors(
  * bespoke `new cloudfront.Distribution(...)` assembled elsewhere -
  * `AssetSupport.attachTo()` is the answer there.
  */
+/**
+ * CloudFront treats the leading `/` on a path pattern as optional -- `assets/*`
+ * and `/assets/*` match exactly the same requests, and AWS's own console and
+ * docs frequently show the slash-less spelling. The checks below therefore
+ * compare NORMALIZED keys: without this, writing `{ 'assets/*': ..., 'assets/t/*': ... }`
+ * walked past all three hazards and synthesized the broad-pattern-first order
+ * this guard exists to refuse -- silently, which is the worst of the failure
+ * modes here.
+ */
+function normalizePathPattern(pattern: string): string {
+  return pattern.startsWith('/') ? pattern.slice(1) : pattern
+}
+
 function assertNoAssetBehaviorOrderingHazards(
   merged: Record<string, cloudfront.BehaviorOptions>,
   attachingAssetSupport: boolean,
 ): void {
-  const keys = Object.keys(merged)
+  const keys = Object.keys(merged).map(normalizePathPattern)
+  const assetsPattern = normalizePathPattern(ASSETS_PATH_PATTERN)
+  const transformPattern = normalizePathPattern(ASSETS_TRANSFORM_PATH_PATTERN)
 
   const spreadMistakeKeys = ASSET_BEHAVIOR_SPREAD_MISTAKE_KEYS.filter((key) => key in merged)
   if (spreadMistakeKeys.length > 0) {
@@ -109,8 +124,8 @@ function assertNoAssetBehaviorOrderingHazards(
   // hand-written order does NOT trip the check below, so nothing else would
   // catch it.
   if (attachingAssetSupport) {
-    const alsoWiredByHand = [ASSETS_PATH_PATTERN, ASSETS_TRANSFORM_PATH_PATTERN].filter(
-      (pattern) => pattern in merged,
+    const alsoWiredByHand = [ASSETS_PATH_PATTERN, ASSETS_TRANSFORM_PATH_PATTERN].filter((pattern) =>
+      keys.includes(normalizePathPattern(pattern)),
     )
     if (alsoWiredByHand.length > 0) {
       throw new Error(
@@ -124,8 +139,8 @@ function assertNoAssetBehaviorOrderingHazards(
     }
   }
 
-  const assetsIndex = keys.indexOf(ASSETS_PATH_PATTERN)
-  const transformIndex = keys.indexOf(ASSETS_TRANSFORM_PATH_PATTERN)
+  const assetsIndex = keys.indexOf(assetsPattern)
+  const transformIndex = keys.indexOf(transformPattern)
   if (assetsIndex !== -1 && transformIndex !== -1 && assetsIndex < transformIndex) {
     throw new Error(
       `CanopyCmsDistribution: additionalBehaviors lists '${ASSETS_PATH_PATTERN}' before ` +
