@@ -213,10 +213,13 @@ export interface CanopyCmsDistributionProps {
    *
    * Prefer the `assetSupport` prop over wiring `AssetSupport`'s behaviors in
    * here by hand — but if you do it by hand anyway, `mergeBehaviors` throws
-   * at synth if it sees either AssetSupport footgun: `/assets/*` listed
-   * before `/assets/t/*`, or the literal keys `assets`/`assetsTransform`
+   * at synth if it sees any of the three AssetSupport footguns: `/assets/*`
+   * listed before `/assets/t/*`; the literal keys `assets`/`assetsTransform`
    * (from spreading `assetBehaviors()`'s return value directly into this
-   * object instead of keying it by path pattern).
+   * object instead of keying it by path pattern); or an asset pattern listed
+   * here at all while the `assetSupport` prop is also passed (see that
+   * prop's own doc comment). See `assertNoAssetBehaviorOrderingHazards`'s
+   * doc comment for the full list.
    */
   additionalBehaviors?: Record<string, cloudfront.BehaviorOptions>
 
@@ -232,7 +235,7 @@ export interface CanopyCmsDistributionProps {
    * `additionalBehaviors` by hand - that stays available as an escape hatch
    * (e.g. for behaviors that are not from `AssetSupport` at all), and this
    * construct's synth-time guard (`mergeBehaviors`) still checks it for the
-   * two ways that manual wiring is known to go wrong: see
+   * three ways that manual wiring is known to go wrong: see
    * `additionalBehaviors`'s own doc comment.
    *
    * No ordering logic lives in this construct beyond calling this method -

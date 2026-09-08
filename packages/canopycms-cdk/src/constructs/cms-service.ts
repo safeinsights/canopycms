@@ -27,9 +27,24 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 /**
  * Synth-time mirror of `resolveDeploymentName`'s rule in the `canopycms`
  * package (packages/canopycms/src/operating-mode/deployment-name.ts).
- * Duplicated rather than imported: `canopycms-cdk` publishes with no runtime
- * dependency on `canopycms` (it is a devDependency, used only to bundle the
- * worker), so importing it here would break the published construct.
+ * Duplicated rather than imported, but NOT for the reason this comment used
+ * to give ("canopycms-cdk publishes with no runtime dependency on canopycms").
+ * That was false, and measurably so: `pnpm --filter canopycms-cdk run build`
+ * emits `dist/index.js` -> `export { CmsWorker } from './worker.js'` and
+ * `dist/worker.js` -> `export { CmsWorker } from 'canopycms/worker/cms-worker'`
+ * -- a bare, unresolved specifier in tsc output, reached from this package's
+ * MAIN entry point. (The esbuild bundle is a different artifact,
+ * `worker/dist/index.js`, built for the EC2 instance.) `canopycms` is
+ * correspondingly a non-optional `peerDependency` in package.json, so
+ * importing `canopycms-cdk` already requires `canopycms` to resolve.
+ *
+ * The honest reason is narrower: importing the predicate here would make a
+ * CONSTRUCT-only consumer pay for the core package's module graph, and the
+ * drift it risks is already covered by a test (below). Whether that still
+ * justifies duplicating is an open question, tracked with the same question
+ * about the S3 prefix constants in
+ * .claude/future-tasks/cdk-prefixes-duplication.md, which reached this
+ * conclusion first.
  *
  * Drift between the two copies is caught by a test, not by this comment:
  * cms-deploy.test.ts drives both this construct and the runtime predicate over
