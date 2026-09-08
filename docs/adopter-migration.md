@@ -46,6 +46,38 @@ and move anything already published down into `## Released` under its version he
 demoting each entry from `###` to `####`. An adopter reading "Unreleased" about a feature
 they already have installed cannot tell whether they are missing something.
 
+### `CLERK_JWT_KEY` is a repository **variable**, not a secret (#37)
+
+**What changed.** Documentation and the generated deploy workflow now classify
+`CLERK_JWT_KEY` consistently as a GitHub Actions **variable**. The generated
+`deploy-cms.yml` reads it from `${{ vars.CLERK_JWT_KEY }}` instead of
+`${{ secrets.CLERK_JWT_KEY }}`, and it is listed under repository variables rather than
+repository secrets.
+
+**Why.** It is Clerk's public JWKS PEM — retrievable from your instance's public JWKS
+endpoint, used only to verify signatures. `docs/deploying-to-aws.md` had been calling it
+three different things: a public JWKS PEM in one table, "public keys only" in the Security
+Model, and a `secret` in the Actions table. The last one is the reading that licenses an
+adopter to conclude the CMS Lambda accepts secrets — and from there, to put
+`CLERK_SECRET_KEY` (full Clerk API access) in the Lambda's plaintext environment, which is
+exactly the mistake the Security Model exists to prevent. The Lambda's posture is now
+stated once, in prose, next to that table.
+
+**To adopt.** If you regenerate `deploy-cms.yml`, or copy the change into your existing
+one, **move `CLERK_JWT_KEY` from repository secrets to repository variables** (Settings ->
+Secrets and variables -> Actions -> Variables). Getting this wrong fails loudly, not
+silently: `infrastructure/bin/app.ts` reads it via `required()`, so an unset value refuses
+the deploy at synth before anything in the account changes.
+
+Keeping it as a secret also works if you prefer — nothing rejects a public value stored in
+a secret. The reclassification is about not teaching that the Lambda handles secrets.
+
+**Worth checking while you are here.** Confirm your own `bin/app.ts` passes
+`CLERK_SECRET_KEY` to `CanopyCmsService` as `clerkSecretKeySecretArn` (a Secrets Manager
+ARN read by the EC2 worker) and **not** as an entry in the Lambda's `environment`. No
+Lambda code path reads that value, so passing it there gains nothing and makes a real
+secret readable by anyone holding `lambda:GetFunctionConfiguration`.
+
 ### `basePath` deployments are supported, and `assetUrl`'s `baseUrl` is now safe for path prefixes (#24)
 
 **What changed.** Three things, all pointing at the same failure — deploying under a Next.js

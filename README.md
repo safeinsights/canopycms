@@ -3226,7 +3226,7 @@ For Clerk authentication:
 ```env
 CLERK_SECRET_KEY=sk_...
 CLERK_PUBLISHABLE_KEY=pk_...
-CLERK_JWT_KEY=...           # Optional: for networkless JWT verification
+CLERK_JWT_KEY=...           # Public JWKS PEM. Optional locally; load-bearing on a no-internet Lambda
 CLERK_AUTHORIZED_PARTIES=... # Optional: comma-separated domains
 ```
 
