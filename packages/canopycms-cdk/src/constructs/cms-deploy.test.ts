@@ -533,6 +533,54 @@ describe('CanopyCmsDistribution: assetSupport prop', () => {
     ).toThrow(/attached twice|duplicate path pattern/i)
   })
 
+  it('catches the wrong order even when written without leading slashes', () => {
+    // CloudFront treats a leading '/' on a path pattern as optional, and AWS's
+    // own console and docs often show the slash-less spelling. Before the
+    // guard normalized, `{ 'assets/*': ..., 'assets/t/*': ... }` synthesized
+    // the broad-pattern-first order with no error at all -- the silent
+    // permanent-403 this whole guard exists to refuse.
+    const { stack, service } = buildServiceAndAssets('SlashlessWrongOrderStack')
+    const anyOrigin = origins.FunctionUrlOrigin.withOriginAccessControl(service.functionUrl)
+    expect(
+      () =>
+        new CanopyCmsDistribution(stack, 'Dist', {
+          ...distributionCommonProps(stack, service.functionUrl),
+          additionalBehaviors: {
+            'assets/*': { origin: anyOrigin },
+            'assets/t/*': { origin: anyOrigin },
+          },
+        }),
+    ).toThrow(/first-match-wins|permanent 403|matches path patterns in the order/i)
+  })
+
+  it('catches a slash-less hand-wired block combined with the assetSupport prop', () => {
+    const { stack, service, assetSupport } = buildServiceAndAssets('SlashlessDoubleWiredStack')
+    const anyOrigin = origins.FunctionUrlOrigin.withOriginAccessControl(service.functionUrl)
+    expect(
+      () =>
+        new CanopyCmsDistribution(stack, 'Dist', {
+          ...distributionCommonProps(stack, service.functionUrl),
+          assetSupport,
+          additionalBehaviors: {
+            'assets/*': { origin: anyOrigin },
+          },
+        }),
+    ).toThrow(/attached twice|duplicate path pattern/i)
+  })
+
+  it('refuses a second attachTo for the same distribution', () => {
+    // The other door into the duplicate-attachment hazard: the prop calls
+    // attachTo for you, so a caller who also calls it by hand attaches each
+    // pattern twice -- and those calls bypass mergeBehaviors entirely, so the
+    // synth guard above cannot see them.
+    const { stack, service, assetSupport } = buildServiceAndAssets('DoubleAttachStack')
+    const dist = new CanopyCmsDistribution(stack, 'Dist', {
+      ...distributionCommonProps(stack, service.functionUrl),
+      assetSupport,
+    })
+    expect(() => assetSupport.attachTo(dist.distribution)).toThrow(/already called/i)
+  })
+
   it('does NOT throw when the assetSupport prop is combined with unrelated additionalBehaviors', () => {
     // Negative control for the check above: passing the prop must stay
     // compatible with a caller who has their own, non-asset behaviors.
@@ -1164,6 +1212,7 @@ const INVALID_BRANCH_NAMES = [
   ['a trailing slash', 'branch/'],
   ['an empty path component', 'a//b'],
   ['a lone @', '@'],
+  ['HEAD, which names the symbolic ref rather than a branch', 'HEAD'],
   ['the empty string', ''],
   ['a newline (would inject a line into the worker .env)', 'branch\nEVIL=1'],
 ] as const
@@ -1630,6 +1679,20 @@ describe('CanopyCmsService: worker .env values are heredoc-safe', () => {
 
     it(`rejects an ENVEOF-bearing ${field}`, () => {
       expect(() => synth(false, build('acmeENVEOFrm'))).toThrow(/must not contain "ENVEOF"/i)
+    })
+
+    it(`rejects a leading quote in ${field}`, () => {
+      // systemd reads this file as EnvironmentFile=, where a value whose FIRST
+      // character is a quote opens a quoted value that keeps consuming lines
+      // until a matching quote -- so one leading quote silently empties the
+      // rest of the worker's environment (AWS_REGION, the secret ARNs, the
+      // deployment name), rather than corrupting the one line it appears on.
+      // git accepts such a branch name, so assertValidGitBranchName passes it
+      // through and assertEnvSafe is what must catch it. deploymentName is the
+      // exception: its charset rule rejects the quote first.
+      expect(() => synth(false, build('"acme'))).toThrow(
+        field === 'deploymentName' ? `invalid ${field}` : 'must not start with a quote',
+      )
     })
   }
 

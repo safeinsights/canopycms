@@ -368,6 +368,9 @@ export class AssetSupport extends Construct {
 
   private readonly behaviors: AssetCloudFrontBehaviors
 
+  /** Distributions `attachTo` has already wired -- see that method's duplicate check. */
+  private readonly attachedDistributions = new WeakSet<cloudfront.Distribution>()
+
   constructor(scope: Construct, id: string, props: AssetSupportProps) {
     super(scope, id)
 
@@ -619,6 +622,25 @@ export class AssetSupport extends Construct {
    * `AssetCloudFrontBehaviors`'s doc comment.
    */
   public attachTo(distribution: cloudfront.Distribution): void {
+    // `addBehavior` does not dedupe, and these calls bypass
+    // `CanopyCmsDistribution`'s own synth-time guard because they run after
+    // that distribution is constructed. So attaching twice -- passing the
+    // `assetSupport` prop AND calling this yourself, most likely, since the
+    // prop's doc comment describes them as equivalent -- synthesizes
+    // ['/assets/t/*','/assets/*','/assets/t/*','/assets/*'] and fails at
+    // deploy time when CloudFront rejects the duplicate patterns. Refuse it
+    // here instead, where the message can say which two routes collided.
+    if (this.attachedDistributions.has(distribution)) {
+      throw new Error(
+        `AssetSupport: attachTo() was already called for this distribution. Each pattern ` +
+          `would be attached twice and CloudFront rejects duplicate path patterns at deploy ` +
+          `time. This usually means the distribution was given CanopyCmsDistribution's ` +
+          `\`assetSupport\` prop (which calls attachTo for you) as well as an explicit ` +
+          `attachTo() call -- keep one.`,
+      )
+    }
+    this.attachedDistributions.add(distribution)
+
     const { origin: transformOrigin, ...transformRest } = this.behaviors.assetsTransform
     const { origin: assetsOrigin, ...assetsRest } = this.behaviors.assets
     distribution.addBehavior(ASSETS_TRANSFORM_PATH_PATTERN, transformOrigin, transformRest)
