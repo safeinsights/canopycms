@@ -1,13 +1,14 @@
 import { existsSync, readFileSync, renameSync } from 'node:fs'
 import * as path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { App, Duration, Stack } from 'aws-cdk-lib'
+import { Duration, Stack } from 'aws-cdk-lib'
 import { Match, Template } from 'aws-cdk-lib/assertions'
 import { aws_cloudfront as cloudfront, aws_iam as iam, aws_s3 as s3 } from 'aws-cdk-lib'
 import { RetentionDays } from 'aws-cdk-lib/aws-logs'
 import { describe, expect, it } from 'vitest'
 
 import { AssetSupport, ASSETS_PATH_PATTERN, ASSETS_TRANSFORM_PATH_PATTERN } from './asset-support'
+import { newTestApp } from '../../test-support/test-synth'
 
 const EDITOR_ORIGINS = ['http://localhost:3000']
 
@@ -63,7 +64,7 @@ function synthWithDistribution(assetSupport: AssetSupport, stack: Stack): Templa
 }
 
 function makeStack(): Stack {
-  const app = new App()
+  const app = newTestApp()
   return new Stack(app, 'TestStack', { env: { account: '123456789012', region: 'us-east-1' } })
 }
 

@@ -1,0 +1,13 @@
+{
+  "extends": "../../../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true
+  },
+  // Also covers the package's test files, which nothing else typechecks: the
+  // package tsconfig.json is its build/publish config and excludes them, so
+  // before this the newTestApp call sites were only checked at vitest runtime
+  // and a helper signature change would surface as a test failure. This config
+  // sets no rootDir, which is what lets it include the deliberate
+  // cross-package imports those suites make.
+  "include": ["**/*.ts", "../src/**/*.test.ts"]
+}
