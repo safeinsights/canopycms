@@ -95,35 +95,196 @@ middleware", which is a real architectural call and not a deploy-test-local clea
    one was right**: it was filed as "no fetch path is a gap", retracted on the
    no-internet objection, and re-filed once that objection turned out not to hold.
 
-   Design notes if this is taken: the fetch must happen once at cold start rather than
-   per request; `clerkMiddleware` reads `process.env.CLERK_SECRET_KEY` synchronously at
-   module scope via `constants.js`, so an async fetch has to complete and assign before
-   the middleware module is evaluated — which may be the hard part, and is worth spiking
-   before committing to this route.
-2. **Stop using `clerkMiddleware` for gating** and protect those routes with a
-   `jwtKey`-only verification path — CanopyCMS already has one
-   (`ClerkAuthPlugin.verifyTokenOnly()`, networkless, PEM-only, no secret required). The
-   middleware would become a thin check that never constructs a Clerk backend client.
-3. **Pass an explicit dummy/derived `secretKey` to `clerkMiddleware`** purely to satisfy
-   `assertKey`, if nothing on the middleware path actually calls the backend API. Needs
-   proving rather than assuming — `auth.protect()`'s behaviour with a bogus secret is the
-   thing to establish.
+### 1b is more tractable than first thought, and needs TWO levers
 
-(1b) and (2) are the two that leave the documented posture intact — (1b) by making the
-claim true, (2) by removing the need for the secret at all. (2) is still the cheaper of
-the two and touches only the shipped template; (1b) is the one to reach for if anything
-else on the Lambda ever needs a real secret. Both need a deploy to confirm.
+Worked out 2026-09-09 across both sessions. An earlier version of this file called the
+module-scope env read "the hard part" and proposed spiking it. **That blocker does not
+exist** — the website adopter found the mechanism, and it is a documented public API.
 
-**Doc status:** the Security Model section's prose has been corrected — it previously
-asserted the Lambda "could not use" a fetch path, which is what made this look closed.
+**Lever 1 — `clerkMiddleware` takes an options CALLBACK, awaited per request.**
+`@clerk/nextjs@7.9.1`, `dist/types/server/clerkMiddleware.d.ts:33,48`:
 
-**Verify before designing:** confirm on a live deploy that an authenticated editor request
-against a Lambda with no `CLERK_SECRET_KEY` really does 500. Everything above is read from
-the SDK source and the templates; no deploy was run. If it somehow does not throw, find
-out why before touching anything, because then one of these readings is wrong.
+```ts
+type ClerkMiddlewareOptionsCallback = (req: NextRequest) =>
+  ClerkMiddlewareOptions | Promise<ClerkMiddlewareOptions>
+(handler: ClerkMiddlewareHandler, options?: ClerkMiddlewareOptionsCallback): NextMiddleware
+```
 
-See also [clerk-middleware-runtime-key-unverified.md](clerk-middleware-runtime-key-unverified.md),
-which reached the same `secretKey` requirement from the one-image-per-tier direction.
+and the implementation awaits it one line above the assertion everyone keeps quoting
+(`dist/esm/server/clerkMiddleware.js:50,55-58`):
+
+```js
+const resolvedParams = typeof params === "function" ? await params(request2) : params
+const secretKey = assertKey(resolvedParams.secretKey || SECRET_KEY, () => ...)
+```
+
+`resolvedParams.secretKey` is FIRST in the chain, so a callback value beats the
+module-scope constant outright. `secretKey` is properly declared on the option type, not
+read opportunistically: `ClerkMiddlewareOptions` -> `AuthenticateRequestOptions` ->
+`VerifyTokenOptions` -> `Omit<LoadClerkJWKFromRemoteOptions,'kid'>`, which declares
+`secretKey?: string` (`@clerk/backend@3.17.1`, `dist/tokens/keys.d.ts:30`). So the shape
+is `clerkMiddleware(handler, async () => ({ jwtKey, secretKey: await getSecret() }))`,
+memoizing after first use — a runtime assignment, which is exactly what module-scope
+evaluation forbids before and permits after.
+
+**Lever 2 — the plugin needs its own, and already has one.** The options callback reaches
+`clerkMiddleware` only. `ClerkAuthPlugin` resolves the secret in a METHOD
+(`clerk-plugin.ts:158-168`'s `getSecretKey()`, `this.secretKeyOverride ??
+process.env.CLERK_SECRET_KEY`, memoized into `resolvedSecretKey`), and
+`secretKeyOverride` comes from the existing `config.secretKey` option
+(`clerk-plugin.ts:149`). That method's own doc comment already describes deferral as the
+point — "Resolves (and memoizes) the Clerk secret key at first use. Fail-closed."
+
+**Both levers are required.** Landing the middleware half and finding `users.getUser`
+still broken is the plausible half-landing, because the two read the secret through
+completely separate paths.
+
+### The remaining risk: which runtime runs the middleware
+
+An AWS SDK Secrets Manager call needs the **Node** runtime, and Next middleware defaults
+to **edge**, where it is unavailable no matter where it is called from. So 1b depends on
+being able to select a Node-runtime middleware.
+
+**You can, and it needs no experimental flag.** Verified in both Next versions this
+package supports, because the answer had already been stated wrongly twice:
+
+| | Next 15.5.21 | Next 16.1.7 |
+| --- | --- | --- |
+| `experimental.nodeMiddleware` typed in `dist/server/config-shared.d.ts` | **absent** | **absent** |
+| `loadNodeMiddleware()` gate (`dist/server/next-server.js`) | `NEXT_MINIMAL`, then `functions['/_middleware']` in the build manifest | identical |
+| `FunctionsConfigManifest.functions[].runtime` (`dist/build/index.d.ts`) | `runtime?: 'nodejs'` | identical |
+
+The mechanism, the same on both: `middleware.ts` declares
+`export const config = { runtime: 'nodejs' }`; the build records
+`functions['/_middleware'].runtime` into `FUNCTIONS_CONFIG_MANIFEST`; at runtime
+`loadNodeMiddleware()` requires `server/middleware.js` when that entry is present. Stable
+declared config, not a flag.
+
+**RETRACTED, and the retraction matters more than the fact.** An earlier version of this
+section said the path was "gated behind `experimental.nodeMiddleware`", and escalated a
+decision to JP about whether a production editor should depend on an experimental flag.
+**That decision does not exist.** The claim came from grepping the identifier
+`nodeMiddleware` in `next-server.js`, finding it at `:1145-1146`, and inferring a config
+option — but those two lines are a **local variable at the call site inside
+`hasMiddleware()`**. The function itself was never opened.
+
+The website adopter caught it, and **their correction needs correcting the same way**: they
+framed it as a version split — "real for 15.x adopters, empty for this site" — which is
+more generous than the facts. There is no split. It was empty in both, and accepting the
+split would have left a false constraint standing for 15.x adopters in this very file.
+
+### MEASURED 2026-09-09, on our own pinned Next
+
+Everything above this line is a reading. This part is not. A `runtime: 'nodejs'`
+middleware with a Node-only import was added to `apps/dual-build-fixture`, built with the
+real `CANOPY_BUILD=cms next build` on Next 15.5.21, and the build output inspected:
+
+```json
+// .next/server/functions-config-manifest.json
+{ "version": 1,
+  "functions": { "/_middleware": { "runtime": "nodejs", "matchers": [ … "/edit(.*)" … ] } } }
+```
+
+- The manifest carries exactly the `functions['/_middleware']` entry
+  `loadNodeMiddleware()` looks for, with `runtime: "nodejs"`.
+- `.next/server/middleware.js` was emitted (162 KB) — the Node middleware bundle that
+  entry causes the server to `require`.
+- The Node-only import survived into that bundle (`node:crypto` present), so a module
+  unavailable on the edge runtime does load there.
+- Build exited 0. (An unrelated pre-existing `ENOENT … route_client-reference-manifest.js`
+  warning from the `standalone` copy step appears in that build and is not caused by the
+  middleware.)
+
+The probe was removed and the fixture's suite re-run green (11/11); nothing was committed
+to the fixture.
+
+**What this does and does not establish.** It establishes that the Node runtime is
+selectable by declared config on the version we ship against, and that Node-only modules
+load in that middleware. It does **not** establish that the **AWS SDK** works there: the
+SDK is a third-party package with its own bundling behaviour and dynamic requires, whereas
+`node:crypto` is a builtin. Nor does it establish anything about reaching a Secrets Manager
+interface endpoint from inside a Lambda's VPC, which is a deploy-level question.
+
+So the remaining unknowns for 1b are now narrow and correctly ordered: (1) does the AWS SDK
+bundle and run in a nodejs-runtime middleware — another build-level check; (2) does the
+interface endpoint resolve from the Lambda's isolated subnet — deploy-level.
+
+### ⚠️ DO NOT add `runtime: 'nodejs'` to the shipped template
+
+Neither `cli/template-files/middleware-clerk.ts.template` nor
+`apps/example1/middleware.ts` declares a `runtime`, so everything we scaffold runs on
+edge. The obvious fix is a `runtime: 'nodejs'` line in the template's `config` export.
+**Measured: on Next 16.1.7 that would silently disable the auth middleware.**
+
+Three build arms, all real `CANOPY_BUILD=cms next build` runs with a
+`runtime: 'nodejs'` middleware — the third measured by the website adopter on their pin:
+
+| | `functions['/_middleware']` | `middleware.js` | edge registration |
+| --- | --- | --- | --- |
+| 15.5.21 + webpack | **populated** | 162 KB | empty |
+| 15.5.21 + turbopack | **populated** | 234 B | empty |
+| 16.1.7 + turbopack | **EMPTY** | 234 B | empty |
+
+`loadNodeMiddleware()` requires `functions['/_middleware']` in production — verified in
+16.1.7's own `dist/server/next-server.js`. On 16.1.7 the build does not write it. So the
+declaration removes the edge registration, emits a Node bundle, and registers it with
+nothing that will load it: **`auth.protect()` stops running on `/edit` and
+`/api/canopycms`, the build exits 0, and nothing says so.** In a generated file adopters
+never revisit. That is materially worse than the edge runtime it was meant to fix.
+
+**The turbopack hypothesis is refuted.** The obvious explanation for the divergence was
+bundler rather than version, and it is wrong: turbopack on 15.5.21 populates the manifest
+normally. The 234 B `middleware.js` is turbopack's signature in both turbopack arms (vs
+webpack's 162 KB), which is what pins the bundler as the *irrelevant* variable. The
+difference is **16.1.7 itself**.
+
+Which means, narrowly: on 16.1.7 the build and the server disagree with each other. The
+server reads `functions['/_middleware']`; the build does not write it. Whether that is a
+Next regression, or a mechanism that moved somewhere neither session has found, is **not
+established** — and it is the question to answer before anyone relies on a Node-runtime
+middleware on 16.x.
+
+**Consequences for this task.** Since `canopycms-next`'s peer range admits 16.x, 1b's
+fetch-at-init path is currently **blocked at the build** for a 16.x adopter, not merely
+unproven. For such a deployment the Clerk secret as a Lambda environment variable is
+presently the only option, which is a point in favour of correcting the Security Model
+table rather than waiting to make it true.
+
+**If the template is ever changed**, it must carry the version constraint explicitly —
+the rule this whole thread produced, applied to the thing the thread was about.
+
+**Caveat on the arms above:** these are build outputs, not serving behaviour. No server
+was started in any arm. The turbopack arm on 15.5.21 also emitted 29 warnings, because
+the fixture is webpack-configured; that does not affect the manifest question asked of
+it, but it is not a clean turbopack configuration either.
+
+### Edge-runtime env delivery works — measured by the adopter
+
+One more measurement, and it is the one that decides how the secret is *delivered* rather
+than whether it is needed. Since the middleware runs on **edge**, the question was whether
+an environment read there is a runtime lookup or resolved at build time — because if it
+were build-time, the Clerk secret could only ever arrive as a Docker **build arg**, baked
+into the image, per Clerk instance. Far worse than a Lambda environment variable.
+
+Measured by the website adopter on 16.1.7: a sentinel environment comparison in
+`middleware.ts`, built with the variable unset, then the emitted edge chunk read. **The
+reference survives verbatim** in `.next/server/edge/chunks/…` — neither inlined nor
+dead-code-eliminated. So the worst case is excluded and Lambda-environment-variable
+delivery works for the edge case.
+
+Their stated residual, kept rather than rounded away: this shows the reference is not
+resolved at build time. It does **not** show that Next's edge runtime is fed the parent
+process's environment at request time in a standalone deployment — one shim away, and a
+serving-behaviour question. Note the deliberate contrast with
+`NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`, which genuinely **is** build-inlined, and is why
+that one is passed as a `ClerkProvider` prop.
+
+**Why this matters for the Security Model.** For an edge-runtime adopter it is a cheaper
+route to the documented posture than the fetch path: secrets can be handed over at deploy
+time rather than fetched at init. Not asserted for the node-runtime case — nobody has
+measured that, and per
+[next16-node-runtime-middleware-unregistered.md](next16-node-runtime-middleware-unregistered.md)
+a node-runtime middleware does not register on 16.1.7 at all.
 
 ## Still worth doing regardless
 
