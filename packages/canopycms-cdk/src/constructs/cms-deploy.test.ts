@@ -7,6 +7,7 @@ import {
   aws_lambda as lambda,
   aws_route53 as route53,
   aws_certificatemanager as acm,
+  aws_cloudfront as cloudfront,
   aws_cloudfront_origins as origins,
   aws_s3 as s3,
 } from 'aws-cdk-lib'
@@ -491,6 +492,43 @@ describe('CanopyCmsDistribution: assetSupport prop', () => {
     ).toThrow(/literal key/i)
   })
 
+  it('a slash-less caller key displaces the construct default rather than duplicating it', () => {
+    // CloudFront treats a leading '/' as optional, so '_next/static/*' and
+    // '/_next/static/*' are the same pattern. The collision filter compared raw
+    // keys, so both were emitted -- which CloudFront rejects at deploy.
+    const { stack, service } = buildServiceAndAssets('SlashlessCollisionStack')
+    const anyOrigin = origins.FunctionUrlOrigin.withOriginAccessControl(service.functionUrl)
+    new CanopyCmsDistribution(stack, 'Dist', {
+      ...distributionCommonProps(stack, service.functionUrl),
+      additionalBehaviors: { '_next/static/*': { origin: anyOrigin } },
+    })
+    const res = Object.values(
+      Template.fromStack(stack).findResources('AWS::CloudFront::Distribution'),
+    )[0]
+    const patterns = (
+      res.Properties.DistributionConfig.CacheBehaviors as Array<{ PathPattern: string }>
+    ).map((b) => b.PathPattern)
+    expect(patterns).toContain('_next/static/*')
+    expect(patterns, 'the slashed default must not also be emitted').not.toContain(
+      '/_next/static/*',
+    )
+  })
+
+  it('refuses two caller keys that normalize to the same pattern', () => {
+    const { stack, service } = buildServiceAndAssets('DuplicateSpellingStack')
+    const anyOrigin = origins.FunctionUrlOrigin.withOriginAccessControl(service.functionUrl)
+    expect(
+      () =>
+        new CanopyCmsDistribution(stack, 'Dist', {
+          ...distributionCommonProps(stack, service.functionUrl),
+          additionalBehaviors: {
+            'api/*': { origin: anyOrigin },
+            '/api/*': { origin: anyOrigin },
+          },
+        }),
+    ).toThrow(/same path pattern/i)
+  })
+
   it('does NOT throw when additionalBehaviors uses the correct manual order (negative control)', () => {
     // Guards against a vacuous guard: the two throwing tests above would
     // "pass" even if the check fired on every additionalBehaviors call, so
@@ -568,6 +606,139 @@ describe('CanopyCmsDistribution: assetSupport prop', () => {
           },
         }),
     ).toThrow(/attached twice|duplicate path pattern/i)
+  })
+
+  it('merges attachTo overrides into BOTH behaviors, keeping the order', () => {
+    // Adopter request #41. A distribution running a viewer-request function on
+    // every behavior (tier basic-auth) needs the asset behaviors to carry the
+    // same functionAssociations, or /assets/* is anonymously readable on an
+    // authenticated tier. Without an overrides parameter such an adopter had to
+    // fall back to assetBehaviors() plus two hand-ordered addBehavior calls --
+    // the shape attachTo exists to eliminate.
+    const { stack, service, assetSupport } = buildServiceAndAssets('AttachOverridesStack')
+    const fn = new cloudfront.Function(stack, 'ViewerFn', {
+      code: cloudfront.FunctionCode.fromInline('function handler(e){return e.request}'),
+    })
+    const dist = new CanopyCmsDistribution(stack, 'Dist', {
+      ...distributionCommonProps(stack, service.functionUrl),
+    })
+    assetSupport.attachTo(dist.distribution, {
+      functionAssociations: [
+        { function: fn, eventType: cloudfront.FunctionEventType.VIEWER_REQUEST },
+      ],
+    })
+
+    const synthesized = Object.values(
+      Template.fromStack(stack).findResources('AWS::CloudFront::Distribution'),
+    )[0]
+    const behaviors = synthesized.Properties.DistributionConfig.CacheBehaviors as Array<{
+      PathPattern: string
+      FunctionAssociations?: unknown[]
+    }>
+    const patterns = behaviors.map((b) => b.PathPattern)
+
+    for (const pattern of [ASSETS_TRANSFORM_PATH_PATTERN, ASSETS_PATH_PATTERN]) {
+      const behavior = behaviors.find((b) => b.PathPattern === pattern)
+      expect(behavior, `${pattern} should be attached`).toBeDefined()
+      expect(
+        behavior?.FunctionAssociations,
+        `${pattern} must carry the viewer-request function, or it is anonymously readable`,
+      ).toHaveLength(1)
+    }
+    expect(patterns.indexOf(ASSETS_TRANSFORM_PATH_PATTERN)).toBeLessThan(
+      patterns.indexOf(ASSETS_PATH_PATTERN),
+    )
+  })
+
+  it('keeps the transform behavior on an origin group when overrides are passed', () => {
+    // NOT a guard against an `origin` override: measured, that is a no-op,
+    // because `addBehavior(pattern, origin, options)` takes the origin
+    // POSITIONALLY and ignores an `origin` key in the options. An earlier
+    // version of this test claimed to guard that and passed with the parameter
+    // widened to `Partial<BehaviorOptions>` and an `origin` supplied -- i.e. it
+    // was vacuous.
+    //
+    // What it pins instead is real and refactor-sensitive: the transform
+    // behavior must still target an origin GROUP after overrides are merged,
+    // since that group is the 403/404 failover to the transform Lambda. It
+    // goes red if buildBehaviors ever stops using one.
+    const { stack, service, assetSupport } = buildServiceAndAssets('AttachOriginGuardStack')
+    const dist = new CanopyCmsDistribution(stack, 'Dist', {
+      ...distributionCommonProps(stack, service.functionUrl),
+    })
+    assetSupport.attachTo(dist.distribution, { compress: false })
+
+    const synthesized = Object.values(
+      Template.fromStack(stack).findResources('AWS::CloudFront::Distribution'),
+    )[0]
+    const config = synthesized.Properties.DistributionConfig
+    const transform = (
+      config.CacheBehaviors as Array<{ PathPattern: string; TargetOriginId: string }>
+    ).find((b) => b.PathPattern === ASSETS_TRANSFORM_PATH_PATTERN)
+    expect(transform).toBeDefined()
+    const groupIds = ((config.OriginGroups?.Items ?? []) as Array<{ Id: string }>).map((g) => g.Id)
+    expect(groupIds, 'an origin group must still exist').not.toHaveLength(0)
+    expect(groupIds).toContain(transform?.TargetOriginId)
+  })
+
+  it('ignores explicitly-undefined override keys rather than falling back to CDK defaults', () => {
+    // A spread copies keys whose value is undefined, so `{ cachePolicy: undefined }`
+    // used to DELETE the construct's choice and let CDK substitute its own --
+    // a different default. Measured before the fix: the transform behavior's
+    // custom policy (minTtl 0, which exists to stop the oversized-output
+    // redirect loop) became managed CACHING_OPTIMIZED with its 1s min TTL, and
+    // viewerProtocolPolicy went from redirect-to-https to allow-all on BOTH
+    // behaviors, serving assets over plain HTTP. Not contrived: it is what
+    // forwarding an unset optional prop produces.
+    const bare = buildServiceAndAssets('OverrideUndefBareStack')
+    const bareDist = new CanopyCmsDistribution(bare.stack, 'Dist', {
+      ...distributionCommonProps(bare.stack, bare.service.functionUrl),
+    })
+    bare.assetSupport.attachTo(bareDist.distribution)
+
+    const undef = buildServiceAndAssets('OverrideUndefStack')
+    const undefDist = new CanopyCmsDistribution(undef.stack, 'Dist', {
+      ...distributionCommonProps(undef.stack, undef.service.functionUrl),
+    })
+    undef.assetSupport.attachTo(undefDist.distribution, {
+      cachePolicy: undefined,
+      viewerProtocolPolicy: undefined,
+    })
+
+    const transformOf = (stack: Stack) => {
+      const res = Object.values(
+        Template.fromStack(stack).findResources('AWS::CloudFront::Distribution'),
+      )[0]
+      const behaviors = res.Properties.DistributionConfig.CacheBehaviors as Array<{
+        PathPattern: string
+        CachePolicyId: unknown
+        ViewerProtocolPolicy: string
+      }>
+      const found = behaviors.find((b) => b.PathPattern === ASSETS_TRANSFORM_PATH_PATTERN)
+      expect(found, 'transform behavior should be attached').toBeDefined()
+      return found!
+    }
+
+    const baseline = transformOf(bare.stack)
+    const withUndef = transformOf(undef.stack)
+    expect(withUndef.CachePolicyId).toEqual(baseline.CachePolicyId)
+    expect(withUndef.ViewerProtocolPolicy).toBe(baseline.ViewerProtocolPolicy)
+    expect(withUndef.ViewerProtocolPolicy).toBe('redirect-to-https')
+  })
+
+  it('refuses two AssetSupport instances attaching to one distribution', () => {
+    // The guard was per-instance, so this pair slipped through and synthesized
+    // the same duplicate-path-pattern deploy failure the guard exists to catch.
+    const { stack, service, assetSupport } = buildServiceAndAssets('TwoInstancesStack')
+    const second = new AssetSupport(stack, 'Assets2', {
+      editorOrigins: ['http://localhost:3000'],
+      requireDeployableBundle: false,
+    })
+    const dist = new CanopyCmsDistribution(stack, 'Dist', {
+      ...distributionCommonProps(stack, service.functionUrl),
+    })
+    assetSupport.attachTo(dist.distribution)
+    expect(() => second.attachTo(dist.distribution)).toThrow(/already called/i)
   })
 
   it('refuses a second attachTo for the same distribution', () => {

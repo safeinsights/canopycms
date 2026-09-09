@@ -46,6 +46,41 @@ and move anything already published down into `## Released` under its version he
 demoting each entry from `###` to `####`. An adopter reading "Unreleased" about a feature
 they already have installed cannot tell whether they are missing something.
 
+### `AssetSupport.attachTo()` takes behavior overrides (#41)
+
+**What changed.** `attachTo(distribution)` gained an optional second parameter:
+
+```ts
+attachTo(distribution: cloudfront.Distribution, overrides?: Partial<cloudfront.AddBehaviorOptions>): void
+```
+
+merged into **both** asset behaviors.
+
+**Why.** Without it, `attachTo` was unusable by exactly the adopters who most need its
+ordering guarantee. A distribution that runs a viewer-request function on every behavior —
+tier basic-auth, most commonly — needs the asset behaviors to carry the same
+`functionAssociations`, or `/assets/*` is **anonymously readable on an authenticated
+tier**. Such an adopter had to fall back to `assetBehaviors()` plus two hand-ordered
+`addBehavior` calls: the exact shape `attachTo` exists to eliminate, re-entered while
+believing ordering was handled upstream — so the local ordering guard they'd otherwise
+have written is the one thing they're least likely to write. `responseHeadersPolicy` is
+the same story for a repo with a shared security-headers policy.
+
+**To adopt.** Nothing required. If you fell back to `assetBehaviors()` _only_ because you
+needed per-behavior options, you can now use `attachTo` and delete your hand-ordered
+block:
+
+```ts
+assetSupport.attachTo(distribution, {
+  functionAssociations: [{ function: tierAuthFn, eventType: FunctionEventType.VIEWER_REQUEST }],
+})
+```
+
+Overrides apply to both behaviors, which is what keeps the ordering guarantee the only
+thing the method decides. If you genuinely need the two to differ you are still on
+`assetBehaviors()` — and should keep your own assertion on the **synthesized** template's
+`CacheBehaviors` array index.
+
 ### `canopycms-auth-clerk` supports Clerk Core 3 (`@clerk/nextjs` 7.x, `@clerk/backend` 3.x)
 
 **What changed.** The peer ranges widened to `@clerk/nextjs: ^6.0.0 || ^7.0.0` and
@@ -87,6 +122,12 @@ unaffected by this rule, since a nested layout is already inside `<body>`.
   `UserButton` as a bare component reference, so the editor's account button is unaffected
   — but if **you** render `AccountComponent` yourself with those props, move them to
   `ClerkProvider`'s `afterSignOutUrl` or a `SignOutButton`.
+
+**Node version.** Choosing the 7.x/3.x line requires **Node >= 20.9.0** (Clerk's own
+`engines`). `canopycms-auth-clerk` still declares `engines.node >= 18`, deliberately —
+that is correct for the package itself and for the 6.x line, and narrowing it would
+exclude a Clerk-6-on-Node-18 adopter for no reason. The constraint comes from whichever
+peer you install, and your package manager will report it.
 
 **Unchanged and still worth knowing:** `clerkMiddleware` requires a non-empty `secretKey`
 in 7.x as it did in 6.x (7.x actually dropped a fallback, so it is slightly stricter). See

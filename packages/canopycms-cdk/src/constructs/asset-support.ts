@@ -132,6 +132,25 @@ const TRANSFORM_CACHE_MIN_TTL = Duration.seconds(0)
 const TRANSFORM_CACHE_DEFAULT_TTL = Duration.days(1)
 const TRANSFORM_CACHE_MAX_TTL = Duration.days(365)
 
+/**
+ * Distributions that already carry the asset behaviors, tracked at MODULE level
+ * rather than per instance.
+ *
+ * Per-instance (the first version of this) only caught the same `AssetSupport`
+ * attaching twice. Two `AssetSupport` constructs attaching to one distribution
+ * slipped through and synthesized
+ * ['/assets/t/*','/assets/*','/assets/t/*','/assets/*'] - the identical
+ * duplicate-path-pattern deploy failure the guard exists to convert into a
+ * synth error. There is no legitimate form of that: both instances attach the
+ * same two patterns, so the second is always wrong regardless of which
+ * construct owns it.
+ *
+ * A `WeakSet` keyed on the distribution object, so it holds no reference that
+ * would outlive the construct tree and cannot leak across CDK apps in a test
+ * process.
+ */
+const distributionsWithAssetBehaviors = new WeakSet<cloudfront.Distribution>()
+
 export interface AssetSupportProps {
   /**
    * Use an existing bucket (BYO mode - e.g. a site's existing content
@@ -370,9 +389,6 @@ export class AssetSupport extends Construct {
 
   private readonly behaviors: AssetCloudFrontBehaviors
 
-  /** Distributions `attachTo` has already wired -- see that method's duplicate check. */
-  private readonly attachedDistributions = new WeakSet<cloudfront.Distribution>()
-
   constructor(scope: Construct, id: string, props: AssetSupportProps) {
     super(scope, id)
 
@@ -586,6 +602,12 @@ export class AssetSupport extends Construct {
   /**
    * The two CloudFront behavior configs this system needs.
    *
+   * If you use this rather than `attachTo` -- which now takes an `overrides`
+   * parameter, so needing per-behavior options is no longer a reason to fall
+   * back here -- you own the ordering, and you should assert it: read the
+   * SYNTHESIZED template's `CacheBehaviors` array index, not your own source
+   * object, since the property is about emitted order.
+   *
    * Prefer `attachTo(distribution)` or `CanopyCmsDistribution`'s
    * `assetSupport` prop, which attach these to a distribution in the only
    * safe order automatically. This method exists as the escape hatch for a
@@ -615,6 +637,33 @@ export class AssetSupport extends Construct {
    * 0x2A, `t` = 0x74), so alphabetizing the keys reproduces exactly this
    * failure, with no synth or deploy error to catch it.
    *
+   * `overrides` is merged into BOTH behaviors, and exists because without it
+   * this method is unusable by exactly the adopters who most need the ordering
+   * guarantee. A distribution that runs a viewer-request function on every
+   * behavior - tier basic-auth, most commonly - needs the asset behaviors to
+   * carry that same `functionAssociations`, or `/assets/*` is anonymously
+   * readable on an authenticated tier. Before this parameter existed such an
+   * adopter had to fall back to `assetBehaviors()` plus two hand-ordered
+   * `addBehavior` calls: the precise shape this method was added to eliminate,
+   * re-entered while believing ordering was handled upstream, which is worse
+   * than never having had the method. (`responseHeadersPolicy` is the same
+   * story for a repo with a shared security-headers policy.)
+   *
+   * Merged into both rather than per-behavior on purpose: applying one set to
+   * both is what preserves the ordering guarantee as the only thing this
+   * method decides. A caller who genuinely needs the two behaviors to differ
+   * has left this method's remit and should use `assetBehaviors()` - and keep
+   * their own ordering assertion.
+   *
+   * Typed `Partial<AddBehaviorOptions>` because that is exactly what
+   * `addBehavior(pattern, origin, behaviorOptions?)` accepts - `origin` is a
+   * POSITIONAL argument there, so `BehaviorOptions` (which is
+   * `AddBehaviorOptions` plus `origin`) would let a caller pass a key the call
+   * silently ignores. Measured, because the first version of this comment
+   * claimed the opposite: widening the parameter and passing an `origin`
+   * override changes nothing in the emitted template, so this narrowing
+   * prevents a confusing no-op rather than a broken origin group.
+   *
    * Needs a concrete `cloudfront.Distribution` - `addBehavior` is an instance
    * method on that class, not on `IDistribution` (what an imported/looked-up
    * distribution reference gives you). For a distribution built entirely
@@ -623,7 +672,10 @@ export class AssetSupport extends Construct {
    * directly instead and list `/assets/t/*` before `/assets/*` yourself - see
    * `AssetCloudFrontBehaviors`'s doc comment.
    */
-  public attachTo(distribution: cloudfront.Distribution): void {
+  public attachTo(
+    distribution: cloudfront.Distribution,
+    overrides?: Partial<cloudfront.AddBehaviorOptions>,
+  ): void {
     // `addBehavior` does not dedupe, and these calls bypass
     // `CanopyCmsDistribution`'s own synth-time guard because they run after
     // that distribution is constructed. So attaching twice -- passing the
@@ -632,7 +684,7 @@ export class AssetSupport extends Construct {
     // ['/assets/t/*','/assets/*','/assets/t/*','/assets/*'] and fails at
     // deploy time when CloudFront rejects the duplicate patterns. Refuse it
     // here instead, where the message can say which two routes collided.
-    if (this.attachedDistributions.has(distribution)) {
+    if (distributionsWithAssetBehaviors.has(distribution)) {
       throw new Error(
         `AssetSupport: attachTo() was already called for this distribution. Each pattern ` +
           `would be attached twice and CloudFront rejects duplicate path patterns at deploy ` +
@@ -641,12 +693,37 @@ export class AssetSupport extends Construct {
           `attachTo() call -- keep one.`,
       )
     }
-    this.attachedDistributions.add(distribution)
+    distributionsWithAssetBehaviors.add(distribution)
+
+    // Drop explicitly-`undefined` keys before merging. A spread copies own
+    // enumerable keys INCLUDING ones whose value is undefined, so
+    // `{ ...transformRest, ...{ cachePolicy: undefined } }` deletes the
+    // construct's choice and lets CDK substitute its own default - which is a
+    // DIFFERENT default. Measured: `cachePolicy: undefined` swaps this
+    // behavior's custom policy (TRANSFORM_CACHE_MIN_TTL = 0, which exists
+    // solely to stop the oversized-output redirect loop documented above) for
+    // the managed CACHING_OPTIMIZED and its 1-second min TTL; and
+    // `viewerProtocolPolicy: undefined` downgrades BOTH behaviors from
+    // redirect-to-https to allow-all, serving assets over plain HTTP.
+    //
+    // This is not a contrived input - it is what forwarding optional props
+    // produces: `attachTo(dist, { cachePolicy: props.maybePolicy })` with the
+    // prop unset. It typechecks (every AddBehaviorOptions field is already
+    // optional), synthesizes and deploys clean.
+    const definedOverrides = Object.fromEntries(
+      Object.entries(overrides ?? {}).filter(([, value]) => value !== undefined),
+    )
 
     const { origin: transformOrigin, ...transformRest } = this.behaviors.assetsTransform
     const { origin: assetsOrigin, ...assetsRest } = this.behaviors.assets
-    distribution.addBehavior(ASSETS_TRANSFORM_PATH_PATTERN, transformOrigin, transformRest)
-    distribution.addBehavior(ASSETS_PATH_PATTERN, assetsOrigin, assetsRest)
+    distribution.addBehavior(ASSETS_TRANSFORM_PATH_PATTERN, transformOrigin, {
+      ...transformRest,
+      ...definedOverrides,
+    })
+    distribution.addBehavior(ASSETS_PATH_PATTERN, assetsOrigin, {
+      ...assetsRest,
+      ...definedOverrides,
+    })
   }
 
   /**
