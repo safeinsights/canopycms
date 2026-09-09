@@ -593,3 +593,84 @@ describe('cms-stack template: the media block names a real API', () => {
     expect(source).toContain('editorOrigins')
   })
 })
+
+/**
+ * `transformRole` exists so an adopter can compute the transform Lambda's
+ * principal ARN without a reference to this construct - see that prop's doc
+ * comment for the cross-account asset-bucket case behind it.
+ *
+ * CDK's `lambda.Function` silently discards the managed policies it would
+ * otherwise attach when a role is passed (it builds the list, then uses it only
+ * for the role it creates itself), so the construct re-attaches them. This
+ * function is NOT VPC-attached, which is exactly what the second test pins:
+ * if this call site and `CanopyCmsService`'s were ever collapsed into one, the
+ * transform Lambda's role would start carrying ENI permissions it has no use
+ * for.
+ */
+describe('AssetSupport - transformRole', () => {
+  const PASSED_ROLE_NAME = 'canopy-transform-passed-role'
+
+  function synthWithPassedRole(): { template: Template; roleLogicalId: string } {
+    const stack = makeStack()
+    const role = new iam.Role(stack, 'TransformRole', {
+      roleName: PASSED_ROLE_NAME,
+      assumedBy: new iam.ServicePrincipal('lambda.amazonaws.com'),
+    })
+    new AssetSupport(stack, 'Assets', { ...BASE_PROPS, transformRole: role })
+
+    const template = Template.fromStack(stack)
+    const roles = template.findResources('AWS::IAM::Role', {
+      Properties: Match.objectLike({ RoleName: PASSED_ROLE_NAME }),
+    })
+    const ids = Object.keys(roles)
+    expect(ids).toHaveLength(1)
+    return { template, roleLogicalId: ids[0] }
+  }
+
+  it('re-attaches the basic-execution managed policy CDK discards, and points the Lambda at the passed role', () => {
+    const { template, roleLogicalId } = synthWithPassedRole()
+
+    const role = template.findResources('AWS::IAM::Role')[roleLogicalId]
+    expect(JSON.stringify(role.Properties.ManagedPolicyArns)).toContain(
+      'service-role/AWSLambdaBasicExecutionRole',
+    )
+
+    const fns = template.findResources('AWS::Lambda::Function')
+    const roleRefs = Object.values(fns).map((fn) => JSON.stringify(fn.Properties.Role))
+    expect(roleRefs).toHaveLength(1)
+    expect(roleRefs[0]).toContain(roleLogicalId)
+  })
+
+  it('does NOT attach the VPC-ENI policy - this Lambda is not VPC-attached', () => {
+    const { template, roleLogicalId } = synthWithPassedRole()
+
+    const role = template.findResources('AWS::IAM::Role')[roleLogicalId]
+    const attached = (role.Properties as { ManagedPolicyArns?: unknown[] }).ManagedPolicyArns
+
+    // Pin the EXACT set rather than only the absence. A bare `not.toContain`
+    // against a stringified `undefined` throws a type error instead of
+    // reporting a clean failure when the list is missing entirely, so the
+    // length assertion is what makes this readable when it breaks - and it
+    // also catches a third policy arriving that nobody meant to add.
+    expect(attached).toHaveLength(1)
+    expect(JSON.stringify(attached)).not.toContain('service-role/AWSLambdaVPCAccessExecutionRole')
+  })
+
+  it('still applies the bucket and log-group grants to the passed role', () => {
+    const { template, roleLogicalId } = synthWithPassedRole()
+
+    const document = Object.values(template.findResources('AWS::IAM::Policy'))
+      .filter((policy) => JSON.stringify(policy.Properties.Roles).includes(roleLogicalId))
+      .map((policy) => JSON.stringify(policy.Properties.PolicyDocument))
+      .join('\n')
+
+    // transformLogGroup.grantWrite - what actually enables logging to the
+    // custom-named group, since the basic-execution policy's log statements are
+    // scoped to /aws/lambda/* only.
+    expect(document).toContain('logs:PutLogEvents')
+    // The prefix-scoped bucket grants, which land on the function's
+    // grantPrincipal (= the passed role).
+    expect(document).toContain('asset-originals/*')
+    expect(document).toContain('asset-meta/*')
+  })
+})

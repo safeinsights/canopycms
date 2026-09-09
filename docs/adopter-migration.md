@@ -46,6 +46,93 @@ and move anything already published down into `## Released` under its version he
 demoting each entry from `###` to `####`. An adopter reading "Unreleased" about a feature
 they already have installed cannot tell whether they are missing something.
 
+### `AssetSupport` and `CanopyCmsService` take an execution role, so its ARN is derivable without a construct reference (#42)
+
+**What changed.** Two new optional props:
+
+```ts
+AssetSupportProps.transformRole?: iam.Role // the transform Lambda
+CanopyCmsServiceProps.lambdaRole?: iam.Role // the CMS Lambda
+```
+
+Unset, nothing changes — CDK creates the execution role exactly as before.
+
+**Why.** If your asset bucket lives in a **different AWS account** from the CMS compute (a
+build account shared across per-environment accounts, so a promoted build's
+`/assets/{hash32}/…` references survive moving tiers), a cross-account S3 grant needs an
+identity half in the compute's stack and a **resource-policy half written in the bucket's
+own stack** — and that half needs the Lambda's principal ARN as a **plain string**.
+
+Both constructs already expose their functions (`transformFunction`, `lambdaFunction`), so
+the role was readable — but only through a construct reference, and that is precisely what
+you cannot use here. Across an account boundary CDK emits `Fn::GetStackOutput`: a
+**CDK-CLI-only intrinsic**, resolved at deploy time by assuming a publishing role and
+calling DescribeStacks. The coupling is invisible to CloudFormation and unusable by any
+deploy path that is not `cdk deploy`. A same-account circular dependency at least fails
+synth; this one does not fail anything until it matters.
+
+Create a deterministically **named** role instead, and both stacks compute
+`arn:aws:iam::<account>:role/<name>` from literals they already hold, with nothing crossing
+between them. See [Cross-account asset bucket](deploying-to-aws.md#cross-account-asset-bucket).
+
+**The footgun this closes, which is the real content of the change.** CDK's
+`lambda.Function` does, in effect:
+
+```js
+managedPolicies.push(AWSLambdaBasicExecutionRole)
+props.vpc && managedPolicies.push(AWSLambdaVPCAccessExecutionRole)
+this.role = props.role || new iam.Role(this, 'ServiceRole', { managedPolicies })
+```
+
+Those managed policies reach **only the role CDK creates**. Pass your own and they are
+**silently discarded** — no warning, no synth error. For the CMS Lambda, which is
+VPC-attached, that leaves a role with no `AWSLambdaVPCAccessExecutionRole`: the function
+**cannot create ENIs and therefore cannot start**, after synthesizing and deploying
+perfectly clean. It fails only at invoke, a long way from the cause.
+
+**So the constructs re-attach them for you** — see
+`packages/canopycms-cdk/src/constructs/lambda-execution-role.ts`. You do not attach
+basic-execution or VPC-access yourself, and the contract is the strong one: passing a role
+yields the same effective permissions as letting the construct create one. Everything else
+already survived a passed role and still does — the EFS access-point statements, the
+log-group write grant, and the asset-bucket grants all land on it.
+
+**To adopt.** Nothing required. If you need the ARN without a reference:
+
+```ts
+const roleName = `canopy-cms-${tier}` // derive it however you name things
+const role = new iam.Role(this, 'CmsRole', {
+  roleName,
+  assumedBy: new iam.ServicePrincipal('lambda.amazonaws.com'),
+})
+new CanopyCmsService(this, 'Cms', { /* ... */ lambdaRole: role })
+
+// In the bucket's stack, in the other account - no reference, just literals:
+const principal = new iam.ArnPrincipal(`arn:aws:iam::${tierAccount}:role/${roleName}`)
+```
+
+**Two costs that are now yours, deliberately.** A **named** IAM role means the stack that
+creates it needs `CAPABILITY_NAMED_IAM`, and a customer-named role **cannot be replaced in
+place** without a rename — so plan the name up front for anything long-lived. Taking a role
+rather than a `roleName` is what puts that decision where its consequences land.
+
+**Why the type is `iam.Role` and not `iam.IRole`,** which is what a CDK prop would normally
+take: `addManagedPolicy` does nothing useful on an _imported_ role, and says nothing about
+it. `ImmutableRole.addManagedPolicy` — what `Role.fromRoleArn` returns for a cross-account
+role, or with `mutable: false` — is an empty method body; the same-account mutable
+`ImportedRole` attaches only policies exposing `attachToRole`, which
+`ManagedPolicy.fromAwsManagedPolicyName` does not. Either way the compensation above
+vanishes and you are back to a Lambda that cannot start — with no runtime check to guard
+it, since `ImmutableRole.addToPrincipalPolicy` returns `statementAdded: true` while
+emitting nothing. The narrower type turns that into a **compile** error instead. If you
+were going to pass `Role.fromRoleArn`, create the role in the compute's stack and name it.
+
+**Now deletable.** Any local workaround for the missing ARN: a hand-written
+`Fn::GetStackOutput`-producing cross-stack reference, a `CfnOutput`-plus-manual-wiring
+step, or an asset grant scoped to the whole compute **account** because the role could not
+be named. That last one is the one worth hunting for — it works, so nothing will ever fail
+to tell you it is broader than you wanted.
+
 ### `AssetSupport.attachTo()` takes behavior overrides (#41)
 
 **What changed.** `attachTo(distribution)` gained an optional second parameter:

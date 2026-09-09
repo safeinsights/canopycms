@@ -13,6 +13,7 @@ import {
   aws_logs as logs,
   aws_s3 as s3,
 } from 'aws-cdk-lib'
+import { attachLambdaExecutionPolicies } from './lambda-execution-role'
 
 // This package (`canopycms-cdk`) is `"type": "module"`, so its compiled
 // output is real ESM - `__dirname` is not a global there. Derive it from
@@ -258,6 +259,33 @@ export interface AssetSupportProps {
   readonly transformOutputRetention?: Duration
 
   /**
+   * Execution role for the transform Lambda (default: CDK creates one).
+   *
+   * Set this when the role's ARN has to be computable WITHOUT a reference to
+   * this construct - the case that motivated the prop is an asset bucket in a
+   * different AWS account from the compute, where the resource-policy half of
+   * the cross-account grant must be written in the bucket's own stack and needs
+   * the principal as a plain string. Reading `transformFunction.role` across an
+   * account boundary does not give you that: CDK emits `Fn::GetStackOutput`, a
+   * CDK-CLI-only intrinsic resolved at deploy time, so the coupling is
+   * invisible to CloudFormation and unusable by any deploy path that is not
+   * `cdk deploy`. Create a deterministically NAMED role instead and both stacks
+   * can compute `arn:aws:iam::<account>:role/<name>` from literals, with
+   * nothing crossing between them.
+   *
+   * A named IAM role means the consuming stack needs `CAPABILITY_NAMED_IAM`,
+   * and cannot be replaced in place without a rename - that trade is yours to
+   * make here, which is the point of taking a role rather than a name.
+   *
+   * `iam.Role`, not `iam.IRole`, ON PURPOSE - an imported role silently
+   * discards the managed policies this construct has to re-attach. See
+   * `attachLambdaExecutionPolicies` (./lambda-execution-role) for what CDK
+   * drops when a role is passed, and why the narrower type is what makes the
+   * compensation reliable.
+   */
+  readonly transformRole?: iam.Role
+
+  /**
    * Name for the transform Lambda's CloudWatch log group (default:
    * `/canopycms/<stackName>/transform`). Deliberately NOT
    * `/aws/lambda/<function-name>` - see `transformLogGroup`'s comment in the
@@ -483,7 +511,19 @@ export class AssetSupport extends Construct {
       removalPolicy: RemovalPolicy.DESTROY,
     })
 
+    // Re-attach what CDK silently drops for a caller-supplied role. MUST run
+    // for every passed role - see that function's doc comment. This function
+    // is not VPC-attached, so it takes basic execution only; the test suite
+    // pins the absence of the VPC-ENI policy here specifically, so that this
+    // call site and the CMS Lambda's cannot be collapsed into one.
+    if (props.transformRole) {
+      attachLambdaExecutionPolicies(props.transformRole, { vpc: false })
+    }
+
     this.transformFunction = new lambda.Function(this, 'TransformFunction', {
+      // Default (unset) leaves CDK to create the execution role, with its own
+      // managed policies intact. See `transformRole`'s doc comment.
+      role: props.transformRole,
       // Built by `pnpm run build:lambda` (lambda/asset-transform/build.mjs) -
       // esbuild bundle + a real linux/arm64 `npm install sharp` alongside it,
       // no Docker. `cdk synth`/`deploy` need that script run first; it is

@@ -1,5 +1,41 @@
 # [P1] No way to compute the Lambda role ARNs without a construct reference
 
+**RESOLVED** (2026-09-09, branch `feat/cross-account-role-props`) — shipped as
+shape (1), narrowed: `transformRole?: iam.Role` on `AssetSupportProps` and
+`lambdaRole?: iam.Role` on `CanopyCmsServiceProps`, with the discarded managed
+policies re-attached by the new
+`packages/canopycms-cdk/src/constructs/lambda-execution-role.ts`.
+
+**The `IRole` in this file's shape (1) was wrong and would have shipped the bug
+it was meant to fix.** `addManagedPolicy` is a silent no-op on every imported
+role, two different ways: `ImmutableRole.addManagedPolicy(_policy) {}` is an
+empty body (what `Role.fromRoleArn` returns cross-account, or with
+`mutable: false`), and the same-account mutable `ImportedRole` attaches only
+policies exposing `attachToRole`, which `ManagedPolicy.fromAwsManagedPolicyName`
+does not. Confirmed on synthesized templates: neither emits any resource. No
+runtime guard is possible either — `ImmutableRole.addToPrincipalPolicy` returns
+`statementAdded: true` while emitting nothing. Narrowing to the concrete
+`iam.Role` moves the failure to compile time, and costs the requesting adopter
+nothing (they create the role in the same tier stack as both constructs).
+
+Shape (2) (`roleName`) was dropped: its `CAPABILITY_NAMED_IAM` requirement is a
+real cost and it buys nothing, since only derivability was needed. The
+named-role replacement trap is not avoided by shape (1) — it moves to the
+adopter, who accepted it. Documented in `docs/adopter-migration.md` (#42 entry)
+and `docs/deploying-to-aws.md`'s new cross-account asset-bucket section.
+
+Basic execution is attached to the transform Lambda's role for **parity, not
+necessity**: it logs to a custom-named group, and that managed policy's log
+statements are scoped to `/aws/lambda/*`, so the existing explicit
+`transformLogGroup.grantWrite()` is what actually enables its logging. Attaching
+it regardless keeps one checkable contract — a passed role gets what a created
+one would — rather than a judgment call that goes stale when the logging
+changes.
+
+Original filing follows.
+
+---
+
 Adopter request #42, filed 2026-09-09 by the website adopter. **A blocker for
 their W5-2 topology**, though not a hard block — they have a coarser fallback.
 Awaiting a shape decision from JP before implementation.
