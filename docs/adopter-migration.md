@@ -46,6 +46,54 @@ and move anything already published down into `## Released` under its version he
 demoting each entry from `###` to `####`. An adopter reading "Unreleased" about a feature
 they already have installed cannot tell whether they are missing something.
 
+### `canopycms-auth-clerk` supports Clerk Core 3 (`@clerk/nextjs` 7.x, `@clerk/backend` 3.x)
+
+**What changed.** The peer ranges widened to `@clerk/nextjs: ^6.0.0 || ^7.0.0` and
+`@clerk/backend: ^2.0.0 || ^3.0.0`, so you can stay on the 6.x/2.x line or move to
+7.x/3.x. CanopyCMS's own devDependencies and both example apps now build against the new
+majors, so CI exercises them.
+
+**To adopt.** Upgrading is optional. If you do upgrade, there is exactly one change Core 3
+forces on a CanopyCMS integration, and it is in your own app rather than in anything we
+ship: **`<ClerkProvider>` must go inside `<body>`**, not wrap `<html>`. If your root layout
+looks like `<ClerkProvider><html>...</html></ClerkProvider>`, move the provider in:
+
+```tsx
+<html lang="en">
+  <body>
+    <ClerkProvider>{children}</ClerkProvider>
+  </body>
+</html>
+```
+
+`apps/example1/app/layout.tsx` shows the corrected shape. For a **dual-build** adopter the
+provider belongs in the editor subtree's layout instead — see
+[Dual Build Support](deploying-to-aws.md#dual-build-support) — and that arrangement is
+unaffected by this rule, since a nested layout is already inside `<body>`.
+
+**What does NOT change, despite what Clerk's Core 3 guide implies.**
+
+- `verifyToken` is **not** removed. The guide's "`verifySecret()` / `verifyAccessToken()` /
+  `verifyToken()` are replaced by `verify()`" is about the machine-auth surface.
+  Session-token `verifyToken` is still exported from `@clerk/backend@3.x` with a
+  byte-identical option set, and **networkless PEM verification still works** — the
+  property the no-internet Lambda deployment depends on. Verified by execution with no
+  network available, not by reading the guide.
+- `CLERK_ENCRYPTION_KEY`, which Core 3 requires "when passing `secretKey`" to
+  `clerkMiddleware`, does **not** apply to the middleware CanopyCMS scaffolds: the
+  requirement is gated on a `secretKey` you pass explicitly, and the generated
+  `middleware.ts` passes only `jwtKey`.
+- `UserButton` lost its `afterSignOutUrl`/`signOutUrl` props. `useClerkAuthConfig()` passes
+  `UserButton` as a bare component reference, so the editor's account button is unaffected
+  — but if **you** render `AccountComponent` yourself with those props, move them to
+  `ClerkProvider`'s `afterSignOutUrl` or a `SignOutButton`.
+
+**Unchanged and still worth knowing:** `clerkMiddleware` requires a non-empty `secretKey`
+in 7.x as it did in 6.x (7.x actually dropped a fallback, so it is slightly stricter). See
+the note in [Security Model](deploying-to-aws.md#security-model) about what that means for
+a CMS Lambda documented as holding no secrets — that question is open and this upgrade
+neither resolves nor worsens it.
+
 ### `CanopyCmsService` gains `settingsBranch`, and the generated stack derives `baseBranch`/`settingsBranch` from `canopycms.config.ts` (#39)
 
 **What changed.** `CanopyCmsService` gained a `settingsBranch` prop, stamped into the
