@@ -3,6 +3,9 @@ import * as os from 'node:os'
 import * as path from 'node:path'
 import { App } from 'aws-cdk-lib'
 import type { AppProps } from 'aws-cdk-lib'
+// Test-only import across the package boundary, as cms-deploy.test.ts already
+// does. `utils/error.ts` is dependency-free.
+import { isNodeError } from '../../canopycms/src/utils/error'
 
 /**
  * The suite's synth-output ownership, in one file.
@@ -29,11 +32,11 @@ import type { AppProps } from 'aws-cdk-lib'
  *    compare two synths against each other -- sharing one outdir between them
  *    would cross-contaminate the assemblies.
  *
- * Bound on failure: a run killed hard enough to skip teardown (SIGKILL, a
- * host crash) leaves behind exactly one root, not one per synth. The
- * `find "$TMPDIR" -maxdepth 1 -name 'canopycms-cdk-synth-*' -mmin +60` shape
- * mops those up; nothing sweeps them automatically, deliberately, since one
- * run deleting another concurrent run's root would break the live one.
+ * Bound on failure: a run that never reaches teardown (Ctrl-C, SIGKILL, a host
+ * crash) leaves behind one root, not one per synth -- and `setup` sweeps those
+ * on the next run. Interruption is the common case, not the exotic one: Ctrl-C
+ * during `vitest run` is how a developer escapes a slow suite, and vitest's
+ * SIGINT handler exits without running globalSetup teardown.
  */
 
 /**
@@ -46,7 +49,11 @@ export const TEST_SYNTH_ROOT_ENV = 'CANOPYCMS_CDK_TEST_SYNTH_ROOT'
 /** Prefix CDK itself uses for the temp assemblies this module exists to prevent. */
 const LEAKED_ASSEMBLY_PREFIX = 'cdk.out'
 
-/** Prefix for the root this suite owns. Deliberately NOT `cdk.out*`, so the leak assertion cannot match our own root. */
+/**
+ * Prefix for the roots this suite owns. Deliberately NOT `cdk.out*`, so the
+ * leak assertion cannot match our own root. A root's name carries the pid of
+ * the run that owns it -- see `sweepDeadRoots`.
+ */
 const SYNTH_ROOT_PREFIX = 'canopycms-cdk-synth-'
 
 /**
@@ -87,9 +94,45 @@ export function newTestApp(props: AppProps = {}): App {
   return new App({ ...props, outdir: mkdtempSync(path.join(testSynthRoot(), 'app-')) })
 }
 
+/**
+ * Removes roots belonging to runs that are no longer alive.
+ *
+ * Sweeping has to tell a dead run's root from a CONCURRENT live one's, and
+ * getting that wrong deletes a running suite's assemblies out from under it.
+ * That hazard is why the root name carries its owner's pid: liveness is asked
+ * of the OS rather than guessed from mtime, which cannot distinguish a crashed
+ * run from a live one that is simply slow between synths.
+ *
+ * Only ESRCH ("no such process") licenses a delete. EPERM means the pid is
+ * alive but owned by another user, and a recycled pid reads as alive too --
+ * both leave the directory alone. Every ambiguous case errs toward leaking one
+ * directory rather than breaking a live run.
+ */
+export function sweepDeadRoots(): void {
+  for (const entry of readdirSync(os.tmpdir())) {
+    if (!entry.startsWith(SYNTH_ROOT_PREFIX)) continue
+    const pid = Number(entry.slice(SYNTH_ROOT_PREFIX.length).split('-')[0])
+    if (!Number.isInteger(pid) || pid <= 0) continue
+    try {
+      process.kill(pid, 0)
+      continue
+    } catch (error) {
+      if (!isNodeError(error) || error.code !== 'ESRCH') continue
+    }
+    try {
+      rmSync(path.join(os.tmpdir(), entry), { recursive: true, force: true })
+    } catch {
+      // A root we cannot remove is not worth failing an otherwise good run over.
+    }
+  }
+}
+
 /** vitest globalSetup. */
 export function setup(): void {
-  process.env[TEST_SYNTH_ROOT_ENV] = mkdtempSync(path.join(os.tmpdir(), SYNTH_ROOT_PREFIX))
+  sweepDeadRoots()
+  process.env[TEST_SYNTH_ROOT_ENV] = mkdtempSync(
+    path.join(os.tmpdir(), `${SYNTH_ROOT_PREFIX}${process.pid}-`),
+  )
 }
 
 /** vitest globalSetup teardown. */
