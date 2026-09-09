@@ -600,16 +600,31 @@ a worker code change), check the new instance's log stream (see
 | Public keys only (CLERK_JWT_KEY) | Full API access                                 |
 | Read/write EFS only              | Read/write EFS + internet                       |
 
-**The CMS Lambda receives public configuration only, and this is a deliberate design
-rather than a gap to work around.** It has no Secrets-Manager-fetch path because it needs
-none, and — having no internet access — could not use one if it had it. Every genuinely
-sensitive value goes to the worker instead: pass the GitHub token and Clerk secret key to
-`CanopyCmsService` as `githubTokenSecretArn` / `clerkSecretKeySecretArn`, and the worker
-reads them at boot with its own IAM grant. The Lambda's `environment` should carry nothing
-you would mind reading in the output of `aws lambda get-function-configuration`.
+**The CMS Lambda is intended to receive public configuration only.** Every genuinely
+sensitive value is meant to go to the worker instead: pass the GitHub token and Clerk
+secret key to `CanopyCmsService` as `githubTokenSecretArn` / `clerkSecretKeySecretArn`,
+and the worker reads them at boot with its own IAM grant. The Lambda's `environment`
+should carry nothing you would mind reading in the output of
+`aws lambda get-function-configuration`.
 
-Concretely, for Clerk: `CLERK_JWT_KEY` (a public PEM) belongs on the Lambda, and
-`CLERK_SECRET_KEY` (full Clerk API access) does not.
+An earlier version of this paragraph justified the absence of a Secrets-Manager-fetch path
+on the Lambda by saying it "could not use one if it had it, having no internet access."
+**That was wrong**, and it mattered, because it made the absence look like a closed design
+decision rather than an open gap. The Lambda runs in `PRIVATE_ISOLATED` subnets of a VPC
+this construct creates, and a VPC endpoint reaches an AWS service from there **without any
+internet route** — which is not hypothetical here: `CanopyCmsService` already adds a
+gateway endpoint for S3 for exactly this reason, because otherwise the Lambda's asset
+writes would hang. Secrets Manager needs the _interface_ variety rather than the free
+gateway one, so it carries an hourly and per-GB charge; that is a cost argument, not an
+impossibility argument.
+
+So the honest statement of today's position is: the Lambda holds no secrets **because
+nothing has built that path yet**, not because the path cannot exist.
+
+Concretely, for Clerk: `CLERK_JWT_KEY` (a public PEM) belongs on the Lambda.
+`CLERK_SECRET_KEY` (full Clerk API access) should not — but read the note below before
+removing it from a deployment where it is currently set, because the shipped middleware
+appears to need it.
 
 > **Known tension, unresolved as of 2026-09-08.** The posture above is the design; the
 > shipped Clerk middleware template may not currently satisfy it. `clerkMiddleware`
@@ -619,8 +634,10 @@ Concretely, for Clerk: `CLERK_JWT_KEY` (a public PEM) belongs on the Lambda, and
 > `/api/canopycms(.*)`. On that reading an authenticated editor request to a Lambda with no
 > `CLERK_SECRET_KEY` throws inside middleware. This has been read from the SDK source but
 > **not confirmed on a live deploy**, so it is filed rather than fixed — see
-> `.claude/future-tasks/deploy-test-lambda-plaintext-clerk-secret.md` for the three options
-> and what to verify first. If you are standing up a Clerk-authenticated deployment now,
+> `.claude/future-tasks/deploy-test-lambda-plaintext-clerk-secret.md` for the options and
+> what to verify first — including a fetch-at-init path over a Secrets Manager interface
+> endpoint, which is the only option that makes the posture above true rather than
+> requiring it to be softened. If you are standing up a Clerk-authenticated deployment now,
 > test sign-in early and treat this as the first thing to check if editor requests 500.
 
 If the CMS Lambda is compromised, an attacker can read/write content on EFS but cannot exfiltrate data, push to GitHub, or access any external service.

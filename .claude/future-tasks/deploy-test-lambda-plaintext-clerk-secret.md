@@ -73,11 +73,33 @@ all, and deploy-test works precisely because it deviates.
 Not "remove the passthrough" but "reconcile the security model with the shipped
 middleware", which is a real architectural call and not a deploy-test-local cleanup:
 
-1. **Bring `CLERK_SECRET_KEY` into the CMS Lambda** and retract the "no sensitive
-   secrets" half of the Security Model. Honest, but gives up the property that makes a
-   Lambda compromise survivable, and the Lambda has no internet so it cannot fetch from
-   Secrets Manager — it would have to arrive as a plaintext environment variable, exactly
-   what request #37 objected to.
+1. **Bring `CLERK_SECRET_KEY` into the CMS Lambda as a plaintext env var** and retract
+   the "no sensitive secrets" half of the Security Model. Honest, but gives up the
+   property that makes a Lambda compromise survivable.
+
+1b. **Fetch it at init over a Secrets Manager interface VPC endpoint.** Added 2026-09-09
+   after the website adopter pointed out that the objection which killed this option is
+   wrong — and it is. The original objection ("the Lambda has no internet so it cannot
+   fetch from Secrets Manager") confuses *no internet route* with *no route*. The Lambda
+   runs in `PRIVATE_ISOLATED` subnets of the VPC `CanopyCmsService` creates, and a VPC
+   endpoint reaches an AWS service from there with no internet at all. **This construct
+   already does exactly that**: `cms-service.ts` adds a gateway endpoint for S3
+   (`this.vpc.addGatewayEndpoint('S3Endpoint', …)`) precisely because the isolated subnet
+   would otherwise have no route to S3 and the Lambda's asset writes would hang. Secrets
+   Manager needs the *interface* variety rather than the free gateway one, so it costs an
+   hourly rate plus per-GB — a cost argument, not an impossibility.
+
+   This is the only option that makes the documented Security Model **true** rather than
+   requiring it to be softened, which is why it is worth the endpoint cost. Note the
+   adopter's observation that their request #37 is now on its third version and **version
+   one was right**: it was filed as "no fetch path is a gap", retracted on the
+   no-internet objection, and re-filed once that objection turned out not to hold.
+
+   Design notes if this is taken: the fetch must happen once at cold start rather than
+   per request; `clerkMiddleware` reads `process.env.CLERK_SECRET_KEY` synchronously at
+   module scope via `constants.js`, so an async fetch has to complete and assign before
+   the middleware module is evaluated — which may be the hard part, and is worth spiking
+   before committing to this route.
 2. **Stop using `clerkMiddleware` for gating** and protect those routes with a
    `jwtKey`-only verification path — CanopyCMS already has one
    (`ClerkAuthPlugin.verifyTokenOnly()`, networkless, PEM-only, no secret required). The
@@ -87,8 +109,13 @@ middleware", which is a real architectural call and not a deploy-test-local clea
    proving rather than assuming — `auth.protect()`'s behaviour with a bogus secret is the
    thing to establish.
 
-(2) looks right and is the only one that keeps the documented posture true, but it needs a
-deploy to confirm, and it is a change to the shipped template, not to deploy-test.
+(1b) and (2) are the two that leave the documented posture intact — (1b) by making the
+claim true, (2) by removing the need for the secret at all. (2) is still the cheaper of
+the two and touches only the shipped template; (1b) is the one to reach for if anything
+else on the Lambda ever needs a real secret. Both need a deploy to confirm.
+
+**Doc status:** the Security Model section's prose has been corrected — it previously
+asserted the Lambda "could not use" a fetch path, which is what made this look closed.
 
 **Verify before designing:** confirm on a live deploy that an authenticated editor request
 against a Lambda with no `CLERK_SECRET_KEY` really does 500. Everything above is read from
