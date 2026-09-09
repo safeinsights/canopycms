@@ -47,11 +47,53 @@ forced major upgrade once the editor is fronting a live site. A dependency
 major is a thing you want to do on a quiet week, not under a running
 deployment.
 
+## Core 3 breaking changes, checked 2026-09-08 — these land ON our surface
+
+Read from Clerk's Core 3 upgrade guide. This is what turns the task from a
+version bump into a piece of design work:
+
+- **`verifyToken` is gone.** Core 3 consolidates
+  `verifySecret()` / `verifyAccessToken()` / `verifyToken()` into a single
+  `verify()`. That is our networkless PEM path, used at six call sites across
+  `clerk-plugin.ts` and `jwt-verifier.ts` — and two of them type their options
+  as `Parameters<typeof clerkVerifyToken>[1]`, so a consolidated signature
+  breaks the types as well as the call. Not a find-and-replace: the semantics
+  of the merged function have to be established, especially whether a
+  `jwtKey`-only call still verifies without network.
+
+- **`clerkMiddleware` now requires `CLERK_ENCRYPTION_KEY` whenever `secretKey`
+  is passed.** This makes the open question in
+  [deploy-test-lambda-plaintext-clerk-secret.md](deploy-test-lambda-plaintext-clerk-secret.md)
+  strictly worse: that thread is about whether one secret has to live on an
+  internet-less Lambda that is designed to hold none, and Core 3 would add a
+  second. Resolve that question BEFORE upgrading, not after — the answer may
+  well decide whether `clerkMiddleware` stays in the shipped template at all,
+  which in turn decides how much of this bump we even need.
+
+- **`ClerkProvider` must be inside `<body>`**, not wrapping `<html>`. Affects
+  `apps/example1/app/layout.tsx` and the dual-build arrangement proved in
+  `apps/dual-build-fixture/app/edit/layout.server.tsx` — so the fixture's
+  CI-enforced guarantee has to be re-established under 7.x, not assumed to
+  carry over.
+
+- **`UserButton` lost its `afterSignOutUrl` / `signOutUrl` props**, moving to
+  `ClerkProvider`'s `afterSignOutUrl` or a separate `SignOutButton`.
+  `canopycms-auth-clerk/src/client.ts` ships `UserButton` as the editor's
+  `AccountComponent`, so this is adopter-visible sign-out behaviour.
+
+- `enableHandshake` removed (we do not use it).
+
+Compatibility that is NOT a blocker, checked: `@clerk/nextjs@7.9.1` needs Node
+`>=20.9.0` (we require `>=22`), `next ^15.5.9` among others (example1 is on
+15.5.21), and React `^18.0.0` (we are on 18.3.1).
+
 ## Recommended shape
 
-1. Verify the four call sites against `@clerk/nextjs@7.x` + `@clerk/backend@3.x`
-   — read both packages' migration notes, then actually run
-   `canopycms-auth-clerk`'s suite against the new majors.
+0. **Settle the `clerkMiddleware` secret question first** (see the bullet
+   above). Core 3 adds `CLERK_ENCRYPTION_KEY` to it, so upgrading before that
+   is decided means designing against a moving target.
+1. Port `verifyToken` -> `verify()` and establish, by execution, that a
+   `jwtKey`-only call still verifies with no network available.
 2. **Exercise the networkless path specifically**: a `jwtKey`-only
    `verifyToken` with no network available. That is the property the AWS
    deployment rests on and the one a major is most likely to move.
