@@ -586,6 +586,12 @@ export class AssetSupport extends Construct {
   /**
    * The two CloudFront behavior configs this system needs.
    *
+   * If you use this rather than `attachTo` -- which now takes an `overrides`
+   * parameter, so needing per-behavior options is no longer a reason to fall
+   * back here -- you own the ordering, and you should assert it: read the
+   * SYNTHESIZED template's `CacheBehaviors` array index, not your own source
+   * object, since the property is about emitted order.
+   *
    * Prefer `attachTo(distribution)` or `CanopyCmsDistribution`'s
    * `assetSupport` prop, which attach these to a distribution in the only
    * safe order automatically. This method exists as the escape hatch for a
@@ -615,6 +621,33 @@ export class AssetSupport extends Construct {
    * 0x2A, `t` = 0x74), so alphabetizing the keys reproduces exactly this
    * failure, with no synth or deploy error to catch it.
    *
+   * `overrides` is merged into BOTH behaviors, and exists because without it
+   * this method is unusable by exactly the adopters who most need the ordering
+   * guarantee. A distribution that runs a viewer-request function on every
+   * behavior - tier basic-auth, most commonly - needs the asset behaviors to
+   * carry that same `functionAssociations`, or `/assets/*` is anonymously
+   * readable on an authenticated tier. Before this parameter existed such an
+   * adopter had to fall back to `assetBehaviors()` plus two hand-ordered
+   * `addBehavior` calls: the precise shape this method was added to eliminate,
+   * re-entered while believing ordering was handled upstream, which is worse
+   * than never having had the method. (`responseHeadersPolicy` is the same
+   * story for a repo with a shared security-headers policy.)
+   *
+   * Merged into both rather than per-behavior on purpose: applying one set to
+   * both is what preserves the ordering guarantee as the only thing this
+   * method decides. A caller who genuinely needs the two behaviors to differ
+   * has left this method's remit and should use `assetBehaviors()` - and keep
+   * their own ordering assertion.
+   *
+   * Typed `Partial<AddBehaviorOptions>` because that is exactly what
+   * `addBehavior(pattern, origin, behaviorOptions?)` accepts - `origin` is a
+   * POSITIONAL argument there, so `BehaviorOptions` (which is
+   * `AddBehaviorOptions` plus `origin`) would let a caller pass a key the call
+   * silently ignores. Measured, because the first version of this comment
+   * claimed the opposite: widening the parameter and passing an `origin`
+   * override changes nothing in the emitted template, so this narrowing
+   * prevents a confusing no-op rather than a broken origin group.
+   *
    * Needs a concrete `cloudfront.Distribution` - `addBehavior` is an instance
    * method on that class, not on `IDistribution` (what an imported/looked-up
    * distribution reference gives you). For a distribution built entirely
@@ -623,7 +656,10 @@ export class AssetSupport extends Construct {
    * directly instead and list `/assets/t/*` before `/assets/*` yourself - see
    * `AssetCloudFrontBehaviors`'s doc comment.
    */
-  public attachTo(distribution: cloudfront.Distribution): void {
+  public attachTo(
+    distribution: cloudfront.Distribution,
+    overrides?: Partial<cloudfront.AddBehaviorOptions>,
+  ): void {
     // `addBehavior` does not dedupe, and these calls bypass
     // `CanopyCmsDistribution`'s own synth-time guard because they run after
     // that distribution is constructed. So attaching twice -- passing the
@@ -645,8 +681,14 @@ export class AssetSupport extends Construct {
 
     const { origin: transformOrigin, ...transformRest } = this.behaviors.assetsTransform
     const { origin: assetsOrigin, ...assetsRest } = this.behaviors.assets
-    distribution.addBehavior(ASSETS_TRANSFORM_PATH_PATTERN, transformOrigin, transformRest)
-    distribution.addBehavior(ASSETS_PATH_PATTERN, assetsOrigin, assetsRest)
+    distribution.addBehavior(ASSETS_TRANSFORM_PATH_PATTERN, transformOrigin, {
+      ...transformRest,
+      ...overrides,
+    })
+    distribution.addBehavior(ASSETS_PATH_PATTERN, assetsOrigin, {
+      ...assetsRest,
+      ...overrides,
+    })
   }
 
   /**

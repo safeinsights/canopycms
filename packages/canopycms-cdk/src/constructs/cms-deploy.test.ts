@@ -7,6 +7,7 @@ import {
   aws_lambda as lambda,
   aws_route53 as route53,
   aws_certificatemanager as acm,
+  aws_cloudfront as cloudfront,
   aws_cloudfront_origins as origins,
   aws_s3 as s3,
 } from 'aws-cdk-lib'
@@ -568,6 +569,79 @@ describe('CanopyCmsDistribution: assetSupport prop', () => {
           },
         }),
     ).toThrow(/attached twice|duplicate path pattern/i)
+  })
+
+  it('merges attachTo overrides into BOTH behaviors, keeping the order', () => {
+    // Adopter request #41. A distribution running a viewer-request function on
+    // every behavior (tier basic-auth) needs the asset behaviors to carry the
+    // same functionAssociations, or /assets/* is anonymously readable on an
+    // authenticated tier. Without an overrides parameter such an adopter had to
+    // fall back to assetBehaviors() plus two hand-ordered addBehavior calls --
+    // the shape attachTo exists to eliminate.
+    const { stack, service, assetSupport } = buildServiceAndAssets('AttachOverridesStack')
+    const fn = new cloudfront.Function(stack, 'ViewerFn', {
+      code: cloudfront.FunctionCode.fromInline('function handler(e){return e.request}'),
+    })
+    const dist = new CanopyCmsDistribution(stack, 'Dist', {
+      ...distributionCommonProps(stack, service.functionUrl),
+    })
+    assetSupport.attachTo(dist.distribution, {
+      functionAssociations: [
+        { function: fn, eventType: cloudfront.FunctionEventType.VIEWER_REQUEST },
+      ],
+    })
+
+    const synthesized = Object.values(
+      Template.fromStack(stack).findResources('AWS::CloudFront::Distribution'),
+    )[0]
+    const behaviors = synthesized.Properties.DistributionConfig.CacheBehaviors as Array<{
+      PathPattern: string
+      FunctionAssociations?: unknown[]
+    }>
+    const patterns = behaviors.map((b) => b.PathPattern)
+
+    for (const pattern of [ASSETS_TRANSFORM_PATH_PATTERN, ASSETS_PATH_PATTERN]) {
+      const behavior = behaviors.find((b) => b.PathPattern === pattern)
+      expect(behavior, `${pattern} should be attached`).toBeDefined()
+      expect(
+        behavior?.FunctionAssociations,
+        `${pattern} must carry the viewer-request function, or it is anonymously readable`,
+      ).toHaveLength(1)
+    }
+    expect(patterns.indexOf(ASSETS_TRANSFORM_PATH_PATTERN)).toBeLessThan(
+      patterns.indexOf(ASSETS_PATH_PATTERN),
+    )
+  })
+
+  it('keeps the transform behavior on an origin group when overrides are passed', () => {
+    // NOT a guard against an `origin` override: measured, that is a no-op,
+    // because `addBehavior(pattern, origin, options)` takes the origin
+    // POSITIONALLY and ignores an `origin` key in the options. An earlier
+    // version of this test claimed to guard that and passed with the parameter
+    // widened to `Partial<BehaviorOptions>` and an `origin` supplied -- i.e. it
+    // was vacuous.
+    //
+    // What it pins instead is real and refactor-sensitive: the transform
+    // behavior must still target an origin GROUP after overrides are merged,
+    // since that group is the 403/404 failover to the transform Lambda. It
+    // goes red if buildBehaviors ever stops using one.
+    const { stack, service, assetSupport } = buildServiceAndAssets('AttachOriginGuardStack')
+    const dist = new CanopyCmsDistribution(stack, 'Dist', {
+      ...distributionCommonProps(stack, service.functionUrl),
+    })
+    assetSupport.attachTo(dist.distribution, { compress: false })
+
+    const synthesized = Object.values(
+      Template.fromStack(stack).findResources('AWS::CloudFront::Distribution'),
+    )[0]
+    const config = synthesized.Properties.DistributionConfig
+    const transform = (
+      config.CacheBehaviors as Array<{ PathPattern: string; TargetOriginId: string }>
+    ).find((b) => b.PathPattern === ASSETS_TRANSFORM_PATH_PATTERN)
+    expect(transform).toBeDefined()
+    const groupIds = ((config.OriginGroups?.Items ?? []) as Array<{ Id: string }>).map((g) => g.Id)
+    expect(groupIds, 'an origin group must still exist').not.toHaveLength(0)
+    expect(groupIds).toContain(transform?.TargetOriginId)
   })
 
   it('refuses a second attachTo for the same distribution', () => {
