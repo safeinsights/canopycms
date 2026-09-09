@@ -139,44 +139,45 @@ point — "Resolves (and memoizes) the Clerk secret key at first use. Fail-close
 still broken is the plausible half-landing, because the two read the secret through
 completely separate paths.
 
-### The remaining risk, and it is a cheaper question than a deploy
+### The remaining risk: which runtime runs the middleware
 
-Not evaluation order but **which runtime executes the middleware**. An AWS SDK Secrets
-Manager call needs the Node runtime; Next middleware defaults to the **edge** runtime,
-where it is unavailable no matter where it is called from.
+An AWS SDK Secrets Manager call needs the **Node** runtime, and Next middleware defaults
+to **edge**, where it is unavailable no matter where it is called from. So 1b depends on
+being able to select a Node-runtime middleware.
 
-Checked against our own pinned Next (15.5.21): Node-runtime middleware **is** supported —
-`dist/server/next-server.js:1145` has `loadNodeMiddleware()`, gated behind
-`experimental.nodeMiddleware`. So the path exists, but it is an **experimental Next flag**,
-and that is the actual decision 1b now turns on: whether a production editor should depend
-on one. That is a judgement call for JP, not a research question.
+**You can, and it needs no experimental flag.** Verified in both Next versions this
+package supports, because the answer had already been stated wrongly twice:
 
-Answerable from a BUILD rather than a deploy either way, which makes it cheaper than
-anything else outstanding on this file.
-2. **Stop using `clerkMiddleware` for gating** and protect those routes with a
-   `jwtKey`-only verification path — CanopyCMS already has one
-   (`ClerkAuthPlugin.verifyTokenOnly()`, networkless, PEM-only, no secret required). The
-   middleware would become a thin check that never constructs a Clerk backend client.
-3. **Pass an explicit dummy/derived `secretKey` to `clerkMiddleware`** purely to satisfy
-   `assertKey`, if nothing on the middleware path actually calls the backend API. Needs
-   proving rather than assuming — `auth.protect()`'s behaviour with a bogus secret is the
-   thing to establish.
+| | Next 15.5.21 | Next 16.1.7 |
+| --- | --- | --- |
+| `experimental.nodeMiddleware` typed in `dist/server/config-shared.d.ts` | **absent** | **absent** |
+| `loadNodeMiddleware()` gate (`dist/server/next-server.js`) | `NEXT_MINIMAL`, then `functions['/_middleware']` in the build manifest | identical |
+| `FunctionsConfigManifest.functions[].runtime` (`dist/build/index.d.ts`) | `runtime?: 'nodejs'` | identical |
 
-(1b) and (2) are the two that leave the documented posture intact — (1b) by making the
-claim true, (2) by removing the need for the secret at all. (2) is still the cheaper of
-the two and touches only the shipped template; (1b) is the one to reach for if anything
-else on the Lambda ever needs a real secret. Both need a deploy to confirm.
+The mechanism, the same on both: `middleware.ts` declares
+`export const config = { runtime: 'nodejs' }`; the build records
+`functions['/_middleware'].runtime` into `FUNCTIONS_CONFIG_MANIFEST`; at runtime
+`loadNodeMiddleware()` requires `server/middleware.js` when that entry is present. Stable
+declared config, not a flag.
 
-**Doc status:** the Security Model section's prose has been corrected — it previously
-asserted the Lambda "could not use" a fetch path, which is what made this look closed.
+**RETRACTED, and the retraction matters more than the fact.** An earlier version of this
+section said the path was "gated behind `experimental.nodeMiddleware`", and escalated a
+decision to JP about whether a production editor should depend on an experimental flag.
+**That decision does not exist.** The claim came from grepping the identifier
+`nodeMiddleware` in `next-server.js`, finding it at `:1145-1146`, and inferring a config
+option — but those two lines are a **local variable at the call site inside
+`hasMiddleware()`**. The function itself was never opened.
 
-**Verify before designing:** confirm on a live deploy that an authenticated editor request
-against a Lambda with no `CLERK_SECRET_KEY` really does 500. Everything above is read from
-the SDK source and the templates; no deploy was run. If it somehow does not throw, find
-out why before touching anything, because then one of these readings is wrong.
+The website adopter caught it, and **their correction needs correcting the same way**: they
+framed it as a version split — "real for 15.x adopters, empty for this site" — which is
+more generous than the facts. There is no split. It was empty in both, and accepting the
+split would have left a false constraint standing for 15.x adopters in this very file.
 
-See also [clerk-middleware-runtime-key-unverified.md](clerk-middleware-runtime-key-unverified.md),
-which reached the same `secretKey` requirement from the one-image-per-tier direction.
+**Still a reading, not a measurement.** What is established is that the runtime is
+selectable by declared config. Nobody has built a Next app with a `runtime: 'nodejs'`
+middleware and confirmed the AWS SDK actually loads and reaches a Secrets Manager
+interface endpoint from inside a Lambda. That is the build-level check to run before
+committing to 1b — and given how this section has gone, run it rather than read it.
 
 ## Still worth doing regardless
 
