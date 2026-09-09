@@ -674,6 +674,48 @@ Separate AWS accounts mean these two stacks' settings branches would never colli
 
 The generated workflow deploys one stack by name, so adding a second one here means updating its Deploy step too — either naming both (`npx cdk deploy CmsTest CmsProd`) or, more usually, giving each environment its own workflow with its own trigger and its own OIDC role.
 
+### Cross-account asset bucket
+
+A supported topology, and the normal one once assets are shared across per-environment accounts: the **asset bucket lives in one account** (a build account, so a promoted build's `/assets/{hash32}/…` references keep resolving as it moves between tiers) while the **compute is per tier, in the tier's own account**.
+
+The grant this needs has two halves. The identity half goes in the compute's stack. The **resource-policy half must be written in the bucket's own stack**, and it needs the Lambda's principal as a **plain string**.
+
+**Do not reach for the construct reference.** `assetSupport.transformFunction.role` and `service.lambdaFunction.role` both work within one account, but across an account boundary CDK emits `Fn::GetStackOutput` — a CDK-CLI-only intrinsic, resolved at deploy time by assuming a publishing role and calling DescribeStacks. Nothing in the emitted CloudFormation records the dependency, and no deploy path other than `cdk deploy` can resolve it. Unlike a same-account circular dependency, it does not fail synth.
+
+Name the roles instead, and pass them in:
+
+```typescript
+// Tier stack, in the tier account.
+const cmsRoleName = `canopy-cms-${tier}`
+const cmsRole = new iam.Role(this, 'CmsRole', {
+  roleName: cmsRoleName,
+  assumedBy: new iam.ServicePrincipal('lambda.amazonaws.com'),
+})
+
+new CanopyCmsService(this, 'Cms', {
+  // ...
+  lambdaRole: cmsRole,
+  assetBucket: s3.Bucket.fromBucketName(this, 'Assets', assetBucketName),
+})
+```
+
+```typescript
+// Bucket stack, in the build account. No reference, no import - literals only.
+bucket.addToResourcePolicy(
+  new iam.PolicyStatement({
+    principals: [new iam.ArnPrincipal(`arn:aws:iam::${tierAccount}:role/canopy-cms-${tier}`)],
+    actions: ['s3:GetObject', 's3:PutObject'],
+    resources: [`${bucket.bucketArn}/assets/*`],
+  }),
+)
+```
+
+`AssetSupport` takes the same prop for its transform Lambda, as `transformRole`. Both props are `iam.Role` rather than `iam.IRole`, and both cause the construct to re-attach the execution-role managed policies CDK silently drops for a caller-supplied role — including the VPC-ENI policy the CMS Lambda cannot start without. See the [#42 migration entry](adopter-migration.md#assetsupport-and-canopycmsservice-take-an-execution-role-so-its-arn-is-derivable-without-a-construct-reference-42) for both, and for why passing `Role.fromRoleArn` is the one thing to avoid.
+
+Two consequences of naming a role: the tier stack needs **`CAPABILITY_NAMED_IAM`**, and a customer-named IAM role **cannot be replaced in place** without a rename — so pick names you can live with for the life of the deployment.
+
+If you are not ready to wire the narrow version, scoping the bucket policy to the tier **account** rather than the role is a bounded, reversible interim step: coarser, since any principal in that account can then reach the asset prefixes, but easy to tighten later without touching the compute.
+
 ## Troubleshooting
 
 **Lambda cold start is slow**: Consider adding provisioned concurrency (1 instance, ~$15/month).

@@ -4,6 +4,7 @@ import { Template, Match } from 'aws-cdk-lib/assertions'
 import { RetentionDays } from 'aws-cdk-lib/aws-logs'
 import {
   aws_ecr as ecr,
+  aws_iam as iam,
   aws_lambda as lambda,
   aws_route53 as route53,
   aws_certificatemanager as acm,
@@ -1917,4 +1918,129 @@ describe('CanopyCmsService: settingsBranch -> CANOPYCMS_SETTINGS_BRANCH', () => 
       expect(() => synth(false, { settingsBranch: value })).not.toThrow()
     })
   }
+})
+
+/**
+ * `lambdaRole` exists so an adopter can compute the CMS Lambda's principal ARN
+ * without holding a reference to this construct - the cross-account
+ * asset-bucket case, where the resource-policy half of the grant is written in
+ * the bucket's own stack. See `CanopyCmsServiceProps.lambdaRole`.
+ *
+ * What these tests defend is the FOOTGUN underneath it, not the plumbing.
+ * CDK's `lambda.Function` builds its managed-policy list and then passes it
+ * only into the role it creates itself, so a caller-supplied role gets
+ * `AWSLambdaBasicExecutionRole` and `AWSLambdaVPCAccessExecutionRole`
+ * SILENTLY DISCARDED. This Lambda is VPC-attached, so a role missing the
+ * latter cannot create ENIs and the function cannot start - while synthesizing
+ * and deploying perfectly clean. Every assertion below reads the synthesized
+ * template rather than the construct's own objects, since the property is
+ * about what CloudFormation receives.
+ *
+ * NOT covered here, by agreement with the adopter who filed the request: that
+ * no reference actually crosses the account boundary in their app. That is an
+ * assertion about THEIR stacks (their guard checks for forbidden intrinsics);
+ * these tests prove the role works once passed.
+ */
+const PASSED_ROLE_NAME = 'canopy-cms-passed-role'
+
+function synthWithPassedRole(): { template: Template; roleLogicalId: string } {
+  const app = newTestApp()
+  const stack = new Stack(app, 'TestStack', {
+    env: { account: '123456789012', region: 'us-east-1' },
+  })
+  // A NAMED role, matching the shape the prop exists to serve: the adopter
+  // names it so both stacks can compute arn:aws:iam::<account>:role/<name>
+  // from literals.
+  const role = new iam.Role(stack, 'CmsRole', {
+    roleName: PASSED_ROLE_NAME,
+    assumedBy: new iam.ServicePrincipal('lambda.amazonaws.com'),
+  })
+  new CanopyCmsService(stack, 'Cms', {
+    cmsDockerImage: lambda.DockerImageCode.fromEcr(
+      ecr.Repository.fromRepositoryName(stack, 'Repo', 'cms'),
+    ),
+    githubOwner: 'acme',
+    githubRepo: 'site',
+    lambdaRole: role,
+    assetBucket: new s3.Bucket(stack, 'AssetBucket'),
+  })
+
+  const template = Template.fromStack(stack)
+  const roles = template.findResources('AWS::IAM::Role', {
+    Properties: Match.objectLike({ RoleName: PASSED_ROLE_NAME }),
+  })
+  const ids = Object.keys(roles)
+  expect(ids).toHaveLength(1)
+  return { template, roleLogicalId: ids[0] }
+}
+
+/** Every AWS::IAM::Policy in the template attached to the given role. */
+function policyActionsForRole(template: Template, roleLogicalId: string): string {
+  const policies = template.findResources('AWS::IAM::Policy')
+  return Object.values(policies)
+    .filter((policy) => JSON.stringify(policy.Properties.Roles).includes(roleLogicalId))
+    .map((policy) => JSON.stringify(policy.Properties.PolicyDocument))
+    .join('\n')
+}
+
+describe('CanopyCmsService: lambdaRole', () => {
+  it('re-attaches the VPC-ENI and basic-execution managed policies CDK discards for a passed role', () => {
+    const { template, roleLogicalId } = synthWithPassedRole()
+
+    const role = template.findResources('AWS::IAM::Role')[roleLogicalId]
+    const attached = JSON.stringify(role.Properties.ManagedPolicyArns)
+
+    // Without the construct's compensation this property is absent entirely
+    // (measured), so both of these fail rather than merely narrowing.
+    expect(attached).toContain('service-role/AWSLambdaVPCAccessExecutionRole')
+    expect(attached).toContain('service-role/AWSLambdaBasicExecutionRole')
+  })
+
+  it('points the CMS Lambda at the passed role rather than creating its own', () => {
+    const { template, roleLogicalId } = synthWithPassedRole()
+
+    const fns = template.findResources('AWS::Lambda::Function', {
+      Properties: Match.objectLike({ PackageType: 'Image' }),
+    })
+    const roleRefs = Object.values(fns).map((fn) => JSON.stringify(fn.Properties.Role))
+    expect(roleRefs).toHaveLength(1)
+    expect(roleRefs[0]).toContain(roleLogicalId)
+
+    // And no CDK-created execution role is left behind alongside it.
+    const roleNames = Object.values(template.findResources('AWS::IAM::Role')).map(
+      (r) => (r.Properties as { RoleName?: string }).RoleName,
+    )
+    expect(roleNames).toContain(PASSED_ROLE_NAME)
+  })
+
+  it('still applies the EFS, log-group and asset-bucket grants to the passed role', () => {
+    const { template, roleLogicalId } = synthWithPassedRole()
+    const document = policyActionsForRole(template, roleLogicalId)
+
+    // EFS access-point statements: applied via addToPrincipalPolicy, which a
+    // passed role DOES receive - asserted rather than assumed.
+    expect(document).toContain('elasticfilesystem:ClientMount')
+    expect(document).toContain('elasticfilesystem:ClientWrite')
+    // cmsLogGroup.grantWrite - the grant that actually enables logging to the
+    // custom-named group (the basic-execution managed policy does not).
+    expect(document).toContain('logs:PutLogEvents')
+    // The props.assetBucket block, which grants via the function's
+    // grantPrincipal (= the passed role).
+    expect(document).toContain('asset-staging/*')
+    expect(document).toContain('asset-originals/*')
+  })
+
+  it('leaves the default path alone: with no lambdaRole, CDK creates a role carrying both managed policies', () => {
+    const template = synth()
+
+    const roles = Object.values(template.findResources('AWS::IAM::Role'))
+    const withBoth = roles.filter((role) => {
+      const attached = JSON.stringify(role.Properties.ManagedPolicyArns)
+      return (
+        attached.includes('service-role/AWSLambdaVPCAccessExecutionRole') &&
+        attached.includes('service-role/AWSLambdaBasicExecutionRole')
+      )
+    })
+    expect(withBoth).toHaveLength(1)
+  })
 })

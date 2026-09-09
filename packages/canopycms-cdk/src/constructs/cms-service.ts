@@ -14,6 +14,7 @@ import {
   aws_logs as logs,
 } from 'aws-cdk-lib'
 import type { IBucket } from 'aws-cdk-lib/aws-s3'
+import { attachLambdaExecutionPolicies } from './lambda-execution-role'
 
 // This package (`canopycms-cdk`) is `"type": "module"`, so its compiled
 // output is real ESM - `__dirname` is not a global there. Found while
@@ -383,6 +384,39 @@ export interface CanopyCmsServiceProps {
   workerLogGroupName?: string
 
   /**
+   * Execution role for the CMS Lambda (default: CDK creates one).
+   *
+   * Set this when the role's ARN has to be computable WITHOUT a reference to
+   * this construct - the motivating case is an asset bucket in a different AWS
+   * account from the compute, where the resource-policy half of the
+   * cross-account grant must be written in the bucket's own stack and needs the
+   * principal as a plain string. Reading `lambdaFunction.role` across an
+   * account boundary does not give you that: CDK emits `Fn::GetStackOutput`, a
+   * CDK-CLI-only intrinsic resolved at deploy time, so the coupling is
+   * invisible to CloudFormation and unusable by any deploy path that is not
+   * `cdk deploy`. Create a deterministically NAMED role instead and both stacks
+   * can compute `arn:aws:iam::<account>:role/<name>` from literals, with
+   * nothing crossing between them.
+   *
+   * A named IAM role means the consuming stack needs `CAPABILITY_NAMED_IAM`,
+   * and cannot be replaced in place without a rename - that trade is yours to
+   * make here, which is the point of taking a role rather than a name.
+   *
+   * This Lambda is VPC-attached, which makes the compensation in
+   * `attachLambdaExecutionPolicies` (./lambda-execution-role) load-bearing
+   * rather than cosmetic: CDK discards `AWSLambdaVPCAccessExecutionRole` for a
+   * passed role, and without it the function cannot create ENIs and so cannot
+   * start - after synthesizing and deploying clean. The construct re-attaches
+   * it, which is also why this is `iam.Role` and not `iam.IRole` (an imported
+   * role would drop it again, silently). Everything else survives a passed role
+   * untouched: the EFS access-point statements, the `cmsLogGroup` write grant
+   * and the `assetBucket` grants all land on it.
+   *
+   * The EC2 worker has its own instance role and is unaffected by this prop.
+   */
+  lambdaRole?: iam.Role
+
+  /**
    * Retention for the CMS Lambda's CloudWatch log group (default: three
    * months / 90 days).
    */
@@ -673,8 +707,20 @@ export class CanopyCmsService extends Construct {
 
     this.timeout = props.timeout ?? DEFAULT_CMS_LAMBDA_TIMEOUT
 
+    // Re-attach what CDK silently drops for a caller-supplied role. MUST run
+    // for every passed role, and `vpc: true` here is the load-bearing part:
+    // this function is VPC-attached, so a role without
+    // AWSLambdaVPCAccessExecutionRole cannot create ENIs and the Lambda cannot
+    // start, having deployed clean. See that function's doc comment.
+    if (props.lambdaRole) {
+      attachLambdaExecutionPolicies(props.lambdaRole, { vpc: true })
+    }
+
     this.lambdaFunction = new lambda.DockerImageFunction(this, 'CmsFunction', {
       code: props.cmsDockerImage,
+      // Default (unset) leaves CDK to create the execution role, with its own
+      // managed policies intact. See `lambdaRole`'s doc comment.
+      role: props.lambdaRole,
       memorySize: props.memorySize ?? 2048,
       timeout: this.timeout,
       reservedConcurrentExecutions: props.reservedConcurrency ?? 10,
