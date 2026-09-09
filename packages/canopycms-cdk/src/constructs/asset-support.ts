@@ -132,6 +132,25 @@ const TRANSFORM_CACHE_MIN_TTL = Duration.seconds(0)
 const TRANSFORM_CACHE_DEFAULT_TTL = Duration.days(1)
 const TRANSFORM_CACHE_MAX_TTL = Duration.days(365)
 
+/**
+ * Distributions that already carry the asset behaviors, tracked at MODULE level
+ * rather than per instance.
+ *
+ * Per-instance (the first version of this) only caught the same `AssetSupport`
+ * attaching twice. Two `AssetSupport` constructs attaching to one distribution
+ * slipped through and synthesized
+ * ['/assets/t/*','/assets/*','/assets/t/*','/assets/*'] - the identical
+ * duplicate-path-pattern deploy failure the guard exists to convert into a
+ * synth error. There is no legitimate form of that: both instances attach the
+ * same two patterns, so the second is always wrong regardless of which
+ * construct owns it.
+ *
+ * A `WeakSet` keyed on the distribution object, so it holds no reference that
+ * would outlive the construct tree and cannot leak across CDK apps in a test
+ * process.
+ */
+const distributionsWithAssetBehaviors = new WeakSet<cloudfront.Distribution>()
+
 export interface AssetSupportProps {
   /**
    * Use an existing bucket (BYO mode - e.g. a site's existing content
@@ -369,9 +388,6 @@ export class AssetSupport extends Construct {
   public readonly maxUploadBytes: number
 
   private readonly behaviors: AssetCloudFrontBehaviors
-
-  /** Distributions `attachTo` has already wired -- see that method's duplicate check. */
-  private readonly attachedDistributions = new WeakSet<cloudfront.Distribution>()
 
   constructor(scope: Construct, id: string, props: AssetSupportProps) {
     super(scope, id)
@@ -668,7 +684,7 @@ export class AssetSupport extends Construct {
     // ['/assets/t/*','/assets/*','/assets/t/*','/assets/*'] and fails at
     // deploy time when CloudFront rejects the duplicate patterns. Refuse it
     // here instead, where the message can say which two routes collided.
-    if (this.attachedDistributions.has(distribution)) {
+    if (distributionsWithAssetBehaviors.has(distribution)) {
       throw new Error(
         `AssetSupport: attachTo() was already called for this distribution. Each pattern ` +
           `would be attached twice and CloudFront rejects duplicate path patterns at deploy ` +
@@ -677,17 +693,36 @@ export class AssetSupport extends Construct {
           `attachTo() call -- keep one.`,
       )
     }
-    this.attachedDistributions.add(distribution)
+    distributionsWithAssetBehaviors.add(distribution)
+
+    // Drop explicitly-`undefined` keys before merging. A spread copies own
+    // enumerable keys INCLUDING ones whose value is undefined, so
+    // `{ ...transformRest, ...{ cachePolicy: undefined } }` deletes the
+    // construct's choice and lets CDK substitute its own default - which is a
+    // DIFFERENT default. Measured: `cachePolicy: undefined` swaps this
+    // behavior's custom policy (TRANSFORM_CACHE_MIN_TTL = 0, which exists
+    // solely to stop the oversized-output redirect loop documented above) for
+    // the managed CACHING_OPTIMIZED and its 1-second min TTL; and
+    // `viewerProtocolPolicy: undefined` downgrades BOTH behaviors from
+    // redirect-to-https to allow-all, serving assets over plain HTTP.
+    //
+    // This is not a contrived input - it is what forwarding optional props
+    // produces: `attachTo(dist, { cachePolicy: props.maybePolicy })` with the
+    // prop unset. It typechecks (every AddBehaviorOptions field is already
+    // optional), synthesizes and deploys clean.
+    const definedOverrides = Object.fromEntries(
+      Object.entries(overrides ?? {}).filter(([, value]) => value !== undefined),
+    )
 
     const { origin: transformOrigin, ...transformRest } = this.behaviors.assetsTransform
     const { origin: assetsOrigin, ...assetsRest } = this.behaviors.assets
     distribution.addBehavior(ASSETS_TRANSFORM_PATH_PATTERN, transformOrigin, {
       ...transformRest,
-      ...overrides,
+      ...definedOverrides,
     })
     distribution.addBehavior(ASSETS_PATH_PATTERN, assetsOrigin, {
       ...assetsRest,
-      ...overrides,
+      ...definedOverrides,
     })
   }
 

@@ -123,6 +123,12 @@ unaffected by this rule, since a nested layout is already inside `<body>`.
   — but if **you** render `AccountComponent` yourself with those props, move them to
   `ClerkProvider`'s `afterSignOutUrl` or a `SignOutButton`.
 
+**Node version.** Choosing the 7.x/3.x line requires **Node >= 20.9.0** (Clerk's own
+`engines`). `canopycms-auth-clerk` still declares `engines.node >= 18`, deliberately —
+that is correct for the package itself and for the 6.x line, and narrowing it would
+exclude a Clerk-6-on-Node-18 adopter for no reason. The constraint comes from whichever
+peer you install, and your package manager will report it.
+
 **Unchanged and still worth knowing:** `clerkMiddleware` requires a non-empty `secretKey`
 in 7.x as it did in 6.x (7.x actually dropped a fallback, so it is slightly stricter). See
 the note in [Security Model](deploying-to-aws.md#security-model) about what that means for

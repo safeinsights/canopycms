@@ -39,9 +39,30 @@ function mergeBehaviors(
   attachingAssetSupport: boolean,
 ): Record<string, cloudfront.BehaviorOptions> {
   if (!caller) return defaults
+  // Compare NORMALIZED keys here too. CloudFront treats a leading '/' as
+  // optional, so a caller passing `'_next/static/*'` did not displace this
+  // construct's own `'/_next/static/*'` default and both were emitted -- two
+  // behaviors CloudFront reads as the same pattern, which it rejects at
+  // deploy. Same reason the hazard checks below normalize.
+  const callerPatterns = new Set(Object.keys(caller).map(normalizePathPattern))
   const uncollided = Object.fromEntries(
-    Object.entries(defaults).filter(([pattern]) => !(pattern in caller)),
+    Object.entries(defaults).filter(
+      ([pattern]) => !callerPatterns.has(normalizePathPattern(pattern)),
+    ),
   )
+  const normalizedCallerKeys = Object.keys(caller).map(normalizePathPattern)
+  const duplicateCallerPattern = normalizedCallerKeys.find(
+    (pattern, i) => normalizedCallerKeys.indexOf(pattern) !== i,
+  )
+  if (duplicateCallerPattern !== undefined) {
+    throw new Error(
+      `CanopyCmsDistribution: additionalBehaviors has two keys that CloudFront reads as the ` +
+        `same path pattern (${JSON.stringify(duplicateCallerPattern)} with and without its ` +
+        `leading '/'). CloudFront rejects duplicate path patterns at deploy time. Keep one ` +
+        `spelling.`,
+    )
+  }
+
   const merged = { ...uncollided, ...caller }
   assertNoAssetBehaviorOrderingHazards(merged, attachingAssetSupport)
   return merged
@@ -91,6 +112,7 @@ function normalizePathPattern(pattern: string): string {
   return pattern.startsWith('/') ? pattern.slice(1) : pattern
 }
 
+/** See the three-hazard list documented above `normalizePathPattern`. */
 function assertNoAssetBehaviorOrderingHazards(
   merged: Record<string, cloudfront.BehaviorOptions>,
   attachingAssetSupport: boolean,
@@ -227,9 +249,15 @@ export interface CanopyCmsDistributionProps {
    * Attach `AssetSupport`'s CloudFront behaviors (`/assets/*` and
    * `/assets/t/*`) to the distribution this construct builds, in the only
    * safe order - see `AssetSupport.attachTo()`'s doc comment for why the
-   * order matters. Equivalent to calling
-   * `assetSupport.attachTo(distribution)` yourself right after construction,
-   * but with nothing to forget.
+   * order matters. Calls `assetSupport.attachTo(distribution)` for you right
+   * after construction, with nothing to forget.
+   *
+   * NOT fully equivalent to calling `attachTo` yourself: this path cannot pass
+   * that method's `overrides` argument. If the asset behaviors need
+   * per-behavior options - a viewer-request function for tier auth being the
+   * motivating case, since without it `/assets/*` is anonymously readable on
+   * an authenticated tier - drop this prop and call
+   * `assetSupport.attachTo(this.distribution, { ... })` after construction.
    *
    * Prefer this over passing `assetSupport.assetBehaviors()` through
    * `additionalBehaviors` by hand - that stays available as an escape hatch
