@@ -258,6 +258,34 @@ was started in any arm. The turbopack arm on 15.5.21 also emitted 29 warnings, b
 the fixture is webpack-configured; that does not affect the manifest question asked of
 it, but it is not a clean turbopack configuration either.
 
+### Edge-runtime env delivery works — measured by the adopter
+
+One more measurement, and it is the one that decides how the secret is *delivered* rather
+than whether it is needed. Since the middleware runs on **edge**, the question was whether
+an environment read there is a runtime lookup or resolved at build time — because if it
+were build-time, the Clerk secret could only ever arrive as a Docker **build arg**, baked
+into the image, per Clerk instance. Far worse than a Lambda environment variable.
+
+Measured by the website adopter on 16.1.7: a sentinel environment comparison in
+`middleware.ts`, built with the variable unset, then the emitted edge chunk read. **The
+reference survives verbatim** in `.next/server/edge/chunks/…` — neither inlined nor
+dead-code-eliminated. So the worst case is excluded and Lambda-environment-variable
+delivery works for the edge case.
+
+Their stated residual, kept rather than rounded away: this shows the reference is not
+resolved at build time. It does **not** show that Next's edge runtime is fed the parent
+process's environment at request time in a standalone deployment — one shim away, and a
+serving-behaviour question. Note the deliberate contrast with
+`NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`, which genuinely **is** build-inlined, and is why
+that one is passed as a `ClerkProvider` prop.
+
+**Why this matters for the Security Model.** For an edge-runtime adopter it is a cheaper
+route to the documented posture than the fetch path: secrets can be handed over at deploy
+time rather than fetched at init. Not asserted for the node-runtime case — nobody has
+measured that, and per
+[next16-node-runtime-middleware-unregistered.md](next16-node-runtime-middleware-unregistered.md)
+a node-runtime middleware does not register on 16.1.7 at all.
+
 ## Still worth doing regardless
 
 Rewrite deploy-test's comment so it stops citing a "Secrets-Manager-fetch path" the
