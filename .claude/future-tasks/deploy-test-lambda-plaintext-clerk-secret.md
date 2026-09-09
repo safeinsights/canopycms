@@ -173,11 +173,47 @@ framed it as a version split — "real for 15.x adopters, empty for this site" �
 more generous than the facts. There is no split. It was empty in both, and accepting the
 split would have left a false constraint standing for 15.x adopters in this very file.
 
-**Still a reading, not a measurement.** What is established is that the runtime is
-selectable by declared config. Nobody has built a Next app with a `runtime: 'nodejs'`
-middleware and confirmed the AWS SDK actually loads and reaches a Secrets Manager
-interface endpoint from inside a Lambda. That is the build-level check to run before
-committing to 1b — and given how this section has gone, run it rather than read it.
+### MEASURED 2026-09-09, on our own pinned Next
+
+Everything above this line is a reading. This part is not. A `runtime: 'nodejs'`
+middleware with a Node-only import was added to `apps/dual-build-fixture`, built with the
+real `CANOPY_BUILD=cms next build` on Next 15.5.21, and the build output inspected:
+
+```json
+// .next/server/functions-config-manifest.json
+{ "version": 1,
+  "functions": { "/_middleware": { "runtime": "nodejs", "matchers": [ … "/edit(.*)" … ] } } }
+```
+
+- The manifest carries exactly the `functions['/_middleware']` entry
+  `loadNodeMiddleware()` looks for, with `runtime: "nodejs"`.
+- `.next/server/middleware.js` was emitted (162 KB) — the Node middleware bundle that
+  entry causes the server to `require`.
+- The Node-only import survived into that bundle (`node:crypto` present), so a module
+  unavailable on the edge runtime does load there.
+- Build exited 0. (An unrelated pre-existing `ENOENT … route_client-reference-manifest.js`
+  warning from the `standalone` copy step appears in that build and is not caused by the
+  middleware.)
+
+The probe was removed and the fixture's suite re-run green (11/11); nothing was committed
+to the fixture.
+
+**What this does and does not establish.** It establishes that the Node runtime is
+selectable by declared config on the version we ship against, and that Node-only modules
+load in that middleware. It does **not** establish that the **AWS SDK** works there: the
+SDK is a third-party package with its own bundling behaviour and dynamic requires, whereas
+`node:crypto` is a builtin. Nor does it establish anything about reaching a Secrets Manager
+interface endpoint from inside a Lambda's VPC, which is a deploy-level question.
+
+So the remaining unknowns for 1b are now narrow and correctly ordered: (1) does the AWS SDK
+bundle and run in a nodejs-runtime middleware — another build-level check; (2) does the
+interface endpoint resolve from the Lambda's isolated subnet — deploy-level.
+
+**Our shipped template gives an adopter no seam for this.** Neither
+`cli/template-files/middleware-clerk.ts.template` nor `apps/example1/middleware.ts`
+declares a `runtime`, so both run on edge. If 1b is ever taken, the template needs
+`runtime: 'nodejs'` in its `config` export — worth noting here because it is a one-line
+change to a generated file, and generated files are the ones adopters do not revisit.
 
 ## Still worth doing regardless
 
