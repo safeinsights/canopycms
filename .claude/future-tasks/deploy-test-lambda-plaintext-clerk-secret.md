@@ -95,11 +95,64 @@ middleware", which is a real architectural call and not a deploy-test-local clea
    one was right**: it was filed as "no fetch path is a gap", retracted on the
    no-internet objection, and re-filed once that objection turned out not to hold.
 
-   Design notes if this is taken: the fetch must happen once at cold start rather than
-   per request; `clerkMiddleware` reads `process.env.CLERK_SECRET_KEY` synchronously at
-   module scope via `constants.js`, so an async fetch has to complete and assign before
-   the middleware module is evaluated — which may be the hard part, and is worth spiking
-   before committing to this route.
+### 1b is more tractable than first thought, and needs TWO levers
+
+Worked out 2026-09-09 across both sessions. An earlier version of this file called the
+module-scope env read "the hard part" and proposed spiking it. **That blocker does not
+exist** — the website adopter found the mechanism, and it is a documented public API.
+
+**Lever 1 — `clerkMiddleware` takes an options CALLBACK, awaited per request.**
+`@clerk/nextjs@7.9.1`, `dist/types/server/clerkMiddleware.d.ts:33,48`:
+
+```ts
+type ClerkMiddlewareOptionsCallback = (req: NextRequest) =>
+  ClerkMiddlewareOptions | Promise<ClerkMiddlewareOptions>
+(handler: ClerkMiddlewareHandler, options?: ClerkMiddlewareOptionsCallback): NextMiddleware
+```
+
+and the implementation awaits it one line above the assertion everyone keeps quoting
+(`dist/esm/server/clerkMiddleware.js:50,55-58`):
+
+```js
+const resolvedParams = typeof params === "function" ? await params(request2) : params
+const secretKey = assertKey(resolvedParams.secretKey || SECRET_KEY, () => ...)
+```
+
+`resolvedParams.secretKey` is FIRST in the chain, so a callback value beats the
+module-scope constant outright. `secretKey` is properly declared on the option type, not
+read opportunistically: `ClerkMiddlewareOptions` -> `AuthenticateRequestOptions` ->
+`VerifyTokenOptions` -> `Omit<LoadClerkJWKFromRemoteOptions,'kid'>`, which declares
+`secretKey?: string` (`@clerk/backend@3.17.1`, `dist/tokens/keys.d.ts:30`). So the shape
+is `clerkMiddleware(handler, async () => ({ jwtKey, secretKey: await getSecret() }))`,
+memoizing after first use — a runtime assignment, which is exactly what module-scope
+evaluation forbids before and permits after.
+
+**Lever 2 — the plugin needs its own, and already has one.** The options callback reaches
+`clerkMiddleware` only. `ClerkAuthPlugin` resolves the secret in a METHOD
+(`clerk-plugin.ts:158-168`'s `getSecretKey()`, `this.secretKeyOverride ??
+process.env.CLERK_SECRET_KEY`, memoized into `resolvedSecretKey`), and
+`secretKeyOverride` comes from the existing `config.secretKey` option
+(`clerk-plugin.ts:149`). That method's own doc comment already describes deferral as the
+point — "Resolves (and memoizes) the Clerk secret key at first use. Fail-closed."
+
+**Both levers are required.** Landing the middleware half and finding `users.getUser`
+still broken is the plausible half-landing, because the two read the secret through
+completely separate paths.
+
+### The remaining risk, and it is a cheaper question than a deploy
+
+Not evaluation order but **which runtime executes the middleware**. An AWS SDK Secrets
+Manager call needs the Node runtime; Next middleware defaults to the **edge** runtime,
+where it is unavailable no matter where it is called from.
+
+Checked against our own pinned Next (15.5.21): Node-runtime middleware **is** supported —
+`dist/server/next-server.js:1145` has `loadNodeMiddleware()`, gated behind
+`experimental.nodeMiddleware`. So the path exists, but it is an **experimental Next flag**,
+and that is the actual decision 1b now turns on: whether a production editor should depend
+on one. That is a judgement call for JP, not a research question.
+
+Answerable from a BUILD rather than a deploy either way, which makes it cheaper than
+anything else outstanding on this file.
 2. **Stop using `clerkMiddleware` for gating** and protect those routes with a
    `jwtKey`-only verification path — CanopyCMS already has one
    (`ClerkAuthPlugin.verifyTokenOnly()`, networkless, PEM-only, no secret required). The
