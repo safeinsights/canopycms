@@ -142,7 +142,7 @@ describe('test synth output is confined to a directory the suite owns', () => {
 describe('roots left by interrupted runs are swept, live ones are not', () => {
   const created: string[] = []
 
-  /** A root named as if owned by `pid`, holding a file so an errant delete is visible. */
+  /** A root named as if owned by `pid`, holding a subdirectory so an errant delete is visible. */
   function plantRoot(pid: number): string {
     const root = mkdtempSync(path.join(os.tmpdir(), `canopycms-cdk-synth-${pid}-`))
     mkdtempSync(path.join(root, 'app-'))
@@ -157,6 +157,8 @@ describe('roots left by interrupted runs are swept, live ones are not', () => {
   it('removes a root whose owning process is gone', () => {
     // A pid that has certainly exited: spawnSync returns only after the child
     // is reaped, so this is a dead pid rather than a guess at an unused number.
+    // If the OS recycled it onto a live process between here and the sweep this
+    // goes RED, never falsely green -- worth knowing if it ever fails oddly.
     const deadPid = spawnSync(process.execPath, ['-e', '']).pid
     expect(deadPid).toBeGreaterThan(0)
     const root = plantRoot(deadPid as number)

@@ -11,9 +11,18 @@ import { isNodeError } from '../../canopycms/src/utils/error'
  * The suite's synth-output ownership, in one file.
  *
  * A CDK `App` given no `outdir` synthesizes into a `mkdtemp('cdk.out')` under
- * `os.tmpdir()` that it NEVER removes. This suite constructs an `App` per
- * helper call and most of its tests synth, so at ~1-3 MB per cloud assembly it
- * was leaking a few hundred megabytes per full run. Left alone it accumulates:
+ * `os.tmpdir()`. CDK does register cleanup for those -- see
+ * `determineOutputDirectory` in `@aws-cdk/cloud-assembly-api`'s
+ * `cloud-assembly.js`, which pushes each temp dir onto a list a
+ * `process.on('exit')` handler empties -- but a vitest worker is torn down
+ * without firing exit handlers, so in this suite that cleanup never runs.
+ * (Verified rather than assumed: a test file registering its own
+ * `process.on('exit')` never fires it.) That is the whole bug; CDK is not at
+ * fault and an `outdir` sidesteps the question entirely.
+ *
+ * This suite constructs an `App` per helper call and most of its tests synth,
+ * at a measured 0.6-3.2 MB per cloud assembly depending on the stack, so it was
+ * leaking a few hundred megabytes per full run. Left alone it accumulates:
  * 26,537 orphaned `cdk.out*` directories totalling 13 GB built up over eight
  * days of ordinary development before this was caught, exhausting free disk.
  * Worth knowing why that took eight days -- a full temp filesystem breaks

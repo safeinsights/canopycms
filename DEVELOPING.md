@@ -3160,7 +3160,7 @@ pnpm --filter canopycms-cdk exec vitest run src/scaffold-synth.test.ts
 
 ### Test-Owned CDK Synth Output (`newTestApp()`)
 
-A CDK `App` given no `outdir` synthesizes into a `mkdtemp('cdk.out')` under `os.tmpdir()` that CDK never removes. Left unaddressed this leaks a cloud assembly per synth: 26,537 orphaned `cdk.out*` directories (13 GB) accumulated over eight days of ordinary development before it was caught, exhausting free disk. It took that long to notice because a full temp filesystem breaks unrelated tooling, so the symptom surfaces nowhere near its cause.
+A CDK `App` given no `outdir` synthesizes into a `mkdtemp('cdk.out')` under `os.tmpdir()`. CDK does clean those up -- from a `process.on('exit')` handler, see `determineOutputDirectory` in `@aws-cdk/cloud-assembly-api`'s `cloud-assembly.js` -- but **a vitest worker is torn down without firing exit handlers**, so under vitest that cleanup never runs and each synth strands an assembly of 0.6-3.2 MB. 26,537 orphaned `cdk.out*` directories (13 GB) accumulated over eight days of ordinary development before it was caught, exhausting free disk. It took that long to notice because a full temp filesystem breaks unrelated tooling, so the symptom surfaces nowhere near its cause.
 
 **Rule: in `packages/canopycms-cdk` tests, never call `new App()` directly -- always use `newTestApp()`** from `test-support/test-synth.ts`:
 
@@ -3172,11 +3172,18 @@ const stack = new Stack(app, 'TestStack', { env: { account: '123456789012', regi
 app.synth()
 ```
 
-`newTestApp(props?)` forwards `props` to `App` but applies `outdir` afterwards, pinned to a fresh `mkdtemp` subdirectory of a per-run root -- not overridable via `props`, since the point of routing every `App` through the helper is that no call site can opt back out. The root itself is created once by vitest's `globalSetup` (`setup`/`teardown`, wired in `vitest.config.ts`) and `rm -rf`'d when the run ends; that lives in the main process rather than a per-file `afterAll`, so teardown still runs when an individual test file fails.
+`newTestApp(props?)` forwards `props` to `App` but applies `outdir` afterwards, pinned to a fresh `mkdtemp` subdirectory of a per-run root. It is not overridable: `props` is typed `Omit<AppProps, 'outdir'>`, so passing one is a compile error rather than an argument silently dropped. The root itself is created once by vitest's `globalSetup` (`setup`/`teardown`, wired in `vitest.config.ts`) and `rm -rf`'d when the run ends; that lives in the main process rather than a per-file `afterAll`, so teardown still runs when an individual test file fails.
 
-Two guard tests in `test-support/test-synth.test.ts` enforce the rule mechanically rather than relying on convention: one performs a real synth and diffs `os.tmpdir()`'s `cdk.out*` entries before/after, requiring no new ones; the other textually scans every committed `.ts` file in the package for `new App(` and fails if it finds one outside `test-synth.ts` itself (`canary/` is excluded from the scan -- it's a real deployable app, not a test).
+Two layers enforce this mechanically rather than relying on convention, and the distinction between them matters:
 
-`test-support/` is treated like `lambda/`, `canary/`, and `worker/`: a non-shipped directory with its own `tsconfig.json`, appended to the package's `typecheck` and `lint` scripts.
+- **The guarantee is behavioral.** `test-support/synth-leak-guard.ts` is a `setupFiles` hook, so it wraps _every_ test file: it snapshots `os.tmpdir()`'s `cdk.out*` entries in `beforeAll` and fails the file on any addition. That catches a leak whatever route produced it -- a namespace-qualified `App`, a scope-less `Stack` (whose constructor builds its own `outdir`-less App), a `Stack` subclass, or an innocuous-looking `makeStack(app?: App)` helper called with nothing.
+- **A textual scan checks the convention.** One test in `test-support/test-synth.test.ts` walks the package's `.ts`/`.tsx`/`.mts`/`.cts` files and fails on a direct `App` construction or a scope-less `Stack`, outside an allowlist of the two files entitled to one (this helper, and `canary/bin/canary.ts`, a real deployable app). It has textual blind spots by construction -- don't widen its patterns to chase subclasses, that is the hook's job -- but it catches a direct construction in a file whose leak would only manifest conditionally, or that a given run never exercises.
+
+`test-synth.test.ts` also asserts the tmpdir property directly around one synth of its own, with its non-vacuity checks ordered deliberately _after_ the leak assertion: placed first they fire first under the outdir-removal mutation and mask the assertion they exist to support.
+
+Interrupting a run needs no cleanup from you. Ctrl-C makes vitest exit without running globalSetup teardown, so the root survives; the root's name carries the owning pid and the next run's `setup` removes any root whose process is gone. Only `ESRCH` licenses that delete, so a live run's root -- including a concurrent one -- is never touched.
+
+`test-support/` is treated like `lambda/`, `canary/`, and `worker/`: a non-shipped directory with its own `tsconfig.json`, appended to the package's `typecheck` and `lint` scripts. That config also includes `../src/**/*.test.ts`, which nothing else typechecks -- the package `tsconfig.json` is its build/publish config and excludes test files -- and it sets no `rootDir`, which is what lets those suites' deliberate cross-package imports resolve.
 
 ### Testing a Repo Script as a Subprocess (`scripts/bump-version.mjs`)
 

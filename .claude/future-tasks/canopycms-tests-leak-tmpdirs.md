@@ -32,7 +32,7 @@ like it) is the right home for the fix rather than adding cleanup 10 times.
 ## Magnitude is NOT measured, and that is step 1
 
 Unlike the CDK leak, nothing here has been quantified. The honest position:
-these directories hold a few small files each, not a 1-3 MB cloud assembly, so
+these directories hold a few small files each, not a 0.6-3.2 MB cloud assembly, so
 this is **not** known to be a disk-filling bug and should not be written up as
 one. What is known is that the accumulation is unbounded and the suite is large.
 
@@ -48,6 +48,16 @@ after=$(ls -1 "$T" | wc -l)
 
 Count entries, not bytes, first — the inode/entry count is the plausible harm
 here, and `du` on thousands of tiny directories is slow and misleading.
+
+## If this is fixed, consider extracting rather than copying
+
+The CDK fix's machinery (a `globalSetup`-owned per-run root, a pid in the root
+name so an interrupted run's root can be swept safely, and a `setupFiles` hook
+asserting the tmpdir gained nothing) currently lives in
+`packages/canopycms-cdk/test-support/test-synth.ts` and `synth-leak-guard.ts`.
+If the fix here reuses that shape, extract it before the second copy exists
+rather than after -- a duplicated pid-naming convention that drifts is worse
+than either copy alone.
 
 ## The rule worth reusing
 

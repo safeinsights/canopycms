@@ -25,11 +25,12 @@ import { listTmpdirCdkOutEntries } from './test-synth'
  * and so a failure names the file that leaked.
  *
  * Accepted false-positive: another process creating a `cdk.out*` entry in the
- * same tmpdir during the file's run. Only a CDK App constructed with no
- * `outdir` does that -- the `cdk` CLI writes `./cdk.out` in its project
- * directory -- so in practice that means another checkout still running the
- * pre-fix suite. Transient and self-resolving, and the set difference means an
- * unrelated process's entry can never be attributed to us.
+ * same tmpdir during the file's run. Only an App constructed with no `outdir`
+ * does that (`determineOutputDirectory` in `@aws-cdk/cloud-assembly-api`'s
+ * `cloud-assembly.js` temp-dirs only on the falsy-outdir branch), so in
+ * practice that means another checkout still running the pre-fix suite.
+ * Transient and self-resolving, and the set difference means an unrelated
+ * process's entry can never be attributed to us.
  */
 let entriesBeforeFile: Set<string>
 

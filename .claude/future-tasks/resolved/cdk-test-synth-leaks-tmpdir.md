@@ -7,23 +7,42 @@ were not alternatives: a `globalSetup` owns the root's *lifecycle* (created once
 in the main process, `rm -rf`'d in teardown, which still runs when an individual
 test file fails -- a per-file `afterAll` does not guarantee that), while a single
 `newTestApp()` owns the *policy* (one call site, so no helper can forget to pass
-`outdir`). Both live in `packages/canopycms-cdk/src/test-support/test-synth.ts`;
+`outdir`). Both live in `packages/canopycms-cdk/test-support/test-synth.ts`;
 all 9 `new App()` sites across `cms-deploy.test.ts` and `asset-support.test.ts`
 now go through it, each App getting its own `mkdtemp` subdirectory so the tests
 that build several Apps and compare two synths cannot cross-contaminate.
 
-Two tests guard it, both mutation-checked rather than assumed:
+Guarded in two layers, everything mutation-checked rather than assumed. The
+split arrived through review and is the durable lesson here:
 
-- `a synth leaves no new cdk.out* directory behind in os.tmpdir()` -- snapshots
-  the `cdk.out*` entry set before and after and differences it, so another CDK
-  process sharing the same tmpdir cannot make it fail. Its non-vacuity
-  assertions (a real assembly was written, and written inside the run's root)
-  are ordered AFTER the leak assertion on purpose: placed first they fired first
-  under the outdir-removal mutation and masked the assertion they exist to
-  support, which is how a leak assertion could have been broken unnoticed.
-- `newTestApp is the only place src/ constructs a CDK App` -- a textual scan of
-  `src/**/*.ts`, excluding the helper itself. `canary/` is out of scope; it is a
-  real CDK app.
+- **The guarantee is behavioral**: `test-support/synth-leak-guard.ts`, a
+  `setupFiles` hook wrapping EVERY test file, diffing the tmpdir `cdk.out*` set
+  per file. Two review rounds each found another spelling a textual scan missed
+  (namespace-qualified `App`, scope-less `Stack`, `Stack` subclass), which was
+  the signal that the instrument was wrong rather than the pattern. The shape no
+  regex can reach is `function makeStack(app?: App)` -- textually clean, leaking
+  only when the argument is omitted. Verified against exactly that: a variable
+  scope of `undefined` leaves the scan green and fails the owning file with 24
+  directories named.
+- **A textual scan checks the convention**, and is documented as *not* the
+  guarantee -- treating it as one is what left four test files unprotected for
+  two rounds. It earns its place by catching a direct construction in a file
+  whose leak would only manifest conditionally.
+- `a synth leaves no new cdk.out* directory behind in os.tmpdir()` -- the same
+  property around one synth of its own. Its non-vacuity assertions are ordered
+  AFTER the leak assertion on purpose: placed first they fired first under the
+  outdir-removal mutation and masked the assertion they exist to support, which
+  is how a leak assertion could have been broken unnoticed.
+- Three tests cover the interrupted-run sweep, including the safety-critical
+  half -- a root whose process is still alive must never be deleted.
+
+Ctrl-C was the residual, found in round 1: vitest's SIGINT handler exits without
+running globalSetup teardown, so an interrupted run stranded its whole root. The
+first version of this file declined to sweep, reasoning that one run could
+delete a concurrent run's root -- true, but pid liveness dissolves the objection
+entirely. Roots now carry their owner's pid and `setup` removes only those whose
+process is gone, with `ESRCH` alone licensing a delete. Proven end to end: a
+root survived SIGINT at exit 130 and the next run swept it.
 
 Measured, not reasoned about: the small suite alone leaked 24 directories / 26 MB
 before the fix; a full suite run after it leaves the `cdk.out*` count unchanged
@@ -38,7 +57,10 @@ because nothing about the mechanism has changed.
 ## Mechanism
 
 CDK's `App` synthesizes to `outdir` if given one, and otherwise to a
-`mkdtemp('cdk.out')` under `os.tmpdir()` — which it never removes. Our CDK
+`mkdtemp('cdk.out')` under `os.tmpdir()`. (Correction established while fixing
+this: CDK *does* remove those, from a `process.on('exit')` handler — but a
+vitest worker is torn down without firing exit handlers, so under vitest the
+cleanup never runs. See the RESOLVED note above.) Our CDK
 suites construct an `App` per test helper call and set no `outdir`:
 
 - `src/constructs/cms-deploy.test.ts` — the big one, ~222 tests, most of which
@@ -47,7 +69,7 @@ suites construct an `App` per test helper call and set no `outdir`:
 - (`src/scaffold-synth.test.ts` is NOT the culprit: it sets `CDK_OUTDIR` for
   the CLI subprocesses it drives, and cleans its own scaffold directory)
 
-Each assembly is ~3.3 MB (`TestStack.template.json`, `tree.json`,
+Each assembly is ~0.6-3.2 MB, measured (`TestStack.template.json`, `tree.json`,
 `manifest.json`, `metadata.json`, plus staged assets). So one full CDK suite
 run leaves a few hundred megabytes behind, and the machine accumulated 13 GB
 across roughly eight days of ordinary work.
