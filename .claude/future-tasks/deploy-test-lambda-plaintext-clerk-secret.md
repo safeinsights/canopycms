@@ -209,11 +209,54 @@ So the remaining unknowns for 1b are now narrow and correctly ordered: (1) does 
 bundle and run in a nodejs-runtime middleware — another build-level check; (2) does the
 interface endpoint resolve from the Lambda's isolated subnet — deploy-level.
 
-**Our shipped template gives an adopter no seam for this.** Neither
-`cli/template-files/middleware-clerk.ts.template` nor `apps/example1/middleware.ts`
-declares a `runtime`, so both run on edge. If 1b is ever taken, the template needs
-`runtime: 'nodejs'` in its `config` export — worth noting here because it is a one-line
-change to a generated file, and generated files are the ones adopters do not revisit.
+### ⚠️ DO NOT add `runtime: 'nodejs'` to the shipped template
+
+Neither `cli/template-files/middleware-clerk.ts.template` nor
+`apps/example1/middleware.ts` declares a `runtime`, so everything we scaffold runs on
+edge. The obvious fix is a `runtime: 'nodejs'` line in the template's `config` export.
+**Measured: on Next 16.1.7 that would silently disable the auth middleware.**
+
+Three build arms, all real `CANOPY_BUILD=cms next build` runs with a
+`runtime: 'nodejs'` middleware — the third measured by the website adopter on their pin:
+
+| | `functions['/_middleware']` | `middleware.js` | edge registration |
+| --- | --- | --- | --- |
+| 15.5.21 + webpack | **populated** | 162 KB | empty |
+| 15.5.21 + turbopack | **populated** | 234 B | empty |
+| 16.1.7 + turbopack | **EMPTY** | 234 B | empty |
+
+`loadNodeMiddleware()` requires `functions['/_middleware']` in production — verified in
+16.1.7's own `dist/server/next-server.js`. On 16.1.7 the build does not write it. So the
+declaration removes the edge registration, emits a Node bundle, and registers it with
+nothing that will load it: **`auth.protect()` stops running on `/edit` and
+`/api/canopycms`, the build exits 0, and nothing says so.** In a generated file adopters
+never revisit. That is materially worse than the edge runtime it was meant to fix.
+
+**The turbopack hypothesis is refuted.** The obvious explanation for the divergence was
+bundler rather than version, and it is wrong: turbopack on 15.5.21 populates the manifest
+normally. The 234 B `middleware.js` is turbopack's signature in both turbopack arms (vs
+webpack's 162 KB), which is what pins the bundler as the *irrelevant* variable. The
+difference is **16.1.7 itself**.
+
+Which means, narrowly: on 16.1.7 the build and the server disagree with each other. The
+server reads `functions['/_middleware']`; the build does not write it. Whether that is a
+Next regression, or a mechanism that moved somewhere neither session has found, is **not
+established** — and it is the question to answer before anyone relies on a Node-runtime
+middleware on 16.x.
+
+**Consequences for this task.** Since `canopycms-next`'s peer range admits 16.x, 1b's
+fetch-at-init path is currently **blocked at the build** for a 16.x adopter, not merely
+unproven. For such a deployment the Clerk secret as a Lambda environment variable is
+presently the only option, which is a point in favour of correcting the Security Model
+table rather than waiting to make it true.
+
+**If the template is ever changed**, it must carry the version constraint explicitly —
+the rule this whole thread produced, applied to the thing the thread was about.
+
+**Caveat on the arms above:** these are build outputs, not serving behaviour. No server
+was started in any arm. The turbopack arm on 15.5.21 also emitted 29 warnings, because
+the fixture is webpack-configured; that does not affect the manifest question asked of
+it, but it is not a clean turbopack configuration either.
 
 ## Still worth doing regardless
 
