@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { App, Duration, Stack } from 'aws-cdk-lib'
+import { Duration, Stack } from 'aws-cdk-lib'
 import { Template, Match } from 'aws-cdk-lib/assertions'
 import { RetentionDays } from 'aws-cdk-lib/aws-logs'
 import {
@@ -27,6 +27,7 @@ import {
   VALID_DEPLOYMENT_NAMES,
   INVALID_DEPLOYMENT_NAMES,
 } from '../../../canopycms/src/operating-mode/deployment-name-fixtures'
+import { newTestApp } from '../../test-support/test-synth'
 
 /**
  * Synthesizes a stack with the CMS service (and optionally the distribution) so
@@ -66,7 +67,7 @@ function synthUncached(
   withDistribution = false,
   overrides: Partial<CanopyCmsServiceProps> = {},
 ): Template {
-  const app = new App()
+  const app = newTestApp()
   const stack = new Stack(app, 'TestStack', {
     env: { account: '123456789012', region: 'us-east-1' },
   })
@@ -172,7 +173,7 @@ describe('CanopyCmsDistribution: origin read timeout matches the Lambda timeout'
   })
 
   it('follows an overridden Lambda timeout when the pair is wired through', () => {
-    const app = new App()
+    const app = newTestApp()
     const stack = new Stack(app, 'PairStack', {
       env: { account: '123456789012', region: 'us-east-1' },
     })
@@ -204,7 +205,7 @@ describe('CanopyCmsDistribution: origin read timeout matches the Lambda timeout'
   })
 
   it('fails at synth rather than deploying a timeout CloudFront would reject', () => {
-    const app = new App()
+    const app = newTestApp()
     const stack = new Stack(app, 'TooLongStack', {
       env: { account: '123456789012', region: 'us-east-1' },
     })
@@ -239,7 +240,7 @@ describe('CanopyCmsDistribution: origin read timeout matches the Lambda timeout'
 
 describe('CanopyCmsDistribution: us-east-1 certificate restriction', () => {
   function distInRegion(region: string, withCertificate: boolean) {
-    const app = new App()
+    const app = newTestApp()
     const stack = new Stack(app, `RegionStack${region.replace(/-/g, '')}`, {
       env: { account: '123456789012', region },
     })
@@ -295,7 +296,7 @@ describe('CanopyCmsDistribution: additionalBehaviors', () => {
     // Without this prop there was no way to attach AssetSupport's behaviors to
     // the distribution the scaffold generates, so its own "uncomment to enable
     // media" instructions were a dead end.
-    const app = new App()
+    const app = newTestApp()
     const stack = new Stack(app, 'BehaviorStack', {
       env: { account: '123456789012', region: 'us-east-1' },
     })
@@ -343,7 +344,7 @@ describe('CanopyCmsDistribution: additionalBehaviors', () => {
     // overridden `/_next/static/*` ahead of everything else the caller passed
     // -- silently making their more specific pattern unreachable, which is
     // exactly what the prop's own doc warns them to avoid.
-    const app = new App()
+    const app = newTestApp()
     const stack = new Stack(app, 'OrderStack', {
       env: { account: '123456789012', region: 'us-east-1' },
     })
@@ -393,7 +394,7 @@ describe('CanopyCmsDistribution: additionalBehaviors', () => {
 describe('CanopyCmsDistribution: assetSupport prop', () => {
   /** Builds a stack with a CanopyCmsService and an AssetSupport, ready to pass to CanopyCmsDistribution. */
   function buildServiceAndAssets(stackId: string) {
-    const app = new App()
+    const app = newTestApp()
     const stack = new Stack(app, stackId, {
       env: { account: '123456789012', region: 'us-east-1' },
     })
@@ -943,7 +944,7 @@ describe('CanopyCmsService B1: the Lambda can actually reach S3', () => {
   })
 
   it('grants the CMS Lambda role prefix-scoped access to an optional assetBucket', () => {
-    const app = new App()
+    const app = newTestApp()
     const stack = new Stack(app, 'TestStack', {
       env: { account: '123456789012', region: 'us-east-1' },
     })

@@ -19,5 +19,11 @@ export default defineConfig({
     // actually wrong. A genuine hang still fails, just later.
     testTimeout: 30_000,
     hookTimeout: 30_000,
+
+    // Owns the directory every `App` in this suite synthesizes into, and
+    // deletes it when the run ends. Without it each synth leaks a cloud
+    // assembly into os.tmpdir() forever -- which filled this machine's disk
+    // (13 GB across 26,537 directories). See test-support/test-synth.ts.
+    globalSetup: ['./test-support/test-synth.ts'],
   },
 })
