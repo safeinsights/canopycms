@@ -15,8 +15,8 @@ that build several Apps and compare two synths cannot cross-contaminate.
 Two tests guard it, both mutation-checked rather than assumed:
 
 - `a synth leaves no new cdk.out* directory behind in os.tmpdir()` -- snapshots
-  the `cdk.out*` entry set before and after and differences it, so a concurrent
-  CDK process elsewhere on the machine cannot make it fail. Its non-vacuity
+  the `cdk.out*` entry set before and after and differences it, so another CDK
+  process sharing the same tmpdir cannot make it fail. Its non-vacuity
   assertions (a real assembly was written, and written inside the run's root)
   are ordered AFTER the leak assertion on purpose: placed first they fired first
   under the outdir-removal mutation and masked the assertion they exist to

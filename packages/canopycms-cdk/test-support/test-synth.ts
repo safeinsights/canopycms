@@ -10,10 +10,11 @@ import type { AppProps } from 'aws-cdk-lib'
  * A CDK `App` given no `outdir` synthesizes into a `mkdtemp('cdk.out')` under
  * `os.tmpdir()` that it NEVER removes. This suite constructs an `App` per
  * helper call and most of its tests synth, so at ~1-3 MB per cloud assembly it
- * was leaking a few hundred megabytes per full run. Left alone it filled a dev
- * machine's disk: 26,537 orphaned `cdk.out*` directories, 13 GB, over eight
- * days -- which surfaced as unrelated tooling failing and app logs silently
- * stopping, and cost real time to attribute.
+ * was leaking a few hundred megabytes per full run. Left alone it accumulates:
+ * 26,537 orphaned `cdk.out*` directories totalling 13 GB built up over eight
+ * days of ordinary development before this was caught, exhausting free disk.
+ * Worth knowing why that took eight days -- a full temp filesystem breaks
+ * unrelated tooling, so the symptom surfaces nowhere near this cause.
  *
  * Two halves, both required:
  *
@@ -29,7 +30,7 @@ import type { AppProps } from 'aws-cdk-lib'
  *    would cross-contaminate the assemblies.
  *
  * Bound on failure: a run killed hard enough to skip teardown (SIGKILL, a
- * machine crash) leaves behind exactly one root, not one per synth. The
+ * host crash) leaves behind exactly one root, not one per synth. The
  * `find "$TMPDIR" -maxdepth 1 -name 'canopycms-cdk-synth-*' -mmin +60` shape
  * mops those up; nothing sweeps them automatically, deliberately, since one
  * run deleting another concurrent run's root would break the live one.
@@ -52,9 +53,9 @@ const SYNTH_ROOT_PREFIX = 'canopycms-cdk-synth-'
  * The `cdk.out*` entries currently in `os.tmpdir()`.
  *
  * Returned as a set for before/after differencing rather than as a count:
- * other processes on the machine (another worktree's suite, a real `cdk`
- * invocation) may add or remove their own entries while a test runs, and an
- * absolute count would make that our failure.
+ * other processes sharing the same tmpdir (another worktree's suite, a real
+ * `cdk` invocation) may add or remove their own entries while a test runs, and
+ * an absolute count would make that our failure.
  */
 export function listTmpdirCdkOutEntries(): Set<string> {
   return new Set(readdirSync(os.tmpdir()).filter((e) => e.startsWith(LEAKED_ASSEMBLY_PREFIX)))

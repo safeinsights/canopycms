@@ -3160,7 +3160,7 @@ pnpm --filter canopycms-cdk exec vitest run src/scaffold-synth.test.ts
 
 ### Test-Owned CDK Synth Output (`newTestApp()`)
 
-A CDK `App` given no `outdir` synthesizes into a `mkdtemp('cdk.out')` under `os.tmpdir()` that CDK never removes. Left unaddressed this leaks a cloud assembly per synth: it filled a dev machine's disk with 26,537 orphaned `cdk.out*` directories (13 GB) over eight days, surfacing as unrelated tooling failures rather than an obvious cause.
+A CDK `App` given no `outdir` synthesizes into a `mkdtemp('cdk.out')` under `os.tmpdir()` that CDK never removes. Left unaddressed this leaks a cloud assembly per synth: 26,537 orphaned `cdk.out*` directories (13 GB) accumulated over eight days of ordinary development before it was caught, exhausting free disk. It took that long to notice because a full temp filesystem breaks unrelated tooling, so the symptom surfaces nowhere near its cause.
 
 **Rule: in `packages/canopycms-cdk` tests, never call `new App()` directly -- always use `newTestApp()`** from `test-support/test-synth.ts`:
 

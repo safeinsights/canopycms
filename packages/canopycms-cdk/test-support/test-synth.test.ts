@@ -45,9 +45,8 @@ describe('test synth output is confined to a directory the suite owns', () => {
 
     // The headline claim, asserted first so that a regression fails for the
     // reason this test is named after. Differenced against the snapshot rather
-    // than compared to zero: a concurrent CDK process elsewhere on the machine
-    // owns its own entries, and only the ones THIS synth added are ours to
-    // fail on.
+    // than compared to zero: another CDK process sharing the same tmpdir owns
+    // its own entries, and only the ones THIS synth added are ours to fail on.
     const after = listTmpdirCdkOutEntries()
     expect([...after].filter((entry) => !before.has(entry))).toEqual([])
 
