@@ -3158,6 +3158,26 @@ pnpm --filter canopycms-cdk exec vitest run src/scaffold-synth.test.ts
 - **`CDK_OUTDIR` + `CDK_CONTEXT_JSON` are how the CDK CLI drives an app.** The first triggers auto-synth; the second delivers `cdk.json`'s `context` block. A test that runs the generated `app` command without passing the context can't catch a bad context value -- e.g. a CDKv1-only feature flag that CDKv2 rejects at synth (`UnsupportedFeatureFlag`) -- because a context-free run never reaches that code path.
 - **Fails loudly, never skips, when `packages/canopycms-cdk/worker/dist` is missing.** The package's own `test` script builds it via `build:test-fixtures` first; running this file in isolation (as above) requires that step too. A skip here would restore exactly the going-green-without-checking property the test exists to remove.
 
+### Test-Owned CDK Synth Output (`newTestApp()`)
+
+A CDK `App` given no `outdir` synthesizes into a `mkdtemp('cdk.out')` under `os.tmpdir()` that CDK never removes. Left unaddressed this leaks a cloud assembly per synth: it filled a dev machine's disk with 26,537 orphaned `cdk.out*` directories (13 GB) over eight days, surfacing as unrelated tooling failures rather than an obvious cause.
+
+**Rule: in `packages/canopycms-cdk` tests, never call `new App()` directly -- always use `newTestApp()`** from `test-support/test-synth.ts`:
+
+```typescript
+import { newTestApp } from '../../test-support/test-synth'
+
+const app = newTestApp()
+const stack = new Stack(app, 'TestStack', { env: { account: '123456789012', region: 'us-east-1' } })
+app.synth()
+```
+
+`newTestApp(props?)` forwards `props` to `App` but applies `outdir` afterwards, pinned to a fresh `mkdtemp` subdirectory of a per-run root -- not overridable via `props`, since the point of routing every `App` through the helper is that no call site can opt back out. The root itself is created once by vitest's `globalSetup` (`setup`/`teardown`, wired in `vitest.config.ts`) and `rm -rf`'d when the run ends; that lives in the main process rather than a per-file `afterAll`, so teardown still runs when an individual test file fails.
+
+Two guard tests in `test-support/test-synth.test.ts` enforce the rule mechanically rather than relying on convention: one performs a real synth and diffs `os.tmpdir()`'s `cdk.out*` entries before/after, requiring no new ones; the other textually scans every committed `.ts` file in the package for `new App(` and fails if it finds one outside `test-synth.ts` itself (`canary/` is excluded from the scan -- it's a real deployable app, not a test).
+
+`test-support/` is treated like `lambda/`, `canary/`, and `worker/`: a non-shipped directory with its own `tsconfig.json`, appended to the package's `typecheck` and `lint` scripts.
+
 ### Testing a Repo Script as a Subprocess (`scripts/bump-version.mjs`)
 
 `packages/canopycms/src/cli/bump-version.test.ts` tests a plain `scripts/*.mjs` release script rather than importing it, because the script does its work at module scope against a directory tree (reads `package.json` files, writes them, `console.log`s the result, exits) -- there is no function to call. The fixture is copied in rather than run in place, since the script resolves its target paths from its own location:
