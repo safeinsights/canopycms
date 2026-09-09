@@ -25,5 +25,11 @@ export default defineConfig({
     // assembly into os.tmpdir() forever -- 13 GB across 26,537 orphaned
     // directories, before this was caught. See test-support/test-synth.ts.
     globalSetup: ['./test-support/test-synth.ts'],
+
+    // The behavioral half of the same rule: fails any test file that leaves a
+    // cloud assembly in os.tmpdir(), whatever route it took to construct the
+    // App. test-synth.test.ts asserts this too, but only around one synth it
+    // performs itself; this covers every file.
+    setupFiles: ['./test-support/synth-leak-guard.ts'],
   },
 })

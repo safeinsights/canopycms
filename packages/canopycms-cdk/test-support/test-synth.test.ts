@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process'
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs'
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -12,48 +12,65 @@ const thisDir = path.dirname(fileURLToPath(import.meta.url))
 const packageRoot = path.join(thisDir, '..')
 
 /**
- * Directories the guard below does not walk.
+ * Directories the convention scan below does not walk, all of them generated
+ * output rather than our sources.
  *
- * Dot-directories are skipped because they are generated working state, not our
- * sources: `.scaffold-synth/` holds the throwaway projects
- * scaffold-synth.test.ts builds, and the CDK app IT generates legitimately
- * constructs an App. Scanning those would both misreport generated code as an
- * offender and make this guard depend on whether that suite happened to run
- * first.
+ * Dot-directories cover `.scaffold-synth/`, which holds the throwaway projects
+ * scaffold-synth.test.ts builds; `cdk.out` covers what the canary's own
+ * documented `npx cdk synth` workflow writes. The CDK apps inside both
+ * legitimately construct an App, so scanning them would misreport generated
+ * code as an offender -- and, for `.scaffold-synth/`, make this scan depend on
+ * whether that suite happened to run first.
  */
-const UNSCANNED_DIRS = new Set(['node_modules', 'dist'])
+const UNSCANNED_DIRS = new Set(['node_modules', 'dist', 'cdk.out'])
 
 /**
- * The two files allowed to construct a CDK App directly.
+ * The files allowed to construct a CDK App directly: this suite's helper, and
+ * the canary's deployable entrypoint.
  *
- * An allowlist rather than skipping `canary/` wholesale: that directory is
- * exempt only because of the one deployable entrypoint in it, and skipping the
- * whole tree would silently exempt any test file added there later.
+ * An allowlist rather than skipping `canary/` wholesale, which is what this
+ * replaced: that directory is exempt only because of the one entrypoint in it,
+ * and skipping the whole tree would silently exempt any test file added there
+ * later.
  */
 const ALLOWED_TO_CONSTRUCT = new Set([
   path.join(thisDir, 'test-synth.ts'),
   path.join(packageRoot, 'canary', 'bin', 'canary.ts'),
 ])
 
-/** Matches a direct App construction, including the namespace-qualified form CDK's own docs use. */
+/**
+ * Matches a direct App construction, including the namespace-qualified form
+ * CDK's own docs use.
+ *
+ * Linear despite the nested quantifier: `[\w$]` excludes `.`, so each
+ * repetition of the group must terminate at a literal `.` and the
+ * decomposition of any input is unique.
+ */
+// eslint-disable-next-line security/detect-unsafe-regex -- see linearity note above
 const APP_CONSTRUCTION = /\bnew\s+(?:[\w$]+\.)*App\s*\(/
 
 /**
- * Matches a scope-less Stack construction, which reintroduces this very leak by
- * a second route: CDK's Stack constructor falls back to building its own App
- * with no `outdir` when given no scope, and that App temp-dirs into
- * `os.tmpdir()` exactly as the original bug did. The App pattern above cannot
- * see it, because the text never names App at all.
+ * Matches a Stack construction given no usable scope, which reintroduces this
+ * very leak by a second route: CDK's Stack constructor builds its own App with
+ * no `outdir` when the scope is absent, and that App temp-dirs into
+ * `os.tmpdir()` exactly as the original bug did. The App pattern cannot see it,
+ * because the text never names App at all.
+ *
+ * Same linearity argument as above.
  */
-const SCOPELESS_STACK = /\bnew\s+(?:[\w$]+\.)*Stack\s*\(\s*\)/
+// eslint-disable-next-line security/detect-unsafe-regex -- see linearity note above
+const SCOPELESS_STACK = /\bnew\s+(?:[\w$]+\.)*Stack\s*\(\s*(?:\)|undefined|null)/
 
 /** Every .ts/.tsx/.mts/.cts file in the package, so neither a new subdirectory nor a new extension slips past. */
 function walkTypeScriptFiles(dir: string): string[] {
-  return readdirSync(dir).flatMap((entry) => {
-    if (UNSCANNED_DIRS.has(entry) || entry.startsWith('.')) return []
-    const full = path.join(dir, entry)
-    if (statSync(full).isDirectory()) return walkTypeScriptFiles(full)
-    return /\.(?:m|c)?tsx?$/.test(full) ? [full] : []
+  // withFileTypes rather than a statSync per entry: it does not follow
+  // symlinks, so a dangling one under the package cannot abort the walk with a
+  // bare ENOENT pointing at a stat call instead of at this rule.
+  return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+    if (UNSCANNED_DIRS.has(entry.name) || entry.name.startsWith('.')) return []
+    const full = path.join(dir, entry.name)
+    if (entry.isDirectory()) return walkTypeScriptFiles(full)
+    return entry.isFile() && /\.(?:m|c)?tsx?$/.test(full) ? [full] : []
   })
 }
 
@@ -72,6 +89,9 @@ describe('test synth output is confined to a directory the suite owns', () => {
     // reason this test is named after. Differenced against the snapshot rather
     // than compared to zero: another CDK process sharing the same tmpdir owns
     // its own entries, and only the ones THIS synth added are ours to fail on.
+    //
+    // Narrow on purpose -- it covers this one synth. The same property is
+    // enforced across every test file by synth-leak-guard.ts.
     const after = listTmpdirCdkOutEntries()
     expect([...after].filter((entry) => !before.has(entry))).toEqual([])
 
@@ -87,14 +107,21 @@ describe('test synth output is confined to a directory the suite owns', () => {
   })
 
   it('newTestApp is the only place the package constructs a CDK App or a scope-less Stack', () => {
-    // The assertion above only protects Apps that go through newTestApp. This
-    // is what keeps a future direct construction -- which would silently start
-    // leaking again -- from being added beside it.
+    // A CONVENTION check, not the leak guarantee -- keep the distinction, since
+    // treating this as the guarantee is what left four test files unprotected
+    // for two review rounds. The guarantee is behavioral and lives in
+    // synth-leak-guard.ts, which wraps every file and catches a leak whatever
+    // route produced it. This test adds something that hook cannot: it fails on
+    // a direct construction even in a file whose leak would only manifest
+    // conditionally, or that no run happens to exercise.
     //
-    // Note the scan is textual, so it would also match its own patterns written
-    // out in prose. That is why the comments here describe the idioms instead
-    // of spelling them, and why the files legitimately holding one are
-    // allowlisted by path rather than matched around.
+    // Being textual, it has blind spots by construction -- a `Stack` subclass,
+    // or a scope passed as a variable that is sometimes undefined. Do not widen
+    // the patterns to chase those; that is the behavioral hook's job.
+    //
+    // The scan would also match its own patterns written out in prose, which is
+    // why the comments here describe the idioms instead of spelling them, and
+    // why the files legitimately holding one are allowlisted by path.
     const files = walkTypeScriptFiles(packageRoot).filter((f) => !ALLOWED_TO_CONSTRUCT.has(f))
 
     // Non-vacuity: a walk that silently returned nothing would pass forever,

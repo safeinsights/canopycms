@@ -1,4 +1,4 @@
-import { mkdtempSync, readdirSync, rmSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readdirSync, rmSync } from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
 import { App } from 'aws-cdk-lib'
@@ -85,12 +85,18 @@ export function testSynthRoot(): string {
  * A CDK `App` that synthesizes inside this run's root instead of leaking a
  * cloud assembly into `os.tmpdir()`.
  *
- * `outdir` is applied after `props` on purpose: it is not overridable, because
- * the point of routing every App through here is that no call site can opt out.
- * `props` is supported so that a test needing App context has no reason to
- * reach for a bare `new App()` and reintroduce the leak.
+ * `outdir` is not overridable -- the point of routing every App through here is
+ * that no call site can opt out -- and `Omit` makes passing one a compile error
+ * rather than an argument silently dropped, the same stance `testSynthRoot`
+ * takes on a missing root. `props` is otherwise supported so that a test
+ * needing App context has no reason to construct an App itself and reintroduce
+ * the leak.
  */
-export function newTestApp(props: AppProps = {}): App {
+export function newTestApp(props: Omit<AppProps, 'outdir'> = {}): App {
+  // The root is recreated if it has gone missing (a cleared $TMPDIR mid-run):
+  // mkdtempSync does not create parents, so without this every subsequent test
+  // fails with a bare ENOENT naming a temp path rather than anything actionable.
+  mkdirSync(testSynthRoot(), { recursive: true })
   return new App({ ...props, outdir: mkdtempSync(path.join(testSynthRoot(), 'app-')) })
 }
 
@@ -103,10 +109,15 @@ export function newTestApp(props: AppProps = {}): App {
  * of the OS rather than guessed from mtime, which cannot distinguish a crashed
  * run from a live one that is simply slow between synths.
  *
- * Only ESRCH ("no such process") licenses a delete. EPERM means the pid is
- * alive but owned by another user, and a recycled pid reads as alive too --
- * both leave the directory alone. Every ambiguous case errs toward leaking one
- * directory rather than breaking a live run.
+ * Only ESRCH ("no such process") licenses a delete. Anything else -- EPERM (the
+ * pid is alive and someone else's), a range error from an absurd pid, a
+ * recycled pid reading as alive -- leaves the directory alone. Every ambiguous
+ * case errs toward leaking one directory rather than breaking a live run.
+ *
+ * The one shape this cannot get right is a separate PID namespace sharing the
+ * tmpdir, e.g. a container bind-mounting /tmp: a live containerized run's pid
+ * can read as ESRCH on the host. Not reachable from this repo's CI, which runs
+ * the suite directly on the runner, and the blast radius is test output.
  */
 export function sweepDeadRoots(): void {
   for (const entry of readdirSync(os.tmpdir())) {
