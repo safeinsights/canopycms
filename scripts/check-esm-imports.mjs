@@ -1115,7 +1115,7 @@ function checkConsumerMatrix(sandbox) {
       const m = MATRIX_CONSUMER_RE.exec(line.trim())
       if (m) codes.push(m[1])
     }
-    results.push({ config, codes, output })
+    results.push({ config, codes, output, specifiers })
   }
 
   const problems = []
@@ -1221,15 +1221,29 @@ function main() {
   )
 
   const matrix = checkConsumerMatrix(sandbox)
+  // Name the span explicitly. Every row compiles EVERY runtime-loadable entry point of
+  // ALL published packages, not just the CDK one the original defect surfaced through —
+  // print the counts so a reader of CI output can see that rather than take it on trust.
+  const matrixPackages = [
+    ...new Set(
+      matrix.results.flatMap(({ specifiers }) =>
+        // Scoped package names are irrelevant here (we publish none), so the first
+        // segment is the package name.
+        specifiers.map((s) => s.split('/')[0]),
+      ),
+    ),
+  ]
   console.log(
-    `\nCompiling a consumer under ${CONSUMER_CONFIGS.length} adopter tsconfig shapes...\n`,
+    `\nCompiling a consumer under ${CONSUMER_CONFIGS.length} adopter tsconfig shapes, ` +
+      `across all ${matrixPackages.length} published packages...\n`,
   )
-  for (const { config, codes } of matrix.results) {
+  for (const { config, codes, specifiers } of matrix.results) {
     const got = codes.length === 0 ? 'compiles' : [...new Set(codes)].join(', ')
     const asExpected =
       config.expect === 'pass' ? codes.length === 0 : codes.includes(config.expectCode)
     const label = config.expect === 'fail' ? `${got} (pinned limitation)` : got
-    console.log(`  ${asExpected ? 'OK  ' : 'FAIL'}  ${config.id.padEnd(24)} ${label}`)
+    const span = `${String(specifiers.length).padStart(2)} entry point(s)`
+    console.log(`  ${asExpected ? 'OK  ' : 'FAIL'}  ${config.id.padEnd(24)} ${span}  ${label}`)
   }
   console.log()
   if (matrix.problems.length > 0) {
