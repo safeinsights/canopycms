@@ -354,24 +354,62 @@ function checkPublishedConditions() {
   const problems = []
   for (const { dir } of PACKAGES) {
     const pkg = loadPackageJson(dir)
-    for (const [subpath, cond] of Object.entries(pkg.publishConfig?.exports ?? {})) {
+    const packageDir = path.join(packagesDir, dir)
+    if (!existsSync(path.join(packageDir, 'dist'))) {
+      throw new Error(`${pkg.name}: dist/ does not exist — run \`pnpm build\` first`)
+    }
+    // A package with no publishConfig.exports publishes its dev `exports` map
+    // verbatim, so THAT is the published map and it still has to be checked.
+    // Reading only publishConfig would silently check nothing for such a package —
+    // the same shape of hole this whole file exists to close.
+    const publishedMap = pkg.publishConfig?.exports ?? pkg.exports ?? {}
+    for (const [subpath, cond] of Object.entries(publishedMap)) {
       // A bare string target has no conditions to match against — it applies to
-      // every condition, require() included — so there is nothing to check.
-      if (typeof cond !== 'object' || cond === null) continue
-      const keys = Object.keys(cond)
-      if (!keys.includes('require') && !keys.includes('default')) {
+      // every condition, require() included — so there is nothing to check beyond
+      // whether the file it names is real.
+      const targets = []
+      if (typeof cond === 'string') {
+        targets.push(cond)
+      } else if (typeof cond === 'object' && cond !== null && !Array.isArray(cond)) {
+        const keys = Object.keys(cond)
+        if (!keys.includes('require') && !keys.includes('default')) {
+          problems.push(
+            `${pkg.name}: publishConfig.exports "${subpath}" offers [${keys.join(', ')}] but no ` +
+              '"require" (or "default") condition, so require() of it fails with ' +
+              'ERR_PACKAGE_PATH_NOT_EXPORTED — add "require" pointing at the same file as ' +
+              '"import" (or at a real .cjs build, as canopycms-next/config does)',
+          )
+        }
+        if (keys.includes('types') && keys[0] !== 'types') {
+          problems.push(
+            `${pkg.name}: publishConfig.exports "${subpath}" lists "types" at position ` +
+              `${keys.indexOf('types')} of [${keys.join(', ')}] — it must come FIRST, because ` +
+              'resolvers take the first matching key and some ignore a later "types"',
+          )
+        }
+        for (const value of Object.values(cond)) {
+          if (typeof value === 'string') targets.push(value)
+        }
+      } else {
         problems.push(
-          `${pkg.name}: publishConfig.exports "${subpath}" offers [${keys.join(', ')}] but no ` +
-            '"require" (or "default") condition, so require() of it fails with ' +
-            'ERR_PACKAGE_PATH_NOT_EXPORTED — add "require" pointing at the same file as "import" ' +
-            '(or at a real .cjs build, as canopycms-next/config does)',
+          `${pkg.name}: publishConfig.exports "${subpath}" is neither a string nor a plain ` +
+            'condition object (array fallbacks and nested conditions are not handled here) — ' +
+            'this check cannot verify it, so it refuses rather than passing it silently',
         )
+        continue
       }
-      if (keys.includes('types') && keys[0] !== 'types') {
+      // Presence of a condition is not reachability: a `require` key pointing at a
+      // typo resolves to nothing. The probes cannot catch this on `skip` subpaths —
+      // they are never loaded — so the ONLY thing standing behind those targets is
+      // this existence check. Verified by mutation: pointing ./client's require at
+      // "./dist/cleint.js" passed every other check green.
+      for (const target of targets) {
+        if (!target.startsWith('./')) continue // not a file reference we can resolve
+        if (existsSync(path.join(packageDir, target))) continue
         problems.push(
-          `${pkg.name}: publishConfig.exports "${subpath}" lists "types" at position ` +
-            `${keys.indexOf('types')} of [${keys.join(', ')}] — it must come FIRST, because ` +
-            'resolvers take the first matching key and some ignore a later "types"',
+          `${pkg.name}: publishConfig.exports "${subpath}" names "${target}", which does not ` +
+            'exist in the built package — npm consumers get ERR_MODULE_NOT_FOUND (or, for a ' +
+            '"types" target, silently degraded types)',
         )
       }
     }
@@ -1034,6 +1072,14 @@ function checkConsumerMatrix(sandbox) {
   const results = []
   for (const config of CONSUMER_CONFIGS) {
     const scope = config.scope ?? 'all'
+    // Unvalidated, a typo like 'roots' would fall through to the !isRoot branch and
+    // silently review the subpaths while claiming to review the roots.
+    if (!['all', 'root', 'subpath'].includes(scope)) {
+      throw new Error(
+        `consumer-matrix config "${config.id}" has scope ${JSON.stringify(scope)}, which is none ` +
+          "of 'all', 'root' or 'subpath'",
+      )
+    }
     const specifiers = allSpecifiers
       .filter((s) => scope === 'all' || (scope === 'root' ? s.isRoot : !s.isRoot))
       .map((s) => s.specifier)
@@ -1115,29 +1161,64 @@ function checkConsumerMatrix(sandbox) {
       const m = MATRIX_CONSUMER_RE.exec(line.trim())
       if (m) codes.push(m[1])
     }
+
+    // A `pass` row is scored purely by "no consumer.ts diagnostics", so ANY tsc failure
+    // whose output matches neither the tsconfig regex above nor the consumer regex —
+    // a crash stack, TS6053 (file not found), TS5083 (cannot read tsconfig) — scores
+    // codes=[] and reports OK. A clean pass row always exits 0, so requiring that
+    // closes the hole without constraining the `fail` rows, which exit non-zero by
+    // design.
+    if (config.expect === 'pass' && run.status !== 0) {
+      throw new Error(
+        `the consumer-matrix probe for config "${config.id}" exited ${run.status} but produced ` +
+          'no consumer diagnostics — that is a broken probe, not a clean run. Output:\n' +
+          (output.trim() || '(empty)'),
+      )
+    }
+
     results.push({ config, codes, output, specifiers })
   }
 
   const problems = []
-  for (const { config, codes } of results) {
-    const failed = codes.length > 0
-    if (config.expect === 'pass' && failed) {
+  for (const { config, codes, specifiers } of results) {
+    if (config.expect === 'pass') {
+      if (codes.length > 0) {
+        problems.push(
+          `${config.id}: expected to compile, but tsc reported ${codes.length} diagnostic(s) ` +
+            `(${[...new Set(codes)].join(', ')}) against the consumer. ${config.why}`,
+        )
+      }
+      continue
+    }
+
+    // A pinned failure is asserted PER SPECIFIER, not "at least one diagnostic".
+    // tsc emits exactly one diagnostic per failing import here, so a fully-pinned row
+    // has codes.length === specifiers.length and every code equal to expectCode.
+    //
+    // "At least one" was the original shape and it was too weak, demonstrated by
+    // mutation: shipping a .d.cts for canopycms-cdk makes it consumable from a
+    // cjs+node16 project, and the row still printed OK on the remaining 16 while the
+    // docs table kept claiming node16 fails outright. A PARTIAL flip is exactly how
+    // this limitation would really lift — one subpath at a time — so it is the case
+    // the row most needs to catch.
+    const unexpected = [...new Set(codes.filter((c) => c !== config.expectCode))]
+    if (unexpected.length > 0) {
       problems.push(
-        `${config.id}: expected to compile, but tsc reported ${codes.length} diagnostic(s) ` +
-          `(${[...new Set(codes)].join(', ')}) against the consumer. ${config.why}`,
+        `${config.id}: expected every failure to be ${config.expectCode}, but also saw ` +
+          `${unexpected.join(', ')} — the limitation changed shape, or an unrelated error is ` +
+          'riding along and being masked by the expected one.',
       )
     }
-    if (config.expect === 'fail' && !failed) {
+    const pinned = codes.filter((c) => c === config.expectCode).length
+    if (pinned !== specifiers.length) {
       problems.push(
-        `${config.id}: this config is PINNED as a known limitation, but it now compiles ` +
-          'cleanly. That is a real change in what adopters can do — update this entry and ' +
-          `the adopter-facing docs rather than deleting the row. ${config.why}`,
-      )
-    }
-    if (config.expect === 'fail' && failed && !codes.includes(config.expectCode)) {
-      problems.push(
-        `${config.id}: expected to fail with ${config.expectCode}, but failed with ` +
-          `${[...new Set(codes)].join(', ')} instead — the limitation changed shape.`,
+        `${config.id}: PINNED as a known limitation, but only ${pinned} of ` +
+          `${specifiers.length} entry point(s) still fail with ${config.expectCode}` +
+          (pinned === 0
+            ? ' — the whole row now compiles cleanly.'
+            : ' — it lifted for some entry points but not others.') +
+          ' That is a real change in what adopters can do: update this entry and the ' +
+          `adopter-facing docs rather than deleting the row. ${config.why}`,
       )
     }
   }
@@ -1239,9 +1320,16 @@ function main() {
   )
   for (const { config, codes, specifiers } of matrix.results) {
     const got = codes.length === 0 ? 'compiles' : [...new Set(codes)].join(', ')
+    // Mirrors checkConsumerMatrix's verdict exactly, including the per-specifier count
+    // for pinned rows — a display that scored a row differently from the check would
+    // report OK next to a failure, or the reverse.
+    const pinned = codes.filter((c) => c === config.expectCode).length
     const asExpected =
-      config.expect === 'pass' ? codes.length === 0 : codes.includes(config.expectCode)
-    const label = config.expect === 'fail' ? `${got} (pinned limitation)` : got
+      config.expect === 'pass'
+        ? codes.length === 0
+        : pinned === specifiers.length && codes.length === pinned
+    const label =
+      config.expect === 'fail' ? `${got} ×${pinned}/${specifiers.length} (pinned limitation)` : got
     const span = `${String(specifiers.length).padStart(2)} entry point(s)`
     console.log(`  ${asExpected ? 'OK  ' : 'FAIL'}  ${config.id.padEnd(24)} ${span}  ${label}`)
   }

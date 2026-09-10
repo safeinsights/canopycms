@@ -41,7 +41,7 @@
     "typecheck": "tsc --noEmit && tsc --noEmit -p lambda/tsconfig.json && tsc --noEmit -p canary/tsconfig.json && tsc --noEmit -p worker/tsconfig.json && tsc --noEmit -p test-support/tsconfig.json"
   },
   "engines": {
-    "node": ">=22"
+    "node": ">=22.12.0"
   },
   "peerDependencies": {
     "canopycms": "workspace:*",
