@@ -37,52 +37,64 @@
   "publishConfig": {
     "exports": {
       ".": {
+        "types": "./dist/index.d.ts",
         "import": "./dist/index.js",
-        "types": "./dist/index.d.ts"
+        "require": "./dist/index.js"
       },
       "./client": {
+        "types": "./dist/client.d.ts",
         "import": "./dist/client.js",
-        "types": "./dist/client.d.ts"
+        "require": "./dist/client.js"
       },
       "./server": {
+        "types": "./dist/server.d.ts",
         "import": "./dist/server.js",
-        "types": "./dist/server.d.ts"
+        "require": "./dist/server.js"
       },
       "./auth": {
+        "types": "./dist/auth/index.d.ts",
         "import": "./dist/auth/index.js",
-        "types": "./dist/auth/index.d.ts"
+        "require": "./dist/auth/index.js"
       },
       "./auth/cache": {
+        "types": "./dist/auth/cache.d.ts",
         "import": "./dist/auth/cache.js",
-        "types": "./dist/auth/cache.d.ts"
+        "require": "./dist/auth/cache.js"
       },
       "./http": {
+        "types": "./dist/http/index.d.ts",
         "import": "./dist/http/index.js",
-        "types": "./dist/http/index.d.ts"
+        "require": "./dist/http/index.js"
       },
       "./task-queue": {
+        "types": "./dist/task-queue/index.d.ts",
         "import": "./dist/task-queue/index.js",
-        "types": "./dist/task-queue/index.d.ts"
+        "require": "./dist/task-queue/index.js"
       },
       "./worker/task-queue": {
+        "types": "./dist/worker/task-queue.d.ts",
         "import": "./dist/worker/task-queue.js",
-        "types": "./dist/worker/task-queue.d.ts"
+        "require": "./dist/worker/task-queue.js"
       },
       "./worker/cms-worker": {
+        "types": "./dist/worker/cms-worker.d.ts",
         "import": "./dist/worker/cms-worker.js",
-        "types": "./dist/worker/cms-worker.d.ts"
+        "require": "./dist/worker/cms-worker.js"
       },
       "./ai": {
+        "types": "./dist/ai/index.d.ts",
         "import": "./dist/ai/index.js",
-        "types": "./dist/ai/index.d.ts"
+        "require": "./dist/ai/index.js"
       },
       "./build": {
+        "types": "./dist/build/index.d.ts",
         "import": "./dist/build/index.js",
-        "types": "./dist/build/index.d.ts"
+        "require": "./dist/build/index.js"
       },
       "./utils/error": {
+        "types": "./dist/utils/error.d.ts",
         "import": "./dist/utils/error.js",
-        "types": "./dist/utils/error.d.ts"
+        "require": "./dist/utils/error.js"
       }
     },
     "bin": {
@@ -102,7 +114,7 @@
     "storybook:build": "storybook build -c .storybook"
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=22.12.0"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.600.0",

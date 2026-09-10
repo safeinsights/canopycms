@@ -1,9 +1,20 @@
 #!/usr/bin/env node
 /**
- * Regression guard for the extensionless-relative-import defect (see
- * scripts/add-js-extensions.mjs): actually resolves each published
- * package's entry points under Node's native ESM resolver and fails loudly
- * if any of them cannot be imported.
+ * Regression guard for two defect classes that share one root cause — the
+ * published package shape is never exercised by anything else in this repo.
+ * It resolves each published package's entry point four ways and fails loudly
+ * on any of them:
+ *
+ *   1. `import` under Node's native ESM resolver — the extensionless-relative-
+ *      import defect (see scripts/add-js-extensions.mjs).
+ *   2. `require()` from a real CommonJS consumer — the missing-"require"-
+ *      condition defect, which made every entry point unreachable from any
+ *      CommonJS project, our own `init-deploy` CDK scaffold included. See
+ *      checkPublishedConditions().
+ *   3. `import type` under moduleResolution:nodenext — see
+ *      checkDeclarationResolution().
+ *   4. a VALUE import from a generated consumer, under each adopter tsconfig
+ *      shape in CONSUMER_CONFIGS — see checkConsumerMatrix().
  *
  * MUST run after `pnpm build` — it imports built dist/ output, not src/.
  *
@@ -309,6 +320,196 @@ function checkCoverage() {
   }
 }
 
+// Static half of the CommonJS-reachability guard (the behavioral half is the
+// require() probe in buildRequireProbeScript() below).
+//
+// When a package.json has an "exports" map, Node IGNORES "main" entirely, and a
+// require() resolves the conditions ["node", "require", "default"]. A map
+// offering only { types, import } therefore matches NOTHING on that path:
+// require('canopycms-cdk') dies with ERR_PACKAGE_PATH_NOT_EXPORTED before the
+// module is ever loaded. That shipped — every published entry point except
+// canopycms-next/config was unreachable from CommonJS.
+//
+// It bit hardest on the CDK package, and NOT only for adopters who wrote their
+// own CommonJS app (`cdk init app --language typescript` produces one, running
+// ts-node). Our OWN scaffold failed: cli/template-files/cdk.json.template runs
+// `node --import tsx infrastructure/bin/app.ts`, and tsx honors the nearest
+// package.json "type" — so in an adopter repo without "type": "module" (the
+// Next.js default, and what all three apps/ fixtures here are) that import
+// resolves through Node's CJS loader and `cdk synth`/`cdk deploy` both die at
+// resolution. Verified both directions against a published-shape sandbox: the
+// same scaffold succeeds pre-fix if the adopter's package.json DOES declare
+// "type": "module", which is exactly why this went unnoticed.
+//
+// Nothing about the code needed changing: once resolution gets past the gate,
+// Node loads these ESM files from require() perfectly well — require(esm), which
+// Node unflagged in 22.12.0, hence engines: node >=22.12.0 on every published
+// package and on the repo root (this script's own CJS probe needs it too).
+// Only the metadata refused.
+//
+// The require() probe below proves the 'test' subpaths genuinely load. This pass
+// covers the rest: 'skip' subpaths are client-only or need a bundler, so they
+// can never be exercised by either probe, and without this check they are
+// exactly where a missing condition would sit unnoticed. It also pins condition
+// ORDER — Node and TypeScript both take the first matching key, so a "types"
+// entry after "import" is ignored by some resolvers.
+function checkPublishedConditions() {
+  const problems = []
+  for (const { dir } of PACKAGES) {
+    const pkg = loadPackageJson(dir)
+    const packageDir = path.join(packagesDir, dir)
+    if (!existsSync(path.join(packageDir, 'dist'))) {
+      throw new Error(`${pkg.name}: dist/ does not exist — run \`pnpm build\` first`)
+    }
+    // A package with no publishConfig.exports publishes its dev `exports` map
+    // verbatim, so THAT is the published map and it still has to be checked.
+    // Reading only publishConfig would silently check nothing for such a package —
+    // the same shape of hole this whole file exists to close.
+    const usingDevMap = pkg.publishConfig?.exports === undefined
+    const mapName = usingDevMap ? 'exports' : 'publishConfig.exports'
+    const publishedMap = pkg.publishConfig?.exports ?? pkg.exports ?? {}
+    for (const [subpath, cond] of Object.entries(publishedMap)) {
+      // A bare string target has no conditions to match against — it applies to
+      // every condition, require() included — so there is nothing to check beyond
+      // whether the file it names is real.
+      const targets = []
+      if (typeof cond === 'string') {
+        targets.push(cond)
+      } else if (typeof cond === 'object' && cond !== null && !Array.isArray(cond)) {
+        const keys = Object.keys(cond)
+        if (!keys.includes('require') && !keys.includes('default')) {
+          problems.push(
+            `${pkg.name}: ${mapName} "${subpath}" offers [${keys.join(', ')}] but no ` +
+              '"require" (or "default") condition, so require() of it fails with ' +
+              'ERR_PACKAGE_PATH_NOT_EXPORTED — add "require" pointing at the same file as ' +
+              '"import" (or at a real .cjs build, as canopycms-next/config does)',
+          )
+        }
+        // Conditions nest, and the nested form is the standard shape for the very
+        // thing the message above recommends — `"require": { "types": "./x.d.cts",
+        // "default": "./x.cjs" }`. Collecting only top-level strings let a typo inside
+        // a nested object through completely green: neither existence-checked (not a
+        // string) nor refused (a nested object IS a plain object, so it never reached
+        // the else branch). Walk the whole subtree instead.
+        //
+        // The types-first rule is checked at EVERY level, not just the top: a resolver
+        // walks a nested object the same way, so `require: { default, types }` loses the
+        // types entry exactly as a top-level misordering does. Only the require/default
+        // requirement is top-level-only — a nested object under `require` has already
+        // matched that condition and does not need its own.
+        const checkOrder = (node, trail) => {
+          const nested = Object.keys(node)
+          if (nested.includes('types') && nested[0] !== 'types') {
+            problems.push(
+              `${pkg.name}: ${mapName} "${subpath}" lists "types" at position ` +
+                `${nested.indexOf('types')} of [${nested.join(', ')}]` +
+                (trail ? ` (inside "${trail}")` : '') +
+                ' — it must come FIRST, because resolvers take the first matching key and ' +
+                'some ignore a later "types"',
+            )
+          }
+        }
+        checkOrder(cond, '')
+        const collect = (node, trail) => {
+          if (typeof node === 'string') {
+            targets.push(node)
+            return
+          }
+          if (typeof node === 'object' && node !== null && !Array.isArray(node)) {
+            checkOrder(node, trail)
+            for (const [k, v] of Object.entries(node)) collect(v, `${trail}.${k}`)
+            return
+          }
+          problems.push(
+            `${pkg.name}: ${mapName} "${subpath}" has a target at ${trail} that is neither a ` +
+              `string nor a condition object (${node === null ? 'null' : typeof node}) — this ` +
+              'check cannot verify it, so it refuses rather than passing it silently',
+          )
+        }
+        for (const [k, v] of Object.entries(cond)) collect(v, k)
+      } else {
+        problems.push(
+          `${pkg.name}: ${mapName} "${subpath}" is neither a string nor a condition object ` +
+            `(${cond === null ? 'null' : Array.isArray(cond) ? 'an array fallback' : typeof cond}) ` +
+            '— this check cannot verify it, so it refuses rather than passing it silently',
+        )
+        continue
+      }
+      // Presence of a condition is not reachability: a `require` key pointing at a
+      // typo resolves to nothing. The probes cannot catch this on `skip` subpaths —
+      // they are never loaded — so the ONLY thing standing behind those targets is
+      // this check. Verified by mutation: pointing ./client's require at
+      // "./dist/cleint.js" passed every other check green.
+      //
+      // Existing on disk is necessary but NOT sufficient: `files` decides what the
+      // tarball carries. That gap is reachable through the dev-map fallback above,
+      // whose targets are `./src/*.ts` — real files that `files: ["dist"]` never
+      // ships, which is precisely the advertise-an-entry-point-the-build-never-emits
+      // shape this file exists to close.
+      // An absent `files` means npm ships everything not otherwise ignored, so there
+      // is nothing to assert — as opposed to `files: []`, which really does ship
+      // nothing. Conflating the two scored every target of a files-less package as
+      // unshipped.
+      const published = pkg.files
+      for (const target of targets) {
+        // Node requires every exports target to start with "./" and to contain no
+        // "."/".."/"node_modules" segment; anything else is ERR_INVALID_PACKAGE_TARGET
+        // at resolution time. Skipping those instead of reporting them meant a target
+        // like "dist/client.js" or "./dist/../src/client.ts" bypassed BOTH checks below
+        // in silence — on the `skip` subpaths, where this is the only backstop.
+        const invalid = !target.startsWith('./')
+          ? 'it does not start with "./"'
+          : target
+                .slice(2)
+                .split('/')
+                .some((s) => s === '.' || s === '..' || s === 'node_modules')
+            ? 'it contains a "."/".."/"node_modules" path segment'
+            : null
+        if (invalid) {
+          problems.push(
+            `${pkg.name}: ${mapName} "${subpath}" names "${target}", which is not a valid ` +
+              `exports target — ${invalid}. Node rejects it with ERR_INVALID_PACKAGE_TARGET.`,
+          )
+          continue
+        }
+        const rel = target.slice(2)
+        if (!existsSync(path.join(packageDir, target))) {
+          problems.push(
+            `${pkg.name}: ${mapName} "${subpath}" names "${target}", which does not exist in ` +
+              'the built package — npm consumers get ERR_MODULE_NOT_FOUND (or, for a "types" ' +
+              'target, silently degraded types)',
+          )
+          continue
+        }
+        if (published === undefined) continue
+        const shipped = published.some((entry) => {
+          // "." ships the whole package; a glob is honoured only up to its literal
+          // prefix, which is enough to tell "under dist/" from "not under dist/"
+          // without pulling in a glob matcher.
+          const e = entry.replace(/^\.\//, '').replace(/\/+$/, '')
+          if (e === '' || e === '.') return true
+          const literal = e.split(/[*?[]/)[0].replace(/\/+$/, '')
+          if (literal === '') return true // a leading glob could match anything
+          return rel === literal || rel.startsWith(`${literal}/`)
+        })
+        if (!shipped) {
+          problems.push(
+            `${pkg.name}: ${mapName} "${subpath}" names "${target}", which exists locally but ` +
+              `is not covered by "files" [${published.join(', ')}] — it would be absent from ` +
+              'the published tarball, so this passes in-repo and fails for every npm consumer',
+          )
+        }
+      }
+    }
+  }
+  if (problems.length > 0) {
+    throw new Error(
+      'check-esm-imports.mjs: published exports map(s) are not reachable from CommonJS:\n' +
+        problems.map((p) => `  - ${p}`).join('\n'),
+    )
+  }
+}
+
 // publishConfig fields override their top-level counterparts in the
 // published package.json — the same merge `npm publish`/`pnpm pack` perform.
 // Verified by diffing a real `pnpm pack` tarball's package.json against this.
@@ -591,6 +792,62 @@ console.log(JSON.stringify(results))
   return { body, count: imports.length }
 }
 
+// Behavioral half of the CommonJS-reachability guard (see
+// checkPublishedConditions() above for why this class exists and what it cost).
+//
+// Deliberately a real require() from a real .cjs file rather than an assertion
+// about package.json text, because the two failure modes it has to separate are
+// both invisible to text:
+//
+//   * ERR_PACKAGE_PATH_NOT_EXPORTED — the condition is missing. The static pass
+//     does catch this one, and this probe is the second instrument on it.
+//   * ERR_REQUIRE_ASYNC_MODULE — the condition is present and still a lie,
+//     because require(esm) refuses a graph containing top-level await. No amount
+//     of reading the exports map reveals that; only loading it does. Nothing in
+//     the current graph has TLA, and this is what keeps that true.
+//
+// Uses the same 'test'/'skip' classification as the ESM probe: every documented
+// skip reason (a CSS import Node's loader rejects, a `next/server` specifier
+// only a bundler resolves) is a property of the module, not of how it was
+// reached, so it applies identically to require().
+//
+// Why the workspace itself cannot see this, and why the guard has to be here:
+// Vitest resolves through Vite, which uses the `import` condition, so a full
+// test suite passes green against a package the Node CJS resolver cannot load
+// at all. The divergence is between the test runner's resolver and Node's, and
+// no assertion running inside the runner can reach it.
+function buildRequireProbeScript() {
+  const requires = []
+  for (const { dir, subpaths } of PACKAGES) {
+    const pkg = loadPackageJson(dir)
+    for (const [subpath, mode] of Object.entries(subpaths)) {
+      if (mode !== 'test') continue
+      const specifier = subpath === '.' ? pkg.name : `${pkg.name}${subpath.slice(1)}`
+      requires.push({ label: specifier, specifier })
+    }
+  }
+
+  const body = `
+const targets = ${JSON.stringify(requires, null, 2)}
+const results = []
+for (const { label, specifier } of targets) {
+  try {
+    require(specifier)
+    results.push({ label, ok: true })
+  } catch (err) {
+    const code = err && err.code ? err.code + ' ' : ''
+    results.push({
+      label,
+      ok: false,
+      error: code + (err instanceof Error ? err.message : String(err)),
+    })
+  }
+}
+console.log(JSON.stringify(results))
+`
+  return { body, count: requires.length }
+}
+
 // Second guard, for the OTHER half of the same defect: the emitted .d.ts.
 //
 // The runtime probe above cannot see this. A .d.ts with an extensionless
@@ -742,39 +999,30 @@ function checkDeclarationResolution(sandbox) {
   return { specifiers, problems }
 }
 
-function main() {
-  checkCoverage()
-
-  // Both read dist/ directly — no sandbox needed — so they run first and fail
-  // fast, before paying for buildSandbox() below.
-  checkDeclaredDependencies()
-  console.log('OK    every dist/ bare specifier is declared in its own package.json.\n')
-  checkNoStrayTestArtifacts()
-  console.log('OK    no test/story artifacts found in any dist/.\n')
-
-  const sandbox = buildSandbox()
-  const { body, count } = buildProbeScript()
-  const probePath = path.join(sandbox, 'probe.mjs')
+// Write a probe into the sandbox, run it, and parse its JSON verdict.
+//
+// The status/stdout assertion is not ceremony: a probe that dies before
+// printing (a broken sandbox, an OOM kill) exits non-zero with no parseable
+// output, and treating that as "no failures" would turn the guard into a
+// permanent silent no-op — the same way the type pass could once report OK for
+// an empty result. Fail loudly instead.
+function runProbe(sandbox, fileName, body) {
+  const probePath = path.join(sandbox, fileName)
   writeFileSync(probePath, body)
 
-  console.log(`Resolving ${count} entry point(s) under real Node ESM (sandbox: ${sandbox})...\n`)
-
-  const result = spawnSync(process.execPath, [probePath], {
-    cwd: sandbox,
-    encoding: 'utf8',
-  })
-
-  if (result.error) {
-    throw result.error
-  }
+  const result = spawnSync(process.execPath, [probePath], { cwd: sandbox, encoding: 'utf8' })
+  if (result.error) throw result.error
   if (result.status !== 0 || !result.stdout?.trim()) {
-    console.error('Probe process failed to run:')
+    console.error(`Probe process (${fileName}) failed to run:`)
     console.error(result.stdout)
     console.error(result.stderr)
     process.exit(1)
   }
+  return JSON.parse(result.stdout.trim())
+}
 
-  const results = JSON.parse(result.stdout.trim())
+// Print one probe's results; returns how many entry points failed.
+function reportProbe(results) {
   let failed = 0
   for (const { label, ok, error } of results) {
     if (ok) {
@@ -785,11 +1033,320 @@ function main() {
       console.log(`        ${error.split('\n')[0]}`)
     }
   }
-
   console.log()
-  if (failed > 0) {
+  return failed
+}
+
+// ---------------------------------------------------------------------------
+// Consumer-configuration matrix.
+//
+// The two runtime probes answer "can Node load this", and checkDeclarationResolution()
+// answers "do our .d.ts files resolve". Neither answers the question an adopter
+// actually has: does `import { X } from 'canopycms-cdk'` COMPILE in the project shape
+// they have? That depends on their tsconfig, and the answers genuinely differ — this
+// matrix exists because they differ.
+//
+// Deliberately VALUE imports, not `import type`. A type-only import is erased, so it
+// never produces the CJS/ESM interop diagnostic that is the whole point here;
+// checkDeclarationResolution() uses `import type` because it is asking a different
+// question (does the declaration graph resolve). An adopter writes a value import.
+//
+// `expect: 'fail'` entries are not tolerated failures — they are PINNED limitations.
+// A config that starts passing fails this check just as loudly as one that starts
+// failing, because either direction means the adopter-facing story changed and the
+// docs that describe it are now wrong.
+//
+// `scope` picks which specifiers a row compiles: 'root' is the bare package name,
+// 'subpath' is everything below it, 'all' is both. It exists because node10 splits
+// exactly along that line — see the two node10 rows.
+const CONSUMER_CONFIGS = [
+  {
+    id: 'esm + nodenext',
+    consumerType: 'module',
+    compilerOptions: { module: 'nodenext', moduleResolution: 'nodenext' },
+    expect: 'pass',
+    why: 'A modern ESM adopter. Resolves our "import" condition.',
+  },
+  {
+    id: 'esm + bundler',
+    consumerType: 'module',
+    compilerOptions: { module: 'esnext', moduleResolution: 'bundler' },
+    expect: 'pass',
+    why: 'What a Next.js adopter gets from `create-next-app`, and the most common shape.',
+  },
+  {
+    id: 'cjs + node10 (root)',
+    consumerType: 'commonjs',
+    scope: 'root',
+    compilerOptions: { module: 'commonjs', moduleResolution: 'node10' },
+    expect: 'pass',
+    why:
+      'A stock `cdk init app --language typescript` project importing a bare package name. ' +
+      'node10 predates "exports" and ignores it entirely, resolving through "main"/"types" ' +
+      '— which is why TypeScript stayed happy here all through the period when Node could ' +
+      'not load the package at all. That divergence IS the defect this file guards: a green ' +
+      'tsc told the adopter nothing. Keep "main"/"types" pointing at the real entry.',
+  },
+  {
+    id: 'cjs + node10 (subpath)',
+    consumerType: 'commonjs',
+    scope: 'subpath',
+    compilerOptions: { module: 'commonjs', moduleResolution: 'node10' },
+    expect: 'fail',
+    expectCode: 'TS2307',
+    why:
+      'PINNED LIMITATION, and NOT caused by the exports map — node10 does not read ' +
+      '"exports" at all, and this commit changed nothing else it reads (verified: top-level ' +
+      '"main"/"types"/"files" are untouched). Ignoring "exports" means node10 looks for a ' +
+      'PHYSICAL node_modules/canopycms/server.js, but our files live under dist/, so every ' +
+      'subpath misses. Supporting it would mean shipping stub directories or typesVersions ' +
+      '— legacy compat this project explicitly does not carry. An adopter needing subpaths ' +
+      'must move off node10, which TypeScript already discourages.',
+  },
+  {
+    id: 'cjs + nodenext',
+    consumerType: 'commonjs',
+    compilerOptions: { module: 'nodenext', moduleResolution: 'nodenext' },
+    expect: 'pass',
+    why:
+      'A CommonJS project on current TypeScript. nodenext models a Node that supports ' +
+      'require(esm), so importing our ESM-only package from CJS is allowed.',
+  },
+  {
+    id: 'cjs + node16',
+    consumerType: 'commonjs',
+    compilerOptions: { module: 'node16', moduleResolution: 'node16' },
+    expect: 'fail',
+    expectCode: 'TS1479',
+    why:
+      'PINNED LIMITATION, and NOT caused by the exports map — verified identical before ' +
+      'and after the "require" condition was added. `module: node16` is pinned to Node 16 ' +
+      'semantics, where require(esm) does not exist, so TypeScript refuses any value ' +
+      'import of an ESM-only package from a CommonJS file. The package being ESM-only is ' +
+      'the cause. An adopter on node16 must use `nodenext` or a dynamic import() — NOT ' +
+      'node10, which resolves only the root entry (see the node10 subpath row, pinned ' +
+      'to TS2307). If this ever starts passing, TypeScript changed its mind and the ' +
+      'adopter-facing docs should say so.',
+  },
+]
+
+// Count every diagnostic attributed to consumer.ts: that file is generated here and
+// imports nothing but our own packages, so each one is ours by construction. Third-party
+// noise (the probe sets `types: []`, so dependency declarations emit unrelated errors)
+// is attributed to other paths and ignored, exactly as in checkDeclarationResolution().
+const MATRIX_CONSUMER_RE = /^consumer\.ts\([0-9]+,[0-9]+\): error (TS[0-9]+):/
+
+function checkConsumerMatrix(sandbox) {
+  const tsc = path.join(repoRoot, 'node_modules', 'typescript', 'bin', 'tsc')
+  if (!existsSync(tsc)) {
+    throw new Error(`typescript not found at ${tsc} — run \`pnpm install\` first`)
+  }
+
+  // Published, runtime-loadable entry points. Restricted to `test` subpaths because a
+  // value import of a `skip` entry (client-only UI, a next/server specifier) says
+  // nothing about consumer configuration — those are module limitations, already
+  // documented in PACKAGES, and they would fire in every row identically.
+  const allSpecifiers = []
+  for (const { dir, subpaths } of PACKAGES) {
+    const pkg = loadPackageJson(dir)
+    for (const [subpath, mode] of Object.entries(subpaths)) {
+      if (mode !== 'test') continue
+      allSpecifiers.push({
+        specifier: subpath === '.' ? pkg.name : `${pkg.name}${subpath.slice(1)}`,
+        isRoot: subpath === '.',
+      })
+    }
+  }
+
+  const results = []
+  for (const config of CONSUMER_CONFIGS) {
+    const scope = config.scope ?? 'all'
+    // Unvalidated, a typo like 'roots' would fall through to the !isRoot branch and
+    // silently review the subpaths while claiming to review the roots.
+    if (!['all', 'root', 'subpath'].includes(scope)) {
+      throw new Error(
+        `consumer-matrix config "${config.id}" has scope ${JSON.stringify(scope)}, which is none ` +
+          "of 'all', 'root' or 'subpath'",
+      )
+    }
+    const specifiers = allSpecifiers
+      .filter((s) => scope === 'all' || (scope === 'root' ? s.isRoot : !s.isRoot))
+      .map((s) => s.specifier)
+    // A scope that selects nothing would make the row vacuous — it would "pass" having
+    // compiled an empty file, or "fail" for reasons unrelated to any specifier.
+    if (specifiers.length === 0) {
+      throw new Error(
+        `consumer-matrix config "${config.id}" selected 0 specifiers with scope "${scope}" — ` +
+          'the row would assert nothing',
+      )
+    }
+    const probeDir = path.join(sandbox, `matrix-${config.id.replace(/[^a-z0-9]+/gi, '-')}`)
+    mkdirSync(probeDir, { recursive: true })
+
+    writeFileSync(
+      path.join(probeDir, 'consumer.ts'),
+      specifiers
+        .map((spec, i) => `import * as m${i} from '${spec}'\nexport const v${i} = m${i}`)
+        .join('\n') + '\n',
+    )
+    writeFileSync(
+      path.join(probeDir, 'package.json'),
+      JSON.stringify(
+        {
+          name: 'matrix-probe',
+          private: true,
+          ...(config.consumerType === 'module' ? { type: 'module' } : {}),
+        },
+        null,
+        2,
+      ),
+    )
+    writeFileSync(
+      path.join(probeDir, 'tsconfig.json'),
+      JSON.stringify(
+        {
+          compilerOptions: {
+            ...config.compilerOptions,
+            target: 'es2022',
+            strict: true,
+            noEmit: true,
+            // TRUE here, unlike checkDeclarationResolution(): this pass asks whether an
+            // adopter's own file compiles, and skipLibCheck:true is what their scaffold
+            // sets. The declaration-quality question is that other pass's job.
+            skipLibCheck: true,
+            types: [],
+          },
+          files: ['consumer.ts'],
+        },
+        null,
+        2,
+      ),
+    )
+    symlinkSync(path.join(sandbox, 'node_modules'), path.join(probeDir, 'node_modules'), 'dir')
+
+    const run = spawnSync(process.execPath, [tsc, '-p', 'tsconfig.json'], {
+      cwd: probeDir,
+      encoding: 'utf8',
+    })
+    if (run.error) throw run.error
+    const output = `${run.stdout ?? ''}${run.stderr ?? ''}`
+    if (run.signal) {
+      throw new Error(`tsc was killed by signal ${run.signal} on config "${config.id}"`)
+    }
+    // Same broken-probe assertion the other type pass makes: a tsconfig diagnostic means
+    // tsc compiled nothing, which would score as a silent pass.
+    const probeConfigErrors = output
+      .split('\n')
+      .filter((line) => /^tsconfig\.json\([0-9]+,[0-9]+\): error TS[0-9]+:/.test(line.trim()))
+    if (probeConfigErrors.length > 0) {
+      throw new Error(
+        `the consumer-matrix probe's own tsconfig is broken on config "${config.id}", so ` +
+          `nothing was typechecked:\n${probeConfigErrors.join('\n')}`,
+      )
+    }
+
+    const codes = []
+    for (const line of output.split('\n')) {
+      const m = MATRIX_CONSUMER_RE.exec(line.trim())
+      if (m) codes.push(m[1])
+    }
+
+    // A `pass` row is scored purely by "no consumer.ts diagnostics", so ANY tsc failure
+    // whose output matches neither the tsconfig regex above nor the consumer regex —
+    // a crash stack, TS6053 (file not found), TS5083 (cannot read tsconfig) — scores
+    // codes=[] and reports OK. A clean pass row always exits 0, so requiring that
+    // closes the hole without constraining the `fail` rows, which exit non-zero by
+    // design.
+    //
+    // `codes.length === 0` is load-bearing, not belt-and-braces. tsc exits non-zero for
+    // ANY error, consumer.ts diagnostics included, so testing status alone fired on
+    // exactly the case this row exists to detect: a real regression in `esm + bundler`
+    // threw "broken probe" — naming the harness for a genuine package defect — and,
+    // because it throws, aborted the loop so no later config ran and the table never
+    // printed. Only a non-zero exit with NOTHING attributable to the consumer is a
+    // broken probe.
+    //
+    // Applies to `fail` rows too, deliberately. Gating this on expect === 'pass' meant a
+    // probe that broke on a pinned row (config-specific breakage; a global one throws on
+    // an earlier pass row) scored codes=[] and reported "the whole row now compiles
+    // cleanly" — a loud message with the wrong diagnosis. A non-zero exit explained by
+    // nothing in consumer.ts is a broken probe whatever the row expects.
+    if (run.status !== 0 && codes.length === 0) {
+      throw new Error(
+        `the consumer-matrix probe for config "${config.id}" exited ${run.status} but produced ` +
+          'no consumer diagnostics — that is a broken probe, not a clean run. Output:\n' +
+          (output.trim() || '(empty)'),
+      )
+    }
+
+    results.push({ config, codes, output, specifiers })
+  }
+
+  const problems = []
+  for (const { config, codes, specifiers } of results) {
+    if (config.expect === 'pass') {
+      if (codes.length > 0) {
+        problems.push(
+          `${config.id}: expected to compile, but tsc reported ${codes.length} diagnostic(s) ` +
+            `(${[...new Set(codes)].join(', ')}) against the consumer. ${config.why}`,
+        )
+      }
+      continue
+    }
+
+    // A pinned failure is asserted PER SPECIFIER, not "at least one diagnostic".
+    // tsc emits exactly one diagnostic per failing import here, so a fully-pinned row
+    // has codes.length === specifiers.length and every code equal to expectCode.
+    //
+    // "At least one" was the original shape and it was too weak, demonstrated by
+    // mutation: shipping a .d.cts for canopycms-cdk makes it consumable from a
+    // cjs+node16 project, and the row still printed OK on the remaining 16 while the
+    // docs table kept claiming node16 fails outright. A PARTIAL flip is exactly how
+    // this limitation would really lift — one subpath at a time — so it is the case
+    // the row most needs to catch.
+    const unexpected = [...new Set(codes.filter((c) => c !== config.expectCode))]
+    if (unexpected.length > 0) {
+      problems.push(
+        `${config.id}: expected every failure to be ${config.expectCode}, but also saw ` +
+          `${unexpected.join(', ')} — the limitation changed shape, or an unrelated error is ` +
+          'riding along and being masked by the expected one.',
+      )
+    }
+    const pinned = codes.filter((c) => c === config.expectCode).length
+    if (pinned !== specifiers.length) {
+      problems.push(
+        `${config.id}: PINNED as a known limitation, but only ${pinned} of ` +
+          `${specifiers.length} entry point(s) still fail with ${config.expectCode}` +
+          (pinned === 0
+            ? ' — the whole row now compiles cleanly.'
+            : ' — it lifted for some entry points but not others.') +
+          ' That is a real change in what adopters can do: update this entry and the ' +
+          `adopter-facing docs rather than deleting the row. ${config.why}`,
+      )
+    }
+  }
+  return { results, problems }
+}
+
+function main() {
+  checkCoverage()
+  checkPublishedConditions()
+
+  // Both read dist/ directly — no sandbox needed — so they run first and fail
+  // fast, before paying for buildSandbox() below.
+  checkDeclaredDependencies()
+  console.log('OK    every dist/ bare specifier is declared in its own package.json.\n')
+  checkNoStrayTestArtifacts()
+  console.log('OK    no test/story artifacts found in any dist/.\n')
+
+  const sandbox = buildSandbox()
+
+  const { body, count } = buildProbeScript()
+  console.log(`Resolving ${count} entry point(s) under real Node ESM (sandbox: ${sandbox})...\n`)
+  const results = runProbe(sandbox, 'probe.mjs', body)
+  if (reportProbe(results) > 0) {
     console.error(
-      `check:esm FAILED — ${failed}/${results.length} entry point(s) could not be imported ` +
+      `check:esm FAILED — entry point(s) could not be imported ` +
         'under real Node ESM. If tsc emitted an extensionless relative import ' +
         "(`from './x'` instead of `from './x.js'`), this is it — see " +
         'scripts/add-js-extensions.mjs.',
@@ -797,8 +1354,28 @@ function main() {
     // Sandbox left in place on failure for local debugging.
     process.exit(1)
   }
+  console.log(`Runtime (ESM): all ${results.length} entry point(s) imported cleanly.`)
 
-  console.log(`Runtime: all ${results.length} entry point(s) imported cleanly.`)
+  const { body: cjsBody, count: cjsCount } = buildRequireProbeScript()
+  console.log(`\nResolving ${cjsCount} entry point(s) under require() from CommonJS...\n`)
+  const cjsResults = runProbe(sandbox, 'probe.cjs', cjsBody)
+  if (reportProbe(cjsResults) > 0) {
+    console.error(
+      'check:esm FAILED — entry point(s) could not be require()d from a CommonJS ' +
+        'consumer. This is the shape a standard `cdk init app --language typescript` ' +
+        'project has, so it breaks `cdk synth`/`cdk deploy` at resolution.\n\n' +
+        'Two usual causes:\n' +
+        '  ERR_PACKAGE_PATH_NOT_EXPORTED — publishConfig.exports offers no "require"\n' +
+        '                              condition. When "exports" exists Node ignores "main",\n' +
+        '                              so an { types, import }-only map matches nothing.\n' +
+        '  ERR_REQUIRE_ASYNC_MODULE    — the condition is there but the module graph gained a\n' +
+        '                              top-level await, which require(esm) refuses. Remove the\n' +
+        '                              TLA, or ship a real CJS build for that entry point.',
+    )
+    // Sandbox left in place on failure for local debugging.
+    process.exit(1)
+  }
+  console.log(`Runtime (CJS): all ${cjsResults.length} entry point(s) require()d cleanly.`)
 
   const { specifiers, problems } = checkDeclarationResolution(sandbox)
   console.log(
@@ -827,7 +1404,55 @@ function main() {
     `  OK    declarations resolve under nodenext for all ${specifiers.length} entry point(s).`,
   )
 
-  console.log(`\ncheck:esm passed — runtime imports and nodenext type resolution both clean.`)
+  const matrix = checkConsumerMatrix(sandbox)
+  // Name the span explicitly. Every row compiles EVERY runtime-loadable entry point of
+  // ALL published packages, not just the CDK one the original defect surfaced through —
+  // print the counts so a reader of CI output can see that rather than take it on trust.
+  const matrixPackages = [
+    ...new Set(
+      matrix.results.flatMap(({ specifiers }) =>
+        // Scoped package names are irrelevant here (we publish none), so the first
+        // segment is the package name.
+        specifiers.map((s) => s.split('/')[0]),
+      ),
+    ),
+  ]
+  console.log(
+    `\nCompiling a consumer under ${CONSUMER_CONFIGS.length} adopter tsconfig shapes, ` +
+      `across all ${matrixPackages.length} published packages...\n`,
+  )
+  for (const { config, codes, specifiers } of matrix.results) {
+    const got = codes.length === 0 ? 'compiles' : [...new Set(codes)].join(', ')
+    // Mirrors checkConsumerMatrix's verdict exactly, including the per-specifier count
+    // for pinned rows — a display that scored a row differently from the check would
+    // report OK next to a failure, or the reverse.
+    const pinned = codes.filter((c) => c === config.expectCode).length
+    const asExpected =
+      config.expect === 'pass'
+        ? codes.length === 0
+        : pinned === specifiers.length && codes.length === pinned
+    const label =
+      config.expect === 'fail' ? `${got} ×${pinned}/${specifiers.length} (pinned limitation)` : got
+    const span = `${String(specifiers.length).padStart(2)} entry point(s)`
+    console.log(`  ${asExpected ? 'OK  ' : 'FAIL'}  ${config.id.padEnd(24)} ${span}  ${label}`)
+  }
+  console.log()
+  if (matrix.problems.length > 0) {
+    for (const p of matrix.problems) console.log(`  FAIL  ${p}`)
+    console.error(
+      '\ncheck:esm FAILED — the set of adopter project shapes that can consume these ' +
+        'packages changed. Every row above is a real configuration someone ships; a row ' +
+        'flipping in EITHER direction means the adopter-facing story moved, so fix the ' +
+        'package or update the row and the docs together.',
+    )
+    // Sandbox left in place on failure for local debugging.
+    process.exit(1)
+  }
+
+  console.log(
+    '\ncheck:esm passed — ESM imports, CommonJS requires, nodenext type resolution, ' +
+      `and all ${CONSUMER_CONFIGS.length} adopter tsconfig shapes.`,
+  )
   rmSync(sandbox, { recursive: true, force: true })
 }
 
