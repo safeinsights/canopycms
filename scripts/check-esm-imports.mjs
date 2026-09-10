@@ -362,6 +362,8 @@ function checkPublishedConditions() {
     // verbatim, so THAT is the published map and it still has to be checked.
     // Reading only publishConfig would silently check nothing for such a package —
     // the same shape of hole this whole file exists to close.
+    const usingDevMap = pkg.publishConfig?.exports === undefined
+    const mapName = usingDevMap ? 'exports' : 'publishConfig.exports'
     const publishedMap = pkg.publishConfig?.exports ?? pkg.exports ?? {}
     for (const [subpath, cond] of Object.entries(publishedMap)) {
       // A bare string target has no conditions to match against — it applies to
@@ -374,7 +376,7 @@ function checkPublishedConditions() {
         const keys = Object.keys(cond)
         if (!keys.includes('require') && !keys.includes('default')) {
           problems.push(
-            `${pkg.name}: publishConfig.exports "${subpath}" offers [${keys.join(', ')}] but no ` +
+            `${pkg.name}: ${mapName} "${subpath}" offers [${keys.join(', ')}] but no ` +
               '"require" (or "default") condition, so require() of it fails with ' +
               'ERR_PACKAGE_PATH_NOT_EXPORTED — add "require" pointing at the same file as ' +
               '"import" (or at a real .cjs build, as canopycms-next/config does)',
@@ -382,35 +384,75 @@ function checkPublishedConditions() {
         }
         if (keys.includes('types') && keys[0] !== 'types') {
           problems.push(
-            `${pkg.name}: publishConfig.exports "${subpath}" lists "types" at position ` +
+            `${pkg.name}: ${mapName} "${subpath}" lists "types" at position ` +
               `${keys.indexOf('types')} of [${keys.join(', ')}] — it must come FIRST, because ` +
               'resolvers take the first matching key and some ignore a later "types"',
           )
         }
-        for (const value of Object.values(cond)) {
-          if (typeof value === 'string') targets.push(value)
+        // Conditions nest, and the nested form is the standard shape for the very
+        // thing the message above recommends — `"require": { "types": "./x.d.cts",
+        // "default": "./x.cjs" }`. Collecting only top-level strings let a typo inside
+        // a nested object through completely green: neither existence-checked (not a
+        // string) nor refused (a nested object IS a plain object, so it never reached
+        // the else branch). Walk the whole subtree instead.
+        const collect = (node, trail) => {
+          if (typeof node === 'string') {
+            targets.push(node)
+            return
+          }
+          if (typeof node === 'object' && node !== null && !Array.isArray(node)) {
+            for (const [k, v] of Object.entries(node)) collect(v, `${trail}.${k}`)
+            return
+          }
+          problems.push(
+            `${pkg.name}: ${mapName} "${subpath}" has a non-string, non-object target at ` +
+              `${trail} (array fallbacks are not handled here) — this check cannot verify it, ` +
+              'so it refuses rather than passing it silently',
+          )
         }
+        for (const [k, v] of Object.entries(cond)) collect(v, k)
       } else {
         problems.push(
-          `${pkg.name}: publishConfig.exports "${subpath}" is neither a string nor a plain ` +
-            'condition object (array fallbacks and nested conditions are not handled here) — ' +
-            'this check cannot verify it, so it refuses rather than passing it silently',
+          `${pkg.name}: ${mapName} "${subpath}" is neither a string nor a plain condition ` +
+            'object (an array fallback, most likely) — this check cannot verify it, so it ' +
+            'refuses rather than passing it silently',
         )
         continue
       }
       // Presence of a condition is not reachability: a `require` key pointing at a
       // typo resolves to nothing. The probes cannot catch this on `skip` subpaths —
       // they are never loaded — so the ONLY thing standing behind those targets is
-      // this existence check. Verified by mutation: pointing ./client's require at
+      // this check. Verified by mutation: pointing ./client's require at
       // "./dist/cleint.js" passed every other check green.
+      //
+      // Existing on disk is necessary but NOT sufficient: `files` decides what the
+      // tarball carries. That gap is reachable through the dev-map fallback above,
+      // whose targets are `./src/*.ts` — real files that `files: ["dist"]` never
+      // ships, which is precisely the advertise-an-entry-point-the-build-never-emits
+      // shape this file exists to close.
+      const published = pkg.files ?? []
       for (const target of targets) {
         if (!target.startsWith('./')) continue // not a file reference we can resolve
-        if (existsSync(path.join(packageDir, target))) continue
-        problems.push(
-          `${pkg.name}: publishConfig.exports "${subpath}" names "${target}", which does not ` +
-            'exist in the built package — npm consumers get ERR_MODULE_NOT_FOUND (or, for a ' +
-            '"types" target, silently degraded types)',
-        )
+        const rel = target.slice(2)
+        if (!existsSync(path.join(packageDir, target))) {
+          problems.push(
+            `${pkg.name}: ${mapName} "${subpath}" names "${target}", which does not exist in ` +
+              'the built package — npm consumers get ERR_MODULE_NOT_FOUND (or, for a "types" ' +
+              'target, silently degraded types)',
+          )
+          continue
+        }
+        const shipped = published.some((entry) => {
+          const e = entry.replace(/^\.\//, '').replace(/\/$/, '')
+          return rel === e || rel.startsWith(`${e}/`)
+        })
+        if (!shipped) {
+          problems.push(
+            `${pkg.name}: ${mapName} "${subpath}" names "${target}", which exists locally but ` +
+              `is not covered by "files" [${published.join(', ')}] — it would be absent from ` +
+              'the published tarball, so this passes in-repo and fails for every npm consumer',
+          )
+        }
       }
     }
   }
@@ -1168,7 +1210,15 @@ function checkConsumerMatrix(sandbox) {
     // codes=[] and reports OK. A clean pass row always exits 0, so requiring that
     // closes the hole without constraining the `fail` rows, which exit non-zero by
     // design.
-    if (config.expect === 'pass' && run.status !== 0) {
+    //
+    // `codes.length === 0` is load-bearing, not belt-and-braces. tsc exits non-zero for
+    // ANY error, consumer.ts diagnostics included, so testing status alone fired on
+    // exactly the case this row exists to detect: a real regression in `esm + bundler`
+    // threw "broken probe" — naming the harness for a genuine package defect — and,
+    // because it throws, aborted the loop so no later config ran and the table never
+    // printed. Only a non-zero exit with NOTHING attributable to the consumer is a
+    // broken probe.
+    if (config.expect === 'pass' && run.status !== 0 && codes.length === 0) {
       throw new Error(
         `the consumer-matrix probe for config "${config.id}" exited ${run.status} but produced ` +
           'no consumer diagnostics — that is a broken probe, not a clean run. Output:\n' +
