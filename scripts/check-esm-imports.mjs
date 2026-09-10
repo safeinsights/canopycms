@@ -382,40 +382,53 @@ function checkPublishedConditions() {
               '"import" (or at a real .cjs build, as canopycms-next/config does)',
           )
         }
-        if (keys.includes('types') && keys[0] !== 'types') {
-          problems.push(
-            `${pkg.name}: ${mapName} "${subpath}" lists "types" at position ` +
-              `${keys.indexOf('types')} of [${keys.join(', ')}] — it must come FIRST, because ` +
-              'resolvers take the first matching key and some ignore a later "types"',
-          )
-        }
         // Conditions nest, and the nested form is the standard shape for the very
         // thing the message above recommends — `"require": { "types": "./x.d.cts",
         // "default": "./x.cjs" }`. Collecting only top-level strings let a typo inside
         // a nested object through completely green: neither existence-checked (not a
         // string) nor refused (a nested object IS a plain object, so it never reached
         // the else branch). Walk the whole subtree instead.
+        //
+        // The types-first rule is checked at EVERY level, not just the top: a resolver
+        // walks a nested object the same way, so `require: { default, types }` loses the
+        // types entry exactly as a top-level misordering does. Only the require/default
+        // requirement is top-level-only — a nested object under `require` has already
+        // matched that condition and does not need its own.
+        const checkOrder = (node, trail) => {
+          const nested = Object.keys(node)
+          if (nested.includes('types') && nested[0] !== 'types') {
+            problems.push(
+              `${pkg.name}: ${mapName} "${subpath}" lists "types" at position ` +
+                `${nested.indexOf('types')} of [${nested.join(', ')}]` +
+                (trail ? ` (inside "${trail}")` : '') +
+                ' — it must come FIRST, because resolvers take the first matching key and ' +
+                'some ignore a later "types"',
+            )
+          }
+        }
+        checkOrder(cond, '')
         const collect = (node, trail) => {
           if (typeof node === 'string') {
             targets.push(node)
             return
           }
           if (typeof node === 'object' && node !== null && !Array.isArray(node)) {
+            checkOrder(node, trail)
             for (const [k, v] of Object.entries(node)) collect(v, `${trail}.${k}`)
             return
           }
           problems.push(
-            `${pkg.name}: ${mapName} "${subpath}" has a non-string, non-object target at ` +
-              `${trail} (array fallbacks are not handled here) — this check cannot verify it, ` +
-              'so it refuses rather than passing it silently',
+            `${pkg.name}: ${mapName} "${subpath}" has a target at ${trail} that is neither a ` +
+              `string nor a condition object (${node === null ? 'null' : typeof node}) — this ` +
+              'check cannot verify it, so it refuses rather than passing it silently',
           )
         }
         for (const [k, v] of Object.entries(cond)) collect(v, k)
       } else {
         problems.push(
-          `${pkg.name}: ${mapName} "${subpath}" is neither a string nor a plain condition ` +
-            'object (an array fallback, most likely) — this check cannot verify it, so it ' +
-            'refuses rather than passing it silently',
+          `${pkg.name}: ${mapName} "${subpath}" is neither a string nor a condition object ` +
+            `(${cond === null ? 'null' : Array.isArray(cond) ? 'an array fallback' : typeof cond}) ` +
+            '— this check cannot verify it, so it refuses rather than passing it silently',
         )
         continue
       }
@@ -430,9 +443,32 @@ function checkPublishedConditions() {
       // whose targets are `./src/*.ts` — real files that `files: ["dist"]` never
       // ships, which is precisely the advertise-an-entry-point-the-build-never-emits
       // shape this file exists to close.
-      const published = pkg.files ?? []
+      // An absent `files` means npm ships everything not otherwise ignored, so there
+      // is nothing to assert — as opposed to `files: []`, which really does ship
+      // nothing. Conflating the two scored every target of a files-less package as
+      // unshipped.
+      const published = pkg.files
       for (const target of targets) {
-        if (!target.startsWith('./')) continue // not a file reference we can resolve
+        // Node requires every exports target to start with "./" and to contain no
+        // "."/".."/"node_modules" segment; anything else is ERR_INVALID_PACKAGE_TARGET
+        // at resolution time. Skipping those instead of reporting them meant a target
+        // like "dist/client.js" or "./dist/../src/client.ts" bypassed BOTH checks below
+        // in silence — on the `skip` subpaths, where this is the only backstop.
+        const invalid = !target.startsWith('./')
+          ? 'it does not start with "./"'
+          : target
+                .slice(2)
+                .split('/')
+                .some((s) => s === '.' || s === '..' || s === 'node_modules')
+            ? 'it contains a "."/".."/"node_modules" path segment'
+            : null
+        if (invalid) {
+          problems.push(
+            `${pkg.name}: ${mapName} "${subpath}" names "${target}", which is not a valid ` +
+              `exports target — ${invalid}. Node rejects it with ERR_INVALID_PACKAGE_TARGET.`,
+          )
+          continue
+        }
         const rel = target.slice(2)
         if (!existsSync(path.join(packageDir, target))) {
           problems.push(
@@ -442,9 +478,16 @@ function checkPublishedConditions() {
           )
           continue
         }
+        if (published === undefined) continue
         const shipped = published.some((entry) => {
-          const e = entry.replace(/^\.\//, '').replace(/\/$/, '')
-          return rel === e || rel.startsWith(`${e}/`)
+          // "." ships the whole package; a glob is honoured only up to its literal
+          // prefix, which is enough to tell "under dist/" from "not under dist/"
+          // without pulling in a glob matcher.
+          const e = entry.replace(/^\.\//, '').replace(/\/+$/, '')
+          if (e === '' || e === '.') return true
+          const literal = e.split(/[*?[]/)[0].replace(/\/+$/, '')
+          if (literal === '') return true // a leading glob could match anything
+          return rel === literal || rel.startsWith(`${literal}/`)
         })
         if (!shipped) {
           problems.push(
@@ -1218,7 +1261,13 @@ function checkConsumerMatrix(sandbox) {
     // because it throws, aborted the loop so no later config ran and the table never
     // printed. Only a non-zero exit with NOTHING attributable to the consumer is a
     // broken probe.
-    if (config.expect === 'pass' && run.status !== 0 && codes.length === 0) {
+    //
+    // Applies to `fail` rows too, deliberately. Gating this on expect === 'pass' meant a
+    // probe that broke on a pinned row (config-specific breakage; a global one throws on
+    // an earlier pass row) scored codes=[] and reported "the whole row now compiles
+    // cleanly" — a loud message with the wrong diagnosis. A non-zero exit explained by
+    // nothing in consumer.ts is a broken probe whatever the row expects.
+    if (run.status !== 0 && codes.length === 0) {
       throw new Error(
         `the consumer-matrix probe for config "${config.id}" exited ${run.status} but produced ` +
           'no consumer diagnostics — that is a broken probe, not a clean run. Output:\n' +
