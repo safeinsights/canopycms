@@ -24,8 +24,9 @@
   "publishConfig": {
     "exports": {
       ".": {
+        "types": "./dist/index.d.ts",
         "import": "./dist/index.js",
-        "types": "./dist/index.d.ts"
+        "require": "./dist/index.js"
       }
     }
   },
@@ -40,7 +41,7 @@
     "typecheck": "tsc --noEmit && tsc --noEmit -p lambda/tsconfig.json && tsc --noEmit -p canary/tsconfig.json && tsc --noEmit -p worker/tsconfig.json && tsc --noEmit -p test-support/tsconfig.json"
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=22"
   },
   "peerDependencies": {
     "canopycms": "workspace:*",

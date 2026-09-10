@@ -211,10 +211,13 @@ unaffected by this rule, since a nested layout is already inside `<body>`.
   `ClerkProvider`'s `afterSignOutUrl` or a `SignOutButton`.
 
 **Node version.** Choosing the 7.x/3.x line requires **Node >= 20.9.0** (Clerk's own
-`engines`). `canopycms-auth-clerk` still declares `engines.node >= 18`, deliberately —
-that is correct for the package itself and for the 6.x line, and narrowing it would
-exclude a Clerk-6-on-Node-18 adopter for no reason. The constraint comes from whichever
-peer you install, and your package manager will report it.
+`engines`). This used to note that `canopycms-auth-clerk` deliberately kept
+`engines.node >= 18` so as not to exclude a Clerk-6-on-Node-18 adopter; that reasoning is
+**superseded**. All five packages now declare `>= 22`, because they are ESM-only and reach
+CommonJS consumers through `require(esm)`, which older runtimes do not support — `>= 18`
+was never true for a CommonJS consumer of these packages, only for an ESM one. The Clerk
+peer constraint still comes from whichever line you install, and your package manager will
+report it.
 
 **Unchanged and still worth knowing:** `clerkMiddleware` requires a non-empty `secretKey`
 in 7.x as it did in 6.x (7.x actually dropped a fallback, so it is slightly stricter). See

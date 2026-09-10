@@ -1,9 +1,18 @@
 #!/usr/bin/env node
 /**
- * Regression guard for the extensionless-relative-import defect (see
- * scripts/add-js-extensions.mjs): actually resolves each published
- * package's entry points under Node's native ESM resolver and fails loudly
- * if any of them cannot be imported.
+ * Regression guard for two defect classes that share one root cause — the
+ * published package shape is never exercised by anything else in this repo.
+ * It resolves each published package's entry point three ways and fails loudly
+ * on any of them:
+ *
+ *   1. `import` under Node's native ESM resolver — the extensionless-relative-
+ *      import defect (see scripts/add-js-extensions.mjs).
+ *   2. `require()` from a real CommonJS consumer — the missing-"require"-
+ *      condition defect, which made every entry point unreachable from any
+ *      CommonJS project, our own `init-deploy` CDK scaffold included. See
+ *      checkPublishedConditions().
+ *   3. `import type` under moduleResolution:nodenext — see
+ *      checkDeclarationResolution().
  *
  * MUST run after `pnpm build` — it imports built dist/ output, not src/.
  *
@@ -309,6 +318,72 @@ function checkCoverage() {
   }
 }
 
+// Static half of the CommonJS-reachability guard (the behavioral half is the
+// require() probe in buildRequireProbeScript() below).
+//
+// When a package.json has an "exports" map, Node IGNORES "main" entirely, and a
+// require() resolves the conditions ["node", "require", "default"]. A map
+// offering only { types, import } therefore matches NOTHING on that path:
+// require('canopycms-cdk') dies with ERR_PACKAGE_PATH_NOT_EXPORTED before the
+// module is ever loaded. That shipped — every published entry point except
+// canopycms-next/config was unreachable from CommonJS.
+//
+// It bit hardest on the CDK package, and NOT only for adopters who wrote their
+// own CommonJS app (`cdk init app --language typescript` produces one, running
+// ts-node). Our OWN scaffold failed: cli/template-files/cdk.json.template runs
+// `node --import tsx infrastructure/bin/app.ts`, and tsx honors the nearest
+// package.json "type" — so in an adopter repo without "type": "module" (the
+// Next.js default, and what all three apps/ fixtures here are) that import
+// resolves through Node's CJS loader and `cdk synth`/`cdk deploy` both die at
+// resolution. Verified both directions against a published-shape sandbox: the
+// same scaffold succeeds pre-fix if the adopter's package.json DOES declare
+// "type": "module", which is exactly why this went unnoticed.
+//
+// Nothing about the code needed changing: once resolution gets past the gate,
+// Node loads these ESM files from require() perfectly well (require(esm), on any
+// Node reporting process.features.require_module — hence engines: node >=22,
+// matching the repo root and .nvmrc). Only the metadata refused.
+//
+// The require() probe below proves the 'test' subpaths genuinely load. This pass
+// covers the rest: 'skip' subpaths are client-only or need a bundler, so they
+// can never be exercised by either probe, and without this check they are
+// exactly where a missing condition would sit unnoticed. It also pins condition
+// ORDER — Node and TypeScript both take the first matching key, so a "types"
+// entry after "import" is ignored by some resolvers.
+function checkPublishedConditions() {
+  const problems = []
+  for (const { dir } of PACKAGES) {
+    const pkg = loadPackageJson(dir)
+    for (const [subpath, cond] of Object.entries(pkg.publishConfig?.exports ?? {})) {
+      // A bare string target has no conditions to match against — it applies to
+      // every condition, require() included — so there is nothing to check.
+      if (typeof cond !== 'object' || cond === null) continue
+      const keys = Object.keys(cond)
+      if (!keys.includes('require') && !keys.includes('default')) {
+        problems.push(
+          `${pkg.name}: publishConfig.exports "${subpath}" offers [${keys.join(', ')}] but no ` +
+            '"require" (or "default") condition, so require() of it fails with ' +
+            'ERR_PACKAGE_PATH_NOT_EXPORTED — add "require" pointing at the same file as "import" ' +
+            '(or at a real .cjs build, as canopycms-next/config does)',
+        )
+      }
+      if (keys.includes('types') && keys[0] !== 'types') {
+        problems.push(
+          `${pkg.name}: publishConfig.exports "${subpath}" lists "types" at position ` +
+            `${keys.indexOf('types')} of [${keys.join(', ')}] — it must come FIRST, because ` +
+            'resolvers take the first matching key and some ignore a later "types"',
+        )
+      }
+    }
+  }
+  if (problems.length > 0) {
+    throw new Error(
+      'check-esm-imports.mjs: published exports map(s) are not reachable from CommonJS:\n' +
+        problems.map((p) => `  - ${p}`).join('\n'),
+    )
+  }
+}
+
 // publishConfig fields override their top-level counterparts in the
 // published package.json — the same merge `npm publish`/`pnpm pack` perform.
 // Verified by diffing a real `pnpm pack` tarball's package.json against this.
@@ -591,6 +666,62 @@ console.log(JSON.stringify(results))
   return { body, count: imports.length }
 }
 
+// Behavioral half of the CommonJS-reachability guard (see
+// checkPublishedConditions() above for why this class exists and what it cost).
+//
+// Deliberately a real require() from a real .cjs file rather than an assertion
+// about package.json text, because the two failure modes it has to separate are
+// both invisible to text:
+//
+//   * ERR_PACKAGE_PATH_NOT_EXPORTED — the condition is missing. The static pass
+//     does catch this one, and this probe is the second instrument on it.
+//   * ERR_REQUIRE_ASYNC_MODULE — the condition is present and still a lie,
+//     because require(esm) refuses a graph containing top-level await. No amount
+//     of reading the exports map reveals that; only loading it does. Nothing in
+//     the current graph has TLA, and this is what keeps that true.
+//
+// Uses the same 'test'/'skip' classification as the ESM probe: every documented
+// skip reason (a CSS import Node's loader rejects, a `next/server` specifier
+// only a bundler resolves) is a property of the module, not of how it was
+// reached, so it applies identically to require().
+//
+// Why the workspace itself cannot see this, and why the guard has to be here:
+// Vitest resolves through Vite, which uses the `import` condition, so a full
+// test suite passes green against a package the Node CJS resolver cannot load
+// at all. The divergence is between the test runner's resolver and Node's, and
+// no assertion running inside the runner can reach it.
+function buildRequireProbeScript() {
+  const requires = []
+  for (const { dir, subpaths } of PACKAGES) {
+    const pkg = loadPackageJson(dir)
+    for (const [subpath, mode] of Object.entries(subpaths)) {
+      if (mode !== 'test') continue
+      const specifier = subpath === '.' ? pkg.name : `${pkg.name}${subpath.slice(1)}`
+      requires.push({ label: specifier, specifier })
+    }
+  }
+
+  const body = `
+const targets = ${JSON.stringify(requires, null, 2)}
+const results = []
+for (const { label, specifier } of targets) {
+  try {
+    require(specifier)
+    results.push({ label, ok: true })
+  } catch (err) {
+    const code = err && err.code ? err.code + ' ' : ''
+    results.push({
+      label,
+      ok: false,
+      error: code + (err instanceof Error ? err.message : String(err)),
+    })
+  }
+}
+console.log(JSON.stringify(results))
+`
+  return { body, count: requires.length }
+}
+
 // Second guard, for the OTHER half of the same defect: the emitted .d.ts.
 //
 // The runtime probe above cannot see this. A .d.ts with an extensionless
@@ -742,39 +873,30 @@ function checkDeclarationResolution(sandbox) {
   return { specifiers, problems }
 }
 
-function main() {
-  checkCoverage()
-
-  // Both read dist/ directly — no sandbox needed — so they run first and fail
-  // fast, before paying for buildSandbox() below.
-  checkDeclaredDependencies()
-  console.log('OK    every dist/ bare specifier is declared in its own package.json.\n')
-  checkNoStrayTestArtifacts()
-  console.log('OK    no test/story artifacts found in any dist/.\n')
-
-  const sandbox = buildSandbox()
-  const { body, count } = buildProbeScript()
-  const probePath = path.join(sandbox, 'probe.mjs')
+// Write a probe into the sandbox, run it, and parse its JSON verdict.
+//
+// The status/stdout assertion is not ceremony: a probe that dies before
+// printing (a broken sandbox, an OOM kill) exits non-zero with no parseable
+// output, and treating that as "no failures" would turn the guard into a
+// permanent silent no-op — the same way the type pass could once report OK for
+// an empty result. Fail loudly instead.
+function runProbe(sandbox, fileName, body) {
+  const probePath = path.join(sandbox, fileName)
   writeFileSync(probePath, body)
 
-  console.log(`Resolving ${count} entry point(s) under real Node ESM (sandbox: ${sandbox})...\n`)
-
-  const result = spawnSync(process.execPath, [probePath], {
-    cwd: sandbox,
-    encoding: 'utf8',
-  })
-
-  if (result.error) {
-    throw result.error
-  }
+  const result = spawnSync(process.execPath, [probePath], { cwd: sandbox, encoding: 'utf8' })
+  if (result.error) throw result.error
   if (result.status !== 0 || !result.stdout?.trim()) {
-    console.error('Probe process failed to run:')
+    console.error(`Probe process (${fileName}) failed to run:`)
     console.error(result.stdout)
     console.error(result.stderr)
     process.exit(1)
   }
+  return JSON.parse(result.stdout.trim())
+}
 
-  const results = JSON.parse(result.stdout.trim())
+// Print one probe's results; returns how many entry points failed.
+function reportProbe(results) {
   let failed = 0
   for (const { label, ok, error } of results) {
     if (ok) {
@@ -785,11 +907,29 @@ function main() {
       console.log(`        ${error.split('\n')[0]}`)
     }
   }
-
   console.log()
-  if (failed > 0) {
+  return failed
+}
+
+function main() {
+  checkCoverage()
+  checkPublishedConditions()
+
+  // Both read dist/ directly — no sandbox needed — so they run first and fail
+  // fast, before paying for buildSandbox() below.
+  checkDeclaredDependencies()
+  console.log('OK    every dist/ bare specifier is declared in its own package.json.\n')
+  checkNoStrayTestArtifacts()
+  console.log('OK    no test/story artifacts found in any dist/.\n')
+
+  const sandbox = buildSandbox()
+
+  const { body, count } = buildProbeScript()
+  console.log(`Resolving ${count} entry point(s) under real Node ESM (sandbox: ${sandbox})...\n`)
+  const results = runProbe(sandbox, 'probe.mjs', body)
+  if (reportProbe(results) > 0) {
     console.error(
-      `check:esm FAILED — ${failed}/${results.length} entry point(s) could not be imported ` +
+      `check:esm FAILED — entry point(s) could not be imported ` +
         'under real Node ESM. If tsc emitted an extensionless relative import ' +
         "(`from './x'` instead of `from './x.js'`), this is it — see " +
         'scripts/add-js-extensions.mjs.',
@@ -797,8 +937,28 @@ function main() {
     // Sandbox left in place on failure for local debugging.
     process.exit(1)
   }
+  console.log(`Runtime (ESM): all ${results.length} entry point(s) imported cleanly.`)
 
-  console.log(`Runtime: all ${results.length} entry point(s) imported cleanly.`)
+  const { body: cjsBody, count: cjsCount } = buildRequireProbeScript()
+  console.log(`\nResolving ${cjsCount} entry point(s) under require() from CommonJS...\n`)
+  const cjsResults = runProbe(sandbox, 'probe.cjs', cjsBody)
+  if (reportProbe(cjsResults) > 0) {
+    console.error(
+      'check:esm FAILED — entry point(s) could not be require()d from a CommonJS ' +
+        'consumer. This is the shape a standard `cdk init app --language typescript` ' +
+        'project has, so it breaks `cdk synth`/`cdk deploy` at resolution.\n\n' +
+        'Two usual causes:\n' +
+        '  ERR_PACKAGE_PATH_NOT_EXPORTED — publishConfig.exports offers no "require"\n' +
+        '                              condition. When "exports" exists Node ignores "main",\n' +
+        '                              so an { types, import }-only map matches nothing.\n' +
+        '  ERR_REQUIRE_ASYNC_MODULE    — the condition is there but the module graph gained a\n' +
+        '                              top-level await, which require(esm) refuses. Remove the\n' +
+        '                              TLA, or ship a real CJS build for that entry point.',
+    )
+    // Sandbox left in place on failure for local debugging.
+    process.exit(1)
+  }
+  console.log(`Runtime (CJS): all ${cjsResults.length} entry point(s) require()d cleanly.`)
 
   const { specifiers, problems } = checkDeclarationResolution(sandbox)
   console.log(
@@ -827,7 +987,10 @@ function main() {
     `  OK    declarations resolve under nodenext for all ${specifiers.length} entry point(s).`,
   )
 
-  console.log(`\ncheck:esm passed — runtime imports and nodenext type resolution both clean.`)
+  console.log(
+    '\ncheck:esm passed — ESM imports, CommonJS requires, and nodenext type ' +
+      'resolution all clean.',
+  )
   rmSync(sandbox, { recursive: true, force: true })
 }
 

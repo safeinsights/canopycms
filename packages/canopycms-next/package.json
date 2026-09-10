@@ -28,16 +28,18 @@
     "exports": {
       ".": {
         "types": "./dist/index.d.ts",
-        "import": "./dist/index.js"
+        "import": "./dist/index.js",
+        "require": "./dist/index.js"
       },
       "./client": {
         "types": "./dist/client.d.ts",
-        "import": "./dist/client.js"
+        "import": "./dist/client.js",
+        "require": "./dist/client.js"
       },
       "./config": {
         "types": "./dist/config.d.ts",
-        "require": "./dist/config.cjs",
-        "import": "./dist/config.mjs"
+        "import": "./dist/config.mjs",
+        "require": "./dist/config.cjs"
       }
     }
   },
@@ -49,7 +51,7 @@
     "typecheck": "tsc --noEmit"
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=22"
   },
   "peerDependencies": {
     "canopycms": "workspace:*",

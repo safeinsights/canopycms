@@ -16,7 +16,7 @@ A schema-driven, branch-aware content management system for git-backed, statical
 
 - **Next.js**: `^13.5.7`, `^14.2.25`, `^15.2.3`, or `16.x` excluding `16.2.x` (see [Known-bad version: Next 16.2.x](#known-bad-version-next-162x) below). This is `canopycms-next`'s `next` peer dependency range -- installing a version outside it triggers your package manager's peer-dependency warning.
 - **React**: `^18.0.0` or `^19.0.0`
-- **Node.js**: `>=18` to consume the published packages; `>=22` to work in this monorepo (see `.nvmrc`).
+- **Node.js**: `>=22`, both to consume the published packages and to work in this monorepo (see `.nvmrc`). The packages are ESM-only and reach CommonJS consumers through `require(esm)`, which needs a Node reporting `process.features.require_module` — so a CommonJS project (a stock `cdk init` app, for instance) cannot load them on older runtimes.
 
 ### Known-bad version: Next 16.2.x
 
