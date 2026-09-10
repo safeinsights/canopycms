@@ -213,7 +213,7 @@ unaffected by this rule, since a nested layout is already inside `<body>`.
 **Node version.** Choosing the 7.x/3.x line requires **Node >= 20.9.0** (Clerk's own
 `engines`). This used to note that `canopycms-auth-clerk` deliberately kept
 `engines.node >= 18` so as not to exclude a Clerk-6-on-Node-18 adopter; that reasoning is
-**superseded**. All five packages now declare `>= 22`, because they are ESM-only and reach
+**superseded**. All five packages now declare `>= 22.12.0`, because they are ESM-only and reach
 CommonJS consumers through `require(esm)`, which older runtimes do not support — `>= 18`
 was never true for a CommonJS consumer of these packages, only for an ESM one. The Clerk
 peer constraint still comes from whichever line you install, and your package manager will

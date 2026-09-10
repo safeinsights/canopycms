@@ -2,7 +2,7 @@
 /**
  * Regression guard for two defect classes that share one root cause — the
  * published package shape is never exercised by anything else in this repo.
- * It resolves each published package's entry point three ways and fails loudly
+ * It resolves each published package's entry point four ways and fails loudly
  * on any of them:
  *
  *   1. `import` under Node's native ESM resolver — the extensionless-relative-
@@ -13,6 +13,8 @@
  *      checkPublishedConditions().
  *   3. `import type` under moduleResolution:nodenext — see
  *      checkDeclarationResolution().
+ *   4. a VALUE import from a generated consumer, under each adopter tsconfig
+ *      shape in CONSUMER_CONFIGS — see checkConsumerMatrix().
  *
  * MUST run after `pnpm build` — it imports built dist/ output, not src/.
  *
@@ -340,9 +342,10 @@ function checkCoverage() {
 // "type": "module", which is exactly why this went unnoticed.
 //
 // Nothing about the code needed changing: once resolution gets past the gate,
-// Node loads these ESM files from require() perfectly well (require(esm), on any
-// Node reporting process.features.require_module — hence engines: node >=22,
-// matching the repo root and .nvmrc). Only the metadata refused.
+// Node loads these ESM files from require() perfectly well — require(esm), which
+// Node unflagged in 22.12.0, hence engines: node >=22.12.0 on every published
+// package and on the repo root (this script's own CJS probe needs it too).
+// Only the metadata refused.
 //
 // The require() probe below proves the 'test' subpaths genuinely load. This pass
 // covers the rest: 'skip' subpaths are client-only or need a bundler, so they
@@ -1120,8 +1123,9 @@ const CONSUMER_CONFIGS = [
       'and after the "require" condition was added. `module: node16` is pinned to Node 16 ' +
       'semantics, where require(esm) does not exist, so TypeScript refuses any value ' +
       'import of an ESM-only package from a CommonJS file. The package being ESM-only is ' +
-      'the cause. An adopter on node16 must use `nodenext`, `node10`, or a dynamic ' +
-      'import(). If this ever starts passing, TypeScript changed its mind and the ' +
+      'the cause. An adopter on node16 must use `nodenext` or a dynamic import() — NOT ' +
+      'node10, which resolves only the root entry (see the node10 subpath row, pinned ' +
+      'to TS2307). If this ever starts passing, TypeScript changed its mind and the ' +
       'adopter-facing docs should say so.',
   },
 ]

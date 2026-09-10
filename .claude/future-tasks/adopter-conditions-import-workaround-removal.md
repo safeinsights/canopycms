@@ -2,7 +2,7 @@
 
 Created 2026-09-09, alongside the fix for the missing `require` condition in every
 published package's `publishConfig.exports` (branch
-`claude/canopycms-cdk-exports-commonjs-8a3afa`). This is the half that lives in the
+`fix/published-exports-commonjs`, PR #308). This is the half that lives in the
 **adopter infrastructure repos**, not here, which is why it is a task rather than part
 of that change.
 
