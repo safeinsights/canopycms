@@ -3552,6 +3552,21 @@ Each package's `build` script runs `rm -rf dist` before `tsc`: bare `tsc` never 
 
 Nothing else in this repo can see that class. Vitest resolves through Vite, and the example apps through webpack/Turbopack; **all of them use the `import` condition**, so a fully green test suite and a working example app say nothing about whether a CommonJS consumer can load the package at all. The guard therefore runs a real `require()` from a real `.cjs` file in the same sandbox, alongside a static pass asserting every published subpath carries a `require` (or `default`) condition -- the static half covers the `skip` subpaths no probe can execute, and the behavioral half catches what no amount of reading `package.json` reveals: a module graph that grows a top-level `await` keeps a perfectly valid `require` condition and still fails, because `require(esm)` refuses async graphs (`ERR_REQUIRE_ASYNC_MODULE`). Verify the guard still bites by appending `await Promise.resolve()` to a built `dist/index.js`: the ESM probe should stay green and the CJS probe go red.
 
+**And it compiles a consumer under six real adopter tsconfig shapes.** The probes above answer "can Node load this"; they do not answer the question an adopter actually has, which is whether `import { X } from 'canopycms-cdk'` compiles in the project shape they have. Those answers genuinely differ, so the matrix pins all six — value imports, not `import type`, because a type-only import is erased and never produces the interop diagnostic that is the whole point:
+
+| Consumer | `module` / `moduleResolution`             | Result                                      |
+| -------- | ----------------------------------------- | ------------------------------------------- |
+| ESM      | `nodenext`                                | compiles                                    |
+| ESM      | `esnext` / `bundler`                      | compiles — what `create-next-app` gives you |
+| CommonJS | `commonjs` / `node10`, **root specifier** | compiles, via `main`/`types`                |
+| CommonJS | `commonjs` / `node10`, **subpath**        | **`TS2307` — pinned limitation**            |
+| CommonJS | `nodenext`                                | compiles                                    |
+| CommonJS | `node16`                                  | **`TS1479` — pinned limitation**            |
+
+The two pinned rows are **not** tolerated failures: a row flipping in _either_ direction fails the check, because either means the adopter-facing story moved and the docs describing it are now wrong. Neither is caused by the `exports` map. `node16` is pinned to Node 16 semantics, where `require(esm)` does not exist, so TypeScript refuses any value import of an ESM-only package from a CommonJS file — verified byte-identical before and after the `require` condition was added; the cause is the package being ESM-only, and the fix for an adopter is `nodenext`, `node10`, or a dynamic `import()`. `node10` predates `exports` and ignores it entirely, so it looks for a _physical_ `node_modules/canopycms/server.js` while our files live under `dist/`; supporting it would mean stub directories or `typesVersions`, legacy compat this project does not carry.
+
+That `node10` root row is worth understanding rather than just keeping green: it compiles through `main`, which is exactly why `tsc` stayed happy for the entire period when Node could not load the package at all. A green typecheck told the adopter nothing. That divergence is the defect this whole file exists to catch.
+
 **A third thing the check enforces: publish-status coverage.** Every `exports` subpath of
 every published package must be declared in [scripts/check-esm-imports.mjs](scripts/check-esm-imports.mjs)'s
 `PACKAGES` list as exactly one of `test` (imported live under Node), `skip: <reason>`

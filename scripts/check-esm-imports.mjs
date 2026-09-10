@@ -911,6 +911,239 @@ function reportProbe(results) {
   return failed
 }
 
+// ---------------------------------------------------------------------------
+// Consumer-configuration matrix.
+//
+// The two runtime probes answer "can Node load this", and checkDeclarationResolution()
+// answers "do our .d.ts files resolve". Neither answers the question an adopter
+// actually has: does `import { X } from 'canopycms-cdk'` COMPILE in the project shape
+// they have? That depends on their tsconfig, and the answers genuinely differ — this
+// matrix exists because they differ.
+//
+// Deliberately VALUE imports, not `import type`. A type-only import is erased, so it
+// never produces the CJS/ESM interop diagnostic that is the whole point here;
+// checkDeclarationResolution() uses `import type` because it is asking a different
+// question (does the declaration graph resolve). An adopter writes a value import.
+//
+// `expect: 'fail'` entries are not tolerated failures — they are PINNED limitations.
+// A config that starts passing fails this check just as loudly as one that starts
+// failing, because either direction means the adopter-facing story changed and the
+// docs that describe it are now wrong.
+//
+// `scope` picks which specifiers a row compiles: 'root' is the bare package name,
+// 'subpath' is everything below it, 'all' is both. It exists because node10 splits
+// exactly along that line — see the two node10 rows.
+const CONSUMER_CONFIGS = [
+  {
+    id: 'esm + nodenext',
+    consumerType: 'module',
+    compilerOptions: { module: 'nodenext', moduleResolution: 'nodenext' },
+    expect: 'pass',
+    why: 'A modern ESM adopter. Resolves our "import" condition.',
+  },
+  {
+    id: 'esm + bundler',
+    consumerType: 'module',
+    compilerOptions: { module: 'esnext', moduleResolution: 'bundler' },
+    expect: 'pass',
+    why: 'What a Next.js adopter gets from `create-next-app`, and the most common shape.',
+  },
+  {
+    id: 'cjs + node10 (root)',
+    consumerType: 'commonjs',
+    scope: 'root',
+    compilerOptions: { module: 'commonjs', moduleResolution: 'node10' },
+    expect: 'pass',
+    why:
+      'A stock `cdk init app --language typescript` project importing a bare package name. ' +
+      'node10 predates "exports" and ignores it entirely, resolving through "main"/"types" ' +
+      '— which is why TypeScript stayed happy here all through the period when Node could ' +
+      'not load the package at all. That divergence IS the defect this file guards: a green ' +
+      'tsc told the adopter nothing. Keep "main"/"types" pointing at the real entry.',
+  },
+  {
+    id: 'cjs + node10 (subpath)',
+    consumerType: 'commonjs',
+    scope: 'subpath',
+    compilerOptions: { module: 'commonjs', moduleResolution: 'node10' },
+    expect: 'fail',
+    expectCode: 'TS2307',
+    why:
+      'PINNED LIMITATION, and NOT caused by the exports map — node10 does not read ' +
+      '"exports" at all, and this commit changed nothing else it reads (verified: top-level ' +
+      '"main"/"types"/"files" are untouched). Ignoring "exports" means node10 looks for a ' +
+      'PHYSICAL node_modules/canopycms/server.js, but our files live under dist/, so every ' +
+      'subpath misses. Supporting it would mean shipping stub directories or typesVersions ' +
+      '— legacy compat this project explicitly does not carry. An adopter needing subpaths ' +
+      'must move off node10, which TypeScript already discourages.',
+  },
+  {
+    id: 'cjs + nodenext',
+    consumerType: 'commonjs',
+    compilerOptions: { module: 'nodenext', moduleResolution: 'nodenext' },
+    expect: 'pass',
+    why:
+      'A CommonJS project on current TypeScript. nodenext models a Node that supports ' +
+      'require(esm), so importing our ESM-only package from CJS is allowed.',
+  },
+  {
+    id: 'cjs + node16',
+    consumerType: 'commonjs',
+    compilerOptions: { module: 'node16', moduleResolution: 'node16' },
+    expect: 'fail',
+    expectCode: 'TS1479',
+    why:
+      'PINNED LIMITATION, and NOT caused by the exports map — verified identical before ' +
+      'and after the "require" condition was added. `module: node16` is pinned to Node 16 ' +
+      'semantics, where require(esm) does not exist, so TypeScript refuses any value ' +
+      'import of an ESM-only package from a CommonJS file. The package being ESM-only is ' +
+      'the cause. An adopter on node16 must use `nodenext`, `node10`, or a dynamic ' +
+      'import(). If this ever starts passing, TypeScript changed its mind and the ' +
+      'adopter-facing docs should say so.',
+  },
+]
+
+// Count every diagnostic attributed to consumer.ts: that file is generated here and
+// imports nothing but our own packages, so each one is ours by construction. Third-party
+// noise (the probe sets `types: []`, so dependency declarations emit unrelated errors)
+// is attributed to other paths and ignored, exactly as in checkDeclarationResolution().
+const MATRIX_CONSUMER_RE = /^consumer\.ts\([0-9]+,[0-9]+\): error (TS[0-9]+):/
+
+function checkConsumerMatrix(sandbox) {
+  const tsc = path.join(repoRoot, 'node_modules', 'typescript', 'bin', 'tsc')
+  if (!existsSync(tsc)) {
+    throw new Error(`typescript not found at ${tsc} — run \`pnpm install\` first`)
+  }
+
+  // Published, runtime-loadable entry points. Restricted to `test` subpaths because a
+  // value import of a `skip` entry (client-only UI, a next/server specifier) says
+  // nothing about consumer configuration — those are module limitations, already
+  // documented in PACKAGES, and they would fire in every row identically.
+  const allSpecifiers = []
+  for (const { dir, subpaths } of PACKAGES) {
+    const pkg = loadPackageJson(dir)
+    for (const [subpath, mode] of Object.entries(subpaths)) {
+      if (mode !== 'test') continue
+      allSpecifiers.push({
+        specifier: subpath === '.' ? pkg.name : `${pkg.name}${subpath.slice(1)}`,
+        isRoot: subpath === '.',
+      })
+    }
+  }
+
+  const results = []
+  for (const config of CONSUMER_CONFIGS) {
+    const scope = config.scope ?? 'all'
+    const specifiers = allSpecifiers
+      .filter((s) => scope === 'all' || (scope === 'root' ? s.isRoot : !s.isRoot))
+      .map((s) => s.specifier)
+    // A scope that selects nothing would make the row vacuous — it would "pass" having
+    // compiled an empty file, or "fail" for reasons unrelated to any specifier.
+    if (specifiers.length === 0) {
+      throw new Error(
+        `consumer-matrix config "${config.id}" selected 0 specifiers with scope "${scope}" — ` +
+          'the row would assert nothing',
+      )
+    }
+    const probeDir = path.join(sandbox, `matrix-${config.id.replace(/[^a-z0-9]+/gi, '-')}`)
+    mkdirSync(probeDir, { recursive: true })
+
+    writeFileSync(
+      path.join(probeDir, 'consumer.ts'),
+      specifiers
+        .map((spec, i) => `import * as m${i} from '${spec}'\nexport const v${i} = m${i}`)
+        .join('\n') + '\n',
+    )
+    writeFileSync(
+      path.join(probeDir, 'package.json'),
+      JSON.stringify(
+        {
+          name: 'matrix-probe',
+          private: true,
+          ...(config.consumerType === 'module' ? { type: 'module' } : {}),
+        },
+        null,
+        2,
+      ),
+    )
+    writeFileSync(
+      path.join(probeDir, 'tsconfig.json'),
+      JSON.stringify(
+        {
+          compilerOptions: {
+            ...config.compilerOptions,
+            target: 'es2022',
+            strict: true,
+            noEmit: true,
+            // TRUE here, unlike checkDeclarationResolution(): this pass asks whether an
+            // adopter's own file compiles, and skipLibCheck:true is what their scaffold
+            // sets. The declaration-quality question is that other pass's job.
+            skipLibCheck: true,
+            types: [],
+          },
+          files: ['consumer.ts'],
+        },
+        null,
+        2,
+      ),
+    )
+    symlinkSync(path.join(sandbox, 'node_modules'), path.join(probeDir, 'node_modules'), 'dir')
+
+    const run = spawnSync(process.execPath, [tsc, '-p', 'tsconfig.json'], {
+      cwd: probeDir,
+      encoding: 'utf8',
+    })
+    if (run.error) throw run.error
+    const output = `${run.stdout ?? ''}${run.stderr ?? ''}`
+    if (run.signal) {
+      throw new Error(`tsc was killed by signal ${run.signal} on config "${config.id}"`)
+    }
+    // Same broken-probe assertion the other type pass makes: a tsconfig diagnostic means
+    // tsc compiled nothing, which would score as a silent pass.
+    const probeConfigErrors = output
+      .split('\n')
+      .filter((line) => /^tsconfig\.json\([0-9]+,[0-9]+\): error TS[0-9]+:/.test(line.trim()))
+    if (probeConfigErrors.length > 0) {
+      throw new Error(
+        `the consumer-matrix probe's own tsconfig is broken on config "${config.id}", so ` +
+          `nothing was typechecked:\n${probeConfigErrors.join('\n')}`,
+      )
+    }
+
+    const codes = []
+    for (const line of output.split('\n')) {
+      const m = MATRIX_CONSUMER_RE.exec(line.trim())
+      if (m) codes.push(m[1])
+    }
+    results.push({ config, codes, output })
+  }
+
+  const problems = []
+  for (const { config, codes } of results) {
+    const failed = codes.length > 0
+    if (config.expect === 'pass' && failed) {
+      problems.push(
+        `${config.id}: expected to compile, but tsc reported ${codes.length} diagnostic(s) ` +
+          `(${[...new Set(codes)].join(', ')}) against the consumer. ${config.why}`,
+      )
+    }
+    if (config.expect === 'fail' && !failed) {
+      problems.push(
+        `${config.id}: this config is PINNED as a known limitation, but it now compiles ` +
+          'cleanly. That is a real change in what adopters can do — update this entry and ' +
+          `the adopter-facing docs rather than deleting the row. ${config.why}`,
+      )
+    }
+    if (config.expect === 'fail' && failed && !codes.includes(config.expectCode)) {
+      problems.push(
+        `${config.id}: expected to fail with ${config.expectCode}, but failed with ` +
+          `${[...new Set(codes)].join(', ')} instead — the limitation changed shape.`,
+      )
+    }
+  }
+  return { results, problems }
+}
+
 function main() {
   checkCoverage()
   checkPublishedConditions()
@@ -987,9 +1220,33 @@ function main() {
     `  OK    declarations resolve under nodenext for all ${specifiers.length} entry point(s).`,
   )
 
+  const matrix = checkConsumerMatrix(sandbox)
   console.log(
-    '\ncheck:esm passed — ESM imports, CommonJS requires, and nodenext type ' +
-      'resolution all clean.',
+    `\nCompiling a consumer under ${CONSUMER_CONFIGS.length} adopter tsconfig shapes...\n`,
+  )
+  for (const { config, codes } of matrix.results) {
+    const got = codes.length === 0 ? 'compiles' : [...new Set(codes)].join(', ')
+    const asExpected =
+      config.expect === 'pass' ? codes.length === 0 : codes.includes(config.expectCode)
+    const label = config.expect === 'fail' ? `${got} (pinned limitation)` : got
+    console.log(`  ${asExpected ? 'OK  ' : 'FAIL'}  ${config.id.padEnd(24)} ${label}`)
+  }
+  console.log()
+  if (matrix.problems.length > 0) {
+    for (const p of matrix.problems) console.log(`  FAIL  ${p}`)
+    console.error(
+      '\ncheck:esm FAILED — the set of adopter project shapes that can consume these ' +
+        'packages changed. Every row above is a real configuration someone ships; a row ' +
+        'flipping in EITHER direction means the adopter-facing story moved, so fix the ' +
+        'package or update the row and the docs together.',
+    )
+    // Sandbox left in place on failure for local debugging.
+    process.exit(1)
+  }
+
+  console.log(
+    '\ncheck:esm passed — ESM imports, CommonJS requires, nodenext type resolution, ' +
+      `and all ${CONSUMER_CONFIGS.length} adopter tsconfig shapes.`,
   )
   rmSync(sandbox, { recursive: true, force: true })
 }
