@@ -9,7 +9,12 @@ import { RetentionDays } from 'aws-cdk-lib/aws-logs'
 import { HttpOrigin } from 'aws-cdk-lib/aws-cloudfront-origins'
 import { describe, expect, it } from 'vitest'
 
-import { AssetSupport, ASSETS_PATH_PATTERN, ASSETS_TRANSFORM_PATH_PATTERN } from './asset-support'
+import {
+  AssetSupport,
+  assetUploadBehavior,
+  ASSETS_PATH_PATTERN,
+  ASSETS_TRANSFORM_PATH_PATTERN,
+} from './asset-support'
 import { newTestApp } from '../../test-support/test-synth'
 
 const EDITOR_ORIGINS = ['http://localhost:3000']
@@ -1290,5 +1295,353 @@ describe('AssetSupport - editorOrigins is optional, but not absent-by-accident',
           bucket,
         }),
     ).not.toThrow()
+  })
+})
+
+describe('assetUploadBehavior() - the upload route from a bucket alone', () => {
+  /** The whole point: a bucket, a behavior, and nothing else in the stack. */
+  function synthStandaloneUpload(options?: { allowedOrigins?: string[]; bucketName?: string }) {
+    const stack = makeStack()
+    const bucket = options?.bucketName
+      ? s3.Bucket.fromBucketName(stack, 'Existing', options.bucketName)
+      : new s3.Bucket(stack, 'AssetBucket')
+    const behavior = assetUploadBehavior(stack, {
+      bucket,
+      ...(options?.allowedOrigins ? { allowedOrigins: options.allowedOrigins } : {}),
+    })
+    new cloudfront.Distribution(stack, 'UploadDist', { defaultBehavior: behavior })
+    const template = Template.fromStack(stack)
+    const distribution = Object.values(template.findResources('AWS::CloudFront::Distribution'))[0]
+    const config = distribution.Properties.DistributionConfig as {
+      DefaultCacheBehavior: EmittedBehavior
+      Origins: EmittedOrigin[]
+    }
+    return { stack, template, behavior, config }
+  }
+
+  it('builds the upload route with no transform Lambda, no role, no log group', () => {
+    const { template } = synthStandaloneUpload()
+
+    // The request this function exists to answer. Reaching the same behavior
+    // through `AssetSupport` costs every one of these, for a function that
+    // this topology never invokes.
+    template.resourceCountIs('AWS::Lambda::Function', 0)
+    template.resourceCountIs('AWS::Lambda::Url', 0)
+    template.resourceCountIs('AWS::IAM::Role', 0)
+    template.resourceCountIs('AWS::IAM::Policy', 0)
+    template.resourceCountIs('AWS::Logs::LogGroup', 0)
+
+    // ...while still emitting the whole upload route.
+    template.resourceCountIs('AWS::CloudFront::Function', 1)
+    template.resourceCountIs('AWS::CloudFront::OriginRequestPolicy', 1)
+    template.resourceCountIs('AWS::CloudFront::ResponseHeadersPolicy', 1)
+    template.resourceCountIs('AWS::CloudFront::Distribution', 1)
+  })
+
+  it('emits the unsigned custom origin, and no origin access control', () => {
+    const { config, template } = synthStandaloneUpload()
+
+    expect(config.Origins).toHaveLength(1)
+    const origin = config.Origins[0]
+    expect(origin.OriginAccessControlId).toBeUndefined()
+    expect(origin.S3OriginConfig).toBeUndefined()
+    expect(origin.CustomOriginConfig?.OriginProtocolPolicy).toBe('https-only')
+    template.resourceCountIs('AWS::CloudFront::OriginAccessControl', 0)
+  })
+
+  it('takes ALLOW_ALL and HTTPS_ONLY, so a POST is neither 405 nor silently degraded to GET', () => {
+    const { config } = synthStandaloneUpload()
+
+    expect([...(config.DefaultCacheBehavior.AllowedMethods ?? [])].sort()).toEqual(
+      ['DELETE', 'GET', 'HEAD', 'OPTIONS', 'PATCH', 'POST', 'PUT'].sort(),
+    )
+    expect(config.DefaultCacheBehavior.ViewerProtocolPolicy).toBe('https-only')
+  })
+
+  it('rewrites to the bucket root, drops Authorization, and answers the preflight', () => {
+    const { template } = synthStandaloneUpload()
+    const handler = loadUploadFunction(template)
+
+    const posted = handler({
+      method: 'POST',
+      uri: '/asset-originals/deep/key.png',
+      headers: {
+        authorization: { value: 'Basic abc' },
+        'content-type': { value: 'multipart/form-data' },
+      },
+    })
+    expect(posted.uri).toBe('/')
+    expect(posted.headers?.authorization).toBeUndefined()
+    expect(posted.headers?.['content-type']?.value).toBe('multipart/form-data')
+
+    const options = handler(preflight('https://anything.example.com'))
+    expect(options.statusCode).toBe(204)
+    expect(options.headers?.['access-control-allow-origin']?.value).toBe('*')
+  })
+
+  it('strips cookies and query strings on the way to the origin', () => {
+    const { template, config } = synthStandaloneUpload()
+    const policy = resolveRef(
+      template,
+      'AWS::CloudFront::OriginRequestPolicy',
+      config.DefaultCacheBehavior.OriginRequestPolicyId as { Ref?: string },
+    )
+    const cfg = policy.OriginRequestPolicyConfig as {
+      CookiesConfig: { CookieBehavior: string }
+      QueryStringsConfig: { QueryStringBehavior: string }
+      HeadersConfig: { HeaderBehavior: string; Headers: string[] }
+    }
+    expect(cfg.CookiesConfig.CookieBehavior).toBe('none')
+    expect(cfg.QueryStringsConfig.QueryStringBehavior).toBe('none')
+    expect(cfg.HeadersConfig.HeaderBehavior).toBe('allExcept')
+    expect(cfg.HeadersConfig.Headers).toEqual(['host'])
+  })
+
+  it('supplies Access-Control-Allow-Origin at the edge and writes no bucket CORS rule', () => {
+    const { template, config } = synthStandaloneUpload()
+    const policy = resolveRef(
+      template,
+      'AWS::CloudFront::ResponseHeadersPolicy',
+      config.DefaultCacheBehavior.ResponseHeadersPolicyId as { Ref?: string },
+    )
+    const cors = (
+      policy.ResponseHeadersPolicyConfig as {
+        CorsConfig: {
+          AccessControlAllowOrigins: { Items: string[] }
+          AccessControlAllowCredentials: boolean
+          OriginOverride: boolean
+        }
+      }
+    ).CorsConfig
+    expect(cors.AccessControlAllowOrigins.Items).toEqual(['*'])
+    expect(cors.AccessControlAllowCredentials).toBe(false)
+    expect(cors.OriginOverride).toBe(true)
+
+    // The bucket exists in this stack and must be left exactly as the caller
+    // made it: `editorOrigins` is the prop that writes a CORS rule, and it
+    // belongs to `AssetSupport`, not to this route.
+    const buckets = Object.values(template.findResources('AWS::S3::Bucket'))
+    expect(buckets).toHaveLength(1)
+    expect(buckets[0].Properties?.CorsConfiguration).toBeUndefined()
+  })
+
+  it('narrows Access-Control-Allow-Origin when allowedOrigins is given', () => {
+    const { template, config } = synthStandaloneUpload({
+      allowedOrigins: ['https://editor.example.com'],
+    })
+    const policy = resolveRef(
+      template,
+      'AWS::CloudFront::ResponseHeadersPolicy',
+      config.DefaultCacheBehavior.ResponseHeadersPolicyId as { Ref?: string },
+    )
+    const cors = (
+      policy.ResponseHeadersPolicyConfig as {
+        CorsConfig: { AccessControlAllowOrigins: { Items: string[] } }
+      }
+    ).CorsConfig
+    expect(cors.AccessControlAllowOrigins.Items).toEqual(['https://editor.example.com'])
+
+    const handler = loadUploadFunction(template)
+    expect(
+      handler(preflight('https://editor.example.com')).headers?.['access-control-allow-origin']
+        ?.value,
+    ).toBe('https://editor.example.com')
+    expect(
+      handler(preflight('https://evil.example.com')).headers?.['access-control-allow-origin'],
+    ).toBeUndefined()
+  })
+})
+
+describe('assetUploadBehavior() - the guards reach the standalone path too', () => {
+  // These three all lived in `AssetSupport`'s constructor before the builder
+  // was shared. A standalone caller that skipped them would deploy clean and
+  // fail in a browser, which is the exact failure each was added to remove -
+  // so each is asserted HERE, on the path that does not go through the class.
+  it('refuses an empty allowedOrigins rather than silently widening to the wildcard', () => {
+    const stack = makeStack()
+    const bucket = new s3.Bucket(stack, 'AssetBucket')
+    expect(() => assetUploadBehavior(stack, { bucket, allowedOrigins: [] })).toThrow(
+      /allowedOrigins is an empty array/,
+    )
+  })
+
+  it('refuses a leftmost-subdomain wildcard, which the preflight could not honour', () => {
+    const stack = makeStack()
+    const bucket = new s3.Bucket(stack, 'AssetBucket')
+    expect(() =>
+      assetUploadBehavior(stack, { bucket, allowedOrigins: ['https://*.preview.example.com'] }),
+    ).toThrow(/compares origins exactly/)
+  })
+
+  it('still accepts the bare wildcard as the sole entry', () => {
+    const stack = makeStack()
+    const bucket = new s3.Bucket(stack, 'AssetBucket')
+    expect(() => assetUploadBehavior(stack, { bucket, allowedOrigins: ['*'] })).not.toThrow()
+  })
+
+  it('refuses a dotted bucket name, which would fail TLS to the origin', () => {
+    const stack = makeStack()
+    const bucket = s3.Bucket.fromBucketName(stack, 'Dotted', 'my.docs.bucket')
+    expect(() => assetUploadBehavior(stack, { bucket })).toThrow(/wildcard certificate/)
+  })
+
+  it('names itself, not AssetSupport, in the errors a standalone caller can hit', () => {
+    const stack = makeStack()
+    const bucket = new s3.Bucket(stack, 'AssetBucket')
+    expect(() => assetUploadBehavior(stack, { bucket, allowedOrigins: [] })).toThrow(
+      /^assetUploadBehavior: allowedOrigins/,
+    )
+  })
+
+  it('snapshots allowedOrigins, so mutating the caller array cannot outrun the guard', () => {
+    const stack = makeStack()
+    const bucket = new s3.Bucket(stack, 'AssetBucket')
+    const origins = ['https://editor.example.com']
+    const behavior = assetUploadBehavior(stack, { bucket, allowedOrigins: origins })
+    origins.length = 0
+    new cloudfront.Distribution(stack, 'UploadDist', { defaultBehavior: behavior })
+
+    const template = Template.fromStack(stack)
+    const policy = Object.values(
+      template.findResources('AWS::CloudFront::ResponseHeadersPolicy'),
+    )[0]
+    const cors = (
+      policy.Properties.ResponseHeadersPolicyConfig as {
+        CorsConfig: { AccessControlAllowOrigins: { Items: string[] } }
+      }
+    ).CorsConfig
+    expect(cors.AccessControlAllowOrigins.Items).toEqual(['https://editor.example.com'])
+  })
+
+  it('registers no attach guard - a built-and-discarded behavior still synths', () => {
+    // Deliberate, and the opposite of `AssetSupport`'s behavior. That guard
+    // fires only in standalone mode with no `editorOrigins`, where opting into
+    // `uploadBehavior` is what satisfied the "something must supply ACAO"
+    // guard. A caller here always brings their own bucket and never passes
+    // through it, so there is no invariant left to protect.
+    const app = newTestApp()
+    const stack = new Stack(app, 'TestStack', {
+      env: { account: '123456789012', region: 'us-east-1' },
+    })
+    const bucket = new s3.Bucket(stack, 'AssetBucket')
+    assetUploadBehavior(stack, { bucket })
+    expect(() => app.synth()).not.toThrow()
+  })
+})
+
+describe('assetUploadBehavior() and AssetSupport.uploadBehavior() are one implementation', () => {
+  it('keeps the construct path of every child the class used to own', () => {
+    // The three ids below are what the emitted logical IDs are derived from.
+    // `uploadBehavior()` passes `this` as the builder's scope precisely so
+    // these stay where they were when the builder lived inside the class - a
+    // move would rename every logical ID and replace three live CloudFront
+    // resources on the next deploy.
+    const stack = makeStack()
+    const support = new AssetSupport(stack, 'Assets', { ...UPLOAD_PROPS })
+    synthUploadDistribution(support, stack)
+
+    for (const id of [
+      'AssetUploadRewriteFunction',
+      'AssetUploadOriginRequestPolicy',
+      'AssetUploadResponseHeadersPolicy',
+    ]) {
+      expect(support.node.tryFindChild(id), `${id} must be a child of AssetSupport`).toBeDefined()
+    }
+  })
+
+  it('gives the standalone path the same behavior shape the class path emits', () => {
+    const classStack = makeStack()
+    const support = new AssetSupport(classStack, 'Assets', { ...UPLOAD_PROPS })
+    const viaClass = synthUploadDistribution(support, classStack).behavior
+
+    const standaloneStack = makeStack()
+    const viaFunction = assetUploadBehavior(standaloneStack, {
+      bucket: new s3.Bucket(standaloneStack, 'AssetBucket'),
+    })
+    new cloudfront.Distribution(standaloneStack, 'UploadDist', { defaultBehavior: viaFunction })
+    const distribution = Object.values(
+      Template.fromStack(standaloneStack).findResources('AWS::CloudFront::Distribution'),
+    )[0]
+    const viaFree = (
+      distribution.Properties.DistributionConfig as { DefaultCacheBehavior: EmittedBehavior }
+    ).DefaultCacheBehavior
+
+    // Compared on the fields that are not references to differently-named
+    // logical IDs; the policies themselves are asserted field-by-field above.
+    expect([...(viaFree.AllowedMethods ?? [])].sort()).toEqual(
+      [...(viaClass.AllowedMethods ?? [])].sort(),
+    )
+    expect(viaFree.ViewerProtocolPolicy).toBe(viaClass.ViewerProtocolPolicy)
+    expect(viaFree.CachePolicyId).toBe(viaClass.CachePolicyId)
+    expect(viaFree.FunctionAssociations).toHaveLength((viaClass.FunctionAssociations ?? []).length)
+  })
+})
+
+describe('assetUploadBehavior() and AssetSupport - a known false positive, pinned', () => {
+  it('refuses a standalone AssetSupport whose bucket is routed through the free function', () => {
+    // A REAL false positive, accepted rather than fixed, pinned so it stays a
+    // decision. The stack below works at runtime -- the edge route is attached
+    // and supplies ACAO -- and synth refuses it anyway, because the guard
+    // observes only the `UploadOrigin` that `uploadBehavior()` mints.
+    //
+    // Before this free function existed, "not attached via the method" and
+    // "not attached at all" were the same fact, so the guard was exact. They
+    // are no longer the same fact.
+    //
+    // Not fixed because every available fix is worse. The free function has no
+    // construct to record attachment on, and having the guard search the tree
+    // for an upload route against this bucket is the instrument the guard's
+    // own comment already rejects: a cross-stack distribution renders as
+    // `Fn::ImportValue`, so a tree search reports "not attached" for a
+    // perfectly correct stack -- a FALSE NEGATIVE traded for this false
+    // positive, and the wrong direction to fail.
+    //
+    // The cost is bounded: it fails loud at synth, and the remedy is the one
+    // an adopter in this position wants anyway. A standalone AssetSupport
+    // already owns the construct, so `uploadBehavior()` costs it nothing --
+    // the free function exists for the stack that would otherwise grow an
+    // AssetSupport it has no other use for. The error text names this case.
+    const app = newTestApp()
+    const stack = new Stack(app, 'TestStack', {
+      env: { account: '123456789012', region: 'us-east-1' },
+    })
+    const support = new AssetSupport(stack, 'Assets', { ...UPLOAD_PROPS })
+    new cloudfront.Distribution(stack, 'Uploads', {
+      defaultBehavior: assetUploadBehavior(stack, { bucket: support.bucket }),
+    })
+
+    expect(() => app.synth()).toThrow(/never attached to a distribution/)
+    expect(() => app.synth()).toThrow(/assetUploadBehavior/)
+  })
+
+  it('is not refused once the construct owns the route, which is the documented remedy', () => {
+    const app = newTestApp()
+    const stack = new Stack(app, 'TestStack', {
+      env: { account: '123456789012', region: 'us-east-1' },
+    })
+    const support = new AssetSupport(stack, 'Assets', { ...UPLOAD_PROPS })
+    new cloudfront.Distribution(stack, 'Uploads', {
+      defaultBehavior: support.uploadBehavior(),
+    })
+
+    expect(() => app.synth()).not.toThrow()
+  })
+})
+
+describe('assetUploadBehavior() - one call per scope', () => {
+  it('throws on a second call with the same scope, rather than minting a second route', () => {
+    // The function creates three children under fixed ids, so CDK's own
+    // duplicate-id check is what stops this -- there is no memoization here
+    // (unlike `uploadBehavior()`, which memoizes precisely because a construct
+    // can be asked twice). Pinned because the doc comment states it: one call
+    // per scope, and a caller who wants two upload routes gives the second one
+    // its own scope.
+    const stack = makeStack()
+    const bucket = new s3.Bucket(stack, 'AssetBucket')
+    assetUploadBehavior(stack, { bucket })
+
+    expect(() => assetUploadBehavior(stack, { bucket })).toThrow(
+      /already a Construct with name 'AssetUploadRewriteFunction'/,
+    )
   })
 })
