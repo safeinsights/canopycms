@@ -15,6 +15,7 @@ import {
 } from '@aws-sdk/client-s3'
 import { createPresignedPost } from '@aws-sdk/s3-presigned-post'
 
+import { isHttpUrlOrSameOriginPath } from '../utils/sanitize-href'
 import { ASSET_PREFIXES, createKeyBuilders, type AssetPrefixes } from './keys'
 import type {
   AssetMeta,
@@ -29,6 +30,17 @@ export interface S3AssetStoreOptions {
   region: string
   /** Defaults to 50 MiB. */
   maxUploadBytes?: number
+  /**
+   * POST target for presigned direct uploads, replacing the S3 REST endpoint the AWS SDK
+   * returns. Absolute http(s) URL or a site-relative path. See `mediaSchema`'s s3 branch for
+   * what this is for; see `isHttpUrlOrSameOriginPath` for what is accepted.
+   *
+   * This is NOT the `publicBaseUrl` that used to live on this interface and was deleted for
+   * looking like the store emitted prefixed URLs. Nothing is joined onto this value and it is
+   * never rendered or stored — it is the endpoint the browser posts to, and it is returned to
+   * the client inside the presign response rather than in the client config.
+   */
+  uploadUrl?: string
   /** Override the default bucket-prefix layout (rarely needed). */
   prefixes?: AssetPrefixes
 }
@@ -63,12 +75,20 @@ export class S3AssetStore implements AssetStore {
   private readonly client: S3Client
   private readonly bucket: string
   private readonly maxUploadBytes: number
+  private readonly uploadUrl: string | undefined
   private readonly keys: ReturnType<typeof createKeyBuilders>
   private readonly stagingPrefix: string
 
   constructor(options: S3AssetStoreOptions) {
     this.bucket = options.bucket
     this.maxUploadBytes = options.maxUploadBytes ?? DEFAULT_MAX_UPLOAD_BYTES
+    // Re-validated here even though mediaSchema already checks it: this class is exported and
+    // constructible directly, so config validation is not on every path that reaches it. Same
+    // defense-in-depth reasoning as assertStagingKey below.
+    if (options.uploadUrl !== undefined && !isHttpUrlOrSameOriginPath(options.uploadUrl)) {
+      throw new Error(`Invalid uploadUrl: ${options.uploadUrl}`)
+    }
+    this.uploadUrl = options.uploadUrl
     this.client = new S3Client({ region: options.region })
     const prefixes = options.prefixes ?? ASSET_PREFIXES
     this.keys = createKeyBuilders(prefixes)
@@ -87,6 +107,14 @@ export class S3AssetStore implements AssetStore {
     }
   }
 
+  /**
+   * `uploadUrl` replaces only the returned `url`. `createPresignedPost` must still run — we
+   * need its `fields`, which carry the policy and signature — and it must still be called
+   * against the real bucket endpoint: a presigned POST's string-to-sign is the base64 policy
+   * alone, so the host is not signed and does not belong in the presign's input. Routing
+   * `uploadUrl` into the S3 client's `endpoint` instead would also mangle it, prepending the
+   * bucket as a subdomain (or, with forcePathStyle, exposing it in the path).
+   */
   async beginUpload(input: BeginUploadInput): Promise<StagedUploadTarget> {
     const key = this.keys.stagingKey(randomUUID())
     const { url, fields } = await createPresignedPost(this.client, {
@@ -101,7 +129,13 @@ export class S3AssetStore implements AssetStore {
       },
       Expires: PRESIGN_EXPIRY_SECONDS,
     })
-    return { mode: 'direct', url, fields, stagingKey: key, maxBytes: this.maxUploadBytes }
+    return {
+      mode: 'direct',
+      url: this.uploadUrl ?? url,
+      fields,
+      stagingKey: key,
+      maxBytes: this.maxUploadBytes,
+    }
   }
 
   async writeStaging(key: string, data: Uint8Array, contentType?: string): Promise<void> {

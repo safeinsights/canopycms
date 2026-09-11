@@ -53,3 +53,23 @@ takes precedence, so setting it to the distribution origin defeats the fallback.
 
 Option 1 is the recommendation. It is a small change to adopter-facing validation, which is why it
 was not taken unilaterally inside PR #261.
+
+## Update 2026-09-10 — option 1's validation half is DONE; only the behaviour half is left
+
+Adopter request #44 needed the same "absolute URL **or** a leading-slash path" shape for a new
+write-side field (`media.uploadUrl`), so the predicate was built once and shared rather than
+twice. `media.publicBaseUrl` now uses `assetMountUrlSchema`
+(`config/schemas/url.ts`, over `isHttpUrlOrSameOriginPath` in `utils/sanitize-href.ts`) and
+**accepts a site-relative path today**. It also now rejects non-http(s) schemes, which the old
+`z.string().url()` allowed.
+
+So the constraint this task was written around is gone, and what remains of option 1 is only its
+second half: **dropping the `baseUrl ?? basePath` fallback** in
+`editor/context/AssetContext.tsx`. That is a one-line change plus its test, and the doc comment
+there has been rewritten to say the fallback is now kept purely so existing basePath deployments
+do not break on upgrade — not because `publicBaseUrl` cannot express a path.
+
+That makes this a straight behaviour decision with no validation work attached: removing the
+fallback means an adopter on a `basePath` deployment with no `publicBaseUrl` set loses the
+inferred mount point and must state it. Worth pairing with a migration note telling them to set
+`publicBaseUrl` to their `basePath`. Options 2 and 3 are unchanged and still not recommended.

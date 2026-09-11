@@ -2383,6 +2383,8 @@ This is the part that resists a simple rule. A deployment prefix always moves th
 
 Two consequences follow. First, adopter guidance is a **mount table keyed on where assets are served**, not a rule keyed on whether a deployment prefix is set. Second, the asset mount point is a **per-render option rather than a config field**, because the editor and the public site can legitimately have different answers — the editor's answer is `media.publicBaseUrl`, and the public site's answer comes from the table.
 
+`media.uploadUrl` is **not** a third answer to that question, despite sitting next to `publicBaseUrl` on the same config object. It names the endpoint the browser POSTs a presigned upload to — a transport detail of the write path — and is never joined onto a stored `/assets/…` value, never rendered, and never written into content. The invariant above governs the read path's mount point only; the two fields are neighbours, not variants, which is why one is a prefix and the other replaces a URL outright.
+
 ### The Deployment Prefix (`basePath`)
 
 The configuration carries a top-level deployment prefix naming where the host app is served (e.g. `/preview-123`). CanopyCMS cannot read the host framework's config at runtime, so this must be stated explicitly; it is threaded through to the client config and drives three things: the editor's API base URL, the preview iframe's `src`, and the preview↔editor path matching described below. Unset means the app is served at its origin's root, and every use site runs it through the shared join, so unset is a no-op everywhere.

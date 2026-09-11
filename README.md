@@ -2156,13 +2156,17 @@ media: {
   adapter: 's3',
   bucket: 'my-site-assets',
   region: 'us-east-1',
-  // Optional: absolute base URL of the origin serving /assets, for the EDITOR's own
-  // image previews -- set it when the editor cannot reach assets at its own root
-  // (a dedicated asset host, or an editor served from a different origin than the
-  // site). Must be absolute; omit for same-origin. This is editor display only and
-  // is never stored in content -- see "Where /assets is mounted" below for the
-  // public site's side of the same question.
+  // Optional: base URL of the origin serving /assets, for the EDITOR's own image
+  // previews -- set it when the editor cannot reach assets at its own root (a
+  // dedicated asset host, or an editor served from a different origin than the
+  // site). An absolute URL or a site-relative path; omit for same-origin. This is
+  // editor display only and is never stored in content -- see "Where /assets is
+  // mounted" below for the public site's side of the same question.
   publicBaseUrl: 'https://assets.example.com',
+  // Optional: where the browser POSTs a presigned upload. Defaults to the S3 REST
+  // endpoint. Set it to route uploads through your own CDN -- see "Routing uploads
+  // through your own CDN" below.
+  uploadUrl: process.env.CANOPY_UPLOAD_URL,
   // Optional: max upload size for presigned direct uploads (default 50 MiB).
   maxUploadBytes: 52_428_800,
 }
@@ -2204,6 +2208,67 @@ media: { adapter: 'local', directory: '.canopy-dev/assets' }
   ```
 
   SVGs and PDFs are served statically (no transform).
+
+**Routing uploads through your own CDN**
+
+By default the browser POSTs a presigned upload straight at the S3 REST endpoint. That is
+cross-origin from your editor, so it needs a **CORS rule on the bucket** — and a CORS rule must
+name an exact origin, which is awkward if the bucket is shared across environments (S3 CORS has
+no prefix scoping, so the rule applies bucket-wide).
+
+`media.uploadUrl` replaces the POST target, so you can route the upload through a CloudFront
+distribution you already control:
+
+```typescript
+media: {
+  adapter: 's3',
+  bucket: 'my-site-assets',
+  region: 'us-east-1',
+  // Same-origin with the editor: no bucket CORS rule needed at all.
+  uploadUrl: '/asset-upload/',
+}
+```
+
+The signature is unaffected — a presigned POST's string-to-sign is the base64 policy alone, so
+the host never enters it. Nothing else about the upload changes.
+
+Accepted values are an absolute `http(s)` URL or a site-relative path. A site-relative value is
+resolved by the browser against the document origin, so it is same-origin by construction. The
+value is used **verbatim** — nothing is joined onto it and the trailing slash is not normalized,
+because only you know whether your CDN behaviour is `/asset-upload/*` or a literal path.
+
+`uploadUrl` is per-deployment. A site-relative value only works where that path actually routes
+to the bucket, so under `next dev` with `adapter: 's3'` it will 404 — drive it from an
+environment variable rather than hard-coding it.
+
+Wiring the CDN behaviour is yours to do, and four things about it are easy to get wrong:
+
+- **Rewrite the URI to `/`.** S3's POST Object is only valid at the bucket root; without a
+  viewer-request rewrite you get `405 MethodNotAllowed`.
+- **Allow all methods, and point at an origin with OAC signing OFF.** CloudFront signs origin
+  requests but never hashes the body, so an OAC-signed origin rejects every multipart POST no
+  matter what you send. Measured, it fails with **`400 InvalidArgument`**, naming the mechanism
+  in the response body: `x-amz-content-sha256 must be UNSIGNED-PAYLOAD, ... or a valid sha256
+value`. Expect an argument-validation error, not an authorization one — the 403 described
+  under [CloudFront OAC and request body signing](docs/deploying-to-aws.md) is the Lambda
+  Function URL case, where Lambda verifies a signature over that header rather than validating
+  its format. Either way you need a second origin entry for the same bucket, since OAC is a
+  property of the origin, not the behaviour.
+- **Forward no cookies.** A same-origin upload path receives your site's cookies, including the
+  editor session cookie, which would otherwise reach S3 and its access logs. If your site sits
+  behind HTTP basic auth, strip `Authorization` too — forwarded to S3 it produces
+  `400 InvalidArgument — Unsupported Authorization Type`.
+- **Watch `CustomErrorResponses`.** They are distribution-wide, so a site that maps 403 to its
+  own 404 page applies that to S3's upload errors as well, and the editor reports the
+  substituted status. A distribution dedicated to assets avoids this.
+
+One limit worth stating plainly: CanopyCMS cannot verify that the host you configure actually
+fronts your bucket. A wrong `uploadUrl` sends a valid presigned credential and the user's file
+to an unintended endpoint, and fails quietly (finalize simply doesn't find the staged object).
+The blast radius is bounded — the POST policy pins the bucket, the exact key, the content type,
+a size range and a 15-minute expiry, so it can never write anywhere else — and it is narrower
+than the bucket-wide CORS rule it replaces. Treat it as deployment configuration, not as
+something to derive at runtime.
 
 **Where `/assets` is mounted**
 
