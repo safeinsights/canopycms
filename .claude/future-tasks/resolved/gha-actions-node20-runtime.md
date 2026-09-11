@@ -115,6 +115,6 @@ and a `grep -c` piped from it reads 0.
     Trusted Publisher example keeps it, so it stays. The cost is log noise in a job
     that runs once per release.
 
-Still open, filed separately: whether Actions pins should stop depending on someone
-noticing a warning. See
-[dependabot-actions-version-updates.md](../dependabot-actions-version-updates.md).
+Decided separately the same day: Dependabot stays security-only, so the next sweep
+will be manual too. See
+[dependabot-actions-version-updates.md](dependabot-actions-version-updates.md).

@@ -1,7 +1,8 @@
-# [P3] Nothing keeps GitHub Actions pins current — decide whether Dependabot should
+# [P3] RESOLVED — Nothing keeps GitHub Actions pins current — decide whether Dependabot should
 
 Filed 2026-09-11, alongside the fix in
-[resolved/gha-actions-node20-runtime.md](resolved/gha-actions-node20-runtime.md).
+[gha-actions-node20-runtime.md](gha-actions-node20-runtime.md). Decided the same
+day. See [Decision](#decision) at the end.
 
 ## What happened
 
@@ -39,3 +40,17 @@ A cheap guard would be to have `scripts/check-action-pins.mjs` (`pnpm lint:actio
 fail when an action appears in both a workflow and a template/example at different
 SHAs. A Dependabot PR would then go red until the template followed. That guard only
 has a job under (a).
+
+## Decision
+
+**(b), JP, 2026-09-11: Dependabot stays security-only** for both ecosystems, and
+`.github/dependabot.yml` is unchanged. Pins move when an annotation or a security
+advisory forces a manual sweep, which is what DEVELOPING.md's CI Workflow
+Conventions now says. The guard above is not needed.
+
+For the next manual sweep, start from
+[gha-actions-node20-runtime.md](gha-actions-node20-runtime.md)'s Resolution. It
+shows how each SHA was resolved and checked, and how the result was measured
+against the old pins in CI. The sweep has to cover the adopter template and the
+example as well, because `lint:actions` checks that they are SHA-pinned, not that
+they are current.
