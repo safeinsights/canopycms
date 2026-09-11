@@ -69,9 +69,9 @@ have deployed clean and failed silently in a browser:
 **Testing note worth carrying forward:** the first tests for the edge function asserted on
 fragments of its emitted SOURCE, and a real matcher bug passed all of them — the code contained
 every expected fragment and still answered the wrong thing. The tests now load the emitted
-`FunctionCode` into `node:vm` and run it against CloudFront-shaped events. 26 tests for this
+`FunctionCode` into `node:vm` and run it against CloudFront-shaped events. 25 tests for this
 feature; 33 source mutations verified across three review rounds, each red on its intended
-test.
+test, two of them re-run after tests were consolidated.
 
 `ASSET_BEHAVIOR_SPREAD_MISTAKE_KEYS` was considered and deliberately **not** extended:
 `uploadBehavior()` returns a bare `BehaviorOptions` rather than a named property, so there is
