@@ -44,6 +44,14 @@ jobs:
         env:
           LC_ALL: C.UTF-8
         run: |
+          # The nine Trojan Source reordering codepoints: the embeddings and
+          # overrides U+202A-202E and the isolates U+2066-2069. Deliberately NOT
+          # the marks U+061C/U+200E/U+200F, which eslint-plugin-security and
+          # rustc do include: their reordering power is confined to adjacent
+          # neutral runs, and they appear legitimately in the RTL content this
+          # CMS exists to edit, so gating them would false-positive on real
+          # Markdown. The filename half below matches the same nine as raw
+          # UTF-8 bytes -- keep the two in step.
           bidi='[\x{202A}-\x{202E}\x{2066}-\x{2069}]'
 
           # File CONTENTS. -I skips files git considers binary, which is a
@@ -68,32 +76,47 @@ jobs:
               ;;
           esac
 
-          # FILENAMES. git grep reads contents only, so a file *named* with an
-          # override -- report<U+202E>gnp.ts, which renders as "report st.png"
-          # -- would otherwise sail through. `-z` keeps paths raw: without it
-          # git quotes non-ASCII and the bytes never reach the matcher.
+          # FILENAMES. git grep reads contents only, so a file merely *named*
+          # with an override -- report<U+202E>gnp.ts, which renders as
+          # "report st.png" -- would otherwise sail through. `-z` keeps paths
+          # raw: without it git quotes non-ASCII and the bytes never arrive.
           #
-          # perl rather than `grep -P` because BSD grep has no -P, so this half
-          # would be untestable on a contributor's macOS machine; perl's -CSD
-          # decodes the stream so \x{...} compares characters, not bytes. It
-          # mimics grep's exit convention on purpose: 0 found, 1 clean.
-          if names=$(git ls-files -z | perl -CSD -0 -ne 'chomp; if (/'"$bidi"'/) { print "$_\n"; $f=1 } END { exit($f ? 0 : 1) }'); then
-            nstatus=0
-          else
-            nstatus=$?
+          # Matched as raw UTF-8 BYTES -- U+202A-202E encode as E2 80 AA-AE and
+          # U+2066-2069 as E2 81 A6-A9 -- rather than as \x{...} under `perl
+          # -CSD`. Decoding would make a malformed-UTF-8 path a FATAL match
+          # error, which aborts the scan partway and leaves every later path
+          # unexamined; a path with invalid UTF-8 is creatable on the runner's
+          # ext4 (though not on macOS/APFS), so that is a real way to mask a
+          # bidi filename rather than a hypothetical. Bytes cannot be malformed,
+          # so the decode is simply removed.
+          #
+          # A wrong byte range here would fail OPEN -- no match reads as "clean"
+          # -- so prove the pattern still matches all nine codepoints before
+          # trusting a clean result from it.
+          selftest=$(perl -CO -e 'print chr($_) for (0x202A..0x202E, 0x2066..0x2069)' |
+            perl -0 -ne '$n++ while /\xe2\x80[\xaa-\xae]|\xe2\x81[\xa6-\xa9]/g; print $n+0')
+          if [ "$selftest" != "9" ]; then
+            echo "::error::bidi filename pattern self-test matched $selftest of 9 codepoints"
+            exit 1
           fi
-          case "$nstatus" in
-            0)
-              echo '::error::Bidirectional unicode characters detected in a FILENAME (CVE-2021-42574 Trojan Source)'
-              echo "$names"
-              exit 1
-              ;;
-            1) ;;
-            *)
-              echo "::error::bidi filename scan did not run (perl exited $nstatus)"
-              exit 1
-              ;;
-          esac
+
+          # Detection is signalled by OUTPUT, not by exit status: perl exits 0
+          # whether or not it matched, so a non-zero status means perl itself
+          # failed and the scan did not run. Deliberately not perl's own exit
+          # code via END -- an END block runs on die too, laundering a fatal
+          # into a status the caller reads as "clean".
+          nstatus=0
+          names=$(git ls-files -z |
+            perl -0 -ne 'chomp; print "$_\n" if /\xe2\x80[\xaa-\xae]|\xe2\x81[\xa6-\xa9]/') || nstatus=$?
+          if [ "$nstatus" -ne 0 ]; then
+            echo "::error::bidi filename scan did not run (perl exited $nstatus)"
+            exit 1
+          fi
+          if [ -n "$names" ]; then
+            echo '::error::Bidirectional unicode characters detected in a FILENAME (CVE-2021-42574 Trojan Source)'
+            echo "$names"
+            exit 1
+          fi
 
           echo 'No bidirectional unicode control characters in contents or filenames'
 
