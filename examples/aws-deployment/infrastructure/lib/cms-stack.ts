@@ -134,9 +134,11 @@ export class CmsStack extends Stack {
     //      hand-written `additionalBehaviors` ever gets that order wrong
     //      instead.
     //
-    // `editorOrigins` is REQUIRED: it is the S3 CORS allowlist for the
-    // editor's presigned uploads, so it must list the origin the editor is
-    // served from.
+    // `editorOrigins` is the S3 CORS allowlist for the editor's presigned
+    // uploads, so it must list the origin the editor is served from. It is
+    // optional only because `uploadBehavior` is the other way to satisfy the
+    // same requirement (CORS supplied at the CloudFront edge instead); with
+    // neither, a construct-created bucket refuses to synth.
     //
     // Run `pnpm --filter canopycms-cdk run build:lambda` before deploying --
     // the transform Lambda needs its native sharp binary, and the construct

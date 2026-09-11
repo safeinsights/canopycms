@@ -2241,10 +2241,40 @@ because only you know whether your CDN behaviour is `/asset-upload/*` or a liter
 to the bucket, so under `next dev` with `adapter: 's3'` it will 404 — drive it from an
 environment variable rather than hard-coding it.
 
-Wiring the CDN behaviour is yours to do, and four things about it are easy to get wrong:
+**If you deploy with `canopycms-cdk`, it builds the behaviour for you.** Set `AssetSupport`'s
+`uploadBehavior` prop and give the result its own distribution — one route, nothing else on it:
 
-- **Rewrite the URI to `/`.** S3's POST Object is only valid at the bucket root; without a
-  viewer-request rewrite you get `405 MethodNotAllowed`.
+```typescript
+const assets = new AssetSupport(this, 'Assets', { uploadBehavior: {} })
+
+const uploads = new cloudfront.Distribution(this, 'AssetUploads', {
+  defaultBehavior: assets.uploadBehavior(),
+})
+// media.uploadUrl = `https://${uploads.distributionDomainName}/`
+```
+
+No custom domain or certificate is needed, and no bucket CORS rule is written: the edge supplies
+`Access-Control-Allow-Origin` for this route alone and answers the CORS preflight itself.
+`allowedOrigins` narrows the wildcard default; origins are matched exactly, so a
+`*.subdomain` pattern is refused at synth rather than passing the policy and failing the
+preflight. `editorOrigins` — which exists only to write
+that bucket rule — becomes optional once you do this, though standalone mode refuses to synth
+with neither.
+
+Wiring it by hand instead, four things are easy to get wrong:
+
+- **Answer the CORS preflight yourself.** This is the one most likely to be missed, and it stops
+  the upload dead. The editor's POST looks like a CORS simple request — `multipart/form-data`,
+  no custom headers — but it registers an `xhr.upload` progress listener, and that alone
+  disqualifies it, so the browser sends `OPTIONS` first. CloudFront does not answer preflights
+  on your behalf (a response headers policy decorates a response, it does not create one), and
+  S3 with no CORS configuration answers `403`. A preflight that is not 2xx fails the browser's
+  check no matter what headers are on it, so the POST is never sent. Answer `OPTIONS` at the
+  edge — a viewer-request function returning 204 with the CORS headers — or keep a bucket CORS
+  rule. Note that a `curl` POST will appear to work throughout: only a browser preflights.
+- **Rewrite the URI to `/`** on viewer request. S3's POST Object is only valid at the bucket
+  root; without it you get `405 MethodNotAllowed`. It is also what keeps "allow all methods"
+  safe — no request can address a key.
 - **Allow all methods, and point at an origin with OAC signing OFF.** CloudFront signs origin
   requests but never hashes the body, so an OAC-signed origin rejects every multipart POST no
   matter what you send. Measured, it fails with **`400 InvalidArgument`**, naming the mechanism
@@ -2252,7 +2282,7 @@ Wiring the CDN behaviour is yours to do, and four things about it are easy to ge
 value`. Expect an argument-validation error, not an authorization one — the 403 described
   under [CloudFront OAC and request body signing](docs/deploying-to-aws.md) is the Lambda
   Function URL case, where Lambda verifies a signature over that header rather than validating
-  its format. Either way you need a second origin entry for the same bucket, since OAC is a
+  its format. Either way you need a separate origin entry for the bucket, since OAC is a
   property of the origin, not the behaviour.
 - **Forward no cookies.** A same-origin upload path receives your site's cookies, including the
   editor session cookie, which would otherwise reach S3 and its access logs. If your site sits
@@ -2260,7 +2290,15 @@ value`. Expect an argument-validation error, not an authorization one — the 40
   `400 InvalidArgument — Unsupported Authorization Type`.
 - **Watch `CustomErrorResponses`.** They are distribution-wide, so a site that maps 403 to its
   own 404 page applies that to S3's upload errors as well, and the editor reports the
-  substituted status. A distribution dedicated to assets avoids this.
+  substituted status. A distribution dedicated to the upload route avoids this, along with the
+  cookie and `Authorization` hazards above — on a different host they are never sent.
+
+One thing that is _not_ a requirement, despite being widely assumed: a bucket CORS rule is not
+what permits the upload. Measured, S3 **accepts** a cross-origin presigned POST with no CORS
+configuration at all and simply declines to advertise it — 204, object landed, no
+`Access-Control-Allow-Origin`. Acceptance and advertisement are independent, which is what lets
+the edge supply the header instead. It also means the failure mode of getting this wrong is a
+file that _is_ in staging while the browser reports a network error.
 
 One limit worth stating plainly: CanopyCMS cannot verify that the host you configure actually
 fronts your bucket. A wrong `uploadUrl` sends a valid presigned credential and the user's file
@@ -2383,7 +2421,9 @@ never reached. `assetBehaviors()` (returning the two behaviors as a plain object
 `attachTo(distribution)` (the same attachment `assetSupport` calls under the hood) remain
 available for a bespoke distribution built outside `CanopyCmsDistribution`; a hand-wired
 `additionalBehaviors` that gets the order wrong, or spreads `assetBehaviors()` into it
-directly, now fails `cdk synth` with an actionable error instead of deploying broken. See
+directly, now fails `cdk synth` with an actionable error instead of deploying broken. Those two
+are the read path; `uploadBehavior()` is the opt-in write path, and belongs on its own
+distribution rather than this one — see "Routing uploads through your own CDN" above. See
 [docs/deploying-to-aws.md](docs/deploying-to-aws.md).
 
 ### Editor Customization

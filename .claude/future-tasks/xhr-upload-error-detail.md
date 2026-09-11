@@ -44,5 +44,7 @@ here starts with a test that will notice.
 
 - [asset-review-followups.md](asset-review-followups.md) holds the sibling item: `xhr-upload.ts`
   takes no `AbortSignal`, so an upload cannot be cancelled.
-- [asset-support-upload-behavior.md](asset-support-upload-behavior.md) — the CDN wiring whose
-  failures this message has to describe.
+- [asset-support-upload-behavior.md](resolved/asset-support-upload-behavior.md) — the CDN wiring
+  whose failures this message has to describe. Resolved 2026-09-11; `AssetSupport` now builds
+  the behaviour, so the failures worth describing are an adopter's own wiring, not the
+  construct's.
