@@ -2683,26 +2683,25 @@ it('logs error when something fails', () => {
 
 Patterns can be strings (substring match) or RegExp.
 
-**`mockConsole()` is mandatory, and only CI enforces it.** `vitest.config.ts`'s
-`onConsoleLog` **throws on _any_ console output Vitest intercepts** — `log` and `info`
-just as much as `warn` and `error`, with no method filter — but the throwing path only
-fires under `CI=true`. Locally the same test prints the output as harmless noise and the
-suite reports green. So a stray `console.log` left in from debugging fails CI exactly as
-hard as an unasserted error. (Vitest's `type` argument is the _stream_, `'stdout'` or
-`'stderr'`, not the console method, so the thrown message reads
-`A test wrote to console.stdout` — that is this hook firing, not a real `console.stdout`
-call.)
+**Swallowing expected output is mandatory, and only CI enforces it — in every package.**
+The `onConsoleLog` hook in [`vitest.shared.ts`](vitest.shared.ts), which each package's
+`vitest.config.ts` spreads in, **throws on _any_ console output Vitest intercepts** — `log`
+and `info` just as much as `warn` and `error` — but only under `CI=true`. Locally the same
+test prints the output and the suite reports green, so a stray `console.log` left in from
+debugging fails CI exactly as hard as an unasserted error. Other packages import
+`mockConsole()` from `canopycms/test-utils`; a plain `vi.spyOn(console, 'warn').mockImplementation(() => {})`,
+asserted and `mockRestore()`d in a `finally`, works too.
 
-The failure mode this produces is nasty: a test that deliberately exercises a logged
-error path passes locally, then in CI the throw surfaces as an _unhandled rejection_
-that takes the whole test step down with **no vitest output at all** — which reads as
-a crashed or OOM-killed process, not a test failure. This cost two people time on
-2026-08-12 before the cause was found.
+The failure is easy to misread: the throw surfaces as an _unhandled rejection_, not a
+failed test, so the summary can still say "passed" above `Errors 1 error`. The error names
+the culprit (`<file> > <test> wrote to stderr under CI`). On 2026-08-12 it took the whole
+step down with no vitest output at all, which read as a crashed process and cost two
+people time.
 
 Reproduce it locally before pushing any test that triggers an error handler:
 
 ```bash
-CI=true pnpm exec vitest run          # from packages/canopycms
+CI=true pnpm exec vitest run          # from any package directory
 ```
 
 Assert the captured output rather than merely silencing it — a test that swallows the
@@ -2736,17 +2735,21 @@ This approach ensures:
 - Unexpected console output still surfaces (helping catch real issues)
 - Console behavior is properly tested as part of the functionality
 
-**Enforced in CI (keep the reporter "all dots"):** the Vitest `dot` reporter
-prints an intercepted `stdout | <file> > <test>` / `stderr | ...` block for any
-test that writes to the console, which makes it hard to tell expected output
-from real problems at a glance. To stop that from creeping back in, an
-`onConsoleLog` hook in [`packages/canopycms/vitest.config.ts`](packages/canopycms/vitest.config.ts)
-throws when a test logs to the console **while `CI` is set** (GitHub Actions sets
-`CI=true`, so the existing `pnpm test` step enforces it — no extra workflow
-step). Locally the log passes through unchanged, so ad-hoc `console.log`
-debugging still works. When CI fails with this error, wrap the expected output
-in `mockConsole()` (swallow + assert) as shown above, or remove the stray log —
-do **not** silence the guard.
+**Enforced in CI (keep the reporter "all dots"):** the `dot` reporter prints a
+`stdout | <file> > <test>` / `stderr | ...` block for any test that writes to the console,
+which buries real problems. GitHub Actions sets `CI=true`, so the existing `pnpm test` step
+enforces the guard with no extra workflow step. `vitest.shared.ts` also names the reporter
+explicitly, because left to its default Vitest 4 switches to its `agent` reporter under an
+AI coding agent (`CLAUDECODE`, `AI_AGENT`, …). That reporter hides passing tests' console
+output and the guard never fires under it, which is how `canopycms-cdk` printed ~950 lines
+of aws-cdk-lib deprecation warnings per CI run that no agent saw locally. When CI fails
+with this error, swallow and assert the expected output, or remove the stray log — do
+**not** silence the guard.
+
+**`canopycms-cdk` also sets `JSII_DEPRECATED=fail`**, so calling a deprecated aws-cdk-lib
+API throws a `DeprecationError` at the call site — locally too, and inside
+`scaffold-synth.test.ts`'s subprocess synth, whose stderr the console guard never sees.
+Migrate the call; do not relax the setting.
 
 ### Testing GC-Dependent Code Deterministically (`WeakRef`/`FinalizationRegistry`)
 
@@ -3185,6 +3188,14 @@ Interrupting a run needs no cleanup from you. Ctrl-C makes vitest exit without r
 
 `test-support/` is treated like `lambda/`, `canary/`, and `worker/`: a non-shipped directory with its own `tsconfig.json`, appended to the package's `typecheck` and `lint` scripts. That config also includes `../src/**/*.test.ts`, which nothing else typechecks -- the package `tsconfig.json` is its build/publish config and excludes test files -- and it sets no `rootDir`, which is what lets those suites' deliberate cross-package imports resolve.
 
+### Diffing Synthesized Output Across a Construct Refactor
+
+Moving a builder out of a construct (e.g., a method pulled into a module-local free function) can pass every existing test while still changing the emitted template -- and in CDK a renamed logical ID replaces live resources on the next deploy, so a passing suite is not the relevant proof. Assertions on individual `Template.fromStack()` matchers can all stay green while the underlying JSON has shifted underneath them.
+
+The check that actually proves it: synth the same stack against both the pre- and post-refactor version of the file, dump `Template.fromStack(stack).toJSON()` to a file each time (a throwaway script or test is fine -- see `newTestApp()` above for synthesizing without leaking a `cdk.out`), and diff the two. An identical diff is what proves the refactor is behavior-preserving; passing assertions alone are not. Reach for this on any extraction out of a construct, not just the one that motivated it. Restore the pre-refactor file from a scratchpad copy afterwards, not `git checkout --` -- see the scratchpad-restore note under [Testing Authorization Defaults](#testing-authorization-defaults-defaultbranchaccess--defaultpathaccess).
+
+**A mutation only counts once you've confirmed it changed the source.** Running break-and-rerun (introduce a bug, confirm the test fails, restore) across 13 mutations on 16 tests turned up two that "passed" and proved nothing: one edited a property that doesn't affect the behavior it claimed to break (adding `customHeaders: {}` to an origin does not turn on origin access control), and one never applied at all because shell quoting mangled the patch script, leaving the source unchanged. Both looked like "the test is weak" and were neither. Before trusting a green (or red) mutation result, check that the intended edit is actually present in the file -- not just that the test command ran.
+
 ### Testing a Repo Script as a Subprocess (`scripts/bump-version.mjs`)
 
 `packages/canopycms/src/cli/bump-version.test.ts` tests a plain `scripts/*.mjs` release script rather than importing it, because the script does its work at module scope against a directory tree (reads `package.json` files, writes them, `console.log`s the result, exits) -- there is no function to call. The fixture is copied in rather than run in place, since the script resolves its target paths from its own location:
@@ -3600,7 +3611,7 @@ This pass covers **every published subpath, not just the runtime-testable ones**
 
 The rewrite pattern is the most fragile part and fails silently in both directions -- too narrow and a relative specifier ships unrewritten (a bare `.` did exactly that), too wide and a bare package name gets a spurious `.js` welded on. `node scripts/add-js-extensions.mjs --self-test` asserts the pattern's classification table plus an end-to-end rewrite (directory expansion, bare dot, already-suffixed specifiers, `.d.ts` alongside `.js`, and idempotence). `pnpm check:esm` runs it first, so it executes in CI.
 
-When changing either the rewrite or the guard, verify the guard still fails. Strip a `.js` off one relative specifier in a built `dist/**/*.d.ts` and re-run `pnpm check:esm`: the runtime probe should stay green and the type pass should go red. Deleting a built `.d.ts` outright should also go red. If either stays green, the guard is not testing what it claims -- and confirm any mutation you make to test this actually landed before trusting the result.
+When changing either the rewrite or the guard, verify the guard still fails. Strip a `.js` off one relative specifier in a built `dist/**/*.d.ts` and re-run `pnpm check:esm`: the runtime probe should stay green and the type pass should go red. Deleting a built `.d.ts` outright should also go red. If either stays green, the guard is not testing what it claims -- and confirm the mutation actually landed before trusting the result (see [Diffing Synthesized Output Across a Construct Refactor](#diffing-synthesized-output-across-a-construct-refactor)).
 
 ### Future-Tasks Backlog Check
 

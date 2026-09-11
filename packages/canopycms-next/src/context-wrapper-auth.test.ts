@@ -82,10 +82,20 @@ describe('createNextCanopyContext auth plugin guard (SEC-C1)', () => {
   })
 
   it('resolves for prod + deployedAs: static + no authPlugin (static stub passes the allowlist)', async () => {
-    const result = await createNextCanopyContext({
-      config: config({ mode: 'prod', deployedAs: 'static' }),
-      entrySchemaRegistry: {},
-    })
-    expect(result.handler).toBeTypeOf('function')
+    // Static mode warns once per process that every CMS API request will 401.
+    // This is the only static-mode test in the file, so it is the one that warns.
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      const result = await createNextCanopyContext({
+        config: config({ mode: 'prod', deployedAs: 'static' }),
+        entrySchemaRegistry: {},
+      })
+      expect(result.handler).toBeTypeOf('function')
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining('running in static deployment mode'),
+      )
+    } finally {
+      warnSpy.mockRestore()
+    }
   })
 })

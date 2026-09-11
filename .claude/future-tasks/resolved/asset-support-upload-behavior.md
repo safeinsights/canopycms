@@ -213,6 +213,16 @@ that belief is easy to arrive at. Raised by the adopter against their own argume
 
 ## Related
 
+- [asset-upload-behavior-from-a-bucket-alone.md](asset-upload-behavior-from-a-bucket-alone.md) —
+  **the follow-on this file's own recommendation made necessary.** Option 3 above was rejected
+  for option 2 because one shared assets distribution means one `AssetSupport` and therefore one
+  shared transform Lambda. But `uploadBehavior()` shipped as an instance method, and the
+  constructor builds that Lambda unconditionally — so option 3 required instantiating an
+  `AssetSupport` beside the bucket for the sole purpose of reaching the method, carrying the
+  same coupling into the topology recommended to avoid it. Resolved 2026-09-11 by exporting
+  `assetUploadBehavior` as a free function taking the bucket directly. That file also corrects
+  the requesting adopter's cost claim: those grants land on the transform function's own
+  execution role, not in the bucket policy, whenever function and bucket share an account.
 - `editorOrigins` (`asset-support.ts`) becomes inert for any adopter who takes `uploadUrl` — it
   exists only to write the bucket CORS rule. ~~Still a required prop, since a cross-origin
   editor is the default shape.~~ **Superseded on resolution:** it is now optional, guarded by

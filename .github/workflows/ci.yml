@@ -187,7 +187,9 @@ jobs:
       # Root-level node tooling. `pnpm lint` is `pnpm -r`, which recurses over
       # workspace PACKAGES only -- scripts/ is not one, so until 2026-08-22
       # nothing linted the seven scripts here, four of which gate CI or
-      # pre-commit themselves (lint:tasks, lint:actions, check:esm).
+      # pre-commit themselves (lint:tasks, lint:actions, check:esm). Also lints
+      # vitest.shared.ts (the test-log guard) and the packages' vitest.config.ts
+      # files that spread it in, which each package's own `eslint src/` skips.
       - name: Lint root scripts (ESLint)
         run: pnpm lint:scripts
 

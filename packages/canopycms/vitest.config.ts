@@ -1,4 +1,5 @@
 import { defineConfig, configDefaults } from 'vitest/config'
+import { quietTestOutput } from '../../vitest.shared'
 
 // vitest 4 removed `environmentMatchGlobs`; per-glob environments are now
 // expressed as separate `projects`. The editor tree runs under jsdom (with the
@@ -6,28 +7,11 @@ import { defineConfig, configDefaults } from 'vitest/config'
 export default defineConfig({
   test: {
     globals: false,
-    reporters: 'dot',
+    // `dot` reporter + the CI `onConsoleLog` guard, shared with every package.
+    // Swallow and assert expected output with mockConsole() (src/test-utils/console-spy.ts).
+    ...quietTestOutput,
     env: {
       CANOPY_BOOTSTRAP_ADMIN_IDS: 'test-admin',
-    },
-    // Keep the reporter to "all dots": a test that writes to the console is
-    // almost always leaking an expected log/warn/error that should instead be
-    // swallowed (and asserted) with mockConsole() from
-    // src/test-utils/console-spy.ts. In CI we fail hard so noise can't creep
-    // back in; locally we let the message through so ad-hoc console.log
-    // debugging still works. Output wrapped in mockConsole() never reaches
-    // here — it replaces the console method before Vitest's interceptor runs.
-    onConsoleLog(log, type) {
-      if (process.env.CI) {
-        throw new Error(
-          `A test wrote to console.${type}, which clutters the test reporter:\n\n` +
-            `${log}\n\n` +
-            `Wrap the expected output with mockConsole() from ` +
-            `src/test-utils/console-spy.ts (it swallows the message and lets you ` +
-            `assert it via toHaveLogged/toHaveWarned/toHaveErrored), or remove the ` +
-            `stray log.`,
-        )
-      }
     },
     projects: [
       {
