@@ -24,6 +24,21 @@ beforeAll(() => {
   process.env.AWS_SECRET_ACCESS_KEY ??= 'test-secret-access-key'
 })
 
+// The endpoint assertions below pin the SDK's RESOLVED endpoint, and endpoint resolution reads
+// the environment. A developer running MinIO/LocalStack locally (AWS_ENDPOINT_URL_S3), or with
+// FIPS/dual-stack set, would otherwise see these fail for a reason unrelated to their change.
+// Cleared rather than defaulted, since these have no correct value here.
+beforeEach(() => {
+  for (const key of [
+    'AWS_ENDPOINT_URL_S3',
+    'AWS_ENDPOINT_URL',
+    'AWS_USE_FIPS_ENDPOINT',
+    'AWS_USE_DUALSTACK_ENDPOINT',
+  ]) {
+    vi.stubEnv(key, undefined as unknown as string)
+  }
+})
+
 vi.mock('node:crypto', async (importOriginal) => ({
   ...(await importOriginal<typeof import('node:crypto')>()),
   randomUUID: vi.fn(),
@@ -44,6 +59,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.useRealTimers()
+  vi.unstubAllEnvs()
   vi.restoreAllMocks()
 })
 
@@ -92,9 +108,11 @@ describe('S3AssetStore.beginUpload upload target', () => {
 
     expect(withOverride.url).not.toBe(withoutOverride.url)
     expect({ ...withOverride, url: null }).toEqual({ ...withoutOverride, url: null })
-    // Field ORDER matters, not just membership: xhr-upload.ts appends these in iteration
-    // order and S3 requires `file` last, so a reordering would be a real defect.
-    expect(Object.keys(withOverride.fields)).toEqual(Object.keys(withoutOverride.fields))
+    // Deliberately NOT also asserting Object.keys(fields) equality between these two: both
+    // come from the same createPresignedPost call path in the same process, so no change to
+    // our code could make that differ. It reads like a guard on multipart field order and
+    // cannot fail by construction. The order that matters is `file` last, which is pinned for
+    // real against the code that builds the body, in editor/media/xhr-upload.test.ts.
   })
 
   it('rejects an invalid uploadUrl at construction rather than at upload time', () => {

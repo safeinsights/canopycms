@@ -34,6 +34,12 @@ export function declaresScheme(url: string): boolean {
  * separately and only fall back to this function to catch the spellings that slip past a
  * `startsWith('//')` check.
  */
+/**
+ * A path segment that is exactly `.` or `..`. Linear, no nested quantifier — see
+ * `utils/url-prefix.ts`'s `stripTrailingSlashes` for why regex shape is watched in this area.
+ */
+const DOT_SEGMENT = /(^|\/)\.\.?(\/|$)/
+
 export function isImplicitlyOffOrigin(url: string): boolean {
   if (declaresScheme(url)) return false
   try {
@@ -114,13 +120,33 @@ export function isHttpUrlOrSameOriginPath(
   // prefix carrying either produces `https://cdn.example.com/?x=1/assets/…` once joined.
   if (value.includes('?') || value.includes('#')) return false
 
+  // A backslash is never legitimate in a configured URL, and it is not merely cosmetic: WHATWG
+  // treats it as a path separator for special schemes, so `/asset\upload/` is SENT as
+  // `/asset/upload/`. Worse on the read side, where the value becomes a prefix — `/\` is a
+  // string `new URL()` REJECTS, so it slips past the off-origin check below and joins into
+  // `/\/assets/a.png`, which a browser then resolves to `https://assets/` (measured). Anyone
+  // wanting a literal backslash in a path must percent-encode it.
+  if (value.includes('\\')) return false
+
+  // Dot segments resolve away before the request is sent — `/asset-upload/..` is SENT as `/`
+  // and `/./x` as `/x` — so the stored value again fails to describe what happens.
+  if (DOT_SEGMENT.test(value)) return false
+
   if (declaresScheme(value)) {
+    // The scheme must be followed by a literal `//`. Parsing to an http(s) URL is NOT enough:
+    // WHATWG resolves a same-scheme reference carrying no authority as RELATIVE, so a browser
+    // on `https://editor.example.com/admin/media` sends `https:cdn.example.com` to
+    // `https://editor.example.com/admin/cdn.example.com` — while `new URL()` here would report
+    // `https://cdn.example.com/`. Accepting it would post the presigned credential and the
+    // user's bytes to a page-dependent path on the editor's own origin, surfacing only as a
+    // 404 with nothing pointing at the config. Dropping the `//` is an ordinary typo.
+    if (!/^https?:\/\//i.test(value)) return false
+    // `http:` is deliberately allowed alongside `https:`: a local S3-compatible endpoint
+    // (MinIO, LocalStack) is `http://localhost:9000`, and that is the one setup in which an
+    // adopter would most want to exercise this path before deploying.
     try {
-      const { protocol } = new URL(value)
-      // `http:` is deliberately allowed alongside `https:`: a local S3-compatible endpoint
-      // (MinIO, LocalStack) is `http://localhost:9000`, and that is the one setup in which an
-      // adopter would most want to exercise this path before deploying.
-      return protocol === 'http:' || protocol === 'https:'
+      new URL(value)
+      return true
     } catch {
       return false
     }

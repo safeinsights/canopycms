@@ -26,6 +26,22 @@ const REJECTED_BY_BOTH: [string, string][] = [
   ['\\/evil.example.com', 'same'],
   ['/\tx', 'tab is stripped during parsing, so the browser requests /x'],
   ['/x\ny', 'newline likewise'],
+  // A scheme that parses to an http(s) URL server-side but that a browser resolves RELATIVE,
+  // because it carries no `//` authority. `new URL('https:cdn.example.com')` reports
+  // https://cdn.example.com/, while a browser on https://editor.example.com/admin/media sends
+  // it to https://editor.example.com/admin/cdn.example.com. Dropping the `//` is an ordinary
+  // typo, and the two readings differ by origin.
+  ['https:cdn.example.com', 'scheme with no // authority; browser resolves it relative'],
+  ['https:/cdn.example.com/asset-upload/', 'one slash, same problem'],
+  ['http:cdn.example.com', 'same, on http'],
+  // Backslash: WHATWG treats it as a path separator for special schemes.
+  ['/\\', 'new URL() rejects it, so it slips past the off-origin check and joins to //assets'],
+  ['/\\/', 'same'],
+  ['/asset\\upload/', 'sent as /asset/upload/ — the stored value is not what is requested'],
+  ['https://cdn.example.com/x\\y', 'sent as /x/y'],
+  // Dot segments resolve away before the request leaves the browser.
+  ['/asset-upload/..', 'sent as /'],
+  ['/./x', 'sent as /x'],
   ['javascript:alert(1)', 'not http(s)'],
   ['data:text/html,x', 'not http(s)'],
   ['mailto:a@b.c', 'not http(s)'],
