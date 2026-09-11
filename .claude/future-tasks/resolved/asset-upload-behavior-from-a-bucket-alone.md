@@ -129,7 +129,7 @@ replacement. This is the check that mattered most and is worth repeating for any
 extraction out of a construct: passing assertions do not prove an unchanged template.
 
 All 59 pre-existing `asset-support.test.ts` tests pass unmodified (the only removed line in
-that file is its import); 18 added, 328 across the package. **15 source mutations verified**,
+that file is its import); 19 added, 329 across the package. **16 source mutations verified**,
 each red on its intended test and green elsewhere.
 
 **Three of those mutations initially proved nothing, and all three failed the same way — the
