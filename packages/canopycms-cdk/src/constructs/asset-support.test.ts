@@ -674,3 +674,276 @@ describe('AssetSupport - transformRole', () => {
     expect(document).toContain('asset-meta/*')
   })
 })
+
+/**
+ * Shapes of the CloudFormation fragments the upload-behavior tests read. Named
+ * rather than inlined because every one of these assertions is about a
+ * property being ABSENT or having one exact value, and an `any`-typed template
+ * walk turns a renamed key into a silently vacuous test.
+ */
+interface EmittedOrigin {
+  Id: string
+  DomainName: unknown
+  CustomOriginConfig?: { OriginProtocolPolicy?: string }
+  S3OriginConfig?: unknown
+  OriginAccessControlId?: unknown
+}
+
+interface EmittedBehavior {
+  AllowedMethods?: string[]
+  ViewerProtocolPolicy?: string
+  TargetOriginId?: string
+  CachePolicyId?: unknown
+  OriginRequestPolicyId?: { Ref?: string }
+  ResponseHeadersPolicyId?: { Ref?: string }
+  FunctionAssociations?: { EventType?: string; FunctionARN?: unknown }[]
+}
+
+interface UploadDistributionParts {
+  template: Template
+  behavior: EmittedBehavior
+  origins: EmittedOrigin[]
+}
+
+/**
+ * Synth the topology `uploadBehavior()` documents: a distribution serving the
+ * upload route and nothing else, with the behavior as its DEFAULT behavior.
+ *
+ * Deliberately does NOT also attach the read behaviors. Their OAC-signed S3
+ * origin would put an `AWS::CloudFront::OriginAccessControl` in the template
+ * and defeat the resource-count tripwire below, and the whole point of the
+ * settled topology is that reads are not on this distribution.
+ */
+function synthUploadDistribution(
+  assetSupport: AssetSupport,
+  stack: Stack,
+): UploadDistributionParts {
+  new cloudfront.Distribution(stack, 'UploadDist', {
+    defaultBehavior: assetSupport.uploadBehavior(),
+  })
+  const template = Template.fromStack(stack)
+  const distribution = Object.values(template.findResources('AWS::CloudFront::Distribution'))[0]
+  const config = distribution.Properties.DistributionConfig as {
+    DefaultCacheBehavior: EmittedBehavior
+    Origins: EmittedOrigin[]
+  }
+  return { template, behavior: config.DefaultCacheBehavior, origins: config.Origins }
+}
+
+/** Resolve a `{ Ref: <logicalId> }` from a behavior to the resource it names. */
+function resolveRef(
+  template: Template,
+  type: string,
+  ref: { Ref?: string } | undefined,
+): Record<string, unknown> {
+  expect(ref?.Ref).toBeTypeOf('string')
+  const resources = template.findResources(type)
+  const resource = resources[ref?.Ref as string]
+  expect(resource).toBeDefined()
+  return resource.Properties as Record<string, unknown>
+}
+
+const UPLOAD_PROPS = { requireDeployableBundle: false, uploadBehavior: {} }
+
+describe('AssetSupport - uploadBehavior()', () => {
+  it('puts the upload on an UNSIGNED origin for the bucket - no OAC anywhere on the distribution', () => {
+    // The tripwire for the single most likely "helpful" edit to this
+    // construct: switching the upload origin to the same
+    // `withOriginAccessControl` origin the read behaviors use, on the
+    // reasonable-sounding grounds that everything else here is OAC-signed.
+    // That fails CLOSED but confusingly - CloudFront signs origin requests
+    // and never hashes the body, so S3 answers 400 InvalidArgument naming
+    // x-amz-content-sha256, which reads like a client bug rather than an
+    // infrastructure one.
+    const stack = makeStack()
+    const assetSupport = new AssetSupport(stack, 'Assets', { ...UPLOAD_PROPS })
+    const { template, origins } = synthUploadDistribution(assetSupport, stack)
+
+    expect(origins).toHaveLength(1)
+    const [origin] = origins
+    // Object.keys throws rather than passing vacuously if the origin entry
+    // ever stops being emitted at all.
+    expect(Object.keys(origin)).not.toContain('OriginAccessControlId')
+    expect(Object.keys(origin)).not.toContain('S3OriginConfig')
+    expect(origin.CustomOriginConfig?.OriginProtocolPolicy).toBe('https-only')
+    expect(JSON.stringify(origin.DomainName)).toContain('RegionalDomainName')
+
+    template.resourceCountIs('AWS::CloudFront::OriginAccessControl', 0)
+  })
+
+  it('allows all methods - a POST is 405 on CDK’s GET/HEAD default', () => {
+    const stack = makeStack()
+    const assetSupport = new AssetSupport(stack, 'Assets', { ...UPLOAD_PROPS })
+    const { behavior } = synthUploadDistribution(assetSupport, stack)
+
+    expect([...(behavior.AllowedMethods ?? [])].sort()).toEqual([
+      'DELETE',
+      'GET',
+      'HEAD',
+      'OPTIONS',
+      'PATCH',
+      'POST',
+      'PUT',
+    ])
+  })
+
+  it('rewrites the URI to the bucket root on viewer-request (POST Object is root-only, and the rewrite is what contains ALLOW_ALL)', () => {
+    const stack = makeStack()
+    const assetSupport = new AssetSupport(stack, 'Assets', { ...UPLOAD_PROPS })
+    const { template, behavior } = synthUploadDistribution(assetSupport, stack)
+
+    const functions = template.findResources('AWS::CloudFront::Function')
+    const codes = Object.values(functions).map(
+      (fn) => (fn.Properties as { FunctionCode: string }).FunctionCode,
+    )
+    expect(codes).toHaveLength(1)
+    expect(codes[0]).toContain("request.uri = '/'")
+
+    const associations = behavior.FunctionAssociations ?? []
+    expect(associations).toHaveLength(1)
+    expect(associations[0].EventType).toBe('viewer-request')
+    expect(JSON.stringify(associations[0].FunctionARN)).toContain('AssetUploadRewriteFunction')
+  })
+
+  it('forwards no cookies to S3, and strips Host and Authorization', () => {
+    const stack = makeStack()
+    const assetSupport = new AssetSupport(stack, 'Assets', { ...UPLOAD_PROPS })
+    const { template, behavior } = synthUploadDistribution(assetSupport, stack)
+
+    const config = resolveRef(
+      template,
+      'AWS::CloudFront::OriginRequestPolicy',
+      behavior.OriginRequestPolicyId,
+    ).OriginRequestPolicyConfig as {
+      CookiesConfig: { CookieBehavior: string }
+      HeadersConfig: { HeaderBehavior: string; Headers?: string[] }
+      QueryStringsConfig: { QueryStringBehavior: string }
+    }
+
+    // The editor session cookie must never reach S3 or its access logs.
+    expect(config.CookiesConfig.CookieBehavior).toBe('none')
+    expect(config.QueryStringsConfig.QueryStringBehavior).toBe('none')
+    expect(config.HeadersConfig.HeaderBehavior).toBe('allExcept')
+    expect([...(config.HeadersConfig.Headers ?? [])].sort()).toEqual(['authorization', 'host'])
+  })
+
+  it('supplies Access-Control-Allow-Origin from the edge, overriding the origin, so no bucket CORS rule is needed', () => {
+    const stack = makeStack()
+    const assetSupport = new AssetSupport(stack, 'Assets', { ...UPLOAD_PROPS })
+    const { template, behavior } = synthUploadDistribution(assetSupport, stack)
+
+    const cors = (
+      resolveRef(
+        template,
+        'AWS::CloudFront::ResponseHeadersPolicy',
+        behavior.ResponseHeadersPolicyId,
+      ).ResponseHeadersPolicyConfig as {
+        CorsConfig: {
+          AccessControlAllowOrigins: { Items: string[] }
+          AccessControlAllowCredentials: boolean
+          OriginOverride: boolean
+        }
+      }
+    ).CorsConfig
+
+    expect(cors.AccessControlAllowOrigins.Items).toEqual(['*'])
+    expect(cors.AccessControlAllowCredentials).toBe(false)
+    expect(cors.OriginOverride).toBe(true)
+  })
+
+  it('honours allowedOrigins for adopters who would rather not use the wildcard', () => {
+    const stack = makeStack()
+    const assetSupport = new AssetSupport(stack, 'Assets', {
+      requireDeployableBundle: false,
+      uploadBehavior: { allowedOrigins: ['https://editor.example.com'] },
+    })
+    const { template, behavior } = synthUploadDistribution(assetSupport, stack)
+
+    const cors = (
+      resolveRef(
+        template,
+        'AWS::CloudFront::ResponseHeadersPolicy',
+        behavior.ResponseHeadersPolicyId,
+      ).ResponseHeadersPolicyConfig as {
+        CorsConfig: { AccessControlAllowOrigins: { Items: string[] } }
+      }
+    ).CorsConfig
+
+    expect(cors.AccessControlAllowOrigins.Items).toEqual(['https://editor.example.com'])
+  })
+
+  it('answers http:// with 403 rather than redirecting - a 301 turns a POST into a GET and the file is never sent', () => {
+    const stack = makeStack()
+    const assetSupport = new AssetSupport(stack, 'Assets', { ...UPLOAD_PROPS })
+    const { behavior } = synthUploadDistribution(assetSupport, stack)
+
+    expect(behavior.ViewerProtocolPolicy).toBe('https-only')
+  })
+
+  it('writes no bucket CORS rule when the edge supplies the header instead', () => {
+    const stack = makeStack()
+    new AssetSupport(stack, 'Assets', { ...UPLOAD_PROPS })
+    const template = Template.fromStack(stack)
+
+    const buckets = Object.values(template.findResources('AWS::S3::Bucket'))
+    expect(buckets).toHaveLength(1)
+    expect(Object.keys(buckets[0].Properties)).not.toContain('CorsConfiguration')
+  })
+
+  it('still writes the bucket CORS rule when editorOrigins is passed alongside', () => {
+    const stack = makeStack()
+    new AssetSupport(stack, 'Assets', { ...BASE_PROPS, uploadBehavior: {} })
+    const template = Template.fromStack(stack)
+
+    template.hasResourceProperties(
+      'AWS::S3::Bucket',
+      Match.objectLike({
+        CorsConfiguration: {
+          CorsRules: Match.arrayWith([Match.objectLike({ AllowedOrigins: EDITOR_ORIGINS })]),
+        },
+      }),
+    )
+  })
+
+  it('refuses uploadBehavior() unless the prop opted in - the unsigned origin is never implicit', () => {
+    const stack = makeStack()
+    const assetSupport = new AssetSupport(stack, 'Assets', { ...BASE_PROPS })
+
+    expect(() => assetSupport.uploadBehavior()).toThrow(/needs the `uploadBehavior` prop/)
+  })
+})
+
+describe('AssetSupport - editorOrigins is optional, but not absent-by-accident', () => {
+  it('refuses to synth a standalone bucket with neither editorOrigins nor uploadBehavior', () => {
+    // Neither route means S3 accepts the upload and declines to advertise it:
+    // the object lands in asset-staging/ and the browser reports a network
+    // error. Nothing downstream of that failure points at CORS.
+    const stack = makeStack()
+
+    expect(() => new AssetSupport(stack, 'Assets', { requireDeployableBundle: false })).toThrow(
+      /given neither/,
+    )
+  })
+
+  it('treats an empty editorOrigins array as absent (CloudFormation rejects a CORS rule with no origins)', () => {
+    const stack = makeStack()
+
+    expect(
+      () =>
+        new AssetSupport(stack, 'Assets', { requireDeployableBundle: false, editorOrigins: [] }),
+    ).toThrow(/given neither/)
+  })
+
+  it('leaves BYO-bucket mode alone - the caller owns that bucket’s CORS configuration', () => {
+    const stack = makeStack()
+    const bucket = new s3.Bucket(stack, 'Existing')
+
+    expect(
+      () =>
+        new AssetSupport(stack, 'Assets', {
+          requireDeployableBundle: false,
+          bucket,
+        }),
+    ).not.toThrow()
+  })
+})

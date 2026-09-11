@@ -1,7 +1,43 @@
 # `AssetSupport` cannot emit the CloudFront behaviour that `media.uploadUrl` needs
 
-**Status:** Open. **Priority: P2.** Filed 2026-09-10 alongside the change that added
-`media.uploadUrl` (adopter request #44).
+**Status: RESOLVED 2026-09-11**, branch `feat/asset-support-upload-behavior`, base
+`int-202608-b`. Filed 2026-09-10 alongside the change that added `media.uploadUrl` (adopter
+request #44).
+
+Shipped as `AssetSupportProps.uploadBehavior` + `AssetSupport.uploadBehavior()` in
+`packages/canopycms-cdk/src/constructs/asset-support.ts`, built to **option 3** below: the
+behaviour is meant to be the default behaviour of a distribution serving the upload route and
+nothing else. It emits an unsigned origin for the bucket, `ALLOW_ALL`, a viewer-request rewrite
+to `/`, an origin-request policy forwarding no cookies and no query strings and stripping
+`host` + `authorization`, and a response-headers policy supplying `ACAO` (default `['*']`,
+overridable via `allowedOrigins`).
+
+Four decisions taken during implementation that this file did not anticipate:
+
+- **`HttpOrigin`, not `S3BucketOrigin.withBucketDefaults()`.** Both are unsigned, but
+  `HttpOrigin` is the exact shape measured end to end below, and it is the only one that can
+  pin the CloudFront->S3 protocol — `withBucketDefaults()` emits `S3OriginConfig`, which has no
+  `OriginProtocolPolicy` field. For a request carrying a live upload credential in its body,
+  that leg should be stated rather than inferred.
+- **`HTTPS_ONLY`, not the read behaviours' `REDIRECT_TO_HTTPS`.** CloudFront redirects with
+  301, and a browser turns a 301'd POST into a GET — so an `http://` upload URL would silently
+  become a bodyless GET, rewritten to `/` and refused, with the file never sent. `HTTPS_ONLY`
+  answers 403: the same refusal, visible.
+- **The URI rewrite is a containment mechanism, not only a functional one.** Rewriting
+  unconditionally means nothing arriving on this behaviour can address a key, so `ALLOW_ALL`
+  buys an anonymous caller only bucket-level operations at `/`, all of which the bucket's
+  BLOCK_ALL stance already refuses. This is why the rewrite must never be made conditional.
+- **`editorOrigins` became optional** rather than staying required (see Related, below, which
+  is now out of date on that point). Standalone mode refuses to synth with neither it nor
+  `uploadBehavior`, and an empty array counts as absent. BYO-bucket mode is untouched: the
+  caller owns that bucket's CORS configuration and the construct cannot read it.
+
+`ASSET_BEHAVIOR_SPREAD_MISTAKE_KEYS` was considered and deliberately **not** extended:
+`uploadBehavior()` returns a bare `BehaviorOptions` rather than a named property, so there is
+no spread to get wrong, and a speculative `'upload'` entry would misfire on an adopter whose
+distribution has a real upload route (CloudFront treats a path pattern's leading slash as
+optional, so `upload` is a legal spelling of `/upload`). The reasoning is recorded at that
+constant so it is not re-opened.
 
 ## Problem
 
@@ -137,7 +173,8 @@ that belief is easy to arrive at. Raised by the adopter against their own argume
 ## Related
 
 - `editorOrigins` (`asset-support.ts`) becomes inert for any adopter who takes `uploadUrl` — it
-  exists only to write the bucket CORS rule. Still a required prop, since a cross-origin editor
-  is the default shape; its doc comment now says so and points here.
-- [rename-asset-staging-prefix.md](rename-asset-staging-prefix.md) and
-  [cdk-prefixes-duplication.md](cdk-prefixes-duplication.md) touch the same construct.
+  exists only to write the bucket CORS rule. ~~Still a required prop, since a cross-origin
+  editor is the default shape.~~ **Superseded on resolution:** it is now optional, guarded by
+  the neither-route synth error described in the status block above.
+- [rename-asset-staging-prefix.md](../rename-asset-staging-prefix.md) and
+  [cdk-prefixes-duplication.md](../cdk-prefixes-duplication.md) touch the same construct.
