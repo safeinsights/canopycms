@@ -37,12 +37,13 @@ const cliCode = await readFile(cliSrc, 'utf8')
 await writeFile(cliSrc, cliCode.replace(/^#!.*\n/, ''))
 
 // Bundle CLI entry points with esbuild so all internal imports are resolved.
-// This fixes Node 20 ESM errors from bare directory imports emitted by tsc.
+// This fixes Node ESM errors from bare directory imports emitted by tsc.
 const commonOptions = {
   bundle: true,
   format: 'esm',
   platform: 'node',
-  target: 'node20',
+  // The engines.node floor (>=22.12.0).
+  target: 'node22',
   packages: 'external',
 }
 

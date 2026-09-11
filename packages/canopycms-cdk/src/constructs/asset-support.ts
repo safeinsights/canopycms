@@ -1192,8 +1192,8 @@ export class AssetSupport extends Construct {
       code: lambda.Code.fromAsset(transformAssetDir),
       handler: 'handler.handler',
       // nodejs20.x was deprecated 2026-04-30; CDK's CloudFormation validation
-      // now fails synth on it. The esbuild bundle targets node20 and runs
-      // unchanged on the node22 runtime.
+      // now fails synth on it. The esbuild bundle (lambda/asset-transform/
+      // build.mjs) targets node22 to match; move the two together.
       runtime: lambda.Runtime.NODEJS_22_X,
       architecture: lambda.Architecture.ARM_64,
       memorySize: TRANSFORM_LAMBDA_MEMORY_MB,

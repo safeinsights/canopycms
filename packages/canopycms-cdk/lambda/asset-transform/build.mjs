@@ -101,7 +101,8 @@ async function main() {
     bundle: true,
     platform: 'node',
     format: 'cjs',
-    target: 'node20',
+    // Matches the function's runtime, lambda.Runtime.NODEJS_22_X in asset-support.ts.
+    target: 'node22',
     external: ['sharp', '@img/*', '@aws-sdk/*'],
     logLevel: 'info',
   })
