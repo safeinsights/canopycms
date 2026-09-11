@@ -1627,3 +1627,21 @@ describe('assetUploadBehavior() and AssetSupport - a known false positive, pinne
     expect(() => app.synth()).not.toThrow()
   })
 })
+
+describe('assetUploadBehavior() - one call per scope', () => {
+  it('throws on a second call with the same scope, rather than minting a second route', () => {
+    // The function creates three children under fixed ids, so CDK's own
+    // duplicate-id check is what stops this -- there is no memoization here
+    // (unlike `uploadBehavior()`, which memoizes precisely because a construct
+    // can be asked twice). Pinned because the doc comment states it: one call
+    // per scope, and a caller who wants two upload routes gives the second one
+    // its own scope.
+    const stack = makeStack()
+    const bucket = new s3.Bucket(stack, 'AssetBucket')
+    assetUploadBehavior(stack, { bucket })
+
+    expect(() => assetUploadBehavior(stack, { bucket })).toThrow(
+      /already a Construct with name 'AssetUploadRewriteFunction'/,
+    )
+  })
+})
