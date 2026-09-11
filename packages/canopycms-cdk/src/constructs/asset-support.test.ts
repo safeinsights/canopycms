@@ -6,6 +6,7 @@ import { Duration, Stack } from 'aws-cdk-lib'
 import { Match, Template } from 'aws-cdk-lib/assertions'
 import { aws_cloudfront as cloudfront, aws_iam as iam, aws_s3 as s3 } from 'aws-cdk-lib'
 import { RetentionDays } from 'aws-cdk-lib/aws-logs'
+import { HttpOrigin } from 'aws-cdk-lib/aws-cloudfront-origins'
 import { describe, expect, it } from 'vitest'
 
 import { AssetSupport, ASSETS_PATH_PATTERN, ASSETS_TRANSFORM_PATH_PATTERN } from './asset-support'
@@ -1101,6 +1102,41 @@ describe('AssetSupport - uploadBehavior()', () => {
     new cloudfront.Distribution(stack, 'Uploads', {
       defaultBehavior: assetSupport.uploadBehavior(),
     })
+
+    expect(() => app.synth()).not.toThrow()
+  })
+
+  it('counts attachment made through addBehavior, not just defaultBehavior', () => {
+    // The recommended topology is a one-behavior distribution, so defaultBehavior
+    // is what the other passing tests use - which would leave a detection reworked
+    // in some default-behavior-specific way (a template search on
+    // DefaultCacheBehavior, say) failing every OTHER attachment shape with the
+    // suite still green. A false synth failure breaks a correct adopter stack.
+    const app = newTestApp()
+    const stack = new Stack(app, 'TestStack', {
+      env: { account: '123456789012', region: 'us-east-1' },
+    })
+    const assetSupport = new AssetSupport(stack, 'Assets', { ...UPLOAD_PROPS })
+    const dist = new cloudfront.Distribution(stack, 'Uploads', {
+      defaultBehavior: { origin: new HttpOrigin('example.com') },
+    })
+    const { origin, ...rest } = assetSupport.uploadBehavior()
+    dist.addBehavior('/upload', origin, rest)
+
+    expect(() => app.synth()).not.toThrow()
+  })
+
+  it('leaves the guard silent for a BYO bucket, whose upload route may live elsewhere', () => {
+    // The `!props.bucket` clause: with a caller-supplied bucket this construct
+    // cannot know where the upload route was built, so opting in without
+    // attaching is not evidence of a mistake. Dropping the clause would false-fail
+    // every BYO adopter whose upload distribution lives in another app entirely.
+    const app = newTestApp()
+    const stack = new Stack(app, 'TestStack', {
+      env: { account: '123456789012', region: 'us-east-1' },
+    })
+    const existing = new s3.Bucket(stack, 'Existing')
+    new AssetSupport(stack, 'Assets', { ...UPLOAD_PROPS, bucket: existing })
 
     expect(() => app.synth()).not.toThrow()
   })

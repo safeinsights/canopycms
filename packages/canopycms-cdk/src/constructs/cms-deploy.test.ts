@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { Duration, Stack } from 'aws-cdk-lib'
+import { CfnElement, Duration, Stack } from 'aws-cdk-lib'
 import { Template, Match } from 'aws-cdk-lib/assertions'
 import { RetentionDays } from 'aws-cdk-lib/aws-logs'
 import {
@@ -827,6 +827,14 @@ describe('CanopyCmsDistribution: assetSupport prop', () => {
     // ...and can still be attached to, which a sticky module-level flag would
     // have to get right by luck of ordering.
     expect(() => other.assetSupport.attachTo(untouched.distribution)).not.toThrow()
+
+    // The marker must stay inert. It is a bare Construct today, so it emits
+    // nothing and shifts no logical id - but "the guard writes to the template"
+    // is exactly the regression that would follow from someone later hanging a
+    // CfnResource off it to carry data. Asserted rather than left to the comment.
+    const marker = dist.distribution.node.findChild('CanopyAssetBehaviorsAttached')
+    const emitted = marker.node.findAll().filter((c) => CfnElement.isCfnElement(c))
+    expect(emitted, 'the attachment marker must not emit into the template').toEqual([])
   })
 
   it('refuses a second attachTo for the same distribution', () => {
