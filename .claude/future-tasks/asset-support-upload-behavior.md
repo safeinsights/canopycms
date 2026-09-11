@@ -38,10 +38,10 @@ Every adopter who takes `uploadUrl` hand-rolls all of the above, and the OAC tra
 is silent-until-403 and non-obvious. The first adopter already measured the whole path end to
 end and hit each item; the second should not have to.
 
-## Open design question, to settle first
+## Which distribution does the upload behaviour attach to?
 
-**Which distribution does the upload behaviour attach to?** Two shapes, and the choice changes
-the API:
+Updated 2026-09-11 after the requesting adopter pushed back on the first answer here and
+measured part of it. **Recommendation is now option 3.**
 
 1. **The site's own distribution** (what `AssetSupport.behaviors` assumes today — it is designed
    to be handed to `CanopyCmsDistribution`'s `additionalBehaviors`). Keeps the upload
@@ -49,23 +49,72 @@ the API:
    Costs: a write-capable unsigned origin sits on the distribution serving the public site;
    `CustomErrorResponses` are distribution-wide, so a site mapping 403→404 applies that to S3's
    upload errors and the editor reports the substituted status; and the cookie and
-   `Authorization` hazards above are live and must be handled by policy.
-2. **A distribution dedicated to assets**, next to the bucket, shared across environments.
-   Three of those hazards stop existing rather than needing to be configured correctly, because
-   it is a different host: no cookies (cross-origin XHR without `withCredentials` sends none),
-   no basic-auth credential, and its own `CustomErrorResponses`. The upload becomes cross-origin
-   again — but `multipart/form-data` is a CORS-safelisted content type and a presigned POST
-   sends no custom headers, so there is **no preflight**; only an `Access-Control-Allow-Origin`
-   on the response is needed, and that can come from a CloudFront response-headers policy rather
-   than from the bucket. On this path CORS is not the security boundary — the presigned policy
-   is — so `ACAO: *` scoped to the upload behaviour is defensible and removes origin
-   enumeration entirely. Would also be a **new supported topology** for `AssetSupport`, and puts
-   the transform Lambda's Function URL origin cross-account (contemplated already; that is what
-   `transformRole` exists for).
+   `Authorization` hazards above are live and must be handled by policy rather than being
+   absent.
 
-**Unverified, and it gates option 2:** that a CloudFront response-headers policy supplying ACAO
-is sufficient with *no* bucket CORS configuration for a cross-origin presigned POST. Reasoned
-from the CORS safelist, not measured. Measure it before building option 2.
+2. **One distribution dedicated to assets**, serving reads *and* writes for every environment.
+   Was the recommendation here; **withdrawn**, for a reason worth keeping written down.
+
+   One assets distribution means one `AssetSupport`, and `AssetSupport` creates the transform
+   Lambda. So it also means **one transform Lambda shared by every environment** — and since
+   that Lambda ships inside `canopycms-cdk`, a package bump would move every environment's
+   asset pipeline at once. Any adopter running a build-once-promote pipeline gives up its
+   graduated rollout to get an upload path, which is a bad trade they should not be asked to
+   make.
+
+   This entry also described the read side as `/assets/*` and `/assets/t/*` "on an OAC-signed
+   origin", which was wrong: `/assets/t/*` is an `OriginGroup` whose primary is the signed S3
+   origin and whose 403/404 failover is the transform Lambda
+   (`asset-support.ts`'s `buildBehaviors`). Built as described it would serve already-computed
+   derivatives and fail every first hit. Corrected here because the elision is what made option
+   2 look cheaper than it is.
+
+3. **A distribution dedicated to the UPLOAD ROUTE only** — one behaviour, one unsigned origin,
+   nothing else on it. Reads and the transform Lambda stay wherever they already are, per
+   environment. **The recommendation.**
+
+   It collects all three structural wins, because they follow from the upload being on a
+   *different host*, not from where reads live: no cookies (a cross-origin XHR without
+   `withCredentials` sends none), no cached basic-auth credential, and its own
+   `CustomErrorResponses` so upload failures keep their true status. None of the read-path
+   hazards arise because the read path is not involved, and the transform-Lambda coupling in
+   option 2 never comes up. `uploadUrl` is then one absolute URL that is the same for every
+   environment.
+
+   It is also the smallest thing to get wrong, which matters given that its defining property is
+   that OAC must be **off**.
+
+## Measurements
+
+**Settled (measured by the adopter against a real bucket with NO CORS configuration):** S3
+**accepts** a cross-origin presigned POST and simply declines to advertise it. A request
+carrying `Origin: https://evil.example.com` returned **204 with no
+`Access-Control-Allow-Origin` header**, as did one with no `Origin` at all.
+
+Acceptance and advertisement are independent — bucket CORS governs only whether S3 *advertises*.
+That is the property an edge-supplied ACAO needs, and it means a dedicated distribution does not
+drag a bucket CORS rule back in. Worth knowing on its own: it is a common assumption that a
+bucket CORS rule is what *permits* the upload, and it is not.
+
+**Still open, and it gates options 2 and 3:** whether a CloudFront response-headers policy
+attaches ACAO to a 2xx from an **unsigned** S3 origin on a POST. Being measured; a negative
+result kills the dedicated-distribution design and makes option 1 the answer. **Do not build
+this until that lands.**
+
+## A caveat for anyone reasoning about per-environment transform Lambdas
+
+Option 2's rejection rests on a per-environment transform Lambda being a rollout boundary. On a
+**shared** bucket it is a weaker one than it looks, and this is a property of our key layout
+rather than of anyone's infrastructure: transform outputs are content-addressed at
+`assets/t/{directives}/{hash32}/{slug}` (`assets/keys.ts`) with **no environment segment**, so
+two environments sharing a bucket share derivatives. Whichever environment requests a given key
+first computes it, and every other environment is then served that object from cache.
+
+So a per-environment Lambda gates only *which code computes a derivative on first hit, for keys
+no other environment has requested yet* — partial and key-dependent, not the clean gate it
+reads as. It does not change the recommendation (option 3 sidesteps the question), but an
+adopter who believes they have per-environment isolation of transform *output* is mistaken, and
+that belief is easy to arrive at. Raised by the adopter against their own argument.
 
 ## Related
 
