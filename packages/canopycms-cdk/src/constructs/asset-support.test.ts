@@ -6,6 +6,7 @@ import { Duration, Stack } from 'aws-cdk-lib'
 import { Match, Template } from 'aws-cdk-lib/assertions'
 import { aws_cloudfront as cloudfront, aws_iam as iam, aws_s3 as s3 } from 'aws-cdk-lib'
 import { RetentionDays } from 'aws-cdk-lib/aws-logs'
+import { HttpOrigin } from 'aws-cdk-lib/aws-cloudfront-origins'
 import { describe, expect, it } from 'vitest'
 
 import { AssetSupport, ASSETS_PATH_PATTERN, ASSETS_TRANSFORM_PATH_PATTERN } from './asset-support'
@@ -1057,7 +1058,7 @@ describe('AssetSupport - uploadBehavior()', () => {
     expect(cors.AccessControlAllowOrigins.Items).toEqual(['https://editor.example.com'])
   })
 
-  it('fails synth when uploadBehavior is opted into but never attached to anything', () => {
+  it('fails synth when uploadBehavior is opted into and the accessor is never called', () => {
     // Satisfying the constructor guard by setting the prop, then not wiring it,
     // reaches the same no-ACAO-anywhere state the guard exists to refuse.
     const app = newTestApp()
@@ -1066,7 +1067,96 @@ describe('AssetSupport - uploadBehavior()', () => {
     })
     new AssetSupport(stack, 'Assets', { ...UPLOAD_PROPS })
 
-    expect(() => app.synth()).toThrow(/never called/)
+    expect(() => app.synth()).toThrow(/never attached to a distribution/)
+    expect(() => app.synth()).toThrow(/uploadBehavior\(\) was never called/)
+  })
+
+  it('fails synth when uploadBehavior() is called and its result is discarded', () => {
+    // The condition is ATTACHMENT, not the accessor having been called. A
+    // memoized accessor cannot tell these apart on its own, and this is the
+    // likelier of the two shapes: it is what a half-finished copy of the README
+    // snippet, or a refactor that loses the value, leaves behind. The adopter
+    // lands in exactly the state the message describes - standalone bucket, no
+    // CORS rule, no edge route - so the guard has to fire here too.
+    const app = newTestApp()
+    const stack = new Stack(app, 'TestStack', {
+      env: { account: '123456789012', region: 'us-east-1' },
+    })
+    const assetSupport = new AssetSupport(stack, 'Assets', { ...UPLOAD_PROPS })
+    assetSupport.uploadBehavior()
+
+    expect(() => app.synth()).toThrow(/never attached to a distribution/)
+    // ...and says WHICH of the two shapes this was, since the fixes differ.
+    expect(() => app.synth()).toThrow(/its return value was not passed to one/)
+  })
+
+  it('passes synth once the upload behavior actually reaches a distribution', () => {
+    // The other side of the guard: attaching it satisfies the validation. Pins
+    // that the check reads attachment rather than merely "something was built",
+    // which would make the two tests above pass for the wrong reason.
+    const app = newTestApp()
+    const stack = new Stack(app, 'TestStack', {
+      env: { account: '123456789012', region: 'us-east-1' },
+    })
+    const assetSupport = new AssetSupport(stack, 'Assets', { ...UPLOAD_PROPS })
+    new cloudfront.Distribution(stack, 'Uploads', {
+      defaultBehavior: assetSupport.uploadBehavior(),
+    })
+
+    expect(() => app.synth()).not.toThrow()
+  })
+
+  it('counts attachment made through addBehavior, not just defaultBehavior', () => {
+    // The recommended topology is a one-behavior distribution, so defaultBehavior
+    // is what the other passing tests use - which would leave a detection reworked
+    // in some default-behavior-specific way (a template search on
+    // DefaultCacheBehavior, say) failing every OTHER attachment shape with the
+    // suite still green. A false synth failure breaks a correct adopter stack.
+    const app = newTestApp()
+    const stack = new Stack(app, 'TestStack', {
+      env: { account: '123456789012', region: 'us-east-1' },
+    })
+    const assetSupport = new AssetSupport(stack, 'Assets', { ...UPLOAD_PROPS })
+    const dist = new cloudfront.Distribution(stack, 'Uploads', {
+      defaultBehavior: { origin: new HttpOrigin('example.com') },
+    })
+    const { origin, ...rest } = assetSupport.uploadBehavior()
+    dist.addBehavior('/upload', origin, rest)
+
+    expect(() => app.synth()).not.toThrow()
+  })
+
+  it('leaves the guard silent for a BYO bucket, whose upload route may live elsewhere', () => {
+    // The `!props.bucket` clause: with a caller-supplied bucket this construct
+    // cannot know where the upload route was built, so opting in without
+    // attaching is not evidence of a mistake. Dropping the clause would false-fail
+    // every BYO adopter whose upload distribution lives in another app entirely.
+    const app = newTestApp()
+    const stack = new Stack(app, 'TestStack', {
+      env: { account: '123456789012', region: 'us-east-1' },
+    })
+    const existing = new s3.Bucket(stack, 'Existing')
+    new AssetSupport(stack, 'Assets', { ...UPLOAD_PROPS, bucket: existing })
+
+    expect(() => app.synth()).not.toThrow()
+  })
+
+  it('counts attachment to a distribution in ANOTHER stack', () => {
+    // The upload route is deliberately a separate one-behavior distribution,
+    // which an adopter may well put in its own stack. Detection therefore reads
+    // the origin's own bind, not the emitted template: a tree search resolves to
+    // an Fn::ImportValue in the consuming stack and would fail this correct
+    // arrangement at synth.
+    const app = newTestApp()
+    const env = { account: '123456789012', region: 'us-east-1' }
+    const stack = new Stack(app, 'TestStack', { env })
+    const uploadStack = new Stack(app, 'UploadStack', { env })
+    const assetSupport = new AssetSupport(stack, 'Assets', { ...UPLOAD_PROPS })
+    new cloudfront.Distribution(uploadStack, 'Uploads', {
+      defaultBehavior: assetSupport.uploadBehavior(),
+    })
+
+    expect(() => app.synth()).not.toThrow()
   })
 
   it('refuses an empty allowedOrigins rather than silently widening it to the wildcard', () => {

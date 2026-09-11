@@ -226,13 +226,30 @@ believing ordering was handled upstream — so the local ordering guard they'd o
 have written is the one thing they're least likely to write. `responseHeadersPolicy` is
 the same story for a repo with a shared security-headers policy.
 
-**To adopt.** Nothing required. If you fell back to `assetBehaviors()` _only_ because you
-needed per-behavior options, you can now use `attachTo` and delete your hand-ordered
-block:
+`CanopyCmsDistribution` forwards them too, via a new
+`assetBehaviorOverrides?: Partial<cloudfront.AddBehaviorOptions>` prop. Until it did, needing
+overrides meant dropping the `assetSupport` prop and hand-calling `attachTo` after
+construction — which sent the tier-auth adopter back to the manual path for a routine
+requirement. Passing `assetBehaviorOverrides` without `assetSupport` throws at `cdk synth`, since there
+would be no behaviors to merge it into and the override would vanish silently.
+
+**To adopt.** Nothing required. If you fell back to `assetBehaviors()` — or dropped the
+`assetSupport` prop — _only_ because you needed per-behavior options, you can now delete your
+hand-ordered block:
 
 ```ts
+// a bespoke distribution
 assetSupport.attachTo(distribution, {
   functionAssociations: [{ function: tierAuthFn, eventType: FunctionEventType.VIEWER_REQUEST }],
+})
+
+// or, on CanopyCmsDistribution, without leaving the guarded path
+new CanopyCmsDistribution(this, 'Dist', {
+  ...yourExistingDistributionProps,
+  assetSupport,
+  assetBehaviorOverrides: {
+    functionAssociations: [{ function: tierAuthFn, eventType: FunctionEventType.VIEWER_REQUEST }],
+  },
 })
 ```
 

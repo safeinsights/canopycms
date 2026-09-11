@@ -252,12 +252,13 @@ export interface CanopyCmsDistributionProps {
    * order matters. Calls `assetSupport.attachTo(distribution)` for you right
    * after construction, with nothing to forget.
    *
-   * NOT fully equivalent to calling `attachTo` yourself: this path cannot pass
-   * that method's `overrides` argument. If the asset behaviors need
-   * per-behavior options - a viewer-request function for tier auth being the
-   * motivating case, since without it `/assets/*` is anonymously readable on
-   * an authenticated tier - drop this prop and call
-   * `assetSupport.attachTo(this.distribution, { ... })` after construction.
+   * If the asset behaviors need per-behavior options - a viewer-request
+   * function for tier auth being the motivating case, since without it
+   * `/assets/*` is anonymously readable on an authenticated tier - pass
+   * `assetBehaviorOverrides` alongside this prop. That requirement used to mean
+   * dropping this prop and hand-calling `attachTo` after construction, which
+   * sent exactly the adopter who most needs the ordering guarantee back to the
+   * manual path this prop exists to replace.
    *
    * Prefer this over passing `assetSupport.assetBehaviors()` through
    * `additionalBehaviors` by hand - that stays available as an escape hatch
@@ -272,6 +273,28 @@ export interface CanopyCmsDistributionProps {
    * @default - no asset behaviors are attached
    */
   assetSupport?: AssetSupport
+
+  /**
+   * Per-behavior options merged into BOTH asset behaviors, forwarded verbatim
+   * to `AssetSupport.attachTo()`'s `overrides` parameter - see that method's
+   * doc comment for the merge semantics and for why the same set goes to both.
+   *
+   * The motivating case is a distribution running a viewer-request function on
+   * every behavior (tier basic-auth): without the same `functionAssociations`
+   * on the asset behaviors, `/assets/*` is anonymously readable on an
+   * authenticated tier.
+   *
+   * Useless without `assetSupport`, and silently so - there would be no
+   * behaviors to merge it into - so that combination throws from this
+   * construct's CONSTRUCTOR rather than being ignored. (A constructor throw,
+   * not an `addValidation`: nothing later can make the combination valid. An
+   * adopter sharing one props object across tiers, with `assetSupport` present
+   * on only some of them, should make the whole prop conditional rather than
+   * the overrides object.)
+   *
+   * @default - the asset behaviors are attached with no overrides
+   */
+  assetBehaviorOverrides?: Partial<cloudfront.AddBehaviorOptions>
 }
 
 /**
@@ -297,6 +320,20 @@ export class CanopyCmsDistribution extends Construct {
 
   constructor(scope: Construct, id: string, props: CanopyCmsDistributionProps) {
     super(scope, id)
+
+    // Overrides with nothing to override. They are merged into the asset
+    // behaviors and there are none, so the only outcome is that whatever the
+    // caller asked for - a tier-auth viewer function, most likely - silently
+    // does not happen.
+    if (props.assetBehaviorOverrides && !props.assetSupport) {
+      throw new Error(
+        'CanopyCmsDistribution: `assetBehaviorOverrides` was passed without `assetSupport`. ' +
+          'The overrides are merged into the asset behaviors, so with no AssetSupport to attach ' +
+          'there is nothing for them to apply to and they would be silently dropped - including ' +
+          'a viewer-request function for tier auth. Pass `assetSupport` as well, or drop the ' +
+          'overrides.',
+      )
+    }
 
     // ========================================================================
     // DNS — Hosted Zone lookup
@@ -449,7 +486,11 @@ export class CanopyCmsDistribution extends Construct {
     // logic lives exactly once, inside attachTo() itself. Callers who instead
     // pass `assetSupport.assetBehaviors()` through `additionalBehaviors` by
     // hand are covered by `mergeBehaviors`'s synth-time guard above instead.
-    props.assetSupport?.attachTo(this.distribution)
+    //
+    // `assetBehaviorOverrides` is forwarded so that needing per-behavior
+    // options is not a reason to leave this prop - and so the ordering
+    // guarantee survives the tier-auth case that most needs it.
+    props.assetSupport?.attachTo(this.distribution, props.assetBehaviorOverrides)
 
     // ========================================================================
     // DNS Records
