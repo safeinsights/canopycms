@@ -127,7 +127,8 @@ test.describe('Admin System Health Panel', () => {
   }) => {
     const lastGitSyncAt = new Date().toISOString()
     // A17: redaction is enforced at the WRITE site, not the read/render path
-    // -- the worker's recordRebaseFailure/syncGit (worker/cms-worker.ts) runs
+    // -- the worker's recordRebaseFailure (worker/rebase.ts) and syncGit
+    // (worker/git-sync.ts) run
     // `redactCredentials` on any git error message BEFORE it is persisted to
     // worker-status.json, and that transform is unit-tested there. This
     // fixture writes worker-status.json directly (no worker involved), so

@@ -32,7 +32,7 @@ For each issue, include: severity, file path with line number, description, and 
 
 #### Agent 1: Security & Authorization (model: opus)
 
-Review: `src/authorization/`, `src/auth/`, `src/api/guards.ts`, `src/middleware/`, and all API handlers in `src/api/`.
+Review: `src/authorization/`, `src/auth/`, `src/api/guards.ts`, and all API handlers in `src/api/`.
 Check for:
 
 - Auth checks missing on any API endpoint
@@ -54,7 +54,7 @@ Use grep-first approach — do NOT read every editor file. Instead:
 
 #### Agent 3: Content Store & Git Operations (model: opus)
 
-Read all of: `src/content-store.ts`, `src/git-manager.ts`, `src/github-service.ts`, `src/branch-workspace.ts`, `src/branch-registry.ts`, `src/branch-metadata.ts`, `src/content-id-index.ts`, `src/asset-store.ts`.
+Read all of: `src/content-store.ts`, `src/git-manager.ts`, `src/github-service.ts`, `src/branch-workspace.ts`, `src/branch-registry.ts`, `src/branch-metadata.ts`, `src/content-id-index.ts`, `src/assets/`.
 Check for:
 
 - Race conditions in concurrent file access (multiple editors on same branch)
@@ -102,7 +102,7 @@ Check for:
 
 #### Agent 7: Editor UI & UX (model: opus)
 
-Read all 127 files in `src/editor/` (components, hooks, forms, preview bridge, block editor).
+Read every file in `src/editor/` (~176 files at time of writing — count it, do not trust this number) (components, hooks, forms, preview bridge, block editor).
 Check for:
 
 - React state/effect correctness (stale closures, missing dependency arrays, race conditions in async effects)
@@ -154,4 +154,7 @@ Produce a single consolidated report with:
 6. **Architectural observations**: Any systemic patterns that should be addressed
 7. **Positive observations**: Things the codebase does well (important for calibration)
 
-Write this report to `REVIEW-REPORT.md` in the project root.
+Write this report to `docs/reviews/<YYYY-MM>.md` (e.g. `docs/reviews/2026-09.md`).
+**Never overwrite an existing report** — prior reports are cited by `.claude/future-tasks/` files as
+historical records. If a report for the current month already exists, append a dated re-verification
+section to it rather than replacing it.

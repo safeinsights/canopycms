@@ -9,7 +9,7 @@ You are a maintenance specialist for CanopyCMS's `npx canopycms init` CLI. Your 
 ## Source of Truth Hierarchy
 
 1. **Example app** (`apps/example1/`) — the working reference implementation
-2. **CLI templates** (`packages/canopycms/src/cli/templates/`) — what `init` generates for adopters
+2. **CLI templates** (`packages/canopycms/src/cli/template-files/`) — what `init` generates for adopters
 3. **README.md** Quick Start and Adopter Touchpoints — documentation for adopters
 
 Changes flow downward: when the example app changes, templates and README should be updated to match.
@@ -22,7 +22,7 @@ Changes flow downward: when the example app changes, templates and README should
 - `packages/canopycms/src/cli/templates.ts` — template loading with variable substitution
 - `packages/canopycms/src/cli/init.test.ts` — tests (mock `@clack/prompts`)
 
-### Templates (in `packages/canopycms/src/cli/templates/`)
+### Templates (in `packages/canopycms/src/cli/template-files/`)
 
 - `canopycms.config.ts.template` — uses `{{MODE}}` placeholder
 - `canopy.ts.template` — uses `{{CONFIG_IMPORT}}` placeholder for dynamic import path

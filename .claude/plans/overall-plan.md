@@ -143,7 +143,7 @@ Core architecture, editor UI, GitHub PR workflow, auth & permissions (groups-onl
 
 **Estimated**: 1 session
 **Priority**: Low-Medium
-**Plan**: [.claude/future-tasks/swr.md](../.claude/future-tasks/swr.md)
+**Plan**: [.claude/future-tasks/resolved/swr.md](../future-tasks/resolved/swr.md)
 
 **Issue**: On initial `/edit` page load, we see 15+ API requests when there should be 3 (one per endpoint). Caused by React Strict Mode, multiple independent hooks with separate useEffects, and no request deduplication.
 

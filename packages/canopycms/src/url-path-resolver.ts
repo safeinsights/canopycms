@@ -39,10 +39,14 @@ export function resolveUrlPathCandidates(
   // `index` is not a contrived segment either — it is the slug the index convention requires on
   // disk, so the collision was structural rather than accidental.
   //
-  // This closes the `.../index` spelling, NOT every extra URL: candidate 2 below still resolves an
-  // index entry at `/<collection>/<entryTypeName>`, because that path is a registered entry-TYPE
-  // schema item which `buildPaths` delegates to the parent collection. Open, and tracked in
-  // .claude/future-tasks/readbyurlpath-entry-type-candidate-phantom-url.md.
+  // This closes the `.../index` spelling only. The other extra URLs an entry answered at —
+  // `/<collection>/<entryTypeName>` via candidate 2, and `/<collection>/<entryTypeName>/<slug>`
+  // via candidate 1 — are closed DOWNSTREAM instead, by `readByUrlPath` requiring every
+  // candidate's `entryPath` to be a collection (`ReadContentInput.urlAddressableOnly`). They have
+  // to be: telling those apart needs the branch's schema, and this module is deliberately pure
+  // and schema-free so that the candidate shapes stay a fact about URLs rather than about
+  // content. The consequence to keep in mind when reading this file: the candidates below are
+  // what is ATTEMPTED, not what can resolve.
   //
   // Compared case-INSENSITIVELY, through the shared `isIndexSlug`. This function is the one
   // consumer that sees a raw, un-normalized URL segment — everything downstream lowercases

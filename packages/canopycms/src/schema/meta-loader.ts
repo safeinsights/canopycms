@@ -4,7 +4,7 @@ import { z } from 'zod'
 import chokidar from 'chokidar'
 import { getErrorMessage } from '../utils/error'
 // canopyLogError/canopyLogWarn, not console.*: this module sits in the
-// worker's runtime import closure (worker/cms-worker.ts ->
+// worker's runtime import closure (worker/git-sync.ts and worker/rebase.ts ->
 // content-index-generation.ts -> branch-schema-cache.ts -> schema/resolver.ts
 // -> here), so a bare console line would land in worker.log without the
 // ISO-8601 prefix the CloudWatch agent's multi_line_start_pattern needs (see

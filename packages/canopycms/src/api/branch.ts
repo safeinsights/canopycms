@@ -251,7 +251,7 @@ export const createBranchHandler = async (
     // Reserve the WHOLE canopycms-settings- namespace, not just this
     // deployment's own settings branch name. Two CanopyCMS deployments can
     // share one GitHub repo, each with its own settings branch under this
-    // prefix; the worker (worker/cms-worker.ts) treats any
+    // prefix; the worker (worker/git-sync.ts) treats any
     // `canopycms-settings-*` ref specially (orphan-branch reconcile/push
     // logic), so another deployment's settings branch is a real name that
     // must not be claimable as a content branch here either.
@@ -326,7 +326,7 @@ export const createBranchHandler = async (
     // (PRIVATE_ISOLATED subnets, no NAT -- see AGENTS.md), so a synchronous
     // GitHub API call at branch-create time is not possible. But remote.git
     // is BOTH this deployment's local git origin AND a mirror of GitHub's
-    // view of the repo: cms-worker.ts's syncGit() fetches GitHub into it
+    // view of the repo: worker/git-sync.ts's syncGit() fetches GitHub into it
     // (see GITHUB_TRACKING_REF_PREFIX's doc comment in git-manager.ts) and
     // then reconciles refs/heads/* non-destructively, so it carries both
     // this deployment's local heads and GitHub's view -- readable offline by

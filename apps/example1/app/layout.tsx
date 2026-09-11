@@ -18,18 +18,17 @@ const authMode =
     ? 'clerk'
     : 'dev'
 
-const RootLayout = ({ children }: { children: React.ReactNode }) => {
-  const content = (
-    <html lang="en">
-      <body>{children}</body>
-    </html>
-  )
-
-  if (authMode === 'clerk') {
-    return <ClerkProvider>{content}</ClerkProvider>
-  }
-
-  return content
-}
+// ClerkProvider goes INSIDE <body>, not around <html>. Clerk Core 3
+// (@clerk/nextjs 7.x) requires this; the pre-7.x shape here was
+// `<ClerkProvider>{<html>...</html>}</ClerkProvider>`.
+//
+// Switching only the wrapper inside <body> also removes the second copy of the
+// document skeleton this used to carry, so the dev-auth and Clerk paths can no
+// longer drift in anything but the provider itself.
+const RootLayout = ({ children }: { children: React.ReactNode }) => (
+  <html lang="en">
+    <body>{authMode === 'clerk' ? <ClerkProvider>{children}</ClerkProvider> : children}</body>
+  </html>
+)
 
 export default RootLayout

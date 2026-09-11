@@ -39,12 +39,421 @@ supersedes an earlier one's workaround entirely.
 
 _Entries land here as changes merge._
 
+### `media.uploadUrl` routes presigned uploads through your own CDN (#44)
+
+**What changed.** One optional field on `mediaSchema`'s s3 branch:
+
+```ts
+media: {
+  adapter: 's3',
+  bucket: '…',
+  region: '…',
+  uploadUrl: '/asset-upload/', // absolute http(s) URL, or a site-relative path
+}
+```
+
+It replaces the `url` that `beginUpload()` returns — the S3 REST endpoint — leaving the
+presign's `fields` untouched. Unset, nothing changes. See
+[Routing uploads through your own CDN](../README.md) for the CloudFront behaviour it expects,
+including the four things that are easy to get wrong.
+
+**Why.** A direct-to-S3 upload is cross-origin, so it needs a bucket CORS rule, and a CORS
+rule must name an exact origin. On a bucket shared across environments that is one
+`AllowedOrigins` entry per environment forever — and S3 CORS has no prefix scoping, so the
+rule cannot be narrowed to the upload path. Routing the upload through a distribution you
+already control makes it same-origin and the rule unnecessary. The signature is unaffected: a
+presigned POST's string-to-sign is the base64 policy alone, so the host never enters it (now
+pinned by a test that fails loudly if a future SDK changes that).
+
+**To adopt.** Nothing, unless you want it. If you do, set `uploadUrl` from an environment
+variable — a site-relative value only works where that path routes to the bucket, so it will
+404 under `next dev`.
+
+**Now deletable.** The bucket CORS rule naming your editor's origin, once uploads are
+same-origin. If you use `canopycms-cdk`'s `AssetSupport` in standalone mode, `editorOrigins`
+becomes inert at the same moment (it stays a required prop, since a cross-origin editor is
+still the default shape).
+
+### `media.publicBaseUrl` accepts a site-relative path, and rejects non-http(s) schemes
+
+**What changed.** `publicBaseUrl` was `z.string().url()`. It now accepts an absolute `http(s)`
+URL, a protocol-relative `//host` URL, **or** a site-relative path such as `/preview-123`.
+
+**Why.** Absolute-only was a validation choice, not a constraint of the feature, and it forced
+the editor to infer its asset mount point from the deployment `basePath` when `publicBaseUrl`
+was unset. You can now state the mount point directly in every topology. The inference is kept
+for compatibility, so nothing breaks on upgrade.
+
+**To adopt.** Nothing required. On a deployment under a `basePath` you may now set
+`publicBaseUrl` to a bare path instead of relying on the inferred fallback.
+
+**Watch out — this is also a tightening.** `z.string().url()` accepted anything `new URL()`
+parses, including `mailto:` and `javascript:`. Those now fail validation. A value of that shape
+never worked (it produced URLs like `/mailto:a@b.c/assets/…`), so this converts a silent
+misconfiguration into a startup error.
+
+Three narrower shapes are also rejected now, all for the same reason — the browser rewrites
+them, so the stored value stops describing what is requested. A literal space
+(`https://cdn.example.com/x y`, which previously validated and worked because the browser
+percent-encodes it — use `%20`); a backslash anywhere (`/asset\upload/` is sent as
+`/asset/upload/`); and `.`/`..` path segments in any spelling, percent-encoded included
+(`/assets/%2e%2e/` is sent as `/`). Also `https:cdn.example.com` — a scheme with no `//` — which
+a browser resolves as a _relative_ reference against the current page rather than as an
+absolute URL.
+
+### `media` config now rejects unknown keys
+
+**What changed.** Each branch of `mediaSchema` is `.strict()`.
+
+**Why.** `CanopyConfigSchema`'s `.strict()` does not recurse, so a misspelled key anywhere
+under `media` used to parse successfully and be silently dropped — your setting simply never
+took effect, with no diagnostic anywhere.
+
+**To adopt.** If your config carries a key that was being ignored, validation now fails and
+names it. That is the point; fix or remove the key.
+
 **Promoting them is a manual step, and it is easy to miss.** `main` auto-publishes a patch
 on every push, so an entry written here is usually released within hours — while the heading
 still says "Unreleased". When you next touch this file, check `npm view canopycms version`
 and move anything already published down into `## Released` under its version heading,
 demoting each entry from `###` to `####`. An adopter reading "Unreleased" about a feature
 they already have installed cannot tell whether they are missing something.
+
+### `AssetSupport` and `CanopyCmsService` take an execution role, so its ARN is derivable without a construct reference (#42)
+
+**What changed.** Two new optional props:
+
+```ts
+AssetSupportProps.transformRole?: iam.Role // the transform Lambda
+CanopyCmsServiceProps.lambdaRole?: iam.Role // the CMS Lambda
+```
+
+Unset, nothing changes — CDK creates the execution role exactly as before.
+
+**Why.** If your asset bucket lives in a **different AWS account** from the CMS compute (a
+build account shared across per-environment accounts, so a promoted build's
+`/assets/{hash32}/…` references survive moving tiers), a cross-account S3 grant needs an
+identity half in the compute's stack and a **resource-policy half written in the bucket's
+own stack** — and that half needs the Lambda's principal ARN as a **plain string**.
+
+Both constructs already expose their functions (`transformFunction`, `lambdaFunction`), so
+the role was readable — but only through a construct reference, and that is precisely what
+you cannot use here. Across an account boundary CDK emits `Fn::GetStackOutput`: a
+**CDK-CLI-only intrinsic**, resolved at deploy time by assuming a publishing role and
+calling DescribeStacks. The coupling is invisible to CloudFormation and unusable by any
+deploy path that is not `cdk deploy`. A same-account circular dependency at least fails
+synth; this one does not fail anything until it matters.
+
+Create a deterministically **named** role instead, and both stacks compute
+`arn:aws:iam::<account>:role/<name>` from literals they already hold, with nothing crossing
+between them. See [Cross-account asset bucket](deploying-to-aws.md#cross-account-asset-bucket).
+
+**The footgun this closes, which is the real content of the change.** CDK's
+`lambda.Function` does, in effect:
+
+```js
+managedPolicies.push(AWSLambdaBasicExecutionRole)
+props.vpc && managedPolicies.push(AWSLambdaVPCAccessExecutionRole)
+this.role = props.role || new iam.Role(this, 'ServiceRole', { managedPolicies })
+```
+
+Those managed policies reach **only the role CDK creates**. Pass your own and they are
+**silently discarded** — no warning, no synth error. For the CMS Lambda, which is
+VPC-attached, that leaves a role with no `AWSLambdaVPCAccessExecutionRole`: the function
+**cannot create ENIs and therefore cannot start**, after synthesizing and deploying
+perfectly clean. It fails only at invoke, a long way from the cause.
+
+**So the constructs re-attach them for you** — see
+`packages/canopycms-cdk/src/constructs/lambda-execution-role.ts`. You do not attach
+basic-execution or VPC-access yourself, and the contract is the strong one: passing a role
+yields the same effective permissions as letting the construct create one. Everything else
+already survived a passed role and still does — the EFS access-point statements, the
+log-group write grant, and the asset-bucket grants all land on it.
+
+**To adopt.** Nothing required. If you need the ARN without a reference:
+
+```ts
+const roleName = `canopy-cms-${tier}` // derive it however you name things
+const role = new iam.Role(this, 'CmsRole', {
+  roleName,
+  assumedBy: new iam.ServicePrincipal('lambda.amazonaws.com'),
+})
+new CanopyCmsService(this, 'Cms', { /* ... */ lambdaRole: role })
+
+// In the bucket's stack, in the other account - no reference, just literals:
+const principal = new iam.ArnPrincipal(`arn:aws:iam::${tierAccount}:role/${roleName}`)
+```
+
+**Two costs that are now yours, deliberately.** A **named** IAM role means the stack that
+creates it needs `CAPABILITY_NAMED_IAM`, and a customer-named role **cannot be replaced in
+place** without a rename — so plan the name up front for anything long-lived. Taking a role
+rather than a `roleName` is what puts that decision where its consequences land.
+
+**Why the type is `iam.Role` and not `iam.IRole`,** which is what a CDK prop would normally
+take: `addManagedPolicy` does nothing useful on an _imported_ role, and says nothing about
+it. `ImmutableRole.addManagedPolicy` — what `Role.fromRoleArn` returns for a cross-account
+role, or with `mutable: false` — is an empty method body; the same-account mutable
+`ImportedRole` attaches only policies exposing `attachToRole`, which
+`ManagedPolicy.fromAwsManagedPolicyName` does not. Either way the compensation above
+vanishes and you are back to a Lambda that cannot start — with no runtime check to guard
+it, since `ImmutableRole.addToPrincipalPolicy` returns `statementAdded: true` while
+emitting nothing. The narrower type turns that into a **compile** error instead. If you
+were going to pass `Role.fromRoleArn`, create the role in the compute's stack and name it.
+
+**Now deletable.** Any local workaround for the missing ARN: a hand-written
+`Fn::GetStackOutput`-producing cross-stack reference, a `CfnOutput`-plus-manual-wiring
+step, or an asset grant scoped to the whole compute **account** because the role could not
+be named. That last one is the one worth hunting for — it works, so nothing will ever fail
+to tell you it is broader than you wanted.
+
+### `AssetSupport.attachTo()` takes behavior overrides (#41)
+
+**What changed.** `attachTo(distribution)` gained an optional second parameter:
+
+```ts
+attachTo(distribution: cloudfront.Distribution, overrides?: Partial<cloudfront.AddBehaviorOptions>): void
+```
+
+merged into **both** asset behaviors.
+
+**Why.** Without it, `attachTo` was unusable by exactly the adopters who most need its
+ordering guarantee. A distribution that runs a viewer-request function on every behavior —
+tier basic-auth, most commonly — needs the asset behaviors to carry the same
+`functionAssociations`, or `/assets/*` is **anonymously readable on an authenticated
+tier**. Such an adopter had to fall back to `assetBehaviors()` plus two hand-ordered
+`addBehavior` calls: the exact shape `attachTo` exists to eliminate, re-entered while
+believing ordering was handled upstream — so the local ordering guard they'd otherwise
+have written is the one thing they're least likely to write. `responseHeadersPolicy` is
+the same story for a repo with a shared security-headers policy.
+
+`CanopyCmsDistribution` forwards them too, via a new
+`assetBehaviorOverrides?: Partial<cloudfront.AddBehaviorOptions>` prop. Until it did, needing
+overrides meant dropping the `assetSupport` prop and hand-calling `attachTo` after
+construction — which sent the tier-auth adopter back to the manual path for a routine
+requirement. Passing `assetBehaviorOverrides` without `assetSupport` throws at `cdk synth`, since there
+would be no behaviors to merge it into and the override would vanish silently.
+
+**To adopt.** Nothing required. If you fell back to `assetBehaviors()` — or dropped the
+`assetSupport` prop — _only_ because you needed per-behavior options, you can now delete your
+hand-ordered block:
+
+```ts
+// a bespoke distribution
+assetSupport.attachTo(distribution, {
+  functionAssociations: [{ function: tierAuthFn, eventType: FunctionEventType.VIEWER_REQUEST }],
+})
+
+// or, on CanopyCmsDistribution, without leaving the guarded path
+new CanopyCmsDistribution(this, 'Dist', {
+  ...yourExistingDistributionProps,
+  assetSupport,
+  assetBehaviorOverrides: {
+    functionAssociations: [{ function: tierAuthFn, eventType: FunctionEventType.VIEWER_REQUEST }],
+  },
+})
+```
+
+Overrides apply to both behaviors, which is what keeps the ordering guarantee the only
+thing the method decides. If you genuinely need the two to differ you are still on
+`assetBehaviors()` — and should keep your own assertion on the **synthesized** template's
+`CacheBehaviors` array index.
+
+### `canopycms-auth-clerk` supports Clerk Core 3 (`@clerk/nextjs` 7.x, `@clerk/backend` 3.x)
+
+**What changed.** The peer ranges widened to `@clerk/nextjs: ^6.0.0 || ^7.0.0` and
+`@clerk/backend: ^2.0.0 || ^3.0.0`, so you can stay on the 6.x/2.x line or move to
+7.x/3.x. CanopyCMS's own devDependencies and both example apps now build against the new
+majors, so CI exercises them.
+
+**To adopt.** Upgrading is optional. If you do upgrade, there is exactly one change Core 3
+forces on a CanopyCMS integration, and it is in your own app rather than in anything we
+ship: **`<ClerkProvider>` must go inside `<body>`**, not wrap `<html>`. If your root layout
+looks like `<ClerkProvider><html>...</html></ClerkProvider>`, move the provider in:
+
+```tsx
+<html lang="en">
+  <body>
+    <ClerkProvider>{children}</ClerkProvider>
+  </body>
+</html>
+```
+
+`apps/example1/app/layout.tsx` shows the corrected shape. For a **dual-build** adopter the
+provider belongs in the editor subtree's layout instead — see
+[Dual Build Support](deploying-to-aws.md#dual-build-support) — and that arrangement is
+unaffected by this rule, since a nested layout is already inside `<body>`.
+
+**What does NOT change, despite what Clerk's Core 3 guide implies.**
+
+- `verifyToken` is **not** removed. The guide's "`verifySecret()` / `verifyAccessToken()` /
+  `verifyToken()` are replaced by `verify()`" is about the machine-auth surface.
+  Session-token `verifyToken` is still exported from `@clerk/backend@3.x` with a
+  byte-identical option set, and **networkless PEM verification still works** — the
+  property the no-internet Lambda deployment depends on. Verified by execution with no
+  network available, not by reading the guide.
+- `CLERK_ENCRYPTION_KEY`, which Core 3 requires "when passing `secretKey`" to
+  `clerkMiddleware`, does **not** apply to the middleware CanopyCMS scaffolds: the
+  requirement is gated on a `secretKey` you pass explicitly, and the generated
+  `middleware.ts` passes only `jwtKey`.
+- `UserButton` lost its `afterSignOutUrl`/`signOutUrl` props. `useClerkAuthConfig()` passes
+  `UserButton` as a bare component reference, so the editor's account button is unaffected
+  — but if **you** render `AccountComponent` yourself with those props, move them to
+  `ClerkProvider`'s `afterSignOutUrl` or a `SignOutButton`.
+
+**Node version.** Choosing the 7.x/3.x line requires **Node >= 20.9.0** (Clerk's own
+`engines`). This used to note that `canopycms-auth-clerk` deliberately kept
+`engines.node >= 18` so as not to exclude a Clerk-6-on-Node-18 adopter; that reasoning is
+**superseded**. All five packages now declare `>= 22.12.0`, because they are ESM-only and reach
+CommonJS consumers through `require(esm)`, which older runtimes do not support — `>= 18`
+was never true for a CommonJS consumer of these packages, only for an ESM one. The Clerk
+peer constraint still comes from whichever line you install, and your package manager will
+report it.
+
+**Unchanged and still worth knowing:** `clerkMiddleware` requires a non-empty `secretKey`
+in 7.x as it did in 6.x (7.x actually dropped a fallback, so it is slightly stricter). See
+the note in [Security Model](deploying-to-aws.md#security-model) about what that means for
+a CMS Lambda documented as holding no secrets — that question is open and this upgrade
+neither resolves nor worsens it.
+
+### `CanopyCmsService` gains `settingsBranch`, and the generated stack derives `baseBranch`/`settingsBranch` from `canopycms.config.ts` (#39)
+
+**What changed.** `CanopyCmsService` gained a `settingsBranch` prop, stamped into the
+worker's `CANOPYCMS_SETTINGS_BRANCH` environment variable — previously read by
+`worker/index.ts` but never stamped by anything, so it had zero writers in the whole
+codebase. Both `settingsBranch` and the existing `baseBranch` prop are now validated at
+`cdk synth` against git's own branch-name rules: a value git itself would refuse fails
+synth instead of deploying an instance that crash-loops forever. Note this is a LOOSER
+rule than the one `deploymentName` gets — a `/` is legal and conventional in a branch
+name (`release/v2`), whereas `deploymentName` is interpolated into
+`canopycms-settings-<name>` as a single ref component and so forbids it.
+`infrastructure/lib/cms-stack.ts`, as generated by `canopycms init-deploy aws`, now
+imports your project's own `canopycms.config.ts` at synth time and derives both props
+from it directly (`baseBranch: config.defaultBaseBranch`, `settingsBranch:
+config.settingsBranch`), so the two can never drift from the shared config the way a
+hand-copied literal could.
+
+**Why.** Two env-derived worker settings could silently diverge from the app's
+`CanopyConfig`. Nothing derived `CANOPYCMS_BASE_BRANCH` from `config.defaultBaseBranch`,
+so every scaffolded deploy was pinned to `'main'` regardless of the adopter's actual
+default branch — a repo whose default branch is not `main` got **no working worker at
+all**: `verifyBaseBranchExists` throws when the named branch doesn't exist in the cloned
+`remote.git`, the worker exits 1, and systemd's `Restart=always` repeats that failure
+forever. `CANOPYCMS_SETTINGS_BRANCH` had the matching gap on the settings-branch side: an
+adopter who set `config.settingsBranch` got a worker permanently aimed at a different
+branch than the Lambda writes to, with only a per-cycle `[SYNC-M3]` warning to notice it.
+
+**To adopt.** Regenerate `infrastructure/lib/cms-stack.ts` (or copy the import and the two
+new lines by hand) so it imports `../../canopycms.config` and passes
+`baseBranch`/`settingsBranch` from it into `CanopyCmsService`. Do this now if your repo's
+default branch is not `main`, or if you set `config.settingsBranch` — both were silently
+wrong before this change. If you maintain your own hand-rolled stack instead of the
+generated one, set the `baseBranch`/`settingsBranch` props on `CanopyCmsService`
+explicitly, matching `canopycms.config.ts` — neither is inferred for you outside the
+generated stack.
+
+**Now deletable.** Any comment, runbook step, or manual checklist item telling you to keep
+`CANOPYCMS_BASE_BRANCH` (or a settings-branch override) in sync with `canopycms.config.ts`
+by hand — the generated stack now does this for you at every synth.
+
+### `AssetSupport.attachTo()` and `CanopyCmsDistribution`'s `assetSupport` prop make the CloudFront behavior-ordering footgun unrepresentable
+
+**What changed.** `AssetSupport.assetBehaviors()` returned `{ assets, assetsTransform }` with
+no CloudFront path pattern attached — the patterns (`/assets/*`, `/assets/t/*`) lived only in
+a doc comment, and CloudFront matches path patterns in the order given, stopping at the first
+match. Listing `/assets/*` before `/assets/t/*` (which alphabetizing the two keys does, since
+`'/assets/*'` sorts before `'/assets/t/*'` lexicographically) served every not-yet-computed
+transform off the S3-only `/assets/*` behavior and never failed over to the transform Lambda —
+a silent, launch-delayed, **permanent** 403 on any derivative that had not already been
+computed, with no synth or deploy error. A second, related mistake — spreading
+`assetBehaviors()`'s return value directly into `additionalBehaviors` — type-checked and
+deployed clean too, synthesizing two behaviors matching the literal path patterns `assets` and
+`assetsTransform`, which nothing ever requests.
+
+Two new APIs replace hand-wiring the order yourself:
+
+- `AssetSupport.attachTo(distribution)` — call it with a concrete `cloudfront.Distribution`
+  and it calls `addBehavior` for `/assets/t/*` then `/assets/*`, in that order, every time.
+- `CanopyCmsDistribution`'s new `assetSupport` prop — pass your `AssetSupport` instance and the
+  construct calls `attachTo()` for you after building its distribution.
+
+`CanopyCmsDistribution` also gained a synth-time guard on its `additionalBehaviors` merge. It
+now throws — naming the cause and pointing at `attachTo()`/the `assetSupport` prop — on any of
+three shapes:
+
+1. `/assets/*` listed before `/assets/t/*`.
+2. The literal keys `assets`/`assetsTransform` from the spread mistake above.
+3. **The `assetSupport` prop passed while `additionalBehaviors` still lists either asset
+   pattern.** This is the mistake to watch for while migrating: both wiring routes are then
+   active, each pattern is attached twice, and CloudFront rejects duplicate path patterns at
+   deploy time. Check 1 cannot catch it, because the block you are migrating away from
+   normally has the order _right_ — that is the whole reason it was working.
+
+A stack with any of the three now fails `cdk synth` with an actionable message instead of
+deploying broken. This guard only covers callers going through `CanopyCmsDistribution`; a
+bespoke `new cloudfront.Distribution(...)` built elsewhere should call `attachTo()` directly.
+
+**This is additive and opt-in.** `assetBehaviors()` and its `AssetCloudFrontBehaviors` return
+shape are unchanged — nothing is removed, and a stack that already lists the two behaviors in
+the correct manual order keeps working exactly as before (the guard's ordering check only
+fires when both patterns are present and in the wrong order). The one thing you must not do is
+_half_ the migration: adopt the prop and leave the old block in place. Delete one or the
+other — check 3 above refuses that combination at synth rather than letting it reach
+CloudFront.
+
+**To adopt.** Nothing is required to keep deploying as-is. To adopt the safer API: in your
+`infrastructure/lib/cms-stack.ts`, replace a hand-written
+
+```typescript
+additionalBehaviors: {
+  '/assets/t/*': assetSupport.assetBehaviors().assetsTransform,
+  '/assets/*': assetSupport.assetBehaviors().assets,
+},
+```
+
+with passing `assetSupport` straight to `CanopyCmsDistribution`:
+
+```typescript
+new CanopyCmsDistribution(this, 'CmsDist', {
+  // ...your existing props...
+  assetSupport,
+})
+```
+
+**Now deletable.** The hand-written `additionalBehaviors` block above, and any comment
+reminding yourself (or a teammate) which order the two patterns have to be listed in — the
+`assetSupport` prop is the one place that ordering now lives.
+
+### `CLERK_JWT_KEY` is a repository **variable**, not a secret (#37)
+
+**What changed.** Documentation and the generated deploy workflow now classify
+`CLERK_JWT_KEY` consistently as a GitHub Actions **variable**. The generated
+`deploy-cms.yml` reads it from `${{ vars.CLERK_JWT_KEY }}` instead of
+`${{ secrets.CLERK_JWT_KEY }}`, and it is listed under repository variables rather than
+repository secrets.
+
+**Why.** It is Clerk's public JWKS PEM — retrievable from your instance's public JWKS
+endpoint, used only to verify signatures. `docs/deploying-to-aws.md` had been calling it
+three different things: a public JWKS PEM in one table, "public keys only" in the Security
+Model, and a `secret` in the Actions table. The last one is the reading that licenses an
+adopter to conclude the CMS Lambda accepts secrets — and from there, to put
+`CLERK_SECRET_KEY` (full Clerk API access) in the Lambda's plaintext environment, which is
+exactly the mistake the Security Model exists to prevent. The Lambda's posture is now
+stated once, in prose, next to that table.
+
+**To adopt.** If you regenerate `deploy-cms.yml`, or copy the change into your existing
+one, **move `CLERK_JWT_KEY` from repository secrets to repository variables** (Settings ->
+Secrets and variables -> Actions -> Variables). Getting this wrong fails loudly, not
+silently: `infrastructure/bin/app.ts` reads it via `required()`, so an unset value refuses
+the deploy at synth before anything in the account changes.
+
+Keeping it as a secret also works if you prefer — nothing rejects a public value stored in
+a secret. The reclassification is about not teaching that the Lambda handles secrets.
+
+**Worth checking while you are here.** Confirm your own `bin/app.ts` passes
+`CLERK_SECRET_KEY` to `CanopyCmsService` as `clerkSecretKeySecretArn` (a Secrets Manager
+ARN read by the EC2 worker) and **not** as an entry in the Lambda's `environment`. No
+Lambda code path reads that value, so passing it there gains nothing and makes a real
+secret readable by anyone holding `lambda:GetFunctionConfiguration`.
 
 ### `basePath` deployments are supported, and `assetUrl`'s `baseUrl` is now safe for path prefixes (#24)
 
@@ -423,8 +832,9 @@ resolver disagreed: it tried "last segment is the slug" first, so the same entry
 
 The round-trip guarantee now excludes the `.../index` spelling for index entries: `item.urlPath`
 reaches the entry, and no `.../index` spelling does, in any case (`/x/Index` and `/x/INDEX` return
-null too). It is not yet exclusive in general — an index entry still also answers at
-`/<collection>/<entryTypeName>`, a separate open hole (see the Unreleased entry below). Ordinary
+null too). The remaining extra URLs an entry answered at are closed by a later entry below, which
+you should read together with this one — it supersedes this entry's original caveat, and its
+"Now deletable" list is the one to act on if you wrote per-route guards. Ordinary
 entries are unchanged — their final slug segment stays case-insensitive.
 A collection literally _named_ `index` is unaffected and in fact fixed — `/docs/index` now resolves
 to that collection's own index entry instead of being shadowed by its parent's.
@@ -540,12 +950,13 @@ home.index.<id>.json`). Entry type and ID are unchanged, so references, `order` 
 3. Drop the sitemap workaround (below), and re-check the emitted `sitemap.xml` for the new URL.
 4. If the old URL was publicly indexed, add a redirect from it — the entry's URL genuinely changes.
 
-**One known caveat, if you serve a root catch-all.** An entry-type name is currently still
-resolvable as a URL segment: with home modelled at the root, `readByUrlPath('/home')` returns the
-home entry as well as `readByUrlPath('/')`. Nothing advertises `/home` (it is absent from the
-sitemap and from `generateContentStaticParams`), so on a route-per-page app it simply 404s. But an
-`app/[[...slug]]` catch-all resolves whatever it is handed, so it would serve a duplicate homepage
-there — filter it until this is fixed.
+**A caveat this entry originally carried has since been fixed, in the same release.** Modelling
+home at the root used to make `readByUrlPath('/home')` return the home entry as well as
+`readByUrlPath('/')` — harmless on a route-per-page app, a duplicate homepage on one with a root
+catch-all. The original wording also under-scoped it: it named `/home`, but _every_ entry-type name
+declared beside home answered too, so filtering `/home` alone still left `/page` and `/landing`
+serving duplicates. All of them now return `null`; see "`readByUrlPath` answers only where
+`listEntries` publishes" below, and do not write the filter.
 
 **Now deletable.**
 
@@ -636,6 +1047,131 @@ write API) is not covered by the new refusal, which is exactly the case the buil
 for slugs your routing could not serve, and any editor-side slug-format check you added in front of
 the create form — the package now rejects those at the write boundary and fails the build on the
 ones that arrive some other way.
+
+### `readByUrlPath` answers only where `listEntries` publishes — **breaking (routing)**
+
+_Adopter request log item 34, and the remainder of item 22._
+
+**What changed.** `readByUrlPath` now resolves exactly the set of URLs enumeration advertises. For
+every entry, `readByUrlPath(item.urlPath)` reaches it and nothing else does. Three shapes that used
+to resolve now return `null`:
+
+```diff
+  await readByUrlPath('/blog/hello')          // the article — unchanged
+- await readByUrlPath('/blog/article')        // ALSO the blog's index entry
+- await readByUrlPath('/blog/article/hello')  // ALSO the article
++ await readByUrlPath('/blog/article')        // null
++ await readByUrlPath('/blog/article/hello')  // null
+```
+
+`article` there is an entry-type _name_. Both shapes came from one cause: an entry type is
+registered in the schema at `<collectionPath>/<typeName>`, and a read against that path is
+delegated to the parent collection — which is correct for `read({ entryPath })`, and meaningless
+for a URL, since a URL's non-slug segments are collection names by construction. The first shape
+needed the collection to have an index entry; **the second did not**, so it applied to every entry
+in every collection, at `/<collection>/<entryTypeName>/<slug>`. The reference app was serving seven
+duplicate pages through it.
+
+The third shape is an entry whose type token on disk is not one its collection declares — most
+often an entry type renamed in the schema without renaming the files. `listEntries` has always
+skipped those; resolution used to serve them anyway, so a page could stay live at a URL enumeration
+had already stopped publishing. It now 404s. **A collection that declares no entry types at all
+counts here too**: it lists nothing, whatever sits in its directory, so a file placed in a
+collections-only container is no longer served either. Neither case can arise from content the CMS
+authored — there is no entry type to have created it as — so if it describes content you have, it
+arrived by hand, by merge or by retrofit, and it was already missing from your sitemap and static
+params. The fix is to rename the files to a declared type, or declare the type. The entry remains
+fully editable, renameable and deletable in the CMS throughout, which is deliberate: only URL
+resolution was narrowed, not reading, writing or renaming — otherwise a save would create a second
+file with the same slug and the mistake would be unfixable from the editor.
+
+**Two things deliberately did not change.** `read({ entryPath: 'content/home' })` still addresses a
+singleton structurally, defaulting the slug to the entry type's own name. And two _different_
+entries claiming one `urlPath` is still a separate problem with its own guard
+(`findDuplicateUrlPaths`, and the build failure described further up).
+
+**One gap remains, and is not fixed here.** A legacy untyped content file — `overview.json` rather
+than `{type}.{slug}.{id}.{ext}` — is still readable by URL while being invisible to `listEntries`,
+`generateContentStaticParams` and the sitemap. If you have such files, they are already absent from
+every enumerating surface; rename them into the typed grammar to make them real entries.
+
+**To adopt.** Nothing, unless a route of yours depends on one of the URLs above. Two checks worth
+doing once:
+
+1. If you serve a catch-all route, request `/<collection>/<entryTypeName>` and
+   `/<collection>/<entryTypeName>/<some-slug>` for a few of your own type names and confirm you get
+   a 404 rather than a page you did not mean to publish. Under a full static export these were
+   always CDN 404s; under `next dev` or `output: 'standalone'` they were served.
+2. If you renamed an entry type without renaming files on disk, those entries stop resolving. They
+   were already missing from your sitemap and static params, so a build will not tell you —
+   `listEntries()` will.
+
+**Now deletable.**
+
+- **Per-route `entryType` gates that exist only to reject a URL that should not have resolved.**
+  The shape is a check at the top of a catch-all or `[slug]` route asserting the resolved entry is
+  the type that route renders — added because the resolver handed back an index entry, or an entry
+  from a different level, and the template rendered with every field `undefined` while
+  `if (!result) notFound()` stayed silent. Those URLs are `null` now. Keep any `entryType` branch
+  that genuinely dispatches between templates; delete the ones that only ever throw or 404.
+- **A catch-all filter that drops entry-type names before resolving.** The shape is a hard-coded
+  list of segments to reject — usually the app's own entry type names — sitting in front of
+  `readByUrlPath`. Note it was never sufficient anyway: filtering the singleton's own name left
+  every other type name declared beside it resolving.
+- **A regression test asserting a specific phantom URL returns null.** The package now asserts the
+  general invariant — enumerate, then probe every adjacent URL the resolver would attempt — over
+  both its own fixtures and its reference app, which is what stops the next shape of this bug
+  reaching you. Keep a local test only if it covers routing you own rather than resolution we own.
+
+### Static exports are reproducible: `CANOPY_BUILD_ID` pins the build id, and the AI manifest stops baking a wall clock — **breaking (type-level)**
+
+**What changed.** Two independent sources of build-to-build variance, both reported by an adopter
+who found them by driving a real content-addressed deploy rather than by review.
+
+1. **`withCanopy(..., { staticBuild: true })` now honors `CANOPY_BUILD_ID` as Next.js's build id.**
+   Next defaults `generateBuildId` to `nanoid()`, so two builds of one source tree land under
+   different `out/_next/static/<id>/` directories and the id names two different file sets. Unset,
+   nothing changes. An explicit `generateBuildId` in your own config still wins. Deliberately
+   ignored on non-static builds: under the dual-build convention the two flavors have different
+   `pageExtensions` and therefore different chunk sets, and one shared id would name both.
+
+2. **`canopycms generate-ai-content` no longer writes an unconditional `new Date()` into
+   `public/ai/manifest.json`.** `manifest.json` now records `buildId` from `CANOPY_BUILD_ID`, and
+   pins `generated` to `SOURCE_DATE_EPOCH` (the Reproducible Builds convention) when that is set.
+   Setting a build id and no `SOURCE_DATE_EPOCH` **omits `generated` entirely** — if one artifact
+   is built once and promoted to production months later, its build clock describes the runner
+   that produced it, not the content, so a reader treating it as "how fresh is this?" is misled by
+   design. The runtime `/ai/*` route is unaffected and still uses a live clock, which is correct
+   for a response generated on demand.
+
+**Breaking, at the type level only:** `AIManifest.generated` is now `string | undefined`. If you
+read that field in TypeScript you need a guard. It is still present at runtime for every build
+that sets neither variable, so behaviour is unchanged unless you opt in.
+
+**To adopt.** Nothing is required. To make a static export reproducible, export `CANOPY_BUILD_ID`
+(it must be 1-255 characters of `[A-Za-z0-9._-]` and not `.` or `..`, because Next splices it
+into `out/_next/static/<id>/` as one path segment with no validation of its own — a content hash of
+your source tree is the usual choice; a value that is set but unusable is ignored with a warning) for both the
+`next build` and the `generate-ai-content` step, and `SOURCE_DATE_EPOCH` as well if you want the
+manifest to keep a timestamp.
+
+Two things worth knowing before you compute that id. A **commit SHA or commit date is not a
+substitute for a tree hash**: a rebase or cherry-pick gives an identical tree a different commit
+object and a different date, reintroducing exactly the variance you are trying to remove. And a
+hex id containing the letters `ad` is safe here — Next re-rolls such ids only on its internal
+fallback path, and a value returned from `generateBuildId` is used verbatim.
+
+**Now deletable.** A per-site `generateBuildId: () => process.env.<YOUR_VAR> || null` line in
+`next.config.ts`, added by hand to pin the build id — **provided you also pass
+`{ staticBuild: true }`**. On a non-static build `withCanopy` leaves `generateBuildId` alone by
+design, so deleting your line there un-pins the build id silently and Next goes back to `nanoid()`;
+keep it. If you do pass `staticBuild: true`, delete the line and export `CANOPY_BUILD_ID`
+instead — but check its operator first: written with `??` rather than `||`, an
+empty-string environment variable survives, clears Next's `typeof buildId !== 'string'` guard,
+and ships an **empty** build id. Also deletable: any post-build step that rewrites or strips the
+manifest's `generated` field to make output comparable.
+
+---
 
 <!--
 Template for each entry — copy, don't improvise:

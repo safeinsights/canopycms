@@ -93,6 +93,118 @@ export interface GenerateAIContentFilesOptions {
 }
 
 /**
+ * A `CANOPY_BUILD_ID` usable as a build id: it becomes a single path segment under
+ * `_next/static/`, so a value like `heads/main` (what `git describe --all` returns) would nest
+ * that directory, and one containing `..` would climb out of it.
+ *
+ * Deliberately duplicated in `canopycms-next`'s `with-canopy.ts` rather than shared. That file is
+ * loaded by `next.config.ts` before any bundler runs, which is why it ships pre-built and imports
+ * nothing from this package; importing a constant from here would pull this module's graph —
+ * `node:fs` included — into a config file that must be plain executable JavaScript. The two
+ * copies must agree, and the tests on both sides assert the same set of values.
+ */
+const SAFE_BUILD_ID = /^[A-Za-z0-9._-]{1,255}$/
+
+/** The message every rejection uses, so the stated rule and the enforced rule cannot drift. */
+const BUILD_ID_RULE = 'must be 1-255 characters of [A-Za-z0-9._-] and not "." or ".."'
+
+function isUsableBuildId(value: string): boolean {
+  // `.` and `..` clear the character class but are not names — as a path segment they resolve to
+  // the static directory itself or its parent. `a..b` is an ordinary filename and stays allowed.
+  // The 255 bound is the same rule: a longer segment fails at `mkdir` with ENAMETOOLONG.
+  return SAFE_BUILD_ID.test(value) && value !== '.' && value !== '..'
+}
+
+/**
+ * What an unusable `SOURCE_DATE_EPOCH` actually costs, which depends on whether a build id is set.
+ *
+ * Worth spelling out rather than saying "unpinned": with a build id, `generated` is not merely
+ * un-pinned but ABSENT, and a field silently vanishing from a published artifact is the outcome an
+ * operator most needs told.
+ */
+function unpinnedConsequence(buildId: string | undefined): string {
+  return buildId
+    ? 'omitting `generated` from the manifest entirely (a build id is set, so no build clock is recorded).'
+    : 'recording the current time in `generated` instead.'
+}
+
+/**
+ * Resolve the manifest's build stamp from the environment.
+ *
+ * This lives at the BUILD boundary, not inside `generateAIContent`, because the same generator
+ * also serves the runtime route — where a live clock is the correct answer and a
+ * `SOURCE_DATE_EPOCH` that happens to be exported in a server environment must not freeze a
+ * response's timestamp.
+ *
+ * `SOURCE_DATE_EPOCH` is the Reproducible Builds convention (decimal seconds since the epoch),
+ * kept under its standard name so a harness that already exports it for tar/gzip/rpm gets this
+ * for free. `CANOPY_BUILD_ID` is ours: Next has no such variable of its own.
+ *
+ * That id is validated here against a rule justified by Next's `_next/static/<id>/` layout, even
+ * though this module is framework-agnostic. Deliberate: the variable's whole purpose is that the
+ * manifest's `buildId` and the framework's build id name the SAME artifact, so a value one reader
+ * would reject is not useful to the other. The cost is that a non-Next adopter cannot use, say, an
+ * ISO timestamp as a build id — revisit this rule, in both copies, when a second framework lands.
+ *
+ * Every rejection warns and is ignored rather than failing the build — same stance as
+ * `readGeneratedRecord` above. Both variables treat "set but unusable" as a broken pipeline
+ * (`SOURCE_DATE_EPOCH=$(git log -1 --format=%ct)` with a failing command) and say so, while
+ * "unset" is a deliberate opt-out and says nothing.
+ *
+ * Note what ignoring a bad `SOURCE_DATE_EPOCH` means when a build id IS set: `generatedAt` stays
+ * undefined, so `generated` is omitted rather than falling back to a live clock. A bad value must
+ * not resurrect a field the adopter's configuration says is meaningless — which is also why that
+ * case warns rather than failing silently, since the field simply disappears.
+ */
+function resolveBuildStamp(): { generatedAt?: string; buildId?: string } {
+  // Trimmed and shape-checked with the same rule `withCanopy` applies, so that when an adopter
+  // pins BOTH halves of a build the manifest's `buildId` and Next's `_next/static/<id>/` agree.
+  // (They are independent readers of one variable: a host-supplied `generateBuildId`, or the CMS
+  // flavor of a dual build, can still leave Next on a different id — this only guarantees that
+  // the variable itself is read identically.)
+  const rawBuildId = process.env.CANOPY_BUILD_ID
+  const trimmedBuildId = rawBuildId?.trim()
+  let buildId: string | undefined
+  if (rawBuildId === undefined) {
+    buildId = undefined
+  } else if (!trimmedBuildId) {
+    console.warn(
+      'CanopyCMS: CANOPY_BUILD_ID is set but blank — recording no buildId in the manifest.',
+    )
+  } else if (!isUsableBuildId(trimmedBuildId)) {
+    console.warn(
+      `CanopyCMS: ignoring CANOPY_BUILD_ID="${trimmedBuildId}": it ${BUILD_ID_RULE}, so that ` +
+        "the manifest's buildId can match the build id Next stores for the same artifact.",
+    )
+  } else {
+    buildId = trimmedBuildId
+  }
+
+  const rawEpoch = process.env.SOURCE_DATE_EPOCH
+  const trimmedEpoch = rawEpoch?.trim()
+  if (rawEpoch !== undefined && !trimmedEpoch) {
+    console.warn(`CanopyCMS: SOURCE_DATE_EPOCH is set but blank — ${unpinnedConsequence(buildId)}`)
+  }
+  if (!trimmedEpoch) return { buildId }
+
+  // Digits only, applied AFTER trimming: surrounding whitespace is a plausible accident in a
+  // shell-exported variable and the intent is unambiguous, but `Number('0x10')` also parses and
+  // `0x10` is not a SOURCE_DATE_EPOCH. The `Number.isNaN` check below also catches values large
+  // enough that `* 1000` overflows the Date range.
+  const seconds = /^\d+$/.test(trimmedEpoch) ? Number(trimmedEpoch) : Number.NaN
+  const date = new Date(seconds * 1000)
+  if (Number.isNaN(date.getTime())) {
+    console.warn(
+      `CanopyCMS: ignoring SOURCE_DATE_EPOCH="${trimmedEpoch}" (expected decimal seconds since ` +
+        `the Unix epoch) — ${unpinnedConsequence(buildId)}`,
+    )
+    return { buildId }
+  }
+
+  return { generatedAt: date.toISOString(), buildId }
+}
+
+/**
  * Generate AI content files and write them to disk.
  *
  * Output written by a previous run that this run no longer produces is removed, so a renamed or
@@ -135,6 +247,7 @@ export async function generateAIContentFiles(
     contentRoot: contentRootName,
     config: aiConfig,
     entryLinkUrl: config.entryLinkUrl,
+    ...resolveBuildStamp(),
   })
 
   // Write files to disk

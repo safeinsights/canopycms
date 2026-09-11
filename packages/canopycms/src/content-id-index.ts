@@ -1,3 +1,25 @@
+/**
+ * The ContentId -> file path index.
+ *
+ * Every entry file carries a stable id in its filename (`<type>.<slug>.<id>.md`),
+ * and this index is what makes an id-based lookup cheap instead of a directory
+ * walk. `ContentStore` owns an instance and consults it on every id-addressed
+ * read.
+ *
+ * Coherency is the whole problem here, and it is cross-process: two Lambdas and
+ * the worker can all mutate one branch on shared storage. The design is an
+ * on-disk generation marker (`content-index-generation.ts`) plus an in-process
+ * registry (`content-index-registry.ts`) — two files whose names read as
+ * near-synonyms and do unrelated jobs. Read
+ * ../../../docs/concurrency.md before changing any of the three.
+ *
+ * Also here: the filename-grammar helpers (`extractIdFromFilename`,
+ * `extractEntryTypeFromFilename`, `extractSlugFromFilename`). Note that this
+ * grammar is LOOSER than what `parseSlug` accepts, which is the gap
+ * `static/`'s `assertRoutableSlugs` exists to catch at build time.
+ *
+ * Module map: ./AGENTS.md.
+ */
 import fs from 'node:fs/promises'
 import path from 'node:path'
 

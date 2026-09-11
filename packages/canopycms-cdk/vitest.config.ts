@@ -19,5 +19,18 @@ export default defineConfig({
     // actually wrong. A genuine hang still fails, just later.
     testTimeout: 30_000,
     hookTimeout: 30_000,
+
+    // Owns the directory every `App` in this suite synthesizes into, and
+    // deletes it when the run ends. Without it each synth strands a cloud
+    // assembly in os.tmpdir(): CDK cleans those up from a process exit handler,
+    // which a vitest worker never fires. 13 GB across 26,537 orphaned
+    // directories, before this was caught. See test-support/test-synth.ts.
+    globalSetup: ['./test-support/test-synth.ts'],
+
+    // The behavioral half of the same rule: fails any test file that leaves a
+    // cloud assembly in os.tmpdir(), whatever route it took to construct the
+    // App. test-synth.test.ts asserts this too, but only around one synth it
+    // performs itself; this covers every file.
+    setupFiles: ['./test-support/synth-leak-guard.ts'],
   },
 })

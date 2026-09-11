@@ -27,7 +27,11 @@ export interface ContentReaderOptions {
 }
 
 export interface ReadContentInput {
-  /** Resolved schema path (e.g., content/posts or content/home). */
+  /**
+   * Resolved schema path (e.g., content/posts or content/home). An entry-TYPE path like
+   * `content/home` is valid and resolves that singleton -- except under `urlAddressableOnly`
+   * below, which rejects it.
+   */
   entryPath: LogicalPath
   slug?: Slug
   branch?: string
@@ -37,6 +41,26 @@ export interface ReadContentInput {
   resolveReferences?: boolean
   /** Whether to resolve entry:ID links in body/markdown fields. Defaults to true. */
   resolveEntryLinks?: boolean
+  /**
+   * This read is addressing an entry by its PUBLISHED URL, so accept only what enumeration
+   * publishes. Two rules, both off by default:
+   *
+   * 1. `entryPath` must be a COLLECTION. A published URL is `/<collectionSegments>/<slug>` (or
+   *    the collapsed collection path, for an index entry), so its non-slug segments are always
+   *    collection names. An `entryPath` that resolves to an entry-TYPE item instead would be
+   *    delegated by `ContentStore.buildPaths` to the parent collection -- answering at
+   *    `/<collection>/<typeName>` and `/<collection>/<typeName>/<slug>`, neither of which any
+   *    forward surface emits.
+   * 2. The resolved entry's type must be one its collection declares, matching the
+   *    `parseTypedFilename(filename, collection.entries)` check `listEntries` applies. A legacy
+   *    untyped file has no type token to fail on -- see `declaresEntryType`.
+   *
+   * Set by `readByUrlPath` and nothing else. Note what it does NOT do: `read({ entryPath:
+   * 'content/home' })` and direct `ContentStore` use keep the entry-type delegation, which is a
+   * supported API and the only way to address a singleton structurally. Misusing this flag can
+   * only make a read stricter, never looser.
+   */
+  urlAddressableOnly?: boolean
 }
 
 /**
@@ -230,6 +254,14 @@ export const createContentReader = (options: ContentReaderOptions): ContentReade
     const { entryPath, slug, branchName, user } = resolveTarget(input)
     const { context, branchRoot, store } = await resolveStore(branchName)
 
+    // Rule 1 of urlAddressableOnly (see ReadContentInput): a published URL's non-slug segments
+    // are collection names, so a candidate landing on an entry-TYPE item can only ever produce a
+    // URL enumeration never emits. NO_SCHEMA_ITEM is what assertCollection raises for exactly
+    // this condition, and readByUrlPath treats it as a miss and tries the next candidate.
+    if (input.urlAddressableOnly && !store.isCollectionPath(entryPath)) {
+      throw new ContentStoreError(`Path is not a collection: ${entryPath}`, 'NO_SCHEMA_ITEM')
+    }
+
     // Get the path WITHOUT reading the file
     let relativePath: PhysicalPath
     // Absolute filesystem path to the entry file. Surfaced on read() / readByUrlPath()
@@ -257,6 +289,18 @@ export const createContentReader = (options: ContentReaderOptions): ContentReade
       const message = err instanceof ContentStoreError ? err.message : 'Invalid content request'
       const code = err instanceof ContentStoreError ? err.code : 'VALIDATION'
       throw new ContentStoreError(message, code)
+    }
+
+    // Rule 2 of urlAddressableOnly (see ReadContentInput): buildPaths' directory scan matches on
+    // slug alone, so it happily returns a file whose type token the collection no longer (or
+    // never did) declare -- a file listEntries skips. Checked here rather than inside the scan so
+    // the write path can still find, edit and rename it; making it unfindable would make the
+    // mistake unrecoverable through the editor.
+    if (input.urlAddressableOnly && !store.declaresEntryType(entryPath, entryType)) {
+      throw new ContentStoreError(
+        `Entry type '${entryType}' is not declared by ${entryPath}`,
+        'NO_SCHEMA_ITEM',
+      )
     }
 
     // Check permissions BEFORE reading the file (security)

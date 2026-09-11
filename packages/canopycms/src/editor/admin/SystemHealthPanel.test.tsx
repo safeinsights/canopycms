@@ -243,7 +243,7 @@ describe('SystemHealthPanel', () => {
         createdBy: 'user-1',
         createdAt: '2026-01-01T00:00:00.000Z',
         updatedAt: '2026-01-02T00:00:00.000Z',
-        // [LOW-3] 'archived' is in rebaseActiveBranches' skip list alongside
+        // 'archived' is in rebaseActiveBranches' skip list alongside
         // 'submitted'/'approved', so the worker never rebases it and a leftover
         // failure record must stay suppressed.
         rebaseFailure: {

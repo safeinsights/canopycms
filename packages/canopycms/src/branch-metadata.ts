@@ -3,6 +3,13 @@ import path from 'node:path'
 
 import type { BranchContext, BranchMetadata, BranchStatus } from './types'
 import { BranchRegistry } from './branch-registry'
+import {
+  BRANCH_META_DIR,
+  BRANCH_META_FILE,
+  BranchMetadataCorruptError,
+  readBranchMetadataFile,
+  type BranchMetadataFile,
+} from './branch-metadata-file'
 import { resolveBranchPath } from './paths'
 import { type OperatingMode } from './operating-mode'
 import { isNotFoundError } from './utils/error'
@@ -14,14 +21,15 @@ import {
   OccWriteConflictError,
 } from './utils/occ-json-write'
 
-const BRANCH_META_DIR = '.canopy-meta'
-const BRANCH_META_FILE = 'branch.json'
-
-export interface BranchMetadataFile {
-  schemaVersion: number
-  version: number
-  writeId?: string
-  branch: BranchMetadata
+// The file format itself lives in the leaf so branch-registry.ts can read
+// branch.json without importing this module (which imports it back). Re-exported
+// here so the existing importers of these names do not have to move.
+export {
+  BRANCH_META_DIR,
+  BRANCH_META_FILE,
+  BranchMetadataCorruptError,
+  readBranchMetadataFile,
+  type BranchMetadataFile,
 }
 
 const CURRENT_SCHEMA_VERSION = 1
@@ -30,33 +38,6 @@ export class BranchMetadataConflictError extends Error {
   constructor(message = 'Concurrent modification detected in branch metadata') {
     super(message)
     this.name = 'BranchMetadataConflictError'
-  }
-}
-
-/**
- * branch.json exists but its content is not valid JSON. Distinguished from
- * provisioning/IO failures so callers can degrade instead of failing hard:
- * the registry scan quarantines the branch, and the request handler keeps
- * serving (with empty internal groups) when the BASE branch is the corrupt
- * one — otherwise the admin recovery surface would be unreachable exactly
- * when it is needed.
- */
-export class BranchMetadataCorruptError extends Error {
-  readonly branchRoot: string
-  /**
-   * [MEDIUM-2] The raw JSON.parse failure message (e.g. "Unexpected token
-   * ..."), with no embedded path. `message` above deliberately keeps the
-   * full `branchRoot`-qualified text for server logs; `parseCause` is what
-   * callers should surface to clients (see branch-health.ts's `parseError`)
-   * so the admin branch-health scan never leaks the absolute workspace path.
-   */
-  readonly parseCause: string
-
-  constructor(branchRoot: string, cause: string) {
-    super(`Corrupt branch metadata in '${branchRoot}': ${cause}`)
-    this.name = 'BranchMetadataCorruptError'
-    this.branchRoot = branchRoot
-    this.parseCause = cause
   }
 }
 
@@ -105,20 +86,7 @@ export class BranchMetadataFileManager {
    * Use this for read-only access (e.g., in registry scanning or loadBranchContext).
    */
   static async loadOnly(branchRoot: string): Promise<BranchMetadataFile | null> {
-    const resolvedRoot = path.resolve(branchRoot)
-    const filePath = path.join(resolvedRoot, BRANCH_META_DIR, BRANCH_META_FILE)
-    try {
-      const raw = await fs.readFile(filePath, 'utf8')
-      return JSON.parse(raw) as BranchMetadataFile
-    } catch (err: unknown) {
-      if (isNotFoundError(err)) {
-        return null
-      }
-      if (err instanceof SyntaxError) {
-        throw new BranchMetadataCorruptError(resolvedRoot, err.message)
-      }
-      throw err
-    }
+    return readBranchMetadataFile(branchRoot)
   }
 
   /**

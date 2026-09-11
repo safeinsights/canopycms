@@ -16,7 +16,7 @@ A schema-driven, branch-aware content management system for git-backed, statical
 
 - **Next.js**: `^13.5.7`, `^14.2.25`, `^15.2.3`, or `16.x` excluding `16.2.x` (see [Known-bad version: Next 16.2.x](#known-bad-version-next-162x) below). This is `canopycms-next`'s `next` peer dependency range -- installing a version outside it triggers your package manager's peer-dependency warning.
 - **React**: `^18.0.0` or `^19.0.0`
-- **Node.js**: `>=18` to consume the published packages; `>=22` to work in this monorepo (see `.nvmrc`).
+- **Node.js**: `>=22.12.0`, both to consume the published packages and to work in this monorepo (`.nvmrc` pins the major). The packages are ESM-only and reach CommonJS consumers through `require(esm)`, which Node unflagged in 22.12.0 — so a CommonJS project (a stock `cdk init` app, for instance) cannot load them on anything earlier.
 
 ### Known-bad version: Next 16.2.x
 
@@ -205,6 +205,8 @@ CANOPY_BUILD=cms next build
 If you are not doing dual-build deployment (most setups), you can ignore this option entirely -- the default behavior works for both development and single-build production.
 
 > **Note:** `withCanopy()` adds `server.ts`/`server.tsx` (or, with `staticBuild: true`, `static.ts`/`static.tsx`) to Next.js `pageExtensions`. If you already have files ending in `.server.ts`, `.server.tsx`, `.static.ts`, or `.static.tsx` inside your app directory for non-CMS purposes, they will be treated as pages/routes by Next.js. Rename them or use a different naming convention to avoid conflicts.
+
+Using Clerk (or another auth SDK) with dual-build? Its provider component can't go in the root layout above -- see [Where a Clerk provider goes](docs/deploying-to-aws.md#dual-build-support) for the `.server.tsx`-scoped layout that keeps it out of the static export, and what is (and isn't yet) verified about sharing one Docker image across Clerk instances.
 
 ### 4. Customize your schemas
 
@@ -1692,8 +1694,9 @@ export default async function Page({ params }) {
 5. `/docs/guides/index` -- returns `null`. When the last segment is literally `index`, step 1 is
    skipped: an index entry's advertised URL is its collection's path (step 3), so it never answers
    at the literal `.../index` URL as well. Step 2 still runs, which is what resolves a collection
-   actually _named_ `index`. (Step 2 is also the open hole below — it still lets an index entry
-   answer at `/<collection>/<entryTypeName>`.)
+   actually _named_ `index`; it does not also answer at `/<collection>/<entryTypeName>`, since
+   `readByUrlPath` only accepts a candidate whose `entryPath` is an actual collection, not the
+   entry-type schema item that segment also matches.
 
 Returns `null` when no content matches the path, or when the current user is not permitted to read it (a `FORBIDDEN` denial renders as a 404 via your existing `if (!result) return notFound()`, rather than throwing). The strict `read()` API still throws on permission errors.
 
@@ -1707,9 +1710,9 @@ Index entries (entries with slug `"index"`) represent the default content for a 
 - **`listEntries()`** returns `urlPath: '/guides'` (not `'/guides/index'`) for index entries, and `urlPath: '/'` for a root index entry
 - **`buildContentTree()`** generates `path: '/guides'` (not `'/guides/index'`) for index entries by default
 
-**Model your home page this way.** (One caveat first, because this recommendation is what exposes it: an entry-type name is currently also resolvable as a URL segment, so with home modelled at the root, `readByUrlPath('/home')` still returns the home entry even though nothing advertises that URL. It is harmless unless you serve a root catch-all -- if you do, filter it, and see [`readbyurlpath-entry-type-candidate-phantom-url.md`](.claude/future-tasks/readbyurlpath-entry-type-candidate-phantom-url.md).) A singleton stored as an ordinary root entry (`content/home.home.<id>.json`) has `urlPath: '/home'`, so a route serving it at `/` leaves the entry's own URL disagreeing with the served one -- which every URL-derived surface then has to be told about separately, starting with the sitemap. Stored as a root index entry (`content/home.index.<id>.json`) its `urlPath` is `/`, the route reads `readByUrlPath('/')`, and nothing needs special-casing. Note what happens to a read that addresses the entry by entry-type path. `read({ entryPath: 'content/home' })` with no `slug` defaults the slug to the entry-type _name_ (`content-store.ts`'s `effectiveSlug = slug || schemaItem.name`), so it looks for slug `home` and stops resolving once the slug is `index`. Passing the slug explicitly -- `read({ entryPath: 'content/home', slug: 'index' })` -- keeps working, and is the smaller migration if you want one. Prefer `readByUrlPath('/')`.
+**Model your home page this way.** A singleton stored as an ordinary root entry (`content/home.home.<id>.json`) has `urlPath: '/home'`, so a route serving it at `/` leaves the entry's own URL disagreeing with the served one -- which every URL-derived surface then has to be told about separately, starting with the sitemap. Stored as a root index entry (`content/home.index.<id>.json`) its `urlPath` is `/`, the route reads `readByUrlPath('/')`, and nothing needs special-casing. Note what happens to a read that addresses the entry by entry-type path. `read({ entryPath: 'content/home' })` with no `slug` defaults the slug to the entry-type _name_ (`content-store.ts`'s `effectiveSlug = slug || schemaItem.name`), so it looks for slug `home` and stops resolving once the slug is `index`. Passing the slug explicitly -- `read({ entryPath: 'content/home', slug: 'index' })` -- keeps working, and is the smaller migration if you want one. Prefer `readByUrlPath('/')`.
 
-This means `entry.urlPath` from `listEntries()` is round-trip safe: `readByUrlPath(entry.urlPath)` always resolves back to the same entry. For an index entry, `/docs/index` no longer reaches it in any case spelling -- though `/docs/<entryTypeName>` still does, which is the open hole the caveat above points at. (For an ordinary entry the final slug segment stays case-insensitive, so `/docs/OVERVIEW` still resolves `/docs/overview` -- collection path segments do not.)
+This means `entry.urlPath` from `listEntries()` is round-trip safe: `readByUrlPath(entry.urlPath)` always resolves back to the same entry. For an index entry, `/docs/index` no longer reaches it in any case spelling, and neither does `/docs/<entryTypeName>` -- that candidate's `entryPath` lands on an entry-type schema item rather than the collection its segments name, and `readByUrlPath` only accepts a candidate whose `entryPath` is a collection. (For an ordinary entry the final slug segment stays case-insensitive, so `/docs/OVERVIEW` still resolves `/docs/overview` -- collection path segments do not.)
 
 ### One URL, one entry
 
@@ -2153,13 +2156,17 @@ media: {
   adapter: 's3',
   bucket: 'my-site-assets',
   region: 'us-east-1',
-  // Optional: absolute base URL of the origin serving /assets, for the EDITOR's own
-  // image previews -- set it when the editor cannot reach assets at its own root
-  // (a dedicated asset host, or an editor served from a different origin than the
-  // site). Must be absolute; omit for same-origin. This is editor display only and
-  // is never stored in content -- see "Where /assets is mounted" below for the
-  // public site's side of the same question.
+  // Optional: base URL of the origin serving /assets, for the EDITOR's own image
+  // previews -- set it when the editor cannot reach assets at its own root (a
+  // dedicated asset host, or an editor served from a different origin than the
+  // site). An absolute URL or a site-relative path; omit for same-origin. This is
+  // editor display only and is never stored in content -- see "Where /assets is
+  // mounted" below for the public site's side of the same question.
   publicBaseUrl: 'https://assets.example.com',
+  // Optional: where the browser POSTs a presigned upload. Defaults to the S3 REST
+  // endpoint. Set it to route uploads through your own CDN -- see "Routing uploads
+  // through your own CDN" below.
+  uploadUrl: process.env.CANOPY_UPLOAD_URL,
   // Optional: max upload size for presigned direct uploads (default 50 MiB).
   maxUploadBytes: 52_428_800,
 }
@@ -2201,6 +2208,105 @@ media: { adapter: 'local', directory: '.canopy-dev/assets' }
   ```
 
   SVGs and PDFs are served statically (no transform).
+
+**Routing uploads through your own CDN**
+
+By default the browser POSTs a presigned upload straight at the S3 REST endpoint. That is
+cross-origin from your editor, so it needs a **CORS rule on the bucket** — and a CORS rule must
+name an exact origin, which is awkward if the bucket is shared across environments (S3 CORS has
+no prefix scoping, so the rule applies bucket-wide).
+
+`media.uploadUrl` replaces the POST target, so you can route the upload through a CloudFront
+distribution you already control:
+
+```typescript
+media: {
+  adapter: 's3',
+  bucket: 'my-site-assets',
+  region: 'us-east-1',
+  // Same-origin with the editor: no bucket CORS rule needed at all.
+  uploadUrl: '/asset-upload/',
+}
+```
+
+The signature is unaffected — a presigned POST's string-to-sign is the base64 policy alone, so
+the host never enters it. Nothing else about the upload changes.
+
+Accepted values are an absolute `http(s)` URL or a site-relative path. A site-relative value is
+resolved by the browser against the document origin, so it is same-origin by construction. The
+value is used **verbatim** — nothing is joined onto it and the trailing slash is not normalized,
+because only you know whether your CDN behaviour is `/asset-upload/*` or a literal path.
+
+`uploadUrl` is per-deployment. A site-relative value only works where that path actually routes
+to the bucket, so under `next dev` with `adapter: 's3'` it will 404 — drive it from an
+environment variable rather than hard-coding it.
+
+**If you deploy with `canopycms-cdk`, it builds the behaviour for you.** Set `AssetSupport`'s
+`uploadBehavior` prop and give the result its own distribution — one route, nothing else on it:
+
+```typescript
+const assets = new AssetSupport(this, 'Assets', { uploadBehavior: {} })
+
+const uploads = new cloudfront.Distribution(this, 'AssetUploads', {
+  defaultBehavior: assets.uploadBehavior(),
+})
+// media.uploadUrl = `https://${uploads.distributionDomainName}/`
+```
+
+No custom domain or certificate is needed, and no bucket CORS rule is written: the edge supplies
+`Access-Control-Allow-Origin` for this route alone and answers the CORS preflight itself.
+`allowedOrigins` narrows the wildcard default; origins are matched exactly, so a
+`*.subdomain` pattern is refused at synth rather than passing the policy and failing the
+preflight. `editorOrigins` — which exists only to write
+that bucket rule — becomes optional once you do this, though standalone mode refuses to synth
+with neither.
+
+Wiring it by hand instead, four things are easy to get wrong:
+
+- **Answer the CORS preflight yourself.** This is the one most likely to be missed, and it stops
+  the upload dead. The editor's POST looks like a CORS simple request — `multipart/form-data`,
+  no custom headers — but it registers an `xhr.upload` progress listener, and that alone
+  disqualifies it, so the browser sends `OPTIONS` first. CloudFront does not answer preflights
+  on your behalf (a response headers policy decorates a response, it does not create one), and
+  S3 with no CORS configuration answers `403`. A preflight that is not 2xx fails the browser's
+  check no matter what headers are on it, so the POST is never sent. Answer `OPTIONS` at the
+  edge — a viewer-request function returning 204 with the CORS headers — or keep a bucket CORS
+  rule. Note that a `curl` POST will appear to work throughout: only a browser preflights.
+- **Rewrite the URI to `/`** on viewer request. S3's POST Object is only valid at the bucket
+  root; without it you get `405 MethodNotAllowed`. It is also what keeps "allow all methods"
+  safe — no request can address a key.
+- **Allow all methods, and point at an origin with OAC signing OFF.** CloudFront signs origin
+  requests but never hashes the body, so an OAC-signed origin rejects every multipart POST no
+  matter what you send. Measured, it fails with **`400 InvalidArgument`**, naming the mechanism
+  in the response body: `x-amz-content-sha256 must be UNSIGNED-PAYLOAD, ... or a valid sha256
+value`. Expect an argument-validation error, not an authorization one — the 403 described
+  under [CloudFront OAC and request body signing](docs/deploying-to-aws.md) is the Lambda
+  Function URL case, where Lambda verifies a signature over that header rather than validating
+  its format. Either way you need a separate origin entry for the bucket, since OAC is a
+  property of the origin, not the behaviour.
+- **Forward no cookies.** A same-origin upload path receives your site's cookies, including the
+  editor session cookie, which would otherwise reach S3 and its access logs. If your site sits
+  behind HTTP basic auth, strip `Authorization` too — forwarded to S3 it produces
+  `400 InvalidArgument — Unsupported Authorization Type`.
+- **Watch `CustomErrorResponses`.** They are distribution-wide, so a site that maps 403 to its
+  own 404 page applies that to S3's upload errors as well, and the editor reports the
+  substituted status. A distribution dedicated to the upload route avoids this, along with the
+  cookie and `Authorization` hazards above — on a different host they are never sent.
+
+One thing that is _not_ a requirement, despite being widely assumed: a bucket CORS rule is not
+what permits the upload. Measured, S3 **accepts** a cross-origin presigned POST with no CORS
+configuration at all and simply declines to advertise it — 204, object landed, no
+`Access-Control-Allow-Origin`. Acceptance and advertisement are independent, which is what lets
+the edge supply the header instead. It also means the failure mode of getting this wrong is a
+file that _is_ in staging while the browser reports a network error.
+
+One limit worth stating plainly: CanopyCMS cannot verify that the host you configure actually
+fronts your bucket. A wrong `uploadUrl` sends a valid presigned credential and the user's file
+to an unintended endpoint, and fails quietly (finalize simply doesn't find the staged object).
+The blast radius is bounded — the POST policy pins the bucket, the exact key, the content type,
+a size range and a 15-minute expiry, so it can never write anywhere else — and it is narrower
+than the bucket-wide CORS rule it replaces. Treat it as deployment configuration, not as
+something to derive at runtime.
 
 **Where `/assets` is mounted**
 
@@ -2307,11 +2413,17 @@ only the library record — existing content references keep resolving.
 > in the asset store.
 
 **Infrastructure** — the `canopycms-cdk` package ships an `AssetSupport` construct that
-provisions the bucket (or attaches to an existing one) and the transform Lambda. Its
-`assetBehaviors()` method returns the two CloudFront behaviors media needs; attach them via
-`CanopyCmsDistribution`'s `additionalBehaviors` option, listing `/assets/t/*` before
-`/assets/*` -- CloudFront matches path patterns in the order given, so a more specific
-pattern listed after a more general one is never reached. See
+provisions the bucket (or attaches to an existing one) and the transform Lambda. Pass it to
+`CanopyCmsDistribution`'s `assetSupport` prop and it attaches both CloudFront behaviors
+(`/assets/*` and `/assets/t/*`) in the only order that is safe -- CloudFront matches path
+patterns in the order given, so a more specific pattern listed after a more general one is
+never reached. `assetBehaviors()` (returning the two behaviors as a plain object) and
+`attachTo(distribution)` (the same attachment `assetSupport` calls under the hood) remain
+available for a bespoke distribution built outside `CanopyCmsDistribution`; a hand-wired
+`additionalBehaviors` that gets the order wrong, or spreads `assetBehaviors()` into it
+directly, now fails `cdk synth` with an actionable error instead of deploying broken. Those two
+are the read path; `uploadBehavior()` is the opt-in write path, and belongs on its own
+distribution rather than this one — see "Routing uploads through your own CDN" above. See
 [docs/deploying-to-aws.md](docs/deploying-to-aws.md).
 
 ### Editor Customization
@@ -2982,10 +3094,31 @@ await generateAIContentFiles({
 
 ### Manifest Format
 
-The manifest at `manifest.json` describes all generated content for tool discovery:
+The manifest at `manifest.json` describes all generated content for tool discovery.
+
+Its first two fields are optional and controlled by the environment of the build that produced
+it. `buildId` is set from `CANOPY_BUILD_ID`, and `generated` from `SOURCE_DATE_EPOCH` (decimal
+seconds since the Unix epoch, the Reproducible Builds convention):
+
+| Environment               | `generated`                     | `buildId`      |
+| ------------------------- | ------------------------------- | -------------- |
+| neither set (the default) | the time of the build           | absent         |
+| `CANOPY_BUILD_ID`         | **absent**                      | the id you set |
+| `SOURCE_DATE_EPOCH`       | pinned from that value          | absent         |
+| both                      | pinned from `SOURCE_DATE_EPOCH` | the id you set |
+
+Declaring a build id omits `generated` on purpose. If you build an artifact once and promote
+that same artifact to production later, its build clock describes the machine that produced it
+rather than the content, so anything reading it as "how fresh is this content?" is misled. Set
+`SOURCE_DATE_EPOCH` as well if you want a timestamp that describes the _source_. With neither
+variable set nothing changes: `generated` is present, as it always was.
+
+The example below shows the both-variables-set case, which is the only one where these two fields
+appear together:
 
 ```json
 {
+  "buildId": "fd91b36c",
   "generated": "2026-03-23T12:00:00.000Z",
   "entries": [],
   "collections": [
@@ -3170,14 +3303,41 @@ For CanopyCMS:
 CANOPY_AUTH_MODE=dev                           # Auth provider: "dev" (default) or "clerk"
 CANOPY_BOOTSTRAP_ADMIN_IDS=user_123,user_456   # Comma-separated user IDs that get auto-admin access
 CANOPY_AUTH_CACHE_PATH=/mnt/efs/workspace/.cache  # Override auth cache location (prod mode only)
+CANOPY_BUILD_ID=fd91b36c                       # Identifies the build artifact (see below)
 ```
+
+`CANOPY_BUILD_ID` makes a static export reproducible, and is read in two places. `withCanopy(...,
+{ staticBuild: true })` uses it as Next.js's build id -- Next's default is random, so without it
+two builds of one source tree land in different `out/_next/static/<id>/` directories. And
+`canopycms generate-ai-content` records it as the AI manifest's `buildId`. Unset, both fall back
+to today's behaviour. Next's build id is deliberately left alone on non-static builds, so a
+dual-build site's two artifacts keep distinct ids; the AI manifest records `buildId` whenever
+`generate-ai-content` runs.
+
+The value must match `[A-Za-z0-9._-]+`, because Next splices it into `out/_next/static/<id>/` as a
+single path segment with no validation of its own -- `git describe --all` returns `heads/main`,
+which would nest that directory one level deeper than every emitted URL expects. A content hash of
+your source tree is the usual choice; note that a commit SHA is not equivalent, since a rebase or
+cherry-pick gives an identical tree a different commit. A value that is set but blank or unusable
+is ignored with a warning rather than silently producing a random id.
+
+Export it in the environment rather than in a dotenv file. Next loads those before it asks for a
+build id, but `canopycms generate-ai-content` does not, so a value living only in
+`.env.production` would pin Next's build id and leave the manifest's `buildId` absent.
+
+`SOURCE_DATE_EPOCH` (decimal seconds since the Unix epoch) pins the AI manifest's `generated`
+timestamp. It is the [Reproducible Builds](https://reproducible-builds.org/docs/source-date-epoch/)
+convention, kept under its standard name so a build harness that already exports it for other
+tools gets this for free. Like `CANOPY_BUILD_ID`, a value that is set but blank or malformed is
+ignored with a warning rather than failing the build -- worth heeding, because when a build id is
+also set an unpinned timestamp means `generated` is omitted entirely.
 
 For Clerk authentication:
 
 ```env
 CLERK_SECRET_KEY=sk_...
 CLERK_PUBLISHABLE_KEY=pk_...
-CLERK_JWT_KEY=...           # Optional: for networkless JWT verification
+CLERK_JWT_KEY=...           # Public JWKS PEM. Optional locally; load-bearing on a no-internet Lambda
 CLERK_AUTHORIZED_PARTIES=... # Optional: comma-separated domains
 ```
 

@@ -163,6 +163,10 @@ function readPostHeroHeadline(slug: string): string {
   if (!postsDir) {
     throw new Error(`Could not find the posts collection directory under ${contentDir}`)
   }
+  // `slug` is a module-local test constant, never external input, and the
+  // literal parts escape their own dots -- no attacker-chosen pattern reaches
+  // this. Same justification style as the other constructed regexps in src/.
+  // eslint-disable-next-line security/detect-non-literal-regexp
   const postFileRe = new RegExp(`^post\\.${slug}\\.[^.]+\\.md$`)
   const postFile = readdirSync(path.join(contentDir, postsDir)).find((f) => postFileRe.test(f))
   if (!postFile) {

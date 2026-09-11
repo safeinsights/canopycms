@@ -494,7 +494,7 @@ describe('GitManager.bareRemoteHasBranch', () => {
     await seedGit.raw(['push', remotePath, 'main:refs/heads/local-only-branch'])
     // Only in the GitHub tracking namespace -- models a branch another
     // CanopyCMS deployment (or a direct push to GitHub) created, which
-    // reconcileTrackedBranches() (worker/cms-worker.ts) hasn't yet turned
+    // reconcileTrackedBranches() (worker/git-sync.ts) hasn't yet turned
     // into a local head.
     await seedGit.raw(['push', remotePath, `main:${GITHUB_TRACKING_REF_PREFIX}tracked-only-branch`])
   })

@@ -1623,7 +1623,9 @@ When adding a new mutator, follow the existing pattern: a thin public method tha
 
 ### Dev Content Sync (`dev.contentSync`)
 
-In dev mode, the editor and dev server read content from a branch clone under `.canopy-dev/content-branches/<branch>/`, while the static build reads the working tree directly. When you edit working-tree `content/**` outside the editor, the dev server keeps serving the stale clone — the long-standing **"build fine, dev blank"** staleness trap.
+In dev mode, the editor, the dev server **and `next build`** all read content from a branch clone under `.canopy-dev/content-branches/<branch>/` — never from the working tree. The clone is seeded from **git-committed** state. So when you edit working-tree `content/**` outside the editor, all three keep reading the stale clone.
+
+> **`next build` reads the clone too — this doc used to claim otherwise.** `listEntries`/`buildContentTree` resolve `branchRoot` through `resolveSchemaContext` unconditionally; there is no build-mode branch in that path. Add or rename a file in the working tree, run `next build`, and the build is **green while silently reading the old content** — the only tells are content-level (a stale `<loc>` in the emitted sitemap, `_not-found` markup in a prerendered page). Staging is not enough, and `rm -rf .canopy-dev` does **not** help: the workspace is re-provisioned from git, reproducing the stale content exactly. Commit the change, or run `canopycms sync push`. Whether a one-shot static build _should_ bypass the branch-clone machinery is an open design question — see [dev-mode-build-reads-branch-clone-not-working-tree.md](.claude/future-tasks/dev-mode-build-reads-branch-clone-not-working-tree.md).
 
 The `dev.contentSync` config field (in `CanopyConfig`, `DevContentSyncMode`) controls how this divergence is handled. It is dev-mode only (ignored when `mode !== 'dev'`):
 
@@ -2477,6 +2479,8 @@ const runRebase = (worker: CmsWorker): Promise<void> =>
 
 This is preferable to making the method public just for testing. Use it sparingly -- only when the private method has complex logic that warrants direct testing.
 
+Note that this cast is also used to _assign_ over an instance member, not just to call one. That form constrains any later refactor of the class -- see [Extracting from a Class Whose Tests Reach Through the Instance](#extracting-from-a-class-whose-tests-reach-through-the-instance).
+
 **Git rebase `--ours` vs `--theirs` reversal:**
 
 During `git rebase`, the meaning of `--ours` and `--theirs` is **reversed** from their usual meaning in `git merge`:
@@ -2500,6 +2504,27 @@ In CanopyCMS's rebase conflict resolution, we use `git checkout --theirs <file>`
 | `??`   | untracked                     | A new file created during the wedge; the abort leaves it alone                                                                                                         |
 
 Filter on `file.working_dir` (simple-git's name for the working-tree column), never on `file.index` or on the pair together -- keying on the wrong column reports committed, safe history as data loss. This filter was written wrong twice in this file's history (first on the wrong columns entirely, then over-reporting the replay's own staged files) before the distinction above was made explicit and asserted directly. When a test needs to assert "what changed and how" from `git status` rather than just "is the tree clean", read both columns' meanings before writing the filter.
+
+### Extracting from a Class Whose Tests Reach Through the Instance
+
+When you split a large class into module-level functions that take a context object (the seam), and its test suite drives the class by **mutating the instance**, the context has two hard requirements:
+
+1. **Every instance-backed member is a function**, resolved by calling back onto the live instance at call time -- not a field copied when the context is built.
+2. **The context is built fresh per call**, so there is no long-lived object for a stale reference to hide in.
+
+A field copied at construction (`octokit: this.octokit`) captures the pre-test value, so the extracted code runs against the real dependency while the test's mock sits unused on the instance. Plain functions rather than getters are deliberate: `ctx.octokit()` makes the late binding visible at every call site, where a getter would read like a captured field.
+
+**Pre-flight check before you extract:** grep for `as unknown as { ... }` casts and enumerate them **for assignment, not just for calls** -- and grep the whole repo, not only the class's test files. `apps/test-app/app/api/e2e-test/rebase/route.ts` reaches into `CmsWorker` this way from an e2e fixture route, so a sweep scoped to `*.test.ts` would have missed it and reported the method as unused. Anything the tests _assign to_ has to stay reachable through the seam. The [call form](#testing-with-real-git-operations) is the easy half and is already documented; the assignments are the ones that break silently. In the worker suite the assigned-to surface is `buildGitHubUrl` (aimed at a local fixture repo instead of github.com), `octokit`, `executeTask`, `pushBranchToGitHub`, `running` (set directly instead of calling `start()`), plus two `protected` test hooks that one test file overrides by subclassing.
+
+**The failure mode**, which happened mid-refactor: an extracted module called the module-level `executeTask` directly -- legal, since the function is defined in the same file as its caller -- which bypassed the instance-level stub and turned 8 tests red. Route the call through the context (`ctx.executeTask(...)`); never edit the test to accommodate the extraction. A test that stubs a method is asserting the seam exists, so making it call the real thing deletes the assertion rather than fixing it.
+
+```typescript
+// In the extracted module, where both are in scope:
+await ctx.executeTask(task, signal) // late-bound, honors the test's stub
+await executeTask(ctx, task, signal) // WRONG: bypasses it silently
+```
+
+Worked example: the `WorkerContext` interface in `src/worker/worker-context.ts` documents which members are safe to copy and which must dispatch live, and [`packages/canopycms/src/worker/AGENTS.md`](packages/canopycms/src/worker/AGENTS.md) maps the modules on the other side of that seam.
 
 ### Testing UI Conflict Indicators
 
@@ -3133,6 +3158,33 @@ pnpm --filter canopycms-cdk exec vitest run src/scaffold-synth.test.ts
 - **`CDK_OUTDIR` + `CDK_CONTEXT_JSON` are how the CDK CLI drives an app.** The first triggers auto-synth; the second delivers `cdk.json`'s `context` block. A test that runs the generated `app` command without passing the context can't catch a bad context value -- e.g. a CDKv1-only feature flag that CDKv2 rejects at synth (`UnsupportedFeatureFlag`) -- because a context-free run never reaches that code path.
 - **Fails loudly, never skips, when `packages/canopycms-cdk/worker/dist` is missing.** The package's own `test` script builds it via `build:test-fixtures` first; running this file in isolation (as above) requires that step too. A skip here would restore exactly the going-green-without-checking property the test exists to remove.
 
+### Test-Owned CDK Synth Output (`newTestApp()`)
+
+A CDK `App` given no `outdir` synthesizes into a `mkdtemp('cdk.out')` under `os.tmpdir()`. CDK does clean those up -- from a `process.on('exit')` handler, see `determineOutputDirectory` in `@aws-cdk/cloud-assembly-api`'s `cloud-assembly.js` -- but **a vitest worker is torn down without firing exit handlers**, so under vitest that cleanup never runs and each synth strands an assembly of 0.6-3.2 MB. 26,537 orphaned `cdk.out*` directories (13 GB) accumulated over eight days of ordinary development before it was caught, exhausting free disk. It took that long to notice because a full temp filesystem breaks unrelated tooling, so the symptom surfaces nowhere near its cause.
+
+**Rule: in `packages/canopycms-cdk` tests, never call `new App()` directly -- always use `newTestApp()`** from `test-support/test-synth.ts`:
+
+```typescript
+import { newTestApp } from '../../test-support/test-synth'
+
+const app = newTestApp()
+const stack = new Stack(app, 'TestStack', { env: { account: '123456789012', region: 'us-east-1' } })
+app.synth()
+```
+
+`newTestApp(props?)` forwards `props` to `App` but applies `outdir` afterwards, pinned to a fresh `mkdtemp` subdirectory of a per-run root. It is not overridable: `props` is typed `Omit<AppProps, 'outdir'>`, so passing one is a compile error rather than an argument silently dropped. The root itself is created once by vitest's `globalSetup` (`setup`/`teardown`, wired in `vitest.config.ts`) and `rm -rf`'d when the run ends; that lives in the main process rather than a per-file `afterAll`, so teardown still runs when an individual test file fails.
+
+Two layers enforce this mechanically rather than relying on convention, and the distinction between them matters:
+
+- **The guarantee is behavioral.** `test-support/synth-leak-guard.ts` is a `setupFiles` hook, so it wraps _every_ test file: it snapshots `os.tmpdir()`'s `cdk.out*` entries in `beforeAll` and fails the file on any addition. That catches a leak whatever route produced it -- a namespace-qualified `App`, a scope-less `Stack` (whose constructor builds its own `outdir`-less App), a `Stack` subclass, or an innocuous-looking `makeStack(app?: App)` helper called with nothing.
+- **A textual scan checks the convention.** One test in `test-support/test-synth.test.ts` walks the package's `.ts`/`.tsx`/`.mts`/`.cts` files and fails on a direct `App` construction or a scope-less `Stack`, outside an allowlist of the two files entitled to one (this helper, and `canary/bin/canary.ts`, a real deployable app). It has textual blind spots by construction -- don't widen its patterns to chase subclasses, that is the hook's job -- but it catches a direct construction in a file whose leak would only manifest conditionally, or that a given run never exercises.
+
+`test-synth.test.ts` also asserts the tmpdir property directly around one synth of its own, with its non-vacuity checks ordered deliberately _after_ the leak assertion: placed first they fire first under the outdir-removal mutation and mask the assertion they exist to support.
+
+Interrupting a run needs no cleanup from you. Ctrl-C makes vitest exit without running globalSetup teardown, so the root survives; the root's name carries the owning pid and the next run's `setup` removes any root whose process is gone. Only `ESRCH` licenses that delete, so a live run's root -- including a concurrent one -- is never touched.
+
+`test-support/` is treated like `lambda/`, `canary/`, and `worker/`: a non-shipped directory with its own `tsconfig.json`, appended to the package's `typecheck` and `lint` scripts. That config also includes `../src/**/*.test.ts`, which nothing else typechecks -- the package `tsconfig.json` is its build/publish config and excludes test files -- and it sets no `rootDir`, which is what lets those suites' deliberate cross-package imports resolve.
+
 ### Testing a Repo Script as a Subprocess (`scripts/bump-version.mjs`)
 
 `packages/canopycms/src/cli/bump-version.test.ts` tests a plain `scripts/*.mjs` release script rather than importing it, because the script does its work at module scope against a directory tree (reads `package.json` files, writes them, `console.log`s the result, exits) -- there is no function to call. The fixture is copied in rather than run in place, since the script resolves its target paths from its own location:
@@ -3468,6 +3520,20 @@ error client-bundle-no-node-builtins: packages/canopycms/src/client.ts → fs/pr
 
 The fix is normally to import the dependency-free sibling instead of the node-importing module -- `paths/branch-name` (not `paths/branch` or the `paths` barrel), `assets/asset-prefixes` (not `assets/keys`), `assets/transform-directives` (not `assets/transform`) -- or to make the import `import type`. If a client-reachable module genuinely needs new browser-safe logic that currently lives in a node-importing file, extract that logic into its own dependency-free module rather than widening the rule.
 
+### Import-Cycle Check
+
+The same `dependency-cruiser` config carries a `no-circular` rule over both packages' `src/`:
+
+```bash
+pnpm lint:cycles
+```
+
+Both packages are at **zero cycles**, so any violation this reports is one you just introduced. Under ESM a runtime import cycle makes module-init order load-order dependent, and the symptom -- an undefined binding at first use -- points nowhere near the cause, so this is cheaper to catch here than to debug later.
+
+`tsPreCompilationDeps` is off (see above), which matters more for this rule than for the bundle one: `import type` edges are erased and can never trip it, so a type-only back-import from an extracted module to the one it was extracted from is legal. Only value imports count.
+
+The rule bites hardest when splitting a class whose methods called each other freely -- the extracted modules can easily end up mutually importing. Break the edge the way the worker split did: hoist the shared piece into a third module that imports neither (`worker/history-rewrite.ts`), or pass the collaborator in through a context object rather than importing it (`worker/worker-context.ts`).
+
 ### Published-Package ESM Import Check
 
 `tsc` with `moduleResolution: "Bundler"` emits extensionless relative specifiers (`from './adapter'`), which `tsc` and bundlers both tolerate but Node's native ESM resolver rejects outright (`ERR_MODULE_NOT_FOUND`). Four of five published packages shipped that way, undetected, until a real adopter hit it:
@@ -3482,7 +3548,26 @@ Each package's `build` script runs `rm -rf dist` before `tsc`: bare `tsc` never 
 
 **Why it can't just `import('canopycms')` in-repo:** this is a pnpm workspace, so `node_modules/canopycms` is a symlink that resolves through the package's _dev_ `exports` field (raw `.ts`, meant for bundlers/tsx) -- never through `publishConfig.exports`, the field a real npm consumer actually gets. A naive in-repo smoke test would pass while the published tarball was broken. The guard ([scripts/check-esm-imports.mjs](scripts/check-esm-imports.mjs)) instead builds a sandbox `node_modules`, merging each package's `publishConfig` over its `package.json` (the same merge `npm publish`/`pnpm pack` perform) and pointing the result at the real built `dist/`, then imports every entry point from there under a real Node subprocess.
 
-**A third thing the check enforces: publish-status coverage.** Every `exports` subpath of
+**The check also requires every entry point from CommonJS.** When a `package.json` has an `exports` map Node ignores `main` entirely, and a `require()` resolves the conditions `["node", "require", "default"]` -- so a map offering only `{ types, import }` matches _nothing_ on that path and dies at resolution with `ERR_PACKAGE_PATH_NOT_EXPORTED`, before the module is ever loaded. Every published entry point except `canopycms-next/config` shipped that way. It bites hardest on `canopycms-cdk`: our own `cdk.json` template runs `node --import tsx infrastructure/bin/app.ts`, and an adopter repo without `"type": "module"` (the Next.js default) resolves that through Node's **CJS** loader, so `cdk synth` and `cdk deploy` both failed for the scaffold we ship. Nothing about the code was wrong -- `require(esm)` loads these files fine once resolution gets past the gate, which is why all five packages -- and the repo root, whose own `check:esm` CJS probe needs it -- now declare `engines: node >=22.12.0`, the release in which Node unflagged `require(esm)`, and list conditions `types` first, then `import`, then `require`. Position matters: resolvers take the first matching key, and some ignore a `types` entry that sits after `import`.
+
+Nothing else in this repo can see that class. Vitest resolves through Vite, and the example apps through webpack/Turbopack; **all of them use the `import` condition**, so a fully green test suite and a working example app say nothing about whether a CommonJS consumer can load the package at all. The guard therefore runs a real `require()` from a real `.cjs` file in the same sandbox, alongside a static pass over every published subpath: it must carry a `require` (or `default`) condition, list `types` first at every nesting level, and name targets that are valid per Node (`./`-prefixed, no `..`), exist on disk, and are covered by `files`. That static half is the only thing standing behind the `skip` subpaths, which no probe can execute, and the behavioral half catches what no amount of reading `package.json` reveals: a module graph that grows a top-level `await` keeps a perfectly valid `require` condition and still fails, because `require(esm)` refuses async graphs (`ERR_REQUIRE_ASYNC_MODULE`). Verify the guard still bites by appending `await Promise.resolve()` to a built `dist/index.js`: the ESM probe should stay green and the CJS probe go red.
+
+**And it compiles a consumer under six real adopter tsconfig shapes.** The probes above answer "can Node load this"; they do not answer the question an adopter actually has, which is whether `import { X } from 'canopycms-cdk'` compiles in the project shape they have. Those answers genuinely differ, so the matrix pins all six — value imports, not `import type`, because a type-only import is erased and never produces the interop diagnostic that is the whole point:
+
+| Consumer | `module` / `moduleResolution`             | Result                                      |
+| -------- | ----------------------------------------- | ------------------------------------------- |
+| ESM      | `nodenext`                                | compiles                                    |
+| ESM      | `esnext` / `bundler`                      | compiles — what `create-next-app` gives you |
+| CommonJS | `commonjs` / `node10`, **root specifier** | compiles, via `main`/`types`                |
+| CommonJS | `commonjs` / `node10`, **subpath**        | **`TS2307` — pinned limitation**            |
+| CommonJS | `nodenext`                                | compiles                                    |
+| CommonJS | `node16`                                  | **`TS1479` — pinned limitation**            |
+
+The two pinned rows are **not** tolerated failures: a row flipping in _either_ direction fails the check, because either means the adopter-facing story moved and the docs describing it are now wrong. Neither is caused by the `exports` map. `node16` is pinned to Node 16 semantics, where `require(esm)` does not exist, so TypeScript refuses any value import of an ESM-only package from a CommonJS file — measured before and after the `require` condition was added and the diagnostic is the same either way; the cause is the package being ESM-only, and the fix for an adopter is `nodenext` or a dynamic `import()` — not `node10`, which resolves only the root entry, as the row above it records. `node10` predates `exports` and ignores it entirely, so it looks for a _physical_ `node_modules/canopycms/server.js` while our files live under `dist/`; supporting it would mean stub directories or `typesVersions`, legacy compat this project does not carry.
+
+That `node10` root row is worth understanding rather than just keeping green: it compiles through `main`, which is exactly why `tsc` stayed happy for the entire period when Node could not load the package at all. A green typecheck told the adopter nothing. That divergence is the defect this whole file exists to catch.
+
+**The check also enforces publish-status coverage.** Every `exports` subpath of
 every published package must be declared in [scripts/check-esm-imports.mjs](scripts/check-esm-imports.mjs)'s
 `PACKAGES` list as exactly one of `test` (imported live under Node), `skip: <reason>`
 (published, but can't be exercised this way -- e.g. a client-only entry that pulls in CSS),
@@ -3500,7 +3585,7 @@ declare it `devOnly` here -- leaving it out of `publishConfig.exports` without d
 exactly the gap that let this ship. See [ARCHITECTURE.md](ARCHITECTURE.md#package-architecture)
 for the full rationale on why `test-utils` stays unpublished.
 
-**Fix:** run [scripts/add-js-extensions.mjs](scripts/add-js-extensions.mjs), the shared post-build step that rewrites extensionless relative specifiers to explicit `.js` (or `/index.js` for directory and bare `.`/`..` specifiers). It is now wired into all five published packages' `build` scripts (`packages/canopycms` via `scripts/postbuild.mjs`; the other four inline as `tsc ... && node ../../scripts/add-js-extensions.mjs dist`). If you add a new published package, wire its `build` script the same way -- `check:esm` will fail on the omission the next time CI runs.
+**Fix:** run [scripts/add-js-extensions.mjs](scripts/add-js-extensions.mjs), the shared post-build step that rewrites extensionless relative specifiers to explicit `.js` (or `/index.js` for directory and bare `.`/`..` specifiers). It is now wired into all five published packages' `build` scripts (`packages/canopycms` via its own `packages/canopycms/scripts/postbuild.mjs`; the other four inline as `tsc ... && node ../../scripts/add-js-extensions.mjs dist`). If you add a new published package, wire its `build` script the same way -- `check:esm` will fail on the omission the next time CI runs.
 
 **The check has a second pass, for `.d.ts`.** The same missing extension in a declaration file does not throw, so the runtime probe above cannot see it: an adopter on `moduleResolution: "node16"`/`"nodenext"` fails to resolve `export * from './x'` inside a `.d.ts`, and TypeScript's recovery is to type the whole import as `any`. Their build stays green while every type we export silently becomes `any` -- and under `skipLibCheck: true`, which most scaffolds set, there is no diagnostic at all. So `check:esm` also typechecks a generated consumer against the same sandbox with `module`/`moduleResolution: nodenext` and `skipLibCheck` deliberately **off**. Two classes of diagnostic fail it, and both are needed:
 

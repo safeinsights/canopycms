@@ -89,13 +89,20 @@ shows a read-only `duplicate IDs` badge per branch — see
 [duplicate-content-id-repair-ui.md](duplicate-content-id-repair-ui.md). The action itself is
 still unreachable from any UI.
 
-## 5. Two `REVIEW-REPORT*.md` siblings at the repo root (review finding #18)
+## 5. Two `REVIEW-REPORT*.md` siblings at the repo root (review finding #18) — RESOLVED 2026-08-23
 
-`REVIEW-REPORT-2026-08.md` now sits beside `REVIEW-REPORT.md`. Committing the review is good
+~~`REVIEW-REPORT-2026-08.md` now sits beside `REVIEW-REPORT.md`. Committing the review is good
 practice; two undated-by-filename siblings at the root will not age well. `docs/reviews/`
 (e.g. `docs/reviews/2026-07.md`, `2026-08.md`) keeps the root legible. Deferred here rather
 than folded in because the July report is already on `main` and moving it belongs in its own
-change, not one buried in a review-fix batch.
+change, not one buried in a review-fix batch.~~
+
+Done in its own change, as suggested: the two reports are now `docs/reviews/2026-07.md` and
+`docs/reviews/2026-08.md`, and all inbound links were updated. The same change fixed the
+cause rather than only the symptom — `.claude/skills/baseline-review/SKILL.md` used to
+instruct its final phase to *write* `REVIEW-REPORT.md`, so a literal run of the skill would
+have destroyed the July baseline. It now writes `docs/reviews/<YYYY-MM>.md` and is told never
+to overwrite an existing report.
 
 ## 6. No action taken, recorded so they are not re-raised as findings
 

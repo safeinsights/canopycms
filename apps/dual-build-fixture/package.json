@@ -8,7 +8,8 @@
     "build:cms": "CANOPY_BUILD=cms next build",
     "typecheck": "tsc --noEmit",
     "verify:dual-build": "vitest run --reporter=dot",
-    "reset-sim": "rm -rf .canopy-dev"
+    "reset-sim": "rm -rf .canopy-dev",
+    "lint": "eslint ."
   },
   "dependencies": {
     "canopycms": "workspace:*",
@@ -19,6 +20,7 @@
     "react-dom": "^18.3.1"
   },
   "devDependencies": {
+    "@clerk/nextjs": "^7.9.1",
     "@types/node": "^22.9.0",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",

@@ -203,7 +203,11 @@ case-SENSITIVE (`/DOCS/overview` → null) and only the final slug segment is ca
 (`/docs/OVERVIEW` → resolves), so after fix 1 an index entry no longer answers at the `.../index`
 spelling. **Follow-up, found 2026-08-21:** "exactly one URL" was too strong — a second, distinct
 hole (`/<collection>/<entryTypeName>`) is still open, tracked in
-[readbyurlpath-entry-type-candidate-phantom-url.md](../readbyurlpath-entry-type-candidate-phantom-url.md).
+[readbyurlpath-entry-type-candidate-phantom-url.md](readbyurlpath-entry-type-candidate-phantom-url.md),
+and closed there on 2026-08-22 — along with a third family that write-up did not have either
+(`/<collection>/<entryTypeName>/<slug>`, which needs no index entry at all). The invariant is
+now asserted generally rather than per-spelling, which is what the adopter asked for after
+watching it be fixed one URL at a time across two releases.
 
 **One correction to the analysis above.** The concern that changing `index` URL semantics would
 propagate into resolved references (which gained a `urlPath` in #245, after this was filed) does

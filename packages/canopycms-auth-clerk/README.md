@@ -12,21 +12,32 @@ npm install canopycms canopycms-auth-clerk @clerk/nextjs
 
 ### Basic Setup
 
+In `app/lib/canopy.ts`, pass the plugin to `createNextCanopyContext` and re-export its
+handler from your catch-all API route:
+
 ```typescript
+import { createNextCanopyContext } from 'canopycms-next'
 import { createClerkAuthPlugin } from 'canopycms-auth-clerk'
-import { createCanopyHandler } from 'canopycms/next'
+import config from '../../canopycms.config'
+import { entrySchemaRegistry } from '../schemas'
 
 const authPlugin = createClerkAuthPlugin({
-  secretKey: process.env.CLERK_SECRET_KEY,
   useOrganizationsAsGroups: true, // Map Clerk organizations to CMS groups
 })
 
-const handler = createCanopyHandler({
-  config,
+const canopyContextPromise = createNextCanopyContext({
+  config: config.server,
   authPlugin,
-  // ...
+  entrySchemaRegistry,
 })
+
+export const getHandler = async () => (await canopyContextPromise).handler
 ```
+
+The secret key is read from the environment by default; see
+[Configuration Options](#configuration-options) below to pass it explicitly.
+`apps/example1/app/lib/canopy.ts` is the full reference wiring, including the
+fail-closed dev/Clerk plugin selection.
 
 ### Configuration Options
 

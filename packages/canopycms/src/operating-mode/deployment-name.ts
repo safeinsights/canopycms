@@ -46,9 +46,12 @@ const VALID_DEPLOYMENT_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
 /**
  * Exported so `canopycms-cdk`'s suite can assert that its own synth-time copy
  * of this rule (constructs/cms-service.ts) still agrees with this one. The
- * construct itself must NOT import this: `canopycms-cdk` publishes without a
- * runtime dependency on `canopycms`, so a source-level import would break the
- * published construct. The drift check is therefore test-only — see
+ * construct deliberately does not import this directly — see
+ * `isValidDeploymentName`'s doc comment in cms-service.ts for the real reason
+ * (not, as this comment used to say, that the published construct lacks a
+ * runtime dependency on `canopycms` — it doesn't: `canopycms` is a
+ * non-optional peerDependency there, and the package's own main entry already
+ * imports it at runtime). The drift check is therefore test-only — see
  * `deployment-name-fixtures.ts`.
  */
 export const isValidDeploymentName = (name: string): boolean =>

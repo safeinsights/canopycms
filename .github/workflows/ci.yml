@@ -63,11 +63,25 @@ jobs:
       - name: Lint client bundle boundary (dependency-cruiser)
         run: pnpm lint:bundle
 
+      # Runtime import cycles across the whole of src, which lint:bundle cannot
+      # see: it cruises only from the two client entries, so a server-side cycle
+      # is invisible to it. There was exactly one when this was turned on.
+      - name: Lint import cycles (dependency-cruiser)
+        run: pnpm lint:cycles
+
       # Backlog hygiene: dead links between task files, index rows still listed
       # open whose file moved to resolved/, and orphans in both directions.
       # Dependency-free and ~instant; also runs in pre-commit via lint-staged.
       - name: Lint future-tasks backlog
         run: pnpm lint:tasks
+
+      # Doc factual drift: backticked repo paths that do not exist, and
+      # `canopycms*` import specifiers in code fences that are not in any
+      # exports map. Both classes shipped -- AGENTS.md documented a
+      # `src/middleware/` that never existed, and canopycms-auth-clerk's README
+      # told adopters to import from `canopycms/next`, which resolves nowhere.
+      - name: Lint doc paths and entrypoints
+        run: pnpm lint:docs
 
       # Root-level node tooling. `pnpm lint` is `pnpm -r`, which recurses over
       # workspace PACKAGES only -- scripts/ is not one, so until 2026-08-22

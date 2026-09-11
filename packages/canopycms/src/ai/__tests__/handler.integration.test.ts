@@ -96,6 +96,32 @@ describe('createAIContentHandler', () => {
     expect(Array.isArray(manifest.collections)).toBe(true)
   })
 
+  it('ignores the build-stamp environment entirely — the runtime route keeps a live clock', async () => {
+    // The invariant is "the build path stamps, the handler clocks". `resolveBuildStamp` lives at
+    // the build boundary precisely so this route cannot be frozen by an ambient variable, and
+    // several build systems (Nix among them) export SOURCE_DATE_EPOCH process-wide. Without this
+    // test, moving that resolution into `generateAIContent` would pass every other test in the
+    // suite and silently serve a months-old timestamp from a warm CMS server.
+    const saved = {
+      buildId: process.env.CANOPY_BUILD_ID,
+      epoch: process.env.SOURCE_DATE_EPOCH,
+    }
+    process.env.CANOPY_BUILD_ID = 'deadbeef'
+    process.env.SOURCE_DATE_EPOCH = '1700000000'
+    try {
+      const response = await callHandler(handler, 'manifest.json')
+      const manifest = (await response.json()) as AIManifest & { buildId?: string }
+      expect(manifest.buildId).toBeUndefined()
+      expect(manifest.generated).toBeTruthy()
+      expect(manifest.generated).not.toBe('2023-11-14T22:13:20.000Z')
+    } finally {
+      if (saved.buildId === undefined) delete process.env.CANOPY_BUILD_ID
+      else process.env.CANOPY_BUILD_ID = saved.buildId
+      if (saved.epoch === undefined) delete process.env.SOURCE_DATE_EPOCH
+      else process.env.SOURCE_DATE_EPOCH = saved.epoch
+    }
+  })
+
   it('serves individual entry markdown with correct Content-Type', async () => {
     const response = await callHandler(handler, 'posts/hello-world.md')
     expect(response.status).toBe(200)

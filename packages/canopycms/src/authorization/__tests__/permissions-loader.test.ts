@@ -4,7 +4,7 @@ import path from 'node:path'
 import os from 'node:os'
 import { loadPathPermissions, mutatePermissionsFile, ensurePermissionsFile } from '../permissions'
 import { unsafeAsPermissionPath } from '../test-utils'
-import { mockConsole } from '../../test-utils/console-spy.js'
+import { mockConsole } from '../../test-utils/console-spy'
 
 describe('permissions loader', () => {
   let testRoot: string

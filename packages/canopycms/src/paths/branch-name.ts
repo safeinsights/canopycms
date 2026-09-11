@@ -31,7 +31,7 @@ export function sanitizeBranchName(branchName: string): SanitizedBranchName {
  * operating-mode/deployment-name.ts's `resolveDeploymentName`). Exported from
  * this dependency-free module -- not constructed ad hoc at each call site --
  * so every consumer that needs to recognize the settings-branch namespace
- * agrees on the exact string: worker/cms-worker.ts's `pushSettingsBranches`
+ * agrees on the exact string: worker/git-sync.ts's `pushSettingsBranches`
  * (never push a `canopycms-settings-*` branch this deployment doesn't own),
  * and api/branch.ts's `createBranchHandler` (reject a user-requested branch
  * whose SANITIZED name falls in this namespace).

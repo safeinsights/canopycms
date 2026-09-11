@@ -211,6 +211,8 @@ export type MediaConfig =
       bucket: string
       region: string
       publicBaseUrl?: string
+      /** POST target for presigned direct uploads; see mediaSchema's s3 branch. */
+      uploadUrl?: string
       maxUploadBytes?: number
     }
   | { adapter: 'lfs'; publicBaseUrl?: string }

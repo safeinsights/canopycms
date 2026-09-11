@@ -86,8 +86,62 @@ named `index` still resolves, and direct `read({ entryPath: 'content/home' })` i
 
 ## Related
 
-- [adopter-request-log-intake.md](adopter-request-log-intake.md) — item #20, whose fix exposed this
-- [resolved/url-resolver-index-entry-extra-url.md](resolved/url-resolver-index-entry-extra-url.md)
+- [adopter-request-log-intake.md](../adopter-request-log-intake.md) — item #20, whose fix exposed this
+- [url-resolver-index-entry-extra-url.md](url-resolver-index-entry-extra-url.md)
   — the `/x/index` half of the same invariant, closed by PR #253
-- [isurlpath-field-marker.md](isurlpath-field-marker.md) — its "singletons are routable" bullet is
+- [isurlpath-field-marker.md](../isurlpath-field-marker.md) — its "singletons are routable" bullet is
   about this same area
+
+---
+
+## RESOLVED — 2026-08-22, branch `fix/readbyurlpath-url-addressable-only`
+
+Adopter request **34** (the remainder of #22), reported against `0.0.65`. Fixed as suggested — in
+URL resolution, not in `ContentStore` — but scoped wider than this file proposed, for three
+reasons the write-up did not anticipate.
+
+**1. There were two phantom families, not one.** This file describes the index-fallback candidate
+landing on an entry-type item. The DIRECT-entry candidate does the same thing one level up:
+`/<collection>/<typeName>/<slug>` resolves `<collection>` + `<slug>`. It needs no index entry, so
+unlike the family described here it applies to **every entry in every collection** — strictly the
+larger hole, and neither the adopter nor this file had it. `apps/example1` was serving seven
+duplicate doc pages through it (`/docs/doc/overview`, `/docs/api/doc/intro`, and siblings), live
+under `app/docs/[[...slug]]`, while `/home` — the instance this file tracks — 404s there for want
+of a route. The fix is therefore stated as an invariant rather than as a skipped candidate: **for a
+published URL, every candidate's `entryPath` is a collection.**
+
+**2. The obstacle this file records was real but avoidable.** Option 1 was taken —
+`ContentStore.isCollectionPath()`, consulted on the read path — and it is the only one of the three
+that is structurally safe. Option 2 (thread the flat schema into `readByUrlPath`) would have been a
+latent bug: the flat schema is a LIST and a `find` over it is first-wins, while `schemaIndex` is a
+Map and is last-wins. Where a subcollection's path equals a parent's entry-type name the two
+disagree, and the list would have reported `entry-type` for something `buildPaths` resolves as a
+collection — closing a legitimate URL. Reading the same Map `buildPaths` reads is what makes gate
+and resolver unable to diverge. The per-call-branch problem noted here dissolved once the check
+moved into `content-reader.ts`, which already builds a per-branch store.
+
+**3. A third disagreement was fixed in the same pass** (JP's call): an entry whose on-disk type
+token its collection does not declare was resolvable by URL though `listEntries` skips it. Both
+rules ride one flag, `ReadContentInput.urlAddressableOnly`, set by `readByUrlPath` and nothing else.
+Note where that check is NOT: `buildPaths`' directory scan stays type-blind, because `write()`
+resolves through it to decide edit-vs-create — rejecting there would mint a second same-slug file
+on save and leave the mistake unfixable from the editor.
+
+**Confirmed by construction, not just by test.** `isCollectionPath` is the non-throwing form of the
+existing private `assertCollection`, type-only (not `resolvePath`'s stricter `type && entries`, or
+it would reject a collection that has subcollections but no entries of its own).
+
+**What was NOT closed**, and is now tracked separately: a legacy untyped file (`overview.json`) is
+still readable by URL and invisible to `listEntries` — see
+[legacy-untyped-files-url-addressable.md](../legacy-untyped-files-url-addressable.md). Rule 2 lets
+those through by construction, since `extractEntryTypeFromFilename` returns `null` for them and the
+collection's declared default is substituted; that is deliberate and pinned by a test, because
+re-expressing the rule as a filename-grammar check would silently 404 every legacy entry.
+
+**Tests.** `url-exclusivity-fixtures.ts` is the durable answer to the adopter's actual complaint —
+that these were being found one at a time, a release apart. It enumerates, round-trips every
+published URL, then probes every adjacent URL the resolver would attempt;
+`url-exclusivity.test.ts` runs it over fixtures and `reference-app-url-exclusivity.test.ts` over
+`apps/example1`'s real content tree, so the reference app is held to the invariant as it grows.
+All five breaks were verified, including the decisive one: gating only the index candidate leaves
+six tests failing.

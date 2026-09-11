@@ -24,8 +24,9 @@
   "publishConfig": {
     "exports": {
       ".": {
+        "types": "./dist/index.d.ts",
         "import": "./dist/index.js",
-        "types": "./dist/index.d.ts"
+        "require": "./dist/index.js"
       }
     }
   },
@@ -35,12 +36,12 @@
     "build:worker": "esbuild worker/index.ts --bundle --platform=node --target=node20 --format=esm --outfile=worker/dist/index.js --banner:js=\"import { createRequire } from 'module'; const require = createRequire(import.meta.url);\"",
     "build:lambda": "node lambda/asset-transform/build.mjs",
     "build:test-fixtures": "pnpm run build:worker && node lambda/asset-transform/build.mjs --skip-native",
-    "lint": "eslint src/ 'lambda/**/*.ts' 'canary/**/*.ts' 'worker/**/*.ts'",
+    "lint": "eslint src/ 'lambda/**/*.ts' 'canary/**/*.ts' 'worker/**/*.ts' 'test-support/**/*.ts'",
     "test": "pnpm run build:test-fixtures && vitest run",
-    "typecheck": "tsc --noEmit && tsc --noEmit -p lambda/tsconfig.json && tsc --noEmit -p canary/tsconfig.json && tsc --noEmit -p worker/tsconfig.json"
+    "typecheck": "tsc --noEmit && tsc --noEmit -p lambda/tsconfig.json && tsc --noEmit -p canary/tsconfig.json && tsc --noEmit -p worker/tsconfig.json && tsc --noEmit -p test-support/tsconfig.json"
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=22.12.0"
   },
   "peerDependencies": {
     "canopycms": "workspace:*",

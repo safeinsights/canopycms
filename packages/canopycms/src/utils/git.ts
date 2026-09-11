@@ -81,7 +81,7 @@ const REJECTION_HINT = 'Updates were rejected because'
  *
  * Deliberately narrow: ordinary transient push failures -- network drops,
  * auth/permission denial, lock contention -- must keep retrying with backoff
- * (see worker/cms-worker.ts's `isPermanentTaskFailure`, which treats git
+ * (see worker/task-runner.ts's `isPermanentTaskFailure`, which treats git
  * failures as transient precisely so those cases still get retried). Only
  * this specific, structurally-unretryable shape should fail fast (worker) or
  * return 409 (API) instead.

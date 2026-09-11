@@ -17,8 +17,10 @@ This guide walks through deploying CanopyCMS on AWS using Lambda + EFS + EC2 Wor
 > [Worker observability](#worker-observability) below) — a locked-down
 > operator role may not have SSM, and the worker was otherwise unobservable.
 > Adopters consume the published `canopycms-cdk` package; the constructs
-> referenced here also power `AssetSupport` for media (add it to give the
-> deployed editor an upload/transform backend).
+> referenced here also power `AssetSupport` for media (pass it to
+> `CanopyCmsDistribution`'s `assetSupport` prop to give the deployed editor an
+> upload/transform backend, with both CloudFront behaviors wired in the only
+> order that is safe).
 
 ## Architecture Overview
 
@@ -62,7 +64,7 @@ Lambda (VPC, no internet)               EC2 Worker (t4g.nano spot)
 - AWS account with CDK bootstrapped
 - GitHub repo with your site content
 - Clerk account (or plan to use dev auth for testing)
-- Node.js 22+
+- Node.js 22.12+ (the published packages' `engines` floor)
 - A `next` version within `canopycms-next`'s peer dependency range (see [README Requirements](../README.md#requirements)) — in particular, avoid `16.2.x`: it fork-bombs `next dev --turbopack` on any app that imports CSS (including the CanopyCMS editor's Mantine styles), which you'll hit locally before you ever get to Step 3
 
 ## Step 1: Add CanopyCMS to Your App
@@ -111,6 +113,10 @@ For a content route shared by both builds (e.g. `app/[slug]/`, or a fixed page l
 `withCanopy(nextConfig, { staticBuild })` picks the matching variant per build (see [README Dual-Build Sites](../README.md#dual-build-sites-static-export--cms-server) for the full example).
 
 Anonymous/public read on the CMS Lambda also needs `defaultPathAccess: { read: 'allow' }` in `canopycms.config.ts` (see [README Permission Model](../README.md#permission-model)); without it, forbidden reads render a 404 instead of a 500, but genuinely public content still needs the explicit allow.
+
+**Where a Clerk (or any auth SDK) provider goes.** A dual-build adopter cannot mount `<ClerkProvider>` in the app's root layout: the root layout is shared by both builds, so merely importing `@clerk/nextjs` there reaches the static export too — and in practice this is worse than dead code shipping to public visitors, because `ClerkProvider` pulls in React Server Actions internally, which `output: 'export'` rejects outright (`next build` fails with "Server Actions are not supported with static export"). Put the provider in a layout scoped to the editor subtree instead, named under the CMS-only extension, e.g. `app/edit/layout.server.tsx`. This works because `withCanopy()`'s `pageExtensions` handling is **additive, not subtractive**: `staticBuild: true` adds `static.ts`/`static.tsx` to `pageExtensions` _instead of_ `server.ts`/`server.tsx` — nothing is removed from a shared list, the two build flavors just add different extensions on top of Next's defaults. Next's app-dir loader resolves every special file (`layout`, `page`, `route`, `loading`, `error`, …) through that same `pageExtensions`-derived resolver, with no special case for `layout` — so a `layout.server.tsx` is picked up as a real layout, scoped to its subtree, exactly like `page.server.tsx` is picked up as a page, whenever `server.tsx` is present, and is invisible whenever it isn't. `apps/dual-build-fixture` enforces both halves of this in CI (`dual-build.test.ts`): the CMS build's compiled `/edit` output must reference `@clerk/nextjs`, and the static build's output must not contain a single byte of it — so this is a guarantee the build enforces, not just advice you have to trust.
+
+**The publishable key still ships per Docker image, not per request.** `<ClerkProvider>` accepts an explicit `publishableKey` prop, and `@clerk/nextjs` gives that prop precedence over `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` — so reading a plain (non-`NEXT_PUBLIC_`-prefixed) runtime environment variable inside `layout.server.tsx` and passing it explicitly is not blocked by the SDK; a real server component's `process.env` read happens at request time, not at build time. That is not the same as one Docker image working across every Clerk instance/tier, though: `clerkMiddleware` (see `middleware-clerk.ts.template`) resolves its own `publishableKey`/`secretKey` independently of whatever the provider receives — there is no shared state between Next middleware and the React render tree — and the shipped middleware template does not thread a runtime-only key through to it, so it falls back to the build-time-baked `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`. Worse, `clerkMiddleware` unconditionally requires a non-empty `secretKey` (it throws if one can't be resolved, `jwtKey` alone does not satisfy it), and `CLERK_SECRET_KEY` is deliberately kept out of the CMS Lambda today (see Step 6) — so making one image genuinely serve multiple Clerk instances would mean also passing matching explicit keys to `clerkMiddleware`, sourced the same way, and revisiting whether `CLERK_SECRET_KEY` belongs in the Lambda at all. **This is unverified** — nothing in this repo demonstrates it end-to-end, and no real Clerk instance was exercised to check it — so treat `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` as a per-tier Docker `buildArg` (see [Build-time client keys](#build-time-client-keys)) until someone does.
 
 ### Preview Support
 
@@ -250,7 +256,9 @@ successful deploy.
 
 Then edit `infrastructure/lib/cms-stack.ts` for anything beyond that — memory
 and concurrency, `AssetSupport` for media (a commented block in the generated
-file), or a distribution you already own.
+file: uncomment it, then pass the resulting `assetSupport` to
+`CanopyCmsDistribution`'s `assetSupport` prop, which attaches its CloudFront
+behaviors in the only safe order for you), or a distribution you already own.
 
 `githubOwner` / `githubRepo` in `infrastructure/bin/app.ts` are prefilled from
 your `origin` remote. Check them: they decide which repository the worker
@@ -319,12 +327,23 @@ deploy at synth — before anything is changed in the account.
 | `AWS_DEPLOY_ROLE_ARN`                       | secret    | yes                                          |
 | `CANOPY_GITHUB_TOKEN_SECRET_ARN`            | secret    | yes (see note below)                         |
 | `CLERK_SECRET_KEY_SECRET_ARN`               | secret    | yes                                          |
-| `CLERK_JWT_KEY`                             | secret    | yes                                          |
 | `AWS_REGION`                                | variable  | yes                                          |
+| `CLERK_JWT_KEY`                             | variable  | yes (see note below)                         |
 | `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`         | variable  | no, but the editor cannot sign in without it |
 | `CANOPY_BOOTSTRAP_ADMIN_IDS`                | variable  | no                                           |
 | `CANOPYCMS_DEPLOYMENT_NAME`                 | variable  | no (defaults to `prod`)                      |
 | `CMS_DOMAIN_NAME`, `CMS_HOSTED_ZONE_DOMAIN` | variables | no (enables CloudFront + Route53)            |
+
+> **Why is `CLERK_JWT_KEY` a variable and not a secret?** Because it is a _public_ key —
+> Clerk's JWKS PEM, retrievable from your instance's public JWKS endpoint, and used only to
+> verify signatures. It is `required` because without it `@clerk/nextjs` falls back to
+> fetching JWKS over the network and the internet-less CMS Lambda hangs at sign-in; that
+> makes it load-bearing, not confidential. Storing it as an Actions _secret_ also works, but
+> it is worth being precise: classifying it as a secret is what invites the conclusion that
+> the CMS Lambda accepts secrets, which it does not (see
+> [Security Model](#security-model)). The genuinely sensitive Clerk value is
+> `CLERK_SECRET_KEY`, which never goes near the Lambda — it lives in Secrets Manager and is
+> read by the worker.
 
 > **Why `CANOPY_GITHUB_TOKEN_SECRET_ARN` and not `GITHUB_TOKEN_SECRET_ARN`?** GitHub
 > reserves the `GITHUB_` prefix and rejects any Actions secret or variable whose name
@@ -432,6 +451,61 @@ Setting `CANOPYCMS_DEPLOYMENT_NAME` through the construct's `environment` prop s
 
 **Changing `deploymentName` (or `settingsBranch`) on a stack that already has a populated settings workspace is refused at boot, loudly** — it is not migrated automatically. Renaming the resolved settings branch would make CanopyCMS check out a _different_ orphan branch in the same on-disk workspace, which wipes `permissions.json`/`groups.json` with no history to recover them from (orphan branches share none). If you see this error, either restore the previous value or deliberately move the settings workspace aside first — see the error message for specifics.
 
+## Base branch and settings branch: keeping the worker and the Lambda in step
+
+Two more values have to agree between the Lambda and the EC2 worker, for the
+same underlying reason as `deploymentName` above: each is read independently
+by a different process, with no automatic reconciliation unless something
+wires them together.
+
+- **`CANOPYCMS_BASE_BRANCH`** — the worker's own copy of the GitHub
+  repository's default branch, stamped once into the worker's `.env` at synth
+  by `CanopyCmsService`'s `baseBranch` prop (default `'main'`). The Lambda
+  instead reads `config.defaultBaseBranch` from `canopycms.config.ts` at
+  request time.
+
+  **Get this wrong and there is no working worker at all.**
+  `verifyBaseBranchExists` throws when the named branch doesn't exist in the
+  cloned `remote.git`; the worker's `start()` records the fatal error;
+  `worker/index.ts` exits 1; systemd's `Restart=always` repeats that
+  forever — a permanent crash loop, not a transient failure, until the value
+  is fixed and the instance replaced. `rebaseActiveBranches` also fetches and
+  rebases against the wrong lineage in the meantime.
+
+- **`CANOPYCMS_SETTINGS_BRANCH`** — an explicit override for the settings
+  branch name, mirroring `config.settingsBranch` in `canopycms.config.ts`.
+  Stamped by `CanopyCmsService`'s `settingsBranch` prop; **unset by default**,
+  in which case the worker falls through to the same computed name the Lambda
+  uses (`canopycms-settings-<deploymentName>` — see
+  [Two deployments, one repository](#two-deployments-one-repository) above).
+  Leaving both unset is safe. Setting `config.settingsBranch` without also
+  setting this prop is not: the Lambda's `getSettingsBranchName`
+  short-circuits on `config.settingsBranch`, so the worker ends up owning a
+  different branch than the Lambda writes to — the worker's per-cycle
+  backstop push (`pushSettingsBranches`) then targets the wrong branch, and
+  its "foreign settings branch" `[SYNC-M3]` warning misfires against the
+  deployment's own branch.
+
+**`infrastructure/lib/cms-stack.ts`, as generated by `canopycms init-deploy aws`,
+derives both of these from your project's own `canopycms.config.ts` at synth
+time** — it imports the config file directly and passes
+`baseBranch: config.defaultBaseBranch` / `settingsBranch: config.settingsBranch`
+into `CanopyCmsService`. So if you deploy through the generated stack, there is
+nothing to keep in sync by hand: change `defaultBaseBranch`/`settingsBranch` in
+`canopycms.config.ts` and the next `cdk deploy` picks it up. If you hand-roll
+your own stack instead of using the generated one, you must set the
+`baseBranch`/`settingsBranch` props on `CanopyCmsService` yourself, matching
+`canopycms.config.ts` exactly — neither prop is validated against the shared
+config for you.
+
+Both props ARE validated at synth as git branch names: a value git itself would
+refuse (whitespace, `..`, `~^:?*[\`, `@{`, a leading `-`, a leading or trailing
+`/`, a component starting with `.` or ending with `.lock`) fails `cdk synth`
+rather than deploying an instance that crash-loops. A `/` inside the name is
+fine and expected — `release/v2` and `epic/foo` are ordinary branch names, and
+the worker keeps the raw name for git refs, sanitizing it only when deriving a
+workspace directory name.
+
 ## Worker observability
 
 The EC2 worker's stdout/stderr ships to CloudWatch Logs by default via the
@@ -519,14 +593,54 @@ a worker code change), check the new instance's log stream (see
 
 ## Security Model
 
-| Lambda                           | EC2 Worker                                      |
+| CMS Lambda                       | EC2 Worker                                      |
 | -------------------------------- | ----------------------------------------------- |
 | No internet access               | Outbound HTTPS only                             |
 | No sensitive secrets             | GitHub token + Clerk key (from Secrets Manager) |
 | Public keys only (CLERK_JWT_KEY) | Full API access                                 |
 | Read/write EFS only              | Read/write EFS + internet                       |
 
-If Lambda is compromised, an attacker can read/write content on EFS but cannot exfiltrate data, push to GitHub, or access any external service.
+**The CMS Lambda is intended to receive public configuration only.** Every genuinely
+sensitive value is meant to go to the worker instead: pass the GitHub token and Clerk
+secret key to `CanopyCmsService` as `githubTokenSecretArn` / `clerkSecretKeySecretArn`,
+and the worker reads them at boot with its own IAM grant. The Lambda's `environment`
+should carry nothing you would mind reading in the output of
+`aws lambda get-function-configuration`.
+
+An earlier version of this paragraph justified the absence of a Secrets-Manager-fetch path
+on the Lambda by saying it "could not use one if it had it, having no internet access."
+**That was wrong**, and it mattered, because it made the absence look like a closed design
+decision rather than an open gap. The Lambda runs in `PRIVATE_ISOLATED` subnets of a VPC
+this construct creates, and a VPC endpoint reaches an AWS service from there **without any
+internet route** — which is not hypothetical here: `CanopyCmsService` already adds a
+gateway endpoint for S3 for exactly this reason, because otherwise the Lambda's asset
+writes would hang. Secrets Manager needs the _interface_ variety rather than the free
+gateway one, so it carries an hourly and per-GB charge; that is a cost argument, not an
+impossibility argument.
+
+So the honest statement of today's position is: the Lambda holds no secrets **because
+nothing has built that path yet**, not because the path cannot exist.
+
+Concretely, for Clerk: `CLERK_JWT_KEY` (a public PEM) belongs on the Lambda.
+`CLERK_SECRET_KEY` (full Clerk API access) should not — but read the note below before
+removing it from a deployment where it is currently set, because the shipped middleware
+appears to need it.
+
+> **Known tension, unresolved as of 2026-09-08.** The posture above is the design; the
+> shipped Clerk middleware template may not currently satisfy it. `clerkMiddleware`
+> resolves `secretKey` as `process.env.CLERK_SECRET_KEY || ''` and asserts it is non-empty
+> (`@clerk/nextjs@6.39.5`, `server/clerkMiddleware.js:62-65` via `assertKey`), while
+> `middleware-clerk.ts.template` passes only `jwtKey` and matches `/edit(.*)` and
+> `/api/canopycms(.*)`. On that reading an authenticated editor request to a Lambda with no
+> `CLERK_SECRET_KEY` throws inside middleware. This has been read from the SDK source but
+> **not confirmed on a live deploy**, so it is filed rather than fixed — see
+> `.claude/future-tasks/deploy-test-lambda-plaintext-clerk-secret.md` for the options and
+> what to verify first — including a fetch-at-init path over a Secrets Manager interface
+> endpoint, which is the only option that makes the posture above true rather than
+> requiring it to be softened. If you are standing up a Clerk-authenticated deployment now,
+> test sign-in early and treat this as the first thing to check if editor requests 500.
+
+If the CMS Lambda is compromised, an attacker can read/write content on EFS but cannot exfiltrate data, push to GitHub, or access any external service.
 
 ### CloudFront OAC and request body signing
 
@@ -559,6 +673,48 @@ new CmsStack(app, 'CmsProd', {
 Separate AWS accounts mean these two stacks' settings branches would never collide even without `deploymentName` — but set distinct values anyway: it's the same repo's `canopycms-settings-*` branch namespace on GitHub, and a future stack sharing an account (or repo) with either of these should not have to guess that the convention exists. See [Two deployments, one repository](#two-deployments-one-repository).
 
 The generated workflow deploys one stack by name, so adding a second one here means updating its Deploy step too — either naming both (`npx cdk deploy CmsTest CmsProd`) or, more usually, giving each environment its own workflow with its own trigger and its own OIDC role.
+
+### Cross-account asset bucket
+
+A supported topology, and the normal one once assets are shared across per-environment accounts: the **asset bucket lives in one account** (a build account, so a promoted build's `/assets/{hash32}/…` references keep resolving as it moves between tiers) while the **compute is per tier, in the tier's own account**.
+
+The grant this needs has two halves. The identity half goes in the compute's stack. The **resource-policy half must be written in the bucket's own stack**, and it needs the Lambda's principal as a **plain string**.
+
+**Do not reach for the construct reference.** `assetSupport.transformFunction.role` and `service.lambdaFunction.role` both work within one account, but across an account boundary CDK emits `Fn::GetStackOutput` — a CDK-CLI-only intrinsic, resolved at deploy time by assuming a publishing role and calling DescribeStacks. Nothing in the emitted CloudFormation records the dependency, and no deploy path other than `cdk deploy` can resolve it. Unlike a same-account circular dependency, it does not fail synth.
+
+Name the roles instead, and pass them in:
+
+```typescript
+// Tier stack, in the tier account.
+const cmsRoleName = `canopy-cms-${tier}`
+const cmsRole = new iam.Role(this, 'CmsRole', {
+  roleName: cmsRoleName,
+  assumedBy: new iam.ServicePrincipal('lambda.amazonaws.com'),
+})
+
+new CanopyCmsService(this, 'Cms', {
+  // ...
+  lambdaRole: cmsRole,
+  assetBucket: s3.Bucket.fromBucketName(this, 'Assets', assetBucketName),
+})
+```
+
+```typescript
+// Bucket stack, in the build account. No reference, no import - literals only.
+bucket.addToResourcePolicy(
+  new iam.PolicyStatement({
+    principals: [new iam.ArnPrincipal(`arn:aws:iam::${tierAccount}:role/canopy-cms-${tier}`)],
+    actions: ['s3:GetObject', 's3:PutObject'],
+    resources: [`${bucket.bucketArn}/assets/*`],
+  }),
+)
+```
+
+`AssetSupport` takes the same prop for its transform Lambda, as `transformRole`. Both props are `iam.Role` rather than `iam.IRole`, and both cause the construct to re-attach the execution-role managed policies CDK silently drops for a caller-supplied role — including the VPC-ENI policy the CMS Lambda cannot start without. See the [#42 migration entry](adopter-migration.md#assetsupport-and-canopycmsservice-take-an-execution-role-so-its-arn-is-derivable-without-a-construct-reference-42) for both, and for why passing `Role.fromRoleArn` is the one thing to avoid.
+
+Two consequences of naming a role: the tier stack needs **`CAPABILITY_NAMED_IAM`**, and a customer-named IAM role **cannot be replaced in place** without a rename — so pick names you can live with for the life of the deployment.
+
+If you are not ready to wire the narrow version, scoping the bucket policy to the tier **account** rather than the role is a bounded, reversible interim step: coarser, since any principal in that account can then reach the asset prefixes, but easy to tighten later without touching the compute.
 
 ## Troubleshooting
 

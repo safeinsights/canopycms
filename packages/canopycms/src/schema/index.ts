@@ -7,7 +7,7 @@
  *
  * @example
  * ```ts
- * import { resolveSchema } from 'canopycms/schema'
+ * import { resolveSchema } from 'canopycms/server'
  *
  * const { schema, sources } = await resolveSchema(contentRoot, entrySchemaRegistry)
  * ```

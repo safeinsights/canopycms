@@ -2,7 +2,9 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 
 import type { BranchContext } from './types'
-import { BranchMetadataFileManager } from './branch-metadata'
+// The leaf, NOT './branch-metadata' — that module imports this one back, and
+// the pair was the package's only runtime import cycle. See branch-metadata-file.ts.
+import { readBranchMetadataFile } from './branch-metadata-file'
 import { isNotFoundError, getErrorMessage } from './utils/error'
 import { createDebugLogger } from './utils/debug'
 // canopyLogWarn, not console.warn: registry regeneration is reached from every
@@ -284,9 +286,9 @@ export class BranchRegistry {
         // would 500 GET /branches for every branch). The broken branch just
         // drops out of the registry; it stays on disk for the admin
         // branch-health surface to report and repair.
-        let meta: Awaited<ReturnType<typeof BranchMetadataFileManager.loadOnly>>
+        let meta: Awaited<ReturnType<typeof readBranchMetadataFile>>
         try {
-          meta = await BranchMetadataFileManager.loadOnly(branchRoot)
+          meta = await readBranchMetadataFile(branchRoot)
         } catch (err: unknown) {
           canopyLogWarn(
             `CanopyCMS: Skipping branch directory '${entry.name}' during registry scan: ${getErrorMessage(err)}`,

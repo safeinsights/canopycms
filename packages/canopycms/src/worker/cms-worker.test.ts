@@ -396,7 +396,7 @@ describe('CmsWorker retry behavior (DEP-L1)', () => {
     expect(consoleSpy).toHaveErrored('Permanently failed')
   })
 
-  // [HIGH-1] task.error is persisted to failed/<id>.json and served to the
+  // [REDACT] task.error is persisted to failed/<id>.json and served to the
   // browser by the admin panel's Tasks tab. A git push failure's message
   // can embed the bot token (buildGitHubUrl() builds
   // https://x-access-token:TOKEN@github.com/...), so it must be redacted

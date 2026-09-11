@@ -1,28 +1,34 @@
 import { describe, it, expect } from 'vitest'
-import { App, Duration, Stack } from 'aws-cdk-lib'
+import { CfnElement, Duration, Stack } from 'aws-cdk-lib'
 import { Template, Match } from 'aws-cdk-lib/assertions'
 import { RetentionDays } from 'aws-cdk-lib/aws-logs'
 import {
   aws_ecr as ecr,
+  aws_iam as iam,
   aws_lambda as lambda,
   aws_route53 as route53,
   aws_certificatemanager as acm,
+  aws_cloudfront as cloudfront,
   aws_cloudfront_origins as origins,
   aws_s3 as s3,
 } from 'aws-cdk-lib'
 import { CanopyCmsService, DEFAULT_CMS_LAMBDA_TIMEOUT } from './cms-service'
 import type { CanopyCmsServiceProps } from './cms-service'
 import { CanopyCmsDistribution } from './cms-distribution'
-// Test-only imports across the package boundary, deliberately: the construct
-// itself must NOT import `canopycms` (this package publishes with no runtime
-// dependency on it), but its SUITE can, which is what makes the duplicated
-// deployment-name rule a red test on drift rather than a comment asking nicely.
+import { AssetSupport, ASSETS_PATH_PATTERN, ASSETS_TRANSFORM_PATH_PATTERN } from './asset-support'
+// Test-only imports across the package boundary, deliberately: the constructs
+// in this directory do not import `canopycms` (see isValidDeploymentName's doc
+// comment in cms-service.ts for the real reason, and for why the older "the
+// package has no runtime dependency on canopycms" version of it was false),
+// but this SUITE can, which is what makes the duplicated deployment-name rule
+// a red test on drift rather than a comment asking nicely.
 // Both modules are dependency-free apart from canopycms's own logger shim.
 import { isValidDeploymentName } from '../../../canopycms/src/operating-mode/deployment-name'
 import {
   VALID_DEPLOYMENT_NAMES,
   INVALID_DEPLOYMENT_NAMES,
 } from '../../../canopycms/src/operating-mode/deployment-name-fixtures'
+import { newTestApp } from '../../test-support/test-synth'
 
 /**
  * Synthesizes a stack with the CMS service (and optionally the distribution) so
@@ -62,7 +68,7 @@ function synthUncached(
   withDistribution = false,
   overrides: Partial<CanopyCmsServiceProps> = {},
 ): Template {
-  const app = new App()
+  const app = newTestApp()
   const stack = new Stack(app, 'TestStack', {
     env: { account: '123456789012', region: 'us-east-1' },
   })
@@ -168,7 +174,7 @@ describe('CanopyCmsDistribution: origin read timeout matches the Lambda timeout'
   })
 
   it('follows an overridden Lambda timeout when the pair is wired through', () => {
-    const app = new App()
+    const app = newTestApp()
     const stack = new Stack(app, 'PairStack', {
       env: { account: '123456789012', region: 'us-east-1' },
     })
@@ -200,7 +206,7 @@ describe('CanopyCmsDistribution: origin read timeout matches the Lambda timeout'
   })
 
   it('fails at synth rather than deploying a timeout CloudFront would reject', () => {
-    const app = new App()
+    const app = newTestApp()
     const stack = new Stack(app, 'TooLongStack', {
       env: { account: '123456789012', region: 'us-east-1' },
     })
@@ -235,7 +241,7 @@ describe('CanopyCmsDistribution: origin read timeout matches the Lambda timeout'
 
 describe('CanopyCmsDistribution: us-east-1 certificate restriction', () => {
   function distInRegion(region: string, withCertificate: boolean) {
-    const app = new App()
+    const app = newTestApp()
     const stack = new Stack(app, `RegionStack${region.replace(/-/g, '')}`, {
       env: { account: '123456789012', region },
     })
@@ -291,7 +297,7 @@ describe('CanopyCmsDistribution: additionalBehaviors', () => {
     // Without this prop there was no way to attach AssetSupport's behaviors to
     // the distribution the scaffold generates, so its own "uncomment to enable
     // media" instructions were a dead end.
-    const app = new App()
+    const app = newTestApp()
     const stack = new Stack(app, 'BehaviorStack', {
       env: { account: '123456789012', region: 'us-east-1' },
     })
@@ -339,7 +345,7 @@ describe('CanopyCmsDistribution: additionalBehaviors', () => {
     // overridden `/_next/static/*` ahead of everything else the caller passed
     // -- silently making their more specific pattern unreachable, which is
     // exactly what the prop's own doc warns them to avoid.
-    const app = new App()
+    const app = newTestApp()
     const stack = new Stack(app, 'OrderStack', {
       env: { account: '123456789012', region: 'us-east-1' },
     })
@@ -383,6 +389,482 @@ describe('CanopyCmsDistribution: additionalBehaviors', () => {
     expect(patterns.indexOf('/_next/static/chunks/*')).toBeLessThan(
       patterns.indexOf('/_next/static/*'),
     )
+  })
+})
+
+describe('CanopyCmsDistribution: assetSupport prop', () => {
+  /** Builds a stack with a CanopyCmsService and an AssetSupport, ready to pass to CanopyCmsDistribution. */
+  function buildServiceAndAssets(stackId: string) {
+    const app = newTestApp()
+    const stack = new Stack(app, stackId, {
+      env: { account: '123456789012', region: 'us-east-1' },
+    })
+    const service = new CanopyCmsService(stack, 'Cms', {
+      cmsDockerImage: lambda.DockerImageCode.fromEcr(
+        ecr.Repository.fromRepositoryName(stack, 'Repo', 'cms'),
+      ),
+      githubOwner: 'acme',
+      githubRepo: 'site',
+    })
+    const assetSupport = new AssetSupport(stack, 'Assets', {
+      editorOrigins: ['http://localhost:3000'],
+      // See asset-support.test.ts's BASE_PROPS doc comment - this suite
+      // synths against the cheap --skip-native fixture bundle.
+      requireDeployableBundle: false,
+    })
+    return { stack, service, assetSupport }
+  }
+
+  function distributionCommonProps(stack: Stack, functionUrl: lambda.FunctionUrl) {
+    return {
+      functionUrl,
+      domainName: 'cms.example.org',
+      hostedZoneDomain: 'example.org',
+      hostedZone: route53.HostedZone.fromHostedZoneAttributes(stack, 'Zone', {
+        hostedZoneId: 'Z123456789',
+        zoneName: 'example.org',
+      }),
+      certificate: acm.Certificate.fromCertificateArn(
+        stack,
+        'Cert',
+        'arn:aws:acm:us-east-1:123456789012:certificate/abc',
+      ),
+    }
+  }
+
+  it('attaches both AssetSupport behaviors in the right order, alongside the construct’s own /_next/static/*', () => {
+    const { stack, service, assetSupport } = buildServiceAndAssets('AssetPropStack')
+    new CanopyCmsDistribution(stack, 'Dist', {
+      ...distributionCommonProps(stack, service.functionUrl),
+      assetSupport,
+    })
+
+    const dist = Object.values(
+      Template.fromStack(stack).findResources('AWS::CloudFront::Distribution'),
+    )[0]
+    const patterns = (
+      dist.Properties.DistributionConfig.CacheBehaviors as { PathPattern: string }[]
+    ).map((b) => b.PathPattern)
+
+    expect(patterns).toContain(ASSETS_TRANSFORM_PATH_PATTERN)
+    expect(patterns).toContain(ASSETS_PATH_PATTERN)
+    expect(patterns).toContain('/_next/static/*')
+    // The whole point: the more specific transform pattern must precede the
+    // broader static one, or CloudFront's first-match-wins ordering serves
+    // every transform request off the S3-only behavior and never fails over
+    // to the transform Lambda.
+    expect(patterns.indexOf(ASSETS_TRANSFORM_PATH_PATTERN)).toBeLessThan(
+      patterns.indexOf(ASSETS_PATH_PATTERN),
+    )
+  })
+
+  it('throws at construction when a hand-written additionalBehaviors lists /assets/* before /assets/t/*', () => {
+    const { stack, service } = buildServiceAndAssets('WrongOrderStack')
+    const anyOrigin = origins.FunctionUrlOrigin.withOriginAccessControl(service.functionUrl)
+    expect(
+      () =>
+        new CanopyCmsDistribution(stack, 'Dist', {
+          ...distributionCommonProps(stack, service.functionUrl),
+          additionalBehaviors: {
+            // Wrong order: the broader pattern listed first swallows every
+            // transform request before CloudFront ever reaches the more
+            // specific one.
+            [ASSETS_PATH_PATTERN]: { origin: anyOrigin },
+            [ASSETS_TRANSFORM_PATH_PATTERN]: { origin: anyOrigin },
+          },
+        }),
+    ).toThrow(/first-match-wins|permanent 403|matches path patterns in the order/i)
+  })
+
+  it('throws at construction when additionalBehaviors carries the literal assets/assetsTransform spread-mistake keys', () => {
+    const { stack, service } = buildServiceAndAssets('SpreadMistakeStack')
+    const anyOrigin = origins.FunctionUrlOrigin.withOriginAccessControl(service.functionUrl)
+    expect(
+      () =>
+        new CanopyCmsDistribution(stack, 'Dist', {
+          ...distributionCommonProps(stack, service.functionUrl),
+          // The mistake this guards against: spreading assetBehaviors()'s
+          // return value directly into additionalBehaviors instead of keying
+          // it by path pattern.
+          additionalBehaviors: {
+            assets: { origin: anyOrigin },
+            assetsTransform: { origin: anyOrigin },
+          },
+        }),
+    ).toThrow(/literal key/i)
+  })
+
+  it('a slash-less caller key displaces the construct default rather than duplicating it', () => {
+    // CloudFront treats a leading '/' as optional, so '_next/static/*' and
+    // '/_next/static/*' are the same pattern. The collision filter compared raw
+    // keys, so both were emitted -- which CloudFront rejects at deploy.
+    const { stack, service } = buildServiceAndAssets('SlashlessCollisionStack')
+    const anyOrigin = origins.FunctionUrlOrigin.withOriginAccessControl(service.functionUrl)
+    new CanopyCmsDistribution(stack, 'Dist', {
+      ...distributionCommonProps(stack, service.functionUrl),
+      additionalBehaviors: { '_next/static/*': { origin: anyOrigin } },
+    })
+    const res = Object.values(
+      Template.fromStack(stack).findResources('AWS::CloudFront::Distribution'),
+    )[0]
+    const patterns = (
+      res.Properties.DistributionConfig.CacheBehaviors as Array<{ PathPattern: string }>
+    ).map((b) => b.PathPattern)
+    expect(patterns).toContain('_next/static/*')
+    expect(patterns, 'the slashed default must not also be emitted').not.toContain(
+      '/_next/static/*',
+    )
+  })
+
+  it('refuses two caller keys that normalize to the same pattern', () => {
+    const { stack, service } = buildServiceAndAssets('DuplicateSpellingStack')
+    const anyOrigin = origins.FunctionUrlOrigin.withOriginAccessControl(service.functionUrl)
+    expect(
+      () =>
+        new CanopyCmsDistribution(stack, 'Dist', {
+          ...distributionCommonProps(stack, service.functionUrl),
+          additionalBehaviors: {
+            'api/*': { origin: anyOrigin },
+            '/api/*': { origin: anyOrigin },
+          },
+        }),
+    ).toThrow(/same path pattern/i)
+  })
+
+  it('does NOT throw when additionalBehaviors uses the correct manual order (negative control)', () => {
+    // Guards against a vacuous guard: the two throwing tests above would
+    // "pass" even if the check fired on every additionalBehaviors call, so
+    // this pins that the hand-written-correct shape templates still show
+    // (assetBehaviors().assetsTransform / .assets, transform first) is
+    // accepted.
+    const { stack, service } = buildServiceAndAssets('CorrectOrderStack')
+    const anyOrigin = origins.FunctionUrlOrigin.withOriginAccessControl(service.functionUrl)
+    expect(
+      () =>
+        new CanopyCmsDistribution(stack, 'Dist', {
+          ...distributionCommonProps(stack, service.functionUrl),
+          additionalBehaviors: {
+            [ASSETS_TRANSFORM_PATH_PATTERN]: { origin: anyOrigin },
+            [ASSETS_PATH_PATTERN]: { origin: anyOrigin },
+          },
+        }),
+    ).not.toThrow()
+  })
+
+  it('throws when the assetSupport prop is combined with a hand-wired asset block', () => {
+    // The migration mistake: an adopter who already hand-wired the behaviors
+    // adopts the `assetSupport` prop without deleting the old block. Note the
+    // hand-written order here is the CORRECT one, so the ordering check above
+    // cannot catch this - and `attachTo` runs after the distribution is
+    // constructed, so its addBehavior calls never reach mergeBehaviors.
+    // Measured before this guard existed: CDK raised nothing and synthesized
+    // CacheBehaviors ['/assets/t/*','/assets/*','/assets/t/*','/assets/*'],
+    // leaving CloudFront to reject the duplicate patterns at deploy time.
+    const { stack, service, assetSupport } = buildServiceAndAssets('DoubleWiredStack')
+    const anyOrigin = origins.FunctionUrlOrigin.withOriginAccessControl(service.functionUrl)
+    expect(
+      () =>
+        new CanopyCmsDistribution(stack, 'Dist', {
+          ...distributionCommonProps(stack, service.functionUrl),
+          assetSupport,
+          additionalBehaviors: {
+            [ASSETS_TRANSFORM_PATH_PATTERN]: { origin: anyOrigin },
+            [ASSETS_PATH_PATTERN]: { origin: anyOrigin },
+          },
+        }),
+    ).toThrow(/attached twice|duplicate path pattern/i)
+  })
+
+  it('catches the wrong order even when written without leading slashes', () => {
+    // CloudFront treats a leading '/' on a path pattern as optional, and AWS's
+    // own console and docs often show the slash-less spelling. Before the
+    // guard normalized, `{ 'assets/*': ..., 'assets/t/*': ... }` synthesized
+    // the broad-pattern-first order with no error at all -- the silent
+    // permanent-403 this whole guard exists to refuse.
+    const { stack, service } = buildServiceAndAssets('SlashlessWrongOrderStack')
+    const anyOrigin = origins.FunctionUrlOrigin.withOriginAccessControl(service.functionUrl)
+    expect(
+      () =>
+        new CanopyCmsDistribution(stack, 'Dist', {
+          ...distributionCommonProps(stack, service.functionUrl),
+          additionalBehaviors: {
+            'assets/*': { origin: anyOrigin },
+            'assets/t/*': { origin: anyOrigin },
+          },
+        }),
+    ).toThrow(/first-match-wins|permanent 403|matches path patterns in the order/i)
+  })
+
+  it('catches a slash-less hand-wired block combined with the assetSupport prop', () => {
+    const { stack, service, assetSupport } = buildServiceAndAssets('SlashlessDoubleWiredStack')
+    const anyOrigin = origins.FunctionUrlOrigin.withOriginAccessControl(service.functionUrl)
+    expect(
+      () =>
+        new CanopyCmsDistribution(stack, 'Dist', {
+          ...distributionCommonProps(stack, service.functionUrl),
+          assetSupport,
+          additionalBehaviors: {
+            'assets/*': { origin: anyOrigin },
+          },
+        }),
+    ).toThrow(/attached twice|duplicate path pattern/i)
+  })
+
+  it('merges attachTo overrides into BOTH behaviors, keeping the order', () => {
+    // Adopter request #41. A distribution running a viewer-request function on
+    // every behavior (tier basic-auth) needs the asset behaviors to carry the
+    // same functionAssociations, or /assets/* is anonymously readable on an
+    // authenticated tier. Without an overrides parameter such an adopter had to
+    // fall back to assetBehaviors() plus two hand-ordered addBehavior calls --
+    // the shape attachTo exists to eliminate.
+    const { stack, service, assetSupport } = buildServiceAndAssets('AttachOverridesStack')
+    const fn = new cloudfront.Function(stack, 'ViewerFn', {
+      code: cloudfront.FunctionCode.fromInline('function handler(e){return e.request}'),
+    })
+    const dist = new CanopyCmsDistribution(stack, 'Dist', {
+      ...distributionCommonProps(stack, service.functionUrl),
+    })
+    assetSupport.attachTo(dist.distribution, {
+      functionAssociations: [
+        { function: fn, eventType: cloudfront.FunctionEventType.VIEWER_REQUEST },
+      ],
+    })
+
+    const synthesized = Object.values(
+      Template.fromStack(stack).findResources('AWS::CloudFront::Distribution'),
+    )[0]
+    const behaviors = synthesized.Properties.DistributionConfig.CacheBehaviors as Array<{
+      PathPattern: string
+      FunctionAssociations?: unknown[]
+    }>
+    const patterns = behaviors.map((b) => b.PathPattern)
+
+    for (const pattern of [ASSETS_TRANSFORM_PATH_PATTERN, ASSETS_PATH_PATTERN]) {
+      const behavior = behaviors.find((b) => b.PathPattern === pattern)
+      expect(behavior, `${pattern} should be attached`).toBeDefined()
+      expect(
+        behavior?.FunctionAssociations,
+        `${pattern} must carry the viewer-request function, or it is anonymously readable`,
+      ).toHaveLength(1)
+    }
+    expect(patterns.indexOf(ASSETS_TRANSFORM_PATH_PATTERN)).toBeLessThan(
+      patterns.indexOf(ASSETS_PATH_PATTERN),
+    )
+  })
+
+  it('keeps the transform behavior on an origin group when overrides are passed', () => {
+    // NOT a guard against an `origin` override: measured, that is a no-op,
+    // because `addBehavior(pattern, origin, options)` takes the origin
+    // POSITIONALLY and ignores an `origin` key in the options. An earlier
+    // version of this test claimed to guard that and passed with the parameter
+    // widened to `Partial<BehaviorOptions>` and an `origin` supplied -- i.e. it
+    // was vacuous.
+    //
+    // What it pins instead is real and refactor-sensitive: the transform
+    // behavior must still target an origin GROUP after overrides are merged,
+    // since that group is the 403/404 failover to the transform Lambda. It
+    // goes red if buildBehaviors ever stops using one.
+    const { stack, service, assetSupport } = buildServiceAndAssets('AttachOriginGuardStack')
+    const dist = new CanopyCmsDistribution(stack, 'Dist', {
+      ...distributionCommonProps(stack, service.functionUrl),
+    })
+    assetSupport.attachTo(dist.distribution, { compress: false })
+
+    const synthesized = Object.values(
+      Template.fromStack(stack).findResources('AWS::CloudFront::Distribution'),
+    )[0]
+    const config = synthesized.Properties.DistributionConfig
+    const transform = (
+      config.CacheBehaviors as Array<{ PathPattern: string; TargetOriginId: string }>
+    ).find((b) => b.PathPattern === ASSETS_TRANSFORM_PATH_PATTERN)
+    expect(transform).toBeDefined()
+    const groupIds = ((config.OriginGroups?.Items ?? []) as Array<{ Id: string }>).map((g) => g.Id)
+    expect(groupIds, 'an origin group must still exist').not.toHaveLength(0)
+    expect(groupIds).toContain(transform?.TargetOriginId)
+  })
+
+  it('ignores explicitly-undefined override keys rather than falling back to CDK defaults', () => {
+    // A spread copies keys whose value is undefined, so `{ cachePolicy: undefined }`
+    // used to DELETE the construct's choice and let CDK substitute its own --
+    // a different default. Measured before the fix: the transform behavior's
+    // custom policy (minTtl 0, which exists to stop the oversized-output
+    // redirect loop) became managed CACHING_OPTIMIZED with its 1s min TTL, and
+    // viewerProtocolPolicy went from redirect-to-https to allow-all on BOTH
+    // behaviors, serving assets over plain HTTP. Not contrived: it is what
+    // forwarding an unset optional prop produces.
+    const bare = buildServiceAndAssets('OverrideUndefBareStack')
+    const bareDist = new CanopyCmsDistribution(bare.stack, 'Dist', {
+      ...distributionCommonProps(bare.stack, bare.service.functionUrl),
+    })
+    bare.assetSupport.attachTo(bareDist.distribution)
+
+    const undef = buildServiceAndAssets('OverrideUndefStack')
+    const undefDist = new CanopyCmsDistribution(undef.stack, 'Dist', {
+      ...distributionCommonProps(undef.stack, undef.service.functionUrl),
+    })
+    undef.assetSupport.attachTo(undefDist.distribution, {
+      cachePolicy: undefined,
+      viewerProtocolPolicy: undefined,
+    })
+
+    const transformOf = (stack: Stack) => {
+      const res = Object.values(
+        Template.fromStack(stack).findResources('AWS::CloudFront::Distribution'),
+      )[0]
+      const behaviors = res.Properties.DistributionConfig.CacheBehaviors as Array<{
+        PathPattern: string
+        CachePolicyId: unknown
+        ViewerProtocolPolicy: string
+      }>
+      const found = behaviors.find((b) => b.PathPattern === ASSETS_TRANSFORM_PATH_PATTERN)
+      expect(found, 'transform behavior should be attached').toBeDefined()
+      return found!
+    }
+
+    const baseline = transformOf(bare.stack)
+    const withUndef = transformOf(undef.stack)
+    expect(withUndef.CachePolicyId).toEqual(baseline.CachePolicyId)
+    expect(withUndef.ViewerProtocolPolicy).toBe(baseline.ViewerProtocolPolicy)
+    expect(withUndef.ViewerProtocolPolicy).toBe('redirect-to-https')
+  })
+
+  it('refuses two AssetSupport instances attaching to one distribution', () => {
+    // The guard was per-instance, so this pair slipped through and synthesized
+    // the same duplicate-path-pattern deploy failure the guard exists to catch.
+    const { stack, service, assetSupport } = buildServiceAndAssets('TwoInstancesStack')
+    const second = new AssetSupport(stack, 'Assets2', {
+      editorOrigins: ['http://localhost:3000'],
+      requireDeployableBundle: false,
+    })
+    const dist = new CanopyCmsDistribution(stack, 'Dist', {
+      ...distributionCommonProps(stack, service.functionUrl),
+    })
+    assetSupport.attachTo(dist.distribution)
+    expect(() => second.attachTo(dist.distribution)).toThrow(/already called/i)
+  })
+
+  it('forwards assetBehaviorOverrides from the prop to BOTH asset behaviors', () => {
+    // The tier-auth adopter is the one who most needs attachTo's ordering
+    // guarantee, and before this prop existed needing overrides sent them off
+    // the guarded path entirely: the assetSupport prop could not pass them, so
+    // the documented advice was to drop the prop and hand-call attachTo. This
+    // pins that the guarded path now covers that case.
+    const { stack, service, assetSupport } = buildServiceAndAssets('PropOverridesStack')
+    const fn = new cloudfront.Function(stack, 'ViewerFn', {
+      code: cloudfront.FunctionCode.fromInline('function handler(e){return e.request}'),
+    })
+    new CanopyCmsDistribution(stack, 'Dist', {
+      ...distributionCommonProps(stack, service.functionUrl),
+      assetSupport,
+      assetBehaviorOverrides: {
+        functionAssociations: [
+          { function: fn, eventType: cloudfront.FunctionEventType.VIEWER_REQUEST },
+        ],
+      },
+    })
+
+    const synthesized = Object.values(
+      Template.fromStack(stack).findResources('AWS::CloudFront::Distribution'),
+    )[0]
+    const behaviors = synthesized.Properties.DistributionConfig.CacheBehaviors as Array<{
+      PathPattern: string
+      FunctionAssociations?: unknown[]
+    }>
+    const patterns = behaviors.map((b) => b.PathPattern)
+
+    for (const pattern of [ASSETS_TRANSFORM_PATH_PATTERN, ASSETS_PATH_PATTERN]) {
+      const behavior = behaviors.find((b) => b.PathPattern === pattern)
+      expect(behavior, `${pattern} should be attached`).toBeDefined()
+      expect(
+        behavior?.FunctionAssociations,
+        `${pattern} must carry the viewer-request function, or it is anonymously readable`,
+      ).toHaveLength(1)
+    }
+    // The overrides must not cost the ordering guarantee the prop exists for.
+    expect(patterns.indexOf(ASSETS_TRANSFORM_PATH_PATTERN)).toBeLessThan(
+      patterns.indexOf(ASSETS_PATH_PATTERN),
+    )
+  })
+
+  it('refuses assetBehaviorOverrides passed without assetSupport', () => {
+    // Otherwise the overrides have nothing to merge into and vanish, taking a
+    // tier-auth viewer function with them -- silently, at the one spot where
+    // that means anonymously readable assets.
+    const { stack, service } = buildServiceAndAssets('OverridesWithoutSupportStack')
+    expect(
+      () =>
+        new CanopyCmsDistribution(stack, 'Dist', {
+          ...distributionCommonProps(stack, service.functionUrl),
+          assetBehaviorOverrides: { compress: false },
+        }),
+    ).toThrow(/without `assetSupport`/)
+  })
+
+  it('records attachment on the distribution itself, not in module state', () => {
+    // The duplicate-attachment guard is keyed on the distribution, so the fact
+    // lives on it as a child construct rather than in a module-level registry.
+    // Asserting the marker (not just the error) is what makes the guard's state
+    // inspectable, and pins that the scoping is the construct tree's.
+    const { stack, service, assetSupport } = buildServiceAndAssets('AttachMarkerStack')
+    const dist = new CanopyCmsDistribution(stack, 'Dist', {
+      ...distributionCommonProps(stack, service.functionUrl),
+    })
+    const markerIds = () => dist.distribution.node.children.map((c) => c.node.id)
+
+    expect(markerIds()).not.toContain('CanopyAssetBehaviorsAttached')
+    assetSupport.attachTo(dist.distribution)
+    expect(markerIds()).toContain('CanopyAssetBehaviorsAttached')
+
+    // A distribution that was never attached to keeps its own state -- the
+    // check cannot be a process-wide "has any distribution been attached to".
+    const other = buildServiceAndAssets('AttachMarkerStack2')
+    const untouched = new CanopyCmsDistribution(other.stack, 'Dist', {
+      ...distributionCommonProps(other.stack, other.service.functionUrl),
+    })
+    expect(untouched.distribution.node.children.map((c) => c.node.id)).not.toContain(
+      'CanopyAssetBehaviorsAttached',
+    )
+    // ...and can still be attached to, which a sticky module-level flag would
+    // have to get right by luck of ordering.
+    expect(() => other.assetSupport.attachTo(untouched.distribution)).not.toThrow()
+
+    // The marker must stay inert. It is a bare Construct today, so it emits
+    // nothing and shifts no logical id - but "the guard writes to the template"
+    // is exactly the regression that would follow from someone later hanging a
+    // CfnResource off it to carry data. Asserted rather than left to the comment.
+    const marker = dist.distribution.node.findChild('CanopyAssetBehaviorsAttached')
+    const emitted = marker.node.findAll().filter((c) => CfnElement.isCfnElement(c))
+    expect(emitted, 'the attachment marker must not emit into the template').toEqual([])
+  })
+
+  it('refuses a second attachTo for the same distribution', () => {
+    // The other door into the duplicate-attachment hazard: the prop calls
+    // attachTo for you, so a caller who also calls it by hand attaches each
+    // pattern twice -- and those calls bypass mergeBehaviors entirely, so the
+    // synth guard above cannot see them.
+    const { stack, service, assetSupport } = buildServiceAndAssets('DoubleAttachStack')
+    const dist = new CanopyCmsDistribution(stack, 'Dist', {
+      ...distributionCommonProps(stack, service.functionUrl),
+      assetSupport,
+    })
+    expect(() => assetSupport.attachTo(dist.distribution)).toThrow(/already called/i)
+  })
+
+  it('does NOT throw when the assetSupport prop is combined with unrelated additionalBehaviors', () => {
+    // Negative control for the check above: passing the prop must stay
+    // compatible with a caller who has their own, non-asset behaviors.
+    const { stack, service, assetSupport } = buildServiceAndAssets('PropPlusUnrelatedStack')
+    const anyOrigin = origins.FunctionUrlOrigin.withOriginAccessControl(service.functionUrl)
+    expect(
+      () =>
+        new CanopyCmsDistribution(stack, 'Dist', {
+          ...distributionCommonProps(stack, service.functionUrl),
+          assetSupport,
+          additionalBehaviors: {
+            '/api/*': { origin: anyOrigin },
+          },
+        }),
+    ).not.toThrow()
   })
 })
 
@@ -557,7 +1039,7 @@ describe('CanopyCmsService B1: the Lambda can actually reach S3', () => {
   })
 
   it('grants the CMS Lambda role prefix-scoped access to an optional assetBucket', () => {
-    const app = new App()
+    const app = newTestApp()
     const stack = new Stack(app, 'TestStack', {
       env: { account: '123456789012', region: 'us-east-1' },
     })
@@ -925,12 +1407,12 @@ describe('CanopyCmsService: deploymentName validation', () => {
   }
 
   // The drift check the duplicated rule never had (PR #172 finding 3). The
-  // construct cannot import the runtime predicate -- `canopycms-cdk` publishes
-  // with no runtime dependency on `canopycms` -- so this TEST imports it and
-  // requires the two verdicts to match. The dangerous direction is a rule
-  // tightened at runtime but not here: the stack would synth clean and then
-  // crash-loop the Lambda at boot, which is what the synth guard exists to
-  // prevent.
+  // construct deliberately avoids importing the runtime predicate here -- see
+  // isValidDeploymentName's doc comment in cms-service.ts -- so this TEST
+  // imports it instead and requires the two verdicts to match. The dangerous
+  // direction is a rule tightened at runtime but not here: the stack would
+  // synth clean and then crash-loop the Lambda at boot, which is what the
+  // synth guard exists to prevent.
   it('agrees with the runtime predicate on every fixture name', () => {
     const candidates = [
       ...VALID_DEPLOYMENT_NAMES,
@@ -948,6 +1430,93 @@ describe('CanopyCmsService: deploymentName validation', () => {
         `synth and operating-mode/deployment-name.ts disagree about ${JSON.stringify(value)}`,
       ).toBe(!isValidDeploymentName(value))
     }
+  })
+})
+
+/**
+ * Branch-name cases for `baseBranch`/`settingsBranch`, which get
+ * `assertValidGitBranchName` rather than `deploymentName`'s single-component
+ * charset.
+ *
+ * NOT the shared `deployment-name-fixtures` list, deliberately. That list
+ * declares `'team/prod'` INVALID, which is right for a value interpolated into
+ * `canopycms-settings-<name>` and wrong for a whole branch name -- reusing it
+ * here refused `cdk synth` for an adopter whose default branch is
+ * `release/v2`. The first entry below is the regression test for that.
+ *
+ * These live here rather than in a cross-package fixture because there is no
+ * runtime counterpart to drift from: nothing in `canopycms` validates a branch
+ * name, the worker uses the string as given.
+ */
+const VALID_BRANCH_NAMES = [
+  'release/v2',
+  'epic/int-202608-b',
+  'feature/a/b/c',
+  'main',
+  'trunk',
+  'release.2026',
+  'v2',
+  'canopycms-settings-prod',
+  'x.locked',
+] as const
+
+const INVALID_BRANCH_NAMES = [
+  ['whitespace', 'my branch'],
+  ['a leading dash (parses as a git option)', '-branch'],
+  ['a colon', 'branch:1'],
+  ['dot-dot', 'a..b'],
+  ['a leading dot', '.branch'],
+  ['a dot-led path component', 'feature/.hidden'],
+  ['a trailing dot', 'branch.'],
+  ['a .lock suffix', 'branch.lock'],
+  ['a .lock path component', 'feature/x.lock'],
+  ['a tilde', 'branch~1'],
+  ['a caret', 'branch^1'],
+  ['a question mark', 'branch?'],
+  ['an asterisk', 'branch*'],
+  ['an open bracket', 'branch['],
+  ['a backslash', 'branch\\1'],
+  ['a reflog selector', 'branch@{1}'],
+  ['a leading slash', '/branch'],
+  ['a trailing slash', 'branch/'],
+  ['an empty path component', 'a//b'],
+  ['a lone @', '@'],
+  ['HEAD, which names the symbolic ref rather than a branch', 'HEAD'],
+  ['the empty string', ''],
+  ['a newline (would inject a line into the worker .env)', 'branch\nEVIL=1'],
+] as const
+
+/**
+ * `baseBranch` gets a synth-time git-ref guard it previously lacked -- before
+ * this it went only through the generic `assertEnvSafe` newline/ENVEOF check
+ * exercised by the heredoc-safe table above, so a value git itself refuses
+ * synthesized and deployed clean and then crash-looped the worker.
+ */
+describe('CanopyCmsService: baseBranch validation', () => {
+  for (const [why, value] of INVALID_BRANCH_NAMES) {
+    it(`throws at synth for a baseBranch with ${why}: ${JSON.stringify(value)}`, () => {
+      expect(() => synth(false, { baseBranch: value })).toThrow(/invalid baseBranch/i)
+    })
+  }
+
+  for (const value of VALID_BRANCH_NAMES) {
+    it(`accepts the baseBranch ${JSON.stringify(value)}`, () => {
+      expect(() => synth(false, { baseBranch: value })).not.toThrow()
+    })
+  }
+
+  it('stamps a slash-bearing baseBranch through to the worker .env', () => {
+    // The regression this guard must not reintroduce: a slash is legal and
+    // conventional in a branch name, and the worker keeps the raw name for git
+    // refs (sanitizing only for workspace directory names).
+    const all = workerUserDataBlobs(synth(false, { baseBranch: 'release/v2' }))
+    expect(all).toContain('CANOPYCMS_BASE_BRANCH=release/v2')
+  })
+
+  it('stamps CANOPYCMS_BASE_BRANCH with a non-main value, building on the existing trunk case', () => {
+    const all = workerUserDataBlobs(synth(false, { baseBranch: 'release.2026' }))
+    expect(all).toContain('CANOPYCMS_BASE_BRANCH=release.2026')
+    expect(all).not.toContain('CANOPYCMS_BASE_BRANCH=main')
   })
 })
 
@@ -1353,21 +1922,48 @@ describe('CanopyCmsService: worker .env values are heredoc-safe', () => {
     ['githubOwner', (value) => ({ githubOwner: value })],
     ['githubRepo', (value) => ({ githubRepo: value })],
     ['baseBranch', (value) => ({ baseBranch: value })],
+    ['settingsBranch', (value) => ({ settingsBranch: value })],
     ['deploymentName', (value) => ({ deploymentName: value })],
     ['githubTokenSecretArn', (value) => ({ githubTokenSecretArn: value })],
     ['clerkSecretKeySecretArn', (value) => ({ clerkSecretKeySecretArn: value })],
   ]
 
+  // baseBranch/settingsBranch/deploymentName each have their OWN stricter
+  // guard (assertValidGitBranchName for the first two -- a whole-ref guard,
+  // since a branch name may contain '/' -- or deploymentName's own
+  // ref-COMPONENT fold, which forbids '/') that runs before assertEnvSafe's
+  // generic newline/ENVEOF checks -- a value that fails the charset never
+  // reaches assertEnvSafe at all, so these three throw "invalid <field> ..."
+  // instead of the generic message.
+  const GIT_REF_VALIDATED_FIELDS = new Set(['baseBranch', 'settingsBranch', 'deploymentName'])
+
   for (const [field, build] of fields) {
     it(`rejects a newline in ${field}`, () => {
       expect(() => synth(false, build('acme\nCANOPYCMS_DEPLOYMENT_NAME=hijacked'))).toThrow(
-        // deploymentName has its own (stricter) guard, which fires first.
-        field === 'deploymentName' ? /invalid deploymentName/i : /must not contain a newline/i,
+        // toThrow(string) is a substring match, not a regexp -- avoids
+        // constructing a RegExp from a non-literal (field names come from the
+        // fixed `fields` array above, but a dynamic RegExp still trips
+        // eslint-plugin-security's detect-non-literal-regexp).
+        GIT_REF_VALIDATED_FIELDS.has(field) ? `invalid ${field}` : 'must not contain a newline',
       )
     })
 
     it(`rejects an ENVEOF-bearing ${field}`, () => {
       expect(() => synth(false, build('acmeENVEOFrm'))).toThrow(/must not contain "ENVEOF"/i)
+    })
+
+    it(`rejects a leading quote in ${field}`, () => {
+      // systemd reads this file as EnvironmentFile=, where a value whose FIRST
+      // character is a quote opens a quoted value that keeps consuming lines
+      // until a matching quote -- so one leading quote silently empties the
+      // rest of the worker's environment (AWS_REGION, the secret ARNs, the
+      // deployment name), rather than corrupting the one line it appears on.
+      // git accepts such a branch name, so assertValidGitBranchName passes it
+      // through and assertEnvSafe is what must catch it. deploymentName is the
+      // exception: its charset rule rejects the quote first.
+      expect(() => synth(false, build('"acme'))).toThrow(
+        field === 'deploymentName' ? `invalid ${field}` : 'must not start with a quote',
+      )
     })
   }
 
@@ -1378,5 +1974,167 @@ describe('CanopyCmsService: worker .env values are heredoc-safe', () => {
     expect(all).toContain('CANOPYCMS_GITHUB_OWNER=acme')
     expect(all).toContain('CANOPYCMS_GITHUB_REPO=site')
     expect(all).toContain('CANOPYCMS_BASE_BRANCH=trunk')
+  })
+})
+
+/**
+ * `settingsBranch` -> `CANOPYCMS_SETTINGS_BRANCH` in the worker's `.env`.
+ * Mirrors the `deploymentName` -> `CANOPYCMS_DEPLOYMENT_NAME` suite above,
+ * plus the branch-name validation it shares with `baseBranch` (see
+ * `assertValidGitBranchName` in cms-service.ts).
+ */
+describe('CanopyCmsService: settingsBranch -> CANOPYCMS_SETTINGS_BRANCH', () => {
+  it('does not stamp CANOPYCMS_SETTINGS_BRANCH at all when settingsBranch is unset', () => {
+    const all = workerUserDataBlobs(synth())
+    expect(all).not.toContain('CANOPYCMS_SETTINGS_BRANCH')
+  })
+
+  it('stamps CANOPYCMS_SETTINGS_BRANCH in the worker .env when settingsBranch is set', () => {
+    const all = workerUserDataBlobs(synth(false, { settingsBranch: 'canopycms-settings-custom' }))
+    expect(all).toContain('CANOPYCMS_SETTINGS_BRANCH=canopycms-settings-custom')
+  })
+
+  it('throws at synth for an empty settingsBranch rather than silently omitting the stamp', () => {
+    expect(() => synth(false, { settingsBranch: '' })).toThrow(/invalid settingsBranch/i)
+  })
+
+  for (const [why, value] of INVALID_BRANCH_NAMES) {
+    it(`throws at synth for a settingsBranch with ${why}: ${JSON.stringify(value)}`, () => {
+      // The empty-string case is asserted on its own above with a more specific
+      // message; skip the duplicate here.
+      if (value === '') return
+      expect(() => synth(false, { settingsBranch: value })).toThrow(/invalid settingsBranch/i)
+    })
+  }
+
+  for (const value of VALID_BRANCH_NAMES) {
+    it(`accepts the settingsBranch ${JSON.stringify(value)}`, () => {
+      expect(() => synth(false, { settingsBranch: value })).not.toThrow()
+    })
+  }
+})
+
+/**
+ * `lambdaRole` exists so an adopter can compute the CMS Lambda's principal ARN
+ * without holding a reference to this construct - the cross-account
+ * asset-bucket case, where the resource-policy half of the grant is written in
+ * the bucket's own stack. See `CanopyCmsServiceProps.lambdaRole`.
+ *
+ * What these tests defend is the FOOTGUN underneath it, not the plumbing.
+ * CDK's `lambda.Function` builds its managed-policy list and then passes it
+ * only into the role it creates itself, so a caller-supplied role gets
+ * `AWSLambdaBasicExecutionRole` and `AWSLambdaVPCAccessExecutionRole`
+ * SILENTLY DISCARDED. This Lambda is VPC-attached, so a role missing the
+ * latter cannot create ENIs and the function cannot start - while synthesizing
+ * and deploying perfectly clean. Every assertion below reads the synthesized
+ * template rather than the construct's own objects, since the property is
+ * about what CloudFormation receives.
+ *
+ * NOT covered here, by agreement with the adopter who filed the request: that
+ * no reference actually crosses the account boundary in their app. That is an
+ * assertion about THEIR stacks (their guard checks for forbidden intrinsics);
+ * these tests prove the role works once passed.
+ */
+const PASSED_ROLE_NAME = 'canopy-cms-passed-role'
+
+function synthWithPassedRole(): { template: Template; roleLogicalId: string } {
+  const app = newTestApp()
+  const stack = new Stack(app, 'TestStack', {
+    env: { account: '123456789012', region: 'us-east-1' },
+  })
+  // A NAMED role, matching the shape the prop exists to serve: the adopter
+  // names it so both stacks can compute arn:aws:iam::<account>:role/<name>
+  // from literals.
+  const role = new iam.Role(stack, 'CmsRole', {
+    roleName: PASSED_ROLE_NAME,
+    assumedBy: new iam.ServicePrincipal('lambda.amazonaws.com'),
+  })
+  new CanopyCmsService(stack, 'Cms', {
+    cmsDockerImage: lambda.DockerImageCode.fromEcr(
+      ecr.Repository.fromRepositoryName(stack, 'Repo', 'cms'),
+    ),
+    githubOwner: 'acme',
+    githubRepo: 'site',
+    lambdaRole: role,
+    assetBucket: new s3.Bucket(stack, 'AssetBucket'),
+  })
+
+  const template = Template.fromStack(stack)
+  const roles = template.findResources('AWS::IAM::Role', {
+    Properties: Match.objectLike({ RoleName: PASSED_ROLE_NAME }),
+  })
+  const ids = Object.keys(roles)
+  expect(ids).toHaveLength(1)
+  return { template, roleLogicalId: ids[0] }
+}
+
+/** Every AWS::IAM::Policy in the template attached to the given role. */
+function policyActionsForRole(template: Template, roleLogicalId: string): string {
+  const policies = template.findResources('AWS::IAM::Policy')
+  return Object.values(policies)
+    .filter((policy) => JSON.stringify(policy.Properties.Roles).includes(roleLogicalId))
+    .map((policy) => JSON.stringify(policy.Properties.PolicyDocument))
+    .join('\n')
+}
+
+describe('CanopyCmsService: lambdaRole', () => {
+  it('re-attaches the VPC-ENI and basic-execution managed policies CDK discards for a passed role', () => {
+    const { template, roleLogicalId } = synthWithPassedRole()
+
+    const role = template.findResources('AWS::IAM::Role')[roleLogicalId]
+    const attached = JSON.stringify(role.Properties.ManagedPolicyArns)
+
+    // Without the construct's compensation this property is absent entirely
+    // (measured), so both of these fail rather than merely narrowing.
+    expect(attached).toContain('service-role/AWSLambdaVPCAccessExecutionRole')
+    expect(attached).toContain('service-role/AWSLambdaBasicExecutionRole')
+  })
+
+  it('points the CMS Lambda at the passed role rather than creating its own', () => {
+    const { template, roleLogicalId } = synthWithPassedRole()
+
+    const fns = template.findResources('AWS::Lambda::Function', {
+      Properties: Match.objectLike({ PackageType: 'Image' }),
+    })
+    const roleRefs = Object.values(fns).map((fn) => JSON.stringify(fn.Properties.Role))
+    expect(roleRefs).toHaveLength(1)
+    expect(roleRefs[0]).toContain(roleLogicalId)
+
+    // And no CDK-created execution role is left behind alongside it.
+    const roleNames = Object.values(template.findResources('AWS::IAM::Role')).map(
+      (r) => (r.Properties as { RoleName?: string }).RoleName,
+    )
+    expect(roleNames).toContain(PASSED_ROLE_NAME)
+  })
+
+  it('still applies the EFS, log-group and asset-bucket grants to the passed role', () => {
+    const { template, roleLogicalId } = synthWithPassedRole()
+    const document = policyActionsForRole(template, roleLogicalId)
+
+    // EFS access-point statements: applied via addToPrincipalPolicy, which a
+    // passed role DOES receive - asserted rather than assumed.
+    expect(document).toContain('elasticfilesystem:ClientMount')
+    expect(document).toContain('elasticfilesystem:ClientWrite')
+    // cmsLogGroup.grantWrite - the grant that actually enables logging to the
+    // custom-named group (the basic-execution managed policy does not).
+    expect(document).toContain('logs:PutLogEvents')
+    // The props.assetBucket block, which grants via the function's
+    // grantPrincipal (= the passed role).
+    expect(document).toContain('asset-staging/*')
+    expect(document).toContain('asset-originals/*')
+  })
+
+  it('leaves the default path alone: with no lambdaRole, CDK creates a role carrying both managed policies', () => {
+    const template = synth()
+
+    const roles = Object.values(template.findResources('AWS::IAM::Role'))
+    const withBoth = roles.filter((role) => {
+      const attached = JSON.stringify(role.Properties.ManagedPolicyArns)
+      return (
+        attached.includes('service-role/AWSLambdaVPCAccessExecutionRole') &&
+        attached.includes('service-role/AWSLambdaBasicExecutionRole')
+      )
+    })
+    expect(withBoth).toHaveLength(1)
   })
 })

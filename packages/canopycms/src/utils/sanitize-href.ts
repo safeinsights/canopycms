@@ -4,6 +4,22 @@
 const SENTINEL_BASE = 'https://relative.invalid'
 
 /**
+ * A path segment that is exactly `.` or `..`, in any spelling a URL parser collapses.
+ *
+ * `%2e` must be covered, not just the literal dot: WHATWG's single-dot and double-dot path
+ * segment definitions are case-insensitively percent-decoded, so `/upload/%2e%2e/` collapses in
+ * a browser exactly as `/upload/../` does. A literal-only guard reads as complete and is one
+ * encoding away from useless — measured before this was widened.
+ *
+ * Bounded repetition over an alternation of two literals, so no nested quantifier and no
+ * backtracking blowup — see `utils/url-prefix.ts`'s `stripTrailingSlashes` for why regex shape
+ * is watched in this area. Measured under 2ms across five ~400KB adversarial inputs, the slowest
+ * consistently being a string of 400k slashes. Stated as a bound rather than a range because
+ * the figures move run to run.
+ */
+const DOT_SEGMENT = /(^|\/)(\.|%2e){1,2}(\/|$)/i
+
+/**
  * Whether `url` declares an explicit scheme (`https:`, `mailto:`, `javascript:`, ...).
  *
  * This is the property that actually distinguishes "the author asked for another origin" from
@@ -63,6 +79,111 @@ export function neutralizeImplicitOffOrigin(url: string): string {
   if (!isImplicitlyOffOrigin(url)) return url
   const parsed = new URL(url, SENTINEL_BASE)
   return parsed.pathname + parsed.search + parsed.hash
+}
+
+/**
+ * Whether `value` is usable as an adopter-CONFIGURED URL base or endpoint: an absolute
+ * `http(s)` URL, or a site-relative path with exactly one leading slash.
+ *
+ * This is the config-validation counterpart to `sanitizeHref`, which does the same job for
+ * untrusted CONTENT. The difference is what happens to a bad value: content is coerced to a
+ * fallback so a page still renders, whereas config should fail loudly at parse time — nobody
+ * is served by a silently-rewritten deployment setting. The http(s) allowlist itself lives in
+ * this file either way, so the two surfaces cannot drift into disagreeing about which schemes
+ * are acceptable (that drift is exactly why `utils/url-prefix.ts` exists — see its header).
+ *
+ * `allowProtocolRelative` exists because the two callers genuinely differ, and the difference
+ * is blast radius rather than taste:
+ *
+ * - A READ-side prefix (`media.publicBaseUrl`, joined onto `/assets/…`) may legitimately be
+ *   `//cdn.example.com`. `utils/url-prefix.ts`'s `isAbsoluteUrl` documents that literal
+ *   spelling as an intentionally-supported off-site pointer, so rejecting it here would break
+ *   a working configuration. A bad value costs a broken `<img>`.
+ * - A WRITE-side endpoint (`media.uploadUrl`, where the browser POSTs a presigned upload) must
+ *   not be protocol-relative even when spelled literally, because such a URL is AMBIGUOUS: it
+ *   resolves to http or https depending on the scheme of whichever editor page happens to
+ *   issue the upload, so the stored config does not determine where a live presigned credential
+ *   and the user's file bytes are sent. That is the same principle every other rule here
+ *   enforces — a config value must describe what actually happens.
+ *
+ *   Note this is NOT an argument that http is forbidden on the write side; bare `http://` is
+ *   accepted, because a loopback or in-cluster S3-compatible endpoint is a real need and a
+ *   browser on an https editor blocks the mixed-content request anyway, so it fails closed. The
+ *   objection to `//host` is that it is undetermined, not that it might be insecure.
+ *
+ * Every spelling that READS as site-relative while redefining the authority — `/\host`,
+ * `\\host`, `\/host`, `///host` — is rejected for both, in both modes. Those look site-relative
+ * to a human and to a naive `startsWith('/')` check, but WHATWG URL resolves each to a
+ * different authority (measured: `///x` resolves to host `x`, not to pathname `/x`), so they
+ * are never what an adopter meant. A scheme-qualified absolute URL is a separate case and is
+ * accepted — `https:///cdn.example.com/` is unusual but unambiguous, resolving identically
+ * standalone and against any base.
+ */
+export function isHttpUrlOrSameOriginPath(
+  value: string,
+  opts: { allowProtocolRelative?: boolean } = {},
+): boolean {
+  if (value === '') return false
+
+  // Reject ASCII control characters and spaces ANYWHERE in the value, not only at the edges.
+  // WHATWG URL strips tab/CR/LF during parsing wherever they occur, so `/\tx` parses as a
+  // perfectly ordinary same-origin path and would satisfy every check below — while the
+  // browser actually requests `/x`. A stored config value that does not describe what is sent
+  // is a defect even when it happens to work, so reject it rather than normalize it away.
+  for (let index = 0; index < value.length; index++) {
+    const code = value.charCodeAt(index)
+    if (code <= 0x20 || code === 0x7f) return false
+  }
+
+  // A query or fragment is meaningless on both sides this predicate serves. S3's POST Object
+  // takes no query parameters and a browser never transmits a fragment; and on the read side a
+  // prefix carrying either produces `https://cdn.example.com/?x=1/assets/…` once joined.
+  if (value.includes('?') || value.includes('#')) return false
+
+  // A backslash is never legitimate in a configured URL, and it is not merely cosmetic: WHATWG
+  // treats it as a path separator for special schemes, so `/asset\upload/` is SENT as
+  // `/asset/upload/`. Worse on the read side, where the value becomes a prefix — `/\` is a
+  // string `new URL()` REJECTS, so it slips past the off-origin check below and joins into
+  // `/\/assets/a.png`, which a browser then resolves to `https://assets/a.png` — a request to a
+  // host literally named `assets` (measured). Anyone
+  // wanting a literal backslash in a path must percent-encode it.
+  if (value.includes('\\')) return false
+
+  // Dot segments resolve away before the request is sent — `/asset-upload/..` is SENT as `/`
+  // and `/./x` as `/x` — so the stored value again fails to describe what happens.
+  if (DOT_SEGMENT.test(value)) return false
+
+  if (declaresScheme(value)) {
+    // The scheme must be followed by a literal `//`. Parsing to an http(s) URL is NOT enough:
+    // WHATWG resolves a same-scheme reference carrying no authority as RELATIVE, so a browser
+    // on `https://editor.example.com/admin/media` sends `https:cdn.example.com` to
+    // `https://editor.example.com/admin/cdn.example.com` — while `new URL()` here would report
+    // `https://cdn.example.com/`. Accepting it would post the presigned credential and the
+    // user's bytes to a page-dependent path on the editor's own origin, surfacing only as a
+    // 404 with nothing pointing at the config. Dropping the `//` is an ordinary typo.
+    if (!/^https?:\/\//i.test(value)) return false
+    // `http:` is deliberately allowed alongside `https:`: a local S3-compatible endpoint
+    // (MinIO, LocalStack) is `http://localhost:9000`, and that is the one setup in which an
+    // adopter would most want to exercise this path before deploying.
+    try {
+      new URL(value)
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  // A LITERAL `//host` is the only off-origin spelling that can be intentional, and only for
+  // callers that opt in. `value[2] !== '/'` matters: `///x` and `////x` are also "implicitly
+  // off-origin" and also start with `//`, but resolve to a host named `x` rather than to a
+  // path — so they must not ride in on the opt-in.
+  if (isImplicitlyOffOrigin(value)) {
+    return opts.allowProtocolRelative === true && value.startsWith('//') && value[2] !== '/'
+  }
+
+  // Site-relative, with exactly one leading slash. The second clause also covers `//`, which
+  // `isImplicitlyOffOrigin` reports as false only because `new URL('//', base)` throws.
+  return value.startsWith('/') && value[1] !== '/'
 }
 
 /**

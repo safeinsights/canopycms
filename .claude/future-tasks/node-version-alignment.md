@@ -10,19 +10,27 @@ three.
 | Place | Value | Set by |
 | --- | --- | --- |
 | `.nvmrc` | `v22` | pre-existing |
-| root `package.json` `engines` (private) | `>=22` | pre-existing |
-| **published packages' `engines`** (all five) | **`>=18`** | pre-existing |
+| root `package.json` `engines` (private) | `>=22.12.0` | PR #308 (was `>=22`) |
+| **published packages' `engines`** (all five) | **`>=22.12.0`** | PR #308 (was `>=18`) |
 | EC2 worker (`cms-service.ts` user-data) | `nodejs22` / `/usr/bin/node-22` | this epic |
 | transform Lambda | `NODEJS_22_X` | pre-existing |
 | scaffold `Dockerfile.cms.template` + `deploy-cms.yml.template` | `22` | this epic |
 | `examples/aws-deployment/deploy-cms.yml` | `22` | round-4 cleanup |
 
-So the runtimes are now consistent at 22. **The published `engines` are not**:
-all five packages advertise `>=18`, a floor nothing builds or tests against.
+So the runtimes are now consistent at 22.
+
+**Question (1) below is ANSWERED as of 2026-09-09 (PR #308), which narrowed all five
+published packages from `>=18` to `>=22.12.0` and moved the root to match.** It was
+not taken as a free cleanup: the packages are ESM-only and reach CommonJS consumers
+through `require(esm)`, which Node unflagged in **22.12.0**, so `>=18` was never true
+for a CommonJS consumer — it advertised a compatibility that did not exist rather than
+one merely untested. `>=22` would have been wrong too, admitting 22.0–22.11 where the
+CommonJS path still fails with no engines warning to say so. Question (2) is untouched
+and remains the open half of this file.
 
 ## The two questions
 
-**1. Should published `engines` say `>=22`?** Advertising `>=18` is a
+**1. Should published `engines` say `>=22`? — ANSWERED, see above: `>=22.12.0`.** Advertising `>=18` was a
 compatibility claim no CI job verifies — the suite, the builds and every
 deployed runtime are 22. Either the claim should be narrowed to what is tested,
 or a CI job should actually exercise the lowest supported Node. Narrowing is a
@@ -40,12 +48,12 @@ exists to record.
 
 ## Fix direction
 
-Decide (1) first: it is adopter-facing and independent of (2). Then do (2) as
+(1) is decided. Do (2) as
 one coordinated change with a single commit touching every row of the table
 above, and re-check that table afterwards.
 
 ## Also worth a glance
 
-`docs/deploying-to-aws.md` says "Node.js 22+" in its prerequisites (updated by
-this epic). If (1) lands as `>=22`, that becomes the enforced floor rather than
-a recommendation, and the wording should follow.
+~~`docs/deploying-to-aws.md` says "Node.js 22+" in its prerequisites.~~ Done in
+PR #308: now reads "Node.js 22.12+ (the published packages' `engines` floor)",
+since (1) made it an enforced floor rather than a recommendation.

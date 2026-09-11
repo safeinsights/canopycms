@@ -311,6 +311,10 @@ function collapseWhitespace(text: string): string {
  * indexes genuinely diverge (see docs/adopter-migration.md).
  */
 export function toPlainText(markdown: string): string {
+  // Destructures `content` only: never touches `.data` (so the shared-instance
+  // hazard cannot apply) and never needs `.matter` (so the cache-hit hazard
+  // cannot apply either).
+  // eslint-disable-next-line no-restricted-syntax
   const { content } = matter(markdown)
   const withoutImports = stripMdxImports(content)
   const { masked, restore } = maskCode(withoutImports)

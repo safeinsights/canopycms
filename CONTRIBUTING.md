@@ -23,7 +23,7 @@ See [AGENTS.md](AGENTS.md) for project goals, code organization, and working agr
 1. Create a branch from `main`.
 2. Make your changes. Follow existing code style and conventions.
 3. Run `pnpm typecheck` and `pnpm test` to verify.
-4. Run `pnpm test:e2e` locally before submitting. E2E tests are currently disabled in CI, so local verification is important.
+4. Run `pnpm test:e2e` locally before submitting. CI runs e2e too (4-way sharded, path-filtered), but a local run catches failures before the PR.
 5. Open a PR. CI must pass (typecheck + unit tests).
 
 ## Claude Code

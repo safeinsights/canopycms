@@ -5,7 +5,8 @@
  * Production runs a Lambda (API) and an EC2 worker over one EFS filesystem.
  * `ContentStore`'s write/delete/rename critical sections were guarded only by
  * the in-process mutex (`utils/async-mutex`), which does not cross that
- * boundary, while `CmsWorker.rebaseActiveBranches()` rewrites the very same
+ * boundary, while the worker's rebase loop (`rebaseOneBranch` in
+ * worker/rebase.ts) rewrites the very same
  * working tree. A write landing after `git rebase` started is destroyed two
  * ways -- `git checkout --theirs <file>` overwrites it with the branch's
  * committed version (and the rebase then SUCCEEDS, logging nothing), and

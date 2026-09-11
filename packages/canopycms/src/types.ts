@@ -140,7 +140,7 @@ export interface WorkerStatusReport {
     failed: { branch: string; error: string }[]
     /**
      * Outcome of reconciling remote.git's `refs/heads/*` against GitHub's
-     * fetched tips (worker/cms-worker.ts's `reconcileTrackedBranches`) --
+     * fetched tips (worker/git-sync.ts's `reconcileTrackedBranches`) --
      * the non-destructive replacement for the old fetch refspec that used
      * to write GitHub's refs directly into `refs/heads/*`.
      */

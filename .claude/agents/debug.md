@@ -81,5 +81,5 @@ npx tsc --noEmit -p packages/canopycms/tsconfig.json 2>&1 | head -50
 2. Check logs and error messages carefully
 3. Trace the code path from entry point
 4. Look for similar issues in tests
-5. Check if it's a known issue in PROMPT.md
+5. Check if it's a known issue in `.claude/future-tasks/` (start at `index.md`)
 6. Provide a clear diagnosis before suggesting fixes

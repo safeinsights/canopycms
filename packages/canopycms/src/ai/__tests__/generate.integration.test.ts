@@ -179,6 +179,38 @@ describe('generateAIContent', () => {
     store = await setupContentTree(root, flat)
   })
 
+  describe('manifest stamp (direct-call contract)', () => {
+    // The build path can never produce these inputs — `resolveBuildStamp` maps '' to undefined —
+    // so only a direct call can pin them. `generateAIContent` is public API (exported from
+    // `canopycms/ai`), and an empty-string `generatedAt` once emitted `"generated": ""` because
+    // the guard condition used `||` while the value used `??`. Nothing else guards that pairing.
+    const base = () => ({ store, flatSchema: flat, contentRoot: config.contentRoot })
+
+    it('treats an empty generatedAt as absent, not as an empty timestamp', async () => {
+      const { manifest } = await generateAIContent({ ...base(), generatedAt: '' })
+      expect(manifest.generated).not.toBe('')
+      expect(Date.parse(manifest.generated as string)).not.toBeNaN()
+    })
+
+    it('omits generated for an empty generatedAt when a buildId is set', async () => {
+      const { manifest } = await generateAIContent({
+        ...base(),
+        generatedAt: '',
+        buildId: 'fd91b36c',
+      })
+      expect(manifest.buildId).toBe('fd91b36c')
+      expect(JSON.parse(JSON.stringify(manifest))).not.toHaveProperty('generated')
+    })
+
+    it('records an explicit generatedAt verbatim', async () => {
+      const { manifest } = await generateAIContent({
+        ...base(),
+        generatedAt: '2023-11-14T22:13:20.000Z',
+      })
+      expect(manifest.generated).toBe('2023-11-14T22:13:20.000Z')
+    })
+  })
+
   it('generates files for all collections and entries', async () => {
     const result = await generateAIContent({
       store,

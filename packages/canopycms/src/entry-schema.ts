@@ -1,3 +1,25 @@
+/**
+ * The entry-schema authoring API — the surface ADOPTERS write against.
+ *
+ * `defineEntrySchema`, `defineInlineFieldGroup`, `defineNestedFieldGroup` and
+ * `defineSeoFieldGroup` are how a host app declares its content model in
+ * TypeScript, with the field list inferring the entry's data type. Changing a
+ * signature here is an adopter-facing breaking change, not an internal one.
+ *
+ * This is the type-level half of the schema story. The runtime half — loading
+ * `.collection.json`, resolving it, and validating content against it — lives in
+ * `schema/` and `validation/`.
+ *
+ * `RESOLVED_REFERENCE_KEYS`/`buildResolvedReference` define the shape a resolved
+ * reference takes; `validation/entry-validator.ts`'s `normalizeReferenceValues`
+ * is the inverse, and the two must agree.
+ *
+ * `DEFAULT_SEO_FIELD_NAMES` is imported from `static/seo.ts` rather than
+ * redeclared, so the schema this module emits and the fields that module reads
+ * cannot drift apart.
+ *
+ * Module map: ./AGENTS.md.
+ */
 import type { ComponentType } from 'react'
 // The recommended SEO field names, shared with the read side (extractSeoFields) so the schema
 // this module emits and the fields that module looks for cannot drift apart.

@@ -5,7 +5,7 @@ import { GroupManager } from './GroupManager'
 import type { InternalGroup } from '../authorization'
 import type { ExternalGroup } from '../api/groups'
 import type { UserSearchResult } from '../auth/types'
-import { mockConsole } from '../test-utils/console-spy.js'
+import { mockConsole } from '../test-utils/console-spy'
 
 const originalMatchMedia = window.matchMedia
 
