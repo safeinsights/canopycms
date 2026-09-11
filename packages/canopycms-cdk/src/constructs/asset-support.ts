@@ -226,6 +226,15 @@ export interface AssetSupportProps {
    * bucket, and that must never appear in a template by accident. Pass
    * `uploadBehavior: {}` to take the defaults.
    *
+   * BYO-BUCKET CAVEAT: this origin addresses the bucket by
+   * `bucketRegionalDomainName`, and for a bucket imported with
+   * `Bucket.fromBucketName()` that resolves to the STACK's region, not the
+   * bucket's. The read path tolerates a mismatch because CloudFront follows
+   * S3's region redirect on an S3-type origin; this one is a custom origin and
+   * does not, so S3's 301 reaches the browser, where a redirected cross-origin
+   * POST surfaces as an opaque network error. Import a cross-region bucket
+   * with `Bucket.fromBucketAttributes({ region })` so the domain name is right.
+   *
    * @default - no upload behavior is built
    */
   readonly uploadBehavior?: AssetUploadBehaviorOptions
@@ -486,8 +495,21 @@ export class AssetSupport extends Construct {
 
   private readonly behaviors: AssetCloudFrontBehaviors
 
-  /** Built only when `AssetSupportProps.uploadBehavior` is set. */
-  private readonly upload?: cloudfront.BehaviorOptions
+  /** Set only when `AssetSupportProps.uploadBehavior` is set; validated in the constructor. */
+  private readonly uploadOptions?: AssetUploadBehaviorOptions
+
+  /**
+   * Memoized on the first `uploadBehavior()` call, NOT built in the
+   * constructor. Opting in creates three CloudFront resources (function,
+   * origin request policy, response headers policy) and response headers
+   * policies have a default account quota of 20 - so an adopter who sets the
+   * prop on a per-environment `AssetSupport` while building the single shared
+   * upload distribution the accessor recommends would otherwise mint a set per
+   * environment for one route. Nothing observes the construct tree between the
+   * constructor and the accessor, so deferring is invisible other than in what
+   * gets emitted.
+   */
+  private upload?: cloudfront.BehaviorOptions
 
   constructor(scope: Construct, id: string, props: AssetSupportProps) {
     super(scope, id)
@@ -537,7 +559,9 @@ export class AssetSupport extends Construct {
           'Access-Control-Allow-Origin from either the bucket or the edge - this construct was ' +
           'given neither. Pass `editorOrigins` (the editor origin(s) that POST uploads), or ' +
           '`uploadBehavior` to route uploads through a CloudFront distribution that supplies the ' +
-          'header at the edge.\n' +
+          'header at the edge. If you have wired an equivalent upload path yourself, outside ' +
+          'this construct, pass `editorOrigins` anyway - a bucket CORS rule your own path makes ' +
+          'redundant is harmless, and this check cannot see that path.\n' +
           'Worth knowing why this is worth failing on: S3 ACCEPTS a cross-origin presigned POST ' +
           'with no CORS rule at all and simply declines to ADVERTISE it (measured: 204, no ' +
           'ACAO header, object landed). So the object reaches asset-staging/ and the browser ' +
@@ -690,7 +714,22 @@ export class AssetSupport extends Construct {
     })
 
     this.behaviors = this.buildBehaviors()
-    this.upload = props.uploadBehavior ? this.buildUploadBehavior(props.uploadBehavior) : undefined
+
+    // Validated eagerly, built lazily (see `upload`'s comment). An empty
+    // `allowedOrigins` is the same class of mistake as an empty
+    // `editorOrigins` and gets the same treatment: CloudFormation rejects
+    // `AccessControlAllowOrigins` with no items, so silently falling back to
+    // the `['*']` default would turn a forwarded-empty-env-var into either a
+    // failed deploy or, worse, a wildcard the caller did not ask for.
+    if (props.uploadBehavior?.allowedOrigins?.length === 0) {
+      throw new Error(
+        'AssetSupport: uploadBehavior.allowedOrigins is an empty array. CloudFront requires at ' +
+          'least one origin, and defaulting an explicitly-empty list to the wildcard would ' +
+          "silently widen what you asked for. Omit the property to take the `['*']` default, " +
+          'or list the origin(s) the editor is served from.',
+      )
+    }
+    this.uploadOptions = props.uploadBehavior
   }
 
   private buildBehaviors(): AssetCloudFrontBehaviors {
@@ -791,30 +830,45 @@ export class AssetSupport extends Construct {
     // only thing that can WRITE either way is a request carrying a valid
     // presigned policy, and only to the single key that policy names. Do not
     // make the rewrite conditional; that gives key addressability back.
+    //
+    // The same function also drops `Authorization`. A site behind HTTP basic
+    // auth otherwise sends S3 a credential it cannot parse
+    // (`400 InvalidArgument - Unsupported Authorization Type`), and the
+    // presigned POST carries its own authority in the body, so nothing on this
+    // route ever wants the header. It is dropped HERE, in the function, rather
+    // than by naming it in the origin request policy's `allExcept` list below,
+    // and that placement is deliberate: CloudFront rejects `Authorization` in
+    // an origin request policy's header ALLOWLIST outright ("The parameter
+    // Headers contains Authorization that is not allowed"), and whether the
+    // same validation fires on an `allExcept` list is not something synth can
+    // tell you - it would surface as a failed `cdk deploy` on the whole stack.
+    // A viewer-request function has no such ambiguity: `method` is the only
+    // read-only field on the request object, headers are freely mutable, and
+    // `Authorization` is the header CloudFront's own basic-auth function
+    // examples read. Dropping it at the viewer also means it is gone before
+    // any policy runs, so the guarantee does not depend on the policy at all.
     const rewriteToBucketRoot = new cloudfront.Function(this, 'AssetUploadRewriteFunction', {
       code: cloudfront.FunctionCode.fromInline(
         [
           'function handler(event) {',
           '  var request = event.request;',
           "  request.uri = '/';",
+          '  delete request.headers.authorization;',
           '  return request;',
           '}',
         ].join('\n'),
       ),
     })
 
-    // `denyList` emits CloudFormation's `allExcept`, i.e. the managed
-    // ALL_VIEWER_EXCEPT_HOST_HEADER policy (which is what the measurements
-    // below were taken against) plus one more exclusion:
+    // `denyList('host')` emits CloudFormation's `allExcept`, which is exactly
+    // the managed ALL_VIEWER_EXCEPT_HOST_HEADER policy - the shape this path
+    // was measured against, and the one `cms-distribution.ts` already deploys.
+    // It is spelled out rather than referencing the managed policy so that the
+    // reason is attached to it: forwarding the viewer's Host to S3 misroutes
+    // the request. `Authorization` is handled by the function above, not here.
     //
-    // - `host` because forwarding the viewer's Host to S3 misroutes the
-    //   request - the same reason the managed policy exists.
-    // - `authorization` because a site behind HTTP basic auth otherwise sends
-    //   S3 a credential it cannot parse: `400 InvalidArgument - Unsupported
-    //   Authorization Type`. The presigned POST carries its own authority in
-    //   the body, so nothing here ever wants an Authorization header.
-    //
-    // Cookies go through `CookiesConfig`, not the header list, so
+    // Cookies go through `CookiesConfig`, not the header list (a CloudFront
+    // Function does not even see them in `request.headers`), so
     // `cookieBehavior.none()` is what strips them: an upload route mounted on
     // a site's own distribution would otherwise hand S3 - and S3's access logs
     // - the editor session cookie. On the dedicated distribution recommended
@@ -825,7 +879,7 @@ export class AssetSupport extends Construct {
       'AssetUploadOriginRequestPolicy',
       {
         cookieBehavior: cloudfront.OriginRequestCookieBehavior.none(),
-        headerBehavior: cloudfront.OriginRequestHeaderBehavior.denyList('host', 'authorization'),
+        headerBehavior: cloudfront.OriginRequestHeaderBehavior.denyList('host'),
         // A presigned POST carries everything in the multipart body.
         queryStringBehavior: cloudfront.OriginRequestQueryStringBehavior.none(),
       },
@@ -952,7 +1006,7 @@ export class AssetSupport extends Construct {
    * is the part that can be split off this way.
    */
   public uploadBehavior(): cloudfront.BehaviorOptions {
-    if (!this.upload) {
+    if (!this.uploadOptions) {
       throw new Error(
         'AssetSupport: uploadBehavior() needs the `uploadBehavior` prop, which is off by ' +
           'default because it is the only thing this construct builds that puts a ' +
@@ -960,6 +1014,9 @@ export class AssetSupport extends Construct {
           '`uploadBehavior: {}` to opt in and take the defaults.',
       )
     }
+    // Memoized: calling this twice must not attach two sets of policies, and
+    // must not fail on duplicate construct ids.
+    this.upload ??= this.buildUploadBehavior(this.uploadOptions)
     return this.upload
   }
 

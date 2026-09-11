@@ -823,8 +823,73 @@ describe('AssetSupport - uploadBehavior()', () => {
     // The editor session cookie must never reach S3 or its access logs.
     expect(config.CookiesConfig.CookieBehavior).toBe('none')
     expect(config.QueryStringsConfig.QueryStringBehavior).toBe('none')
+    // Exactly the managed ALL_VIEWER_EXCEPT_HOST_HEADER shape. `authorization`
+    // is deliberately NOT in this list - naming it in an origin request policy
+    // is the one thing here that might be rejected at deploy rather than at
+    // synth, so the function below drops it instead.
     expect(config.HeadersConfig.HeaderBehavior).toBe('allExcept')
-    expect([...(config.HeadersConfig.Headers ?? [])].sort()).toEqual(['authorization', 'host'])
+    expect(config.HeadersConfig.Headers).toEqual(['host'])
+  })
+
+  it('drops Authorization at the viewer, where a basic-auth site would otherwise send S3 a credential it cannot parse', () => {
+    const stack = makeStack()
+    const assetSupport = new AssetSupport(stack, 'Assets', { ...UPLOAD_PROPS })
+    const { template } = synthUploadDistribution(assetSupport, stack)
+
+    const functions = template.findResources('AWS::CloudFront::Function')
+    const codes = Object.values(functions).map(
+      (fn) => (fn.Properties as { FunctionCode: string }).FunctionCode,
+    )
+    expect(codes).toHaveLength(1)
+    expect(codes[0]).toContain('delete request.headers.authorization')
+  })
+
+  it('disables caching on the upload route', () => {
+    // CACHING_DISABLED's all-`none` cache key is also what keeps the origin
+    // request policy legal, so this is load-bearing rather than incidental.
+    const stack = makeStack()
+    const assetSupport = new AssetSupport(stack, 'Assets', { ...UPLOAD_PROPS })
+    const { behavior } = synthUploadDistribution(assetSupport, stack)
+
+    // The managed CachePolicy.CACHING_DISABLED id.
+    expect(behavior.CachePolicyId).toBe('4135ea2d-6df8-44a3-9df3-4b5a84be39ad')
+  })
+
+  it('builds no CloudFront resources when the prop is set but the behavior is never used', () => {
+    // Opting in mints a function + two policies, and response headers policies
+    // have a default account quota of 20 - so this must not happen per
+    // environment for adopters pointing several at one upload distribution.
+    const stack = makeStack()
+    new AssetSupport(stack, 'Assets', { ...UPLOAD_PROPS })
+    const template = Template.fromStack(stack)
+
+    template.resourceCountIs('AWS::CloudFront::Function', 0)
+    template.resourceCountIs('AWS::CloudFront::OriginRequestPolicy', 0)
+    template.resourceCountIs('AWS::CloudFront::ResponseHeadersPolicy', 0)
+  })
+
+  it('is memoized - calling uploadBehavior() twice does not mint a second set of policies', () => {
+    const stack = makeStack()
+    const assetSupport = new AssetSupport(stack, 'Assets', { ...UPLOAD_PROPS })
+
+    expect(assetSupport.uploadBehavior()).toBe(assetSupport.uploadBehavior())
+
+    synthUploadDistribution(assetSupport, stack)
+    const template = Template.fromStack(stack)
+    template.resourceCountIs('AWS::CloudFront::Function', 1)
+    template.resourceCountIs('AWS::CloudFront::ResponseHeadersPolicy', 1)
+  })
+
+  it('refuses an empty allowedOrigins rather than silently widening it to the wildcard', () => {
+    const stack = makeStack()
+
+    expect(
+      () =>
+        new AssetSupport(stack, 'Assets', {
+          requireDeployableBundle: false,
+          uploadBehavior: { allowedOrigins: [] },
+        }),
+    ).toThrow(/allowedOrigins is an empty array/)
   })
 
   it('supplies Access-Control-Allow-Origin from the edge, overriding the origin, so no bucket CORS rule is needed', () => {
@@ -882,7 +947,8 @@ describe('AssetSupport - uploadBehavior()', () => {
 
   it('writes no bucket CORS rule when the edge supplies the header instead', () => {
     const stack = makeStack()
-    new AssetSupport(stack, 'Assets', { ...UPLOAD_PROPS })
+    const assetSupport = new AssetSupport(stack, 'Assets', { ...UPLOAD_PROPS })
+    synthUploadDistribution(assetSupport, stack)
     const template = Template.fromStack(stack)
 
     const buckets = Object.values(template.findResources('AWS::S3::Bucket'))
