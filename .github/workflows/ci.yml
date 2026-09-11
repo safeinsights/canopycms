@@ -44,25 +44,58 @@ jobs:
         env:
           LC_ALL: C.UTF-8
         run: |
-          if matches=$(git grep -P -I -l '[\x{202A}-\x{202E}\x{2066}-\x{2069}]'); then
+          bidi='[\x{202A}-\x{202E}\x{2066}-\x{2069}]'
+
+          # File CONTENTS. -I skips files git considers binary, which is a
+          # deliberate trade: it means a file marked binary via .gitattributes
+          # can opt out, but without it a future image fixture would
+          # false-positive on any stray E2 80 AA-AE byte run.
+          if matches=$(git grep -P -I -l "$bidi"); then
             status=0
           else
             status=$?
           fi
           case "$status" in
             0)
-              echo '::error::Bidirectional unicode characters detected (CVE-2021-42574 Trojan Source)'
+              echo '::error::Bidirectional unicode characters detected in file contents (CVE-2021-42574 Trojan Source)'
               echo "$matches"
               exit 1
               ;;
-            1)
-              echo 'No bidirectional unicode control characters found'
-              ;;
+            1) ;;
             *)
-              echo "::error::bidi scan did not run (git grep exited $status)"
+              echo "::error::bidi content scan did not run (git grep exited $status)"
               exit 1
               ;;
           esac
+
+          # FILENAMES. git grep reads contents only, so a file *named* with an
+          # override -- report<U+202E>gnp.ts, which renders as "report st.png"
+          # -- would otherwise sail through. `-z` keeps paths raw: without it
+          # git quotes non-ASCII and the bytes never reach the matcher.
+          #
+          # perl rather than `grep -P` because BSD grep has no -P, so this half
+          # would be untestable on a contributor's macOS machine; perl's -CSD
+          # decodes the stream so \x{...} compares characters, not bytes. It
+          # mimics grep's exit convention on purpose: 0 found, 1 clean.
+          if names=$(git ls-files -z | perl -CSD -0 -ne 'chomp; if (/'"$bidi"'/) { print "$_\n"; $f=1 } END { exit($f ? 0 : 1) }'); then
+            nstatus=0
+          else
+            nstatus=$?
+          fi
+          case "$nstatus" in
+            0)
+              echo '::error::Bidirectional unicode characters detected in a FILENAME (CVE-2021-42574 Trojan Source)'
+              echo "$names"
+              exit 1
+              ;;
+            1) ;;
+            *)
+              echo "::error::bidi filename scan did not run (perl exited $nstatus)"
+              exit 1
+              ;;
+          esac
+
+          echo 'No bidirectional unicode control characters in contents or filenames'
 
       - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
 
@@ -143,9 +176,14 @@ jobs:
       #
       # `exit-code: 1` means a new restricted (LGPL/GPL-class) license anywhere
       # in the production graph fails the build. The one this repo already
-      # carries -- libvips, via `sharp` -- is suppressed with its reasoning in
-      # .trivyignore.yaml, which has to be passed explicitly because Trivy
-      # auto-loads only the plain `.trivyignore` form, not the `.yaml` one.
+      # carries -- libvips, via `sharp` -- is suppressed by
+      # .trivy-ignore-policy.rego, scoped to those packages by name.
+      #
+      # That has to be a rego policy, not the simpler `.trivyignore.yaml`: a
+      # YAML `licenses:` rule matches the license expression alone and cannot be
+      # narrowed to a package, so it would have suppressed EVERY
+      # LGPL-3.0-or-later dependency, present and future -- passing silently on
+      # exactly what this scan exists to catch. The file explains the mechanics.
       - name: Scan dependency licenses (Trivy)
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
@@ -154,7 +192,15 @@ jobs:
           scanners: 'license'
           severity: 'HIGH,CRITICAL'
           exit-code: '1'
-          trivyignores: '.trivyignore.yaml'
+          ignore-policy: '.trivy-ignore-policy.rego'
+          # Keep Trivy's cache OUT of the workspace. The action defaults
+          # cache-dir to ${{ github.workspace }}/.cache/trivy, which the
+          # `Format check (Prettier)` step below then walks -- and prettier
+          # --check fails on Trivy's compact JSON metadata. A license-only scan
+          # writes nothing there today, so this is latent, but it arms itself
+          # the moment any job here adds a vuln scan and populates the shared
+          # cache-trivy-* key.
+          cache-dir: '${{ runner.temp }}/trivy'
 
       - name: Format check (Prettier)
         run: pnpm exec prettier --check .
