@@ -2262,6 +2262,7 @@ import { assetUploadBehavior } from 'canopycms-cdk'
 const uploads = new cloudfront.Distribution(this, 'AssetUploads', {
   defaultBehavior: assetUploadBehavior(this, { bucket: assetBucket }),
 })
+// media.uploadUrl = `https://${uploads.distributionDomainName}/`
 ```
 
 Same options, same behaviour — it is the same implementation, and `AssetSupport.uploadBehavior()`
