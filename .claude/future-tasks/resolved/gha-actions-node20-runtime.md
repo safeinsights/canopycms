@@ -88,13 +88,13 @@ call, and he was not asked about it:
 
 **Verification.** PR #317's CI at `403a3afb` against PR #316's at `54f249d5` (old
 pins), same eight jobs. Counts come from the jobs API and from full job logs
-fetched with `gh api --allow-escape-sequences`. Without that flag `gh` prints
-nothing for a log containing escape codes, and a `grep -c` over the empty output
-reads 0.
+fetched with `gh api --allow-escape-sequences`. Without that flag, `gh` refuses a
+log that contains escape codes: nothing goes to stdout, the refusal goes to stderr,
+and a `grep -c` piped from it reads 0.
 
 - The Node 20 annotation was on all 8 jobs before and is on none after.
 - The `[DEP0040] punycode` deprecation printed 2–8 lines per job before and none
-  after, across the five job logs compared.
+  after, in all eight job logs.
 - Every job's step conclusions match: the same steps ran and the same one was
   skipped, so no `paths-filter` gate turned the run vacuous.
 - The new pins print two log lines of their own, neither an annotation:
