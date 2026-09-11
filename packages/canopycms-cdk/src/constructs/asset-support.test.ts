@@ -859,8 +859,11 @@ describe('AssetSupport - uploadBehavior()', () => {
     // Opting in mints a function + two policies, and response headers policies
     // have a default account quota of 20 - so this must not happen per
     // environment for adopters pointing several at one upload distribution.
+    // `editorOrigins` is passed alongside purely so the synth validation for
+    // "opted in but never attached" does not fire - this test is about
+    // laziness, not about that guard, which has its own test below.
     const stack = makeStack()
-    new AssetSupport(stack, 'Assets', { ...UPLOAD_PROPS })
+    new AssetSupport(stack, 'Assets', { ...BASE_PROPS, uploadBehavior: {} })
     const template = Template.fromStack(stack)
 
     template.resourceCountIs('AWS::CloudFront::Function', 0)
@@ -878,6 +881,112 @@ describe('AssetSupport - uploadBehavior()', () => {
     const template = Template.fromStack(stack)
     template.resourceCountIs('AWS::CloudFront::Function', 1)
     template.resourceCountIs('AWS::CloudFront::ResponseHeadersPolicy', 1)
+  })
+
+  it('answers the CORS preflight at the edge - the editor\u2019s upload is not a simple request, and S3 with no CORS rule 403s an OPTIONS', () => {
+    // xhr-upload.ts assigns xhr.upload.onprogress before send(), and ANY
+    // listener on XMLHttpRequestUpload disqualifies the request from the
+    // simple-request rules regardless of method/headers/content-type. So a
+    // real browser upload always preflights. CloudFront does not synthesize
+    // preflight responses, and the bucket deliberately has no CORS rule, so
+    // without this short-circuit the OPTIONS reaches S3, 403s, and the POST is
+    // never sent. A scripted POST does not exercise this at all.
+    const stack = makeStack()
+    const assetSupport = new AssetSupport(stack, 'Assets', { ...UPLOAD_PROPS })
+    const { template } = synthUploadDistribution(assetSupport, stack)
+
+    const functions = template.findResources('AWS::CloudFront::Function')
+    const code = Object.values(functions).map(
+      (fn) => (fn.Properties as { FunctionCode: string }).FunctionCode,
+    )[0]
+
+    expect(code).toContain("request.method === 'OPTIONS'")
+    expect(code).toContain('statusCode: 204')
+    expect(code).toContain('access-control-allow-origin')
+    expect(code).toContain("'access-control-allow-methods': { value: 'POST' }")
+    expect(code).toContain("'access-control-max-age': { value: '3000' }")
+  })
+
+  it('echoes the caller\u2019s own Origin on a preflight when allowedOrigins is narrowed (a preflight may only name one)', () => {
+    const stack = makeStack()
+    const assetSupport = new AssetSupport(stack, 'Assets', {
+      requireDeployableBundle: false,
+      uploadBehavior: { allowedOrigins: ['https://a.example.com', 'https://b.example.com'] },
+    })
+    const { template } = synthUploadDistribution(assetSupport, stack)
+
+    const functions = template.findResources('AWS::CloudFront::Function')
+    const code = Object.values(functions).map(
+      (fn) => (fn.Properties as { FunctionCode: string }).FunctionCode,
+    )[0]
+
+    expect(code).toContain(
+      'var ALLOWED_ORIGINS = ["https://a.example.com","https://b.example.com"]',
+    )
+    expect(code).toContain('ALLOWED_ORIGINS.indexOf(origin) !== -1')
+    // The wildcard branch must not fire for a narrowed list.
+    expect(code).toContain("ALLOWED_ORIGINS[0] === '*'")
+  })
+
+  it('the preflight function and the response-headers policy agree on the allowed method', () => {
+    // Two places tell the browser what it may send; they must not disagree.
+    const stack = makeStack()
+    const assetSupport = new AssetSupport(stack, 'Assets', { ...UPLOAD_PROPS })
+    const { template, behavior } = synthUploadDistribution(assetSupport, stack)
+
+    const cors = (
+      resolveRef(
+        template,
+        'AWS::CloudFront::ResponseHeadersPolicy',
+        behavior.ResponseHeadersPolicyId,
+      ).ResponseHeadersPolicyConfig as {
+        CorsConfig: { AccessControlAllowMethods: { Items: string[] } }
+      }
+    ).CorsConfig
+    const code = Object.values(template.findResources('AWS::CloudFront::Function')).map(
+      (fn) => (fn.Properties as { FunctionCode: string }).FunctionCode,
+    )[0]
+
+    expect(cors.AccessControlAllowMethods.Items).toEqual(['POST'])
+    for (const method of cors.AccessControlAllowMethods.Items) {
+      expect(code).toContain(`value: '${method}'`)
+    }
+  })
+
+  it('snapshots allowedOrigins, so mutating the caller\u2019s array cannot slip past the empty-list guard', () => {
+    const stack = makeStack()
+    const callerOrigins = ['https://editor.example.com']
+    const assetSupport = new AssetSupport(stack, 'Assets', {
+      requireDeployableBundle: false,
+      uploadBehavior: { allowedOrigins: callerOrigins },
+    })
+    // The guard has already passed; the behaviour is not built until now.
+    callerOrigins.length = 0
+
+    const { template, behavior } = synthUploadDistribution(assetSupport, stack)
+    const cors = (
+      resolveRef(
+        template,
+        'AWS::CloudFront::ResponseHeadersPolicy',
+        behavior.ResponseHeadersPolicyId,
+      ).ResponseHeadersPolicyConfig as {
+        CorsConfig: { AccessControlAllowOrigins: { Items: string[] } }
+      }
+    ).CorsConfig
+
+    expect(cors.AccessControlAllowOrigins.Items).toEqual(['https://editor.example.com'])
+  })
+
+  it('fails synth when uploadBehavior is opted into but never attached to anything', () => {
+    // Satisfying the constructor guard by setting the prop, then not wiring it,
+    // reaches the same no-ACAO-anywhere state the guard exists to refuse.
+    const app = newTestApp()
+    const stack = new Stack(app, 'TestStack', {
+      env: { account: '123456789012', region: 'us-east-1' },
+    })
+    new AssetSupport(stack, 'Assets', { ...UPLOAD_PROPS })
+
+    expect(() => app.synth()).toThrow(/never called/)
   })
 
   it('refuses an empty allowedOrigins rather than silently widening it to the wildcard', () => {

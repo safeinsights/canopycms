@@ -66,8 +66,38 @@ const PREFIXES = {
   transform: 'assets/t',
 } as const
 
-/** S3 CORS preflight cache duration for presigned-POST uploads from the editor. */
+/**
+ * CORS preflight cache duration for presigned-POST uploads from the editor.
+ * Used for the bucket's own CORS rule and, when `uploadBehavior` is on, for
+ * both the edge's preflight response and its response headers policy.
+ */
 const CORS_MAX_AGE_SECONDS = 3000
+
+/**
+ * The only method the upload route exists to serve. Shared by the preflight
+ * response the CloudFront Function returns and the response headers policy's
+ * `Access-Control-Allow-Methods`, so a browser cannot be told two different
+ * things about what it may send. (The BEHAVIOR still allows all methods -
+ * CloudFront has no narrower set containing POST - which is a separate concern
+ * handled by the URI rewrite; see `buildUploadBehavior`.)
+ */
+const UPLOAD_ALLOWED_METHOD = 'POST'
+
+/**
+ * Render a string array as a JavaScript literal for embedding in CloudFront
+ * Function source.
+ *
+ * `JSON.stringify` already escapes quotes and backslashes, so an adopter's
+ * origin string cannot terminate the literal and inject code. It does NOT
+ * escape U+2028/U+2029, which are legal in JSON but were line terminators in
+ * JavaScript before ES2019 - and the CloudFront Functions runtime is not a
+ * runtime to find out about on. Escaping them costs one `replace`.
+ */
+function toFunctionLiteral(values: string[]): string {
+  return JSON.stringify(values)
+    .replace(/\u2028/g, '\\u2028')
+    .replace(/\u2029/g, '\\u2029')
+}
 
 /** Matches packages/canopycms/src/assets/store-s3.ts's `DEFAULT_MAX_UPLOAD_BYTES`. */
 const DEFAULT_MAX_UPLOAD_BYTES = 50 * 1024 * 1024
@@ -729,7 +759,42 @@ export class AssetSupport extends Construct {
           'or list the origin(s) the editor is served from.',
       )
     }
-    this.uploadOptions = props.uploadBehavior
+    // Snapshotted, not aliased. The guard above runs now but `allowedOrigins`
+    // is not READ until the accessor builds the behavior, so holding the
+    // caller's array by reference would let `origins.length = 0` in between
+    // walk straight past the check just made.
+    this.uploadOptions = props.uploadBehavior && {
+      ...props.uploadBehavior,
+      allowedOrigins: props.uploadBehavior.allowedOrigins?.slice(),
+    }
+
+    // Setting `uploadBehavior` SATISFIES the standalone guard above, but only
+    // calling `uploadBehavior()` and attaching the result actually produces an
+    // Access-Control-Allow-Origin from anywhere. Opting in and stopping there -
+    // which is exactly what copying the README snippet and not finishing looks
+    // like - lands a standalone bucket with no CORS rule and no edge route: the
+    // silent failure the guard's own text calls misleading, reached through the
+    // guard rather than around it.
+    //
+    // A synth-time validation is the only place this can be caught, since the
+    // constructor cannot know what the caller will do next. It is the first
+    // `addValidation` in this package; the alternative (checking in the
+    // constructor) cannot express "and nothing used it".
+    this.node.addValidation({
+      validate: () => {
+        if (props.uploadBehavior && editorOrigins.length === 0 && !props.bucket && !this.upload) {
+          return [
+            'AssetSupport: `uploadBehavior` was set but uploadBehavior() was never called, so ' +
+              'no upload behavior was attached to any distribution and nothing supplies ' +
+              'Access-Control-Allow-Origin. With no `editorOrigins` either, a browser upload ' +
+              'will land the object in asset-staging/ and still report a network error. Pass ' +
+              "the behavior to a distribution (see uploadBehavior()'s doc comment), or pass " +
+              '`editorOrigins` instead.',
+          ]
+        }
+        return []
+      },
+    })
   }
 
   private buildBehaviors(): AssetCloudFrontBehaviors {
@@ -847,11 +912,58 @@ export class AssetSupport extends Construct {
     // `Authorization` is the header CloudFront's own basic-auth function
     // examples read. Dropping it at the viewer also means it is gone before
     // any policy runs, so the guarantee does not depend on the policy at all.
+    // The same function ALSO answers the CORS preflight, and that is not
+    // optional decoration - without it this route cannot work at all.
+    //
+    // The editor's upload is NOT a CORS simple request, though it looks like
+    // one: `xhr-upload.ts` sends multipart/form-data with no custom headers,
+    // but it assigns `xhr.upload.onprogress` before `send()`, and registering
+    // ANY listener on the `XMLHttpRequestUpload` object is its own disqualifier
+    // from the simple-request rules, independent of method, headers and content
+    // type. So every browser upload begins with `OPTIONS /`.
+    //
+    // Nothing else on this route would answer it. CloudFront does not
+    // synthesize preflight responses - a response headers policy supplies
+    // values for headers "in responses to CORS preflight requests", i.e. it
+    // decorates a response that something else produced - and `ALLOW_ALL`
+    // forwards the OPTIONS to S3, which with no CORS configuration answers
+    // `403 CORSResponse: CORS is not enabled for this bucket`. A preflight that
+    // is not a 2xx fails the browser's check whatever headers are attached, so
+    // the POST is never sent and the upload dies as an opaque network error.
+    //
+    // This is why the end-to-end measurements did not catch it: they replayed
+    // the POST as a script, which has no preflight. A scripted POST is not an
+    // acceptance test for this route; a real browser upload is.
+    //
+    // Short-circuiting at the viewer also strengthens the containment argument
+    // above rather than weakening it - an OPTIONS that never reaches the origin
+    // can address nothing.
+    const allowedOrigins = options.allowedOrigins ?? ['*']
     const rewriteToBucketRoot = new cloudfront.Function(this, 'AssetUploadRewriteFunction', {
       code: cloudfront.FunctionCode.fromInline(
         [
+          `var ALLOWED_ORIGINS = ${toFunctionLiteral(allowedOrigins)};`,
           'function handler(event) {',
           '  var request = event.request;',
+          "  if (request.method === 'OPTIONS') {",
+          '    var headers = {',
+          `      'access-control-allow-methods': { value: '${UPLOAD_ALLOWED_METHOD}' },`,
+          "      'access-control-allow-headers': { value: '*' },",
+          `      'access-control-max-age': { value: '${CORS_MAX_AGE_SECONDS}' },`,
+          '    };',
+          // Echo the caller's own Origin when the list is narrowed: a preflight
+          // may only be answered with `*` or the single requesting origin, so a
+          // multi-entry list cannot be returned verbatim. No match means no
+          // ACAO, and the browser's own check refuses the upload - which is the
+          // correct outcome, and a clearer one than a 403 here would be.
+          "    var origin = request.headers.origin ? request.headers.origin.value : '';",
+          "    if (ALLOWED_ORIGINS[0] === '*') {",
+          "      headers['access-control-allow-origin'] = { value: '*' };",
+          '    } else if (ALLOWED_ORIGINS.indexOf(origin) !== -1) {',
+          "      headers['access-control-allow-origin'] = { value: origin };",
+          '    }',
+          "    return { statusCode: 204, statusDescription: 'No Content', headers: headers };",
+          '  }',
           "  request.uri = '/';",
           '  delete request.headers.authorization;',
           '  return request;',
@@ -860,12 +972,15 @@ export class AssetSupport extends Construct {
       ),
     })
 
-    // `denyList('host')` emits CloudFormation's `allExcept`, which is exactly
-    // the managed ALL_VIEWER_EXCEPT_HOST_HEADER policy - the shape this path
-    // was measured against, and the one `cms-distribution.ts` already deploys.
-    // It is spelled out rather than referencing the managed policy so that the
-    // reason is attached to it: forwarding the viewer's Host to S3 misroutes
-    // the request. `Authorization` is handled by the function above, not here.
+    // `denyList('host')` emits CloudFormation's `allExcept`. In the HEADERS
+    // dimension only, that is the managed ALL_VIEWER_EXCEPT_HOST_HEADER policy
+    // - the shape this path was measured against. It is NOT that policy
+    // overall, and must not be replaced by it: the managed one is documented as
+    // "Cookies: All, Query strings: All", so adopting it would forward the
+    // editor session cookie to S3, which is one of the two hazards this whole
+    // policy exists to remove. Only the header behavior is shared.
+    //
+    // `Authorization` is handled by the function above, not here.
     //
     // Cookies go through `CookiesConfig`, not the header list (a CloudFront
     // Function does not even see them in `request.headers`), so
@@ -907,9 +1022,9 @@ export class AssetSupport extends Construct {
       'AssetUploadResponseHeadersPolicy',
       {
         corsBehavior: {
-          accessControlAllowOrigins: options.allowedOrigins ?? ['*'],
+          accessControlAllowOrigins: allowedOrigins,
           accessControlAllowCredentials: false,
-          accessControlAllowMethods: ['POST'],
+          accessControlAllowMethods: [UPLOAD_ALLOWED_METHOD],
           accessControlAllowHeaders: ['*'],
           accessControlMaxAge: Duration.seconds(CORS_MAX_AGE_SECONDS),
           originOverride: true,
