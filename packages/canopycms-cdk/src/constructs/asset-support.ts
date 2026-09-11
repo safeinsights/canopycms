@@ -769,9 +769,9 @@ export class AssetSupport extends Construct {
     // does not exist.
     //
     // `HttpOrigin` rather than `S3BucketOrigin.withBucketDefaults()`, which
-    // would also be unsigned, for two reasons. It is the exact shape the
-    // adopter measured this whole path against end to end (204, object
-    // landed); and it is the only one of the two that can state the
+    // would also be unsigned, for two reasons. It is the exact shape this
+    // whole path was measured against end to end on live AWS resources (204,
+    // object landed); and it is the only one of the two that can state the
     // CloudFront->S3 protocol, which for a request carrying a live upload
     // credential in its body should be pinned rather than inferred.
     // `withBucketDefaults()` emits `S3OriginConfig`, which has no
@@ -804,8 +804,8 @@ export class AssetSupport extends Construct {
     })
 
     // `denyList` emits CloudFormation's `allExcept`, i.e. the managed
-    // ALL_VIEWER_EXCEPT_HOST_HEADER policy (which is what the adopter measured
-    // against) plus one more exclusion:
+    // ALL_VIEWER_EXCEPT_HOST_HEADER policy (which is what the measurements
+    // below were taken against) plus one more exclusion:
     //
     // - `host` because forwarding the viewer's Host to S3 misroutes the
     //   request - the same reason the managed policy exists.

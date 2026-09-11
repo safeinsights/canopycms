@@ -1,8 +1,7 @@
 # `AssetSupport` cannot emit the CloudFront behaviour that `media.uploadUrl` needs
 
 **Status: RESOLVED 2026-09-11**, branch `feat/asset-support-upload-behavior`, base
-`int-202608-b`. Filed 2026-09-10 alongside the change that added `media.uploadUrl` (adopter
-request #44).
+`int-202608-b`. Filed 2026-09-10 alongside the change that added `media.uploadUrl`.
 
 Shipped as `AssetSupportProps.uploadBehavior` + `AssetSupport.uploadBehavior()` in
 `packages/canopycms-cdk/src/constructs/asset-support.ts`, built to **option 3** below: the
