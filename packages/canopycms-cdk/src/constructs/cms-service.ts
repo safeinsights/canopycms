@@ -1185,8 +1185,12 @@ export class CanopyCmsService extends Construct {
       launchTemplate,
       minCapacity: 1,
       maxCapacity: 1,
-      healthCheck: autoscaling.HealthCheck.ec2({
-        grace: Duration.minutes(5),
+      // `healthChecks`, not the deprecated `healthCheck`/`HealthCheck.ec2({ grace })`:
+      // both synthesize the same HealthCheckType/HealthCheckGracePeriod, but the
+      // deprecated form prints a jsii warning on every synth -- in adopters'
+      // `cdk synth` output, not just ours -- and is slated for removal in v3.
+      healthChecks: autoscaling.HealthChecks.ec2({
+        gracePeriod: Duration.minutes(5),
       }),
       // Without an updatePolicy, CloudFormation's default behavior for an ASG
       // behind a changed launch template is to update the template resource
