@@ -39,6 +39,48 @@ supersedes an earlier one's workaround entirely.
 
 _Entries land here as changes merge._
 
+### `assetUploadBehavior()` builds the upload route from a bucket alone
+
+**What changed.** `canopycms-cdk` now exports a free function beside `AssetSupport`:
+
+```ts
+import { assetUploadBehavior } from 'canopycms-cdk'
+
+const uploads = new cloudfront.Distribution(this, 'AssetUploads', {
+  defaultBehavior: assetUploadBehavior(this, { bucket: assetBucket }),
+})
+// media.uploadUrl = `https://${uploads.distributionDomainName}/`
+```
+
+It takes the same options as `AssetSupportProps.uploadBehavior`, plus the `bucket` it would
+otherwise have read off the construct. `AssetSupport.uploadBehavior()` is unchanged and now
+delegates to it, so there is one implementation; the emitted template for existing callers is
+byte-for-byte identical, and no resource is replaced on your next deploy.
+
+**Why.** `AssetSupport.uploadBehavior()` documents, and recommends, giving the upload route
+its own distribution serving that one route — reads and transforms stay per-environment, only
+the upload route moves, and one `uploadUrl` then works for every environment. But the upload
+behavior was an instance method, and `AssetSupport`'s constructor builds the transform Lambda
+unconditionally. So following that recommendation meant instantiating a second `AssetSupport`
+next to the bucket purely to reach the method, getting a Lambda, a log group, a Function URL,
+an execution role and its S3 grants that nothing in that stack ever invokes.
+
+That is the same coupling used to reject the shared-assets-distribution topology in the first
+place, reappearing in the topology recommended instead. The upload route depends on the bucket
+and nothing else, which is exactly why it can be built from one.
+
+**To adopt.** Nothing, unless you want it. Reach for the free function when you have a bucket
+and no other use for an `AssetSupport` in that stack — typically where the bucket is owned by
+a stack that holds no per-environment resources. Keep using `AssetSupport.uploadBehavior()`
+when you already have the construct.
+
+**Now deletable.** Any `AssetSupport` instantiated only to reach `uploadBehavior()`, together
+with the transform Lambda, log group, Function URL and execution role it drags in. Check what
+those grants are attached to before you delete: CDK puts them on that function's own execution
+role, not in your bucket policy, whenever the function and the bucket are in the same account —
+so in the common case removing the construct removes the whole footprint and leaves no bucket
+policy statement behind to clean up.
+
 ### `media.uploadUrl` routes presigned uploads through your own CDN (#44)
 
 **What changed.** One optional field on `mediaSchema`'s s3 branch:

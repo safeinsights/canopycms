@@ -2253,6 +2253,25 @@ const uploads = new cloudfront.Distribution(this, 'AssetUploads', {
 // media.uploadUrl = `https://${uploads.distributionDomainName}/`
 ```
 
+**If you have a bucket and no other use for an `AssetSupport` in that stack**, build the same
+behaviour from the bucket alone:
+
+```typescript
+import { assetUploadBehavior } from 'canopycms-cdk'
+
+const uploads = new cloudfront.Distribution(this, 'AssetUploads', {
+  defaultBehavior: assetUploadBehavior(this, { bucket: assetBucket }),
+})
+```
+
+Same options, same behaviour — it is the same implementation, and `AssetSupport.uploadBehavior()`
+calls it. The difference is what else gets built: `AssetSupport`'s constructor always creates the
+transform Lambda, its log group, its Function URL and its execution role, none of which this
+route uses. That matters where the upload distribution lives beside the bucket rather than beside
+a per-environment asset pipeline — the topology recommended just above. Reach for the method when
+you already have an `AssetSupport`, and the function when you would be creating one only to call
+it.
+
 No custom domain or certificate is needed, and no bucket CORS rule is written: the edge supplies
 `Access-Control-Allow-Origin` for this route alone and answers the CORS preflight itself.
 `allowedOrigins` narrows the wildcard default; origins are matched exactly, so a
