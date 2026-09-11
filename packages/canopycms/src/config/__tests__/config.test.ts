@@ -980,6 +980,86 @@ describe('mediaSchema', () => {
   it('rejects an unknown adapter name', () => {
     expect(() => mediaSchema.parse({ adapter: 'cloudinary' })).toThrow()
   })
+
+  // Each branch carries its own .strict(). CanopyConfigSchema's .strict() does not recurse,
+  // so before these branches had one, a misspelled media key parsed successfully and was
+  // silently dropped — the adopter's setting simply never took effect, with no diagnostic.
+  describe('unknown keys', () => {
+    it('rejects an unknown key on the s3 branch', () => {
+      expect(() =>
+        mediaSchema.parse({
+          adapter: 's3',
+          bucket: 'my-bucket',
+          region: 'us-east-1',
+          uploadURL: '/asset-upload/', // a real, plausible misspelling of uploadUrl
+        }),
+      ).toThrow()
+    })
+
+    it('rejects an unknown key on the local branch', () => {
+      expect(() => mediaSchema.parse({ adapter: 'local', bucket: 'my-bucket' })).toThrow()
+    })
+
+    it('rejects uploadUrl on the local branch, where it means nothing', () => {
+      expect(() => mediaSchema.parse({ adapter: 'local', uploadUrl: '/asset-upload/' })).toThrow()
+    })
+  })
+
+  describe('uploadUrl', () => {
+    it('parses an s3 config carrying a site-relative uploadUrl', () => {
+      const result = mediaSchema.parse({
+        adapter: 's3',
+        bucket: 'my-bucket',
+        region: 'us-east-1',
+        uploadUrl: '/asset-upload/',
+      })
+
+      expect(result).toEqual({
+        adapter: 's3',
+        bucket: 'my-bucket',
+        region: 'us-east-1',
+        uploadUrl: '/asset-upload/',
+      })
+    })
+
+    it('parses an s3 config carrying an absolute uploadUrl', () => {
+      expect(
+        mediaSchema.parse({
+          adapter: 's3',
+          bucket: 'my-bucket',
+          region: 'us-east-1',
+          uploadUrl: 'https://cdn.example.com/asset-upload/',
+        }),
+      ).toMatchObject({ uploadUrl: 'https://cdn.example.com/asset-upload/' })
+    })
+
+    it('rejects a protocol-relative uploadUrl, which would inherit the editor scheme', () => {
+      expect(() =>
+        mediaSchema.parse({
+          adapter: 's3',
+          bucket: 'my-bucket',
+          region: 'us-east-1',
+          uploadUrl: '//cdn.example.com',
+        }),
+      ).toThrow()
+    })
+  })
+
+  describe('publicBaseUrl', () => {
+    // The relaxation asked for by .claude/future-tasks/editor-asset-mount-topology.md's
+    // option 1: the old z.string().url() could not express a bare path at all.
+    it('accepts a site-relative mount point', () => {
+      expect(mediaSchema.parse({ adapter: 'local', publicBaseUrl: '/preview-123' })).toEqual({
+        adapter: 'local',
+        publicBaseUrl: '/preview-123',
+      })
+    })
+
+    // The tightening that rode along: z.string().url() accepted anything new URL() parsed.
+    it('rejects a non-http scheme', () => {
+      expect(() => mediaSchema.parse({ adapter: 'local', publicBaseUrl: 'mailto:a@b.c' })).toThrow()
+    })
+  })
 })
 
 // basePath is the deployment prefix the host Next.js app is served under (e.g.

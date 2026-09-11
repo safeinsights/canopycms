@@ -39,6 +39,70 @@ supersedes an earlier one's workaround entirely.
 
 _Entries land here as changes merge._
 
+### `media.uploadUrl` routes presigned uploads through your own CDN (#44)
+
+**What changed.** One optional field on `mediaSchema`'s s3 branch:
+
+```ts
+media: {
+  adapter: 's3',
+  bucket: '…',
+  region: '…',
+  uploadUrl: '/asset-upload/', // absolute http(s) URL, or a site-relative path
+}
+```
+
+It replaces the `url` that `beginUpload()` returns — the S3 REST endpoint — leaving the
+presign's `fields` untouched. Unset, nothing changes. See
+[Routing uploads through your own CDN](../README.md) for the CloudFront behaviour it expects,
+including the four things that are easy to get wrong.
+
+**Why.** A direct-to-S3 upload is cross-origin, so it needs a bucket CORS rule, and a CORS
+rule must name an exact origin. On a bucket shared across environments that is one
+`AllowedOrigins` entry per environment forever — and S3 CORS has no prefix scoping, so the
+rule cannot be narrowed to the upload path. Routing the upload through a distribution you
+already control makes it same-origin and the rule unnecessary. The signature is unaffected: a
+presigned POST's string-to-sign is the base64 policy alone, so the host never enters it (now
+pinned by a test that fails loudly if a future SDK changes that).
+
+**To adopt.** Nothing, unless you want it. If you do, set `uploadUrl` from an environment
+variable — a site-relative value only works where that path routes to the bucket, so it will
+404 under `next dev`.
+
+**Now deletable.** The bucket CORS rule naming your editor's origin, once uploads are
+same-origin. If you use `canopycms-cdk`'s `AssetSupport` in standalone mode, `editorOrigins`
+becomes inert at the same moment (it stays a required prop, since a cross-origin editor is
+still the default shape).
+
+### `media.publicBaseUrl` accepts a site-relative path, and rejects non-http(s) schemes
+
+**What changed.** `publicBaseUrl` was `z.string().url()`. It now accepts an absolute `http(s)`
+URL, a protocol-relative `//host` URL, **or** a site-relative path such as `/preview-123`.
+
+**Why.** Absolute-only was a validation choice, not a constraint of the feature, and it forced
+the editor to infer its asset mount point from the deployment `basePath` when `publicBaseUrl`
+was unset. You can now state the mount point directly in every topology. The inference is kept
+for compatibility, so nothing breaks on upgrade.
+
+**To adopt.** Nothing required. On a deployment under a `basePath` you may now set
+`publicBaseUrl` to a bare path instead of relying on the inferred fallback.
+
+**Watch out — this is also a tightening.** `z.string().url()` accepted anything `new URL()`
+parses, including `mailto:` and `javascript:`. Those now fail validation. A value of that shape
+never worked (it produced URLs like `/mailto:a@b.c/assets/…`), so this converts a silent
+misconfiguration into a startup error.
+
+### `media` config now rejects unknown keys
+
+**What changed.** Each branch of `mediaSchema` is `.strict()`.
+
+**Why.** `CanopyConfigSchema`'s `.strict()` does not recurse, so a misspelled key anywhere
+under `media` used to parse successfully and be silently dropped — your setting simply never
+took effect, with no diagnostic anywhere.
+
+**To adopt.** If your config carries a key that was being ignored, validation now fails and
+names it. That is the point; fix or remove the key.
+
 **Promoting them is a manual step, and it is easy to miss.** `main` auto-publishes a patch
 on every push, so an entry written here is usually released within hours — while the heading
 still says "Unreleased". When you next touch this file, check `npm view canopycms version`

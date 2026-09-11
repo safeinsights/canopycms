@@ -35,14 +35,19 @@ export interface AssetContextProviderProps extends AssetContextValue {
 /**
  * `baseUrl` (`media.publicBaseUrl`) wins; `basePath` is the fallback.
  *
- * They are ALTERNATIVES, never composed: `publicBaseUrl` is validated absolute-only, so it names
- * another origin serving `/assets` at THAT origin's root, and a deployment `basePath` cannot apply
- * on top of it. Where the two differ is topology, not precedence - see the asset-mount table in
- * the README.
+ * They are ALTERNATIVES, never composed: whichever is used names where `/assets` is mounted, in
+ * full, and a deployment `basePath` cannot apply on top of it. Where the two differ is topology,
+ * not precedence - see the asset-mount table in the README.
  *
- * The fallback exists because `publicBaseUrl` cannot express a bare path (it is validated
- * absolute-only), so without it the editor's thumbnails, previews and crop images stay
- * root-relative on a basePath deployment where Next serves `/assets` — and 404.
+ * WHY THE FALLBACK EXISTS, AND WHY THAT REASON IS NOW GONE. It was added because
+ * `publicBaseUrl` was validated absolute-only (`z.string().url()`) and so could not express a
+ * bare path, leaving the editor's thumbnails, previews and crop images root-relative — and 404 —
+ * on a basePath deployment where Next serves `/assets`. That constraint was lifted when
+ * `publicBaseUrl` moved to `assetMountUrlSchema`, which accepts a site-relative path: an adopter
+ * can now simply set `publicBaseUrl: '/preview-123'`. The fallback is kept only so that existing
+ * basePath deployments do not break on upgrade, which makes removing it a deliberate decision
+ * rather than a cleanup - it is option 1 of
+ * `.claude/future-tasks/editor-asset-mount-topology.md`, still open.
  *
  * KNOWN LIMITATION: the fallback assumes that topology, and consults none. On a CloudFront/CDK
  * deployment a basePath does NOT move the asset space (behaviors are anchored at the distribution

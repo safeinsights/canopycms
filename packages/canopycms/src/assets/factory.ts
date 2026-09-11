@@ -26,10 +26,14 @@ export function createAssetStore(
 
   switch (media.adapter) {
     case 's3':
+      // Every field here is optional on S3AssetStoreOptions, so dropping one is legal
+      // TypeScript and silently reverts a configured behavior to its default. factory.test.ts
+      // asserts each reaches the store for that reason.
       return new S3AssetStore({
         bucket: media.bucket,
         region: media.region,
         maxUploadBytes: media.maxUploadBytes,
+        uploadUrl: media.uploadUrl,
       })
     case 'local': {
       const root = media.directory ?? opts.devAssetsDir

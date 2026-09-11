@@ -171,6 +171,19 @@ export interface AssetSupportProps {
    * (the editor's own origin(s) - e.g. `http://localhost:3000` in dev, or
    * the deployed editor's domain). Only applied in standalone mode (see
    * `bucket`).
+   *
+   * This exists solely to write the bucket's CORS rule, which is only needed
+   * because the browser POSTs presigned uploads cross-origin. An adopter that
+   * sets `media.uploadUrl` to route uploads through their own CDN makes the
+   * upload same-origin and needs no such rule - the value is then inert, the
+   * same way it already is in BYO-bucket mode. Still required rather than
+   * optional, because a cross-origin editor is the default shape; pass your
+   * editor origin(s) unless you have deliberately made uploads same-origin.
+   *
+   * NOTE this construct cannot currently build that CDN upload path for you:
+   * both behaviors below use an OAC-signed S3 origin and CDK's default
+   * GET/HEAD methods, and an upload behavior needs neither. Tracked in
+   * `.claude/future-tasks/asset-support-upload-behavior.md`.
    */
   readonly editorOrigins: string[]
 

@@ -66,6 +66,80 @@ export function neutralizeImplicitOffOrigin(url: string): string {
 }
 
 /**
+ * Whether `value` is usable as an adopter-CONFIGURED URL base or endpoint: an absolute
+ * `http(s)` URL, or a site-relative path with exactly one leading slash.
+ *
+ * This is the config-validation counterpart to `sanitizeHref`, which does the same job for
+ * untrusted CONTENT. The difference is what happens to a bad value: content is coerced to a
+ * fallback so a page still renders, whereas config should fail loudly at parse time — nobody
+ * is served by a silently-rewritten deployment setting. The http(s) allowlist itself lives in
+ * this file either way, so the two surfaces cannot drift into disagreeing about which schemes
+ * are acceptable (that drift is exactly why `utils/url-prefix.ts` exists — see its header).
+ *
+ * `allowProtocolRelative` exists because the two callers genuinely differ, and the difference
+ * is blast radius rather than taste:
+ *
+ * - A READ-side prefix (`media.publicBaseUrl`, joined onto `/assets/…`) may legitimately be
+ *   `//cdn.example.com`. `utils/url-prefix.ts`'s `isAbsoluteUrl` documents that literal
+ *   spelling as an intentionally-supported off-site pointer, so rejecting it here would break
+ *   a working configuration. A bad value costs a broken `<img>`.
+ * - A WRITE-side endpoint (`media.uploadUrl`, where the browser POSTs a presigned upload) must
+ *   not be protocol-relative even when spelled literally: such a URL inherits the *editor's*
+ *   scheme, so an editor tier reachable over http silently downgrades an upload carrying a live
+ *   credential and the user's file bytes to plaintext. A bad value costs those.
+ *
+ * Every other off-origin spelling — `/\host`, `\\host`, `\/host`, `///host` — is rejected for
+ * both, in both modes. Those read as site-relative to a human and to a naive `startsWith('/')`
+ * check, but WHATWG URL resolves each of them to a different authority (measured: `///x`
+ * resolves to host `x`, not to pathname `/x`), so they are never what an adopter meant.
+ */
+export function isHttpUrlOrSameOriginPath(
+  value: string,
+  opts: { allowProtocolRelative?: boolean } = {},
+): boolean {
+  if (value === '') return false
+
+  // Reject ASCII control characters and spaces ANYWHERE in the value, not only at the edges.
+  // WHATWG URL strips tab/CR/LF during parsing wherever they occur, so `/\tx` parses as a
+  // perfectly ordinary same-origin path and would satisfy every check below — while the
+  // browser actually requests `/x`. A stored config value that does not describe what is sent
+  // is a defect even when it happens to work, so reject it rather than normalize it away.
+  for (let index = 0; index < value.length; index++) {
+    const code = value.charCodeAt(index)
+    if (code <= 0x20 || code === 0x7f) return false
+  }
+
+  // A query or fragment is meaningless on both sides this predicate serves. S3's POST Object
+  // takes no query parameters and a browser never transmits a fragment; and on the read side a
+  // prefix carrying either produces `https://cdn.example.com/?x=1/assets/…` once joined.
+  if (value.includes('?') || value.includes('#')) return false
+
+  if (declaresScheme(value)) {
+    try {
+      const { protocol } = new URL(value)
+      // `http:` is deliberately allowed alongside `https:`: a local S3-compatible endpoint
+      // (MinIO, LocalStack) is `http://localhost:9000`, and that is the one setup in which an
+      // adopter would most want to exercise this path before deploying.
+      return protocol === 'http:' || protocol === 'https:'
+    } catch {
+      return false
+    }
+  }
+
+  // A LITERAL `//host` is the only off-origin spelling that can be intentional, and only for
+  // callers that opt in. `value[2] !== '/'` matters: `///x` and `////x` are also "implicitly
+  // off-origin" and also start with `//`, but resolve to a host named `x` rather than to a
+  // path — so they must not ride in on the opt-in.
+  if (isImplicitlyOffOrigin(value)) {
+    return opts.allowProtocolRelative === true && value.startsWith('//') && value[2] !== '/'
+  }
+
+  // Site-relative, with exactly one leading slash. The second clause also covers `//`, which
+  // `isImplicitlyOffOrigin` reports as false only because `new URL('//', base)` throws.
+  return value.startsWith('/') && value[1] !== '/'
+}
+
+/**
  * Sanitize an untrusted URL for use in `href` attributes.
  *
  * Handles both absolute URLs (`https://example.com`) and relative
