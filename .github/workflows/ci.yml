@@ -89,9 +89,11 @@ jobs:
           #
           # Matched as raw UTF-8 BYTES -- U+202A-202E encode as E2 80 AA-AE and
           # U+2066-2069 as E2 81 A6-A9 -- rather than as \x{...} under `perl
-          # -CSD`. Decoding would make a malformed-UTF-8 path a FATAL match
-          # error, which aborts the scan partway and leaves every later path
-          # unexamined; a path with invalid UTF-8 is creatable on the runner's
+          # -CSD`. Decoding would make a path holding an invalid multi-byte
+          # sequence -- a bad or missing continuation after a start byte like
+          # E2; a stray \xff never reaches the decoder -- a FATAL match error,
+          # which aborts the scan partway and leaves every later path
+          # unexamined; such a path is creatable on the runner's
           # ext4 (though not on macOS/APFS), so that is a real way to mask a
           # bidi filename rather than a hypothetical. Bytes cannot be malformed,
           # so the decode is simply removed.

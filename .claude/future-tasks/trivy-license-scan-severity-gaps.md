@@ -6,9 +6,11 @@
 
 `.github/workflows/ci.yml`'s `Scan dependency licenses (Trivy)` step runs with
 `severity: 'HIGH,CRITICAL'`. Trivy maps a license to a severity through its own
-classification of the SPDX expression — `restricted` (LGPL/GPL-class) lands at HIGH,
-`reciprocal` at MEDIUM, permissive at LOW. A license Trivy cannot classify at all is
-reported at **UNKNOWN**, which `HIGH,CRITICAL` excludes.
+classification of the SPDX expression. Observed on this graph (Trivy 0.70.0,
+`--severity UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL`): `restricted` → HIGH, `notice` → LOW,
+`unencumbered` → LOW, and `unknown` → **UNKNOWN**, which `HIGH,CRITICAL` excludes. Other
+categories Trivy defines (`reciprocal`, for instance) are absent from this graph, so their
+mapping is not asserted here — re-check rather than assume if one appears.
 
 The practical hole: a dependency whose `license` field is a custom string rather than an
 SPDX identifier is invisible to the gate, whatever its actual terms. The production graph
