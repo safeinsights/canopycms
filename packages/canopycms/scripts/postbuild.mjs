@@ -42,7 +42,7 @@ const commonOptions = {
   bundle: true,
   format: 'esm',
   platform: 'node',
-  // The engines.node floor (>=22.12.0).
+  // Node 22.0 syntax: the major of the engines.node floor (>=22.12.0).
   target: 'node22',
   packages: 'external',
 }

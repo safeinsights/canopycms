@@ -16,9 +16,10 @@ fix corrected that line.
 ## The decision (JP's)
 
 - **(a) Re-enable version updates for `github-actions` only.** Keep `npm`
-  security-only and give Actions a grouped, monthly schedule. That is a handful of
-  small PRs a year, each fully exercised by CI except the main-only steps of
-  `publish.yml`. Dependabot rewrites both the SHA and the trailing version comment.
+  security-only and give Actions a grouped, monthly schedule. That is at most one
+  PR a month, and its own CI exercises every action except the ones only the two
+  publish workflows use. GitHub's docs don't say whether Dependabot also rewrites
+  a trailing `# vX.Y.Z` comment next to a SHA pin, so check the first such PR.
 - **(b) Stay security-only.** Bump by hand when an annotation or a security advisory
   forces it, which is what happened this time.
 
@@ -26,7 +27,10 @@ fix corrected that line.
 
 Dependabot only scans `.github/workflows/`, so it never touches
 `packages/canopycms/src/cli/template-files/deploy-cms.yml.template` or
-`examples/aws-deployment/deploy-cms.yml`. Adopters inherit those pins, including
+`examples/aws-deployment/deploy-cms.yml`. GitHub's docs say `directory: "/"` checks
+"workflow files in `.github/workflows`", and #57 bears it out. On 2026-06-03 the
+template and the example held the same `actions/checkout@v4` pin as the workflows,
+and #57 changed only `ci.yml` and `publish.yml`. Adopters inherit those pins, including
 `configure-aws-credentials` in front of a CDK-admin OIDC role. Under (a) they would
 lag behind the workflows, since `actions/checkout` and `actions/setup-node` appear in
 both.

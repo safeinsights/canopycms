@@ -59,7 +59,8 @@ across the three workflows, `deploy-cms.yml.template` and
 | `dorny/paths-filter` | v3 | v4.0.3 |
 | `aws-actions/configure-aws-credentials` | v4 | v6.2.4 |
 
-**Two departures from the Fix above**, both approved by JP:
+**Two departures from the Fix above.** JP approved the first; the second was my
+call, and he was not asked about it:
 
 - **Latest release, not the first `node24` one.** The first `node24` majors are
   already superseded (checkout v5 by v6 and v7), so pinning them would only have
@@ -71,19 +72,48 @@ across the three workflows, `deploy-cms.yml.template` and
 
 - **setup-node v7** stops exporting a dummy `NODE_AUTH_TOKEN` when `registry-url`
   is set. Upstream's stated reason (actions/setup-node#1558) is cleaner OIDC
-  publishing, which is how we publish. It is still the one change on the publish
-  path, and the first thing to run it is a prerelease dispatch.
-- **checkout v6** persists credentials to a separate file instead of
-  `.git/config`, and `publish.yml`'s `git push` still reads them. **v7** refuses
-  fork-PR checkout under `pull_request_target`/`workflow_run`; we use neither.
-- **create-github-app-token v3.2** deprecates `app-id`. Switched to
+  publishing, which is how we publish. It is the one change to how publishing
+  authenticates, and the first thing to run it is a prerelease dispatch.
+- **checkout v6** writes the persisted credential to its own file under
+  `$RUNNER_TEMP` and has `.git/config` include that file, so `publish.yml`'s
+  `git push` still picks it up. **v7** refuses fork-PR checkout under
+  `pull_request_target`/`workflow_run`; we use neither.
+- **create-github-app-token v3.1.0** deprecated `app-id` (v3.0.0's `action.yml`
+  has no `deprecationMessage` on it; v3.1.0's does). Switched to
   `client-id: ${{ vars.RELEASE_BOT_CLIENT_ID }}`: a public identifier, hence a
   variable, not a secret.
 - **download-artifact v8** fails on a digest mismatch instead of warning.
 - **pnpm/action-setup v6** bootstraps pnpm 11, then self-updates to the
   `packageManager` pin.
 
-**Verification:** pending the PR's CI run.
+**Verification.** PR #317's CI at `403a3afb` against PR #316's at `54f249d5` (old
+pins), same eight jobs. Counts come from the jobs API and from full job logs
+fetched with `gh api --allow-escape-sequences`. Without that flag `gh` prints
+nothing for a log containing escape codes, and a `grep -c` over the empty output
+reads 0.
+
+- The Node 20 annotation was on all 8 jobs before and is on none after.
+- The `[DEP0040] punycode` deprecation printed 2–8 lines per job before and none
+  after, across the five job logs compared.
+- Every job's step conclusions match: the same steps ran and the same one was
+  skipped, so no `paths-filter` gate turned the run vacuous.
+- The new pins print two log lines of their own, neither an annotation:
+  - pnpm/action-setup v6's `Detected a pnpm v10 installation layout at PNPM_HOME`
+    WARN, once per job. The only v5 release, 5.0.0, bootstraps pnpm 8 and was
+    never patched, so v6 stays.
+  - download-artifact v8's `[DEP0005] Buffer()` deprecation, once, in Merge E2E.
+- The publish path was reproduced locally with pnpm 10.12.1 and npm 11.19.0,
+  against an `.npmrc` written the way setup-node v7 writes it, with
+  `NODE_AUTH_TOKEN` unset:
+  - `pnpm install`, `pnpm pack` and `npm publish --dry-run` exit 0, and
+    `npm view canopycms version` still returns the published version.
+  - pnpm prints `WARN Failed to replace env in config: ${NODE_AUTH_TOKEN}` on
+    each command.
+  - npm's OIDC exchange overwrites whatever token is configured (npm v11.19.0
+    `lib/utils/oidc.js`, `config.set(authTokenKey, response.token, 'user')`).
+  - Dropping `registry-url` would silence the warning, but setup-node's own
+    Trusted Publisher example keeps it, so it stays. The cost is log noise in a job
+    that runs once per release.
 
 Still open, filed separately: whether Actions pins should stop depending on someone
 noticing a warning. See

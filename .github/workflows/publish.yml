@@ -113,7 +113,7 @@ jobs:
       # "changes must go through a PR" rule is gated by RELEASE_BOT_PRIVATE_KEY,
       # which only exists in this repo — unlike the generic GITHUB_TOKEN, which
       # cannot be granted bypass at all. The client ID is a public identifier,
-      # hence a variable rather than a secret; v3.2 deprecated `app-id` for it.
+      # hence a variable rather than a secret; v3.1.0 deprecated `app-id` for it.
       - name: Generate release-bot app token
         id: app-token
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
