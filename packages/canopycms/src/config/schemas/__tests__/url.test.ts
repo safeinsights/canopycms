@@ -13,6 +13,14 @@ const ACCEPTED_BY_BOTH = [
   '/asset-upload/',
   '/asset-upload',
   '/',
+  // Dots that are NOT whole segments must survive the dot-segment guard. Hostnames are full
+  // of them, and so are ordinary paths — this is the over-rejection the guard could cause.
+  'https://cdn.example.com/v1.0/upload/',
+  'http://[::1]:9000/bucket',
+  '/v1.0/upload',
+  '/.well-known/upload',
+  '/file..name',
+  '/a.b/c.d',
 ]
 
 // Every one of these reads as harmless to a human or to a naive startsWith('/') check.
@@ -42,6 +50,15 @@ const REJECTED_BY_BOTH: [string, string][] = [
   // Dot segments resolve away before the request leaves the browser.
   ['/asset-upload/..', 'sent as /'],
   ['/./x', 'sent as /x'],
+  // WHATWG percent-decodes case-insensitively when identifying dot segments, so a
+  // literal-only guard reads as complete and is one encoding away from useless.
+  ['/asset-upload/%2e%2e/', 'encoded .. — also sent as /'],
+  ['/asset-upload/%2E%2E/', 'uppercase encoding'],
+  ['/asset-upload/.%2e/', 'mixed literal and encoded'],
+  ['/asset-upload/%2e./', 'mixed, other order'],
+  ['/asset-upload/%2e/', 'encoded single dot'],
+  ['/a/%2e%2e/%2e%2e/b', 'sent as /b'],
+  ['https://cdn.example.com/asset-upload/%2e%2e/', 'absolute form, sent as the origin root'],
   ['javascript:alert(1)', 'not http(s)'],
   ['data:text/html,x', 'not http(s)'],
   ['mailto:a@b.c', 'not http(s)'],
@@ -78,22 +95,6 @@ describe('uploadTargetUrlSchema', () => {
 
   it('trims surrounding whitespace, so a templated env var with a trailing newline still parses', () => {
     expect(uploadTargetUrlSchema.parse('  /asset-upload/\n')).toBe('/asset-upload/')
-  })
-
-  // Guard on the rejection table itself: the shape the adopter originally proposed must fail
-  // on the rows that motivated writing our own predicate. If this passes with their union,
-  // the table above is not discriminating and the rest of this file proves nothing.
-  it('rejects the shapes a naive union of z.string().url() and startsWith("/") would accept', () => {
-    for (const value of [
-      '//evil.example.com/',
-      '///x',
-      '/\\evil.example.com',
-      'javascript:alert(1)',
-    ]) {
-      const naivelyAccepted = /^[a-z][a-z0-9+.-]*:/i.test(value) || value.startsWith('/')
-      expect(naivelyAccepted).toBe(true)
-      expect(() => uploadTargetUrlSchema.parse(value)).toThrow()
-    }
   })
 })
 

@@ -83,7 +83,6 @@ describe('uploadToPresignedPost', () => {
     // trailing-slash normalization would each produce a *similar* string, and a CloudFront
     // path pattern distinguishes them.
     expect(FakeXhr.last.openArgs).toEqual(['POST', url])
-    expect(FakeXhr.last.openArgs?.[1]).toBe(url)
   })
 
   it('appends every presign field first and `file` LAST', async () => {

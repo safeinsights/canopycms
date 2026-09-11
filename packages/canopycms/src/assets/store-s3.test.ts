@@ -9,6 +9,8 @@
  */
 
 import { randomUUID } from 'node:crypto'
+import os from 'node:os'
+import path from 'node:path'
 
 import { S3Client } from '@aws-sdk/client-s3'
 import { createPresignedPost } from '@aws-sdk/s3-presigned-post'
@@ -25,17 +27,27 @@ beforeAll(() => {
 })
 
 // The endpoint assertions below pin the SDK's RESOLVED endpoint, and endpoint resolution reads
-// the environment. A developer running MinIO/LocalStack locally (AWS_ENDPOINT_URL_S3), or with
-// FIPS/dual-stack set, would otherwise see these fail for a reason unrelated to their change.
-// Cleared rather than defaulted, since these have no correct value here.
+// developer machine state. A developer running MinIO/LocalStack, or with FIPS/dual-stack set,
+// would otherwise see these fail for a reason unrelated to their change.
+//
+// Two sources, not one. The env vars are the obvious half; the shared config file is the half
+// that is easy to miss, because `@smithy/middleware-endpoint` gives `endpoint_url` a
+// `configFileSelector` as well as an `environmentVariableSelector` — so `~/.aws/config`
+// carrying `endpoint_url` defeats an env-only fix. Pointing the SDK at paths that do not exist
+// is what actually neutralizes it.
 beforeEach(() => {
   for (const key of [
     'AWS_ENDPOINT_URL_S3',
     'AWS_ENDPOINT_URL',
     'AWS_USE_FIPS_ENDPOINT',
     'AWS_USE_DUALSTACK_ENDPOINT',
+    'AWS_PROFILE',
   ]) {
+    // vitest's stubEnv DELETES on undefined rather than storing the string 'undefined'.
     vi.stubEnv(key, undefined as unknown as string)
+  }
+  for (const key of ['AWS_CONFIG_FILE', 'AWS_SHARED_CREDENTIALS_FILE']) {
+    vi.stubEnv(key, path.join(os.tmpdir(), 'canopy-nonexistent-aws-config'))
   }
 })
 
