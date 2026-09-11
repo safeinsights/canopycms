@@ -39,8 +39,8 @@ const REJECTED_BY_BOTH: [string, string][] = [
   // https://cdn.example.com/, while a browser on https://editor.example.com/admin/media sends
   // it to https://editor.example.com/admin/cdn.example.com. Dropping the `//` is an ordinary
   // typo, and the two readings differ by origin.
-  ['https:cdn.example.com', 'scheme with no // authority; browser resolves it relative'],
-  ['https:/cdn.example.com/asset-upload/', 'one slash, same problem'],
+  ['https:cdn.example.com', 'no authority: resolved against the page DIRECTORY, /admin/cdn…'],
+  ['https:/cdn.example.com/asset-upload/', 'one slash: resolved against the page ROOT, /cdn…'],
   ['http:cdn.example.com', 'same, on http'],
   // Backslash: WHATWG treats it as a path separator for special schemes.
   ['/\\', 'new URL() rejects it, so it slips past the off-origin check and joins to //assets'],
@@ -85,9 +85,11 @@ describe('uploadTargetUrlSchema', () => {
     expect(() => uploadTargetUrlSchema.parse(value)).toThrow()
   })
 
-  // The difference between the two schemas, and the only one. A protocol-relative upload
-  // target inherits the editor's scheme, so an http editor tier would silently downgrade an
-  // upload carrying a live credential to plaintext.
+  // The difference between the two schemas, and the only one — a census over a 4-symbol
+  // alphabet found 39 divergent values, every one a literal //host. It is rejected here
+  // because it is AMBIGUOUS, not because http is unsafe: it resolves to http or https
+  // depending on the editor page issuing the upload, so the config would not determine where
+  // a live credential is sent. Bare http:// is accepted (see ACCEPTED_BY_BOTH).
   it('rejects a protocol-relative //host, which the mount schema accepts', () => {
     expect(() => uploadTargetUrlSchema.parse('//cdn.example.com')).toThrow()
     expect(assetMountUrlSchema.parse('//cdn.example.com')).toBe('//cdn.example.com')

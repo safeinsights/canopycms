@@ -17,9 +17,15 @@ import { isHttpUrlOrSameOriginPath } from '../../utils/sanitize-href'
 /**
  * Where the browser POSTs a presigned direct upload (`media.uploadUrl`).
  *
- * Stricter than `assetMountUrlSchema` by exactly one case — no protocol-relative `//host` — and
- * `isHttpUrlOrSameOriginPath`'s doc explains why: this value is where a live upload credential
- * and the user's file bytes are sent, so it must not inherit the editor's scheme.
+ * Stricter than `assetMountUrlSchema` by exactly one case — no protocol-relative `//host` —
+ * because that spelling is ambiguous rather than insecure: it resolves to http or https
+ * depending on the editor page issuing the upload, so the config would not determine where a
+ * live credential is sent. `isHttpUrlOrSameOriginPath`'s doc carries the full reasoning,
+ * including why bare `http://` is nonetheless accepted.
+ *
+ * "Exactly one case" is measured, not asserted: a census over a 4-symbol alphabet plus the
+ * hand-written shapes found 39 values the two schemas treat differently, and every one is a
+ * literal `//host` (three only after `.trim()` strips a leading tab).
  */
 export const uploadTargetUrlSchema = z
   .string()

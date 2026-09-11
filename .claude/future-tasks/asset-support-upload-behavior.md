@@ -18,10 +18,15 @@ Three things an upload behaviour needs, none of which `AssetSupport` can produce
    a property of the *origin*, not the behaviour, so the upload path needs a **second origin
    entry for the same bucket**. With `SigningBehavior: always` CloudFront re-signs the request
    with its own credentials — and, more fundamentally, **CloudFront signs origin requests but
-   never hashes the body**, so an OAC-signed origin rejects any multipart POST with a 403
-   regardless of what the viewer sends. That constraint is already written down for the Lambda
-   origin in `docs/deploying-to-aws.md` ("CloudFront OAC and request body signing"); an adopter
-   wiring this by hand meets it from the other direction and has to re-derive it.
+   never hashes the body**, so an OAC-signed origin rejects any multipart POST regardless of
+   what the viewer sends. **Measured: `400 InvalidArgument`**, with the response body naming the
+   mechanism — `x-amz-content-sha256 must be UNSIGNED-PAYLOAD, ... or a valid sha256 value`.
+
+   Do NOT describe this as a 403. The related note for the Lambda Function URL origin in
+   `docs/deploying-to-aws.md` ("CloudFront OAC and request body signing") correctly says 403,
+   and the two are different: S3 validates that header's VALUE FORMAT, which is argument
+   validation, while Lambda verifies a SIGNATURE over it, which is authorization. An adopter
+   told to expect a 403 goes looking for a permissions problem that is not there.
 2. **`allowedMethods: ALLOW_ALL`.** Both existing behaviours omit `allowedMethods` and so take
    CDK's `ALLOW_GET_HEAD` default. A POST is 405 without it.
 3. **A viewer-request URI rewrite to `/`.** S3's POST Object is only valid at the bucket root;
@@ -96,10 +101,23 @@ That is the property an edge-supplied ACAO needs, and it means a dedicated distr
 drag a bucket CORS rule back in. Worth knowing on its own: it is a common assumption that a
 bucket CORS rule is what *permits* the upload, and it is not.
 
-**Still open, and it gates options 2 and 3:** whether a CloudFront response-headers policy
-attaches ACAO to a 2xx from an **unsigned** S3 origin on a POST. Being measured; a negative
-result kills the dedicated-distribution design and makes option 1 the answer. **Do not build
-this until that lands.**
+**Settled 2026-09-11 — this was the gating question, and the answer is yes.** A CloudFront
+response-headers policy DOES supply `Access-Control-Allow-Origin` for a cross-origin presigned
+POST against an **unsigned** S3 origin with no bucket CORS configuration: 204, `ACAO: *`, object
+landed. Measured by the adopter on throwaway resources (unsigned `HttpOrigin`,
+`ALL_VIEWER_EXCEPT_HOST_HEADER`, `NoSuchCORSConfiguration` verified throughout), with the POST
+reproduced exactly as `xhr-upload.ts` sends it — presign fields first, `file` last, no custom
+headers. **Option 3 is unblocked and has been requested.**
+
+Three further facts fell out of the same run, each previously argued here rather than measured:
+
+- **The presigned-POST signature tolerates a different Host.** The object landed through the
+  distribution, so the string-to-sign really is the policy alone.
+- **CloudFront forwards a multipart body with field order intact** — S3 would have rejected it
+  outright otherwise, since `file` must be last.
+- **The edge authorises nothing.** Corrupting the signature and posting through the distribution
+  gives 403 with no object landing. Authority remains entirely the presigned policy, which is
+  what makes `ACAO: *` scoped to the upload path defensible where a bucket-wide rule is not.
 
 ## A caveat for anyone reasoning about per-environment transform Lambdas
 

@@ -4,6 +4,21 @@
 const SENTINEL_BASE = 'https://relative.invalid'
 
 /**
+ * A path segment that is exactly `.` or `..`, in any spelling a URL parser collapses.
+ *
+ * `%2e` must be covered, not just the literal dot: WHATWG's single-dot and double-dot path
+ * segment definitions are case-insensitively percent-decoded, so `/upload/%2e%2e/` collapses in
+ * a browser exactly as `/upload/../` does. A literal-only guard reads as complete and is one
+ * encoding away from useless — measured before this was widened.
+ *
+ * Bounded repetition over an alternation of two literals, so no nested quantifier and no
+ * backtracking blowup — see `utils/url-prefix.ts`'s `stripTrailingSlashes` for why regex shape
+ * is watched in this area. Measured 0.08–1.7ms across five ~400KB adversarial inputs, the
+ * slowest being a string of 400k slashes.
+ */
+const DOT_SEGMENT = /(^|\/)(\.|%2e){1,2}(\/|$)/i
+
+/**
  * Whether `url` declares an explicit scheme (`https:`, `mailto:`, `javascript:`, ...).
  *
  * This is the property that actually distinguishes "the author asked for another origin" from
@@ -34,20 +49,6 @@ export function declaresScheme(url: string): boolean {
  * separately and only fall back to this function to catch the spellings that slip past a
  * `startsWith('//')` check.
  */
-/**
- * A path segment that is exactly `.` or `..`, in any spelling a URL parser collapses.
- *
- * `%2e` must be covered, not just the literal dot: WHATWG's single-dot and double-dot path
- * segment definitions are case-insensitively percent-decoded, so `/upload/%2e%2e/` collapses in
- * a browser exactly as `/upload/../` does. A literal-only guard reads as complete and is one
- * encoding away from useless — measured before this was widened.
- *
- * Bounded repetition over an alternation of two literals, so no nested quantifier and no
- * backtracking blowup — see `utils/url-prefix.ts`'s `stripTrailingSlashes` for why regex shape
- * is watched in this area. Measured under 1ms on 400KB adversarial inputs.
- */
-const DOT_SEGMENT = /(^|\/)(\.|%2e){1,2}(\/|$)/i
-
 export function isImplicitlyOffOrigin(url: string): boolean {
   if (declaresScheme(url)) return false
   try {
@@ -98,14 +99,24 @@ export function neutralizeImplicitOffOrigin(url: string): string {
  *   spelling as an intentionally-supported off-site pointer, so rejecting it here would break
  *   a working configuration. A bad value costs a broken `<img>`.
  * - A WRITE-side endpoint (`media.uploadUrl`, where the browser POSTs a presigned upload) must
- *   not be protocol-relative even when spelled literally: such a URL inherits the *editor's*
- *   scheme, so an editor tier reachable over http silently downgrades an upload carrying a live
- *   credential and the user's file bytes to plaintext. A bad value costs those.
+ *   not be protocol-relative even when spelled literally, because such a URL is AMBIGUOUS: it
+ *   resolves to http or https depending on the scheme of whichever editor page happens to
+ *   issue the upload, so the stored config does not determine where a live presigned credential
+ *   and the user's file bytes are sent. That is the same principle every other rule here
+ *   enforces — a config value must describe what actually happens.
  *
- * Every other off-origin spelling — `/\host`, `\\host`, `\/host`, `///host` — is rejected for
- * both, in both modes. Those read as site-relative to a human and to a naive `startsWith('/')`
- * check, but WHATWG URL resolves each of them to a different authority (measured: `///x`
- * resolves to host `x`, not to pathname `/x`), so they are never what an adopter meant.
+ *   Note this is NOT an argument that http is forbidden on the write side; bare `http://` is
+ *   accepted, because a loopback or in-cluster S3-compatible endpoint is a real need and a
+ *   browser on an https editor blocks the mixed-content request anyway, so it fails closed. The
+ *   objection to `//host` is that it is undetermined, not that it might be insecure.
+ *
+ * Every spelling that READS as site-relative while redefining the authority — `/\host`,
+ * `\\host`, `\/host`, `///host` — is rejected for both, in both modes. Those look site-relative
+ * to a human and to a naive `startsWith('/')` check, but WHATWG URL resolves each to a
+ * different authority (measured: `///x` resolves to host `x`, not to pathname `/x`), so they
+ * are never what an adopter meant. A scheme-qualified absolute URL is a separate case and is
+ * accepted — `https:///cdn.example.com/` is unusual but unambiguous, resolving identically
+ * standalone and against any base.
  */
 export function isHttpUrlOrSameOriginPath(
   value: string,
@@ -132,7 +143,8 @@ export function isHttpUrlOrSameOriginPath(
   // treats it as a path separator for special schemes, so `/asset\upload/` is SENT as
   // `/asset/upload/`. Worse on the read side, where the value becomes a prefix — `/\` is a
   // string `new URL()` REJECTS, so it slips past the off-origin check below and joins into
-  // `/\/assets/a.png`, which a browser then resolves to `https://assets/` (measured). Anyone
+  // `/\/assets/a.png`, which a browser then resolves to `https://assets/a.png` — a request to a
+  // host literally named `assets` (measured). Anyone
   // wanting a literal backslash in a path must percent-encode it.
   if (value.includes('\\')) return false
 

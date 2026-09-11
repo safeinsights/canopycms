@@ -92,6 +92,15 @@ parses, including `mailto:` and `javascript:`. Those now fail validation. A valu
 never worked (it produced URLs like `/mailto:a@b.c/assets/…`), so this converts a silent
 misconfiguration into a startup error.
 
+Three narrower shapes are also rejected now, all for the same reason — the browser rewrites
+them, so the stored value stops describing what is requested. A literal space
+(`https://cdn.example.com/x y`, which previously validated and worked because the browser
+percent-encodes it — use `%20`); a backslash anywhere (`/asset\upload/` is sent as
+`/asset/upload/`); and `.`/`..` path segments in any spelling, percent-encoded included
+(`/assets/%2e%2e/` is sent as `/`). Also `https:cdn.example.com` — a scheme with no `//` — which
+a browser resolves as a _relative_ reference against the current page rather than as an
+absolute URL.
+
 ### `media` config now rejects unknown keys
 
 **What changed.** Each branch of `mediaSchema` is `.strict()`.

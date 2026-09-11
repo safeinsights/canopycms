@@ -2246,10 +2246,14 @@ Wiring the CDN behaviour is yours to do, and four things about it are easy to ge
 - **Rewrite the URI to `/`.** S3's POST Object is only valid at the bucket root; without a
   viewer-request rewrite you get `405 MethodNotAllowed`.
 - **Allow all methods, and point at an origin with OAC signing OFF.** CloudFront signs origin
-  requests but never hashes the body, so an OAC-signed origin rejects a multipart POST with a
-  403 regardless of what you send (the same constraint described under
-  [CloudFront OAC and request body signing](docs/deploying-to-aws.md)). That means a second
-  origin entry for the same bucket — OAC is a property of the origin, not the behaviour.
+  requests but never hashes the body, so an OAC-signed origin rejects every multipart POST no
+  matter what you send. Measured, it fails with **`400 InvalidArgument`**, naming the mechanism
+  in the response body: `x-amz-content-sha256 must be UNSIGNED-PAYLOAD, ... or a valid sha256
+value`. Expect an argument-validation error, not an authorization one — the 403 described
+  under [CloudFront OAC and request body signing](docs/deploying-to-aws.md) is the Lambda
+  Function URL case, where Lambda verifies a signature over that header rather than validating
+  its format. Either way you need a second origin entry for the same bucket, since OAC is a
+  property of the origin, not the behaviour.
 - **Forward no cookies.** A same-origin upload path receives your site's cookies, including the
   editor session cookie, which would otherwise reach S3 and its access logs. If your site sits
   behind HTTP basic auth, strip `Authorization` too — forwarded to S3 it produces
