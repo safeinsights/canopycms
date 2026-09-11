@@ -6,6 +6,7 @@ import {
   Duration,
   RemovalPolicy,
   Stack,
+  Token,
   aws_cloudfront as cloudfront,
   aws_cloudfront_origins as origins,
   aws_iam as iam,
@@ -759,6 +760,33 @@ export class AssetSupport extends Construct {
           'or list the origin(s) the editor is served from.',
       )
     }
+
+    // Two consumers read `allowedOrigins` and they do not share a matcher: the
+    // response headers policy (which decides ACAO on the POST response) accepts
+    // CloudFront's pattern grammar, including a leftmost-subdomain wildcard
+    // like `https://*.preview.example.com`; the preflight responder compiled
+    // into the CloudFront Function can only do exact-string comparison, because
+    // reimplementing that grammar in an edge function without being able to
+    // test it against CloudFront is how the two silently disagree.
+    //
+    // So a pattern is refused rather than half-honoured. Accepting one would
+    // deploy clean and then fail every upload from a matching origin at the
+    // PREFLIGHT, with a correct-looking policy sitting right next to it - the
+    // same invisible failure the preflight responder was added to remove.
+    const wildcardOrigins = (props.uploadBehavior?.allowedOrigins ?? []).filter((origin) =>
+      origin.includes('*'),
+    )
+    const isBareWildcard = props.uploadBehavior?.allowedOrigins?.join() === '*'
+    if (wildcardOrigins.length > 0 && !isBareWildcard) {
+      throw new Error(
+        `AssetSupport: uploadBehavior.allowedOrigins contains a wildcard pattern ` +
+          `(${wildcardOrigins.map((o) => JSON.stringify(o)).join(', ')}). CloudFront's response ` +
+          `headers policy would accept it, but the CORS preflight is answered at the edge by a ` +
+          `CloudFront Function that compares origins exactly - so every upload from a matching ` +
+          `origin would fail its preflight while the policy looked correct. Use exactly ` +
+          `['*'] to allow any origin, or list each editor origin in full.`,
+      )
+    }
     // Snapshotted, not aliased. The guard above runs now but `allowedOrigins`
     // is not READ until the accessor builds the behavior, so holding the
     // caller's array by reference would let `origins.length = 0` in between
@@ -880,6 +908,26 @@ export class AssetSupport extends Construct {
     // credential in its body should be pinned rather than inferred.
     // `withBucketDefaults()` emits `S3OriginConfig`, which has no
     // `OriginProtocolPolicy` field at all.
+    // A dot in the bucket name breaks this origin specifically. S3's wildcard
+    // certificate covers one label (`*.s3.<region>.amazonaws.com`), so
+    // `my.docs.bucket.s3.<region>.amazonaws.com` fails TLS validation and
+    // CloudFront answers 502 on every upload. This is a CUSTOM origin doing
+    // ordinary TLS validation; the read path uses an S3-type origin, which
+    // CloudFront treats differently, so nothing else here would surface it -
+    // and dotted names are most likely in exactly the BYO case ("a site's
+    // existing content bucket") this behavior is written for. Only checkable
+    // when the name is a real literal, which for an imported bucket it is.
+    const bucketName = this.bucket.bucketName
+    if (!Token.isUnresolved(bucketName) && bucketName.includes('.')) {
+      throw new Error(
+        `AssetSupport: uploadBehavior cannot use bucket "${bucketName}" - a dot in the bucket ` +
+          `name puts an extra label in its regional domain name, which S3's wildcard ` +
+          `certificate does not cover, so CloudFront fails TLS to the origin and answers 502 on ` +
+          `every upload. The read behaviors are unaffected (they use an S3-type origin). Use a ` +
+          `dot-free bucket for uploads, or route uploads somewhere other than this construct.`,
+      )
+    }
+
     const uploadOrigin = new origins.HttpOrigin(this.bucket.bucketRegionalDomainName, {
       protocolPolicy: cloudfront.OriginProtocolPolicy.HTTPS_ONLY,
     })
@@ -949,7 +997,7 @@ export class AssetSupport extends Construct {
           '    var headers = {',
           `      'access-control-allow-methods': { value: '${UPLOAD_ALLOWED_METHOD}' },`,
           "      'access-control-allow-headers': { value: '*' },",
-          `      'access-control-max-age': { value: '${CORS_MAX_AGE_SECONDS}' },`,
+          `      'access-control-max-age': { value: '${CORS_MAX_AGE_SECONDS}' }`,
           '    };',
           // Echo the caller's own Origin when the list is narrowed: a preflight
           // may only be answered with `*` or the single requesting origin, so a
@@ -957,7 +1005,7 @@ export class AssetSupport extends Construct {
           // ACAO, and the browser's own check refuses the upload - which is the
           // correct outcome, and a clearer one than a 403 here would be.
           "    var origin = request.headers.origin ? request.headers.origin.value : '';",
-          "    if (ALLOWED_ORIGINS[0] === '*') {",
+          "    if (ALLOWED_ORIGINS.length === 1 && ALLOWED_ORIGINS[0] === '*') {",
           "      headers['access-control-allow-origin'] = { value: '*' };",
           '    } else if (ALLOWED_ORIGINS.indexOf(origin) !== -1) {',
           "      headers['access-control-allow-origin'] = { value: origin };",

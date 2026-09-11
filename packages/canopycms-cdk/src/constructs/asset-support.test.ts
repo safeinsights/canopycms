@@ -1,4 +1,5 @@
 import { existsSync, readFileSync, renameSync } from 'node:fs'
+import * as vm from 'node:vm'
 import * as path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { Duration, Stack } from 'aws-cdk-lib'
@@ -743,6 +744,53 @@ function resolveRef(
   return resource.Properties as Record<string, unknown>
 }
 
+/**
+ * Load the emitted CloudFront Function and RUN it.
+ *
+ * Round 3 of review found a matcher bug that every source-text `toContain`
+ * assertion in this file walked straight past: the emitted code contained all
+ * the right fragments and still answered the wrong thing for a wildcard
+ * pattern. A fragment check cannot observe behaviour, so these tests execute
+ * the function against CloudFront-shaped events instead. Strict mode is
+ * prepended because the CloudFront Functions runtime forces it.
+ */
+interface EdgeRequest {
+  method: string
+  uri: string
+  headers: Record<string, { value: string }>
+}
+interface EdgeResponse {
+  statusCode?: number
+  statusDescription?: string
+  headers?: Record<string, { value: string }>
+  uri?: string
+  method?: string
+}
+
+function loadUploadFunction(template: Template): (request: EdgeRequest) => EdgeResponse {
+  const functions = template.findResources('AWS::CloudFront::Function')
+  const codes = Object.values(functions).map(
+    (fn) => (fn.Properties as { FunctionCode: string }).FunctionCode,
+  )
+  expect(codes).toHaveLength(1)
+
+  const context = vm.createContext({})
+  vm.runInContext(`"use strict";\n${codes[0]}`, context)
+  const handler = vm.runInContext('handler', context) as (event: {
+    request: EdgeRequest
+  }) => EdgeResponse
+  expect(typeof handler).toBe('function')
+  return (request) => handler({ request })
+}
+
+function preflight(origin?: string): EdgeRequest {
+  return {
+    method: 'OPTIONS',
+    uri: '/asset-upload/',
+    headers: origin === undefined ? {} : { origin: { value: origin } },
+  }
+}
+
 const UPLOAD_PROPS = { requireDeployableBundle: false, uploadBehavior: {} }
 
 describe('AssetSupport - uploadBehavior()', () => {
@@ -787,22 +835,109 @@ describe('AssetSupport - uploadBehavior()', () => {
     ])
   })
 
-  it('rewrites the URI to the bucket root on viewer-request (POST Object is root-only, and the rewrite is what contains ALLOW_ALL)', () => {
+  it('rewrites every non-preflight request to the bucket root and drops Authorization (executed, not grepped)', () => {
+    // POST Object is root-only, and the unconditional rewrite is also what
+    // contains ALLOW_ALL: nothing arriving here can address a key.
     const stack = makeStack()
     const assetSupport = new AssetSupport(stack, 'Assets', { ...UPLOAD_PROPS })
-    const { template, behavior } = synthUploadDistribution(assetSupport, stack)
+    const { template } = synthUploadDistribution(assetSupport, stack)
+    const run = loadUploadFunction(template)
 
-    const functions = template.findResources('AWS::CloudFront::Function')
-    const codes = Object.values(functions).map(
-      (fn) => (fn.Properties as { FunctionCode: string }).FunctionCode,
-    )
-    expect(codes).toHaveLength(1)
-    expect(codes[0]).toContain("request.uri = '/'")
+    const posted = run({
+      method: 'POST',
+      uri: '/asset-upload/some/deep/key.png',
+      headers: { authorization: { value: 'Basic c2VjcmV0' }, 'content-type': { value: 'x' } },
+    })
+    expect(posted.uri).toBe('/')
+    expect(posted.headers).not.toHaveProperty('authorization')
+    expect(posted.headers).toHaveProperty('content-type')
 
-    const associations = behavior.FunctionAssociations ?? []
-    expect(associations).toHaveLength(1)
-    expect(associations[0].EventType).toBe('viewer-request')
-    expect(JSON.stringify(associations[0].FunctionARN)).toContain('AssetUploadRewriteFunction')
+    // A GET is rewritten too - key addressability must not come back by method.
+    expect(run({ method: 'GET', uri: '/assets/secret.png', headers: {} }).uri).toBe('/')
+  })
+
+  it('answers the CORS preflight itself, because the editor\u2019s upload is not a simple request and S3 with no CORS rule 403s an OPTIONS', () => {
+    // xhr-upload.ts assigns xhr.upload.onprogress before send(), and ANY
+    // listener on XMLHttpRequestUpload disqualifies a request from the
+    // simple-request rules regardless of method/headers/content-type. So a real
+    // browser upload always preflights. CloudFront does not synthesize
+    // preflight responses and the bucket deliberately has no CORS rule, so
+    // without this the OPTIONS reaches S3, 403s, and the POST is never sent.
+    const stack = makeStack()
+    const assetSupport = new AssetSupport(stack, 'Assets', { ...UPLOAD_PROPS })
+    const { template } = synthUploadDistribution(assetSupport, stack)
+    const run = loadUploadFunction(template)
+
+    const response = run(preflight('https://editor.example.com'))
+    expect(response.statusCode).toBe(204)
+    expect(response.headers?.['access-control-allow-origin']?.value).toBe('*')
+    expect(response.headers?.['access-control-allow-methods']?.value).toBe('POST')
+    expect(response.headers?.['access-control-max-age']?.value).toBe('3000')
+    // It must NOT fall through to the origin-bound branch.
+    expect(response.uri).toBeUndefined()
+  })
+
+  it('echoes the requesting Origin on a preflight when allowedOrigins is narrowed, and withholds ACAO when it does not match', () => {
+    // A preflight may be answered with `*` or exactly one origin, so a
+    // multi-entry list cannot be returned verbatim.
+    const stack = makeStack()
+    const assetSupport = new AssetSupport(stack, 'Assets', {
+      requireDeployableBundle: false,
+      uploadBehavior: { allowedOrigins: ['https://a.example.com', 'https://b.example.com'] },
+    })
+    const { template } = synthUploadDistribution(assetSupport, stack)
+    const run = loadUploadFunction(template)
+
+    expect(
+      run(preflight('https://b.example.com')).headers?.['access-control-allow-origin'],
+    ).toEqual({ value: 'https://b.example.com' })
+    // Never the wildcard, and never another entry from the list.
+    expect(
+      run(preflight('https://evil.example.com')).headers?.['access-control-allow-origin'],
+    ).toBeUndefined()
+    expect(run(preflight()).headers?.['access-control-allow-origin']).toBeUndefined()
+    // Still a well-formed 204 either way - the browser's own check refuses it.
+    expect(run(preflight('https://evil.example.com')).statusCode).toBe(204)
+  })
+
+  it('does not treat a list that merely contains "*" as the wildcard', () => {
+    // Guarded at construction, so the only way to reach the function is the
+    // bare wildcard. This pins the pair: if the guard is ever relaxed, the
+    // matcher must be revisited at the same time.
+    const stack = makeStack()
+
+    expect(
+      () =>
+        new AssetSupport(stack, 'Assets', {
+          requireDeployableBundle: false,
+          uploadBehavior: { allowedOrigins: ['https://a.example.com', '*'] },
+        }),
+    ).toThrow(/wildcard pattern/)
+  })
+
+  it('refuses a leftmost-subdomain wildcard, which the response headers policy would accept but the preflight matcher cannot honour', () => {
+    const stack = makeStack()
+
+    expect(
+      () =>
+        new AssetSupport(stack, 'Assets', {
+          requireDeployableBundle: false,
+          uploadBehavior: { allowedOrigins: ['https://*.preview.example.com'] },
+        }),
+    ).toThrow(/compares origins exactly/)
+  })
+
+  it('refuses a dotted bucket name, whose regional domain S3\u2019s wildcard certificate does not cover', () => {
+    const stack = makeStack()
+    const bucket = s3.Bucket.fromBucketName(stack, 'Dotted', 'my.docs.bucket')
+
+    expect(() =>
+      new AssetSupport(stack, 'Assets', {
+        requireDeployableBundle: false,
+        bucket,
+        uploadBehavior: {},
+      }).uploadBehavior(),
+    ).toThrow(/wildcard certificate/)
   })
 
   it('forwards no cookies to S3, and strips Host and Authorization', () => {
@@ -829,19 +964,6 @@ describe('AssetSupport - uploadBehavior()', () => {
     // synth, so the function below drops it instead.
     expect(config.HeadersConfig.HeaderBehavior).toBe('allExcept')
     expect(config.HeadersConfig.Headers).toEqual(['host'])
-  })
-
-  it('drops Authorization at the viewer, where a basic-auth site would otherwise send S3 a credential it cannot parse', () => {
-    const stack = makeStack()
-    const assetSupport = new AssetSupport(stack, 'Assets', { ...UPLOAD_PROPS })
-    const { template } = synthUploadDistribution(assetSupport, stack)
-
-    const functions = template.findResources('AWS::CloudFront::Function')
-    const codes = Object.values(functions).map(
-      (fn) => (fn.Properties as { FunctionCode: string }).FunctionCode,
-    )
-    expect(codes).toHaveLength(1)
-    expect(codes[0]).toContain('delete request.headers.authorization')
   })
 
   it('disables caching on the upload route', () => {
@@ -905,27 +1027,6 @@ describe('AssetSupport - uploadBehavior()', () => {
     expect(code).toContain('access-control-allow-origin')
     expect(code).toContain("'access-control-allow-methods': { value: 'POST' }")
     expect(code).toContain("'access-control-max-age': { value: '3000' }")
-  })
-
-  it('echoes the caller\u2019s own Origin on a preflight when allowedOrigins is narrowed (a preflight may only name one)', () => {
-    const stack = makeStack()
-    const assetSupport = new AssetSupport(stack, 'Assets', {
-      requireDeployableBundle: false,
-      uploadBehavior: { allowedOrigins: ['https://a.example.com', 'https://b.example.com'] },
-    })
-    const { template } = synthUploadDistribution(assetSupport, stack)
-
-    const functions = template.findResources('AWS::CloudFront::Function')
-    const code = Object.values(functions).map(
-      (fn) => (fn.Properties as { FunctionCode: string }).FunctionCode,
-    )[0]
-
-    expect(code).toContain(
-      'var ALLOWED_ORIGINS = ["https://a.example.com","https://b.example.com"]',
-    )
-    expect(code).toContain('ALLOWED_ORIGINS.indexOf(origin) !== -1')
-    // The wildcard branch must not fire for a narrowed list.
-    expect(code).toContain("ALLOWED_ORIGINS[0] === '*'")
   })
 
   it('the preflight function and the response-headers policy agree on the allowed method', () => {
