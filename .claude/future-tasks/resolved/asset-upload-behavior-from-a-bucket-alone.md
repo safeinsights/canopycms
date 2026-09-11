@@ -34,10 +34,18 @@ Lambda's grants (`GetObject*` on `asset-originals/*` and `asset-meta/*`, `PutObj
 **Measured against a synthesized template: it does not.** An owned `s3.Bucket` plus an
 `AssetSupport` in the same stack and account emits **zero** `AWS::S3::BucketPolicy` resources.
 All three grants land on the transform function's own execution role, as
-`AWS::IAM::Policy` statements on `…TransformFunctionServiceRoleDefaultPolicy`. This is CDK's
-`Grant.addToPrincipalOrResource` behaviour: it writes the resource half only when the grantee
-cannot take an identity policy or sits in another account. A same-account Lambda with a
-CDK-managed mutable role takes the identity half and nothing else.
+`AWS::IAM::Policy` statements on `…TransformFunctionServiceRoleDefaultPolicy`. Read the
+mechanism off `Grant.addToPrincipalOrResource` (aws-cdk-lib, `aws-iam/lib/grant.ts`) rather
+than from memory: it adds the identity statement, then returns immediately if that statement
+was added AND the grantee's account is known to match the resource's (`TokenComparison` SAME,
+or both unresolved). Only if one of those fails does it also write a resource statement.
+
+**Cross-account does not invert this, which was the obvious next guess and was also measured.**
+All three shapes — an owned bucket, one imported by name, one imported by ARN with an
+explicitly different `account` — emit zero `AWS::S3::BucketPolicy`. The resource half does run
+for an import, but `addToResourcePolicy` on a bucket CDK does not own is a no-op. So a
+cross-account adopter gets the identity half from this construct and writes the resource half
+themselves, on the bucket's side — which is what the requester described doing, and is correct.
 
 So the discarded footprint is **self-contained**: the role is created and destroyed with the
 throwaway construct, and deleting it leaves no statement behind on the shared bucket. The real
@@ -92,6 +100,26 @@ there is no invariant left to protect and a discarded return value is a visibly 
 Pinned as a passing case, so a future "add the guard here too" is a deliberate change rather
 than an accident.
 
+## A false positive this introduced, accepted rather than fixed
+
+Found by adversarial review, reproduced, and pinned by two tests. A **standalone**
+`AssetSupport` (construct-owned bucket, no `editorOrigins`) whose bucket is routed through
+`assetUploadBehavior` now fails synth with "the upload behavior was never attached", even
+though the edge route is attached and ACAO is supplied. The guard observes only the
+`UploadOrigin` that `uploadBehavior()` mints; before this change, "not attached via the method"
+and "not attached at all" were the same fact, and they no longer are.
+
+Not fixed, because every fix is worse. The free function has no construct to record attachment
+on, and having the guard search the tree for an upload route against this bucket is the exact
+instrument the guard's own comment rejects — a cross-stack distribution renders as
+`Fn::ImportValue`, so a tree search reports "not attached" for a correct stack. That trades
+this loud false positive for a silent false negative, the wrong direction to fail.
+
+The cost is bounded: it fails at synth, and the remedy is what an adopter in that position
+wants anyway. A standalone `AssetSupport` already owns the construct, so `uploadBehavior()`
+costs it nothing — the free function is for the stack that would otherwise grow an
+`AssetSupport` it has no other use for. The error text now names this case explicitly.
+
 ## Verification
 
 **The emitted template is byte-for-byte identical** for the existing path. Both versions of the
@@ -100,12 +128,17 @@ two `Template.toJSON()` dumps diffed clean — so no existing deployment sees a 
 replacement. This is the check that mattered most and is worth repeating for any future
 extraction out of a construct: passing assertions do not prove an unchanged template.
 
-All 59 pre-existing `asset-support.test.ts` tests pass unmodified; 16 added, 326 across the
-package. **13 source mutations verified**, each red on its intended test and green elsewhere —
-including two that initially proved nothing (a `customHeaders: {}` edit that does not affect
-OAC at all, and a mutation whose shell quoting silently failed to apply). Both were re-run
-properly. A mutation that does not fail is only evidence once you have confirmed it actually
-changed the source.
+All 59 pre-existing `asset-support.test.ts` tests pass unmodified (the only removed line in
+that file is its import); 18 added, 328 across the package. **15 source mutations verified**,
+each red on its intended test and green elsewhere.
+
+**Three of those mutations initially proved nothing, and all three failed the same way — the
+edit did not change what the test observes.** One added `customHeaders: {}` to an origin, which
+does not turn on OAC. One never applied at all, its patch script mangled by shell quoting. One
+applied cleanly but replaced a neighbouring phrase, leaving the word under assertion in place.
+Each looked like "the test is weak" and none was. The rule this earns: before believing a green
+mutation run, confirm the specific string or behaviour the test names is the thing that
+changed — not merely that the file differs.
 
 Edge-function tests continue to load the emitted `FunctionCode` into `node:vm` and run it,
 per the instrument change recorded in

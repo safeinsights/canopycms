@@ -1576,3 +1576,54 @@ describe('assetUploadBehavior() and AssetSupport.uploadBehavior() are one implem
     expect(viaFree.FunctionAssociations).toHaveLength((viaClass.FunctionAssociations ?? []).length)
   })
 })
+
+describe('assetUploadBehavior() and AssetSupport - a known false positive, pinned', () => {
+  it('refuses a standalone AssetSupport whose bucket is routed through the free function', () => {
+    // A REAL false positive, accepted rather than fixed, pinned so it stays a
+    // decision. The stack below works at runtime -- the edge route is attached
+    // and supplies ACAO -- and synth refuses it anyway, because the guard
+    // observes only the `UploadOrigin` that `uploadBehavior()` mints.
+    //
+    // Before this free function existed, "not attached via the method" and
+    // "not attached at all" were the same fact, so the guard was exact. They
+    // are no longer the same fact.
+    //
+    // Not fixed because every available fix is worse. The free function has no
+    // construct to record attachment on, and having the guard search the tree
+    // for an upload route against this bucket is the instrument the guard's
+    // own comment already rejects: a cross-stack distribution renders as
+    // `Fn::ImportValue`, so a tree search reports "not attached" for a
+    // perfectly correct stack -- a FALSE NEGATIVE traded for this false
+    // positive, and the wrong direction to fail.
+    //
+    // The cost is bounded: it fails loud at synth, and the remedy is the one
+    // an adopter in this position wants anyway. A standalone AssetSupport
+    // already owns the construct, so `uploadBehavior()` costs it nothing --
+    // the free function exists for the stack that would otherwise grow an
+    // AssetSupport it has no other use for. The error text names this case.
+    const app = newTestApp()
+    const stack = new Stack(app, 'TestStack', {
+      env: { account: '123456789012', region: 'us-east-1' },
+    })
+    const support = new AssetSupport(stack, 'Assets', { ...UPLOAD_PROPS })
+    new cloudfront.Distribution(stack, 'Uploads', {
+      defaultBehavior: assetUploadBehavior(stack, { bucket: support.bucket }),
+    })
+
+    expect(() => app.synth()).toThrow(/never attached to a distribution/)
+    expect(() => app.synth()).toThrow(/assetUploadBehavior/)
+  })
+
+  it('is not refused once the construct owns the route, which is the documented remedy', () => {
+    const app = newTestApp()
+    const stack = new Stack(app, 'TestStack', {
+      env: { account: '123456789012', region: 'us-east-1' },
+    })
+    const support = new AssetSupport(stack, 'Assets', { ...UPLOAD_PROPS })
+    new cloudfront.Distribution(stack, 'Uploads', {
+      defaultBehavior: support.uploadBehavior(),
+    })
+
+    expect(() => app.synth()).not.toThrow()
+  })
+})

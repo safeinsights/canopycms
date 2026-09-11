@@ -2265,8 +2265,8 @@ const uploads = new cloudfront.Distribution(this, 'AssetUploads', {
 // media.uploadUrl = `https://${uploads.distributionDomainName}/`
 ```
 
-Same options, same behaviour — it is the same implementation, and `AssetSupport.uploadBehavior()`
-calls it. The difference is what else gets built: `AssetSupport`'s constructor always creates the
+Same options, same behaviour — both entry points build the route through one shared internal
+function, so they cannot drift. The difference is what else gets built: `AssetSupport`'s constructor always creates the
 transform Lambda, its log group, its Function URL and its execution role, none of which this
 route uses. That matters where the upload distribution lives beside the bucket rather than beside
 a per-environment asset pipeline — the topology recommended just above. Reach for the method when

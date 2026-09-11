@@ -894,14 +894,27 @@ function buildUploadBehavior(
  *
  * That footprint is cheaper than it looks, and the reason is worth stating
  * because the opposite is easy to assume: those grants do NOT land in the
- * bucket policy. CDK's `Grant.addToPrincipalOrResource` writes the resource
- * half only cross-account, or for a principal that cannot carry an identity
- * policy - so for a same-account function with a CDK-managed role the grants
- * go to that function's OWN execution role. Measured on a synthesized
- * template, an owned bucket plus a same-account `AssetSupport` emits no
- * `AWS::S3::BucketPolicy` at all. Deleting the construct therefore takes the
- * whole footprint with it and leaves nothing behind on a shared bucket's
- * policy.
+ * bucket policy. `Grant.addToPrincipalOrResource` (aws-cdk-lib,
+ * `aws-iam/lib/grant.ts`) adds the identity statement first and returns right
+ * there when two things hold - the identity statement was actually added, AND
+ * the grantee's account is known to match the resource's (`TokenComparison`
+ * SAME, or both unresolved). Only when one of those fails does it also write a
+ * resource statement. A same-account Lambda with a CDK-managed role satisfies
+ * both, so its grants go to that function's OWN execution role and nowhere
+ * else. Measured on a synthesized template, an owned bucket plus a
+ * same-account `AssetSupport` emits no `AWS::S3::BucketPolicy` at all.
+ * Deleting the construct therefore takes the whole footprint with it and
+ * leaves nothing behind on a shared bucket's policy.
+ *
+ * Nor does the cross-account shape invert it, which is the obvious next
+ * guess and is also wrong. Measured across all three shapes - an owned
+ * bucket, one imported by name, and one imported by ARN with an explicitly
+ * DIFFERENT account - every one emits zero `AWS::S3::BucketPolicy`. The
+ * second half of `addToPrincipalOrResource` does run for an import, but
+ * `addToResourcePolicy` on a bucket CDK does not own is a no-op: it cannot
+ * write a policy onto a resource it did not create. So a cross-account
+ * adopter gets the identity half here and writes the resource half
+ * themselves, on the bucket's own side.
  *
  * What it costs instead is legibility: a second `AssetSupport` standing in a
  * stack that has no asset pipeline, existing only so that a method can be
@@ -914,6 +927,17 @@ function buildUploadBehavior(
  * `AssetSupport.uploadBehavior()` remains the right call when you already have
  * an `AssetSupport`; both funnel into the same builder, so the two cannot
  * drift.
+ *
+ * TWO THINGS TO KNOW ABOUT `scope`. It receives the CloudFront Function and
+ * the two policies as children under fixed ids, so calling this twice with
+ * the SAME scope throws CDK's duplicate-construct-id error rather than
+ * returning a second behavior - one call per scope. And because the children
+ * hang off `scope`, moving an EXISTING deployment from
+ * `AssetSupport.uploadBehavior()` to this function changes their construct
+ * path and therefore their logical IDs, which replaces all three CloudFront
+ * resources. There is no reason to make that move on a stack that already has
+ * an `AssetSupport`; this function is for the stack that would otherwise have
+ * to grow one.
  *
  * TWO THINGS THIS DOES NOT DO, both deliberate:
  *
@@ -1279,7 +1303,11 @@ export class AssetSupport extends Construct {
               ', so nothing supplies Access-Control-Allow-Origin. With no `editorOrigins` ' +
               'either, a browser upload will land the object in asset-staging/ and still ' +
               'report a network error. Pass the behavior to a distribution (see ' +
-              "uploadBehavior()'s doc comment), or pass `editorOrigins` instead.",
+              "uploadBehavior()'s doc comment), or pass `editorOrigins` instead. If you " +
+              'built the upload route from this bucket with the `assetUploadBehavior` free ' +
+              'function, ACAO IS supplied and this check cannot see it - it observes only ' +
+              'the origin this construct minted. Call uploadBehavior() here instead; you ' +
+              'already have the construct, so the free function buys you nothing.',
           ]
         }
         return []

@@ -53,9 +53,15 @@ const uploads = new cloudfront.Distribution(this, 'AssetUploads', {
 ```
 
 It takes the same options as `AssetSupportProps.uploadBehavior`, plus the `bucket` it would
-otherwise have read off the construct. `AssetSupport.uploadBehavior()` is unchanged and now
-delegates to it, so there is one implementation; the emitted template for existing callers is
-byte-for-byte identical, and no resource is replaced on your next deploy.
+otherwise have read off the construct. `AssetSupport.uploadBehavior()` is unchanged; both entry
+points now route through one shared internal builder, so there is a single implementation. The
+emitted template for existing callers is byte-for-byte identical, and no resource is replaced on
+your next deploy.
+
+Moving an _existing_ deployment from the method to the free function is a different matter: the
+three CloudFront resources would sit at a new construct path and so get new logical IDs, which
+replaces them. There is no reason to make that move on a stack that already has an
+`AssetSupport`.
 
 **Why.** `AssetSupport.uploadBehavior()` documents, and recommends, giving the upload route
 its own distribution serving that one route — reads and transforms stay per-environment, only
