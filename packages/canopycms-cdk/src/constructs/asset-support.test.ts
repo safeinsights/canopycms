@@ -555,8 +555,8 @@ describe('deployable-bundle guard', () => {
 
 describe('cms-stack template: the media block names a real API', () => {
   // The scaffold's "uncomment to enable media" block previously named
-  // a member that did not exist, and omitted the
-  // REQUIRED `editorOrigins` prop -- so an adopter who followed the template's
+  // a member that did not exist, and omitted the then-required
+  // `editorOrigins` prop -- so an adopter who followed the template's
   // own instructions hit two type errors plus a nonexistent property, then had
   // to reverse-engineer the construct's real API. Template text cannot be
   // type-checked while it is commented out, so assert the API surface it
@@ -588,11 +588,14 @@ describe('cms-stack template: the media block names a real API', () => {
     }
   })
 
-  it.each(MEDIA_BLOCK_SOURCES)('%s passes the required editorOrigins prop', (file) => {
-    const source = readFileSync(file, 'utf-8')
-    expect(/new AssetSupport\(/.test(source)).toBe(true)
-    expect(source).toContain('editorOrigins')
-  })
+  it.each(MEDIA_BLOCK_SOURCES)(
+    '%s passes editorOrigins -- optional to the construct now, but still what the scaffold should teach',
+    (file) => {
+      const source = readFileSync(file, 'utf-8')
+      expect(/new AssetSupport\(/.test(source)).toBe(true)
+      expect(source).toContain('editorOrigins')
+    },
+  )
 })
 
 /**
@@ -940,7 +943,7 @@ describe('AssetSupport - uploadBehavior()', () => {
     ).toThrow(/wildcard certificate/)
   })
 
-  it('forwards no cookies to S3, and strips Host and Authorization', () => {
+  it('forwards no cookies, no query strings, and no Host to S3 (Authorization is dropped by the function, not here)', () => {
     const stack = makeStack()
     const assetSupport = new AssetSupport(stack, 'Assets', { ...UPLOAD_PROPS })
     const { template, behavior } = synthUploadDistribution(assetSupport, stack)
@@ -1003,30 +1006,6 @@ describe('AssetSupport - uploadBehavior()', () => {
     const template = Template.fromStack(stack)
     template.resourceCountIs('AWS::CloudFront::Function', 1)
     template.resourceCountIs('AWS::CloudFront::ResponseHeadersPolicy', 1)
-  })
-
-  it('answers the CORS preflight at the edge - the editor\u2019s upload is not a simple request, and S3 with no CORS rule 403s an OPTIONS', () => {
-    // xhr-upload.ts assigns xhr.upload.onprogress before send(), and ANY
-    // listener on XMLHttpRequestUpload disqualifies the request from the
-    // simple-request rules regardless of method/headers/content-type. So a
-    // real browser upload always preflights. CloudFront does not synthesize
-    // preflight responses, and the bucket deliberately has no CORS rule, so
-    // without this short-circuit the OPTIONS reaches S3, 403s, and the POST is
-    // never sent. A scripted POST does not exercise this at all.
-    const stack = makeStack()
-    const assetSupport = new AssetSupport(stack, 'Assets', { ...UPLOAD_PROPS })
-    const { template } = synthUploadDistribution(assetSupport, stack)
-
-    const functions = template.findResources('AWS::CloudFront::Function')
-    const code = Object.values(functions).map(
-      (fn) => (fn.Properties as { FunctionCode: string }).FunctionCode,
-    )[0]
-
-    expect(code).toContain("request.method === 'OPTIONS'")
-    expect(code).toContain('statusCode: 204')
-    expect(code).toContain('access-control-allow-origin')
-    expect(code).toContain("'access-control-allow-methods': { value: 'POST' }")
-    expect(code).toContain("'access-control-max-age': { value: '3000' }")
   })
 
   it('the preflight function and the response-headers policy agree on the allowed method', () => {

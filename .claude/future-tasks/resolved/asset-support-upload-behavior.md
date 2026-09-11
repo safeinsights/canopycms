@@ -6,12 +6,34 @@
 Shipped as `AssetSupportProps.uploadBehavior` + `AssetSupport.uploadBehavior()` in
 `packages/canopycms-cdk/src/constructs/asset-support.ts`, built to **option 3** below: the
 behaviour is meant to be the default behaviour of a distribution serving the upload route and
-nothing else. It emits an unsigned origin for the bucket, `ALLOW_ALL`, a viewer-request rewrite
-to `/`, an origin-request policy forwarding no cookies and no query strings and stripping
-`host` + `authorization`, and a response-headers policy supplying `ACAO` (default `['*']`,
-overridable via `allowedOrigins`).
+nothing else. It emits an unsigned origin for the bucket, `ALLOW_ALL`, a viewer-request
+CloudFront Function, an origin-request policy forwarding no cookies and no query strings and
+excluding `host`, and a response-headers policy supplying `ACAO` (default `['*']`, overridable
+via `allowedOrigins`). The function does three things: rewrites the URI to `/`, deletes
+`Authorization`, and answers the CORS preflight.
 
-Four decisions taken during implementation that this file did not anticipate:
+## The finding that changed the design, found in review round 2
+
+**This route needs a preflight responder, and the measurements below could not have shown
+that.** They replayed the POST as a script; a scripted POST has no preflight.
+
+The editor's upload is not a CORS simple request, though it reads like one. `xhr-upload.ts`
+sends `multipart/form-data` with no custom headers — but it assigns `xhr.upload.onprogress`
+before `send()`, and registering ANY listener on the `XMLHttpRequestUpload` object disqualifies
+a request from the simple-request rules on its own, independent of method, headers and content
+type. So every browser upload begins with `OPTIONS /`.
+
+Nothing else would have answered it. CloudFront does not synthesize preflight responses (a
+response headers policy supplies values for headers *in responses to* preflight requests — it
+decorates a response something else produced), and `ALLOW_ALL` forwards the OPTIONS to S3,
+which with no CORS configuration answers `403 CORSResponse`. A preflight that is not 2xx fails
+the browser's check whatever headers are attached, so **on the exact topology recommended here
+the POST would never have been sent at all.**
+
+The lesson generalises past this task: a scripted POST is not an acceptance test for a
+browser upload path. Anything that turns on CORS has to be exercised by a browser.
+
+Four further decisions taken during implementation that this file did not anticipate:
 
 - **`HttpOrigin`, not `S3BucketOrigin.withBucketDefaults()`.** Both are unsigned, but
   `HttpOrigin` is the exact shape measured end to end below, and it is the only one that can
@@ -30,6 +52,26 @@ Four decisions taken during implementation that this file did not anticipate:
   is now out of date on that point). Standalone mode refuses to synth with neither it nor
   `uploadBehavior`, and an empty array counts as absent. BYO-bucket mode is untouched: the
   caller owns that bucket's CORS configuration and the construct cannot read it.
+
+Review rounds then added a set of fail-closed guards, each for a failure that would otherwise
+have deployed clean and failed silently in a browser:
+
+- `allowedOrigins` entries are matched EXACTLY at the preflight, so a leftmost-subdomain
+  pattern (which the response headers policy would happily accept) is refused at synth rather
+  than half-honoured. `'*'` counts only as the sole entry.
+- An empty `allowedOrigins` is refused rather than defaulting to the wildcard.
+- A dotted BYO bucket name is refused: S3's wildcard certificate covers one label, so
+  `my.docs.bucket.s3.<region>.amazonaws.com` fails TLS to this *custom* origin and CloudFront
+  answers 502. The read path uses an S3-type origin and is unaffected.
+- Setting `uploadBehavior` and never calling `uploadBehavior()` fails synth — otherwise the
+  standalone guard is satisfied while nothing supplies ACAO from anywhere.
+
+**Testing note worth carrying forward:** the first tests for the edge function asserted on
+fragments of its emitted SOURCE, and a real matcher bug passed all of them — the code contained
+every expected fragment and still answered the wrong thing. The tests now load the emitted
+`FunctionCode` into `node:vm` and run it against CloudFront-shaped events. 26 tests for this
+feature; 33 source mutations verified across three review rounds, each red on its intended
+test.
 
 `ASSET_BEHAVIOR_SPREAD_MISTAKE_KEYS` was considered and deliberately **not** extended:
 `uploadBehavior()` returns a bare `BehaviorOptions` rather than a named property, so there is

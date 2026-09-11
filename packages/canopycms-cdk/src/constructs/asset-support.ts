@@ -204,6 +204,14 @@ export interface AssetUploadBehaviorOptions {
    * Narrow it to your editor origin(s) if you would rather; nothing else here
    * depends on the wildcard.
    *
+   * ORIGINS ARE MATCHED EXACTLY, and `'*'` is honoured only as the sole entry.
+   * CloudFront's response headers policy would accept a leftmost-subdomain
+   * pattern (`https://*.preview.example.com`), but the CORS preflight is
+   * answered at the edge by a CloudFront Function that compares strings, so a
+   * pattern would pass the POST response's policy and fail every preflight.
+   * Rather than half-honour it, the constructor refuses any entry containing
+   * `*` unless the list is exactly `['*']`.
+   *
    * @default ['*']
    */
   readonly allowedOrigins?: string[]
@@ -536,9 +544,11 @@ export class AssetSupport extends Construct {
    * policies have a default account quota of 20 - so an adopter who sets the
    * prop on a per-environment `AssetSupport` while building the single shared
    * upload distribution the accessor recommends would otherwise mint a set per
-   * environment for one route. Nothing observes the construct tree between the
-   * constructor and the accessor, so deferring is invisible other than in what
-   * gets emitted.
+   * environment for one route. Deferring is invisible other than in what gets
+   * emitted, with one exception worth knowing rather than discovering: calling
+   * the accessor AFTER a synth has run modifies the construct tree, and CDK
+   * refuses that with `ConstructTreeModifiedAfterSynth` naming the constructs
+   * added. Loud, not silent.
    */
   private upload?: cloudfront.BehaviorOptions
 
@@ -1060,11 +1070,15 @@ export class AssetSupport extends Construct {
     // bucket that does have its own CORS configuration.
     //
     // AllowMethods/AllowHeaders/MaxAge take effect only on a CORS PREFLIGHT,
-    // which this path does not trigger: `xhr-upload.ts` sends
-    // multipart/form-data with no custom headers, a CORS simple request. They
-    // are set coherently rather than left to drift, but adding any custom
-    // header on that XHR would start requiring a preflight - which S3, with no
-    // CORS configuration, would refuse.
+    // and this path DOES trigger one - see the CloudFront Function above, which
+    // answers it, and which exists because nothing else would. They are set
+    // here anyway, sharing `UPLOAD_ALLOWED_METHOD` with that function so the
+    // two cannot tell a browser different things, and because a response
+    // headers policy is documented to decorate responses without saying whether
+    // a function-generated one is among them. If it is, `originOverride: true`
+    // means the policy's values REPLACE the function's identical ones; if it is
+    // not, the function's stand alone. Either way the viewer sees exactly one
+    // of each, which is what makes it safe not to know.
     const responseHeadersPolicy = new cloudfront.ResponseHeadersPolicy(
       this,
       'AssetUploadResponseHeadersPolicy',
@@ -1153,7 +1167,9 @@ export class AssetSupport extends Construct {
    *   applies that to S3's upload errors too and the editor reports the
    *   substituted status. The site's cookies and any cached basic-auth
    *   credential are also live hazards there that have to be stripped by
-   *   policy (`buildUploadBehavior` does strip both) rather than simply never
+   *   policy and function (`buildUploadBehavior` removes both - cookies via
+   *   the origin request policy, `Authorization` in the viewer-request
+   *   function) rather than simply never
    *   being sent. It works; it is just strictly worse.
    * - NOT one shared distribution serving asset reads AND writes for every
    *   environment. One assets distribution means one `AssetSupport`, and

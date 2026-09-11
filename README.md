@@ -2254,12 +2254,24 @@ const uploads = new cloudfront.Distribution(this, 'AssetUploads', {
 ```
 
 No custom domain or certificate is needed, and no bucket CORS rule is written: the edge supplies
-`Access-Control-Allow-Origin` for this route alone. `editorOrigins` — which exists only to write
+`Access-Control-Allow-Origin` for this route alone and answers the CORS preflight itself.
+`allowedOrigins` narrows the wildcard default; origins are matched exactly, so a
+`*.subdomain` pattern is refused at synth rather than passing the policy and failing the
+preflight. `editorOrigins` — which exists only to write
 that bucket rule — becomes optional once you do this, though standalone mode refuses to synth
 with neither.
 
 Wiring it by hand instead, four things are easy to get wrong:
 
+- **Answer the CORS preflight yourself.** This is the one most likely to be missed, and it stops
+  the upload dead. The editor's POST looks like a CORS simple request — `multipart/form-data`,
+  no custom headers — but it registers an `xhr.upload` progress listener, and that alone
+  disqualifies it, so the browser sends `OPTIONS` first. CloudFront does not answer preflights
+  on your behalf (a response headers policy decorates a response, it does not create one), and
+  S3 with no CORS configuration answers `403`. A preflight that is not 2xx fails the browser's
+  check no matter what headers are on it, so the POST is never sent. Answer `OPTIONS` at the
+  edge — a viewer-request function returning 204 with the CORS headers — or keep a bucket CORS
+  rule. Note that a `curl` POST will appear to work throughout: only a browser preflights.
 - **Rewrite the URI to `/`** on viewer request. S3's POST Object is only valid at the bucket
   root; without it you get `405 MethodNotAllowed`. It is also what keeps "allow all methods"
   safe — no request can address a key.
