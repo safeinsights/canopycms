@@ -3635,6 +3635,16 @@ When you retire a task, do all three things together or the check will tell you 
 
 One limit worth knowing: the check does not follow into `node_modules`, so a server-only npm package (`sharp`, `simple-git`, the S3 SDK) imported from client code slips past it. The e2e production `next build` remains the backstop for that.
 
+### Trojan Source (Bidirectional Unicode) Check
+
+CI greps every tracked file for bidirectional unicode control characters (U+202A-202E, U+2066-2069) before `pnpm install` runs, catching CVE-2021-42574 in seconds. It pins `LC_ALL=C.UTF-8`: `git grep -P` only compiles `\x{...}` escapes above 0xFF in PCRE2 UTF mode, which git enables only under a UTF-8 locale -- under `LC_ALL=C` the command dies with exit 128 instead of matching nothing. The step branches on exit status with `case` rather than `if` for exactly that reason: 0 (matches found) fails, 1 (clean) passes, anything else -- including that 128 -- fails loudly rather than being read as "clean". ESLint's `security/detect-bidi-characters` overlaps but is JS/TS-only and only a warning, so it doesn't gate CI.
+
+### Dependency License Scan (Trivy)
+
+CI runs a Trivy `fs` scan (`scanners: license`, `severity: HIGH,CRITICAL`, `exit-code: 1`) **after** `pnpm install`, deliberately: Trivy reads `pnpm-lock.yaml` but collects license metadata from the installed tree, so against a bare checkout it reports the lockfile as "Not scanned" and exits 0 without having inspected anything.
+
+A new HIGH/CRITICAL (LGPL/GPL-class) license anywhere in the production dependency graph fails the build. Either remove the dependency or add a documented rule to [.trivyignore.yaml](.trivyignore.yaml), which must be passed explicitly via the action's `trivyignores:` input -- Trivy auto-loads only the plain `.trivyignore` form. The existing rule suppresses libvips (`LGPL-3.0-or-later`), pulled in by `sharp` (a direct production dependency); it's keyed by license _expression_ rather than package name because the flagged package differs between a dev machine (`@img/sharp-libvips-darwin-arm64`) and CI (`@img/sharp-libvips-linux-x64`, `-linuxmusl-x64`).
+
 ### Waiting on PR Checks
 
 Watching a PR's CI by hand -- or worse, by inline bash loop -- is how a session loses twenty minutes and then merges on a result it misread. Use the watcher instead:
