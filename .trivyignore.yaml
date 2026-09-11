@@ -1,0 +1,30 @@
+licenses:
+  # `sharp` (Apache-2.0) is a direct production dependency of the published
+  # `canopycms` package — it backs the on-demand image transform engine in
+  # `packages/canopycms/src/assets/`. Its prebuilt native binaries arrive as
+  # `@img/sharp-libvips-*`, which are LGPL-3.0-or-later and which Trivy
+  # classifies `restricted`/HIGH. Without this rule the license scanner reds
+  # every CI run on arrival, which is how it was caught before landing.
+  #
+  # Why this is suppressed rather than fixed: CanopyCMS does not redistribute
+  # libvips. `packages/canopycms` builds with plain `tsc` (no bundler) and
+  # publishes `files: ["dist"]` with no `bundledDependencies`, so the npm
+  # tarball carries only our own MIT-licensed JavaScript. `sharp` sits in
+  # `dependencies`, so it is the ADOPTER's package manager that resolves
+  # `@img/sharp-libvips-<platform>` into the adopter's own `node_modules`, as
+  # a separate, unmodified, dynamically-linked package that keeps its own
+  # license text. We are a consumer of the shared library, not a distributor
+  # of it — which is a different posture from the sibling repos that ship
+  # container images containing the binary and therefore also carry a
+  # THIRD_PARTY_LICENSES.md.
+  #
+  # Keyed by exact license EXPRESSION, not by package name, deliberately: the
+  # platform-specific package name differs between a developer's machine
+  # (`@img/sharp-libvips-darwin-arm64`) and CI (`@img/sharp-libvips-linux-x64`),
+  # but the expression does not. Verified against the npm registry that every
+  # `@img/sharp-*` wrapper is plain Apache-2.0 and every `@img/sharp-libvips-*`
+  # is plain `LGPL-3.0-or-later`, so no compound expression rule is needed here.
+  #
+  # A NEW restricted-license dependency, or a change to one of these
+  # expressions, still fails CI. That is the intended review trigger.
+  - id: LGPL-3.0-or-later

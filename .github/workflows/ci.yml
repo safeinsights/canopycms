@@ -27,6 +27,43 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
+      # Trojan Source (CVE-2021-42574): bidirectional control characters let
+      # source render in a different order than it compiles in. Dependency-free
+      # and ~instant, so it runs before install and fails in seconds.
+      #
+      # LC_ALL is pinned deliberately, and the exit status is handled by `case`
+      # rather than by `if`. `git grep -P` compiles \x{...} escapes above 0xFF
+      # only in PCRE2 UTF mode, which git turns on only under a UTF-8 locale;
+      # under LC_ALL=C or an unset locale it dies with "character code point
+      # value in \x{} or \o{} is too large" and exit 128. The obvious form of
+      # this check -- `if git grep -P ...; then fail; fi` -- reads that fatal
+      # error as "found nothing" and passes, so a locale change would quietly
+      # turn the check into a no-op rather than breaking it loudly. Both
+      # branches were verified against a planted U+202E before this landed.
+      - name: Check for bidirectional unicode characters (Trojan Source)
+        env:
+          LC_ALL: C.UTF-8
+        run: |
+          if matches=$(git grep -P -I -l '[\x{202A}-\x{202E}\x{2066}-\x{2069}]'); then
+            status=0
+          else
+            status=$?
+          fi
+          case "$status" in
+            0)
+              echo '::error::Bidirectional unicode characters detected (CVE-2021-42574 Trojan Source)'
+              echo "$matches"
+              exit 1
+              ;;
+            1)
+              echo 'No bidirectional unicode control characters found'
+              ;;
+            *)
+              echo "::error::bidi scan did not run (git grep exited $status)"
+              exit 1
+              ;;
+          esac
+
       - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
 
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
@@ -96,6 +133,28 @@ jobs:
       # is what this check exists to make impossible.
       - name: Lint GitHub Action pins
         run: pnpm lint:actions
+
+      # Dependency licenses. MUST run after `pnpm install`: Trivy reads
+      # `pnpm-lock.yaml` but collects the license metadata from the INSTALLED
+      # tree, so against a bare checkout it reports the lockfile as "Not
+      # scanned" and exits 0 -- passing without having looked at anything. The
+      # upstream version of this step ran before `pnpm install` and was vacuous
+      # for exactly that reason; both placements were verified locally.
+      #
+      # `exit-code: 1` means a new restricted (LGPL/GPL-class) license anywhere
+      # in the production graph fails the build. The one this repo already
+      # carries -- libvips, via `sharp` -- is suppressed with its reasoning in
+      # .trivyignore.yaml, which has to be passed explicitly because Trivy
+      # auto-loads only the plain `.trivyignore` form, not the `.yaml` one.
+      - name: Scan dependency licenses (Trivy)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          scanners: 'license'
+          severity: 'HIGH,CRITICAL'
+          exit-code: '1'
+          trivyignores: '.trivyignore.yaml'
 
       - name: Format check (Prettier)
         run: pnpm exec prettier --check .
