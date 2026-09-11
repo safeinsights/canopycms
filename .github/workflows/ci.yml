@@ -14,9 +14,11 @@ on:
 # the credentials `actions/checkout` persists on disk.
 permissions:
   contents: read
-  # dorny/paths-filter reads PR metadata when it cannot diff from git
-  # history alone. Read-only either way -- the property this block buys is
-  # that NOTHING here is writable.
+  # dorny/paths-filter lists a pull request's changed files through the API
+  # whenever it has a token, and `token` defaults to github.token (see
+  # getChangedFiles in its src/main.ts); push events diff with git instead.
+  # Read-only either way -- the property this block buys is that NOTHING
+  # here is writable.
   pull-requests: read
 
 jobs:
