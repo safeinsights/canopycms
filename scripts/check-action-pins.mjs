@@ -87,7 +87,7 @@ if (problems.length > 0) {
   for (const p of problems) console.error(`  ${p}`)
   console.error(
     '\nPin each to a full commit SHA with the tag in a trailing comment, e.g.:\n' +
-      '  uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4\n\n' +
+      '  uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n\n' +
       'Resolve a tag to its commit (dereferencing annotated tags) with:\n' +
       '  gh api repos/OWNER/REPO/commits/TAG --jq .sha\n',
   )

@@ -312,7 +312,10 @@ Prerequisites that an update-function-code pipeline did not need:
    (`cdk-hnb659fds-*-deploy-role`, `-file-publishing-role`,
    `-image-publishing-role`, `-lookup-role`). `cdk deploy` mutates
    infrastructure, so this is a wider grant than updating a function's code.
-3. **A Docker daemon on the runner** (`ubuntu-latest` has one).
+3. **A Docker daemon on the runner** (`ubuntu-latest` has one). On a
+   self-hosted runner, you also need Actions Runner v2.327.1 or later: the
+   workflow's pinned actions run on Node 24, and their docs give that as the
+   minimum.
 4. **The CDK devDependencies from Step 4**, committed to `package.json`. The
    workflow checks for them before deploying.
 

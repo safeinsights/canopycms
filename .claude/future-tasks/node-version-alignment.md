@@ -1,4 +1,4 @@
-# [P3] Node versions are stated in six places and do not all agree
+# [P3] Node versions are stated in many places and must move together
 
 Owed from the 2026-08 infra-review epic's plan (I said I would file the
 repo-wide 22 → 24 bump and did not), plus two inconsistencies the round-4
@@ -16,8 +16,12 @@ three.
 | transform Lambda | `NODEJS_22_X` | pre-existing |
 | scaffold `Dockerfile.cms.template` + `deploy-cms.yml.template` | `22` | this epic |
 | `examples/aws-deployment/deploy-cms.yml` | `22` | round-4 cleanup |
+| esbuild `target`s: `canopycms/scripts/postbuild.mjs`, `canopycms-cdk`'s `build:worker` script, `canopycms-cdk/lambda/asset-transform/build.mjs` | `node22` | `chore/actions-node24` (were `node20`; no earlier sweep listed them) |
 
-So the runtimes are now consistent at 22.
+So the runtimes are now consistent at 22. Not in this table: the runtime each pinned
+GitHub Action declares (`runs.using`). That belongs to the action, not to us, and
+changes only when the action is re-pinned; see
+[resolved/gha-actions-node20-runtime.md](resolved/gha-actions-node20-runtime.md).
 
 **Question (1) below is ANSWERED as of 2026-09-09 (PR #308), which narrowed all five
 published packages from `>=18` to `>=22.12.0` and moved the root to match.** It was
@@ -42,8 +46,8 @@ and not a cleanup. Note Node 18 is EOL (2025-04-30) and Node 20 since
 **2027-04-30**; Node 24 is Active LTS until 2026-10-20, then maintenance to
 **2028-04-30**. There is no urgency, and 22 was chosen for this epic precisely
 so the worker matches `.nvmrc`/CI rather than leading them. The bump should move
-`.nvmrc`, root `engines`, CI, the worker, the Lambda runtimes and both scaffold
-templates **together** — a partial bump is what produced the split this file
+`.nvmrc`, root `engines`, CI, the worker, the Lambda runtimes, the esbuild targets
+and both scaffold templates **together** — a partial bump is what produced the split this file
 exists to record.
 
 ## Fix direction
