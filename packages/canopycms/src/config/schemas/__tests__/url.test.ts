@@ -85,8 +85,8 @@ describe('uploadTargetUrlSchema', () => {
     expect(() => uploadTargetUrlSchema.parse(value)).toThrow()
   })
 
-  // The difference between the two schemas, and the only one — a census over a 4-symbol
-  // alphabet found 39 divergent values, every one a literal //host. It is rejected here
+  // The difference between the two schemas, and the only one — a census over every 4-character
+  // string from an 11-symbol alphabet found 39 divergent values, every one a literal //host. It is rejected here
   // because it is AMBIGUOUS, not because http is unsafe: it resolves to http or https
   // depending on the editor page issuing the upload, so the config would not determine where
   // a live credential is sent. Bare http:// is accepted (see ACCEPTED_BY_BOTH).

@@ -13,8 +13,9 @@ const SENTINEL_BASE = 'https://relative.invalid'
  *
  * Bounded repetition over an alternation of two literals, so no nested quantifier and no
  * backtracking blowup — see `utils/url-prefix.ts`'s `stripTrailingSlashes` for why regex shape
- * is watched in this area. Measured 0.08–1.7ms across five ~400KB adversarial inputs, the
- * slowest being a string of 400k slashes.
+ * is watched in this area. Measured under 2ms across five ~400KB adversarial inputs, the slowest
+ * consistently being a string of 400k slashes. Stated as a bound rather than a range because
+ * the figures move run to run.
  */
 const DOT_SEGMENT = /(^|\/)(\.|%2e){1,2}(\/|$)/i
 

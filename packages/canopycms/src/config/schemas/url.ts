@@ -23,9 +23,10 @@ import { isHttpUrlOrSameOriginPath } from '../../utils/sanitize-href'
  * live credential is sent. `isHttpUrlOrSameOriginPath`'s doc carries the full reasoning,
  * including why bare `http://` is nonetheless accepted.
  *
- * "Exactly one case" is measured, not asserted: a census over a 4-symbol alphabet plus the
- * hand-written shapes found 39 values the two schemas treat differently, and every one is a
- * literal `//host` (three only after `.trim()` strips a leading tab).
+ * "Exactly one case" is measured, not asserted: a census over every 4-character string
+ * drawn from an 11-symbol alphabet (slash, backslash, dot, colon, %2e, ?, #, tab, and three
+ * letters), plus hand-written shapes, found 39 values the two schemas treat differently — and
+ * every one is a literal `//host` (three only after `.trim()` strips a leading tab).
  */
 export const uploadTargetUrlSchema = z
   .string()
