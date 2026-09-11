@@ -743,6 +743,92 @@ describe('CanopyCmsDistribution: assetSupport prop', () => {
     expect(() => second.attachTo(dist.distribution)).toThrow(/already called/i)
   })
 
+  it('forwards assetBehaviorOverrides from the prop to BOTH asset behaviors', () => {
+    // The tier-auth adopter is the one who most needs attachTo's ordering
+    // guarantee, and before this prop existed needing overrides sent them off
+    // the guarded path entirely: the assetSupport prop could not pass them, so
+    // the documented advice was to drop the prop and hand-call attachTo. This
+    // pins that the guarded path now covers that case.
+    const { stack, service, assetSupport } = buildServiceAndAssets('PropOverridesStack')
+    const fn = new cloudfront.Function(stack, 'ViewerFn', {
+      code: cloudfront.FunctionCode.fromInline('function handler(e){return e.request}'),
+    })
+    new CanopyCmsDistribution(stack, 'Dist', {
+      ...distributionCommonProps(stack, service.functionUrl),
+      assetSupport,
+      assetBehaviorOverrides: {
+        functionAssociations: [
+          { function: fn, eventType: cloudfront.FunctionEventType.VIEWER_REQUEST },
+        ],
+      },
+    })
+
+    const synthesized = Object.values(
+      Template.fromStack(stack).findResources('AWS::CloudFront::Distribution'),
+    )[0]
+    const behaviors = synthesized.Properties.DistributionConfig.CacheBehaviors as Array<{
+      PathPattern: string
+      FunctionAssociations?: unknown[]
+    }>
+    const patterns = behaviors.map((b) => b.PathPattern)
+
+    for (const pattern of [ASSETS_TRANSFORM_PATH_PATTERN, ASSETS_PATH_PATTERN]) {
+      const behavior = behaviors.find((b) => b.PathPattern === pattern)
+      expect(behavior, `${pattern} should be attached`).toBeDefined()
+      expect(
+        behavior?.FunctionAssociations,
+        `${pattern} must carry the viewer-request function, or it is anonymously readable`,
+      ).toHaveLength(1)
+    }
+    // The overrides must not cost the ordering guarantee the prop exists for.
+    expect(patterns.indexOf(ASSETS_TRANSFORM_PATH_PATTERN)).toBeLessThan(
+      patterns.indexOf(ASSETS_PATH_PATTERN),
+    )
+  })
+
+  it('refuses assetBehaviorOverrides passed without assetSupport', () => {
+    // Otherwise the overrides have nothing to merge into and vanish, taking a
+    // tier-auth viewer function with them -- silently, at the one spot where
+    // that means anonymously readable assets.
+    const { stack, service } = buildServiceAndAssets('OverridesWithoutSupportStack')
+    expect(
+      () =>
+        new CanopyCmsDistribution(stack, 'Dist', {
+          ...distributionCommonProps(stack, service.functionUrl),
+          assetBehaviorOverrides: { compress: false },
+        }),
+    ).toThrow(/without `assetSupport`/)
+  })
+
+  it('records attachment on the distribution itself, not in module state', () => {
+    // The duplicate-attachment guard is keyed on the distribution, so the fact
+    // lives on it as a child construct rather than in a module-level registry.
+    // Asserting the marker (not just the error) is what makes the guard's state
+    // inspectable, and pins that the scoping is the construct tree's.
+    const { stack, service, assetSupport } = buildServiceAndAssets('AttachMarkerStack')
+    const dist = new CanopyCmsDistribution(stack, 'Dist', {
+      ...distributionCommonProps(stack, service.functionUrl),
+    })
+    const markerIds = () => dist.distribution.node.children.map((c) => c.node.id)
+
+    expect(markerIds()).not.toContain('CanopyAssetBehaviorsAttached')
+    assetSupport.attachTo(dist.distribution)
+    expect(markerIds()).toContain('CanopyAssetBehaviorsAttached')
+
+    // A distribution that was never attached to keeps its own state -- the
+    // check cannot be a process-wide "has any distribution been attached to".
+    const other = buildServiceAndAssets('AttachMarkerStack2')
+    const untouched = new CanopyCmsDistribution(other.stack, 'Dist', {
+      ...distributionCommonProps(other.stack, other.service.functionUrl),
+    })
+    expect(untouched.distribution.node.children.map((c) => c.node.id)).not.toContain(
+      'CanopyAssetBehaviorsAttached',
+    )
+    // ...and can still be attached to, which a sticky module-level flag would
+    // have to get right by luck of ordering.
+    expect(() => other.assetSupport.attachTo(untouched.distribution)).not.toThrow()
+  })
+
   it('refuses a second attachTo for the same distribution', () => {
     // The other door into the duplicate-attachment hazard: the prop calls
     // attachTo for you, so a caller who also calls it by hand attaches each

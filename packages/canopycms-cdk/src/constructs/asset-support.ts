@@ -47,17 +47,11 @@ const transformAssetDir = path.join(__dirname, '..', '..', 'lambda', 'asset-tran
 const DEPLOYABLE_MARKER = '.deployable'
 
 /**
- * The four S3 key prefixes the asset system uses, mirrored from
- * `packages/canopycms/src/assets/asset-prefixes.ts` (the source of truth).
- * Duplicated as plain string literals - not imported from `canopycms` -
- * because this construct must synth cleanly for ANY consumer's CDK app
- * (e.g. a site's own `infrastructure/` package), which has no reason to
- * have `canopycms` itself resolvable from wherever its CDK code runs. The
- * transform Lambda (../../lambda/asset-transform/handler.ts), by contrast,
- * is bundled at build time from WITHIN this package (where `canopycms` is a
- * real workspace devDependency), so it imports the canonical constants
- * directly from `canopycms/server` instead of duplicating them - see that
- * file's doc comment.
+ * The four S3 key prefixes the asset system uses. Source of truth is
+ * `packages/canopycms/src/assets/asset-prefixes.ts`; these are copied as
+ * literals rather than imported so this construct synths in a consumer CDK app
+ * that has no `canopycms` resolvable. (The transform Lambda does import them -
+ * it is bundled from inside this package; see its handler's doc comment.)
  */
 const PREFIXES = {
   originals: 'asset-originals',
@@ -165,23 +159,64 @@ const TRANSFORM_CACHE_DEFAULT_TTL = Duration.days(1)
 const TRANSFORM_CACHE_MAX_TTL = Duration.days(365)
 
 /**
- * Distributions that already carry the asset behaviors, tracked at MODULE level
- * rather than per instance.
+ * Id of the marker construct `attachTo` adds to a distribution to record that
+ * the asset behaviors are already on it.
  *
- * Per-instance (the first version of this) only caught the same `AssetSupport`
- * attaching twice. Two `AssetSupport` constructs attaching to one distribution
- * slipped through and synthesized
- * ['/assets/t/*','/assets/*','/assets/t/*','/assets/*'] - the identical
- * duplicate-path-pattern deploy failure the guard exists to convert into a
- * synth error. There is no legitimate form of that: both instances attach the
- * same two patterns, so the second is always wrong regardless of which
- * construct owns it.
+ * The fact being recorded is "THIS distribution already carries these two
+ * patterns", so it is stored ON that distribution rather than in a module-level
+ * registry. Per-INSTANCE state was the first version and was wrong: two
+ * different `AssetSupport` constructs attaching to one distribution slipped
+ * through and synthesized ['/assets/t/*','/assets/*','/assets/t/*','/assets/*'],
+ * the duplicate-path-pattern deploy failure the guard exists to convert into a
+ * synth error. There is no legitimate form of that - both instances attach the
+ * same two patterns, so the second is always wrong regardless of which construct
+ * owns it - so the check has to be keyed on the distribution, not the attacher.
  *
- * A `WeakSet` keyed on the distribution object, so it holds no reference that
- * would outlive the construct tree and cannot leak across CDK apps in a test
- * process.
+ * A module-level `WeakSet` keyed on the distribution object did that correctly
+ * (a `cloudfront.Distribution` instance belongs to exactly one construct tree,
+ * and `attachTo` takes a concrete instance, so one could never be claimed by a
+ * second CDK app). A child construct is preferred anyway because the scoping is
+ * then a property of the tree rather than something the reader has to reason
+ * about process lifetime to trust - and it is visible in `node.children`, so a
+ * test can assert the guard's state instead of only its error.
+ *
+ * The marker is a bare `Construct`, which emits nothing into the template.
  */
-const distributionsWithAssetBehaviors = new WeakSet<cloudfront.Distribution>()
+const ATTACHED_MARKER_ID = 'CanopyAssetBehaviorsAttached'
+
+/**
+ * The upload behavior's origin, which records having been bound to a
+ * distribution.
+ *
+ * This exists so the synth-time validation below can tell "`uploadBehavior()`
+ * was CALLED" from "its result actually reached a distribution" - two states a
+ * memoized accessor cannot distinguish on its own, and the second is the one
+ * that determines whether anything supplies Access-Control-Allow-Origin.
+ *
+ * CDK calls `bind()` exactly when a `Distribution` takes a behavior: from the
+ * constructor for `defaultBehavior` (the topology `uploadBehavior()`
+ * recommends), and from `addBehavior` for an additional one. Measured on both,
+ * plus a distribution in a different stack - all three bind, and all three bind
+ * EAGERLY at construction, before any validation runs. A behavior that is built
+ * and then dropped never binds.
+ *
+ * Observing the origin rather than searching the tree for the emitted behavior
+ * is what makes this work across stacks. The tree search resolves to an
+ * `Fn::ImportValue` in a consuming stack, so it would report "not attached" for
+ * a perfectly correct cross-stack distribution - a false synth failure, which is
+ * worse than the gap it closes.
+ */
+class UploadOrigin extends origins.HttpOrigin {
+  public attachedToDistribution = false
+
+  public bind(
+    scope: Construct,
+    options: cloudfront.OriginBindOptions,
+  ): cloudfront.OriginBindConfig {
+    this.attachedToDistribution = true
+    return super.bind(scope, options)
+  }
+}
 
 /**
  * Configuration for the presigned-upload CloudFront behavior. See
@@ -265,14 +300,29 @@ export interface AssetSupportProps {
    * bucket, and that must never appear in a template by accident. Pass
    * `uploadBehavior: {}` to take the defaults.
    *
-   * BYO-BUCKET CAVEAT: this origin addresses the bucket by
-   * `bucketRegionalDomainName`, and for a bucket imported with
-   * `Bucket.fromBucketName()` that resolves to the STACK's region, not the
-   * bucket's. The read path tolerates a mismatch because CloudFront follows
-   * S3's region redirect on an S3-type origin; this one is a custom origin and
-   * does not, so S3's 301 reaches the browser, where a redirected cross-origin
-   * POST surfaces as an opaque network error. Import a cross-region bucket
-   * with `Bucket.fromBucketAttributes({ region })` so the domain name is right.
+   * BYO-BUCKET CAVEATS - three, and the first is about your bucket policy:
+   *
+   * 1. YOUR BUCKET POLICY IS THE ONLY GATE ON THIS ROUTE. The read behaviors
+   *    reach the bucket through an OAC-SIGNED origin, so a permissive policy
+   *    there is still gated by a signature CloudFront adds. This origin cannot
+   *    be signed (CloudFront never hashes the body, so an OAC-signed origin
+   *    rejects every multipart POST), so nothing gates it but the policy. The
+   *    route is contained by rewriting every request to `/`, which leaves an
+   *    anonymous caller only the bucket-level operations at the root - so what
+   *    your policy grants anonymously AT THE BUCKET ROOT is what is reachable.
+   *    A bucket this construct creates refuses all of them (BLOCK_ALL, no
+   *    public policy); an existing bucket is yours to have got right, and "the
+   *    read path already works" is not evidence that it is.
+   * 2. This origin addresses the bucket by `bucketRegionalDomainName`, and for
+   *    a bucket imported with `Bucket.fromBucketName()` that resolves to the
+   *    STACK's region, not the bucket's. The read path tolerates a mismatch
+   *    because CloudFront follows S3's region redirect on an S3-type origin;
+   *    this one is a custom origin and does not, so S3's 301 reaches the
+   *    browser, where a redirected cross-origin POST surfaces as an opaque
+   *    network error. Import a cross-region bucket with
+   *    `Bucket.fromBucketAttributes({ region })` so the domain name is right.
+   * 3. A DOT in the bucket name breaks this origin specifically - refused at
+   *    synth, with the reason, in `buildUploadBehavior`.
    *
    * @default - no upload behavior is built
    */
@@ -552,6 +602,13 @@ export class AssetSupport extends Construct {
    */
   private upload?: cloudfront.BehaviorOptions
 
+  /**
+   * The origin inside `upload`, kept so the validation below can ask whether
+   * that behavior was ever attached to a distribution - see `UploadOrigin`.
+   * Set by `buildUploadBehavior`, i.e. at the same moment as `upload`.
+   */
+  private uploadOrigin?: UploadOrigin
+
   constructor(scope: Construct, id: string, props: AssetSupportProps) {
     super(scope, id)
 
@@ -807,12 +864,20 @@ export class AssetSupport extends Construct {
     }
 
     // Setting `uploadBehavior` SATISFIES the standalone guard above, but only
-    // calling `uploadBehavior()` and attaching the result actually produces an
+    // ATTACHING the behavior to a distribution actually produces an
     // Access-Control-Allow-Origin from anywhere. Opting in and stopping there -
     // which is exactly what copying the README snippet and not finishing looks
     // like - lands a standalone bucket with no CORS rule and no edge route: the
     // silent failure the guard's own text calls misleading, reached through the
     // guard rather than around it.
+    //
+    // The condition is ATTACHMENT, not `uploadBehavior()` having been called.
+    // Those look equivalent and are not: the accessor memoizes, so a caller who
+    // invokes it and loses the value in a refactor sets every flag an accessor
+    // can set and still lands in exactly the state above. That shape is if
+    // anything likelier than never calling it at all, since it is what a
+    // half-finished copy of the README snippet leaves behind. `UploadOrigin`
+    // (above) is what makes the difference observable from here.
     //
     // A synth-time validation is the only place this can be caught, since the
     // constructor cannot know what the caller will do next. It is the first
@@ -820,14 +885,22 @@ export class AssetSupport extends Construct {
     // constructor) cannot express "and nothing used it".
     this.node.addValidation({
       validate: () => {
-        if (props.uploadBehavior && editorOrigins.length === 0 && !props.bucket && !this.upload) {
+        if (
+          props.uploadBehavior &&
+          editorOrigins.length === 0 &&
+          !props.bucket &&
+          !this.uploadOrigin?.attachedToDistribution
+        ) {
           return [
-            'AssetSupport: `uploadBehavior` was set but uploadBehavior() was never called, so ' +
-              'no upload behavior was attached to any distribution and nothing supplies ' +
-              'Access-Control-Allow-Origin. With no `editorOrigins` either, a browser upload ' +
-              'will land the object in asset-staging/ and still report a network error. Pass ' +
-              "the behavior to a distribution (see uploadBehavior()'s doc comment), or pass " +
-              '`editorOrigins` instead.',
+            'AssetSupport: `uploadBehavior` was set but the upload behavior was never attached ' +
+              'to a distribution' +
+              (this.upload
+                ? ' - uploadBehavior() was called, but its return value was not passed to one'
+                : ' - uploadBehavior() was never called') +
+              ', so nothing supplies Access-Control-Allow-Origin. With no `editorOrigins` ' +
+              'either, a browser upload will land the object in asset-staging/ and still ' +
+              'report a network error. Pass the behavior to a distribution (see ' +
+              "uploadBehavior()'s doc comment), or pass `editorOrigins` instead.",
           ]
         }
         return []
@@ -938,9 +1011,10 @@ export class AssetSupport extends Construct {
       )
     }
 
-    const uploadOrigin = new origins.HttpOrigin(this.bucket.bucketRegionalDomainName, {
+    const uploadOrigin = new UploadOrigin(this.bucket.bucketRegionalDomainName, {
       protocolPolicy: cloudfront.OriginProtocolPolicy.HTTPS_ONLY,
     })
+    this.uploadOrigin = uploadOrigin
 
     // S3's POST Object is only valid at the bucket ROOT - without this rewrite
     // the upload gets 405 MethodNotAllowed. It is also what CONTAINS this
@@ -949,8 +1023,18 @@ export class AssetSupport extends Construct {
     // only the bucket-level operations at `/` (list, create, delete bucket).
     // A bucket this construct creates refuses all of them anonymously
     // (BLOCK_ALL, no public policy); in BYO-bucket mode that is the caller's
-    // bucket policy to have got right, as it already is for the read path. The
-    // only thing that can WRITE either way is a request carrying a valid
+    // bucket policy to have got right.
+    //
+    // Their bucket policy is a WEAKER backstop here than on the read path, and
+    // the two must not be read as equivalent: the read behaviors go through an
+    // OAC-SIGNED origin, so a too-permissive policy there is still gated by a
+    // signature CloudFront adds. This origin is deliberately unsigned (it has
+    // to be - see the OAC note at the top of this method), so on a BYO bucket
+    // the policy is the ONLY thing standing between an anonymous caller and
+    // whatever that policy allows at `/`. Stated where a BYO adopter reads it,
+    // in `uploadBehavior()`'s caveat block, not only here.
+    //
+    // The only thing that can WRITE either way is a request carrying a valid
     // presigned policy, and only to the single key that policy names. Do not
     // make the rewrite conditional; that gives key addressability back.
     //
@@ -1236,14 +1320,11 @@ export class AssetSupport extends Construct {
    * has left this method's remit and should use `assetBehaviors()` - and keep
    * their own ordering assertion.
    *
-   * Typed `Partial<AddBehaviorOptions>` because that is exactly what
-   * `addBehavior(pattern, origin, behaviorOptions?)` accepts - `origin` is a
-   * POSITIONAL argument there, so `BehaviorOptions` (which is
-   * `AddBehaviorOptions` plus `origin`) would let a caller pass a key the call
-   * silently ignores. Measured, because the first version of this comment
-   * claimed the opposite: widening the parameter and passing an `origin`
-   * override changes nothing in the emitted template, so this narrowing
-   * prevents a confusing no-op rather than a broken origin group.
+   * Typed `Partial<AddBehaviorOptions>`, not `BehaviorOptions`, because
+   * `addBehavior` takes `origin` positionally - so an `origin` key here would be
+   * a silently ignored no-op. (Measured: passing one changes nothing in the
+   * emitted template. It is a confusing no-op being prevented, not a broken
+   * origin group.)
    *
    * Needs a concrete `cloudfront.Distribution` - `addBehavior` is an instance
    * method on that class, not on `IDistribution` (what an imported/looked-up
@@ -1265,7 +1346,7 @@ export class AssetSupport extends Construct {
     // ['/assets/t/*','/assets/*','/assets/t/*','/assets/*'] and fails at
     // deploy time when CloudFront rejects the duplicate patterns. Refuse it
     // here instead, where the message can say which two routes collided.
-    if (distributionsWithAssetBehaviors.has(distribution)) {
+    if (distribution.node.tryFindChild(ATTACHED_MARKER_ID)) {
       throw new Error(
         `AssetSupport: attachTo() was already called for this distribution. Each pattern ` +
           `would be attached twice and CloudFront rejects duplicate path patterns at deploy ` +
@@ -1274,7 +1355,7 @@ export class AssetSupport extends Construct {
           `attachTo() call -- keep one.`,
       )
     }
-    distributionsWithAssetBehaviors.add(distribution)
+    new Construct(distribution, ATTACHED_MARKER_ID)
 
     // Drop explicitly-`undefined` keys before merging. A spread copies own
     // enumerable keys INCLUDING ones whose value is undefined, so
