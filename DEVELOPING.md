@@ -3646,6 +3646,24 @@ When you retire a task, do all three things together or the check will tell you 
 
 One limit worth knowing: the check does not follow into `node_modules`, so a server-only npm package (`sharp`, `simple-git`, the S3 SDK) imported from client code slips past it. The e2e production `next build` remains the backstop for that.
 
+### Trojan Source (Bidirectional Unicode) Check
+
+CI scans tracked files for bidirectional unicode control characters (U+202A-202E, U+2066-2069) before `pnpm install` runs, catching CVE-2021-42574 in seconds. It checks file _contents_ and file _names_ separately -- `git grep` reads contents only, so a file merely named with an override (`report<U+202E>gnp.ts`, which renders as `report st.png`) needs its own pass over `git ls-files -z`. Content matching uses `git grep -P -I`, so a file git treats as binary (a NUL byte, or a `.gitattributes` `binary`/`-diff` marking) is skipped -- a deliberate trade, since without `-I` a future binary fixture would false-positive on any stray `E2 80 AA`-`AE` byte run.
+
+It pins `LC_ALL=C.UTF-8`: `git grep -P` only compiles `\x{...}` escapes above 0xFF in PCRE2 UTF mode, which git enables only under a UTF-8 locale -- under `LC_ALL=C` the command dies with exit 128 instead of matching nothing. The **content** half therefore branches on exit status with `case` rather than `if`: 0 (matches found) fails, 1 (clean) passes, anything else -- including that 128 -- fails loudly rather than being read as "clean".
+
+The **filename** half is built differently, and deliberately. It uses perl rather than `grep -P`, so it is runnable on macOS too (BSD grep has no `-P`), and it matches the raw UTF-8 **bytes** rather than decoding with `-CSD`. Decoding would make a path whose bytes are an invalid multi-byte sequence -- a bad or missing continuation after a start byte such as `E2`, though not a stray `\xff`, which never reaches the decoder -- a _fatal_ match error, aborting the scan partway and leaving every later path unexamined. That is a way to mask a bidi filename, since invalid-UTF-8 paths are creatable on the runner's ext4 (not on macOS/APFS). Detection there is signalled by output rather than exit status, because an `END` block runs on death too and would launder a fatal into a status the caller reads as clean; `set -o pipefail` covers the matching case where `git ls-files` itself fails.
+
+A wrong byte range would fail open, so the step self-tests the pattern against all nine codepoints before trusting a clean result, and both halves splice one shared definition so the self-test cannot drift from the scan. Those nine are the embeddings, overrides and isolates only -- not the marks U+061C/U+200E/U+200F, which reorder just adjacent neutral runs and appear legitimately in the RTL content this CMS edits. ESLint's `security/detect-bidi-characters` overlaps but is JS/TS-only and only a warning, so it doesn't gate CI.
+
+### Dependency License Scan (Trivy)
+
+CI runs a Trivy `fs` scan (`scanners: license`, `severity: HIGH,CRITICAL`, `exit-code: 1`) **after** `pnpm install`, deliberately: Trivy reads `pnpm-lock.yaml` but collects license metadata from the installed tree, so against a bare checkout it reports the lockfile as "Not scanned" and exits 0 without having inspected anything.
+
+A new HIGH/CRITICAL (LGPL/GPL-class) license anywhere in the production dependency graph fails the build. Either remove the dependency or add a documented exemption to [.trivy-ignore-policy.rego](.trivy-ignore-policy.rego), passed via the action's `ignore-policy:` input. The existing exemption covers libvips (`LGPL-3.0-or-later`), pulled in by `sharp` (a direct production dependency), and is scoped by package-name prefix because the flagged package differs between a dev machine (`@img/sharp-libvips-darwin-arm64`) and CI (`@img/sharp-libvips-linux-x64`, `-linuxmusl-x64`).
+
+It has to be a rego policy rather than the simpler `.trivyignore.yaml`, and the reason is worth knowing before you reach for the YAML form: a YAML `licenses:` rule matches the license expression _alone_ and cannot be narrowed to a package. Every license finding here carries `FilePath: "pnpm-lock.yaml"`, so `paths:` only ever matches the lockfile, and `purls:` is not applied to license findings at all. A YAML rule would therefore have suppressed _every_ `LGPL-3.0-or-later` dependency, present and future -- silently passing exactly what the scan exists to catch. Rego receives `PkgName`, so it exempts the packages we mean and nothing else.
+
 ### Waiting on PR Checks
 
 Watching a PR's CI by hand -- or worse, by inline bash loop -- is how a session loses twenty minutes and then merges on a result it misread. Use the watcher instead:

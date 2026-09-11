@@ -27,6 +27,107 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
+      # Trojan Source (CVE-2021-42574): bidirectional control characters let
+      # source render in a different order than it compiles in. Dependency-free
+      # and ~instant, so it runs before install and fails in seconds.
+      #
+      # LC_ALL is pinned deliberately, and the exit status is handled by `case`
+      # rather than by `if`. `git grep -P` compiles \x{...} escapes above 0xFF
+      # only in PCRE2 UTF mode, which git turns on only under a UTF-8 locale;
+      # under LC_ALL=C or an unset locale it dies with "character code point
+      # value in \x{} or \o{} is too large" and exit 128. The obvious form of
+      # this check -- `if git grep -P ...; then fail; fi` -- reads that fatal
+      # error as "found nothing" and passes, so a locale change would quietly
+      # turn the check into a no-op rather than breaking it loudly. Both
+      # branches were verified against a planted U+202E before this landed.
+      - name: Check for bidirectional unicode characters (Trojan Source)
+        env:
+          LC_ALL: C.UTF-8
+        run: |
+          # Without this, `git ls-files -z | perl ...` reports only perl's
+          # status: if git failed, perl reads empty stdin, exits 0, and the
+          # scan reads as clean. Same fail-open shape this whole step guards.
+          set -o pipefail
+
+          # The nine Trojan Source reordering codepoints: the embeddings and
+          # overrides U+202A-202E and the isolates U+2066-2069. Deliberately NOT
+          # the marks U+061C/U+200E/U+200F, which eslint-plugin-security and
+          # rustc do include: their reordering power is confined to adjacent
+          # neutral runs, and they appear legitimately in the RTL content this
+          # CMS exists to edit, so gating them would false-positive on real
+          # Markdown. The filename half below matches the same nine as raw
+          # UTF-8 bytes -- keep the two in step.
+          bidi='[\x{202A}-\x{202E}\x{2066}-\x{2069}]'
+          bidi_bytes='\xe2\x80[\xaa-\xae]|\xe2\x81[\xa6-\xa9]'
+
+          # File CONTENTS. -I skips files git considers binary, which is a
+          # deliberate trade: it means a file marked binary via .gitattributes
+          # can opt out, but without it a future image fixture would
+          # false-positive on any stray E2 80 AA-AE byte run.
+          if matches=$(git grep -P -I -l "$bidi"); then
+            status=0
+          else
+            status=$?
+          fi
+          case "$status" in
+            0)
+              echo '::error::Bidirectional unicode characters detected in file contents (CVE-2021-42574 Trojan Source)'
+              echo "$matches"
+              exit 1
+              ;;
+            1) ;;
+            *)
+              echo "::error::bidi content scan did not run (git grep exited $status)"
+              exit 1
+              ;;
+          esac
+
+          # FILENAMES. git grep reads contents only, so a file merely *named*
+          # with an override -- report<U+202E>gnp.ts, which renders as
+          # "report st.png" -- would otherwise sail through. `-z` keeps paths
+          # raw: without it git quotes non-ASCII and the bytes never arrive.
+          #
+          # Matched as raw UTF-8 BYTES -- U+202A-202E encode as E2 80 AA-AE and
+          # U+2066-2069 as E2 81 A6-A9 -- rather than as \x{...} under `perl
+          # -CSD`. Decoding would make a path holding an invalid multi-byte
+          # sequence -- a bad or missing continuation after a start byte like
+          # E2; a stray \xff never reaches the decoder -- a FATAL match error,
+          # which aborts the scan partway and leaves every later path
+          # unexamined; such a path is creatable on the runner's
+          # ext4 (though not on macOS/APFS), so that is a real way to mask a
+          # bidi filename rather than a hypothetical. Bytes cannot be malformed,
+          # so the decode is simply removed.
+          #
+          # A wrong byte range here would fail OPEN -- no match reads as "clean"
+          # -- so prove the pattern still matches all nine codepoints before
+          # trusting a clean result from it.
+          selftest=$(perl -CO -e 'print chr($_) for (0x202A..0x202E, 0x2066..0x2069)' |
+            perl -0 -ne '$n++ while /'"$bidi_bytes"'/g; print $n+0')
+          if [ "$selftest" != "9" ]; then
+            echo "::error::bidi filename pattern self-test matched $selftest of 9 codepoints"
+            exit 1
+          fi
+
+          # Detection is signalled by OUTPUT, not by exit status: perl exits 0
+          # whether or not it matched, so a non-zero status means perl itself
+          # failed and the scan did not run. Deliberately not perl's own exit
+          # code via END -- an END block runs on die too, laundering a fatal
+          # into a status the caller reads as "clean".
+          nstatus=0
+          names=$(git ls-files -z |
+            perl -0 -ne 'chomp; print "$_\n" if /'"$bidi_bytes"'/') || nstatus=$?
+          if [ "$nstatus" -ne 0 ]; then
+            echo "::error::bidi filename scan did not run (pipeline exited $nstatus)"
+            exit 1
+          fi
+          if [ -n "$names" ]; then
+            echo '::error::Bidirectional unicode characters detected in a FILENAME (CVE-2021-42574 Trojan Source)'
+            echo "$names"
+            exit 1
+          fi
+
+          echo 'No bidirectional unicode control characters in contents or filenames'
+
       - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
 
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
@@ -98,6 +199,41 @@ jobs:
       # is what this check exists to make impossible.
       - name: Lint GitHub Action pins
         run: pnpm lint:actions
+
+      # Dependency licenses. MUST run after `pnpm install`: Trivy reads
+      # `pnpm-lock.yaml` but collects the license metadata from the INSTALLED
+      # tree, so against a bare checkout it reports the lockfile as "Not
+      # scanned" and exits 0 -- passing without having looked at anything. The
+      # upstream version of this step ran before `pnpm install` and was vacuous
+      # for exactly that reason; both placements were verified locally.
+      #
+      # `exit-code: 1` means a new restricted (LGPL/GPL-class) license anywhere
+      # in the production graph fails the build. The one this repo already
+      # carries -- libvips, via `sharp` -- is suppressed by
+      # .trivy-ignore-policy.rego, scoped to those packages by name.
+      #
+      # That has to be a rego policy, not the simpler `.trivyignore.yaml`: a
+      # YAML `licenses:` rule matches the license expression alone and cannot be
+      # narrowed to a package, so it would have suppressed EVERY
+      # LGPL-3.0-or-later dependency, present and future -- passing silently on
+      # exactly what this scan exists to catch. The file explains the mechanics.
+      - name: Scan dependency licenses (Trivy)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          scanners: 'license'
+          severity: 'HIGH,CRITICAL'
+          exit-code: '1'
+          ignore-policy: '.trivy-ignore-policy.rego'
+          # Keep Trivy's cache OUT of the workspace. The action defaults
+          # cache-dir to ${{ github.workspace }}/.cache/trivy, which the
+          # `Format check (Prettier)` step below then walks -- and prettier
+          # --check fails on Trivy's compact JSON metadata. A license-only scan
+          # writes nothing there today, so this is latent, but it arms itself
+          # the moment any job here adds a vuln scan and populates the shared
+          # cache-trivy-* key.
+          cache-dir: '${{ runner.temp }}/trivy'
 
       - name: Format check (Prettier)
         run: pnpm exec prettier --check .
