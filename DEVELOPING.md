@@ -3185,6 +3185,14 @@ Interrupting a run needs no cleanup from you. Ctrl-C makes vitest exit without r
 
 `test-support/` is treated like `lambda/`, `canary/`, and `worker/`: a non-shipped directory with its own `tsconfig.json`, appended to the package's `typecheck` and `lint` scripts. That config also includes `../src/**/*.test.ts`, which nothing else typechecks -- the package `tsconfig.json` is its build/publish config and excludes test files -- and it sets no `rootDir`, which is what lets those suites' deliberate cross-package imports resolve.
 
+### Diffing Synthesized Output Across a Construct Refactor
+
+Moving a builder out of a construct (e.g., a method pulled into a module-local free function) can pass every existing test while still changing the emitted template -- and in CDK a renamed logical ID replaces live resources on the next deploy, so a passing suite is not the relevant proof. Assertions on individual `Template.fromStack()` matchers can all stay green while the underlying JSON has shifted underneath them.
+
+The check that actually proves it: synth the same stack against both the pre- and post-refactor version of the file, dump `Template.fromStack(stack).toJSON()` to a file each time (a throwaway script or test is fine -- see `newTestApp()` above for synthesizing without leaking a `cdk.out`), and diff the two. An identical diff is what proves the refactor is behavior-preserving; passing assertions alone are not. Reach for this on any extraction out of a construct, not just the one that motivated it. Restore the pre-refactor file from a scratchpad copy afterwards, not `git checkout --` -- see the scratchpad-restore note under [Testing Authorization Defaults](#testing-authorization-defaults-defaultbranchaccess--defaultpathaccess).
+
+**A mutation only counts once you've confirmed it changed the source.** Running break-and-rerun (introduce a bug, confirm the test fails, restore) across 13 mutations on 16 tests turned up two that "passed" and proved nothing: one edited a property that doesn't affect the behavior it claimed to break (adding `customHeaders: {}` to an origin does not turn on origin access control), and one never applied at all because shell quoting mangled the patch script, leaving the source unchanged. Both looked like "the test is weak" and were neither. Before trusting a green (or red) mutation result, check that the intended edit is actually present in the file -- not just that the test command ran.
+
 ### Testing a Repo Script as a Subprocess (`scripts/bump-version.mjs`)
 
 `packages/canopycms/src/cli/bump-version.test.ts` tests a plain `scripts/*.mjs` release script rather than importing it, because the script does its work at module scope against a directory tree (reads `package.json` files, writes them, `console.log`s the result, exits) -- there is no function to call. The fixture is copied in rather than run in place, since the script resolves its target paths from its own location:
@@ -3600,7 +3608,7 @@ This pass covers **every published subpath, not just the runtime-testable ones**
 
 The rewrite pattern is the most fragile part and fails silently in both directions -- too narrow and a relative specifier ships unrewritten (a bare `.` did exactly that), too wide and a bare package name gets a spurious `.js` welded on. `node scripts/add-js-extensions.mjs --self-test` asserts the pattern's classification table plus an end-to-end rewrite (directory expansion, bare dot, already-suffixed specifiers, `.d.ts` alongside `.js`, and idempotence). `pnpm check:esm` runs it first, so it executes in CI.
 
-When changing either the rewrite or the guard, verify the guard still fails. Strip a `.js` off one relative specifier in a built `dist/**/*.d.ts` and re-run `pnpm check:esm`: the runtime probe should stay green and the type pass should go red. Deleting a built `.d.ts` outright should also go red. If either stays green, the guard is not testing what it claims -- and confirm any mutation you make to test this actually landed before trusting the result.
+When changing either the rewrite or the guard, verify the guard still fails. Strip a `.js` off one relative specifier in a built `dist/**/*.d.ts` and re-run `pnpm check:esm`: the runtime probe should stay green and the type pass should go red. Deleting a built `.d.ts` outright should also go red. If either stays green, the guard is not testing what it claims -- and confirm the mutation actually landed before trusting the result (see [Diffing Synthesized Output Across a Construct Refactor](#diffing-synthesized-output-across-a-construct-refactor)).
 
 ### Future-Tasks Backlog Check
 

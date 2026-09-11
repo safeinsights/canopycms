@@ -892,15 +892,24 @@ function buildUploadBehavior(
  * behavior through the class therefore costs an instantiation whose only
  * purpose is to be instantiated.
  *
- * The wasted Lambda is cheap. The grants are not: where the bucket is OWNED by
- * the stack building the upload route, CDK writes that never-invoked
- * function's grants straight into the bucket policy, and a policy kept
- * deliberately tight acquires statements that are fine on the day and
- * unexplainable six months later. That is the case this function removes. It
- * matters most for the shape the one-route topology invites - one bucket
- * shared by every environment, in a stack that holds no per-environment
- * resources, with reads and transforms staying per-environment - because that
- * is exactly where the owned-bucket half and the upload route coincide.
+ * That footprint is cheaper than it looks, and the reason is worth stating
+ * because the opposite is easy to assume: those grants do NOT land in the
+ * bucket policy. CDK's `Grant.addToPrincipalOrResource` writes the resource
+ * half only cross-account, or for a principal that cannot carry an identity
+ * policy - so for a same-account function with a CDK-managed role the grants
+ * go to that function's OWN execution role. Measured on a synthesized
+ * template, an owned bucket plus a same-account `AssetSupport` emits no
+ * `AWS::S3::BucketPolicy` at all. Deleting the construct therefore takes the
+ * whole footprint with it and leaves nothing behind on a shared bucket's
+ * policy.
+ *
+ * What it costs instead is legibility: a second `AssetSupport` standing in a
+ * stack that has no asset pipeline, existing only so that a method can be
+ * called on it, is fine on the day and unexplainable six months later. That
+ * is what this function removes, and it matters most for the shape the
+ * one-route topology invites - one bucket shared by every environment, owned
+ * by a stack that holds no per-environment resources, with reads and
+ * transforms staying per-environment.
  *
  * `AssetSupport.uploadBehavior()` remains the right call when you already have
  * an `AssetSupport`; both funnel into the same builder, so the two cannot
