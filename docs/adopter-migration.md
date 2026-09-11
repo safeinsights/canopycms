@@ -230,8 +230,8 @@ the same story for a repo with a shared security-headers policy.
 `assetBehaviorOverrides?: Partial<cloudfront.AddBehaviorOptions>` prop. Until it did, needing
 overrides meant dropping the `assetSupport` prop and hand-calling `attachTo` after
 construction — which sent the tier-auth adopter back to the manual path for a routine
-requirement. Passing `assetBehaviorOverrides` without `assetSupport` throws at synth, since
-there would be no behaviors to merge it into and the override would vanish silently.
+requirement. Passing `assetBehaviorOverrides` without `assetSupport` throws at `cdk synth`, since there
+would be no behaviors to merge it into and the override would vanish silently.
 
 **To adopt.** Nothing required. If you fell back to `assetBehaviors()` — or dropped the
 `assetSupport` prop — _only_ because you needed per-behavior options, you can now delete your
@@ -245,6 +245,7 @@ assetSupport.attachTo(distribution, {
 
 // or, on CanopyCmsDistribution, without leaving the guarded path
 new CanopyCmsDistribution(this, 'Dist', {
+  ...yourExistingDistributionProps,
   assetSupport,
   assetBehaviorOverrides: {
     functionAssociations: [{ function: tierAuthFn, eventType: FunctionEventType.VIEWER_REQUEST }],

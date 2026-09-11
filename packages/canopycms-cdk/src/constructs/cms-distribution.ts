@@ -285,8 +285,12 @@ export interface CanopyCmsDistributionProps {
    * authenticated tier.
    *
    * Useless without `assetSupport`, and silently so - there would be no
-   * behaviors to merge it into - so that combination is refused at synth rather
-   * than ignored.
+   * behaviors to merge it into - so that combination throws from this
+   * construct's CONSTRUCTOR rather than being ignored. (A constructor throw,
+   * not an `addValidation`: nothing later can make the combination valid. An
+   * adopter sharing one props object across tiers, with `assetSupport` present
+   * on only some of them, should make the whole prop conditional rather than
+   * the overrides object.)
    *
    * @default - the asset behaviors are attached with no overrides
    */

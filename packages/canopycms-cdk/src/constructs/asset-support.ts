@@ -195,16 +195,18 @@ const ATTACHED_MARKER_ID = 'CanopyAssetBehaviorsAttached'
  *
  * CDK calls `bind()` exactly when a `Distribution` takes a behavior: from the
  * constructor for `defaultBehavior` (the topology `uploadBehavior()`
- * recommends), and from `addBehavior` for an additional one. Measured on both,
- * plus a distribution in a different stack - all three bind, and all three bind
- * EAGERLY at construction, before any validation runs. A behavior that is built
- * and then dropped never binds.
+ * recommends), and from `addBehavior` for an additional one. Both shapes, and a
+ * distribution in a different stack, are pinned as PASSING cases in
+ * asset-support.test.ts - a mechanism that only sees one of them would fail the
+ * other two at synth. All three bind eagerly at construction, before any
+ * validation runs. A behavior that is built and then dropped never binds.
  *
  * Observing the origin rather than searching the tree for the emitted behavior
- * is what makes this work across stacks. The tree search resolves to an
- * `Fn::ImportValue` in a consuming stack, so it would report "not attached" for
- * a perfectly correct cross-stack distribution - a false synth failure, which is
- * worse than the gap it closes.
+ * is what makes the cross-stack case work. Measured: a consuming stack renders
+ * the reference as `Fn::ImportValue`, not as the producing stack's resolved ARN,
+ * so a tree search would report "not attached" for a perfectly correct
+ * cross-stack distribution - a false synth failure, which is worse than the gap
+ * it closes.
  */
 class UploadOrigin extends origins.HttpOrigin {
   public attachedToDistribution = false
@@ -1208,9 +1210,9 @@ export class AssetSupport extends Construct {
   /**
    * The two CloudFront behavior configs this system needs.
    *
-   * If you use this rather than `attachTo` -- which now takes an `overrides`
-   * parameter, so needing per-behavior options is no longer a reason to fall
-   * back here -- you own the ordering, and you should assert it: read the
+   * If you use this rather than `attachTo` -- which takes an `overrides`
+   * parameter, so needing per-behavior options is not a reason to fall back
+   * here -- you own the ordering, and you should assert it: read the
    * SYNTHESIZED template's `CacheBehaviors` array index, not your own source
    * object, since the property is about emitted order.
    *
