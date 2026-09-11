@@ -2683,26 +2683,25 @@ it('logs error when something fails', () => {
 
 Patterns can be strings (substring match) or RegExp.
 
-**`mockConsole()` is mandatory, and only CI enforces it.** `vitest.config.ts`'s
-`onConsoleLog` **throws on _any_ console output Vitest intercepts** — `log` and `info`
-just as much as `warn` and `error`, with no method filter — but the throwing path only
-fires under `CI=true`. Locally the same test prints the output as harmless noise and the
-suite reports green. So a stray `console.log` left in from debugging fails CI exactly as
-hard as an unasserted error. (Vitest's `type` argument is the _stream_, `'stdout'` or
-`'stderr'`, not the console method, so the thrown message reads
-`A test wrote to console.stdout` — that is this hook firing, not a real `console.stdout`
-call.)
+**Swallowing expected output is mandatory, and only CI enforces it — in every package.**
+The `onConsoleLog` hook in [`vitest.shared.ts`](vitest.shared.ts), which each package's
+`vitest.config.ts` spreads in, **throws on _any_ console output Vitest intercepts** — `log`
+and `info` just as much as `warn` and `error` — but only under `CI=true`. Locally the same
+test prints the output and the suite reports green, so a stray `console.log` left in from
+debugging fails CI exactly as hard as an unasserted error. Other packages import
+`mockConsole()` from `canopycms/test-utils`; a plain `vi.spyOn(console, 'warn').mockImplementation(() => {})`,
+asserted and `mockRestore()`d in a `finally`, works too.
 
-The failure mode this produces is nasty: a test that deliberately exercises a logged
-error path passes locally, then in CI the throw surfaces as an _unhandled rejection_
-that takes the whole test step down with **no vitest output at all** — which reads as
-a crashed or OOM-killed process, not a test failure. This cost two people time on
-2026-08-12 before the cause was found.
+The failure is easy to misread: the throw surfaces as an _unhandled rejection_, not a
+failed test, so the summary can still say "passed" above `Errors 1 error`. The error names
+the culprit (`<file> > <test> wrote to stderr under CI`). On 2026-08-12 it took the whole
+step down with no vitest output at all, which read as a crashed process and cost two
+people time.
 
 Reproduce it locally before pushing any test that triggers an error handler:
 
 ```bash
-CI=true pnpm exec vitest run          # from packages/canopycms
+CI=true pnpm exec vitest run          # from any package directory
 ```
 
 Assert the captured output rather than merely silencing it — a test that swallows the
@@ -2736,17 +2735,21 @@ This approach ensures:
 - Unexpected console output still surfaces (helping catch real issues)
 - Console behavior is properly tested as part of the functionality
 
-**Enforced in CI (keep the reporter "all dots"):** the Vitest `dot` reporter
-prints an intercepted `stdout | <file> > <test>` / `stderr | ...` block for any
-test that writes to the console, which makes it hard to tell expected output
-from real problems at a glance. To stop that from creeping back in, an
-`onConsoleLog` hook in [`packages/canopycms/vitest.config.ts`](packages/canopycms/vitest.config.ts)
-throws when a test logs to the console **while `CI` is set** (GitHub Actions sets
-`CI=true`, so the existing `pnpm test` step enforces it — no extra workflow
-step). Locally the log passes through unchanged, so ad-hoc `console.log`
-debugging still works. When CI fails with this error, wrap the expected output
-in `mockConsole()` (swallow + assert) as shown above, or remove the stray log —
-do **not** silence the guard.
+**Enforced in CI (keep the reporter "all dots"):** the `dot` reporter prints a
+`stdout | <file> > <test>` / `stderr | ...` block for any test that writes to the console,
+which buries real problems. GitHub Actions sets `CI=true`, so the existing `pnpm test` step
+enforces the guard with no extra workflow step. `vitest.shared.ts` also names the reporter
+explicitly, because left to its default Vitest 4 switches to its `agent` reporter under an
+AI coding agent (`CLAUDECODE`, `AI_AGENT`, …). That reporter hides passing tests' console
+output and the guard never fires under it, which is how `canopycms-cdk` printed ~950 lines
+of aws-cdk-lib deprecation warnings per CI run that no agent saw locally. When CI fails
+with this error, swallow and assert the expected output, or remove the stray log — do
+**not** silence the guard.
+
+**`canopycms-cdk` also sets `JSII_DEPRECATED=fail`**, so calling a deprecated aws-cdk-lib
+API throws a `DeprecationError` at the call site — locally too, and inside
+`scaffold-synth.test.ts`'s subprocess synth, whose stderr the console guard never sees.
+Migrate the call; do not relax the setting.
 
 ### Testing GC-Dependent Code Deterministically (`WeakRef`/`FinalizationRegistry`)
 

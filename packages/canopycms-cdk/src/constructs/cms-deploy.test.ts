@@ -1393,6 +1393,19 @@ describe('CanopyCmsService: worker ASG rolling update policy', () => {
   })
 })
 
+describe('CanopyCmsService: worker ASG health check', () => {
+  it('synthesizes an EC2 health check with a 5-minute grace period', () => {
+    // Pins the template, not the construct prop: the move from the deprecated
+    // `healthCheck: HealthCheck.ec2({ grace })` to `healthChecks:
+    // HealthChecks.ec2({ gracePeriod })` was only safe because both render these
+    // two properties identically. A change here alters every deployed worker ASG.
+    synth().hasResourceProperties('AWS::AutoScaling::AutoScalingGroup', {
+      HealthCheckType: 'EC2',
+      HealthCheckGracePeriod: 300,
+    })
+  })
+})
+
 describe('CanopyCmsService: deploymentName validation', () => {
   for (const [why, value] of INVALID_DEPLOYMENT_NAMES) {
     it(`throws at synth for a deploymentName with ${why}: ${JSON.stringify(value)}`, () => {

@@ -1,7 +1,24 @@
 import { defineConfig } from 'vitest/config'
+import { quietTestOutput } from '../../vitest.shared'
 
 export default defineConfig({
   test: {
+    // `dot` reporter + the CI `onConsoleLog` guard, shared with every package.
+    ...quietTestOutput,
+
+    env: {
+      // Using a deprecated aws-cdk-lib API throws a DeprecationError at the call
+      // site instead of printing a warning. A warning is printed on every synth,
+      // so one deprecated prop cost ~950 CI log lines a run -- and it prints in
+      // adopters' own `cdk synth` too, and the API is slated for removal in v3.
+      //
+      // Stronger than the console guard, not a duplicate of it: this fails
+      // locally as well as in CI, and it reaches scaffold-synth.test.ts's
+      // subprocess synth (it spreads process.env), whose stderr the console
+      // guard never sees. Migrate the call; do not relax this to `warn`/`quiet`.
+      JSII_DEPRECATED: 'fail',
+    },
+
     // CDK synth is genuinely slow -- it builds a full CloudFormation template
     // in-process -- and it got slower with aws-cdk-lib 2.260+. Vitest's 5s
     // default is a generic value, not one tuned for a suite whose unit of work
