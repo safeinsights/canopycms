@@ -114,6 +114,15 @@ and a `grep -c` piped from it reads 0.
   - Dropping `registry-url` would silence the warning, but setup-node's own
     Trusted Publisher example keeps it, so it stays. The cost is log noise in a job
     that runs once per release.
+- Then for real: a prerelease dispatched from this branch
+  ([run 34641266424](https://github.com/safeinsights/canopycms/actions/runs/34641266424),
+  at `2829bff2`) published all five packages as `0.0.67-int.89` under `int`, each
+  with an SLSA provenance attestation, and `latest` stayed `0.0.66`. So OIDC trusted
+  publishing works behind setup-node v7 and the new checkout and pnpm pins. The job
+  had zero annotations and no `DEP0040`, and it printed the 32
+  `Failed to replace env in config` warnings the local reproduction predicted. The
+  one part of the release path still unrun is `publish.yml`'s main-only token step
+  and the `git push` after it.
 
 Decided separately the same day: Dependabot stays security-only, so the next sweep
 will be manual too. See
