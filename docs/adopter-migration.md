@@ -39,6 +39,63 @@ supersedes an earlier one's workaround entirely.
 
 _Entries land here as changes merge._
 
+### A worker credential can be one field of a JSON secret
+
+**What changed.** The EC2 worker's Secrets Manager reads (`packages/canopycms-cdk/worker/`)
+can now pull a single field out of a secret whose value is a JSON document, instead of
+treating the whole document as the credential. Two env vars, read by the worker entrypoint:
+
+| Env var                                    | Reads a field from                  |
+| ------------------------------------------ | ----------------------------------- |
+| `CANOPYCMS_GITHUB_TOKEN_SECRET_JSON_FIELD` | `CANOPYCMS_GITHUB_TOKEN_SECRET_ARN` |
+| `CLERK_SECRET_KEY_SECRET_JSON_FIELD`       | `CLERK_SECRET_KEY_SECRET_ARN`       |
+
+So a secret holding `{"CLERK_SECRET_KEY": "sk_live_…", "CLERK_JWT_KEY": "…"}` is read by
+setting `CLERK_SECRET_KEY_SECRET_JSON_FIELD=CLERK_SECRET_KEY`.
+
+**Nothing changes if you do not set them.** With no field configured the secret's whole
+string value is the credential, byte for byte as before — no parse is attempted, so a raw
+`ghp_…` or `sk_live_…` cannot fail on it. That path is pinned by a regression test.
+
+**The silent case now warns.** If a secret's value parses as a JSON _object_ and no field is
+configured, the worker logs a loud warning naming the keys it found and the env var to set,
+then carries on using the whole document exactly as before. This is the part of the change
+that matters most: the old failure was silent — a JSON document is a valid string, so the
+entire document became the credential and nothing errored until Clerk rejected the key or git
+rejected the URL, a long way from the cause. The warning cannot misfire on a real credential,
+because none of them is valid JSON, and scalars (`42`, `"x"`, `null`) are excluded.
+
+With a field configured, every off-path fails fast and says why, naming the ARN, the field
+asked for, and the keys actually present: not valid JSON, not a JSON object, no such field,
+or a field whose value is not a string. No secret value ever appears in those messages.
+
+**To adopt.** Nothing, unless you want it. This release wires the env vars in the worker
+entrypoint only; the CDK props that stamp them are a separate change, so today you set the
+vars yourself if you are managing the worker's environment by hand.
+
+**Two forms that deliberately do NOT work**, because both are widespread conventions from
+neighbouring AWS services and both would fail confusingly here:
+
+- The ECS/CloudFormation suffix form, `arn:…:secret:my-secret-AbCdEf:CLERK_SECRET_KEY::`.
+  `GetSecretValue` does not parse that suffix, and CDK's `Secret.fromSecretCompleteArn`
+  rejects a suffixed ARN outright. Use the separate field env var.
+- CDK's `secretValueFromJson`. It resolves the **plaintext** into the CloudFormation template
+  at deploy time, which would end the "the `.env` carries the ARN, never the value" posture
+  that [deploying-to-aws.md](deploying-to-aws.md) describes.
+
+**This solves one of the three Clerk keys, not all three.** Only `CLERK_SECRET_KEY` is read
+through Secrets Manager. `CLERK_JWT_KEY` is threaded to the Lambda as a plain CDK prop and
+the publishable key is a Docker build arg — **neither can point at an ARN at all.** That is
+deliberate (both are public material — see
+[deploying-to-aws.md](deploying-to-aws.md#security-model)), but if your reason for keeping
+one JSON document per environment was to have a single place to rotate all three, this change
+does not give you that.
+
+**Now deletable.** Any wrapper you wrote that fetches the secret yourself, parses it, and
+re-exports one field into the worker's environment before starting it — a shell `jq` step in
+user-data, or a wrapper entrypoint around `canopy-worker`. If that wrapper also validated the
+field exists, the package now does it with a better message.
+
 ### `assetUploadBehavior()` builds the upload route from a bucket alone
 
 **What changed.** `canopycms-cdk` now exports a free function beside `AssetSupport`:
