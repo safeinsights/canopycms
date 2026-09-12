@@ -21,9 +21,10 @@ authoritative**; this file is the map to where those rules live.
 | `rebase.ts`          | The rebase loop, the deepest leaf of the git-sync cluster                                                                                                                                                                                        |
 | `history-rewrite.ts` | The [SYNC-H1] kernel all three clusters touch                                                                                                                                                                                                    |
 | `log.ts`             | `workerLog`/`workerLogWarn`/`workerLogError`                                                                                                                                                                                                     |
+| `github-auth.ts`     | Which GitHub credential this worker uses (token or App), how an installation token is minted, and PEM normalization                                                                                                                              |
 
-Imports run one way only — `cms-worker` → {`task-runner`, `git-sync`} → `rebase` →
-`history-rewrite` → `worker-context`. `pnpm lint:cycles` enforces that the graph stays
+Imports run one way only — `cms-worker` → {`task-runner`, `git-sync`, `github-auth`} →
+`rebase` → `history-rewrite` → `worker-context`. `pnpm lint:cycles` enforces that the graph stays
 ACYCLIC, which is not the same thing: a new `rebase.ts` → `task-runner.ts` edge would pass
 lint and still break the layering above. Keep the direction by review.
 
@@ -113,6 +114,31 @@ SPECIFIC commit this worker knows its own rebase replaced — the marker, or the
 tip — never on "whatever `remote.git` holds right now". A lease on the current tip is
 satisfied by a reviewer's direct push to the PR branch and would delete it, silently, from
 `remote.git` and then from GitHub.
+
+## `github-auth.ts`
+
+**`@octokit/auth-app` must never become a dependency of `canopycms`.** `github-service.ts` is
+reachable from `services.ts`, so anything it imports is in every adopter's Next.js **server**
+bundle — including the large majority who use a personal access token and will never register
+a GitHub App (registering one needs org-admin rights). `pnpm lint:bundle` cruises the _client_
+entries only and does not see this. The package therefore holds only the SHAPE
+(`OctokitAuthStrategyOptions` in `github-service.ts`, `GitHubAppAuth` here), and the deployment
+entrypoint constructs the strategy and injects it — the seam `refreshAuthCache` already uses.
+Held by the `core-no-github-app-auth` dependency-cruiser rule (run by `pnpm lint:cycles`) and
+by a manifest assertion in `github-auth.test.ts`.
+
+**The token path is not a legacy path.** `githubToken` is the documented default and must keep
+working with `@octokit/auth-app` absent from the install entirely. Exactly one of the two
+credentials is configured; neither is the only error.
+
+**A mint rejection must reach `isPermanentTaskFailure` as thrown.** That classifier reads an
+Octokit `RequestError`'s `.status` — 4xx permanent, 5xx and status-less transient. Any `catch`
+that rethrows `new Error(getErrorMessage(err))` on this path silently turns a permanently bad
+key into an infinitely retried transient failure.
+
+**Nothing may cache what `resolveGitToken` returns**, and no caller may cache a URL built from
+it: an installation token lasts about an hour. (`pushBranchToGitHub` resolving ONCE per call is
+a different rule, and a required one — see `task-runner.ts`.)
 
 ## `log.ts`
 
