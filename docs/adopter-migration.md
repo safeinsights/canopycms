@@ -39,6 +39,77 @@ supersedes an earlier one's workaround entirely.
 
 _Entries land here as changes merge._
 
+### The worker can authenticate to GitHub as an App (the token still works, unchanged)
+
+**What changed.** `CmsWorkerConfig` gained an optional `githubAppAuth`. Supply it _instead of_
+`githubToken` to have the worker act as a GitHub App installation rather than as a personal
+access token. Exactly one of the two; neither is the only error.
+
+**Nothing about the token path changed.** `githubToken` is not deprecated, warns about nothing,
+and stays the documented default. A GitHub App has to be registered and installed by an
+organisation admin, which many adopters are not — so this is an option, not a direction.
+The token path also keeps working with `@octokit/auth-app` absent from your install entirely:
+`canopycms` does not depend on it and never imports it.
+
+**To adopt** — only if you want App auth. This release wires the _package_ side; the CDK props
+that stamp the credentials onto the worker instance land in the next entry, so for now this is
+for adopters driving `CmsWorker` from their own entrypoint:
+
+```ts
+import { createAppAuth } from '@octokit/auth-app' // YOUR dependency, not canopycms's
+import { CmsWorker, normalizeGitHubAppPrivateKey } from 'canopycms/worker/cms-worker'
+
+// ONE instance: it holds the installation-token cache, so sharing it keeps the REST
+// and git halves on the same hourly token.
+const appAuth = createAppAuth({
+  appId,
+  installationId,
+  privateKey: normalizeGitHubAppPrivateKey(rawPrivateKey),
+})
+
+new CmsWorker({
+  ...rest,
+  githubAppAuth: {
+    mintInstallationToken: async () => (await appAuth({ type: 'installation' })).token,
+    // A closure, not `authStrategy: createAppAuth` — that would have Octokit build a
+    // SECOND instance with its own separate cache.
+    octokitAuth: { authStrategy: () => appAuth, auth: {} },
+  },
+})
+```
+
+**Run your private key through `normalizeGitHubAppPrivateKey`.** What it buys you today is
+that a key mangled on its way through configuration still works: `\n` escapes turned into real
+newlines, and a base64-wrapped PEM unwrapped (both orders — escaped-then-wrapped and
+wrapped-then-escaped). That is where a multi-line secret usually ends up after a single-line
+config field. Anything unusable throws where the key is configured, naming the key, instead of
+surfacing later as an opaque JWT signing failure.
+
+It also converts PKCS#1 to PKCS#8, which is **insurance rather than a fix for a current
+failure** — worth stating plainly, because the opposite is easy to assume. GitHub issues App
+keys as PKCS#1 (`-----BEGIN RSA PRIVATE KEY-----`), and whether that is accepted depends on
+which build of `universal-github-app-jwt` your bundler resolves, never on the key:
+
+| Resolution                                                                                       | PKCS#1                               |
+| ------------------------------------------------------------------------------------------------ | ------------------------------------ |
+| `@octokit/auth-app@6` → `universal-github-app-jwt@1` via `main` (e.g. `esbuild --platform=node`) | **works** (signs via `jsonwebtoken`) |
+| the same package via `module` / `browser` (Vite, webpack, esbuild `--platform=browser`)          | throws "only PKCS#8 is supported"    |
+| `@octokit/auth-app@7` → `universal-github-app-jwt@2` under the `node` export condition           | works (it converts internally)       |
+| the same, under any other condition                                                              | throws                               |
+
+So a bundler flag or a dependency bump can turn a working key into a boot failure without the
+key changing. Converting up front removes the coupling.
+
+**Now deletable.** If you hand-rolled App auth around `CmsWorker`, the pieces this replaces are:
+your own PEM conversion; any code that mints a token at boot and holds it (installation tokens
+last about an hour — `buildGitHubUrl` now resolves one per use); and any wrapper that catches
+and re-throws a mint failure. That last one is worth checking specifically: re-throwing as a
+new `Error` drops the HTTP status, and CanopyCMS's task classifier reads that status to decide
+permanent-vs-retry — without it a permanently bad key is retried forever instead of failing fast.
+
+**`GitHubService` is unaffected** and remains static-token-only; the Lambda-side GitHub client
+still takes a token.
+
 ### `assetUploadBehavior()` builds the upload route from a bucket alone
 
 **What changed.** `canopycms-cdk` now exports a free function beside `AssetSupport`:

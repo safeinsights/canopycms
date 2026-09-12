@@ -244,9 +244,15 @@ describe('normalizeGitHubAppPrivateKey', () => {
     expect(createPrivateKey(normalized).export({ type: 'pkcs8', format: 'pem' })).toBe(pkcs8)
   }
 
+  /** Break base64 into 64-column lines, the way every base64 CLI emits it. */
+  const lineWrap = (b64: string) => (b64.match(/.{1,64}/g) ?? []).join('\n')
+
   it('converts the PKCS#1 PEM GitHub actually issues', () => {
-    // The landmine: GitHub hands out `BEGIN RSA PRIVATE KEY`, and
-    // universal-github-app-jwt's WebCrypto path reads only PKCS#8.
+    // GitHub hands out `BEGIN RSA PRIVATE KEY`. At the pin we install this
+    // still signs (see normalizeGitHubAppPrivateKey's comment -- measured),
+    // but only because esbuild's `--platform=node` reaches the jsonwebtoken
+    // build; the WebCrypto build of the same package rejects PKCS#1 outright.
+    // Converting decouples us from that resolution.
     expect(pkcs1).toContain('-----BEGIN RSA PRIVATE KEY-----')
     expectIsTheKeyInPkcs8(normalizeGitHubAppPrivateKey(pkcs1))
   })
@@ -273,11 +279,42 @@ describe('normalizeGitHubAppPrivateKey', () => {
     expectIsTheKeyInPkcs8(normalizeGitHubAppPrivateKey(wrapped))
   })
 
+  it('accepts a PEM that was \\n-escaped and THEN base64-wrapped', () => {
+    // The two manglings compose, in either order, and each hides the other:
+    // the escapes here are inside the encoded bytes, so unescaping before the
+    // unwrap does nothing and the decoded PEM still has literal backslash-n.
+    const wrapped = Buffer.from(pkcs1.trimEnd().replace(/\n/g, '\\n'), 'utf8').toString('base64')
+    expect(wrapped).not.toContain('BEGIN')
+    expectIsTheKeyInPkcs8(normalizeGitHubAppPrivateKey(wrapped))
+  })
+
+  it('accepts a PEM that was base64-wrapped and THEN \\n-escaped', () => {
+    // The other order: the escapes are on the base64 itself, which stops it
+    // even being recognised as base64 until they are undone.
+    //
+    // The trailing newline is explicit, not incidental. `base64 -w 64` and
+    // friends end their output with one, and once escaped and unescaped it
+    // leaves a real newline AFTER the `=` padding -- which the base64 shape
+    // test is anchored past. Letting the line-wrapping decide whether one
+    // appears makes it depend on the generated key's length: measured, a
+    // version of this test without the explicit `\n` passed against an
+    // implementation that does not re-trim between the two passes.
+    const wrapped = (lineWrap(Buffer.from(pkcs1, 'utf8').toString('base64')) + '\n').replace(
+      /\n/g,
+      '\\n',
+    )
+    expect(wrapped.endsWith('\\n')).toBe(true)
+    expectIsTheKeyInPkcs8(normalizeGitHubAppPrivateKey(wrapped))
+  })
+
   it('accepts a base64-wrapped PEM that was line-wrapped', () => {
-    const wrapped = Buffer.from(pkcs8, 'utf8')
-      .toString('base64')
-      .replace(/(.{64})/g, '$1\n')
+    const wrapped = lineWrap(Buffer.from(pkcs8, 'utf8').toString('base64'))
     expect(wrapped).toContain('\n')
+    expectIsTheKeyInPkcs8(normalizeGitHubAppPrivateKey(wrapped))
+  })
+
+  it('accepts a base64 wrapping that ends in a newline, as base64(1) emits', () => {
+    const wrapped = lineWrap(Buffer.from(pkcs1, 'utf8').toString('base64')) + '\n'
     expectIsTheKeyInPkcs8(normalizeGitHubAppPrivateKey(wrapped))
   })
 

@@ -190,28 +190,57 @@ async function mintInstallationToken(app: GitHubAppAuth, timeoutMs: number): Pro
 /**
  * Normalize a GitHub App private key to a PKCS#8 PEM.
  *
- * **GitHub issues App keys as PKCS#1** (`-----BEGIN RSA PRIVATE KEY-----`),
- * but `@octokit/auth-app@6` signs its JWT through `universal-github-app-jwt`,
- * whose WebCrypto path accepts **only PKCS#8**. Which of that package's paths
- * runs depends on the export condition the bundler picks — the worker is
- * bundled with `esbuild --platform=node --format=esm` — so a key that signs
- * fine in one build can fail in another. Converting up front removes the
- * question.
- *
- * Also accepts the two wrappings a key picks up on its way through
- * configuration, since both are indistinguishable from corruption at the point
- * of failure:
+ * What this does TODAY, and it is the reason to call it: accept the two
+ * wrappings a key picks up on its way through configuration, and fail loudly
+ * and locally on anything unusable.
  * - `\n` escaped as a literal backslash-n (a `.env` value, or JSON that was
  *   never parsed);
  * - the whole PEM base64-encoded (a common way to get a multi-line secret
  *   through a single-line field).
  *
- * Anything `crypto.createPrivateKey` cannot parse throws here — at the point
- * the key is configured, naming the key — rather than surfacing later as an
- * opaque JWT signing failure.
+ * Both are indistinguishable from corruption at the point of failure, and
+ * anything `crypto.createPrivateKey` cannot parse throws here — where the key
+ * is configured, naming the key — rather than surfacing later as an opaque
+ * JWT signing failure.
+ *
+ * The PKCS#1 → PKCS#8 conversion is INSURANCE, not a fix for a current
+ * failure. GitHub issues App keys as PKCS#1 (`-----BEGIN RSA PRIVATE KEY-----`),
+ * and whether that is accepted depends on which build of
+ * `universal-github-app-jwt` a bundler resolves, never on the key:
+ * - At the pin we install (`@octokit/auth-app@6` → `universal-github-app-jwt@1.2.0`,
+ *   which has no `exports` field) the worker's own flags,
+ *   `esbuild --platform=node --format=esm`, resolve `main` → the `dist-node`
+ *   build, which signs via `jsonwebtoken` and takes PKCS#1 happily. Measured
+ *   by bundling with exactly those flags: an unconverted key works.
+ * - That same package's `module`/`browser` entry is a WebCrypto build that
+ *   throws "Private Key is in PKCS#1 format, but only PKCS#8 is supported".
+ *   Any resolver preferring `module` reaches it.
+ * - `@octokit/auth-app@7` moves to `universal-github-app-jwt@2`, which is
+ *   WebCrypto-only and converts PKCS#1 solely under the **`node` export
+ *   condition** (`#crypto` → `lib/crypto-node.js`); its `default` sibling's
+ *   converter is a no-op, and the key throws.
+ *
+ * So a bundler flag or a dependency bump can turn a working key into a boot
+ * failure without the key changing. Three lines here remove that coupling.
  */
 export function normalizeGitHubAppPrivateKey(privateKey: string): string {
-  const pem = decodeIfBase64(unescapeNewlines(privateKey.trim()))
+  // Unescape on BOTH sides of the unwrap. The two manglings compose in either
+  // order -- a PEM can be escaped and then base64-wrapped (the escapes are
+  // then inside the encoded bytes), or wrapped and then escaped (the escapes
+  // are on the base64 itself, and would stop it being recognised as base64 at
+  // all). Each pass is a no-op when there is nothing to undo.
+  //
+  // Re-trimmed BETWEEN the passes, not only at the start: unescaping a value
+  // that ended in a trailing `\n` escape (which is what `base64 -w 64` output
+  // becomes after a trip through a single-line field) leaves a real trailing
+  // newline, and decodeIfBase64's shape test is anchored at both ends.
+  // Trimming inside that function instead would mean a `\s*$` tail on its
+  // regex, whose whitespace overlaps the body class -- the polynomial
+  // backtracking shape redactCredentials (utils/error.ts) avoids deliberately.
+  //
+  // No trim after the second pass: `createPrivateKey` accepts a PEM with
+  // surrounding whitespace, so one there would be unexercised.
+  const pem = unescapeNewlines(decodeIfBase64(unescapeNewlines(privateKey.trim()).trim()))
   try {
     return createPrivateKey(pem).export({ type: 'pkcs8', format: 'pem' }).toString()
   } catch (err) {
