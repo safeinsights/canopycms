@@ -200,7 +200,13 @@ export async function pushSettingsBranches(
     }
 
     try {
-      await git.push(ctx.buildGitHubUrl(), settingsBranch)
+      // Resolved in place rather than hoisted: this is the only push in the
+      // function, so there is no second call to keep consistent, and the
+      // resolution would have to move out to syncGit and arrive as an argument
+      // -- changing pushSettingsBranches' signature, which cms-worker.test.ts
+      // calls directly through the instance against an inline type naming it
+      // (see the `PushSettingsBranchesInternals` suite).
+      await git.push(await ctx.buildGitHubUrl(), settingsBranch)
       workerLog(`Pushed settings branch ${settingsBranch} to GitHub`)
     } catch (err) {
       // Non-fatal: branch may already be up-to-date. This call site has no
@@ -452,7 +458,7 @@ export async function syncGit(ctx: GitSyncContext): Promise<void> {
     // simple-git's fetch() with a URL doesn't support --prune directly.
     await git.raw([
       'fetch',
-      ctx.buildGitHubUrl(),
+      await ctx.buildGitHubUrl(),
       '--prune',
       `+refs/heads/*:${GITHUB_TRACKING_REF_PREFIX}*`,
     ])

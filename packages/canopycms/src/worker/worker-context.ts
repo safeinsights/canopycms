@@ -86,14 +86,25 @@ export interface WorkerContext {
   /** The worker's Octokit client, read at call time (tests replace it). */
   octokit(): Octokit
   /**
-   * The tokenized GitHub clone URL, read at call time (tests replace this
+   * The tokenized GitHub clone URL, resolved at call time (tests replace this
    * method to point at a local fixture repo).
+   *
+   * Async because the credential need not be something the worker already
+   * holds: a credential that has to be fetched or minted cannot be assembled
+   * synchronously out of config. No such credential exists yet -- today's only
+   * implementation reads `config.githubToken` and resolves immediately -- so
+   * this signature is groundwork, not a description of current behaviour.
+   *
+   * A caller that needs the URL more than once must resolve it ONCE into a
+   * local and reuse that, rather than calling again per push -- see
+   * pushBranchToGitHub, where a second resolution inside the stale-lease catch
+   * block would replace the very error being classified.
    *
    * Anything derived from it can embed the bot token, so a message that reaches
    * worker-status.json, branch.json or a task file must go through
    * `redactCredentials` first.
    */
-  buildGitHubUrl(): string
+  buildGitHubUrl(): Promise<string>
   /**
    * Workspace directory for a branch named by its GIT REF name — the form task
    * payloads carry. Sanitizes; `feature/x` lives in `feature-x`.

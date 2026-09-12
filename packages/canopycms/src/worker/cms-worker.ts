@@ -646,7 +646,7 @@ export class CmsWorker {
     await fs.rm(stagingPath, { recursive: true, force: true })
 
     try {
-      await git.clone(this.buildGitHubUrl(), stagingPath, ['--bare'])
+      await git.clone(await this.buildGitHubUrl(), stagingPath, ['--bare'])
 
       // Before the rename, so the token is gone from the config the moment the
       // repo becomes reachable under its real name. Throws (rather than
@@ -706,7 +706,21 @@ export class CmsWorker {
     return pushBranchToGitHub(this.ctx(), branch)
   }
 
-  private buildGitHubUrl(): string {
+  /**
+   * Async even though the token is right there in config: this is the single
+   * seam through which every git-over-HTTPS credential reaches a git command
+   * (the only other use of `config.githubToken` is Octokit's HTTP auth at the
+   * constructor), and a credential that had to be fetched rather than read
+   * once at boot could not be resolved synchronously. Widening the signature
+   * here, separately from the arrival of any such credential, keeps the two
+   * changes from being entangled.
+   *
+   * Do NOT add a parallel token accessor alongside it. Every instance-backed
+   * WorkerContext member stays a function precisely so tests can replace it
+   * through the instance (worker-context.ts's INVARIANT); a second credential
+   * path would be one nothing stubs.
+   */
+  private async buildGitHubUrl(): Promise<string> {
     return `https://x-access-token:${this.config.githubToken}@github.com/${this.config.githubOwner}/${this.config.githubRepo}.git`
   }
 
