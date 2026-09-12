@@ -28,26 +28,7 @@ import { refreshClerkCache } from 'canopycms-auth-clerk/cache-writer'
 import { getErrorMessage } from 'canopycms/utils/error'
 import path from 'node:path'
 
-async function getSecret(secretArn: string, retries = 3): Promise<string> {
-  const { SecretsManagerClient, GetSecretValueCommand } =
-    await import('@aws-sdk/client-secrets-manager')
-  const client = new SecretsManagerClient({})
-  for (let attempt = 0; attempt <= retries; attempt++) {
-    try {
-      const response = await client.send(new GetSecretValueCommand({ SecretId: secretArn }))
-      if (!response.SecretString) {
-        throw new Error(`Secret ${secretArn} has no string value`)
-      }
-      return response.SecretString
-    } catch (err) {
-      if (attempt === retries) throw err
-      const delay = 1000 * Math.pow(2, attempt) // 1s, 2s, 4s
-      workerLog(`Secrets Manager unavailable for ${secretArn}, retrying in ${delay}ms...`)
-      await new Promise((r) => setTimeout(r, delay))
-    }
-  }
-  throw new Error('unreachable')
-}
+import { getSecret } from './secrets'
 
 async function main() {
   // FIRST, before anything that could log. The imports above only cover code
