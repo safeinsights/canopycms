@@ -265,6 +265,10 @@ export async function processTaskQueue(ctx: TaskRunnerContext): Promise<void> {
  * - A Promise.race rejects when the timeout fires, so work that cannot
  *   observe the signal (git subprocesses via simple-git) still fails the
  *   attempt and the worker moves on instead of stalling forever.
+ * That second layer is also what bounds `ctx.buildGitHubUrl()`: resolving the
+ * tokenized URL is async and likewise does not observe the signal, so a
+ * resolution that hangs fails the attempt at taskTimeoutMs rather than
+ * stalling the worker.
  * pushBranchToGitHub additionally kills stalled git processes via
  * simple-git's block timeout, so a hung push doesn't leak a process.
  */
@@ -530,6 +534,26 @@ export async function pushBranchToGitHub(ctx: TaskRunnerContext, branch: string)
   // gitChildEnv's local-ops allowlist deliberately drops.
   git.env(gitNetworkChildEnv())
 
+  // Resolve the tokenized URL ONCE, here, before anything below runs. All
+  // three pushes in this function use this const; none of them calls
+  // ctx.buildGitHubUrl() again. That is a correctness requirement, not tidiness
+  // -- resolution is async, and doing it per-push breaks two things:
+  //
+  // - The retry push below sits INSIDE the stale-lease catch. A resolution
+  //   that threw there would replace the push error being classified, so
+  //   neither isStaleLeaseRejection nor isNonFastForwardRejection would ever
+  //   run and a genuinely diverged branch would be retried instead of raising
+  //   PermanentTaskError -- re-introducing exactly the retry-budget burn that
+  //   carve-out exists to prevent.
+  // - readPublishedSha below captures remote.git's tip BEFORE the push, and
+  //   that value decides whether the [SYNC-H1] marker gets cleared at the end.
+  //   An awaited resolution between the read and the push widens the window in
+  //   which remote.git's tip can move underneath that decision.
+  //
+  // It also means all three pushes provably carry the same credential, rather
+  // than one per push with an expiry boundary somewhere in between.
+  const githubUrl = await ctx.buildGitHubUrl()
+
   // [SYNC-H1] If the rebase loop rewrote this branch's already-published
   // history, GitHub still holds the commit it replaced, so an ordinary
   // push is non-fast-forward forever. Push under a lease keyed to exactly
@@ -547,12 +571,12 @@ export async function pushBranchToGitHub(ctx: TaskRunnerContext, branch: string)
         'push',
         `--force-with-lease=${branch}:${marker}`,
         '--end-of-options',
-        ctx.buildGitHubUrl(),
+        githubUrl,
         `${branch}:${branch}`,
       ])
     } else {
       // Pass URL directly to avoid persisting the token in remote.git/config
-      await git.push(ctx.buildGitHubUrl(), branch)
+      await git.push(githubUrl, branch)
     }
   } catch (err) {
     const message = getErrorMessage(err)
@@ -577,7 +601,7 @@ export async function pushBranchToGitHub(ctx: TaskRunnerContext, branch: string)
     // usually absorbed above and never even reaches this branch.)
     if (marker && isStaleLeaseRejection(message)) {
       try {
-        await git.push(ctx.buildGitHubUrl(), branch)
+        await git.push(githubUrl, branch)
       } catch (retryErr) {
         const retryMessage = getErrorMessage(retryErr)
         if (isNonFastForwardRejection(retryMessage)) {

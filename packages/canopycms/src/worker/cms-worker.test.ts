@@ -1018,6 +1018,91 @@ describe('CmsWorker.pushBranchToGitHub() [push-rejection classification]', () =>
     expect(meta.branch.syncFailureReason).toContain('feature-collision')
     expect(meta.branch.syncFailureReason).toContain('has diverged and needs reconciling')
   })
+
+  // -------------------------------------------------------------------------
+  // buildGitHubUrl() resolves asynchronously.
+  //
+  // The credential behind the URL need not be a value the worker already holds
+  // -- an installation token is minted on demand -- so buildGitHubUrl returns a
+  // Promise. Every stub above returns a BARE STRING through an `as unknown as`
+  // double assertion, which type-checks against the test's own inline type and
+  // therefore compiles unchanged under any signature. `await` on a string is a
+  // no-op, so those stubs cannot tell a correct conversion from a missing one.
+  // The two tests below are the ones that can.
+  // -------------------------------------------------------------------------
+
+  type AsyncPushBranchInternals = {
+    pushBranchToGitHub(branch: string): Promise<void>
+    buildGitHubUrl(): Promise<string>
+  }
+
+  it('pushes when buildGitHubUrl resolves a real promise rather than a bare string', async () => {
+    // The one stub in this file whose `await` actually suspends. A conversion
+    // that dropped an `await` would hand git the string "[object Promise]" as
+    // its remote and fail here, where every bare-string stub would pass.
+    await seedBranchInRemoteGit('feature-async-url', 'hello')
+    const worker = makePushWorker()
+    ;(worker as unknown as AsyncPushBranchInternals).buildGitHubUrl = () =>
+      Promise.resolve(githubFixture)
+
+    await (worker as unknown as AsyncPushBranchInternals).pushBranchToGitHub('feature-async-url')
+
+    expect(await fixtureHasBranch('feature-async-url')).toBe(true)
+    expect(consoleSpy).toHaveLogged('Pushed feature-async-url to GitHub')
+  })
+
+  it('resolves the URL once for all three pushes, so a later resolution failure cannot displace the stale-lease classification', async () => {
+    // Pins the hoist in pushBranchToGitHub. The retry push sits INSIDE the
+    // stale-lease catch block: if the URL were resolved per-push instead of
+    // once up front, a resolution that threw there would replace the push
+    // error being classified, so neither isStaleLeaseRejection nor
+    // isNonFastForwardRejection would run and this genuinely diverged branch
+    // would be retried instead of failing fast.
+    //
+    // The resolver below succeeds exactly once and throws afterwards -- a real
+    // shape for an on-demand credential, and the shape that tells the two
+    // implementations apart. Revert the hoist and this goes red: the second
+    // resolution throws, `caught` is that plain Error, and the
+    // PermanentTaskError assertion fails.
+    await seedBranchInGitHubFixture('feature-once', 'someone else')
+    const foreignTip = await shaOf(githubFixture, 'refs/heads/feature-once')
+    await seedBranchInRemoteGit('feature-once', 'ours')
+    // A marker GitHub is provably not at, so the lease is refused and the
+    // catch block's retry push runs -- the second resolution, if there is one.
+    await writeRewriteMarker('feature-once', '0'.repeat(40))
+
+    const worker = makePushWorker()
+    let resolutions = 0
+    ;(worker as unknown as AsyncPushBranchInternals).buildGitHubUrl = () => {
+      resolutions++
+      if (resolutions > 1) {
+        return Promise.reject(new Error('credential resolution failed on a later call'))
+      }
+      return Promise.resolve(githubFixture)
+    }
+
+    let caught: unknown
+    try {
+      await (worker as unknown as AsyncPushBranchInternals).pushBranchToGitHub('feature-once')
+    } catch (err) {
+      caught = err
+    }
+
+    // The classification survived: still permanent, still the honest reason,
+    // and NOT the resolver's error wearing the push failure's place. Asserted
+    // before the call count because this is the defect that matters -- the
+    // count below corroborates the mechanism, it is not the claim.
+    expect(caught).toBeInstanceOf(PermanentTaskError)
+    expect((caught as Error).message).toContain(
+      'has genuinely diverged and nothing was overwritten',
+    )
+    expect((caught as Error).message).not.toContain('credential resolution failed')
+    // Resolved once, so all three pushes provably carry the same credential.
+    expect(resolutions).toBe(1)
+    // Nothing was overwritten, and the marker is kept for a reconciled retry.
+    expect(await shaOf(githubFixture, 'refs/heads/feature-once')).toBe(foreignTip)
+    expect(await readMarker('feature-once')).toBe('0'.repeat(40))
+  })
 })
 
 // ---------------------------------------------------------------------------

@@ -646,7 +646,7 @@ export class CmsWorker {
     await fs.rm(stagingPath, { recursive: true, force: true })
 
     try {
-      await git.clone(this.buildGitHubUrl(), stagingPath, ['--bare'])
+      await git.clone(await this.buildGitHubUrl(), stagingPath, ['--bare'])
 
       // Before the rename, so the token is gone from the config the moment the
       // repo becomes reachable under its real name. Throws (rather than
@@ -706,7 +706,16 @@ export class CmsWorker {
     return pushBranchToGitHub(this.ctx(), branch)
   }
 
-  private buildGitHubUrl(): string {
+  /**
+   * Async even though the token is right there in config: this is the single
+   * seam through which every git-over-HTTPS credential reaches a git command
+   * (see WorkerContext's `buildGitHubUrl`), and a credential that must be
+   * minted on demand rather than read once at boot cannot be resolved
+   * synchronously. Widening the signature here rather than at the point a
+   * second credential source arrives keeps that change from being entangled
+   * with this one. Do NOT add a parallel token accessor alongside it.
+   */
+  private async buildGitHubUrl(): Promise<string> {
     return `https://x-access-token:${this.config.githubToken}@github.com/${this.config.githubOwner}/${this.config.githubRepo}.git`
   }
 
