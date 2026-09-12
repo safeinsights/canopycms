@@ -248,6 +248,8 @@ successful deploy.
 | -------------------------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `GITHUB_TOKEN_SECRET_ARN`                    | yes      | **Full** ARN including the six-character suffix — it goes verbatim into the worker's IAM policy, so a name-based ARN silently never matches and the worker gets AccessDenied at boot |
 | `CLERK_SECRET_KEY_SECRET_ARN`                | yes      | Full ARN, same reason                                                                                                                                                                |
+| `GITHUB_TOKEN_SECRET_JSON_FIELD`             | no       | Set only if that secret holds a JSON document rather than the bare token; names the key to read out of it. See [JSON secret documents](#json-secret-documents)                       |
+| `CLERK_SECRET_KEY_SECRET_JSON_FIELD`         | no       | Same, for the Clerk secret                                                                                                                                                           |
 | `CLERK_JWT_KEY`                              | yes      | Clerk's public JWKS PEM. Unset, Clerk falls back to a network JWKS fetch and the no-internet Lambda hangs at sign-in                                                                 |
 | `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`          | no       | Deploys fine when empty and ships an editor that cannot sign in                                                                                                                      |
 | `CANOPY_BOOTSTRAP_ADMIN_IDS`                 | no       | Comma-separated Clerk user IDs granted admin on first boot                                                                                                                           |
@@ -335,7 +337,12 @@ deploy at synth — before anything is changed in the account.
 | `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`         | variable  | no, but the editor cannot sign in without it |
 | `CANOPY_BOOTSTRAP_ADMIN_IDS`                | variable  | no                                           |
 | `CANOPYCMS_DEPLOYMENT_NAME`                 | variable  | no (defaults to `prod`)                      |
+| `GITHUB_TOKEN_SECRET_JSON_FIELD`            | variable  | no (only for a JSON secret document)         |
+| `CLERK_SECRET_KEY_SECRET_JSON_FIELD`        | variable  | no (only for a JSON secret document)         |
 | `CMS_DOMAIN_NAME`, `CMS_HOSTED_ZONE_DOMAIN` | variables | no (enables CloudFront + Route53)            |
+
+The two `_JSON_FIELD` entries are variables, not secrets, for the same reason
+`CLERK_JWT_KEY` is: they carry the _name_ of a key, not the key's value.
 
 > **Why is `CLERK_JWT_KEY` a variable and not a secret?** Because it is a _public_ key —
 > Clerk's JWKS PEM, retrievable from your instance's public JWKS endpoint, and used only to
@@ -409,6 +416,40 @@ Before deploying, create these secrets in AWS Secrets Manager:
 | `canopycms/clerk-secret-key` | Clerk backend secret key     | EC2 worker (user cache refresh) |
 
 The Lambda does NOT need these secrets — only the EC2 worker reads them.
+
+### JSON secret documents
+
+The table above is the simple shape: one secret per credential, whose entire
+value _is_ the credential. If you instead keep one JSON document per
+environment — a common convention, and what Secrets Manager's console offers
+first — point the deployment at the field you want:
+
+```
+GITHUB_TOKEN_SECRET_ARN=arn:aws:secretsmanager:us-east-1:123456789012:secret:my-app/prod-AbCdEf
+GITHUB_TOKEN_SECRET_JSON_FIELD=CANOPYCMS_GITHUB_TOKEN
+```
+
+The worker then reads that key out of the document. Leave the `_JSON_FIELD`
+variable unset and behaviour is exactly as before — the whole value is the
+credential — so nothing changes for the single-value shape above.
+
+Three things worth knowing before you choose:
+
+- **Do not append the field to the ARN.** `arn:…:secret:my-app/prod-AbCdEf:CANOPYCMS_GITHUB_TOKEN::`
+  is the ECS / CloudFormation dynamic-reference convention, and the worker does
+  not use either — it calls `GetSecretValue`, which returns the whole document
+  and does not parse that suffix. `CanopyCmsService` rejects such an ARN at
+  synth rather than letting it reach the worker's IAM policy, where it would
+  match nothing and produce AccessDenied at boot.
+- **A missing or misspelled field fails loudly, at boot**, naming the field you
+  asked for and the keys the document actually has. A secret that holds a JSON
+  document with _no_ field configured is warned about on every boot, since the
+  whole document would otherwise silently become the credential.
+- **Only these two credentials can come from a secret at all.** If your document
+  also holds `CLERK_JWT_KEY` and `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`, those two
+  still have to be supplied separately — as a repository variable and a build
+  arg respectively. Both are public key material, so they are deliberately not
+  routed through Secrets Manager; see [Security Model](#security-model).
 
 ## Content Publishing Flow
 

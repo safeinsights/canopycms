@@ -57,6 +57,12 @@
 #                                            and the CMS Lambda takes public values only
 #        CANOPY_BOOTSTRAP_ADMIN_IDS          comma-separated Clerk user IDs
 #      Optional:
+#        GITHUB_TOKEN_SECRET_JSON_FIELD      set ONLY if that secret holds a JSON
+#                                            document instead of the bare token;
+#                                            names the key to read out of it
+#        CLERK_SECRET_KEY_SECRET_JSON_FIELD  same, for the Clerk secret. A key
+#                                            NAME, not key material, so a
+#                                            variable rather than a secret
 #        CANOPYCMS_DEPLOYMENT_NAME           defaults to 'prod'
 #        CMS_DOMAIN_NAME                     enables CloudFront + Route53
 #        CMS_HOSTED_ZONE_DOMAIN              required alongside CMS_DOMAIN_NAME
@@ -134,10 +140,17 @@ jobs:
       # Every variable below is consumed by infrastructure/bin/app.ts. Keep
       # this block in step with the `required()` calls there: a variable added
       # in one place and not the other fails the deploy at synth.
+      #
+      # OPTIONAL variables belong here too, and fail more quietly: app.ts reads
+      # them with `|| undefined`, so one that is missing from this block is not
+      # a synth error, it is a prop that can never be set from CI at all -- the
+      # deploy succeeds and the feature is simply inert.
       - name: Deploy
         env:
           GITHUB_TOKEN_SECRET_ARN: ${{ secrets.CANOPY_GITHUB_TOKEN_SECRET_ARN }}
           CLERK_SECRET_KEY_SECRET_ARN: ${{ secrets.CLERK_SECRET_KEY_SECRET_ARN }}
+          GITHUB_TOKEN_SECRET_JSON_FIELD: ${{ vars.GITHUB_TOKEN_SECRET_JSON_FIELD }}
+          CLERK_SECRET_KEY_SECRET_JSON_FIELD: ${{ vars.CLERK_SECRET_KEY_SECRET_JSON_FIELD }}
           CLERK_JWT_KEY: ${{ vars.CLERK_JWT_KEY }}
           NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${{ vars.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY }}
           CANOPY_BOOTSTRAP_ADMIN_IDS: ${{ vars.CANOPY_BOOTSTRAP_ADMIN_IDS }}
