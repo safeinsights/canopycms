@@ -67,7 +67,9 @@ because none of them is valid JSON, and scalars (`42`, `"x"`, `null`) are exclud
 
 With a field configured, every off-path fails fast and says why, naming the ARN, the field
 asked for, and the keys actually present: not valid JSON, not a JSON object, no such field,
-or a field whose value is not a string. No secret value ever appears in those messages.
+or a field whose value is not a string — including an empty string, which the whole-value
+path has always rejected and which every caller downstream would otherwise treat, silently,
+as no credential at all. No secret value ever appears in those messages.
 
 **To adopt.** Nothing, unless you want it. This release wires the env vars in the worker
 entrypoint only; the CDK props that stamp them are a separate change, so today you set the

@@ -60,14 +60,28 @@ function sentCommand(index = 0): GetSecretValueCommand {
  */
 let warnSpy: ReturnType<typeof vi.spyOn>
 
-/** Every warning emitted, flattened — `workerLogWarn` passes the timestamp, the level and the message as separate console arguments. */
+/**
+ * `console.log` must be captured too, not merely tolerated: the retry path calls
+ * `workerLog`, and `quietTestOutput.onConsoleLog` in `vitest.shared.ts` THROWS on
+ * any stdout write when `CI` is set. Without this spy the suite passes locally
+ * and fails on CI with five unhandled rejections and a green test count —
+ * verified by running `CI=1 pnpm exec vitest run worker/secrets.test.ts`.
+ */
+let logSpy: ReturnType<typeof vi.spyOn>
+
+/** Every message a spy captured, flattened — the `workerLog*` helpers pass the timestamp, the level and the message as separate console arguments. */
+function textOf(spy: ReturnType<typeof vi.spyOn>): string {
+  return spy.mock.calls.map((args: unknown[]) => args.join(' ')).join('\n')
+}
+
 function warnText(): string {
-  return warnSpy.mock.calls.map((args: unknown[]) => args.join(' ')).join('\n')
+  return textOf(warnSpy)
 }
 
 beforeEach(() => {
   sendMock.mockReset()
   warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+  logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
 })
 
 afterEach(() => {
@@ -119,6 +133,21 @@ describe('getSecret', () => {
 
     expect(value).toBe('ghp_after_retry')
     expect(sendMock).toHaveBeenCalledTimes(2)
+    // The log is captured rather than merely swallowed, so the operator-facing
+    // line is pinned instead of silently deleted by the spy.
+    expect(textOf(logSpy)).toContain('retrying in 1000ms')
+  })
+
+  it('backs off 1s, 2s, 4s across successive retries', async () => {
+    sendMock.mockRejectedValue(new Error('ThrottlingException'))
+
+    await expect(withTimersAdvanced(() => getSecret(ARN, { retries: 3 }))).rejects.toThrow(
+      'ThrottlingException',
+    )
+    const logged = textOf(logSpy)
+    expect(logged).toContain('retrying in 1000ms')
+    expect(logged).toContain('retrying in 2000ms')
+    expect(logged).toContain('retrying in 4000ms')
   })
 
   it('gives up after the configured number of retries and rethrows', async () => {
@@ -139,6 +168,27 @@ describe('getSecret', () => {
 
     await expect(getSecret(ARN)).rejects.toThrow('has no string value')
     expect(sendMock).toHaveBeenCalledTimes(1)
+  })
+
+  // `retries` is an exported option, so these shapes are reachable by any caller
+  // even though the entrypoint never passes one. Both used to let the loop fall
+  // out of its own condition, which reported a VALUE problem for a transport
+  // failure — the exact misclassification the commit-1 split exists to prevent.
+  it('makes one real call when retries is NaN, instead of none at all', async () => {
+    sendMock.mockResolvedValue({ SecretString: 'ghp_abcdef1234567890' })
+
+    await expect(getSecret(ARN, { retries: NaN })).resolves.toBe('ghp_abcdef1234567890')
+    expect(sendMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('rethrows the real transport error when retries is fractional', async () => {
+    sendMock.mockRejectedValue(new Error('ThrottlingException'))
+
+    // Not 'has no string value': the secret was fetched, the fetch failed, and
+    // the caller must be told which.
+    await expect(withTimersAdvanced(() => getSecret(ARN, { retries: 1.5 }))).rejects.toThrow(
+      'ThrottlingException',
+    )
   })
 })
 
@@ -343,10 +393,16 @@ describe('getSecret with a jsonField configured', () => {
     await expect(getSecret(ARN, { jsonField: '__proto__' })).resolves.toBe('ghp_weird')
   })
 
-  it('returns an empty-string field verbatim rather than treating it as missing', async () => {
+  it('throws on an empty-string field, as the whole-value path does for an empty secret', async () => {
+    // Returning '' would be silently indistinguishable from "no credential" to
+    // every caller downstream: `main()` would claim the ARN env var is unset
+    // while it plainly is set, and an empty Clerk key leaves `refreshAuthCache`
+    // undefined, disabling auth-cache refresh with no log line.
     sendMock.mockResolvedValue({ SecretString: JSON.stringify({ CLERK_SECRET_KEY: '' }) })
 
-    await expect(getSecret(ARN, { jsonField: 'CLERK_SECRET_KEY' })).resolves.toBe('')
+    await expect(getSecret(ARN, { jsonField: 'CLERK_SECRET_KEY' })).rejects.toThrow(
+      'is an empty string',
+    )
   })
 
   it('still retries a transient transport failure before parsing', async () => {

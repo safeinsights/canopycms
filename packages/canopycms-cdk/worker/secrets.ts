@@ -41,10 +41,14 @@ async function fetchSecretString(secretArn: string, retries: number): Promise<st
     await import('@aws-sdk/client-secrets-manager')
   const client = new SecretsManagerClient({})
 
-  // Clamped so a nonsensical negative `retries` still makes one call rather than
-  // skipping the loop entirely and reporting a value problem for a secret that
-  // was never fetched.
-  const lastAttempt = Math.max(0, retries)
+  // Normalized so the loop ALWAYS terminates through `break` or `throw`, never
+  // by falling out of the condition. Two ways it could fall out, both of which
+  // would report "has no string value" for a secret that was either never
+  // fetched or whose real transport error got swallowed:
+  //   NaN — `0 <= NaN` is false, so the loop body never runs at all;
+  //   1.5 — `attempt === lastAttempt` is never true, so the final failure is
+  //         never rethrown and the loop just ends after sleeping.
+  const lastAttempt = Number.isFinite(retries) ? Math.max(0, Math.floor(retries)) : 0
 
   let secretString: string | undefined
   for (let attempt = 0; attempt <= lastAttempt; attempt++) {
@@ -155,6 +159,19 @@ function extractJsonField(secretArn: string, secretString: string, jsonField: st
   if (typeof value !== 'string') {
     throw new Error(
       `Secret ${secretArn} field "${jsonField}" is ${describeType(value)}, not a string. A credential must be a JSON string value.`,
+    )
+  }
+
+  // An empty credential is rejected here for the same reason `fetchSecretString`
+  // rejects an empty `SecretString`: it is not a credential, and every caller
+  // downstream treats it as absent — silently. `main()` would report
+  // "CANOPYCMS_GITHUB_TOKEN or ..._SECRET_ARN is required" while the ARN plainly
+  // is set, and an empty Clerk key leaves `refreshAuthCache` undefined, which
+  // disables auth-cache refresh with no log line at all. Both are exactly the
+  // class of silent failure this change exists to end.
+  if (value === '') {
+    throw new Error(
+      `Secret ${secretArn} field "${jsonField}" is an empty string. Set a value for it, or point at a different field.`,
     )
   }
   return value
