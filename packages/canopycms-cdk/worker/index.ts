@@ -28,26 +28,7 @@ import { refreshClerkCache } from 'canopycms-auth-clerk/cache-writer'
 import { getErrorMessage } from 'canopycms/utils/error'
 import path from 'node:path'
 
-async function getSecret(secretArn: string, retries = 3): Promise<string> {
-  const { SecretsManagerClient, GetSecretValueCommand } =
-    await import('@aws-sdk/client-secrets-manager')
-  const client = new SecretsManagerClient({})
-  for (let attempt = 0; attempt <= retries; attempt++) {
-    try {
-      const response = await client.send(new GetSecretValueCommand({ SecretId: secretArn }))
-      if (!response.SecretString) {
-        throw new Error(`Secret ${secretArn} has no string value`)
-      }
-      return response.SecretString
-    } catch (err) {
-      if (attempt === retries) throw err
-      const delay = 1000 * Math.pow(2, attempt) // 1s, 2s, 4s
-      workerLog(`Secrets Manager unavailable for ${secretArn}, retrying in ${delay}ms...`)
-      await new Promise((r) => setTimeout(r, delay))
-    }
-  }
-  throw new Error('unreachable')
-}
+import { getSecret } from './secrets'
 
 async function main() {
   // FIRST, before anything that could log. The imports above only cover code
@@ -73,14 +54,25 @@ async function main() {
   // Secrets from Secrets Manager or env vars
   let githubToken = process.env.CANOPYCMS_GITHUB_TOKEN
   if (!githubToken && process.env.CANOPYCMS_GITHUB_TOKEN_SECRET_ARN) {
-    githubToken = await getSecret(process.env.CANOPYCMS_GITHUB_TOKEN_SECRET_ARN)
+    githubToken = await getSecret(process.env.CANOPYCMS_GITHUB_TOKEN_SECRET_ARN, {
+      // `|| undefined` rather than passing the env var straight through: a var
+      // that is present but blank means "not configured", so `getSecret` should
+      // take the unchanged whole-value path rather than hunt for a field named
+      // ''. The var name is passed too, so the warning `getSecret` logs when it
+      // finds an unread JSON document can name the exact thing to set.
+      jsonField: process.env.CANOPYCMS_GITHUB_TOKEN_SECRET_JSON_FIELD || undefined,
+      jsonFieldEnvVar: 'CANOPYCMS_GITHUB_TOKEN_SECRET_JSON_FIELD',
+    })
   }
   if (!githubToken)
     throw new Error('CANOPYCMS_GITHUB_TOKEN or CANOPYCMS_GITHUB_TOKEN_SECRET_ARN is required')
 
   let clerkSecretKey = process.env.CLERK_SECRET_KEY
   if (!clerkSecretKey && process.env.CLERK_SECRET_KEY_SECRET_ARN) {
-    clerkSecretKey = await getSecret(process.env.CLERK_SECRET_KEY_SECRET_ARN)
+    clerkSecretKey = await getSecret(process.env.CLERK_SECRET_KEY_SECRET_ARN, {
+      jsonField: process.env.CLERK_SECRET_KEY_SECRET_JSON_FIELD || undefined,
+      jsonFieldEnvVar: 'CLERK_SECRET_KEY_SECRET_JSON_FIELD',
+    })
   }
 
   // Build auth cache refresher (Clerk-specific)
