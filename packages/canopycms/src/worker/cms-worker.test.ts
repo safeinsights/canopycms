@@ -1103,6 +1103,56 @@ describe('CmsWorker.pushBranchToGitHub() [push-rejection classification]', () =>
     expect(await shaOf(githubFixture, 'refs/heads/feature-once')).toBe(foreignTip)
     expect(await readMarker('feature-once')).toBe('0'.repeat(40))
   })
+
+  it('resolves the URL before reading the published SHA, so the marker decision sees the commit it actually sent', async () => {
+    // The hoist's second reason. `outgoingSha` is what decides whether the
+    // [SYNC-H1] marker is spent, and it must describe the commit this push
+    // actually sends. Resolving the URL BELOW that read puts an await between
+    // the read and the push, so a tip that moves in between leaves outgoingSha
+    // describing a commit that is no longer what went out.
+    //
+    // Made observable by a resolver that moves remote.git's tip while it
+    // resolves -- the shape a slow credential mint has. Move the const below
+    // readPublishedSha and this goes red: outgoingSha reads the PRE-move tip,
+    // which still equals the marker, so the marker is never cleared and the
+    // self-heal pass keeps firing against a rewrite that has already landed.
+    await seedBranchInRemoteGit('feature-window', 'v1')
+    const published = await shaOf(remoteGitPath, 'refs/heads/feature-window')
+    // GitHub holds exactly the marker commit, so the lease is satisfied.
+    await simpleGit().raw([
+      '--git-dir',
+      remoteGitPath,
+      'push',
+      githubFixture,
+      'feature-window:feature-window',
+    ])
+    await writeRewriteMarker('feature-window', published)
+
+    // One further commit, staged in a working clone but not yet in remote.git.
+    const laterPath = path.join(tmpDir, 'later-work')
+    await simpleGit().clone(remoteGitPath, laterPath, ['--branch', 'feature-window'])
+    const laterGit = simpleGit({ baseDir: laterPath })
+    await laterGit.addConfig('user.name', 'Editor')
+    await laterGit.addConfig('user.email', 'editor@canopycms.test')
+    await fs.writeFile(path.join(laterPath, 'file.txt'), 'v2')
+    await laterGit.add(['file.txt'])
+    await laterGit.commit('later work')
+
+    const worker = makePushWorker()
+    ;(worker as unknown as AsyncPushBranchInternals).buildGitHubUrl = async () => {
+      await laterGit.raw(['push', 'origin', 'feature-window:feature-window'])
+      return githubFixture
+    }
+
+    await (worker as unknown as AsyncPushBranchInternals).pushBranchToGitHub('feature-window')
+
+    const sentTip = await shaOf(remoteGitPath, 'refs/heads/feature-window')
+    expect(sentTip).not.toBe(published)
+    expect(await shaOf(githubFixture, 'refs/heads/feature-window')).toBe(sentTip)
+    // outgoingSha was read after resolution, so it is the commit actually sent
+    // rather than the pre-resolution tip, and the marker is correctly spent.
+    expect(await readMarker('feature-window')).toBeUndefined()
+  })
 })
 
 // ---------------------------------------------------------------------------
