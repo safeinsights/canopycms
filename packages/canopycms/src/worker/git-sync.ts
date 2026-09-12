@@ -201,9 +201,11 @@ export async function pushSettingsBranches(
 
     try {
       // Resolved in place rather than hoisted: this is the only push in the
-      // function, so there is no second call to keep consistent, and hoisting
-      // would push the resolution into pushSettingsBranches' signature -- which
-      // a test stubs through the instance.
+      // function, so there is no second call to keep consistent, and the
+      // resolution would have to move out to syncGit and arrive as an argument
+      // -- changing pushSettingsBranches' signature, which cms-worker.test.ts
+      // calls directly through the instance against an inline type naming it
+      // (see the `PushSettingsBranchesInternals` suite).
       await git.push(await ctx.buildGitHubUrl(), settingsBranch)
       workerLog(`Pushed settings branch ${settingsBranch} to GitHub`)
     } catch (err) {

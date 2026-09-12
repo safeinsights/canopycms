@@ -1023,12 +1023,14 @@ describe('CmsWorker.pushBranchToGitHub() [push-rejection classification]', () =>
   // buildGitHubUrl() resolves asynchronously.
   //
   // The credential behind the URL need not be a value the worker already holds
-  // -- an installation token is minted on demand -- so buildGitHubUrl returns a
-  // Promise. Every stub above returns a BARE STRING through an `as unknown as`
-  // double assertion, which type-checks against the test's own inline type and
-  // therefore compiles unchanged under any signature. `await` on a string is a
-  // no-op, so those stubs cannot tell a correct conversion from a missing one.
-  // The two tests below are the ones that can.
+  // -- a credential that has to be fetched or minted cannot be read out of
+  // config synchronously -- so buildGitHubUrl returns a Promise. Every stub
+  // above returns a BARE STRING through an `as unknown as` double assertion,
+  // which type-checks against the test's own inline type and therefore compiles
+  // unchanged under any signature. `await` on a string is a no-op, so those
+  // stubs cannot tell a correct conversion from a missing one: dropping the
+  // `await` in pushBranchToGitHub was measured to fail the three tests below
+  // and leave all nine pre-existing tests in this suite green.
   // -------------------------------------------------------------------------
 
   type AsyncPushBranchInternals = {
@@ -1038,8 +1040,11 @@ describe('CmsWorker.pushBranchToGitHub() [push-rejection classification]', () =>
 
   it('pushes when buildGitHubUrl resolves a real promise rather than a bare string', async () => {
     // The one stub in this file whose `await` actually suspends. A conversion
-    // that dropped an `await` would hand git the string "[object Promise]" as
-    // its remote and fail here, where every bare-string stub would pass.
+    // that dropped the `await` hands git a Promise where a remote belongs and
+    // fails here, where every bare-string stub above would pass. (Measured: it
+    // does NOT surface as "[object Promise]" -- simple-git's push() filters
+    // non-string arguments out, so the remote is dropped entirely and git
+    // fails with "The current branch main has no upstream branch".)
     await seedBranchInRemoteGit('feature-async-url', 'hello')
     const worker = makePushWorker()
     ;(worker as unknown as AsyncPushBranchInternals).buildGitHubUrl = () =>

@@ -265,10 +265,11 @@ export async function processTaskQueue(ctx: TaskRunnerContext): Promise<void> {
  * - A Promise.race rejects when the timeout fires, so work that cannot
  *   observe the signal (git subprocesses via simple-git) still fails the
  *   attempt and the worker moves on instead of stalling forever.
- * That second layer is also what bounds `ctx.buildGitHubUrl()`: resolving the
- * tokenized URL is async and likewise does not observe the signal, so a
- * resolution that hangs fails the attempt at taskTimeoutMs rather than
- * stalling the worker.
+ * That second layer is also what bounds pushBranchToGitHub's
+ * `ctx.buildGitHubUrl()`: resolving the tokenized URL is async and likewise
+ * does not observe the signal, so a resolution that hangs fails the attempt at
+ * taskTimeoutMs rather than stalling the worker. (git-sync.ts's two resolutions
+ * run on the sync loop, not through here, and are not bounded by it.)
  * pushBranchToGitHub additionally kills stalled git processes via
  * simple-git's block timeout, so a hung push doesn't leak a process.
  */
