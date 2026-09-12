@@ -3,6 +3,8 @@
 **Status:** Open. **Priority: P2.** Found 2026-09-08 while investigating adopter request #40
 (dual-build `<ClerkProvider>` placement) on branch `docs/clerk-provider-dual-build`.
 
+Being addressed by [cms-image-build-epic.md](cms-image-build-epic.md) (PR 6).
+
 ## Problem
 
 Adopter request #40's second half asked whether `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` (baked into

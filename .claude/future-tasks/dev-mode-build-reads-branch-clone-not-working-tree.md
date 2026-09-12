@@ -4,6 +4,8 @@
 **Found:** 2026-08-15, PR #235 human-review fix session (fix/human-review-235), while proving a
 build-guard fix with real `next build` runs against `apps/example1`
 
+Being addressed by [cms-image-build-epic.md](cms-image-build-epic.md) (PR 1).
+
 ## Problem
 
 `DEVELOPING.md`'s "Dev Content Sync" section states:

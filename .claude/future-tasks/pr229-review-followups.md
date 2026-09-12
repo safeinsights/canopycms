@@ -3,6 +3,8 @@
 From the human review of [PR #229](https://github.com/safeinsights/canopycms/pull/229#pullrequestreview-4938780868)
 (`integration-202608-a` → `main`, **approved** with two fix-first findings), 2026-08-14.
 
+§1 (below) is being addressed by [cms-image-build-epic.md](cms-image-build-epic.md) (PR 6).
+
 The two fix-first findings (#1 `NumberField` sign loss, #2 settings-workspace 503 taking
 down `/admin`) and the small fold-ins (#3 `GitRemoteRefMissingError` over-classification,
 #4 message advertising an unreachable action, #5a lock-message wording, #6 permanently

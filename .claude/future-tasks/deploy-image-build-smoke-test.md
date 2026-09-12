@@ -4,6 +4,8 @@ Filed 2026-08-12, from `fix/deploy-template-cdk-app` (the CDK-app scaffolding
 fix). Not a regression that branch introduced — it made an existing blind spot
 larger and worth naming.
 
+Being addressed by [cms-image-build-epic.md](cms-image-build-epic.md) (PR 5).
+
 ## What is unverified
 
 `Dockerfile.cms.template` is the image `cdk deploy` builds and the Lambda runs.
