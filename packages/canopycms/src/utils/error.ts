@@ -120,6 +120,26 @@ export function redactCredentials(message: string): string {
   // outside URL userinfo): GitHub token prefixes and Bearer values.
   result = result.replace(/\b(?:gh[pousr]|github_pat)_[A-Za-z0-9_]{8,}/g, '***')
   result = result.replace(/\b(Bearer\s+)[A-Za-z0-9._~+/=-]{8,}/g, '$1***')
+  // PEM private-key blocks — a GitHub App's key, which reaches error text
+  // whenever the key itself fails to parse or to sign. None of the rules
+  // above matches one: it carries no URL userinfo, no `gh*_` prefix and no
+  // `Bearer`.
+  //
+  // Linear by construction. The label is `[A-Z]{0,9} ?` (bounded, so its
+  // backtracking is a constant factor) rather than an open `[A-Z ]*`, which
+  // would rescan a long run of capitals at every start position. The lazy
+  // `[\s\S]*?` is stopped by the END footer, or by end-of-string when the
+  // message was truncated mid-key — without that second alternative a
+  // half-quoted key would pass through in full.
+  result = result.replace(
+    /-----BEGIN [A-Z]{0,9} ?PRIVATE KEY-----[\s\S]*?(?:-----END[^\n]*|$)/g,
+    '<private-key>',
+  )
+  // Bare JWTs (`eyJ…`): the app JWT `@octokit/auth-app` signs on the way to
+  // an installation token, which GitHub echoes back in the body of the 401 it
+  // rejects it with. Three dot-separated base64url runs; the class excludes
+  // `.`, so each run is unambiguous and the whole is linear.
+  result = result.replace(/\beyJ[\w-]{8,}\.[\w-]{8,}\.[\w-]+/g, '***')
   return result
 }
 

@@ -195,5 +195,58 @@ describe('error utilities', () => {
       const msg = "base branch 'fix/thing' does not exist at /mnt/efs/workspace"
       expect(redactCredentials(msg)).toBe(msg)
     })
+
+    // GitHub App auth puts two new credential shapes into worker error text,
+    // and `task.error` / worker-status.json are served to a browser by the
+    // admin panel. Each case below asserts what SURVIVES as well as what is
+    // gone -- an absence check alone passes vacuously on an empty result.
+    it('redacts a PKCS#1 private-key block, keeping the surrounding message', () => {
+      const msg = [
+        'failed to sign JWT with key',
+        '-----BEGIN RSA PRIVATE KEY-----',
+        'MIIEowIBAAKCAQEAy8Dbv8prpJ/0kKhlGeJYozo2t60EG8L0561g13R29LvMR5hy',
+        'vGZlGJpmn65+A4xHXInJYiPuKzrKUnApeLZ+vw1HocOAZtWK0z3r26uA8kQYOKX9',
+        '-----END RSA PRIVATE KEY-----',
+        'for app 12345',
+      ].join('\n')
+
+      const redacted = redactCredentials(msg)
+
+      expect(redacted).toContain('failed to sign JWT with key')
+      expect(redacted).toContain('for app 12345')
+      expect(redacted).toContain('<private-key>')
+      expect(redacted).not.toContain('MIIEowIBAAKCAQEA')
+      expect(redacted).not.toContain('BEGIN RSA PRIVATE KEY')
+    })
+
+    it('redacts a PKCS#8 block too, and one truncated mid-key', () => {
+      const labelled = redactCredentials(
+        'key: -----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0B\n-----END PRIVATE KEY-----',
+      )
+      expect(labelled).toBe('key: <private-key>')
+
+      // No END footer: a message cut off mid-key must not pass the body
+      // through just because the terminator never arrived.
+      const truncated = redactCredentials(
+        'key: -----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEAy8Dbv8prpJ',
+      )
+      expect(truncated).toBe('key: <private-key>')
+    })
+
+    it('redacts a bare JWT, keeping the surrounding message', () => {
+      const jwt =
+        'eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJpYXQiOjE2MDAwMDAwMDAsImlzcyI6IjEyMzQ1In0.c2lnbmF0dXJlLWJ5dGVz'
+      const msg = `POST /app/installations/42/access_tokens failed: token ${jwt} is invalid`
+
+      const redacted = redactCredentials(msg)
+
+      expect(redacted).toBe('POST /app/installations/42/access_tokens failed: token *** is invalid')
+      expect(redacted).not.toContain('eyJhbGciOiJSUzI1NiI')
+    })
+
+    it('does not mistake ordinary dotted words for a JWT', () => {
+      const msg = 'no such file: config.settings.json'
+      expect(redactCredentials(msg)).toBe(msg)
+    })
   })
 })
