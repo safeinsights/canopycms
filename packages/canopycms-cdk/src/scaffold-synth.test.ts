@@ -65,6 +65,13 @@ const SYNTH_ENV = {
   CLERK_SECRET_KEY_SECRET_ARN:
     'arn:aws:secretsmanager:us-east-1:111111111111:secret:canopycms/clerk-secret-key-Ef34Gh',
   CLERK_JWT_KEY: '-----BEGIN PUBLIC KEY-----\nplaceholder\n-----END PUBLIC KEY-----',
+  // Optional, and set here anyway: these two have to travel bin/app.ts ->
+  // CmsStackProps -> lib/cms-stack.ts -> CanopyCmsService -> the worker's .env,
+  // and a break anywhere along that chain is invisible to a synth that leaves
+  // them unset. The stamps are asserted below. Unset behaviour is covered at
+  // the construct level in cms-deploy.test.ts, which can afford both cases.
+  GITHUB_TOKEN_SECRET_JSON_FIELD: 'CANOPYCMS_GITHUB_TOKEN',
+  CLERK_SECRET_KEY_SECRET_JSON_FIELD: 'CLERK_SECRET_KEY',
 }
 
 /** Two cold Node boots, one of which imports all of aws-cdk-lib and stages two assets. */
@@ -76,6 +83,15 @@ let synthesizedStacks: string[]
 let resourceTypes: Set<string>
 /** Every resource in every synthesized template, so assertions can look inside them. */
 let resources: unknown[]
+/**
+ * The raw text of every synthesized template, concatenated.
+ *
+ * The worker's `.env` is written by a user-data heredoc, so its lines are
+ * literal substrings of the template rather than structured fields -- searching
+ * the text is what makes an assertion on them robust to how CDK chunks the
+ * UserData `Fn::Join`. Same reasoning as the branch-probe test below.
+ */
+let renderedTemplates: string
 
 function readJsonField(value: unknown, field: string): unknown {
   return typeof value === 'object' && value !== null && field in value
@@ -152,8 +168,11 @@ beforeAll(async () => {
 
   resourceTypes = new Set()
   resources = []
+  renderedTemplates = ''
   for (const file of templateFiles) {
-    const template: unknown = JSON.parse(await fs.readFile(path.join(outDir, file), 'utf-8'))
+    const raw = await fs.readFile(path.join(outDir, file), 'utf-8')
+    renderedTemplates += raw
+    const template: unknown = JSON.parse(raw)
     const templateResources = readJsonField(template, 'Resources')
     if (typeof templateResources !== 'object' || templateResources === null) continue
     for (const resource of Object.values(templateResources)) {
@@ -298,6 +317,50 @@ describe('canopycms init-deploy aws produces a synthesizable CDK app', () => {
     },
     TIMEOUT_MS,
   )
+
+  /**
+   * The scaffold half of adopter request #46. Four files carry this wiring --
+   * `bin/app.ts`, `lib/cms-stack.ts`'s props, that file's pass-through to
+   * `CanopyCmsService`, and the workflow's `env:` block -- and a break in any
+   * one of them produces a deployment where the prop is simply inert: the
+   * worker keeps warning that a JSON field should be configured, and the
+   * adopter keeps configuring one that never arrives.
+   *
+   * Synthesizing successfully proves nothing here, because these inputs are
+   * OPTIONAL: drop the pass-through in `cms-stack.ts` and synth still succeeds.
+   * Only the stamp proves the value travelled.
+   */
+  it('carries the optional JSON-field inputs through bin/app.ts and cms-stack.ts into the worker .env', () => {
+    expect(renderedTemplates).toContain(
+      `CANOPYCMS_GITHUB_TOKEN_SECRET_JSON_FIELD=${SYNTH_ENV.GITHUB_TOKEN_SECRET_JSON_FIELD}`,
+    )
+    expect(renderedTemplates).toContain(
+      `CLERK_SECRET_KEY_SECRET_JSON_FIELD=${SYNTH_ENV.CLERK_SECRET_KEY_SECRET_JSON_FIELD}`,
+    )
+    // The ARNs travel by the same route and are asserted alongside so a
+    // template that lost its .env heredoc entirely cannot pass the two above
+    // by some accident of substring matching.
+    expect(renderedTemplates).toContain(
+      `CANOPYCMS_GITHUB_TOKEN_SECRET_ARN=${SYNTH_ENV.GITHUB_TOKEN_SECRET_ARN}`,
+    )
+  })
+
+  it('passes the JSON-field variables through the generated workflow, which is the only way CI can set them', async () => {
+    // bin/app.ts reads these with `|| undefined` rather than `required()`, so a
+    // variable missing from the workflow's env: block is not a synth error --
+    // it is a prop no adopter deploying through CI can ever set. The workflow
+    // file says as much next to the block; this is the check behind that note.
+    const workflow = await fs.readFile(
+      path.join(scaffoldDir, '.github/workflows/deploy-cms.yml'),
+      'utf-8',
+    )
+    expect(workflow).toContain(
+      'GITHUB_TOKEN_SECRET_JSON_FIELD: ${{ vars.GITHUB_TOKEN_SECRET_JSON_FIELD }}',
+    )
+    expect(workflow).toContain(
+      'CLERK_SECRET_KEY_SECRET_JSON_FIELD: ${{ vars.CLERK_SECRET_KEY_SECRET_JSON_FIELD }}',
+    )
+  })
 
   it('names the stack exactly what the generated workflow deploys', async () => {
     // `--all` would deploy any other stacks in the adopter's repo, so the

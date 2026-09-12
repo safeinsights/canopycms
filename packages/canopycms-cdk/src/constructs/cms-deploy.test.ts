@@ -29,6 +29,8 @@ import {
   INVALID_DEPLOYMENT_NAMES,
 } from '../../../canopycms/src/operating-mode/deployment-name-fixtures'
 import { newTestApp } from '../../test-support/test-synth'
+import { readFileSync } from 'node:fs'
+import path from 'node:path'
 
 /**
  * Synthesizes a stack with the CMS service (and optionally the distribution) so
@@ -1354,6 +1356,257 @@ describe('CanopyCmsService: secret ARN props feed the IAM policy', () => {
     })
     expect(secretResources(template)).toEqual(expect.arrayContaining([other, GITHUB_ARN]))
   })
+
+  it('a JSON-field prop leaves the policy byte-identical -- a field is not a grantable resource', () => {
+    // GetSecretValue returns the WHOLE secret value and the worker picks the
+    // field out of it in getSecret, so the grant that already exists for the
+    // ARN covers the field too. Asserted rather than assumed because the
+    // deduped union above exists precisely because someone once assumed the
+    // opposite about these two prop families -- and the cheap wrong fix here
+    // is to append the field to the ARN in the policy Resource, which produces
+    // a resource that matches nothing.
+    const base: Partial<CanopyCmsServiceProps> = {
+      githubTokenSecretArn: GITHUB_ARN,
+      clerkSecretKeySecretArn: CLERK_ARN,
+    }
+    const withoutField = secretResources(synthUncached(false, base))
+    const withField = secretResources(
+      synthUncached(false, {
+        ...base,
+        githubTokenSecretJsonField: 'CANOPYCMS_GITHUB_TOKEN',
+        clerkSecretKeySecretJsonField: 'CLERK_SECRET_KEY',
+      }),
+    )
+    // Positive anchor: `toEqual` between two empty arrays would pass happily.
+    expect(withoutField).toEqual(expect.arrayContaining([GITHUB_ARN, CLERK_ARN]))
+    expect(withField).toEqual(withoutField)
+  })
+})
+
+/**
+ * `githubTokenSecretJsonField` / `clerkSecretKeySecretJsonField` ->
+ * `CANOPYCMS_GITHUB_TOKEN_SECRET_JSON_FIELD` / `CLERK_SECRET_KEY_SECRET_JSON_FIELD`
+ * in the worker's `.env`.
+ *
+ * That `.env` is the ONLY way `getSecret`'s `jsonField` option can be reached on
+ * a deployed worker: user-data rewrites /opt/canopy-worker/.env on every
+ * instance launch and `cdk deploy` rolls the ASG, so a hand-edited value does
+ * not survive. Until these props existed, the worker warned an adopter with a
+ * JSON secret to set a variable that nothing could set.
+ */
+describe('CanopyCmsService: secret JSON-field props -> worker .env', () => {
+  const GITHUB_ARN = 'arn:aws:secretsmanager:us-east-1:123456789012:secret:gh-AbCdEf'
+  const CLERK_ARN = 'arn:aws:secretsmanager:us-east-1:123456789012:secret:clerk-AbCdEf'
+  const BOTH_ARNS: Partial<CanopyCmsServiceProps> = {
+    githubTokenSecretArn: GITHUB_ARN,
+    clerkSecretKeySecretArn: CLERK_ARN,
+  }
+
+  it('stamps both JSON-field vars when the props are set', () => {
+    const all = workerUserDataBlobs(
+      synthUncached(false, {
+        ...BOTH_ARNS,
+        githubTokenSecretJsonField: 'CANOPYCMS_GITHUB_TOKEN',
+        clerkSecretKeySecretJsonField: 'CLERK_SECRET_KEY',
+      }),
+    )
+    expect(all).toContain('CANOPYCMS_GITHUB_TOKEN_SECRET_JSON_FIELD=CANOPYCMS_GITHUB_TOKEN')
+    expect(all).toContain('CLERK_SECRET_KEY_SECRET_JSON_FIELD=CLERK_SECRET_KEY')
+  })
+
+  it('stamps neither JSON-field var when the props are omitted', () => {
+    const all = workerUserDataBlobs(synthUncached(false, BOTH_ARNS))
+    // Positive anchors FIRST. The two `not.toContain`s below are the assertions
+    // that matter -- an absent var and an empty one are not the same to
+    // getSecret, which takes the whole-value path only when the var is unset --
+    // but on their own they pass just as happily against a blob that lost its
+    // .env entirely, or against a renamed resource type.
+    expect(all).toContain(`CANOPYCMS_GITHUB_TOKEN_SECRET_ARN=${GITHUB_ARN}`)
+    expect(all).toContain(`CLERK_SECRET_KEY_SECRET_ARN=${CLERK_ARN}`)
+    expect(all).not.toContain('CANOPYCMS_GITHUB_TOKEN_SECRET_JSON_FIELD')
+    expect(all).not.toContain('CLERK_SECRET_KEY_SECRET_JSON_FIELD')
+  })
+
+  it('stamps one without the other', () => {
+    const all = workerUserDataBlobs(
+      synthUncached(false, { ...BOTH_ARNS, clerkSecretKeySecretJsonField: 'CLERK_SECRET_KEY' }),
+    )
+    expect(all).toContain('CLERK_SECRET_KEY_SECRET_JSON_FIELD=CLERK_SECRET_KEY')
+    expect(all).not.toContain('CANOPYCMS_GITHUB_TOKEN_SECRET_JSON_FIELD')
+  })
+
+  describe('a JSON field without its secret ARN is refused at synth', () => {
+    // Stamping the field with no ARN reads the credential from nowhere, and
+    // both halves fail mutely: Clerk leaves refreshAuthCache undefined, which
+    // disables auth-cache refresh with no log line at all, and GitHub reports
+    // "CANOPYCMS_GITHUB_TOKEN or ..._SECRET_ARN is required" against a stack
+    // that visibly configures a GitHub secret.
+    it('githubTokenSecretJsonField without githubTokenSecretArn', () => {
+      expect(() =>
+        synthUncached(false, { githubTokenSecretJsonField: 'CANOPYCMS_GITHUB_TOKEN' }),
+      ).toThrow(/githubTokenSecretJsonField is set but githubTokenSecretArn is not/)
+    })
+
+    it('clerkSecretKeySecretJsonField without clerkSecretKeySecretArn', () => {
+      expect(() =>
+        synthUncached(false, { clerkSecretKeySecretJsonField: 'CLERK_SECRET_KEY' }),
+      ).toThrow(/clerkSecretKeySecretJsonField is set but clerkSecretKeySecretArn is not/)
+    })
+
+    it('names the missing prop, so the message says what to add', () => {
+      expect(() =>
+        synthUncached(false, { githubTokenSecretJsonField: 'CANOPYCMS_GITHUB_TOKEN' }),
+      ).toThrow(/Set githubTokenSecretArn, or drop githubTokenSecretJsonField/)
+    })
+  })
+
+  describe('an empty JSON field is refused at synth', () => {
+    // The worker reads a blank value as "no field configured" (`|| undefined`
+    // at both call sites in worker/index.ts), so stamping it would discard an
+    // explicitly set prop silently. assertEnvSafe does not catch this: an
+    // empty string has no newline, no leading quote and no ENVEOF.
+    it('githubTokenSecretJsonField', () => {
+      expect(() => synthUncached(false, { ...BOTH_ARNS, githubTokenSecretJsonField: '' })).toThrow(
+        /githubTokenSecretJsonField must not be empty/,
+      )
+    })
+
+    it('clerkSecretKeySecretJsonField', () => {
+      expect(() =>
+        synthUncached(false, { ...BOTH_ARNS, clerkSecretKeySecretJsonField: '' }),
+      ).toThrow(/clerkSecretKeySecretJsonField must not be empty/)
+    })
+  })
+
+  describe("a secret ARN carrying the ECS ':KEY::' suffix is refused at synth", () => {
+    // The suffix is a CloudFormation-dynamic-reference / ECS `valueFrom`
+    // convention. GetSecretValue does not parse it, and the string lands
+    // verbatim in the worker's IAM Resource where it matches nothing --
+    // AccessDenied at boot, then systemd's Restart=always every 5s forever.
+    const SUFFIXED_GITHUB = `${GITHUB_ARN}:CANOPYCMS_GITHUB_TOKEN::`
+    const SUFFIXED_CLERK = `${CLERK_ARN}:CLERK_SECRET_KEY::`
+
+    it('githubTokenSecretArn', () => {
+      expect(() => synthUncached(false, { githubTokenSecretArn: SUFFIXED_GITHUB })).toThrow(
+        /githubTokenSecretArn .* carries a ':KEY::' JSON-field suffix/,
+      )
+    })
+
+    it('clerkSecretKeySecretArn', () => {
+      expect(() => synthUncached(false, { clerkSecretKeySecretArn: SUFFIXED_CLERK })).toThrow(
+        /clerkSecretKeySecretArn .* carries a ':KEY::' JSON-field suffix/,
+      )
+    })
+
+    it('secretsArns, which has no JSON-field prop but the same IAM failure', () => {
+      expect(() => synthUncached(false, { secretsArns: [GITHUB_ARN, SUFFIXED_CLERK] })).toThrow(
+        /secretsArns\[1\] .* carries a ':KEY::' JSON-field suffix/,
+      )
+    })
+
+    it('points the adopter at the supported prop instead of just refusing', () => {
+      expect(() => synthUncached(false, { githubTokenSecretArn: SUFFIXED_GITHUB })).toThrow(
+        /name the key with githubTokenSecretJsonField instead/,
+      )
+    })
+  })
+
+  describe('plain complete ARNs are still accepted', () => {
+    // The guard above keys on a colon AFTER the six-character suffix. These
+    // pin that it cannot swallow ordinary ARNs -- a secret name may contain
+    // hyphens, and may itself end in something that looks like a suffix.
+    for (const arn of [
+      GITHUB_ARN,
+      'arn:aws:secretsmanager:us-east-1:123456789012:secret:my-secret-with-dashes-AbCdEf',
+      'arn:aws:secretsmanager:us-east-1:123456789012:secret:prod-Ab12Cd-Ef34Gh',
+      // A name-based (incomplete) ARN. Wrong for a different reason -- the IAM
+      // Resource never matches -- but not this guard's business, and the
+      // scaffolded stack's fromSecretCompleteArn already rejects it.
+      'arn:aws:secretsmanager:us-east-1:123456789012:secret:gh',
+    ]) {
+      it(`accepts ${arn}`, () => {
+        expect(() =>
+          synthUncached(false, {
+            githubTokenSecretArn: arn,
+            githubTokenSecretJsonField: 'CANOPYCMS_GITHUB_TOKEN',
+          }),
+        ).not.toThrow()
+      })
+    }
+  })
+})
+
+/**
+ * The scaffold templates and the checked-in example teach the same wiring, and
+ * scaffold-synth.test.ts exercises only the templates -- it runs the real CLI,
+ * which never reads `examples/`. So the example is exactly the copy that can
+ * rot unnoticed, and it has: the media block in `asset-support.test.ts` grew
+ * these same tests because a fix landed in the template while
+ * `examples/aws-deployment/` went on teaching a dead API.
+ *
+ * Textual, and deliberately so -- these are template and example FILES, not
+ * modules this suite can import and execute. It catches a copy that was never
+ * updated, which is the observed failure; it cannot catch one updated wrongly.
+ * The behavioural half lives in scaffold-synth.test.ts, which synthesizes the
+ * generated project and asserts the value reaches the worker's .env.
+ */
+describe('secret JSON-field wiring: the scaffold template and the example stay in step', () => {
+  const repoRoot = path.join(__dirname, '..', '..', '..', '..')
+  const read = (relative: string): string => readFileSync(path.join(repoRoot, relative), 'utf-8')
+
+  const PAIRS: Array<[string, string, string[]]> = [
+    [
+      'infrastructure/lib/cms-stack.ts',
+      'packages/canopycms/src/cli/template-files/cms-stack.ts.template',
+      [
+        'githubTokenSecretJsonField?: string',
+        'clerkSecretKeySecretJsonField?: string',
+        'githubTokenSecretJsonField: props.githubTokenSecretJsonField,',
+        'clerkSecretKeySecretJsonField: props.clerkSecretKeySecretJsonField,',
+      ],
+    ],
+    [
+      'infrastructure/bin/app.ts',
+      'packages/canopycms/src/cli/template-files/cdk-app.ts.template',
+      [
+        'githubTokenSecretJsonField: process.env.GITHUB_TOKEN_SECRET_JSON_FIELD || undefined,',
+        'clerkSecretKeySecretJsonField: process.env.CLERK_SECRET_KEY_SECRET_JSON_FIELD || undefined,',
+      ],
+    ],
+    [
+      'deploy-cms.yml',
+      'packages/canopycms/src/cli/template-files/deploy-cms.yml.template',
+      [
+        'GITHUB_TOKEN_SECRET_JSON_FIELD: ${{ vars.GITHUB_TOKEN_SECRET_JSON_FIELD }}',
+        'CLERK_SECRET_KEY_SECRET_JSON_FIELD: ${{ vars.CLERK_SECRET_KEY_SECRET_JSON_FIELD }}',
+      ],
+    ],
+  ]
+
+  for (const [exampleRelative, templatePath, required] of PAIRS) {
+    const examplePath =
+      exampleRelative === 'deploy-cms.yml'
+        ? 'examples/aws-deployment/deploy-cms.yml'
+        : `examples/aws-deployment/${exampleRelative}`
+
+    it(`${templatePath} carries the JSON-field wiring`, () => {
+      const source = read(templatePath)
+      for (const line of required) expect(source).toContain(line)
+    })
+
+    it(`${examplePath} carries the same wiring as its template`, () => {
+      const source = read(examplePath)
+      for (const line of required) expect(source).toContain(line)
+    })
+  }
+
+  it('neither copy reaches for the ECS :KEY:: ARN suffix the construct refuses', () => {
+    // The suffix form is the obvious-looking thing to write, and a scaffold
+    // that taught it would hand every adopter a synth error.
+    for (const [, templatePath] of PAIRS) {
+      expect(read(templatePath)).not.toMatch(/:secret:.*-[A-Za-z0-9]{6}:[A-Z_]+::/)
+    }
+  })
 })
 
 describe('CanopyCmsService M4: worker ASG uses a LaunchTemplate, not LaunchConfiguration', () => {
@@ -1939,6 +2192,25 @@ describe('CanopyCmsService: worker .env values are heredoc-safe', () => {
     ['deploymentName', (value) => ({ deploymentName: value })],
     ['githubTokenSecretArn', (value) => ({ githubTokenSecretArn: value })],
     ['clerkSecretKeySecretArn', (value) => ({ clerkSecretKeySecretArn: value })],
+    // The JSON-field props carry their matching ARN, because a field without
+    // its ARN is refused by an EARLIER guard (assertSecretPropPair in
+    // cms-service.ts) with a different message -- these cases are about
+    // assertEnvSafe, so they have to reach it.
+    [
+      'githubTokenSecretJsonField',
+      (value) => ({
+        githubTokenSecretArn: 'arn:aws:secretsmanager:us-east-1:123456789012:secret:gh-AbCdEf',
+        githubTokenSecretJsonField: value,
+      }),
+    ],
+    [
+      'clerkSecretKeySecretJsonField',
+      (value) => ({
+        clerkSecretKeySecretArn:
+          'arn:aws:secretsmanager:us-east-1:123456789012:secret:clerk-AbCdEf',
+        clerkSecretKeySecretJsonField: value,
+      }),
+    ],
   ]
 
   // baseBranch/settingsBranch/deploymentName each have their OWN stricter

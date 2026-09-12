@@ -59,6 +59,18 @@ new CmsStack(app, 'CanopyCms', {
   githubTokenSecretArn: required('GITHUB_TOKEN_SECRET_ARN'),
   clerkSecretKeySecretArn: required('CLERK_SECRET_KEY_SECRET_ARN'),
 
+  // Optional, and NOT `required()`: set one only if that secret holds a JSON
+  // document rather than the bare credential, in which case this names the key
+  // to read out of it. Leave unset -- the common case -- and the secret's whole
+  // value is the credential, exactly as before.
+  //
+  // Do NOT instead append `:KEY::` to the ARNs above. That is the ECS /
+  // CloudFormation convention; the worker reads secrets with the GetSecretValue
+  // API, which does not parse it, and CanopyCmsService refuses such an ARN at
+  // synth.
+  githubTokenSecretJsonField: process.env.GITHUB_TOKEN_SECRET_JSON_FIELD || undefined,
+  clerkSecretKeySecretJsonField: process.env.CLERK_SECRET_KEY_SECRET_JSON_FIELD || undefined,
+
   // Clerk's public JWKS PEM, for networkless session verification.
   clerkJwtKey: required('CLERK_JWT_KEY'),
 
