@@ -91,9 +91,9 @@ export interface WorkerContext {
    *
    * Async because the credential need not be something the worker already
    * holds: a credential that has to be fetched or minted cannot be assembled
-   * synchronously out of config. No such credential exists yet -- today's only
-   * implementation reads `config.githubToken` and resolves immediately -- so
-   * this signature is groundwork, not a description of current behaviour.
+   * synchronously out of config. Under GitHub App auth it is minted on
+   * demand and lasts about an hour (see worker/github-auth.ts); the personal
+   * access token path still resolves immediately.
    *
    * A caller that needs the URL more than once must resolve it ONCE into a
    * local and reuse that, rather than calling again per push -- see
