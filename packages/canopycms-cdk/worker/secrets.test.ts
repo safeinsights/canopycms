@@ -94,8 +94,13 @@ afterEach(() => {
  * 1s/2s/4s sleeps off the wall clock; `runAllTimersAsync` also runs timers
  * scheduled by earlier timers, which is what a multi-attempt backoff does.
  */
-async function withTimersAdvanced<T>(run: () => Promise<T>): Promise<T> {
+async function withTimersAdvanced<T>(
+  run: () => Promise<T>,
+  /** Runs after the fake timers are installed — the only moment a spy can wrap the FAKE `setTimeout` rather than being replaced by it. */
+  afterFakeTimers?: () => void,
+): Promise<T> {
   vi.useFakeTimers()
+  afterFakeTimers?.()
   const settled = run().then(
     (value) => () => value,
     (err: unknown) => () => {
@@ -136,14 +141,31 @@ describe('getSecret', () => {
     // The log is captured rather than merely swallowed, so the operator-facing
     // line is pinned instead of silently deleted by the spy.
     expect(textOf(logSpy)).toContain('retrying in 1000ms')
+    // The stdout half of "no secret value ever reaches a log line". worker.log
+    // ships to CloudWatch, and spying console.log to keep the CI guard quiet is
+    // exactly what would hide a leak: without this, adding a
+    // `workerLog(secretString)` to the retry path passes all 39 tests. Paired
+    // with the positive assertion above so it cannot pass vacuously.
+    expect(textOf(logSpy)).not.toContain('ghp_after_retry')
   })
 
-  it('backs off 1s, 2s, 4s across successive retries', async () => {
+  it('sleeps 1s, then 2s, then 4s between attempts', async () => {
     sendMock.mockRejectedValue(new Error('ThrottlingException'))
+    let timeoutSpy: ReturnType<typeof vi.spyOn> | undefined
 
-    await expect(withTimersAdvanced(() => getSecret(ARN, { retries: 3 }))).rejects.toThrow(
-      'ThrottlingException',
-    )
+    await expect(
+      withTimersAdvanced(
+        () => getSecret(ARN, { retries: 3 }),
+        () => {
+          timeoutSpy = vi.spyOn(globalThis, 'setTimeout')
+        },
+      ),
+    ).rejects.toThrow('ThrottlingException')
+
+    // The DELAYS HANDED TO setTimeout, not the delays announced in the log. A
+    // regression that flattened the real backoff while still computing the
+    // message would pass an assertion on the log text.
+    expect(timeoutSpy?.mock.calls.map((args: unknown[]) => args[1])).toEqual([1000, 2000, 4000])
     const logged = textOf(logSpy)
     expect(logged).toContain('retrying in 1000ms')
     expect(logged).toContain('retrying in 2000ms')
