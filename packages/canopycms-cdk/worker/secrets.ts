@@ -42,12 +42,16 @@ async function fetchSecretString(secretArn: string, retries: number): Promise<st
   const client = new SecretsManagerClient({})
 
   // Normalized so the loop ALWAYS terminates through `break` or `throw`, never
-  // by falling out of the condition. Two ways it could fall out, both of which
-  // would report "has no string value" for a secret that was either never
-  // fetched or whose real transport error got swallowed:
-  //   NaN — `0 <= NaN` is false, so the loop body never runs at all;
-  //   1.5 — `attempt === lastAttempt` is never true, so the final failure is
-  //         never rethrown and the loop just ends after sleeping.
+  // by falling out of the condition, and never without bound. Three shapes,
+  // measured against the pre-normalization `Math.max(0, retries)`:
+  //   NaN      — `0 <= NaN` is false, so the loop body never ran AT ALL, and it
+  //              then reported "has no string value" for a secret never fetched;
+  //   1.5      — `attempt === lastAttempt` was never true, so the real SDK error
+  //              was never rethrown; it slept 1s+2s and reported the same
+  //              value-shaped error for a transport failure;
+  //   Infinity — retried forever, with the delay doubling each time.
+  // Every finite non-negative integer, and every negative value, is unaffected:
+  // the default (3) is 4 calls at 1s/2s/4s before and after.
   const lastAttempt = Number.isFinite(retries) ? Math.max(0, Math.floor(retries)) : 0
 
   let secretString: string | undefined
@@ -98,8 +102,8 @@ function tryParseJson(raw: string): { parsed: unknown } | undefined {
 
 /**
  * Key NAMES only, quoted and comma-joined. Never a value: these strings go into
- * error messages and worker.log, which the admin panel and CloudWatch both
- * surface, and the values here are credentials.
+ * error messages and into `/var/log/canopy-worker/worker.log`, which the
+ * CloudWatch agent ships off the instance, and the values here are credentials.
  */
 function describeKeys(doc: JsonObject): string {
   const keys = Object.keys(doc)
@@ -186,10 +190,14 @@ function extractJsonField(secretArn: string, secretString: string, jsonField: st
  * credential and the first symptom is Clerk rejecting a key, or git rejecting a
  * URL, a long way from the cause.
  *
- * It cannot misfire on a real credential: `ghp_…`, `ghs_…`, `sk_live_…` and a
- * PEM are none of them valid JSON, so the parse fails and nothing is logged. The
- * object check also excludes scalars — a secret whose value is `42` or `"x"`
- * parses fine but is not a credential document and gets no warning.
+ * It does not fire on any credential this worker reads: a GitHub PAT (`ghp_…`),
+ * an installation token (`ghs_…`), a Clerk secret key (`sk_live_…`/`sk_test_…`)
+ * and a PEM private key are none of them valid JSON, so the parse fails and
+ * nothing is logged. The object check also excludes scalars — a secret whose
+ * value is `42` or `"x"` parses fine but is not a credential document and gets
+ * no warning. A credential that WAS a bare JSON object would warn, which is the
+ * intended behaviour rather than a false positive: the whole document is in fact
+ * being used as the credential at that point.
  */
 function warnIfUnreadJsonDocument(
   secretArn: string,
@@ -221,7 +229,9 @@ export interface GetSecretOptions {
    *
    * Omitted (or empty, which is how an unset env var arrives) means today's
    * behaviour: the secret's whole string value IS the credential, returned
-   * verbatim with no parse attempted.
+   * verbatim. A parse IS still attempted on that path — that is what
+   * `warnIfUnreadJsonDocument` does — but it can only produce a log line, never
+   * change the returned bytes.
    */
   jsonField?: string
   /**

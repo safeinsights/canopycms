@@ -63,9 +63,12 @@ let warnSpy: ReturnType<typeof vi.spyOn>
 /**
  * `console.log` must be captured too, not merely tolerated: the retry path calls
  * `workerLog`, and `quietTestOutput.onConsoleLog` in `vitest.shared.ts` THROWS on
- * any stdout write when `CI` is set. Without this spy the suite passes locally
- * and fails on CI with five unhandled rejections and a green test count —
- * verified by running `CI=1 pnpm exec vitest run worker/secrets.test.ts`.
+ * any stdout write when `CI` is set. Without the swallow the suite passes
+ * locally and fails on CI with a GREEN test count and a non-zero exit — one
+ * error per retry line emitted. Re-measured 2026-09-12 by removing only
+ * `.mockImplementation(() => {})` and running
+ * `CI=1 pnpm exec vitest run worker/secrets.test.ts`: `39 passed`, `9 errors`,
+ * exit 1.
  */
 let logSpy: ReturnType<typeof vi.spyOn>
 
@@ -192,8 +195,9 @@ describe('getSecret', () => {
     expect(sendMock).toHaveBeenCalledTimes(1)
   })
 
-  // `retries` is an exported option, so these shapes are reachable by any caller
-  // even though the entrypoint never passes one. Both used to let the loop fall
+  // `retries` is exported from this module, so a future call site inside the
+  // worker can pass one; it is NOT reachable from outside the package, whose
+  // only export is `.` → `src/index.ts`. Both shapes used to let the loop fall
   // out of its own condition, which reported a VALUE problem for a transport
   // failure — the exact misclassification the commit-1 split exists to prevent.
   it('makes one real call when retries is NaN, instead of none at all', async () => {
@@ -285,8 +289,9 @@ describe('getSecret with no jsonField configured', () => {
     await getSecret(ARN, { jsonFieldEnvVar: 'CLERK_SECRET_KEY_SECRET_JSON_FIELD' })
 
     // Paired with the positive assertions above so this cannot pass by the
-    // warning being absent: worker.log is shipped to CloudWatch, and `task.error`
-    // reaches the admin panel's browser.
+    // warning being absent. The warning lands in
+    // `/var/log/canopy-worker/worker.log`, which the CloudWatch agent ships off
+    // the instance — so a value here leaves the box.
     expect(warnSpy).toHaveBeenCalledTimes(1)
     expect(warnText()).not.toContain('sk_live_xyz')
     expect(warnText()).not.toContain('ghp_1')
