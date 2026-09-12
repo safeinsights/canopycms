@@ -73,23 +73,43 @@ or a field whose value is not a string — including an empty string, which the 
 path has always rejected and which every caller downstream would otherwise treat, silently,
 as no credential at all. No secret value ever appears in those messages.
 
-**To adopt.** Nothing yet — and if you deploy through `CanopyCmsService`, nothing you _can_
-do yet. This release wires the env vars in the worker entrypoint only. The construct builds
-the worker's `.env` from a closed list with no passthrough, so there is no prop for either
-var, and editing `/opt/canopy-worker/.env` on the instance does not survive: user-data
-rewrites it on every launch and the ASG replaces instances on every `cdk deploy`. The props
-are the next change. Until they land, a JSON-document secret keeps working exactly as it does
-today, with a warning on each worker boot that you cannot yet act on.
+**To adopt.** Nothing, unless one of those two secrets holds a JSON document. If one does,
+set the matching `CanopyCmsService` prop to the key you want:
+
+| Prop                            | Sets                                       | Names a field in          |
+| ------------------------------- | ------------------------------------------ | ------------------------- |
+| `githubTokenSecretJsonField`    | `CANOPYCMS_GITHUB_TOKEN_SECRET_JSON_FIELD` | `githubTokenSecretArn`    |
+| `clerkSecretKeySecretJsonField` | `CLERK_SECRET_KEY_SECRET_JSON_FIELD`       | `clerkSecretKeySecretArn` |
+
+Through the scaffolded stack (`canopycms init-deploy aws`) they are wired to the optional
+env vars `GITHUB_TOKEN_SECRET_JSON_FIELD` and `CLERK_SECRET_KEY_SECRET_JSON_FIELD`, passed
+through by the generated `deploy-cms.yml` as repository _variables_ — they carry a key's
+name, not its value. If you scaffolded before this release, add the two props to
+`infrastructure/bin/app.ts` and `infrastructure/lib/cms-stack.ts`, or re-run the generator
+and diff. Leave everything unset and nothing changes.
+
+Two ways to get it wrong now fail at `cdk synth` instead of at worker boot, because both
+previously produced a worker that deployed clean and then restart-looped every five seconds:
+setting a `…JsonField` prop without its `…SecretArn` prop (the field would be stamped, the
+ARN would not, and the credential would be read from nowhere — for Clerk, silently disabling
+auth-cache refresh with no log line), and passing an ARN that carries the ECS `:KEY::` suffix
+described below. Neither check changes the worker's IAM policy: a field is a key inside a
+secret's value, not a separately grantable resource, so the existing
+`secretsmanager:GetSecretValue` grant on the secret already covers it.
 
 **Two forms that deliberately do NOT work**, because both are widespread conventions from
 neighbouring AWS services and both would fail confusingly here:
 
 - The ECS/CloudFormation suffix form, `arn:…:secret:my-secret-AbCdEf:CLERK_SECRET_KEY::`.
   That suffix is a CloudFormation dynamic-reference and ECS task-definition convention;
-  `GetSecretValue` takes it as part of the `SecretId` rather than parsing it. CDK rejects it
-  before you get that far — on aws-cdk-lib 2.265.0, `Secret.fromSecretCompleteArn` with a
-  suffixed ARN throws `` `secretCompleteArn` does not appear to be complete; missing
-6-character suffix ``. Use the separate field env var.
+  `GetSecretValue` takes it as part of the `SecretId` rather than parsing it. Two things now
+  refuse it before it can reach a running worker: `CanopyCmsService` throws at synth, naming
+  the `…JsonField` prop to use instead, and — through the scaffolded stack, which resolves
+  the ARN first — CDK gets there even earlier with its own less helpful message (on
+  aws-cdk-lib 2.265.0, `Secret.fromSecretCompleteArn` with a suffixed ARN throws
+  `` `secretCompleteArn` does not appear to be complete; missing 6-character suffix ``).
+  `secretsArns` entries are checked the same way, since those go verbatim into the worker's
+  IAM policy where a suffixed ARN matches nothing.
 - CDK's `secretValueFromJson`. It resolves the **plaintext** into the CloudFormation template
   at deploy time, which would end the "the `.env` carries the ARN, never the value" posture
   that [deploying-to-aws.md](deploying-to-aws.md) describes.
