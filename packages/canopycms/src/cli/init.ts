@@ -311,7 +311,7 @@ export async function init(options: InitOptions): Promise<void> {
 export async function initDeployAws(options: InitDeployOptions): Promise<void> {
   const { projectDir, force, nonInteractive } = options
   const writeOpts = { force, nonInteractive }
-  const { dockerfileCms, dockerignore, githubWorkflowCms, cdkJson, cdkApp, cmsStack } =
+  const { dockerfileCms, dockerignore, githubWorkflowCms, cdkJson, cdkApp, cmsStack, cdkTsconfig } =
     await import('./templates')
   const {
     detectPackageManager,
@@ -384,6 +384,14 @@ export async function initDeployAws(options: InitDeployOptions): Promise<void> {
     await cmsStack(),
     writeOpts,
   )
+  // The only type-check the CDK app gets. tsx runs it without one, and the exclusion below keeps
+  // `next build` out of it, so the generated workflow runs `tsc --noEmit -p infrastructure` with
+  // this file before deploying. It extends the project's tsconfig.json, which tsx reads too.
+  await writeFile(
+    path.join(projectDir, 'infrastructure/tsconfig.json'),
+    await cdkTsconfig(),
+    writeOpts,
+  )
 
   // infrastructure/ imports aws-cdk-lib and canopycms-cdk, which the app itself need not install,
   // and a Next app's tsconfig.json includes `**/*.ts`. Unexcluded, the app's own `next build`
@@ -403,7 +411,11 @@ export async function initDeployAws(options: InitDeployOptions): Promise<void> {
     }[tsconfigResult]
     p.log.warn(
       `${reason}. Add "infrastructure" to its "exclude" list, or \`next build\` type-checks the ` +
-        'CDK app and fails unless aws-cdk-lib is installed in the app.',
+        'CDK app and fails unless aws-cdk-lib is installed in the app.' +
+        (tsconfigResult === 'missing'
+          ? ' infrastructure/tsconfig.json, as init-deploy writes it, extends it too, so the ' +
+            "deploy workflow's type-check fails until it exists."
+          : ''),
     )
   }
 

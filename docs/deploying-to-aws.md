@@ -194,6 +194,7 @@ This creates:
 - `cdk.json` — CDK app configuration; `cdk deploy` resolves the app through this
 - `infrastructure/bin/app.ts` — CDK app entry point
 - `infrastructure/lib/cms-stack.ts` — the stack itself, yours to edit
+- `infrastructure/tsconfig.json` — compiler settings for type-checking the CDK app
 
 The install and build commands in `Dockerfile.cms` and the workflow are written
 for the package manager the command detects (npm, pnpm, or Yarn — from your
@@ -209,6 +210,14 @@ and your app's own `next build` would otherwise type-check it. A `tsconfig.json`
 with comments, or one that inherits `exclude` through `extends` with no list of
 its own, is left alone, and the command asks you to make that edit. It asks the
 same when there is no `tsconfig.json`.
+
+The CDK app is type-checked separately, with `infrastructure/tsconfig.json`.
+`cdk.json` runs the app through tsx, which does not check types, so without that
+check a misspelled `CanopyCmsService` prop is dropped silently and the deploy
+uses the prop's default. The generated workflow runs
+`tsc --noEmit -p infrastructure` before deploying; run it yourself after editing
+the stack. `infrastructure/tsconfig.json` extends your `tsconfig.json`, so that
+check fails until the project has one.
 
 ## Step 3: Test Locally in Dev Mode
 
@@ -347,8 +356,9 @@ CDKv1 is rejected outright at synth (`UnsupportedFeatureFlag`).
 ### Deploy
 
 ```bash
-cdk bootstrap                # once per account/region
-cdk synth                    # confirm it builds before touching the account
+cdk bootstrap                        # once per account/region
+npx tsc --noEmit -p infrastructure   # cdk synth does not check types
+cdk synth                            # confirm it builds before touching the account
 cdk deploy CanopyCms
 ```
 
@@ -391,7 +401,9 @@ Prerequisites that an update-function-code pipeline did not need:
    later: the workflow's pinned actions run on Node 24, and their docs give
    that as the minimum.
 4. **The CDK devDependencies from Step 4**, committed to `package.json`. The
-   workflow checks for them before deploying.
+   workflow checks for them before deploying, then type-checks the CDK app
+   with `tsc --noEmit -p infrastructure`, which also needs `typescript` and
+   `@types/node`. Next.js requires both in a TypeScript app.
 
 ### Repository secrets and variables
 

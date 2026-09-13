@@ -693,6 +693,13 @@ describe('canopycms init-deploy aws', () => {
           (m) => m.includes('No tsconfig.json found') && m.includes('"infrastructure"'),
         ),
       ).toBe(true)
+      // The scaffolded infrastructure/tsconfig.json extends the missing file, so the deploy's
+      // type-check fails until it exists.
+      expect(
+        warnings().some(
+          (m) => m.includes('No tsconfig.json found') && m.includes('infrastructure/tsconfig.json'),
+        ),
+      ).toBe(true)
     })
   })
 
@@ -755,6 +762,45 @@ describe('canopycms init-deploy aws', () => {
     const stack = await fs.readFile(path.join(tmpDir, 'infrastructure/lib/cms-stack.ts'), 'utf-8')
     expect(stack).toContain('CanopyCmsService')
     expect(stack).toContain("from 'canopycms-cdk'")
+  })
+
+  it('type-checks the CDK app with infrastructure/tsconfig.json before touching AWS', async () => {
+    await initDeployAws({ cloud: 'aws', projectDir: tmpDir, force: false, nonInteractive: true })
+
+    // tsx runs the CDK app without type-checking it, and the app's tsconfig.json excludes
+    // infrastructure/, so this step is the only check a misspelled CanopyCmsService prop meets.
+    // scaffold-synth.test.ts (canopycms-cdk) runs the command; this pins that it exists and when.
+    const tsconfig = await fs.readFile(path.join(tmpDir, 'infrastructure/tsconfig.json'), 'utf-8')
+    expect(tsconfig).toContain('"noEmit": true')
+
+    const workflow = await fs.readFile(
+      path.join(tmpDir, '.github/workflows/deploy-cms.yml'),
+      'utf-8',
+    )
+    const lines = workflow.split('\n').map((line) => line.trim())
+    const typeCheck = lines.indexOf('npx tsc --noEmit -p infrastructure')
+    const credentials = lines.findIndex((line) =>
+      line.startsWith('uses: aws-actions/configure-aws-credentials'),
+    )
+    const deploy = lines.findIndex((line) => line.startsWith('run: npx cdk deploy'))
+    // All three present, or the ordering below would pass on a missing line.
+    expect(typeCheck).toBeGreaterThan(-1)
+    expect(credentials).toBeGreaterThan(-1)
+    expect(deploy).toBeGreaterThan(-1)
+    expect(typeCheck).toBeLessThan(credentials)
+    expect(typeCheck).toBeLessThan(deploy)
+  })
+
+  it('keeps an existing infrastructure/tsconfig.json unless --force', async () => {
+    const tsconfigPath = path.join(tmpDir, 'infrastructure/tsconfig.json')
+    await fs.mkdir(path.dirname(tsconfigPath), { recursive: true })
+    await fs.writeFile(tsconfigPath, 'existing', 'utf-8')
+
+    await initDeployAws({ cloud: 'aws', projectDir: tmpDir, force: false, nonInteractive: true })
+    expect(await fs.readFile(tsconfigPath, 'utf-8')).toBe('existing')
+
+    await initDeployAws({ cloud: 'aws', projectDir: tmpDir, force: true, nonInteractive: true })
+    expect(await fs.readFile(tsconfigPath, 'utf-8')).toContain('"noEmit": true')
   })
 
   it('ships no CDKv1 feature flags in cdk.json context', async () => {
@@ -823,6 +869,8 @@ describe('canopycms init-deploy aws', () => {
     // Lambda keeps running the old tree until an unrelated content change
     // happens to ship it.
     expect(workflow).toContain("- 'cdk.json'")
+    // infrastructure/tsconfig.json extends it, so a change to it alone can fail the type-check.
+    expect(workflow).toContain("- 'tsconfig.json'")
     expect(workflow).toContain("- 'package.json'")
     expect(workflow).toContain("- 'package-lock.json'")
   })

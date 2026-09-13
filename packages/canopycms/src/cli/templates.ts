@@ -169,3 +169,7 @@ export async function cdkApp(options: {
 export async function cmsStack(): Promise<string> {
   return readTemplate('cms-stack.ts.template')
 }
+
+export async function cdkTsconfig(): Promise<string> {
+  return readTemplate('cdk-tsconfig.json.template')
+}

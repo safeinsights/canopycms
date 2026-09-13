@@ -4,6 +4,8 @@
 **Found:** 2026-09-12, by the code review of PR 5 of
 [cms-image-build-epic.md](cms-image-build-epic.md) (the `standalone-image` smoke test and its
 scaffold fixes): items 1-3 in round 1, item 4 in round 2. All four were left out of that PR.
+Items 2 and 3 were resolved on 2026-09-13 by PR #332 (`fix/scaffold-cdk-typecheck`). Items 1 and 4
+are open.
 
 ## 1. `init-deploy aws` rewrites the whole of an adopter's `tsconfig.json`
 
@@ -18,7 +20,7 @@ Decide:
 - keep the adopter's indentation and line endings, or insert the entry as text;
 - whether editing an existing adopter file should follow `writeFile`'s `--force`-or-confirm rule.
 
-## 2. Nothing type-checks the scaffolded CDK app any more
+## 2. Nothing type-checks the scaffolded CDK app any more — RESOLVED 2026-09-13
 
 `infrastructure/` is now excluded from the app's `tsconfig.json` and from the image build context,
 so the CDK app is not type-checked anywhere:
@@ -35,7 +37,26 @@ the deploy would use the default.
 Direction: scaffold `infrastructure/tsconfig.json`, and add `tsc --noEmit -p infrastructure` to the
 deploy workflow template, where the CDK dependencies are already installed.
 
-## 3. A plugin wrapped around `withCanopy` loses Next 16's Turbopack error
+**Resolved** by PR #332 (`fix/scaffold-cdk-typecheck`), in that direction.
+
+- `init-deploy aws` writes `infrastructure/tsconfig.json` from `cdk-tsconfig.json.template`. It
+  extends the project's `tsconfig.json`, because tsx resolves that file's `paths` aliases and
+  compiles `canopycms.config.ts` with its options. It overrides what the CDK app needs: bundler
+  resolution, `.ts` imports, `types: ["node"]`, `noEmit`, `exclude: []`, and `incremental` and
+  `composite` off. It also resets `verbatimModuleSyntax`, `exactOptionalPropertyTypes` and
+  `noPropertyAccessFromIndexSignature`, which tsx never applies to `infrastructure/` and which fail
+  the generated stack.
+- The workflow template's "Type-check the CDK app" step runs `npx tsc --noEmit -p infrastructure`
+  after the dependency check and before AWS credentials. It first fails with a named error when
+  `typescript` is not installed, because `npx tsc` would otherwise download npm's deprecated `tsc`
+  package. The workflow also runs on a change to `tsconfig.json` alone.
+- `scaffold-synth.test.ts` reads that command out of the generated workflow and runs it on a
+  scaffold with a create-next-app `tsconfig.json`. It passes, lists only the CDK app and
+  `canopycms.config.ts`, resolves an `@/` alias, and passes with the four reset options switched on
+  in the project's `tsconfig.json`. It fails with TS2561 on a misspelled `memorySize`.
+- `examples/aws-deployment/` got the same file and step.
+
+## 3. A plugin wrapped around `withCanopy` loses Next 16's Turbopack error — RESOLVED 2026-09-13
 
 `withCanopy` decides whether to add `turbopack: {}` from the config it is given. A plugin that wraps
 `withCanopy`'s output adds its `webpack` after that decision, as `withBundleAnalyzer(withCanopy({}))`
@@ -45,6 +66,9 @@ suggested fix, the same key. What is lost is the error saying so. The other orde
 `withCanopy(withBundleAnalyzer({}))`, keeps the guard.
 
 Decide: document that `withCanopy` should be the outermost wrapper, or accept this.
+
+**Resolved** by PR #332 (`fix/scaffold-cdk-typecheck`): documented. README's `withCanopy()` section says to
+make it the outermost wrapper, and why.
 
 ## 4. An unreadable Next version gets no `turbopack` key, so a Next 16 build can still exit
 
