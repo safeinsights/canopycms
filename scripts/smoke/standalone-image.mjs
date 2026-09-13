@@ -76,8 +76,12 @@ const PAGE = {
   title: 'Standalone smoke page',
 }
 
-/** What the root layout renders around every page, from its own content read. */
-const LAYOUT_MARK = `<header>${PAGE.title}</header>`
+/**
+ * Text only the root layout's content read puts on a not-found response. Matched as text, not as
+ * `<header>` markup: a force-dynamic route that calls notFound() answers with an empty HTML shell
+ * and carries the layout's output in Next's RSC flight payload instead.
+ */
+const LAYOUT_MARK = PAGE.title
 
 /** The sitemap's origin. Any absolute URL does; nothing resolves it. */
 const SITE_URL = 'https://smoke.canopycms.test'
@@ -652,7 +656,7 @@ async function assertContainer(baseUrl, container) {
       }
       if (expectExactly404 && !response.body.toString('utf8').includes(LAYOUT_MARK)) {
         throw new SmokeError(
-          `status 404, but not rendered through the root layout (${LAYOUT_MARK})`,
+          `status 404, but the root layout's content read ("${LAYOUT_MARK}") is not in the response`,
         )
       }
       return `status ${status}`
