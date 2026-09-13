@@ -184,6 +184,23 @@ describe('resolveWorkerGitHubAuth', () => {
       expect(handed?.aborted).toBe(true)
     })
 
+    it.each([NaN, 0, -1, Infinity])(
+      'refuses a nonsensical mint timeout (%s) at construction',
+      (bad) => {
+        // AbortSignal.timeout throws a RangeError for each of these, and it
+        // would throw INSIDE the mint -- where the rejection has no `.status`,
+        // so isPermanentTaskFailure reads it as transient and every push task
+        // burns its full retry budget on what is a config typo.
+        // `parseInt(process.env.X ?? '')` is NaN, which is how one arrives.
+        expect(() =>
+          resolveWorkerGitHubAuth({
+            gitTokenMintTimeoutMs: bad,
+            githubAppAuth: appAuthWith(async () => 'ghs_minted'),
+          }),
+        ).toThrow(/gitTokenMintTimeoutMs must be a positive number/)
+      },
+    )
+
     it('defaults the mint timeout to 30s', () => {
       expect(DEFAULT_GIT_TOKEN_MINT_TIMEOUT_MS).toBe(30_000)
     })

@@ -220,6 +220,69 @@ describe('CmsWorker GitHub App authentication', () => {
       await expect(fs.access(path.join(workspacePath, '.tasks', '.worker-lock'))).rejects.toThrow()
     })
 
+    it('runs BEFORE the clone, on a cold workspace where the clone would otherwise speak first', async () => {
+      // The test above cannot pin the ordering: beforeEach seeds remote.git,
+      // so ensureRemoteGit short-circuits and its misleading catch is never
+      // reachable. Here remote.git does NOT exist, so moving the preflight
+      // below ensureRemoteGit really does change which message the operator
+      // gets -- measured: with the call moved, this goes red on "may be
+      // empty" and the test above stays green.
+      await fs.rm(path.join(workspacePath, 'remote.git'), { recursive: true, force: true })
+      const worker = makeWorker({
+        githubAppAuth: appAuthWith(async () => {
+          throw Object.assign(new Error('Bad credentials'), { status: 401 })
+        }),
+      })
+
+      await expect(worker.start()).rejects.toThrow(/GitHub App authentication failed/)
+
+      const status = await readStatus()
+      expect(status.lastFatalError?.message).toContain('GitHub App authentication failed')
+      expect(status.lastFatalError?.message).not.toContain('may be empty')
+    })
+
+    it('does not exit on a transient failure, because the token path would not either', async () => {
+      // A GitHub 5xx during boot must not be fatal. On the token path a warm
+      // remote.git short-circuits ensureRemoteGit and Promise.allSettled
+      // swallows the initial syncGit, so the worker starts and retries; if
+      // this path exited instead, systemd (Restart=always) would crash-loop
+      // the instance until GitHub recovered, blaming the private key each
+      // time.
+      let mints = 0
+      const worker = makeWorker({
+        githubAppAuth: appAuthWith(async () => {
+          mints++
+          throw Object.assign(new Error('Service unavailable'), { status: 503 })
+        }),
+      })
+      ;(worker as unknown as { buildGitHubUrl(): Promise<string> }).buildGitHubUrl = async () =>
+        githubFixture
+
+      try {
+        await worker.start()
+        expect(mints).toBe(1)
+        expect(consoleSpy).toHaveWarned('Could not verify GitHub App authentication at startup')
+        expect(consoleSpy).toHaveWarned('Service unavailable')
+        expect(consoleSpy).toHaveLogged('CMS Worker started')
+        expect(consoleSpy).not.toHaveLogged('GitHub App authentication verified')
+      } finally {
+        await worker.stop()
+      }
+    })
+
+    it('still exits on a permanent failure, which is what the check is for', async () => {
+      // The complement of the test above, so neither can pass by the
+      // classifier having been wired to a constant.
+      const worker = makeWorker({
+        githubAppAuth: appAuthWith(async () => {
+          throw Object.assign(new Error('Bad credentials'), { status: 401 })
+        }),
+      })
+
+      await expect(worker.start()).rejects.toThrow(/GitHub App authentication failed/)
+      expect(consoleSpy).not.toHaveWarned('Continuing')
+    })
+
     it('mints once before any git work and lets startup continue', async () => {
       let mintedBeforeGit = 0
       const worker = makeWorker({

@@ -74,11 +74,19 @@ export type CanopyOctokitAuthOptions = { auth: string } | OctokitAuthStrategyOpt
  * errors the plugin never sees, like non-403 network failures).
  */
 export function createCanopyOctokit(options: CanopyOctokitAuthOptions): Octokit {
+  // The two auth fields are picked out EXPLICITLY rather than spread. A spread
+  // would forward anything else the caller's object happened to carry --
+  // `baseUrl`, `request`, `log`, `userAgent` are all live `OctokitOptions`,
+  // and a non-literal argument (a widened variable, not an inline object)
+  // slips past TypeScript's excess-property check. This function's contract is
+  // "our Octokit, authenticated the way you say", not "our Octokit, configured
+  // however you like".
+  const auth =
+    'authStrategy' in options
+      ? { authStrategy: options.authStrategy, auth: options.auth }
+      : { auth: options.auth }
   return new ThrottledOctokit({
-    // Spread, not `auth: options.auth`: an `authStrategy` in the options must
-    // reach the constructor too, and Octokit ignores `auth` entirely when one
-    // is present.
-    ...options,
+    ...auth,
     throttle: {
       onRateLimit: (retryAfter, requestOptions, _octokit, retryCount) => {
         canopyLogWarn(

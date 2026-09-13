@@ -138,6 +138,17 @@ export function resolveWorkerGitHubAuth(config: GitHubAuthConfig): ResolvedGitHu
 
   if (app) {
     const timeoutMs = config.gitTokenMintTimeoutMs ?? DEFAULT_GIT_TOKEN_MINT_TIMEOUT_MS
+    // Validated here, at construction, because `AbortSignal.timeout` throws a
+    // RangeError for NaN/negative/Infinity -- and it would throw INSIDE the
+    // mint, where the rejection carries no `.status`, so every push task would
+    // read it as transient and burn its whole retry budget on a config typo.
+    // `parseInt(process.env.X ?? '')` is NaN, which is exactly how such a
+    // value arrives.
+    if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+      throw new Error(
+        `CanopyCMS worker: gitTokenMintTimeoutMs must be a positive number of milliseconds (got ${String(timeoutMs)}).`,
+      )
+    }
     return {
       octokitAuth: app.octokitAuth,
       resolveGitToken: () => mintInstallationToken(app, timeoutMs),

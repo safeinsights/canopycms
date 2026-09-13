@@ -248,5 +248,34 @@ describe('error utilities', () => {
       const msg = 'no such file: config.settings.json'
       expect(redactCredentials(msg)).toBe(msg)
     })
+
+    it('keeps the text after a single-line PEM footer', () => {
+      // The footer match stops at its own closing dashes rather than running
+      // to end of line, so a one-line message does not lose its context.
+      const redacted = redactCredentials(
+        'sign failed: -----BEGIN PRIVATE KEY-----MIIEvQIB-----END PRIVATE KEY----- for app 12345',
+      )
+      expect(redacted).toBe('sign failed: <private-key> for app 12345')
+    })
+
+    it('redacts credential shapes in linear time on adversarial input', () => {
+      // Both new rules had to be written against CodeQL js/polynomial-redos,
+      // and the JWT rule failed that on its first spelling: with `\b` instead
+      // of a `(?<![\w-])` lookbehind, `-` being a non-word character inside
+      // the run class made every `-eyJ` a fresh start position. Measured
+      // 190ms at 20KB, 831ms at 40KB, 12.7s at 160KB -- quadratic. This input
+      // is the 160KB one; the bound is deliberately loose (a slow CI box must
+      // not flake it) because two orders of magnitude separate the two
+      // spellings.
+      const adversarial = '-eyJ'.repeat(40_000)
+      const startedAt = Date.now()
+      expect(redactCredentials(adversarial)).toBe(adversarial)
+      expect(Date.now() - startedAt).toBeLessThan(1_000)
+
+      const unterminatedKey = '-----BEGIN RSA PRIVATE KEY-----' + 'A'.repeat(200_000)
+      const keyStartedAt = Date.now()
+      expect(redactCredentials(unterminatedKey)).toBe('<private-key>')
+      expect(Date.now() - keyStartedAt).toBeLessThan(1_000)
+    })
   })
 })
