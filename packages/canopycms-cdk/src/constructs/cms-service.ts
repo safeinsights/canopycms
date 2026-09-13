@@ -413,6 +413,36 @@ function assertNotInlinePrivateKey(propName: string, value: string | undefined):
 }
 
 /**
+ * Rejects a GitHub App identifier that is not a whole number.
+ *
+ * Both identifiers are numeric, and the two wrong values an adopter reaches for
+ * are the App's *slug* and its `Iv1.…` OAuth client id — both are on the same
+ * settings page as the number, and neither works.
+ *
+ * The two fail differently at boot, and both are worse than failing here.
+ * `createAppAuth` refuses a non-numeric `appId` at construction (measured
+ * against `@octokit/auth-app@6.1.4`: `Number.isFinite(+options.appId)`), so the
+ * app id at least produces a named error. The installation id is checked only
+ * for falsiness there, so a non-numeric one is interpolated into
+ * `/app/installations/NaN/access_tokens` and comes back as a 404 that reads as
+ * "the app is not installed" — sending the operator to re-install a perfectly
+ * good App.
+ *
+ * Stricter than `createAppAuth`'s own `+value` coercion, deliberately: that
+ * accepts `' 12 '`, `12.5` and `0x1f`. None of them is an id.
+ */
+function assertNumericId(propName: string, value: string | undefined): void {
+  if (value === undefined || /^\d+$/.test(value)) return
+  throw new Error(
+    `CanopyCmsService: ${propName} must be the numeric id GitHub shows for the app ` +
+      `(got ${JSON.stringify(value)}). The app's slug and its 'Iv1.…' client id both appear on ` +
+      `the same settings page and neither works here — githubAppId is the number labelled ` +
+      `"App ID", and githubAppInstallationId is the trailing number in the URL of the app's ` +
+      `install page under your organisation's settings.`,
+  )
+}
+
+/**
  * Guards the GitHub credential props at synth: exactly one shape, fully given.
  *
  * Both rules restate `resolveWorkerGitHubAuth`
@@ -441,6 +471,8 @@ function assertGitHubAuthProps(props: CanopyCmsServiceProps): void {
   for (const name of GITHUB_APP_PROP_NAMES) {
     assertNotInlinePrivateKey(name, props[name])
   }
+  assertNumericId('githubAppId', props.githubAppId)
+  assertNumericId('githubAppInstallationId', props.githubAppInstallationId)
 
   const missing = GITHUB_APP_PROP_NAMES.filter((name) => !props[name])
   const provided = GITHUB_APP_PROP_NAMES.filter((name) => props[name])

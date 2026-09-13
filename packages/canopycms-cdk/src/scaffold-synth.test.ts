@@ -27,7 +27,7 @@
  */
 
 import { execFile } from 'node:child_process'
-import { existsSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -423,9 +423,39 @@ describe('canopycms init-deploy aws produces a synthesizable CDK app', () => {
       )
       // The grant, not just the .env: a worker told which secret to read with
       // no permission to read it deploys clean and then AccessDenied-loops
-      // every 5s forever. This is the end-to-end half of the construct-level
-      // IAM assertion in cms-deploy.test.ts.
-      expect(templates).toContain(APP_SYNTH_ENV.GITHUB_APP_PRIVATE_KEY_SECRET_ARN)
+      // every 5s forever.
+      //
+      // What this pins, precisely: that the GENERATED stack grants it by some
+      // route. It does NOT pin the construct's prop-to-IAM union, and measuring
+      // that was worth doing -- removing the App ARN from that union leaves
+      // this green, because `cms-stack.ts` also lists the key in `secretsArns`.
+      // The union is pinned at the construct level in cms-deploy.test.ts, where
+      // no `secretsArns` masks it. Both matter: an adopter who hand-writes the
+      // stack has only the union.
+      //
+      // Parsed, NOT a substring search of the template text: the .env stamp
+      // asserted above contains that same ARN, so `templates.toContain(arn)`
+      // would pass with no IAM statement at all -- coverage that is not there.
+      const grantedSecretArns = files.flatMap((file) => {
+        const doc: unknown = JSON.parse(readFileSync(path.join(outDir, file), 'utf-8'))
+        const policies = Object.values(readJsonField(doc, 'Resources') ?? {}).filter(
+          (r) => readJsonField(r, 'Type') === 'AWS::IAM::Policy',
+        )
+        return policies.flatMap((policy) => {
+          const statements = readJsonField(
+            readJsonField(readJsonField(policy, 'Properties'), 'PolicyDocument'),
+            'Statement',
+          )
+          return (Array.isArray(statements) ? statements : []).flatMap((s: unknown) => {
+            if (!JSON.stringify(readJsonField(s, 'Action')).includes('GetSecretValue')) return []
+            const resource = readJsonField(s, 'Resource')
+            return (Array.isArray(resource) ? resource : [resource]).filter(
+              (r): r is string => typeof r === 'string',
+            )
+          })
+        })
+      })
+      expect(grantedSecretArns).toContain(APP_SYNTH_ENV.GITHUB_APP_PRIVATE_KEY_SECRET_ARN)
       // ...and the token path is genuinely gone, rather than both being stamped.
       expect(templates).not.toContain('CANOPYCMS_GITHUB_TOKEN_SECRET_ARN=')
     },

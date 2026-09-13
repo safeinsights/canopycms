@@ -1781,6 +1781,42 @@ describe('CanopyCmsService: githubApp* props -> worker .env', () => {
     })
   })
 
+  describe('the App identifiers must be numeric', () => {
+    // The two wrong values are on the same settings page as the right one: the
+    // app's slug, and its 'Iv1.…' OAuth client id. They fail DIFFERENTLY at
+    // boot and both are worse than failing here -- `createAppAuth` names a bad
+    // appId, but checks installationId only for falsiness, so a non-numeric one
+    // is interpolated into /app/installations/NaN/access_tokens and returns a
+    // 404 that reads as "the app is not installed".
+    for (const bad of ['my-app-slug', 'Iv1.a1b2c3d4e5f6', '12345 ', '12.5']) {
+      it(`rejects githubAppId=${JSON.stringify(bad)}`, () => {
+        expect(() => synthUncached(false, { ...APP_PROPS, githubAppId: bad })).toThrow(
+          /githubAppId must be the numeric id/,
+        )
+      })
+    }
+
+    it('rejects a non-numeric githubAppInstallationId', () => {
+      expect(() =>
+        synthUncached(false, { ...APP_PROPS, githubAppInstallationId: 'my-org' }),
+      ).toThrow(/githubAppInstallationId must be the numeric id/)
+    })
+
+    it('names both the slug and the client id, which are what adopters reach for', () => {
+      expect(() => synthUncached(false, { ...APP_PROPS, githubAppId: 'my-app-slug' })).toThrow(
+        /slug and its 'Iv1/,
+      )
+    })
+
+    it('accepts ordinary numeric ids -- negative control', () => {
+      // Without this, every assertion above would pass against a guard that
+      // rejected everything.
+      expect(() =>
+        synthUncached(false, { ...APP_PROPS, githubAppId: '1', githubAppInstallationId: '9' }),
+      ).not.toThrow()
+    })
+  })
+
   describe('a PEM passed where an ARN or an identifier belongs is named at synth', () => {
     // There is deliberately no plaintext private-key prop: the value would go
     // into the worker's .env, which systemd reads as EnvironmentFile where a
@@ -1872,6 +1908,11 @@ describe('secret JSON-field wiring: the scaffold template and the example stay i
         // must still fail loudly at synth -- and is only relaxed when the App
         // variables are set.
         "required('GITHUB_TOKEN_SECRET_ARN')",
+        // ANY of the three App variables, not just the app id. Gating on the id
+        // alone answers a two-of-three configuration with "GITHUB_TOKEN_SECRET_ARN
+        // must be set" -- telling the adopter to restore the credential the
+        // migration guide just told them to remove.
+        'githubTokenSecretArn: usingGitHubApp',
       ],
     ],
     [
@@ -2610,6 +2651,25 @@ describe('CanopyCmsService: worker .env values are heredoc-safe', () => {
   // instead of the generic message.
   const GIT_REF_VALIDATED_FIELDS = new Set(['baseBranch', 'settingsBranch', 'deploymentName'])
 
+  // The two GitHub App identifiers are the same situation one step stricter:
+  // `assertNumericId` allows digits ONLY, so no value that could offend
+  // assertEnvSafe can reach it -- a numeric string has no newline, no quote, no
+  // backslash, no whitespace and no ENVEOF. They stay in the table because
+  // membership is the point: a prop dropped from it is a prop nobody notices
+  // has stopped being guarded, whichever guard does the rejecting.
+  const NUMERIC_ID_FIELDS = new Set(['githubAppId', 'githubAppInstallationId'])
+
+  /**
+   * The numeric guard runs before assertEnvSafe, so for those two fields every
+   * hostile value below is rejected by IT rather than by the rule under test.
+   * Applied per-rule rather than folded into a single helper with
+   * GIT_REF_VALIDATED_FIELDS, because the two sets do not carve out the same
+   * rules: an ENVEOF-bearing branch name passes the git-ref charset and DOES
+   * reach assertEnvSafe, while a numeric id never reaches it at all.
+   */
+  const numericIdOr = (field: string, otherwise: string | RegExp): string | RegExp =>
+    NUMERIC_ID_FIELDS.has(field) ? 'must be the numeric id' : otherwise
+
   for (const [field, build] of fields) {
     it(`rejects a newline in ${field}`, () => {
       expect(() => synth(false, build('acme\nCANOPYCMS_DEPLOYMENT_NAME=hijacked'))).toThrow(
@@ -2617,12 +2677,17 @@ describe('CanopyCmsService: worker .env values are heredoc-safe', () => {
         // constructing a RegExp from a non-literal (field names come from the
         // fixed `fields` array above, but a dynamic RegExp still trips
         // eslint-plugin-security's detect-non-literal-regexp).
-        GIT_REF_VALIDATED_FIELDS.has(field) ? `invalid ${field}` : 'must not contain a newline',
+        numericIdOr(
+          field,
+          GIT_REF_VALIDATED_FIELDS.has(field) ? `invalid ${field}` : 'must not contain a newline',
+        ),
       )
     })
 
     it(`rejects an ENVEOF-bearing ${field}`, () => {
-      expect(() => synth(false, build('acmeENVEOFrm'))).toThrow(/must not contain "ENVEOF"/i)
+      expect(() => synth(false, build('acmeENVEOFrm'))).toThrow(
+        numericIdOr(field, /must not contain "ENVEOF"/i),
+      )
     })
 
     it(`rejects a leading quote in ${field}`, () => {
@@ -2635,7 +2700,10 @@ describe('CanopyCmsService: worker .env values are heredoc-safe', () => {
       // through and assertEnvSafe is what must catch it. deploymentName is the
       // exception: its charset rule rejects the quote first.
       expect(() => synth(false, build('"acme'))).toThrow(
-        field === 'deploymentName' ? `invalid ${field}` : 'must not start with a quote',
+        numericIdOr(
+          field,
+          field === 'deploymentName' ? `invalid ${field}` : 'must not start with a quote',
+        ),
       )
     })
 
@@ -2645,7 +2713,10 @@ describe('CanopyCmsService: worker .env values are heredoc-safe', () => {
       // .env entry that follows. Same class as the leading quote, but it
       // corrupts a neighbouring variable rather than its own.
       expect(() => synth(false, build('acme\\'))).toThrow(
-        GIT_REF_VALIDATED_FIELDS.has(field) ? `invalid ${field}` : 'must not contain a backslash',
+        numericIdOr(
+          field,
+          GIT_REF_VALIDATED_FIELDS.has(field) ? `invalid ${field}` : 'must not contain a backslash',
+        ),
       )
     })
 
@@ -2654,9 +2725,12 @@ describe('CanopyCmsService: worker .env values are heredoc-safe', () => {
       // than the one configured here -- and for a JSON field that means the
       // whole-document fallback, silently.
       expect(() => synth(false, build(' acme'))).toThrow(
-        GIT_REF_VALIDATED_FIELDS.has(field)
-          ? `invalid ${field}`
-          : 'must not start or end with whitespace',
+        numericIdOr(
+          field,
+          GIT_REF_VALIDATED_FIELDS.has(field)
+            ? `invalid ${field}`
+            : 'must not start or end with whitespace',
+        ),
       )
     })
   }
