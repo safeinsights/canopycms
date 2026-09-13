@@ -3363,11 +3363,21 @@ CLERK_AUTHORIZED_PARTIES=... # Optional: comma-separated domains
 
 `CLERK_SECRET_KEY` is resolved lazily, on the first authenticated request -- not at build/startup. This means a zero-editor static/public build (`deployedAs: 'static'`, no auth plugin exercised) never needs the secret at all. It's still required wherever authentication actually runs: the CMS server build/deployment and the worker daemon's auth-cache refresh.
 
-For GitHub integration (production mode):
+For GitHub integration (production mode), the worker authenticates with either a personal
+access token (default) or a GitHub App:
 
 ```env
 GITHUB_BOT_TOKEN=ghp_...    # Bot token for PR creation
 ```
+
+GitHub App auth is optional -- a PAT stays the documented default, since registering an App
+needs account-owner rights many adopters don't have. To use one instead, run
+`npx canopycms init-github-app create` to register a per-site App via GitHub's App-manifest
+flow (so GitHub shows you the exact permissions before you click Create) and capture its
+private key without it ever touching disk; `init-github-app verify` re-checks an existing
+installation and changes nothing. Both print `GITHUB_APP_ID` and `GITHUB_APP_INSTALLATION_ID`.
+Register one App per site, never one shared across repositories. Full walkthrough (including
+where the key ends up and how the worker reads it) in [docs/deploying-to-aws.md](docs/deploying-to-aws.md#authenticating-as-a-github-app).
 
 ## Documentation
 
