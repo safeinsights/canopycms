@@ -103,6 +103,23 @@ export default withCanopy({
 - `npm run build` → static export for S3 (public site)
 - `CANOPY_BUILD=cms npm run build` → standalone server for Lambda (CMS)
 
+**sharp in the standalone image.** For the CMS build, `withCanopy()` also adds sharp's libvips shared library to Next's file tracing. Next can miss that library for sharp 0.35 ([vercel/next.js#97973](https://github.com/vercel/next.js/issues/97973)). An image built without it fails to load sharp at runtime with `ERR_DLOPEN_FAILED`.
+
+If you don't use `withCanopy()`, or your standalone build prints `CanopyCMS: could not add sharp's libvips…`, add the directory yourself. Paths are relative to the Next.js project directory. With pnpm:
+
+```typescript
+export default {
+  output: 'standalone',
+  outputFileTracingIncludes: {
+    '/**': ['node_modules/.pnpm/@img+sharp-libvips-*/node_modules/@img/*/lib/**/*'],
+  },
+}
+```
+
+- **npm.** npm's hoisted layout puts the same directory at `node_modules/@img/sharp-libvips-*/lib`.
+- **Monorepo.** Prefix the glob with the path from the app to the directory that holds `node_modules`, e.g. `../../`.
+- **Next 13 or 14.** Nest `outputFileTracingIncludes` under `experimental`.
+
 For a content route shared by both builds (e.g. `app/[slug]/`, or a fixed page like the home route), don't use a single `page.tsx`: `output: 'export'` requires `dynamicParams = false`, but on the CMS Lambda that makes an unknown slug throw Next's internal `NoFallbackError` (a 500) before your page's `notFound()` runs — and Next statically parses route-segment config, so the value can't be a conditional expression. The CMS build also must not prerender content pages: a build-time prerender serves build-time content to anonymous visitors (bypassing runtime path ACLs), and rendering a not-prerendered slug as on-demand static generation makes the request-scoped read throw `DYNAMIC_SERVER_USAGE` (also a 500). Split the page instead:
 
 ```tsx
