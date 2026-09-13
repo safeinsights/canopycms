@@ -144,9 +144,20 @@ function run(cmd, args, { cwd, env, capture = false, allowFailure = false } = {}
   return result
 }
 
+/** Whether `child` is `parent` or below it, comparing the paths as given. */
 function isInside(child, parent) {
-  const rel = path.relative(realpathSync(parent), realpathSync(child))
+  const rel = path.relative(parent, child)
   return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel))
+}
+
+function readContainerLog(container) {
+  const logs = run('docker', ['logs', container], { capture: true, allowFailure: true })
+  return `${logs.stdout ?? ''}${logs.stderr ?? ''}`
+}
+
+function printLogTail(containerLog) {
+  const tail = containerLog.split('\n').slice(-200).join('\n')
+  console.error(`\n[smoke] container log (last 200 lines):\n${tail}`)
 }
 
 function findTarball(dir, pkg) {
@@ -785,13 +796,19 @@ async function assertContainer(baseUrl, container) {
 async function main() {
   const options = parseOptions()
   const workDir = options.workDir ?? mkdtempSync(path.join(os.tmpdir(), 'canopy-standalone-smoke-'))
-  mkdirSync(workDir, { recursive: true })
-  if (isInside(workDir, REPO_ROOT)) {
-    throw new SmokeError(
-      `--work-dir must be outside the repository: inside it the packages resolve as workspace ` +
-        `links and sharp is bundled rather than externalized (${workDir})`,
-    )
+  // Checked on the path as given before anything is created, then again on the real path, which
+  // only exists once the directory does: a symlink could still lead back into the checkout.
+  const assertOutsideRepo = (dir) => {
+    if (isInside(dir, REPO_ROOT) || isInside(dir, realpathSync(REPO_ROOT))) {
+      throw new SmokeError(
+        `--work-dir must be outside the repository: inside it the packages resolve as workspace ` +
+          `links and sharp is bundled rather than externalized (${workDir})`,
+      )
+    }
   }
+  assertOutsideRepo(workDir)
+  mkdirSync(workDir, { recursive: true })
+  assertOutsideRepo(realpathSync(workDir))
   const appDir = path.join(workDir, 'app')
   if (existsSync(appDir)) throw new SmokeError(`${appDir} already exists; use a fresh --work-dir`)
   log(`work dir: ${workDir}`)
@@ -808,10 +825,12 @@ async function main() {
   })
 
   const seedDir = path.join(workDir, 'seed')
-  seedCheckout(appDir, seedDir)
-  run('docker', ['create', '--name', container, '-p', '127.0.0.1::8080', image])
+  let created = false
   let outcome
   try {
+    seedCheckout(appDir, seedDir)
+    run('docker', ['create', '--name', container, '-p', '127.0.0.1::8080', image])
+    created = true
     run('docker', ['cp', `${seedDir}/.`, `${container}:/app/`])
     run('docker', ['start', container])
     const port = /127\.0\.0\.1:(\d+)/.exec(
@@ -822,24 +841,30 @@ async function main() {
     await waitForServer(baseUrl, container)
     outcome = await assertContainer(baseUrl, container)
   } finally {
-    if (outcome) writeFileSync(path.join(workDir, 'container.log'), outcome.containerLog)
+    // Read before cleanup on every path. When the server dies before answering, its own output is
+    // the only record of why, and `docker rm` would discard it.
+    if (created) {
+      const containerLog = outcome?.containerLog ?? readContainerLog(container)
+      writeFileSync(path.join(workDir, 'container.log'), containerLog)
+      if (!outcome) printLogTail(containerLog)
+    }
     if (!options.keep) {
-      run('docker', ['rm', '-f', container], { capture: true, allowFailure: true })
+      if (created) run('docker', ['rm', '-f', container], { capture: true, allowFailure: true })
       run('docker', ['rmi', image], { capture: true, allowFailure: true })
     }
   }
 
   const failed = outcome.results.filter((result) => !result.ok)
   if (failed.length > 0) {
-    const tail = outcome.containerLog.split('\n').slice(-200).join('\n')
-    console.error(`\n[smoke] container log (last 200 lines):\n${tail}`)
+    printLogTail(outcome.containerLog)
     console.error(`\n❌ ${failed.length} of ${outcome.results.length} checks failed`)
     process.exit(1)
   }
   console.log(
     `\n✅ all ${outcome.results.length} checks passed (${options.pm}, Next ${options.nextVersion})`,
   )
-  if (!options.workDir) rmSync(workDir, { recursive: true, force: true })
+  // --keep leaves the container and image, so it leaves the scaffold they were built from too.
+  if (!options.workDir && !options.keep) rmSync(workDir, { recursive: true, force: true })
 }
 
 main().catch((err) => {

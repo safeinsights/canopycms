@@ -448,24 +448,25 @@ jobs:
         uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
         with:
           filters: |
-            # What the image is generated from, what decides where build-time reads come from,
-            # how sharp is traced and loaded, and what the smoke app installs.
+            # All source and packaging inputs of the three packages the smoke app installs, unlike
+            # `dual-build`'s narrower list. The image compiles the whole editor into `next build`,
+            # and its checks go through most of the server: the CLI templates, request-time
+            # dev-mode reads (context, services, git-manager, operating-mode), the API, http and
+            # auth layers, assets and sharp tracing. A narrower list let changes on those paths
+            # report a green "Skipped". Each leg takes about 2.5 minutes, which pays for running
+            # on most PRs.
             relevant:
-              - 'packages/canopycms/src/cli/template-files/**'
-              - 'packages/canopycms/src/cli/cli.ts'
-              - 'packages/canopycms/src/cli/init.ts'
-              - 'packages/canopycms/src/cli/project-detect.ts'
-              - 'packages/canopycms/src/cli/templates.ts'
-              - 'packages/canopycms-next/src/config.ts'
-              - 'packages/canopycms-next/src/sharp-tracing.ts'
-              - 'packages/canopycms-next/src/with-canopy.ts'
-              - 'packages/canopycms/src/assets/**'
-              - 'packages/canopycms/src/branch-workspace.ts'
-              - 'packages/canopycms/src/build-mode.ts'
-              - 'packages/canopycms/src/content-reader.ts'
+              - 'packages/canopycms/src/**'
+              - 'packages/canopycms/scripts/**'
               - 'packages/canopycms/package.json'
-              - 'packages/canopycms-auth-dev/package.json'
+              - 'packages/canopycms/tsconfig.build.json'
+              - 'packages/canopycms-next/src/**'
               - 'packages/canopycms-next/package.json'
+              - 'packages/canopycms-next/tsconfig.build.json'
+              - 'packages/canopycms-auth-dev/src/**'
+              - 'packages/canopycms-auth-dev/package.json'
+              - 'packages/canopycms-auth-dev/tsconfig.build.json'
+              - 'scripts/add-js-extensions.mjs'
               - 'pnpm-lock.yaml'
               - 'scripts/smoke/**'
               - '.github/workflows/ci.yml'
