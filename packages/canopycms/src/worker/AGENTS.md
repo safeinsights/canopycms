@@ -21,7 +21,7 @@ authoritative**; this file is the map to where those rules live.
 | `rebase.ts`          | The rebase loop, the deepest leaf of the git-sync cluster                                                                                                                                                                                                                  |
 | `history-rewrite.ts` | The [SYNC-H1] kernel all three clusters touch                                                                                                                                                                                                                              |
 | `log.ts`             | `workerLog`/`workerLogWarn`/`workerLogError`                                                                                                                                                                                                                               |
-| `github-auth.ts`     | Which GitHub credential this worker uses (token or App), how an installation token is minted, and PEM normalization                                                                                                                                                        |
+| `github-auth.ts`     | Which GitHub credential this worker uses (token or App), how an installation token is minted, the PAT swap in `refreshCredential` behind its 60s floor, and PEM normalization                                                                                              |
 
 Imports run one way only — `cms-worker` → {`task-runner`, `git-sync`} → `rebase` →
 `history-rewrite` → `worker-context`. `github-auth` sits outside that chain as a leaf:
@@ -122,7 +122,7 @@ satisfied by a reviewer's direct push to the PR branch and would delete it, sile
 here that spans files, which is why it is in this document and the rest are in the code.
 `github-service.ts` is reachable from `services.ts`, so anything it imports is in every
 adopter's Next.js **server** bundle — including the large majority who use a personal access
-token and will never register a GitHub App (registering one needs org-admin rights). The
+token and will never register a GitHub App (under an organisation, that takes an owner or a GitHub App manager). The
 package therefore holds only the SHAPE (`OctokitAuthStrategyOptions` in `github-service.ts`,
 `GitHubAppAuth` here), and a deployment that uses an App constructs the strategy in its own
 entrypoint and injects it — the seam `refreshAuthCache` already uses.

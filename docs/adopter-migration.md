@@ -85,9 +85,7 @@ Through the scaffolded stack (`canopycms init-deploy aws`) they are wired to the
 env vars `GITHUB_TOKEN_SECRET_JSON_FIELD` and `CLERK_SECRET_KEY_SECRET_JSON_FIELD`, which the
 generated `deploy-cms.yml` fills from repository _variables_ — they carry a key's name, not
 its value. The variables are named `CANOPY_GITHUB_TOKEN_SECRET_JSON_FIELD` and
-`CLERK_SECRET_KEY_SECRET_JSON_FIELD`: the GitHub one needs the `CANOPY_` prefix because
-GitHub refuses to create any secret **or variable** whose name begins with `GITHUB_`, which
-is why its ARN secret is already spelled that way.
+`CLERK_SECRET_KEY_SECRET_JSON_FIELD` ([why the prefix](deploying-to-aws.md#repository-secrets-and-variables)).
 
 If you scaffolded before this release, add the two props to `infrastructure/bin/app.ts` and
 `infrastructure/lib/cms-stack.ts`, or re-run the generator and diff. Leave everything unset
@@ -141,8 +139,9 @@ access token. Exactly one of the two: setting both is an error, and so is settin
 which identity a push or a pull request acts as.)
 
 **Nothing about the token path changed.** `githubToken` is not deprecated, warns about nothing,
-and stays the documented default. A GitHub App has to be registered and installed by an
-organisation admin, which many adopters are not — so this is an option, not a direction.
+and stays the documented default. Registering a GitHub App under an organisation takes an
+owner of that organisation (or a GitHub App manager for all its Apps), which many adopters
+are not — so this is an option, not a direction.
 The token path also keeps working with `@octokit/auth-app` absent from your install entirely:
 `canopycms` does not depend on it and never imports it.
 
@@ -182,20 +181,10 @@ wrapped-then-escaped). That is where a multi-line secret usually ends up after a
 config field. Anything unusable throws where the key is configured, naming the key, instead of
 surfacing later as an opaque JWT signing failure.
 
-It also converts PKCS#1 to PKCS#8, which is **insurance rather than a fix for a current
-failure** — worth stating plainly, because the opposite is easy to assume. GitHub issues App
-keys as PKCS#1 (`-----BEGIN RSA PRIVATE KEY-----`), and whether that is accepted depends on
-which build of `universal-github-app-jwt` your bundler resolves, never on the key:
-
-| Resolution                                                                                           | PKCS#1                               |
-| ---------------------------------------------------------------------------------------------------- | ------------------------------------ |
-| `@octokit/auth-app@6` → `universal-github-app-jwt@1` via `main` (e.g. `esbuild --platform=node`)     | **works** (signs via `jsonwebtoken`) |
-| the same package via `module` / `browser` (Vite, webpack, esbuild `--platform=browser`)              | throws "only PKCS#8 is supported"    |
-| `@octokit/auth-app@7` → `universal-github-app-jwt@2` under the `node` condition of its `imports` map | works (it converts internally)       |
-| the same, under any other condition                                                                  | throws                               |
-
-So a bundler flag or a dependency bump can turn a working key into a boot failure without the
-key changing. Converting up front removes the coupling.
+It also converts PKCS#1 to PKCS#8 — insurance, not a fix: GitHub's PKCS#1 keys sign today
+under the worker's `esbuild --platform=node` build, but a `module`-preferring bundler, or
+`@octokit/auth-app@7` outside the `node` condition of its dependency's `imports` map (per the
+published package), can reject them. `normalizeGitHubAppPrivateKey`'s comment has the detail.
 
 **One caveat on the `authStrategy: () => appAuth` closure.** Octokit calls the strategy with
 its own `request`, and its REST calls mint through that — not through any `request` you passed
@@ -208,7 +197,8 @@ your own PEM conversion; any code that mints a token at boot and holds it (insta
 last about an hour — `buildGitHubUrl` now resolves one per use); and any wrapper that catches
 and re-throws a mint failure. That last one is worth checking specifically: re-throwing as a
 new `Error` drops the HTTP status, and CanopyCMS's task classifier reads that status to decide
-permanent-vs-retry — without it a permanently bad key is retried forever instead of failing fast.
+permanent-vs-retry — without it a permanently bad key burns every publish's whole retry budget,
+and fails every sync, instead of failing fast.
 
 **`GitHubService` is unaffected** and remains static-token-only; the Lambda-side GitHub client
 still takes a token.
@@ -221,13 +211,7 @@ still takes a token.
 entrypoint builds the App credential for you — you write none of the `createAppAuth` wiring
 in the entry above. This closes adopter request #45.
 
-**Nothing about the token path changed**, and this is the last time it will be said in these
-entries: `githubTokenSecretArn` is not deprecated, warns about nothing, and remains the
-documented default. Registering and installing a GitHub App needs organisation-admin rights
-that many adopters do not have, so App auth is an option for organisations that require one,
-not a direction of travel. Existing stacks need no edit.
-
-**To adopt** — only if you want App auth:
+**To adopt** — only if you want App auth (existing stacks need no edit):
 
 1. Register the App under your organisation, install it on the content repository with
    **Contents: read & write** and **Pull requests: read & write**, and store its PEM private
@@ -242,11 +226,8 @@ not a direction of travel. Existing stacks need no edit.
    variable_ whose name starts with `GITHUB_`, so the obvious names cannot exist. The workflow
    maps each onto the unprefixed environment variable the CDK app reads.
 
-The private key is **ARN-only** — there is no plain-value prop and there cannot be one. The
-worker's configuration arrives as a `.env` file that systemd reads as `EnvironmentFile=`,
-where a newline starts a new variable, and a PEM is multi-line. Passing the key itself where
-the ARN belongs is refused at synth with a message that says so, rather than as a puzzling
-"an ARN must not contain a newline".
+The private key is **ARN-only**, and passing the key itself where the ARN belongs is refused
+at synth ([why](deploying-to-aws.md#authenticating-as-a-github-app)).
 
 The private-key ARN is unioned into the worker's IAM policy automatically, exactly as
 `githubTokenSecretArn` is — you do not repeat it in `secretsArns`. It also honours
@@ -283,12 +264,9 @@ does not fail loudly — `convert-to-draft`'s GraphQL failure carries no HTTP st
 worker classifies a permission denial as transient and retries the branch into `sync-failed`.
 `verify` finds that at setup time instead.
 
-**Register one App per site, not one shared across repositories.** A GitHub App's private key
-is App-level, and scoping an installation to one repository is a choice made at mint time
-rather than a boundary GitHub enforces against the key-holder: anyone with the key can list
-the App's installations and mint a token for any of them. Each site's worker reads the key at
-runtime, so one shared App means a compromise of one site's secret store grants write access
-to every other site's repository.
+**Register one App per site, not one shared across repositories:** anyone holding an App's key
+can mint a token for any of its installations
+([why](../ARCHITECTURE.md#why-one-github-app-per-site-not-one-shared-across-an-organisation)).
 
 **The key's destination is yours to choose.** Everything after `--` is run with the PEM on its
 standard input — so it never touches disk and never appears in a process listing — and that
@@ -300,6 +278,10 @@ or any other secret store.
 canopycms init-github-app create -- \
   aws secretsmanager create-secret --name canopycms/github-app-key --secret-string file:///dev/stdin
 ```
+
+If that command fails, `create` asks for a **file path** to write the key to, never a command,
+and a first word containing `=` is refused
+([details](deploying-to-aws.md#register-it-with-canopycms-init-github-app)).
 
 **Two things it will not do**, both deliberate: it will not edit an existing JSON secret
 document (a read-modify-write against a shared credential can silently drop its other
@@ -320,26 +302,18 @@ was no signal that anything was wrong, because `CmsWorker.refreshAuthCache()` lo
 swallows its errors. The symptom was a stale auth cache and one log line every fifteen
 minutes.
 
-The worker now re-reads a secret when the operation using it fails. Rotation is picked up
-within about five minutes for the GitHub token (the git-sync interval) and fifteen for the
-Clerk key (the auth-cache interval). A publish that meets a revoked GitHub token re-reads
-too, so when the new token is stored before the old one is revoked, the publish's automatic
-retry goes out on the new token instead of failing.
-
-It is **reactive, not polled**: between failures the worker makes no `GetSecretValue` calls
-at all, so this costs nothing in the healthy case. A secret that is wrong rather than rotated
-is re-read at most once every five minutes and never retried against an unchanged value, so
-it settles instead of looping — and it keeps checking indefinitely, so a later fix is still
-picked up.
+The worker now re-reads a secret when the operation using it fails, so a rotation is picked
+up without an instance replacement; timings, costs and the store-before-revoke order are in
+[deploying-to-aws.md](deploying-to-aws.md#rotating-a-secret).
 
 **To adopt.** Nothing. This is automatic for any deployment whose credentials come from
 `*_SECRET_ARN`, which is every deployment the scaffold generates.
 
 Two limits worth knowing, both deliberate:
 
-- A **GitHub App private key** is still read only at boot. An App key does not expire, and
-  the hourly installation tokens minted from it already refresh themselves; rotating the key
-  itself needs an instance replacement.
+- A **GitHub App private key** is still read only at boot. Store the new key, replace the
+  instance, and only then delete the old key on GitHub — the reverse order fails every publish
+  about an hour later ([details](deploying-to-aws.md#rotating-a-secret)).
 - A credential supplied as a **plain env var** (`CANOPYCMS_GITHUB_TOKEN`, `CLERK_SECRET_KEY`)
   is never re-read. Re-reading the ARN you overrode would swap your override back out.
 
@@ -352,10 +326,13 @@ One consequence for anyone driving `CmsWorker` from their own entrypoint: `CmsWo
 gains an optional `refreshGitHubToken?: () => Promise<string | undefined>`. Return the new
 token, or `undefined` for "nothing to do" — no ARN, read too recently, or a value identical
 to the one already held. Leave it unset and behaviour is exactly as before. Core calls it
-after every failed git sync **and every failed task**, so a burst of failing publishes calls
-it every few seconds — keep a floor on how often it actually reads. A call still unsettled
-after `taskTimeoutMs` is abandoned rather than awaited.
-`packages/canopycms-cdk/worker/credential-refresh.ts` is the worked example, guards included.
+after a failed git sync or a failed task, but at most once per
+`refreshGitHubTokenMinIntervalMs` (default `60000`; `0` disables it). That floor has a cost
+when your provider has no floor of its own: a call in the minute before a rotation holds off
+every retry of a publish (they span roughly 35–50 seconds), so that publish fails and must be
+resubmitted. A call still unsettled after `taskTimeoutMs` is abandoned rather than awaited.
+`packages/canopycms-cdk/worker/credential-refresh.ts` is the worked example; it keeps a
+five-minute floor of its own.
 
 See [deploying-to-aws.md](deploying-to-aws.md#rotating-a-secret).
 

@@ -9,7 +9,7 @@
  * Two branches of `@smithy/node-http-handler@4.5.0`'s `setSocketTimeout`
  * (dist-cjs/index.js) are exercised deliberately, by different tests:
  *   - The first two tests below (unchanged from before the body-stall
- *     defect) use `requestTimeout: 1000` (< 6000), which makes
+ *     defect) use `requestTimeout` 1000 and 500 (both < 6000), which makes
  *     `socketTimeout` arm IMMEDIATELY — the simple branch. It says nothing
  *     about a stalled response BODY: these tests never let response headers
  *     arrive at all, so `requestTimeout`/`socketTimeout` alone bound them.
@@ -18,9 +18,9 @@
  *     DEFER arming the socket idle timer by 3000ms behind a timer that gets
  *     cleared the instant response headers arrive. That deferred-arm branch
  *     is the one a stalled response BODY slipped through — see the
- *     measurement in the comment above `secretsManagerClientConfig` in
+ *     comment above `secretsManagerClientConfig` in
  *     `secrets.ts`. Those tests inject a SHORT deadline (well under the
- *     15000ms production value) so the suite stays fast while still
+ *     20000ms production attempt deadline) so the suite stays fast while still
  *     exercising the real, slow branch:
  *       - the "stalled RESPONSE BODY" tests below drive a real
  *         `SecretsManagerClient` + `AbortSignal.timeout(...)` directly —
@@ -268,7 +268,7 @@ describe('getSecret() wiring', () => {
       await expect(
         getSecret('arn:aws:secretsmanager:us-east-1:123456789012:secret:test-XXXXXX', {
           retries: 0, // exactly one attempt, no backoff — isolates the deadline itself
-          attemptTimeoutMs: 1000, // short injected deadline, far below the 15000ms production default
+          attemptTimeoutMs: 1000, // short injected deadline, far below the 20000ms production default
         }),
       ).rejects.toThrow(/aborted/)
       // Without the deadline wired into `fetchSecretString`'s `client.send`,
@@ -304,8 +304,9 @@ describe('getSecret() attemptTimeoutMs validation', () => {
           attemptTimeoutMs,
         }),
       ).rejects.toThrow(/attemptTimeoutMs must be a whole number/)
-      // Unvalidated, AbortSignal.timeout threw inside the retry loop's try, so
-      // this backed off for ~7s and then rejected with a RangeError.
+      // Unvalidated, AbortSignal.timeout threw (or, for 0, aborted at once)
+      // inside the retry loop's try, so this backed off for ~7s and then
+      // rejected — with a RangeError, or for 0 an abort.
       expect(Date.now() - start).toBeLessThan(1000)
     },
   )

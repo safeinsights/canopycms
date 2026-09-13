@@ -78,9 +78,10 @@ describe('CmsWorker credential refresh on a failing sync', () => {
       githubToken: 'ghp_boot',
       refreshGitHubToken,
       // Fast enough that the test does not wait out the 5-minute default,
-      // slow enough not to spin. The floor that keeps this from hammering
-      // Secrets Manager in production lives in the PROVIDER, not here --
-      // see canopycms-cdk/worker/credential-refresh.ts.
+      // slow enough not to spin. Core's own refresh floor (60s by default,
+      // not overridden here) still holds this to one provider call a minute;
+      // the AWS provider adds a five-minute floor of its own
+      // (canopycms-cdk/worker/credential-refresh.ts).
       gitSyncInterval: 20,
       taskPollInterval: 10_000,
     })

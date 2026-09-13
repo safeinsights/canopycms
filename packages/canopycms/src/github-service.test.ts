@@ -613,8 +613,8 @@ describe('GitHubService', () => {
       const octokit = createCanopyOctokit({ authStrategy, auth: { appId: 42 } })
 
       expect(authStrategy).toHaveBeenCalledTimes(1)
-      // Octokit merges its own `{ request, log, octokit, octokitOptions }`
-      // over whatever `auth` carried, so the injected values must still be there.
+      // Octokit merges `auth` over its own `{ request, log, octokit,
+      // octokitOptions }`, so the injected values are there.
       expect(authStrategy.mock.calls[0][0]).toMatchObject({ appId: 42 })
       await expect(octokit.auth()).resolves.toEqual({ token: 'ghs_installation' })
       // Still the same client otherwise: the REST surface and the throttling

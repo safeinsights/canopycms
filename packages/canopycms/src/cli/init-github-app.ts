@@ -146,9 +146,12 @@ export type PermissionSet = Readonly<Record<string, PermissionLevel>>
  *   rather than the part that is not automatic.
  *
  * Nothing else. No `issues` (there are no `issues.*` calls — nothing sets labels
- * or assignees, which is the usual reason a PR bot needs it), no `workflows`
- * (nothing writes under `.github/workflows/`), no `administration`, no `actions`,
- * and no organisation permissions.
+ * or assignees, which is the usual reason a PR bot needs it), no `administration`,
+ * no `actions`, and no organisation permissions. No `workflows`: nothing in the
+ * worker edits `.github/workflows/`, but GitHub may still refuse to push rebased
+ * history that carries a base-branch change to it — see
+ * .claude/future-tasks/worker-push-refused-when-base-changes-workflows.md, an
+ * open P1.
  */
 export const CANOPY_APP_PERMISSIONS: PermissionSet = {
   contents: 'write',
@@ -957,8 +960,10 @@ type CreatedApp = { id: number; slug: string; clientId: string; pem: string }
  * Only the four fields this tool needs are lifted out. The response also carries
  * `client_secret` and `webhook_secret`, which this App never uses — so the body
  * is never logged, never returned whole, and never reaches an error message.
- * Failures here report the HTTP status and nothing else, for the same reason:
- * the code itself is exchangeable for the private key for a full hour.
+ * Failures collapse to `null` and nothing from the response is surfaced, for
+ * the same reason: the code itself is exchangeable for the private key for a
+ * full hour. That also drops the HTTP status, which the caller does not report
+ * (.claude/future-tasks/init-github-app-review-round-1-lows.md, item 2).
  */
 export async function convertManifest(code: string): Promise<CreatedApp | null> {
   const response = await githubRequest<{
@@ -1348,7 +1353,7 @@ async function readBackInstallation(
   // into `verify --key-stdin`. Without this, `verify` failed with "could not
   // sign a JWT" on a key the worker boots on fine. Called here rather than in
   // `cli.ts` so `create` goes through it too: GitHub's own freshly-minted PEM is
-  // already normal, so this is a no-op for it.
+  // PKCS#1, so this re-exports it as PKCS#8 — the same key, differently encoded.
   let normalizedKey: string
   try {
     normalizedKey = normalizeGitHubAppPrivateKey(privateKey)
@@ -1361,9 +1366,10 @@ async function readBackInstallation(
     // in this file.
     console.error(
       `\nThe private key could not be normalised: ${redactCredentials(getErrorMessage(err))}\n` +
-        '  Check that this is the App private key (the downloaded .pem), NOT the "client\n' +
-        '  secret" listed a few sections above it on the App\'s settings page — that one is\n' +
-        '  for OAuth user flows, is unused by this App, and fails confusingly here.',
+        '  If you supplied this key, check that it is the App private key (the downloaded\n' +
+        '  .pem), NOT the "client secret" listed a few sections above it on the App\'s\n' +
+        '  settings page — that one is for OAuth user flows, is unused by this App, and fails\n' +
+        '  confusingly here.',
     )
     return { ok: false, installationId: null }
   }
@@ -1376,9 +1382,10 @@ async function readBackInstallation(
     // an opaque 401 from GitHub.
     console.error(
       `\nThe private key could not sign a JWT: ${redactCredentials(getErrorMessage(err))}\n` +
-        '  Check that this is the App private key (the downloaded .pem), NOT the "client\n' +
-        '  secret" listed a few sections above it on the App\'s settings page — that one is\n' +
-        '  for OAuth user flows, is unused by this App, and fails confusingly here.',
+        '  If you supplied this key, check that it is the App private key (the downloaded\n' +
+        '  .pem), NOT the "client secret" listed a few sections above it on the App\'s\n' +
+        '  settings page — that one is for OAuth user flows, is unused by this App, and fails\n' +
+        '  confusingly here.',
     )
     return { ok: false, installationId: null }
   }
@@ -1513,7 +1520,8 @@ async function resolveTarget(options: InitGitHubAppOptions): Promise<AppTarget |
   if (!owner || !repo) {
     console.error(
       'Could not work out which GitHub repository this is for.\n\n' +
-        '  Detection reads the `origin` remote and only understands github.com URLs, so it\n' +
+        '  Detection reads the `origin` remote and looks for github.com in its URL (and can\n' +
+        '  misread one with a port), so it\n' +
         '  finds nothing when there is no remote, no git, or a GitHub Enterprise Server host\n' +
         '  (which this command does not support — it talks to api.github.com).\n\n' +
         '  Pass them explicitly:  --owner <account> --repo <repository>',
@@ -1789,7 +1797,8 @@ async function verifyCommand(options: InitGitHubAppOptions): Promise<number> {
   if (!options.privateKey) {
     console.error(
       'Pass the App private key, with --key-file <path> or --key-stdin (reads the PEM from\n' +
-        '  standard input, so it can come straight out of a secret store without touching disk).',
+        '  standard input, so it can come straight out of a secret store without touching disk).\n' +
+        '  An empty path, file or stdin counts as no key.',
     )
     return 1
   }

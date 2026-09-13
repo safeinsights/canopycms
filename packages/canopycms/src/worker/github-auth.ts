@@ -20,9 +20,10 @@ type TokenAuth = ReturnType<typeof createTokenAuth>
  * warns on, or nudges away from the token.
  *
  * - **A personal access token** (`githubToken`). The documented default, and
- *   the only one most adopters will ever use: registering and installing a
- *   GitHub App needs organisation-admin rights that a single-maintainer site
- *   does not have. Nothing in this module imports `@octokit/auth-app`, so
+ *   the only one most adopters will ever use: registering a GitHub App under
+ *   an organisation takes an owner of that organisation (or a GitHub App
+ *   manager for all its Apps), which many adopters are not. Nothing in this
+ *   module imports `@octokit/auth-app`, so
  *   this path works with that package absent from the install entirely.
  * - **A GitHub App** (`githubAppAuth`). An App's private key does not expire
  *   and installs across repositories, where a fine-grained PAT expires within
@@ -58,16 +59,18 @@ export interface GitHubAuthConfig {
    *
    * Resolves to the new token, or to `undefined` for "nothing to do", which
    * covers every no-op case: no ARN configured, re-read too recently, or a
-   * re-read whose value is identical to the one already held. All of that
-   * judgement lives in the provider, not here — see
+   * re-read whose value is identical to the one already held. That judgement
+   * lives in the provider (core adds only the floor below) — see
    * `packages/canopycms-cdk/worker/credential-refresh.ts`, which is also the
    * worked example for an adopter driving `CmsWorker` from their own
    * entrypoint.
    *
-   * **Only the token path uses this.** A GitHub App refreshes itself: its
-   * `@octokit/auth-app` strategy holds an installation-token cache and mints
-   * a new hourly token as the old one nears expiry, so `refreshCredential()`
-   * below is a no-op on that path.
+   * **Only the token path uses this.** A GitHub App renews its token on
+   * expiry: its `@octokit/auth-app` strategy caches the installation token for
+   * 59 minutes and mints a new one after that, so `refreshCredential()` below
+   * is a no-op on that path. It does NOT recover a rotated private key or an
+   * early-revoked token — see
+   * .claude/future-tasks/worker-app-auth-cannot-recover-a-rotated-key.md.
    */
   refreshGitHubToken?: () => Promise<string | undefined>
   /**
@@ -84,6 +87,11 @@ export interface GitHubAuthConfig {
    * its own five-minute floor; an adopter's own provider has none unless they
    * write one, so core enforces this one regardless of what the provider does
    * on its side.
+   *
+   * The cost, where the provider has no floor of its own: a call in the minute
+   * before a rotation holds off every retry of a publish that then meets the
+   * revoked token (its retries span roughly 35-50s), so that publish fails and
+   * must be resubmitted.
    */
   refreshGitHubTokenMinIntervalMs?: number
   /**
@@ -168,9 +176,10 @@ export interface ResolvedGitHubAuth {
    *
    * **The one place the two credential shapes differ, and the reason nothing
    * outside this module has to know which one it holds.** On the App path it
-   * is a no-op: the strategy owns its own token cache and mints on demand. On
-   * the token path it calls `GitHubAuthConfig.refreshGitHubToken` and swaps
-   * the result in.
+   * is a no-op: the strategy owns its own token cache and mints a new token on
+   * expiry (expiry only — see `GitHubAuthConfig.refreshGitHubToken`). On the
+   * token path it calls `GitHubAuthConfig.refreshGitHubToken`, at most once per
+   * `refreshGitHubTokenMinIntervalMs`, and swaps the result in.
    *
    * Nothing needs rebuilding afterwards, on either path. Both consumers read
    * the credential per use — `resolveGitToken` on every `buildGitHubUrl()`,
@@ -256,8 +265,10 @@ export function resolveWorkerGitHubAuth(config: GitHubAuthConfig): ResolvedGitHu
       resolveGitToken: () => mintInstallationToken(app, timeoutMs),
       // Deliberately a no-op, not an oversight, and not wired to
       // `refreshGitHubToken`: an App holds no token to re-read. Its private
-      // key does not expire, and the hourly installation token it mints is
-      // refreshed by `@octokit/auth-app`'s own cache as it nears expiry.
+      // key does not expire, and `@octokit/auth-app`'s own cache mints a new
+      // installation token when the old one expires. A rotated key or an
+      // early-revoked token is NOT recovered here — see
+      // .claude/future-tasks/worker-app-auth-cannot-recover-a-rotated-key.md.
       refreshCredential: async () => {},
     }
   }
@@ -546,7 +557,8 @@ function getHttpStatus(err: unknown): number | null {
  * - That same package's `module`/`browser` entry is a WebCrypto build that
  *   throws "Private Key is in PKCS#1 format, but only PKCS#8 is supported".
  *   Any resolver preferring `module` reaches it.
- * - `@octokit/auth-app@7` moves to `universal-github-app-jwt@2`, which is
+ * - Per their published package.json files (neither is installed here),
+ *   `@octokit/auth-app@7` moves to `universal-github-app-jwt@2`, which is
  *   WebCrypto-only and converts PKCS#1 solely under the **`node` condition of
  *   its `imports` map** (`"#crypto"` → `lib/crypto-node.js`); the `default`
  *   sibling's `convertPrivateKey` is a literal no-op, and the key throws.

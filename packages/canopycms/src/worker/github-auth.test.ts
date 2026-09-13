@@ -606,7 +606,7 @@ describe('resolveWorkerGitHubAuth', () => {
     })
 
     describe('the GitHub App path', () => {
-      it('never calls the provider — the strategy refreshes itself', async () => {
+      it('never calls the provider — the strategy renews its own token on expiry', async () => {
         const refreshGitHubToken = providerOf('ghp_should_not_be_used')
         const resolved = resolveWorkerGitHubAuth({
           githubAppAuth: appAuthWith(async () => 'ghs_minted'),
@@ -616,9 +616,9 @@ describe('resolveWorkerGitHubAuth', () => {
         await resolved.refreshCredential()
 
         // An App holds no token to re-read: its private key does not expire,
-        // and `@octokit/auth-app`'s own cache mints the hourly installation
-        // token as the old one nears expiry. Calling the provider here would
-        // read a GitHub-token secret this deployment does not even have.
+        // and `@octokit/auth-app`'s own cache mints a new installation token
+        // when the old one expires. Calling the provider here would read a
+        // GitHub-token secret this deployment does not even have.
         expect(refreshGitHubToken).not.toHaveBeenCalled()
       })
 

@@ -762,7 +762,7 @@ export class CmsWorker {
    * DEFERRED out of the constructor deliberately, exactly as
    * `ensureSettingsBranch()` is, and for the same reason that method records:
    * `resolveWorkerGitHubAuth` throws for a half-configured credential (both
-   * set, neither set, an unusable mint timeout), and a throw during
+   * set, neither set, an unusable mint timeout or refresh interval), and a throw during
    * `new CmsWorker(...)` lands BEFORE the only code that writes
    * `lastFatalError` — start()'s catch. The AWS entrypoint constructs the
    * worker and calls start() separately, and its `main().catch()` only logs
@@ -812,7 +812,7 @@ export class CmsWorker {
    * token path is a bare `async` return.
    *
    * A mint failure propagates AS THROWN, carrying the `.status` that
-   * `isPermanentTaskFailure` (task-runner.ts:91) classifies on — see
+   * `isPermanentTaskFailure` (task-runner.ts:92) classifies on — see
    * github-auth.ts.
    *
    * Do NOT add a parallel token accessor alongside it. Every instance-backed
@@ -1006,21 +1006,23 @@ export class CmsWorker {
    * to classify on: a `git fetch` or `git push` rejected for a dead token throws
    * a plain simple-git error — exit 128, no HTTP `.status` — which
    * `isPermanentTaskFailure` reads as transient, so a gate keyed on it would
-   * never fire. What bounds the cost is the provider, not this method:
-   * `refreshGitHubToken` decides whether to read at all, and the AWS one reads
-   * at most once per five minutes and returns `undefined` for an unchanged value
-   * (canopycms-cdk/worker/credential-refresh.ts). On the GitHub App path the
-   * refresh is a no-op. The provider's floor is shared by both call sites, so a
-   * read issued by one throttles the other until the floor expires.
+   * never fire. Two floors bound the cost instead: core's own
+   * `refreshGitHubTokenMinIntervalMs` (default 60s, enforced by
+   * `refreshCredential` in github-auth.ts), and whatever floor the provider
+   * keeps — the AWS one reads at most once per five minutes and returns
+   * `undefined` for an unchanged value (canopycms-cdk/worker/credential-refresh.ts).
+   * On the GitHub App path the refresh is a no-op. Both call sites share both
+   * floors, so a read issued by one throttles the other.
    *
    * **Never throws.** Both callers are already reporting a failure, and that
    * failure is the one that must reach the log.
    *
    * **Bounded by `taskTimeoutMs`**, because the task loop awaits it, and a read
-   * that never settled would stop every publish queued behind it. The AWS
-   * provider is exactly that shape: it builds `new SecretsManagerClient({})`, and
-   * with no timeout configured `@smithy/node-http-handler` arms no connection,
-   * request or socket timer. A read that loses the race is not cancelled, and
+   * that never settled would stop every publish queued behind it. An adopter's
+   * provider may have no bound at all, and the AWS one, bounded as it is
+   * (canopycms-cdk/worker/secrets.ts), can still take up to 87s for one
+   * `getSecret` — longer than the 60s default here. A read that loses the race
+   * is not cancelled, and
    * may still land later; `refreshCredential` discards a result older than one
    * it has already applied, so a late landing cannot put a stale token back.
    */

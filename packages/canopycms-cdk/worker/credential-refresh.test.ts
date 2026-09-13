@@ -164,8 +164,8 @@ describe('guard: too soon', () => {
       now: clock.now,
     })
 
-    // Three refreshes at the SAME instant. With a `>` comparison instead of
-    // `>=`, `0 - 0 < 0` is false only by luck of operator; this pins it.
+    // Three refreshes at the SAME instant: `0 - 0 < 0` is false, so each is
+    // permitted; with `<=` only the first would be.
     await secret.refresh()
     await secret.refresh()
     await secret.refresh()

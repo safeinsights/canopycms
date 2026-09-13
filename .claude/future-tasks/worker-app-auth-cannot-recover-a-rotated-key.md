@@ -16,8 +16,8 @@ task — ever loads a new key.
 When an operator rotates the way GitHub documents it — generate a new key, store it, delete the
 old one — **without** replacing the instance:
 
-1. **Nothing fails for up to an hour.** The reviewer read `@octokit/auth-app`'s
-   `dist-src/cache.js`: installation tokens are cached in an LRU with a 59-minute TTL, and a
+1. **Nothing fails for up to an hour.** `@octokit/auth-app@6.1.4`'s `dist-src/cache.js:7`
+   caches installation tokens in an LRU with a 59-minute TTL (`ttl: 1e3 * 60 * 59`), and a
    cached token does not stop working when the key that minted it is deleted.
 2. **Then every mint fails.** When the cached token expires, the next mint signs its JWT with
    the deleted key and GitHub answers 401. The `RequestError` propagates as thrown, and
@@ -27,15 +27,16 @@ old one — **without** replacing the instance:
    minutes, and the new key sitting in Secrets Manager is never read.
 
 Recovery takes an instance replacement plus a manual requeue of every branch that failed in the
-meantime. `docs/deploying-to-aws.md#rotating-a-secret` does say an App key needs an instance
-replacement, but not that the instance must be replaced **before** the old key is deleted — the
-order that avoids all of this.
+meantime. `docs/deploying-to-aws.md#rotating-a-secret` now gives the order that avoids all of
+this: store the new key, replace the instance, and only then delete the old key.
 
 ## An installation token revoked early (LOW, plausible)
 
 `mintInstallationToken` in `packages/canopycms-cdk/worker/github-app-auth.ts` never passes
-`refresh: true`. Per the reviewer's reading of `hook.js`, the strategy retries a 401 only within
-5 seconds of the token's creation. So a token revoked early while the App itself is healthy
+`refresh: true`, and the cache is bypassed only when it does
+(`dist-src/get-installation-authentication.js:22`). The strategy retries a 401 only within 5 seconds
+of the token's creation (`dist-src/hook.js:6`, `FIVE_SECONDS_IN_MS`, checked at `:76`), and only in
+its REST request hook, never for the git-over-HTTPS URL. So a token revoked early while the App itself is healthy
 (`DELETE /installation/token`, or GitHub revoking a leaked `ghs_`) is served from the cache for
 up to 59 minutes, although a fresh mint would work immediately. Which events actually revoke a
 token early is not confirmed.
@@ -43,7 +44,7 @@ token early is not confirmed.
 ## Options
 
 1. **Docs.** State the order: store the new key, replace the instance, then delete the old key.
-   Cheap, and worth doing whichever of the options below is chosen.
+   Cheap, and worth doing whichever of the options below is chosen. Done 2026-09-13.
 2. **A re-read seam for the App path.** On a failure, re-read the key secret, with the same floor
    and unchanged-value guard as the PAT, and rebuild the `createAppAuth` instance when the key
    changed. Core would have to swap `octokitAuth` and `mintInstallationToken` together.

@@ -248,7 +248,10 @@ export async function processTaskQueue(ctx: TaskRunnerContext): Promise<void> {
       // token spent its whole retry budget (5s/10s/20s backoff) waiting on the
       // git-sync loop's refresh, up to 5 minutes away, and failed permanently
       // while the working token sat in the secret store. With it, the retry
-      // resolves buildGitHubUrl() afresh and picks the new token up.
+      // resolves buildGitHubUrl() afresh and picks the new token up — unless
+      // another failure used the re-read within the floor (60s in core, five
+      // minutes for the AWS provider), in which case a publish that exhausts
+      // its retries first still fails.
       //
       // Ungated, and after the outcome is recorded rather than before: the task
       // is safely in pending/ or failed/ while a network read runs, and that
@@ -277,11 +280,13 @@ export async function processTaskQueue(ctx: TaskRunnerContext): Promise<void> {
  * - A Promise.race rejects when the timeout fires, so work that cannot
  *   observe the signal (git subprocesses via simple-git) still fails the
  *   attempt and the worker moves on instead of stalling forever.
- * That second layer is also what bounds pushBranchToGitHub's
- * `ctx.buildGitHubUrl()`: resolving the tokenized URL is async and likewise
- * does not observe the signal, so a resolution that hangs fails the attempt at
- * taskTimeoutMs rather than stalling the worker. (git-sync.ts's two resolutions
- * run on the sync loop, not through here, and are not bounded by it.)
+ * That second layer also stops a hung `ctx.buildGitHubUrl()` in
+ * pushBranchToGitHub from stalling the worker: resolving the tokenized URL is
+ * async and does not observe the signal, so the attempt fails at taskTimeoutMs —
+ * but the resolution is not cancelled, and if it later settles the abandoned
+ * push continues. (On the App path the mint is separately bounded by
+ * gitTokenMintTimeoutMs. git-sync.ts's two resolutions run on the sync loop,
+ * not through here, and are not bounded by taskTimeoutMs.)
  * pushBranchToGitHub additionally kills stalled git processes via
  * simple-git's block timeout, so a hung push doesn't leak a process.
  */

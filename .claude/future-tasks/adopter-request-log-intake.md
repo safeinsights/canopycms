@@ -222,7 +222,7 @@ surrounding whitespace) now cover every worker `.env` value, both grounded in ho
 `EnvironmentFile` parser actually behaves.
 
 **Still open, and they should know.** (a) The boot-only read is only half-solved: under App
-auth the credential refreshes itself, but **a PAT adopter who rotates still holds the
+auth the token renews itself on expiry, but **a PAT adopter who rotates still holds the
 boot-time token until the ASG rolls** — their item's own "Related" note, and the majority case
 since most adopters cannot register an App. Tracked as the reactive-re-read task. (b) The App
 path ships **unexercised against real GitHub**: every test generates its key with

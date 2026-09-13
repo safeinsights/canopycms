@@ -3371,7 +3371,8 @@ GITHUB_BOT_TOKEN=ghp_...    # Bot token for PR creation
 ```
 
 GitHub App auth is optional -- a PAT stays the documented default, since registering an App
-needs account-owner rights many adopters don't have. To use one instead, register a per-site
+under an organisation takes an owner of it (or a GitHub App manager for all its Apps), which
+many adopters are not. To use one instead, register a per-site
 App via GitHub's App-manifest flow, which shows you the exact permissions before you click
 Create:
 
