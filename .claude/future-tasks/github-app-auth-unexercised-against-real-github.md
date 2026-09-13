@@ -54,6 +54,14 @@ can never run in CI.
 4. **Then narrow it deliberately** — drop the installation to `pull_requests: read` and confirm
    `verify` catches it, and that the worker's failure looks the way this file predicts. That is
    the half that proves `verify` is worth having.
+5. **Two cases added by the epic's review (2026-09-13).**
+   - Change a workflow file on the base branch, let the worker rebase a content branch across
+     it, then publish that branch. The push is expected to be refused without `workflows`
+     permission; see
+     [worker-push-refused-when-base-changes-workflows.md](worker-push-refused-when-base-changes-workflows.md).
+   - Rotate the App private key (store the new one, delete the old one) on a running worker,
+     and confirm the failure arrives about an hour later as a permanent 401; see
+     [worker-app-auth-cannot-recover-a-rotated-key.md](worker-app-auth-cannot-recover-a-rotated-key.md).
 
 ## What to write down afterwards
 
