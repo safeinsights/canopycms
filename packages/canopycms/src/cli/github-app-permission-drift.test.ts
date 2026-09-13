@@ -355,6 +355,7 @@ describe('the source-level backstop', () => {
    */
 
   const OCTOKIT_CALL =
+    // eslint-disable-next-line security/detect-unsafe-regex -- linear, see above
     /\boctokit(?:\(\))?\s*\.\s*[A-Za-z_$][\w$]*\s*(?:\.\s*[A-Za-z_$][\w$]*\s*)?\(/
 
   function filesWithOctokitCalls(): string[] {

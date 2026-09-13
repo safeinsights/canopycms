@@ -374,10 +374,59 @@ describe('handOffKey', () => {
     // the private key.
     const stdin = new PassThrough()
     const { child } = fakeChild({ stdin, exitCode: undefined })
-    queueMicrotask(() => stdin.destroy(new Error('EPIPE')))
+    queueMicrotask(() => {
+      stdin.destroy(new Error('EPIPE'))
+      // A real child still exits after its pipe breaks, and the exit code is
+      // what handOffKey waits for.
+      queueMicrotask(() => child.emit('close', 0))
+    })
     const result = await handOffKey(PEM, { kind: 'command', argv: ['store'] }, () => child)
     expect(result.stored).toBe(false)
-    expect(result.detail).toContain('closed its input')
+    expect(result.detail).toContain('could not be written to its input')
+  })
+
+  it('lets a ZERO exit stand when the key was written cleanly', async () => {
+    // The other side of the rule above, and the one that keeps it from being
+    // merely conservative: a child that took the key, stored it and exited 0
+    // must not be reported as a failure, or the operator generates a new key
+    // for nothing.
+    const { child, written } = fakeChild({ exitCode: 0 })
+    const result = await handOffKey(PEM, { kind: 'command', argv: ['store'] }, () => child)
+    expect(result.stored).toBe(true)
+    expect(written.join('')).toBe(PEM)
+  })
+
+  it('does not let a zero exit override a write that failed', async () => {
+    // A write error vetoes a zero exit, and the two are independent events, so
+    // the verdict is deferred a turn rather than taken on whichever arrives
+    // first. Without that, a broken pipe racing a fast exit reports a key as
+    // stored on the strength of an exit code alone.
+    const stdin = new PassThrough()
+    const { child } = fakeChild({ stdin, exitCode: undefined })
+    queueMicrotask(() => {
+      stdin.destroy(new Error('EPIPE'))
+      queueMicrotask(() => child.emit('close', 0))
+    })
+    const result = await handOffKey(PEM, { kind: 'command', argv: ['store'] }, () => child)
+    expect(result.stored).toBe(false)
+  })
+
+  it('takes the exit code as the contract, even from a child that read nothing', async () => {
+    // The documented limit, pinned as BEHAVIOUR rather than as a comment, so a
+    // future change that starts reporting this as a failure is a deliberate one.
+    //
+    // MEASURED against real children: `sh -c 'exec 0<&-; exit 0'` and
+    // `sh -c 'head -c 5 >/dev/null; exit 0'` both report stored, because a
+    // ~1.7KB PEM fits entirely in a 64KB pipe buffer — the write completes into
+    // the kernel whether or not the child ever reads it, so no EPIPE is raised
+    // and nothing locally distinguishes them from a command that stored the key.
+    // The tempting fix (wait for the stream to flush) measures the buffer, not
+    // the child, and would look like a check while being one.
+    const stdin = new PassThrough()
+    stdin.resume() // accepts and discards, exactly as the kernel buffer does
+    const { child } = fakeChild({ stdin, exitCode: 0 })
+    const result = await handOffKey(PEM, { kind: 'command', argv: ['store'] }, () => child)
+    expect(result.stored).toBe(true)
   })
 
   it('reports a child that could not be spawned at all', async () => {

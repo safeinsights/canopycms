@@ -537,6 +537,22 @@ export type SpawnFn = (command: string, args: string[]) => ChildProcess
  * closes stdin early makes the write fail with EPIPE, and an unhandled error on
  * a stream takes the process down — carrying with it the only copy of a private
  * key for an App that already exists.
+ *
+ * WHAT `stored: true` DOES AND DOES NOT MEAN. It means the command exited zero
+ * and nothing went wrong writing to it. It does NOT mean the command read the
+ * key, and it cannot: **a PEM is around 1.7KB and a pipe buffer is 64KB, so the
+ * write completes into the kernel buffer whether or not the child ever reads
+ * it.** MEASURED against real children — `sh -c 'exec 0<&-; exit 0'` (closes its
+ * input and exits) and `sh -c 'head -c 5 >/dev/null; exit 0'` (reads five bytes)
+ * both report stored, and no EPIPE is generated in either case because the write
+ * never had to block. There is no local signal that distinguishes them from a
+ * command that stored the key properly.
+ *
+ * So the child's EXIT CODE is the contract, and the operator is responsible for
+ * naming a command that fails loudly. That is stated here rather than papered
+ * over, because the tempting fix — waiting for the stream to flush — measures
+ * the kernel buffer rather than the child, and would look like a check while
+ * being one.
  */
 export async function handOffKey(
   pem: string,
@@ -579,15 +595,40 @@ export async function handOffKey(
       resolve(result)
     }
 
+    // Recorded rather than settled on, so the child's EXIT CODE stays the
+    // authority on whether the key was stored. A child that consumed the key,
+    // stored it and exited 0 must not be reported as a failure because its
+    // pipe errored on the way down — the operator would generate a new key for
+    // nothing. It does veto a zero exit, though: a write that did not complete
+    // means the child cannot have received the whole PEM, whatever it claims.
+    let writeError: Error | undefined
+
     child.on('error', (err) => {
+      // A spawn failure, where no 'close' need follow — so this one settles.
       settle({ stored: false, detail: `could not run \`${command}\`: ${getErrorMessage(err)}` })
     })
     child.on('close', (code) => {
-      if (code === 0) {
-        settle({ stored: true, detail: `\`${command}\` accepted the key and exited 0` })
-        return
-      }
-      settle({ stored: false, detail: `\`${command}\` exited ${code ?? 'by signal'}` })
+      // Deferred one turn of the event loop so a stdin error that is already
+      // pending is recorded BEFORE the verdict is taken. A broken pipe and the
+      // child's exit are two independent events and `close` can win the race,
+      // which would report a key as stored on the strength of an exit code
+      // while the write that carried it had failed.
+      setImmediate(() => {
+        if (writeError) {
+          settle({
+            stored: false,
+            detail:
+              `\`${command}\` exited ${code ?? 'by signal'}, but the key could not be written ` +
+              `to its input (${getErrorMessage(writeError)})`,
+          })
+          return
+        }
+        if (code === 0) {
+          settle({ stored: true, detail: `\`${command}\` accepted the key and exited 0` })
+          return
+        }
+        settle({ stored: false, detail: `\`${command}\` exited ${code ?? 'by signal'}` })
+      })
     })
 
     const stdin = child.stdin
@@ -595,13 +636,11 @@ export async function handOffKey(
       settle({ stored: false, detail: `\`${command}\` has no stdin to write the key to` })
       return
     }
-    // See the docstring: without this listener an EPIPE from an early-closing
-    // child is an unhandled stream error and takes the process with it.
+    // This listener is not optional. Without it an EPIPE from an early-closing
+    // child is an unhandled stream error, which takes the process down — and
+    // with it the only copy of a private key for an App that already exists.
     stdin.on('error', (err) => {
-      settle({
-        stored: false,
-        detail: `\`${command}\` closed its input before the key was written (${getErrorMessage(err)})`,
-      })
+      writeError = err
     })
     stdin.end(pem)
   })
