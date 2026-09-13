@@ -146,10 +146,11 @@ organisation admin, which many adopters are not — so this is an option, not a 
 The token path also keeps working with `@octokit/auth-app` absent from your install entirely:
 `canopycms` does not depend on it and never imports it.
 
-**To adopt** — only if you want App auth. This release wires the _package_ side only:
-`canopycms-cdk`'s own worker entrypoint does not construct an App strategy yet, and the CDK
-props that stamp the credentials onto the instance land in a later entry. So for now this is
-for adopters driving `CmsWorker` from their own entrypoint:
+**To adopt** — only if you want App auth. This entry is the _package_ side: what an adopter
+driving `CmsWorker` from their own entrypoint writes. If you deploy with `canopycms-cdk`,
+you do not write any of this — see
+[the CDK entry below](#the-cdk-worker-can-authenticate-as-a-github-app-45), which wires it
+for you from three props.
 
 ```ts
 import { createAppAuth } from '@octokit/auth-app' // YOUR dependency, not canopycms's
@@ -211,6 +212,56 @@ permanent-vs-retry — without it a permanently bad key is retried forever inste
 
 **`GitHubService` is unaffected** and remains static-token-only; the Lambda-side GitHub client
 still takes a token.
+
+### The CDK worker can authenticate as a GitHub App (#45)
+
+**What changed.** `CanopyCmsServiceProps` gained `githubAppId`,
+`githubAppInstallationId`, `githubAppPrivateKeySecretArn` and
+`githubAppPrivateKeySecretJsonField`. Set the first three and `canopycms-cdk`'s EC2 worker
+entrypoint builds the App credential for you — you write none of the `createAppAuth` wiring
+in the entry above. This closes adopter request #45.
+
+**Nothing about the token path changed**, and this is the last time it will be said in these
+entries: `githubTokenSecretArn` is not deprecated, warns about nothing, and remains the
+documented default. Registering and installing a GitHub App needs organisation-admin rights
+that many adopters do not have, so App auth is an option for organisations that require one,
+not a direction of travel. Existing stacks need no edit.
+
+**To adopt** — only if you want App auth:
+
+1. Register the App under your organisation, install it on the content repository with
+   **Contents: read & write** and **Pull requests: read & write**, and store its PEM private
+   key in Secrets Manager.
+2. Set the three props and **remove `githubTokenSecretArn`** (with its JSON field). Exactly
+   one credential: a partial set of the three is refused at synth, and so is an App alongside
+   a token — two credentials would leave it undefined which identity a push or a pull request
+   acts as.
+3. From the generated GitHub Actions workflow, store them as `CANOPY_GITHUB_APP_ID`,
+   `CANOPY_GITHUB_APP_INSTALLATION_ID` and `CANOPY_GITHUB_APP_PRIVATE_KEY_SECRET_ARN`. **The
+   `CANOPY_` prefix is not cosmetic:** GitHub refuses to create an Actions secret _or
+   variable_ whose name starts with `GITHUB_`, so the obvious names cannot exist. The workflow
+   maps each onto the unprefixed environment variable the CDK app reads.
+
+The private key is **ARN-only** — there is no plain-value prop and there cannot be one. The
+worker's configuration arrives as a `.env` file that systemd reads as `EnvironmentFile=`,
+where a newline starts a new variable, and a PEM is multi-line. Passing the key itself where
+the ARN belongs is refused at synth with a message that says so, rather than as a puzzling
+"an ARN must not contain a newline".
+
+The private-key ARN is unioned into the worker's IAM policy automatically, exactly as
+`githubTokenSecretArn` is — you do not repeat it in `secretsArns`. It also honours
+`githubAppPrivateKeySecretJsonField`, which is the case that motivated JSON-field support in
+the first place: an App private key is exactly the sort of material an organisation keeps
+inside one credential document per environment.
+
+**Now deletable.** If you were driving `CmsWorker` from a hand-written entrypoint purely to
+get App auth onto an otherwise-CDK deployment, that entrypoint can go. Also any user-data or
+wrapper step that fetched the PEM and re-exported it into the worker's environment — that
+path could not have worked for a multi-line key anyway, which is part of why this landed as
+a prop.
+
+See [deploying-to-aws.md](deploying-to-aws.md#authenticating-as-a-github-app) for the full
+walkthrough.
 
 ### `assetUploadBehavior()` builds the upload route from a bucket alone
 

@@ -39,6 +39,17 @@ function required(name: string): string {
 
 const app = new App()
 
+// How the EC2 worker authenticates to GitHub. A personal access token is the
+// default and what nearly every deployment uses; a GitHub App is the option for
+// organisations that require one -- registering and installing an App needs
+// org-admin rights, which many adopters do not have.
+//
+// Exactly one of the two: CanopyCmsService refuses both at synth, because two
+// credentials leave it undefined which identity a push or a PR acts as. So
+// GITHUB_TOKEN_SECRET_ARN is `required()` -- an unset one must still fail loudly
+// -- EXCEPT when the App variables are set, where there is no token to point at.
+const githubAppId = process.env.GITHUB_APP_ID || undefined
+
 new CmsStack(app, '{{STACK_NAME}}', {
   // An explicit account/region is required, not cosmetic: CanopyCmsDistribution
   // resolves your hosted zone with HostedZone.fromLookup, and a context lookup
@@ -56,8 +67,21 @@ new CmsStack(app, '{{STACK_NAME}}', {
   // six-character suffix -- they are written verbatim into the worker's IAM
   // policy, so a name-based ARN silently never matches and the worker gets
   // AccessDenied at boot.
-  githubTokenSecretArn: required('GITHUB_TOKEN_SECRET_ARN'),
+  githubTokenSecretArn: githubAppId
+    ? process.env.GITHUB_TOKEN_SECRET_ARN || undefined
+    : required('GITHUB_TOKEN_SECRET_ARN'),
   clerkSecretKeySecretArn: required('CLERK_SECRET_KEY_SECRET_ARN'),
+
+  // Optional, and NOT `required()`: GitHub App authentication, as an
+  // alternative to the token above. Set all three or none -- an installation
+  // token is minted from all three together, and a partial set is refused at
+  // synth. The private key is ARN-only: it is a multi-line PEM, and every value
+  // the construct puts in the worker's environment must be single-line.
+  githubAppId,
+  githubAppInstallationId: process.env.GITHUB_APP_INSTALLATION_ID || undefined,
+  githubAppPrivateKeySecretArn: process.env.GITHUB_APP_PRIVATE_KEY_SECRET_ARN || undefined,
+  githubAppPrivateKeySecretJsonField:
+    process.env.GITHUB_APP_PRIVATE_KEY_SECRET_JSON_FIELD || undefined,
 
   // Optional, and NOT `required()`: set one only if that secret holds a JSON
   // document rather than the bare credential, in which case this names the key

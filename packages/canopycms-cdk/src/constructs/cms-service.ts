@@ -370,6 +370,103 @@ function assertSecretArnHasNoFieldSuffix(
   )
 }
 
+/** The three props that together configure GitHub App authentication. */
+const GITHUB_APP_PROP_NAMES = [
+  'githubAppId',
+  'githubAppInstallationId',
+  'githubAppPrivateKeySecretArn',
+] as const
+
+/**
+ * Rejects a PEM private key passed where a prop expects an identifier or an ARN.
+ *
+ * There is no plaintext private-key prop, and there cannot be one: the value
+ * would be written into the worker's `.env`, which systemd reads as
+ * `EnvironmentFile=` where a newline begins a new variable. So the realistic
+ * mistake is to paste the key into `githubAppPrivateKeySecretArn` -- the prop
+ * whose name contains "PrivateKey" -- instead of the ARN of a secret holding
+ * it.
+ *
+ * Without this, that lands on `assertEnvSafe`'s generic rule and reports "must
+ * not contain a newline" about an ARN, which explains the mechanism and not the
+ * mistake. Checked on all three App props because the same misunderstanding
+ * puts the key in any of them, and each would otherwise produce a differently
+ * confusing message.
+ *
+ * A one-line key (a base64-wrapped PEM, say) is NOT caught here, and cannot be:
+ * it is indistinguishable from a malformed ARN at synth. It fails at boot in
+ * `normalizeGitHubAppPrivateKey`, or -- for the ARN prop -- as a Secrets
+ * Manager error naming the string it tried to fetch.
+ */
+function assertNotInlinePrivateKey(propName: string, value: string | undefined): void {
+  if (value === undefined || !value.includes('-----BEGIN')) return
+  throw new Error(
+    `CanopyCmsService: ${propName} looks like a PEM private key, not ${
+      propName === 'githubAppPrivateKeySecretArn' ? 'a secret ARN' : 'an identifier'
+    }. ` +
+      `The GitHub App private key can ONLY be supplied as a Secrets Manager ARN -- it is ` +
+      `multi-line, and every value this construct configures goes into the worker's .env file, ` +
+      `which systemd reads as EnvironmentFile where a newline starts a new variable. Store the ` +
+      `PEM in Secrets Manager and pass that secret's full ARN as githubAppPrivateKeySecretArn ` +
+      `(optionally with githubAppPrivateKeySecretJsonField if it lives inside a JSON document).`,
+  )
+}
+
+/**
+ * Guards the GitHub credential props at synth: exactly one shape, fully given.
+ *
+ * Both rules restate `resolveWorkerGitHubAuth`
+ * (packages/canopycms/src/worker/github-auth.ts), which enforces them on the
+ * worker at boot. Restating them is the point rather than duplication for its
+ * own sake: a worker that throws at boot is restarted by systemd every 5
+ * seconds indefinitely, and `cdk deploy` reports success -- so a rule that only
+ * exists at boot is a rule the adopter discovers from CloudWatch. The core
+ * check stays because core is reachable without this construct.
+ *
+ * 1. **All three App props or none.** Two of the three is not a partial
+ *    configuration that could still work: `createAppAuth` needs the App ID, the
+ *    installation ID and the key, and the message names the missing ones rather
+ *    than saying the set is incomplete.
+ * 2. **Not both an App and a token.** Rejected rather than resolved by
+ *    precedence, because it would otherwise be undefined which identity a push
+ *    or a pull request acts as -- and a PR opened by the wrong identity is not
+ *    something an adopter notices quickly.
+ *
+ * Configuring NEITHER is deliberately not an error here. The worker also reads
+ * `CANOPYCMS_GITHUB_TOKEN` directly from its environment, which an adopter can
+ * supply outside this construct, and core refuses the genuinely empty case at
+ * boot with a message naming both options.
+ */
+function assertGitHubAuthProps(props: CanopyCmsServiceProps): void {
+  for (const name of GITHUB_APP_PROP_NAMES) {
+    assertNotInlinePrivateKey(name, props[name])
+  }
+
+  const missing = GITHUB_APP_PROP_NAMES.filter((name) => !props[name])
+  const provided = GITHUB_APP_PROP_NAMES.filter((name) => props[name])
+
+  if (provided.length > 0 && missing.length > 0) {
+    throw new Error(
+      `CanopyCmsService: GitHub App authentication needs all of ` +
+        `${GITHUB_APP_PROP_NAMES.join(', ')}, but ${missing.join(' and ')} ` +
+        `${missing.length === 1 ? 'is' : 'are'} not set (${provided.join(' and ')} ` +
+        `${provided.length === 1 ? 'is' : 'are'}). An App's installation token is minted from ` +
+        `all three together, so a partial set cannot authenticate at all -- supply the rest, or ` +
+        `drop them and use githubTokenSecretArn.`,
+    )
+  }
+
+  if (provided.length > 0 && props.githubTokenSecretArn) {
+    throw new Error(
+      `CanopyCmsService: configure either githubTokenSecretArn or the githubApp* props, not ` +
+        `both. Two credentials would leave it undefined which identity the worker's pushes and ` +
+        `pull requests act as. A personal access token is the default and needs no App props; ` +
+        `GitHub App auth replaces it, so drop githubTokenSecretArn (and its JSON field) when ` +
+        `you adopt it.`,
+    )
+  }
+}
+
 /**
  * Default CMS Lambda timeout.
  *
@@ -472,6 +569,78 @@ export interface CanopyCmsServiceProps {
    * through) and the field belongs here instead.
    */
   githubTokenSecretJsonField?: string
+
+  /**
+   * GitHub App ID, to authenticate the worker as a GitHub App installation
+   * instead of as a personal access token.
+   *
+   * **The token is the default and stays first-class.** Registering and
+   * installing a GitHub App needs organisation-admin rights that a
+   * single-maintainer site does not have, so this is the "if your organisation
+   * requires it" option, not a direction of travel. Nothing about
+   * `githubTokenSecretArn` is deprecated or warned about.
+   *
+   * All three App props (`githubAppId`, `githubAppInstallationId`,
+   * `githubAppPrivateKeySecretArn`) are set together or not at all, and App
+   * auth is mutually exclusive with `githubTokenSecretArn` — both are refused
+   * at synth. That mirrors `resolveWorkerGitHubAuth` in core
+   * (packages/canopycms/src/worker/github-auth.ts), which refuses the same two
+   * shapes at boot; checking here turns a 5-second systemd restart loop into a
+   * failed `cdk synth`.
+   *
+   * Stamped into the worker's `CANOPYCMS_GITHUB_APP_ID`.
+   */
+  githubAppId?: string
+
+  /**
+   * The App's installation ID on your repository — NOT the App ID above.
+   *
+   * An App can be installed on several accounts, and a token is minted per
+   * installation, so both numbers are needed. It is the trailing number in the
+   * URL of the App's install page under your organisation's settings.
+   *
+   * Stamped into the worker's `CANOPYCMS_GITHUB_APP_INSTALLATION_ID`.
+   */
+  githubAppInstallationId?: string
+
+  /**
+   * Secrets Manager ARN for the App's PEM private key.
+   *
+   * **ARN-only: there is deliberately no plaintext prop for this key**, unlike
+   * every other credential the construct knows about, and the reason is
+   * mechanical rather than a matter of taste. Every value the construct puts in
+   * the worker's environment is written into a `.env` file that systemd reads
+   * as `EnvironmentFile=`, where a newline starts a new variable — so
+   * `assertEnvSafe` refuses one, and a PEM is inherently multi-line. A
+   * plaintext key could not be delivered to the worker intact by this path at
+   * all. Passing the PEM itself here is caught by name at synth (see
+   * `assertNotInlinePrivateKey`) rather than surfacing as a puzzling "an ARN
+   * must not contain a newline".
+   *
+   * The ARN is unioned into the worker's IAM policy alongside the other secret
+   * ARN props; you do not need to repeat it in `secretsArns`.
+   */
+  githubAppPrivateKeySecretArn?: string
+
+  /**
+   * The key within a JSON secret document at `githubAppPrivateKeySecretArn`;
+   * omit when the secret's whole value is the PEM.
+   *
+   * Stamped into the worker's
+   * `CANOPYCMS_GITHUB_APP_PRIVATE_KEY_SECRET_JSON_FIELD`. See
+   * `githubTokenSecretJsonField` above — same mechanism, same non-relationship
+   * to the ECS `:KEY::` ARN suffix. This is the case that motivated the JSON
+   * field support in the first place: an App private key is exactly the kind of
+   * material an organisation keeps inside one credential document per
+   * environment.
+   *
+   * A PEM stored as a JSON string value carries its newlines as `\n` escapes,
+   * which `JSON.parse` turns back into real newlines — and the worker
+   * additionally runs whatever it reads through
+   * `normalizeGitHubAppPrivateKey`, which unescapes and base64-unwraps, so a
+   * key mangled by a single-line config field still works.
+   */
+  githubAppPrivateKeySecretJsonField?: string
 
   /** Secrets Manager ARN for the Clerk secret key */
   clerkSecretKeySecretArn?: string
@@ -787,6 +956,16 @@ export class CanopyCmsService extends Construct {
       'clerkSecretKeySecretJsonField',
       props.clerkSecretKeySecretJsonField,
     )
+    assertSecretPropPair(
+      'githubAppPrivateKeySecretArn',
+      props.githubAppPrivateKeySecretArn,
+      'githubAppPrivateKeySecretJsonField',
+      props.githubAppPrivateKeySecretJsonField,
+    )
+    // After the pair checks, so an App private-key ARN that is malformed is
+    // reported as such before this asks whether the SET of App props is
+    // complete. Both messages are right; the more specific one is more useful.
+    assertGitHubAuthProps(props)
     // `secretsArns` gets the suffix half of the same guard: it has no
     // JSON-field prop, but its entries are written verbatim into the worker's
     // IAM policy below, so a suffixed ARN fails there in precisely the way the
@@ -1094,13 +1273,24 @@ export class CanopyCmsService extends Construct {
     // got AccessDenied from GetSecretValue, exited, and systemd restart-looped
     // it every 5s forever. Nothing flagged it at synth.
     //
-    // Deduped so the emitted policy does not list the same ARN twice when an
-    // adopter correctly passes both.
+    // Deduped for the benefit of anyone reading this list, NOT of the emitted
+    // template: measured against aws-cdk-lib 2.265, `PolicyStatement` already
+    // collapses a repeated `resources` entry, so passing the same ARN twice
+    // renders one `Resource` either way. Removing this `new Set` changes no
+    // synthesized output and breaks no test -- which is worth saying out loud,
+    // because the comment here previously claimed the opposite and a reader
+    // could reasonably have trusted it while refactoring.
     const secretsArns = [
       ...new Set(
         [
           ...(props.secretsArns ?? []),
           props.githubTokenSecretArn,
+          // The App private key is read by the same `getSecret` call path as
+          // the token it replaces, from the same instance profile, so omitting
+          // it here would reproduce that AccessDenied restart-loop exactly --
+          // on the credential path an adopter reaches for precisely because
+          // the token path was not good enough.
+          props.githubAppPrivateKeySecretArn,
           props.clerkSecretKeySecretArn,
         ].filter((arn): arn is string => typeof arn === 'string' && arn.length > 0),
       ),
@@ -1180,6 +1370,29 @@ export class CanopyCmsService extends Construct {
       envEntries.push([
         'CANOPYCMS_GITHUB_TOKEN_SECRET_JSON_FIELD',
         props.githubTokenSecretJsonField,
+      ])
+    }
+    // GitHub App credentials. Stamped individually rather than as a group even
+    // though `assertGitHubAuthProps` has already established they are all set
+    // or all unset: each `if` is then the same shape as every other entry here,
+    // and a future prop added to the App set cannot be silently dropped by a
+    // condition that names only its siblings.
+    if (props.githubAppId) {
+      envEntries.push(['CANOPYCMS_GITHUB_APP_ID', props.githubAppId])
+    }
+    if (props.githubAppInstallationId) {
+      envEntries.push(['CANOPYCMS_GITHUB_APP_INSTALLATION_ID', props.githubAppInstallationId])
+    }
+    if (props.githubAppPrivateKeySecretArn) {
+      envEntries.push([
+        'CANOPYCMS_GITHUB_APP_PRIVATE_KEY_SECRET_ARN',
+        props.githubAppPrivateKeySecretArn,
+      ])
+    }
+    if (props.githubAppPrivateKeySecretJsonField) {
+      envEntries.push([
+        'CANOPYCMS_GITHUB_APP_PRIVATE_KEY_SECRET_JSON_FIELD',
+        props.githubAppPrivateKeySecretJsonField,
       ])
     }
     if (props.clerkSecretKeySecretArn) {
