@@ -39,7 +39,7 @@
  * comparison rather than a one-way check.
  */
 
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join, relative } from 'node:path'
 import type { Octokit } from '@octokit/rest'
@@ -51,6 +51,7 @@ import { pollMergeState } from '../worker/rebase'
 import type { RebaseContext } from '../worker/rebase'
 import type { TaskAction } from '../worker/task-queue'
 import type { Task } from '../task-queue/index'
+import { mockConsole, type MockConsole } from '../test-utils'
 
 /**
  * Every GitHub operation this package performs, and the App permission that
@@ -264,6 +265,19 @@ function allOperations(coverage: Coverage): string[] {
 }
 
 describe('the declared App permissions cover every GitHub call this package makes', () => {
+  // Driving the real dispatch table means driving its real logging: `Created PR
+  // #7`, `Converted PR #7 to draft`, and a swallowed poll warning. CI turns
+  // stray console output into unhandled rejections (see
+  // DEVELOPING.md#expecting-console-messages), and a local run prints it rather
+  // than failing — so without this the suite is green here and red there.
+  let consoleSpy: MockConsole
+  beforeEach(() => {
+    consoleSpy = mockConsole()
+  })
+  afterEach(() => {
+    consoleSpy.restore()
+  })
+
   it('reaches every driver it claims to drive', async () => {
     // THE FLOOR, and it is per-driver on purpose. Every direction-checking
     // assertion below is meaningless if the harness silently stopped reaching
