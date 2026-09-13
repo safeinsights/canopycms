@@ -519,6 +519,39 @@ describe('resolveTracingRoot', () => {
     const result = resolveTracingRoot({ projectDir: tmp })
     expect(result).toBe(tmp)
   })
+
+  it('stops at the closest lockfile with lockfileRoot: closest, as Next 13 and 14 do', () => {
+    const repo = path.join(tmp, 'repo')
+    const app = path.join(repo, 'apps/web')
+    writeText(path.join(repo, 'pnpm-lock.yaml'))
+    writeText(path.join(app, 'package-lock.json'))
+
+    expect(resolveTracingRoot({ projectDir: app, lockfileRoot: 'closest' })).toBe(app)
+    expect(resolveTracingRoot({ projectDir: app })).toBe(repo)
+  })
+
+  it('ignores bun.lock with lockfileRoot: closest, which Next 13 and 14 do not look for', () => {
+    const repo = path.join(tmp, 'repo')
+    const app = path.join(repo, 'apps/web')
+    writeText(path.join(repo, 'pnpm-lock.yaml'))
+    writeText(path.join(app, 'bun.lock'))
+
+    expect(resolveTracingRoot({ projectDir: app, lockfileRoot: 'closest' })).toBe(repo)
+  })
+
+  it('traces a workspace store above the app with lockfileRoot: closest when the only lockfile is at the workspace root', () => {
+    // The Next 13 and 14 monorepo case: a root taken from the project directory would refuse this
+    // include, but Next's closest-lockfile root sits at the workspace and accepts it.
+    const repo = path.join(tmp, 'repo')
+    setupPnpmSharpInstall(repo)
+    writeText(path.join(repo, 'pnpm-lock.yaml'))
+    const app = path.join(repo, 'apps/web')
+    mkdirSync(app, { recursive: true })
+
+    expect(sharpTracingIncludes({ projectDir: app, lockfileRoot: 'closest' })).toEqual({
+      includes: [`../../${EXPECTED_PNPM_LIBVIPS_INCLUDE}`],
+    })
+  })
 })
 
 // ---------------------------------------------------------------------------

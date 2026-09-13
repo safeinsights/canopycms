@@ -256,7 +256,7 @@ function mergeTracingIncludes(
   }
 }
 
-function sharpTracingWarning(problem: string | undefined): string {
+function sharpTracingWarning(problem: string | undefined, nextVersionUnknown: boolean): string {
   return (
     "CanopyCMS: could not add sharp's libvips to this standalone build's file tracing" +
     (problem ? ` (${problem})` : '') +
@@ -265,7 +265,24 @@ function sharpTracingWarning(problem: string | undefined): string {
     'sharp with ERR_DLOPEN_FAILED. Add it in next.config yourself, with paths relative to the ' +
     "project directory. For pnpm: outputFileTracingIncludes: { '/**': " +
     "['node_modules/.pnpm/@img+sharp-libvips-*/node_modules/@img/*/lib/**/*'] }. For npm: " +
-    "outputFileTracingIncludes: { '/**': ['node_modules/@img/sharp-libvips-*/lib/**/*'] }."
+    "outputFileTracingIncludes: { '/**': ['node_modules/@img/sharp-libvips-*/lib/**/*'] }." +
+    (nextVersionUnknown
+      ? ' The installed Next.js version could not be read either: on Next 13 or 14, put ' +
+        'outputFileTracingIncludes under experimental.'
+      : '')
+  )
+}
+
+/**
+ * The warning for an include that WAS written, under a key chosen without knowing the Next version.
+ * That choice is always the top-level key, which Next 13 and 14 ignore.
+ */
+function unknownNextVersionWarning(projectDir: string): string {
+  return (
+    `CanopyCMS: could not read the version of the next package installed for ${projectDir}, so ` +
+    "sharp's libvips was added to the top-level outputFileTracingIncludes key, which Next 15 and " +
+    'later read. On Next 13 or 14, move that entry under experimental.outputFileTracingIncludes, ' +
+    'or the built server fails to load sharp with ERR_DLOPEN_FAILED.'
   )
 }
 
@@ -300,8 +317,8 @@ function sharpTracingConfig(
   // Read and write each option where Next reads it (`loadConfig` in `next/dist/server/config.js`).
   // A value of `undefined` or `null` counts as unset throughout, because Next drops those first.
   // - Next 13 and 14 read the tracing options only under `experimental`. A top-level key is reported
-  //   as an invalid option and ignored. Their tracing root is `experimental.outputFileTracingRoot ||
-  //   dir`, with no lockfile inference (`build/index.ts` in Next 14.2.25).
+  //   as an invalid option and ignored. A root nobody configured comes from the CLOSEST lockfile
+  //   there (`findRootDir`, from `assignDefaults` in `server/config.ts`), not the outermost.
   // - Next 15 and 16 still accept the `experimental` spellings, and copy any that is set over the
   //   top-level key (`warnOptionHasBeenMovedOutOfExperimental`). So a legacy value wins, and an
   //   include written only at the top level would be silently replaced.
@@ -341,24 +358,34 @@ function sharpTracingConfig(
   const { includes, problem } = hasNextConfig(projectDir)
     ? sharpTracingIncludes({
         projectDir,
-        outputFileTracingRoot: experimentalOnly ? configuredRoot || projectDir : configuredRoot,
+        outputFileTracingRoot: configuredRoot,
         turbopackRoot,
+        lockfileRoot: experimentalOnly ? 'closest' : 'outermost',
       })
     : {
         includes: [],
         problem: `the working directory ${projectDir} has no next.config file, so withCanopy cannot tell where the project is`,
       }
 
+  const nextVersionUnknown = nextMajor === null
   if (includes.length === 0) {
     if (nextConfig.output === 'standalone' && !warnedAboutSharpTracing) {
       warnedAboutSharpTracing = true
-      console.warn(sharpTracingWarning(problem))
+      console.warn(sharpTracingWarning(problem, nextVersionUnknown))
     }
     return {}
   }
 
   const merged = mergeTracingIncludes(existing, includes)
-  if (!includesUnderExperimental) return { outputFileTracingIncludes: merged }
+  if (!includesUnderExperimental) {
+    // An unreadable version falls back to the key Next 15 and later read. A standalone build says
+    // so, because Next 13 and 14 ignore that key and the server would fail to load sharp.
+    if (nextVersionUnknown && nextConfig.output === 'standalone' && !warnedAboutSharpTracing) {
+      warnedAboutSharpTracing = true
+      console.warn(unknownNextVersionWarning(projectDir))
+    }
+    return { outputFileTracingIncludes: merged }
+  }
   // Built as a variable, not returned as a literal, because Next 15's `ExperimentalConfig` type no
   // longer declares this key.
   const legacyExperimental = { ...experimental, outputFileTracingIncludes: merged }

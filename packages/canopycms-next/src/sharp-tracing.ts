@@ -48,6 +48,12 @@ export interface SharpTracingInput {
   outputFileTracingRoot?: string
   /** The adopter's `turbopack.root`, as written. */
   turbopackRoot?: string
+  /**
+   * Which lockfile a root nobody configured comes from.
+   * - `'outermost'`, the default: Next 15 and later (`findRootDirAndLockFiles`).
+   * - `'closest'`: Next 13 and 14 (`findRootDir`, called from `assignDefaults` in `server/config.ts`).
+   */
+  lockfileRoot?: 'outermost' | 'closest'
 }
 
 export interface SharpTracingResult {
@@ -58,10 +64,16 @@ export interface SharpTracingResult {
 }
 
 /**
- * The lockfiles Next's own root inference looks for, in its order
+ * The lockfiles Next 15 and later look for when inferring a root, in their order
  * (`findRootLockFile` in `next/dist/lib/find-root.js`).
  */
 const LOCKFILES = ['pnpm-lock.yaml', 'package-lock.json', 'yarn.lock', 'bun.lock', 'bun.lockb']
+
+/**
+ * The same list in Next 14.2.25, which predates `bun.lock`. Next 13.5.7 also lacks `bun.lockb`,
+ * which matters only to a Bun project on Next 13.
+ */
+const LEGACY_LOCKFILES = ['pnpm-lock.yaml', 'package-lock.json', 'yarn.lock', 'bun.lockb']
 
 /**
  * The config file names Next loads (`CONFIG_FILES` in `next/dist/shared/lib/constants.js`).
@@ -200,9 +212,9 @@ export function hasNextConfig(dir: string): boolean {
   return NEXT_CONFIG_FILES.some((name) => isFile(path.join(dir, name)))
 }
 
-function findLockFileUpwards(startDir: string): string | null {
+function findLockFileUpwards(startDir: string, names: readonly string[]): string | null {
   for (let dir = startDir; ; dir = path.dirname(dir)) {
-    for (const name of LOCKFILES) {
+    for (const name of names) {
       const candidate = path.join(dir, name)
       if (isFile(candidate)) return candidate
     }
@@ -213,22 +225,30 @@ function findLockFileUpwards(startDir: string): string | null {
 /**
  * The tracing root Next will use (`loadConfig` in `next/dist/server/config.js`).
  *
- * The precedence is `outputFileTracingRoot`, then `turbopack.root`, then the directory of the
- * outermost lockfile. That last one is found by searching upwards again from each found lockfile's
- * parent, mirroring `findRootDirAndLockFiles`. Next resolves a relative configured root against the
- * working directory; `withCanopy` only calls this when that directory is the project dir.
+ * The precedence is `outputFileTracingRoot`, then `turbopack.root`, then a lockfile's directory:
+ * - by default, as in Next 15 and later: the outermost lockfile, found by searching upwards again
+ *   from each found lockfile's parent (`findRootDirAndLockFiles`);
+ * - with `lockfileRoot: 'closest'`, as in Next 13 and 14: the nearest one (`findRootDir`).
+ *
+ * Next resolves a relative configured root against the working directory; `withCanopy` only calls
+ * this when that directory is the project dir.
  */
 export function resolveTracingRoot(input: SharpTracingInput): string {
   const configured = input.outputFileTracingRoot || input.turbopackRoot
   if (configured) return path.resolve(input.projectDir, configured)
 
-  let lockFile = findLockFileUpwards(input.projectDir)
+  if (input.lockfileRoot === 'closest') {
+    const closest = findLockFileUpwards(input.projectDir, LEGACY_LOCKFILES)
+    return closest ? path.dirname(closest) : input.projectDir
+  }
+
+  let lockFile = findLockFileUpwards(input.projectDir, LOCKFILES)
   if (!lockFile) return input.projectDir
   for (;;) {
     const lockDir = path.dirname(lockFile)
     const parentDir = path.dirname(lockDir)
     if (parentDir === lockDir) break
-    const outer = findLockFileUpwards(parentDir)
+    const outer = findLockFileUpwards(parentDir, LOCKFILES)
     if (!outer) break
     lockFile = outer
   }

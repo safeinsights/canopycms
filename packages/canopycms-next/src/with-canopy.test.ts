@@ -500,6 +500,7 @@ describe('withCanopy', () => {
         projectDir: process.cwd(),
         outputFileTracingRoot: '../shared-root',
         turbopackRoot: '../turbo-root',
+        lockfileRoot: 'outermost',
       })
     })
 
@@ -660,13 +661,17 @@ describe('withCanopy', () => {
       )
     })
 
-    it('uses the project directory as the root on Next < 15, which infers none from lockfiles', () => {
+    it('asks for the closest-lockfile root on Next < 15 and the outermost on 15+, as each infers it', () => {
       tracing.nextMajor = 14
-
       withCanopy({})
-
       expect(sharpTracingIncludesMock).toHaveBeenLastCalledWith(
-        expect.objectContaining({ outputFileTracingRoot: process.cwd() }),
+        expect.objectContaining({ lockfileRoot: 'closest', outputFileTracingRoot: undefined }),
+      )
+
+      tracing.nextMajor = 16
+      withCanopy({})
+      expect(sharpTracingIncludesMock).toHaveBeenLastCalledWith(
+        expect.objectContaining({ lockfileRoot: 'outermost' }),
       )
     })
 
@@ -739,6 +744,66 @@ describe('withCanopy', () => {
           const fresh = await import('./with-canopy')
           fresh.withCanopy({})
           expect(warn).not.toHaveBeenCalled()
+        } finally {
+          vi.resetModules()
+        }
+      })
+
+      it('warns on a standalone build when the Next version is unreadable and the include went top-level', async () => {
+        tracing.nextMajor = null
+        tracing.result = { includes: ['glob/**/*'] }
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+        vi.resetModules()
+        try {
+          const fresh = await import('./with-canopy')
+          const result = fresh.withCanopy({ output: 'standalone' })
+
+          expect(result.outputFileTracingIncludes).toEqual({ '/**': ['glob/**/*'] })
+          expect(warn).toHaveBeenCalledTimes(1)
+          expect(warn.mock.calls[0]?.[0]).toEqual(
+            expect.stringContaining('experimental.outputFileTracingIncludes'),
+          )
+        } finally {
+          vi.resetModules()
+        }
+      })
+
+      it('does not warn about the version when it is readable, or when a legacy experimental include decides the key', async () => {
+        tracing.result = { includes: ['glob/**/*'] }
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+        vi.resetModules()
+        try {
+          const fresh = await import('./with-canopy')
+          tracing.nextMajor = 16
+          fresh.withCanopy({ output: 'standalone' })
+          // Written under `experimental`, which every Next version reads, so the version is moot.
+          tracing.nextMajor = null
+          fresh.withCanopy(
+            asNextConfig({ output: 'standalone', experimental: { outputFileTracingIncludes: {} } }),
+          )
+
+          expect(warn).not.toHaveBeenCalled()
+        } finally {
+          vi.resetModules()
+        }
+      })
+
+      it('adds the version note to the nothing-found warning when the version is unreadable too', async () => {
+        tracing.nextMajor = null
+        tracing.result = { includes: [], problem: 'boom' }
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+        vi.resetModules()
+        try {
+          const fresh = await import('./with-canopy')
+          fresh.withCanopy({ output: 'standalone' })
+
+          expect(warn).toHaveBeenCalledTimes(1)
+          expect(warn.mock.calls[0]?.[0]).toEqual(
+            expect.stringContaining('version could not be read'),
+          )
         } finally {
           vi.resetModules()
         }
