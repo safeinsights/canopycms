@@ -539,6 +539,29 @@ describe('resolveTracingRoot', () => {
     expect(resolveTracingRoot({ projectDir: app, lockfileRoot: 'closest' })).toBe(repo)
   })
 
+  it('recognises bun.lockb with lockfileRoot: closest, which Next 14 looks for', () => {
+    const repo = path.join(tmp, 'repo')
+    const app = path.join(repo, 'apps/web')
+    writeText(path.join(repo, 'pnpm-lock.yaml'))
+    writeText(path.join(app, 'bun.lockb'))
+
+    expect(resolveTracingRoot({ projectDir: app, lockfileRoot: 'closest' })).toBe(app)
+  })
+
+  it('falls back to projectDir with lockfileRoot: closest when no lockfile is found anywhere', () => {
+    // Same assumption about this machine's TMPDIR ancestors as the outermost case above.
+    expect(resolveTracingRoot({ projectDir: tmp, lockfileRoot: 'closest' })).toBe(tmp)
+  })
+
+  it('walks past a nearer lockfile to an outer bun.lock without lockfileRoot, as Next 15 and later do', () => {
+    const repo = path.join(tmp, 'repo')
+    const app = path.join(repo, 'apps/web')
+    writeText(path.join(repo, 'bun.lock'))
+    writeText(path.join(app, 'package-lock.json'))
+
+    expect(resolveTracingRoot({ projectDir: app })).toBe(repo)
+  })
+
   it('traces a workspace store above the app with lockfileRoot: closest when the only lockfile is at the workspace root', () => {
     // The Next 13 and 14 monorepo case: a root taken from the project directory would refuse this
     // include, but Next's closest-lockfile root sits at the workspace and accepts it.

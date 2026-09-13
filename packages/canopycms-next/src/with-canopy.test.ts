@@ -673,6 +673,13 @@ describe('withCanopy', () => {
       expect(sharpTracingIncludesMock).toHaveBeenLastCalledWith(
         expect.objectContaining({ lockfileRoot: 'outermost' }),
       )
+
+      // An unreadable version is treated as Next 15 or later for the root, as it is for the key.
+      tracing.nextMajor = null
+      withCanopy({})
+      expect(sharpTracingIncludesMock).toHaveBeenLastCalledWith(
+        expect.objectContaining({ lockfileRoot: 'outermost' }),
+      )
     })
 
     it('leaves a malformed existing outputFileTracingIncludes value untouched', () => {
@@ -758,6 +765,8 @@ describe('withCanopy', () => {
         try {
           const fresh = await import('./with-canopy')
           const result = fresh.withCanopy({ output: 'standalone' })
+          // A second evaluation in the same module instance must not warn again.
+          fresh.withCanopy({ output: 'standalone' })
 
           expect(result.outputFileTracingIncludes).toEqual({ '/**': ['glob/**/*'] })
           expect(warn).toHaveBeenCalledTimes(1)
