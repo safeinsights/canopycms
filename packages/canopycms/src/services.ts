@@ -42,13 +42,14 @@ import { BranchSchemaCache } from './branch-schema-cache'
 import { enqueueTask } from './worker/task-queue'
 import { getTaskQueueDir } from './worker/task-queue-config'
 import { detectHeadBranch } from './utils/git'
-import { isDeployedStatic } from './build-mode'
+import { readsFromCheckout } from './build-mode'
 
 /**
  * Create a per-instance active branch detector with its own 5-second TTL cache.
  *
  * Detection priority:
  * - If explicitly configured, use that value (both modes).
+ * - Static deployments and builds read the checkout: defaultBaseBranch ?? 'main', no git.
  * - In dev mode, auto-detect from the current git HEAD branch.
  * - In prod mode, fall back to defaultBaseBranch ?? 'main'.
  */
@@ -57,8 +58,8 @@ function createActiveBranchDetector() {
 
   return async (config: CanopyConfig): Promise<string> => {
     if (config.defaultActiveBranch) return config.defaultActiveBranch
-    // Static deployments read content from the checkout — never shell out to git
-    if (isDeployedStatic(config)) return config.defaultBaseBranch ?? 'main'
+    // Static deployments and builds read content from the checkout — never shell out to git
+    if (readsFromCheckout(config)) return config.defaultBaseBranch ?? 'main'
     if (config.mode === 'dev') {
       const now = Date.now()
       if (cache && now < cache.expiresAt) {
@@ -239,7 +240,7 @@ async function _createCanopyServicesInternal(
   // by workspace provisioning). Reuses the detector's 5s TTL cache.
   const defaultBaseBranch =
     explicitBaseBranch ??
-    (config.mode === 'dev' && !isDeployedStatic(config)
+    (config.mode === 'dev' && !readsFromCheckout(config)
       ? await detectActiveBranch({ ...config, defaultActiveBranch: undefined })
       : 'main')
   config = { ...config, defaultActiveBranch, defaultBaseBranch }
@@ -536,8 +537,8 @@ async function _createCanopyServicesInternal(
     getSettingsBranchRoot,
     refreshActiveBranch: async () => {
       if (services.config.mode !== 'dev') return
-      // Static deployments serve from the checkout — no git HEAD to track
-      if (isDeployedStatic(services.config)) return
+      // Static deployments and builds serve from the checkout — no git HEAD to track
+      if (readsFromCheckout(services.config)) return
       // Explicitly configured values are respected — never overridden by
       // git HEAD detection. Only re-detect what the adopter left unset.
       if (explicitActiveBranch && explicitBaseBranch) return

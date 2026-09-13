@@ -581,7 +581,7 @@ CanopyCMS distinguishes between two branch config fields:
 
 **Auto-detection in dev mode:**
 
-Both branch identity fields are resolved once at service creation and baked into config: `defaultActiveBranch` is auto-detected from the current git HEAD (`createActiveBranchDetector()` in `services.ts`), and `defaultBaseBranch` follows the same dev-mode HEAD detection when unset (matching `resolveBaseBranch()`). `refreshActiveBranch()` then re-detects **both** per-request (with a 5-second cache) — each field only when not explicitly configured; explicit config values are never overridden. Both the HTTP API handler and `getCanopy()`/`getContext()` perform this refresh (previously only the HTTP handler did), so server-component reads follow branch switches too. This means if you switch from `main` to `my-feature` while the dev server is running, the CMS silently starts serving content from the `my-feature` workspace — no restart needed. The workspace is lazily created on the first content request if it doesn't exist. On a detached HEAD or outside a git repo, detection falls back to `defaultBaseBranch ?? 'main'` (the active-branch detector passes the base branch as the `detectHeadBranch` fallback). Static deployments (`deployedAs: 'static'`) never shell out to git for branch detection — they fall back to `defaultBaseBranch ?? 'main'`.
+Both branch identity fields are resolved once at service creation and baked into config: `defaultActiveBranch` is auto-detected from the current git HEAD (`createActiveBranchDetector()` in `services.ts`), and `defaultBaseBranch` follows the same dev-mode HEAD detection when unset (matching `resolveBaseBranch()`). `refreshActiveBranch()` then re-detects **both** per-request (with a 5-second cache) — each field only when not explicitly configured; explicit config values are never overridden. Both the HTTP API handler and `getCanopy()`/`getContext()` perform this refresh (previously only the HTTP handler did), so server-component reads follow branch switches too. This means if you switch from `main` to `my-feature` while the dev server is running, the CMS silently starts serving content from the `my-feature` workspace — no restart needed. The workspace is lazily created on the first content request if it doesn't exist. On a detached HEAD or outside a git repo, detection falls back to `defaultBaseBranch ?? 'main'` (the active-branch detector passes the base branch as the `detectHeadBranch` fallback). Static deployments and any build (`readsFromCheckout()` in `build-mode.ts`) never shell out to git for branch detection — they fall back to `defaultBaseBranch ?? 'main'`.
 
 This only affects non-editor content serving (public site, `getCanopy()`, AI content). The editor is pinned to its own branch via URL params and stores drafts per-branch in localStorage.
 
@@ -1623,9 +1623,7 @@ When adding a new mutator, follow the existing pattern: a thin public method tha
 
 ### Dev Content Sync (`dev.contentSync`)
 
-In dev mode, the editor, the dev server **and `next build`** all read content from a branch clone under `.canopy-dev/content-branches/<branch>/` — never from the working tree. The clone is seeded from **git-committed** state. So when you edit working-tree `content/**` outside the editor, all three keep reading the stale clone.
-
-> **`next build` reads the clone too — this doc used to claim otherwise.** `listEntries`/`buildContentTree` resolve `branchRoot` through `resolveSchemaContext` unconditionally; there is no build-mode branch in that path. Add or rename a file in the working tree, run `next build`, and the build is **green while silently reading the old content** — the only tells are content-level (a stale `<loc>` in the emitted sitemap, `_not-found` markup in a prerendered page). Staging is not enough, and `rm -rf .canopy-dev` does **not** help: the workspace is re-provisioned from git, reproducing the stale content exactly. Commit the change, or run `canopycms sync push`. Whether a one-shot static build _should_ bypass the branch-clone machinery is an open design question — see [dev-mode-build-reads-branch-clone-not-working-tree.md](.claude/future-tasks/dev-mode-build-reads-branch-clone-not-working-tree.md).
+In dev mode, the editor and the dev server read content from a branch clone under `.canopy-dev/content-branches/<branch>/`, seeded from **git-committed** state. `next build` does not: every build-time read comes straight from the working tree, uncommitted files included, and never touches git or `.canopy-dev` (`readsFromCheckout` in `build-mode.ts`). So a working-tree edit made outside the editor reaches the next build at once but leaves the editor and dev server on the stale clone, and an editor save reaches a build only after `canopycms sync pull` copies it out.
 
 The `dev.contentSync` config field (in `CanopyConfig`, `DevContentSyncMode`) controls how this divergence is handled. It is dev-mode only (ignored when `mode !== 'dev'`):
 
@@ -3136,15 +3134,10 @@ Two things about this gate are easy to miss:
   re-checked separately here -- `assertNoDuplicateUrlPaths` already runs during a normal
   `next build` via the sitemap and static-params calls, so a real collision already fails the
   build outright.
-- **The CI job needs a `git checkout -B main` step, for a build-time reason, not just a
-  request-time one.** `apps/example1` is always CanopyCMS `mode: 'dev'`, and dev mode's
-  base-branch resolution (`resolveBaseBranch`/`detectHeadBranch` in `utils/git.ts`) falls back
-  to the literal branch name `main` on a detached HEAD -- exactly what `actions/checkout`
-  leaves it as. That fallback fires for this app's build-time content read too. Without
-  attaching HEAD to a real branch pointing at the checked-out commit first (the same fix
-  `dual-build` above already needed), the job would silently build against whatever `main`
-  happens to resolve to instead of the PR's own content, defeating the gate while still
-  reporting green.
+- **The CI job builds on the detached HEAD `actions/checkout` leaves, with no git setup.** A
+  build reads the working tree, never a branch clone, so it reads exactly the PR's content; a
+  green run is the live proof, and `build-verify.test.ts` also asserts the build creates no
+  `.canopy-dev`. `dual-build` above still attaches HEAD, for its request-time reads.
 
 ### Scaffold-and-Synth Verification (`canopycms-cdk/src/scaffold-synth.test.ts`)
 

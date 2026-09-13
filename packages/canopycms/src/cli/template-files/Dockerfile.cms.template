@@ -19,30 +19,26 @@ COPY . .
 # Guard against adopter apps with no public/ directory: Next's standalone
 # output still expects one, and the runner stage below copies it.
 RUN mkdir -p public
-# Build-time content reads (generateStaticParams / prerendering) run in dev
-# mode -- never set CANOPY_MODE=prod for `next build`: prod-mode build reads
-# would try to open a branch workspace (EFS remote.git) that cannot exist in
-# the image builder.
+# Build-time content reads (generateStaticParams, prerendering, sitemaps) come
+# straight from the files copied above -- the working tree at /app -- in either
+# operating mode. Nothing here touches git, a branch clone or .canopy-dev, so
+# this stage needs neither git nor a repository (.dockerignore excludes .git).
+# CANOPY_BUILD_MODE=true extends that to anything else the build command below
+# runs that reads content outside `next build` (e.g. `canopycms
+# generate-ai-content`).
+# A command that does need git -- `canopycms sync`, say -- does not belong in
+# this stage.
 #
-# CANOPY_MODE is read at RUN time by resolveOperatingMode
+# Leave CANOPY_MODE unset here. Nothing in the build needs prod, and prod mode
+# would hold the builder to run-time checks it has no reason to meet
+# (gitBotAuthorName/gitBotAuthorEmail, an auth plugin that verifies
+# credentials). CANOPY_MODE is read at RUN time by resolveOperatingMode
 # (canopycms/src/operating-mode/mode-env.ts) and wins over the `mode` literal
-# in canopycms.config.ts, which is why leaving it unset here is the whole
-# trick: the same image builds in dev mode and then runs in prod mode, because
-# CanopyCmsService sets CANOPY_MODE=prod on the Lambda. Do not "fix" the config
-# file to say prod -- that would break this build.
-#
-# Dev-mode reads require the project to be a git
-# repository, and .git is excluded from the build context by .dockerignore --
-# so synthesize a single-commit repo from the copied files. node_modules
-# (created by the install step above) is excluded via .git/info/exclude - an
-# adopter repo without its own .gitignore would otherwise commit it into the
-# snapshot (slow build, bloated builder layer).
-RUN apt-get update && apt-get install -y --no-install-recommends git && rm -rf /var/lib/apt/lists/* \
-    && git init -q -b main \
-    && printf 'node_modules\n.next\n' > .git/info/exclude \
-    && git add -A \
-    && git -c user.email=build@canopycms.local -c user.name="Image Build" commit -qm "image build snapshot"
+# in canopycms.config.ts, so the image builds with the config's `dev` and runs
+# in prod because CanopyCmsService sets CANOPY_MODE=prod on the Lambda. Keep
+# the config file saying dev -- `next dev` needs it.
 ENV CANOPY_BUILD=cms
+ENV CANOPY_BUILD_MODE=true
 # Next.js inlines NEXT_PUBLIC_* values into the client bundle at `next build`
 # time, and the generated Clerk edit page needs the publishable key. The
 # publishable key is public material, so it's safe to bake into image layers.

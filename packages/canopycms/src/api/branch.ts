@@ -220,8 +220,9 @@ export const createBranchHandler = async (
     // reserved canopycms-settings- prefix, and the remote-mirror check
     // further down) apply ONLY to this user-facing creation path.
     // http/handler.ts's auto-create (base/active/settings branches) and
-    // branch-workspace.ts's loadOrCreateBranchContext (reached from content
-    // reads and the AI pipeline) provision system/known branch names, not
+    // branch-workspace.ts's loadOrCreateBranchContext (reached from run-time
+    // content reads and the AI pipeline; build-time reads return the checkout
+    // and never provision) provision system/known branch names, not
     // user-chosen ones, and deliberately stay uncovered -- intentional, not
     // an oversight.
 

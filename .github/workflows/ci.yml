@@ -455,9 +455,10 @@ jobs:
             # build-verify.test.ts's own doc comment names the historical
             # incident as a URL-resolution bug (readByUrlPath('/') missing
             # the re-modelled home entry, so Next silently prerendered the
-            # not-found boundary at '/' with exit code 0) plus a base-branch
-            # resolution hazard specific to this app's dev-mode build-time
-            # reads -- neither mechanism lives under static/ or build/, so a
+            # not-found boundary at '/' with exit code 0) plus the choice of
+            # WHERE build-time reads come from (a dev-mode build once read a
+            # branch clone chosen via git HEAD) -- neither mechanism lives
+            # under static/ or build/, so a
             # regression there used to pass this gate on both the PR AND the
             # push to main. This gate has two halves that go through
             # different code, traced separately.
@@ -471,10 +472,14 @@ jobs:
             #     broke)
             #   - content-reader.ts, the glue read()/readByUrlPath route
             #     through (imports utils/entry-url's isIndexSlug directly)
-            #   - branch-workspace.ts, which resolves/provisions the dev-mode
-            #     branch workspace this build reads from, and imports both
-            #     utils/git's resolveBaseBranch (the base-branch fallback
-            #     named above) and operating-mode's strategy selection
+            #   - build-mode.ts, whose readsFromCheckout sends every
+            #     build-time read to the working tree, and
+            #     branch-workspace.ts, whose loadOrCreateBranchContext applies
+            #     it (otherwise resolving/provisioning a branch workspace via
+            #     utils/git's resolveBaseBranch and operating-mode's strategy
+            #     selection)
+            #   - services.ts, which bakes the active branch at creation and
+            #     must not consult git HEAD at build
             #   - utils/git.ts and operating-mode/** themselves
             #   - utils/entry-url.ts, the index-slug rule url-path-resolver.ts
             #     and static/'s own duplicate-URL guard must keep agreeing on
@@ -541,6 +546,8 @@ jobs:
               - 'packages/canopycms/src/content-reader.ts'
               - 'packages/canopycms/src/content-listing.ts'
               - 'packages/canopycms/src/branch-workspace.ts'
+              - 'packages/canopycms/src/build-mode.ts'
+              - 'packages/canopycms/src/services.ts'
               - 'packages/canopycms/src/content-store.ts'
               - 'packages/canopycms/src/utils/git.ts'
               - 'packages/canopycms/src/utils/entry-url.ts'
@@ -565,26 +572,12 @@ jobs:
         if: steps.filter.outputs.relevant == 'true'
         run: pnpm install --frozen-lockfile
 
-      # apps/example1 is always CanopyCMS `mode: 'dev'` (see its
-      # canopycms.config.ts) -- there is no separate static-export flavor
-      # here, unlike apps/dual-build-fixture. Dev mode's base-branch
-      # resolution (`resolveBaseBranch` / `detectHeadBranch` in canopycms's
-      # utils/git.ts) falls back to the literal name 'main' whenever HEAD is
-      # detached, which is exactly what actions/checkout leaves it as. That
-      # is true for this BUILD-TIME read too, not only a request-time one --
-      # verified empirically while building this job: without this step, a
-      # detached HEAD alongside any pre-existing local `main` makes the
-      # build silently read `main`'s (older/different) content instead of
-      # the checked-out commit's, which reproduces BOTH halves of the
-      # historical bug this job exists to catch (empty home page, stale
-      # "/home" in the sitemap) regardless of whether this PR's own code and
-      # content are fine. Pointing `main` at the checked-out commit and
-      # attaching HEAD to it (not merely creating it -- see
-      # apps/dual-build-fixture's identical step above) is what makes dev
-      # mode read this commit's actual content.
-      - name: Attach HEAD to a real branch for dev-mode content reads
-        if: steps.filter.outputs.relevant == 'true'
-        run: git checkout -B main
+      # No `git checkout -B main` step here, on purpose. A build reads the
+      # working tree, never a dev-mode branch clone (readsFromCheckout in
+      # canopycms's build-mode.ts), so building on the detached HEAD that
+      # actions/checkout leaves reads exactly this commit's content -- a green
+      # run is the live proof. apps/dual-build-fixture's job above still
+      # attaches HEAD, for its request-time reads under `next start`.
 
       # canopycms-next's "./config" export (what apps/example1's
       # next.config.mjs imports) resolves to a pre-bundled

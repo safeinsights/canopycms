@@ -3,7 +3,7 @@ import path from 'node:path'
 import type { CanopyConfig } from './config'
 import { ensureBranchRoot } from './paths'
 import { getBranchMetadataFileManager, loadBranchContext } from './branch-metadata'
-import { isDeployedStatic } from './build-mode'
+import { readsFromCheckout } from './build-mode'
 import type { BranchAccessControl, BranchContext, CanopyUserId } from './types'
 import type { OperatingMode } from './operating-mode'
 import { operatingStrategy } from './operating-mode'
@@ -56,11 +56,15 @@ export class BranchWorkspaceManager {
 
       // Create new lock promise
       const lockPromise = (async () => {
-        // The in-memory lock above only serializes within one process. Parallel
-        // build workers (separate processes) could otherwise both clone into the
-        // same branch workspace ("destination path already exists"), so guard the
-        // workspace init with a cross-process lock too. initializeWorkspace is
-        // idempotent, so the waiter simply finds the workspace already cloned.
+        // The in-memory lock above only serializes within one process. Separate
+        // processes can provision the same branch workspace at once -- several
+        // Lambda containers sharing one EFS workspace root in prod, or the dev
+        // server beside a content-reading script run outside a build in dev --
+        // and would otherwise both clone into it ("destination path already
+        // exists"), so guard the workspace init with a cross-process lock too.
+        // initializeWorkspace is idempotent, so the waiter simply finds the
+        // workspace already cloned. (A build's content reads never get here:
+        // loadOrCreateBranchContext returns the checkout before provisioning.)
         let releaseLock: (() => Promise<void>) | undefined
         try {
           log.debug('workspace', 'Ensuring git workspace', {
@@ -167,8 +171,10 @@ export { loadBranchContext } from './branch-metadata'
 /**
  * Load an existing branch context, or create the workspace if it doesn't exist yet.
  *
- * Static deployments skip all git/branch workspace operations and return
- * a synthetic context pointing at the current working directory.
+ * When content is read from the checkout (`readsFromCheckout`: a static
+ * deployment, or any build) this skips every git and branch-workspace
+ * operation and returns a synthetic context rooted at the current working
+ * directory. `branchName` is echoed back on that context but selects nothing.
  */
 export async function loadOrCreateBranchContext(options: {
   config: CanopyConfig
@@ -178,8 +184,8 @@ export async function loadOrCreateBranchContext(options: {
   createdBy: CanopyUserId
   remoteUrl?: string
 }): Promise<BranchContext> {
-  // Static deployments read content directly from the checkout — no git ops needed
-  if (isDeployedStatic(options.config)) {
+  // Static deployments and builds read content directly from the checkout — no git ops
+  if (readsFromCheckout(options.config)) {
     const cwd = process.cwd()
     return {
       branch: {

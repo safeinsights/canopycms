@@ -216,9 +216,11 @@ first write fails with `EROFS`.
 
 **Leave `mode: 'dev'` in `canopycms.config.ts` anyway.** That one file is loaded
 by three different things — `next dev` locally, `next build` inside the
-deployment image, and the deployed server — and the first two genuinely need
-dev: a prod-mode build read looks for a branch workspace on EFS that cannot
-exist in an image builder, so a `mode: 'prod'` literal fails the image build.
+deployment image, and the deployed server. `next dev` needs dev. `next build`
+reads the working tree in either mode, so it needs nothing from prod, and a
+`mode: 'prod'` literal would only hold the image build to prod-mode checks it
+has no reason to meet: `gitBotAuthorName`/`gitBotAuthorEmail`, and an auth
+plugin that verifies credentials.
 
 The deployed value therefore comes from the environment, in two halves:
 
@@ -257,9 +259,9 @@ you hand-edit the stack or the Dockerfile, or build the image some other way:
   server.
 - **Don't compute `mode` in `canopycms.config.ts` from either variable.** Not
   from `NEXT_PUBLIC_CANOPY_MODE`: it is set while `next build` runs, and
-  Next.js inlines `NEXT_PUBLIC_*` into server bundles too, so the build's
-  server-side reads would resolve `prod`, which the `dev` literal is there to
-  prevent. Not from `CANOPY_MODE` either
+  Next.js inlines `NEXT_PUBLIC_*` into server bundles too, so the build would
+  resolve `prod` and meet the prod-mode checks the `dev` literal keeps out of
+  it (see [Operating mode](#operating-mode)). Not from `CANOPY_MODE` either
   (`process.env.CANOPY_MODE === 'prod' ? 'prod' : 'dev'`): Next.js doesn't
   inline it into the browser bundle, so that literal is always `dev` there,
   while server code on the Lambda gets `prod`. The server half looks

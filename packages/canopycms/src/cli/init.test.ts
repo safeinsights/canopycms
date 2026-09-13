@@ -484,16 +484,29 @@ describe('canopycms init-deploy aws', () => {
     expect(dockerfile).toContain('mkdir -p public')
   })
 
-  it('Dockerfile.cms synthesizes a git repo for dev-mode build reads and never bakes prod mode into the build', async () => {
+  it('Dockerfile.cms builds from the copied files with no git in the builder, and never bakes prod mode into the build', async () => {
     await initDeployAws({ cloud: 'aws', projectDir: tmpDir, force: false, nonInteractive: true })
 
     const dockerfile = await fs.readFile(path.join(tmpDir, 'Dockerfile.cms'), 'utf-8')
-    // Dev-mode build-time content reads require a git repo; .dockerignore
-    // excludes .git, so the builder must create one from the copied files.
-    expect(dockerfile).toContain('git init -q -b main')
-    expect(dockerfile).toContain('image build snapshot')
-    // Prod-mode build reads would need an EFS remote.git inside the builder;
-    // validated to fail in the deploy-test harness. Prod is runtime-only.
+    const [builder, runner] = dockerfile.split(/^FROM .* AS runner$/m)
+    expect(runner, 'expected a runner stage').toBeDefined()
+    // The split consumes the runner's own FROM line, so check its base separately:
+    // `FROM builder AS runner` would inherit the builder's ENV (CANOPY_BUILD_MODE=true)
+    // and make the deployed CMS read /app as the synthetic build user.
+    const runnerBase = /^FROM (\S+) AS runner$/m.exec(dockerfile)?.[1]
+    expect(runnerBase, 'expected a runner stage FROM line').toBeDefined()
+    expect(runnerBase).not.toBe('builder')
+    // A build reads the working tree (readsFromCheckout in build-mode.ts), so
+    // the builder needs neither git nor a synthesized repository. The runner
+    // still installs git: the deployed CMS does real branch operations.
+    expect(builder).not.toMatch(/apt-get install[^\n]*\bgit\b/)
+    expect(builder).not.toContain('git init')
+    expect(runner).toMatch(/apt-get install[^\n]*\bgit\b/)
+    // Scripts {{DOCKER_BUILD}} runs outside `next build` read the working tree
+    // too. Docker ENV is per stage, so this never reaches the runtime image.
+    expect(builder).toContain('ENV CANOPY_BUILD_MODE=true')
+    expect(runner).not.toContain('CANOPY_BUILD_MODE')
+    // Nothing in the build needs prod; prod is run-time only.
     expect(dockerfile).not.toContain('ENV CANOPY_MODE=prod')
   })
 
@@ -515,16 +528,6 @@ describe('canopycms init-deploy aws', () => {
 
     const stack = await fs.readFile(path.join(tmpDir, 'infrastructure/lib/cms-stack.ts'), 'utf-8')
     expect(stack).toContain("NEXT_PUBLIC_CANOPY_MODE: 'prod'")
-  })
-
-  it('Dockerfile.cms keeps node_modules out of the synthesized snapshot repo without touching adopter files', async () => {
-    await initDeployAws({ cloud: 'aws', projectDir: tmpDir, force: false, nonInteractive: true })
-
-    const dockerfile = await fs.readFile(path.join(tmpDir, 'Dockerfile.cms'), 'utf-8')
-    // npm ci runs before git init, so node_modules exists at `git add -A` time;
-    // .git/info/exclude keeps it out even when the adopter repo has no .gitignore.
-    expect(dockerfile).toContain('.git/info/exclude')
-    expect(dockerfile).toContain('node_modules\\n.next\\n')
   })
 
   it('creates .dockerignore that excludes host node_modules but keeps vendor/', async () => {

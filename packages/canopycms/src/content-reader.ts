@@ -13,7 +13,7 @@ import { type OperatingMode } from './operating-mode'
 import type { CanopyServices } from './services'
 import type { BranchContext } from './types'
 import type { CanopyUser } from './user'
-import { isDeployedStatic, isBuildMode } from './build-mode'
+import { isDeployedStatic, isBuildMode, readsFromCheckout } from './build-mode'
 import { isNotFoundError } from './utils/error'
 import { resolveEntryLinksInData } from './entry-link-resolver'
 
@@ -131,9 +131,10 @@ export const createContentReader = (options: ContentReaderOptions): ContentReade
   const createdBy = options.createdBy ?? 'canopycms-content-reader'
 
   const resolveBranchContext = async (branchName: string): Promise<BranchContext> => {
-    // Static deployments read from the checkout: loadOrCreateBranchContext returns a
-    // synthetic cwd context without git ops, regardless of allowCreateBranch.
-    if (isDeployedStatic(services.config)) {
+    // Static deployments and builds read from the checkout: loadOrCreateBranchContext
+    // returns a synthetic cwd context without git ops, regardless of allowCreateBranch
+    // or a custom getBranchContext resolver.
+    if (readsFromCheckout(services.config)) {
       return loadOrCreateBranchContext({
         config: services.config,
         branchName,
