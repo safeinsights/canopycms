@@ -12,7 +12,7 @@ tier":
 - `<ClerkProvider publishableKey={process.env.<plain variable>}>` in the editor-subtree
   `layout.server.tsx`. The prop wins over `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`
   (`mergeNextClerkPropsWithEnv`: `props.publishableKey || process.env.NEXT_PUBLIC_…`, in both
-  `@clerk/nextjs` 6.39.5 and 7.9.1).
+  `@clerk/nextjs` 6.39.5, at `dist/cjs/utils/mergeNextClerkPropsWithEnv.js:30`, and 7.9.1).
 - **`export const dynamic = 'force-dynamic'` in that layout.** The earlier version of this file
   missed this. It called the fixture's read "a genuine per-request runtime read", but the fixture
   passed a constant. Measured 2026-09-12 on Next 15.5.21, with real `next build` + `next start`
@@ -34,7 +34,8 @@ tier":
 Keeping `clerkMiddleware` still means one image per Clerk instance and a secret on the Lambda. It
 reads the build-inlined `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` unless given explicit keys or an
 options callback, and it throws on every matched request without a resolvable `secretKey`
-(`@clerk/nextjs` 7.9.1: `server/constants.js:9,11`, `server/clerkMiddleware.js:50-58`).
+(`@clerk/nextjs` 7.9.1: `dist/esm/server/constants.js:9,11`, `dist/esm/server/clerkMiddleware.js:50-58`;
+6.39.5: `dist/esm/server/clerkMiddleware.js:62-65`).
 [deploy-test-lambda-plaintext-clerk-secret.md](deploy-test-lambda-plaintext-clerk-secret.md) holds
 the options for that path.
 

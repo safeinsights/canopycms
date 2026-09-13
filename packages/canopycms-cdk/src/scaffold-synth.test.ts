@@ -220,10 +220,11 @@ describe('canopycms init-deploy aws produces a synthesizable CDK app', () => {
     )
     expect(stackSource).toContain("NEXT_PUBLIC_CANOPY_MODE: 'prod'")
 
-    // The image itself must NOT bake the server half in: `next build` runs its
-    // content reads in dev mode, and a prod-mode build read would look for a
-    // branch workspace that cannot exist in a builder. Build arg in, runtime
-    // variable out -- that pairing is the whole mechanism.
+    // The image itself must NOT bake the server half in: the image's `next build`
+    // stays in dev mode. Build reads come from the working tree in either mode, so
+    // nothing there needs prod, and prod would hold the builder to checks it has
+    // no reason to meet (see mode-env.ts). Build arg in, runtime variable out --
+    // that pairing is the whole mechanism.
     const dockerfile = await fs.readFile(path.join(scaffoldDir, 'Dockerfile.cms'), 'utf-8')
     expect(dockerfile).toContain('ARG NEXT_PUBLIC_CANOPY_MODE')
     expect(dockerfile).not.toContain('ENV CANOPY_MODE=prod')
@@ -305,7 +306,7 @@ describe('canopycms init-deploy aws produces a synthesizable CDK app', () => {
    * CDK records that platform in the asset manifest, never in the
    * CloudFormation template -- so no template assertion can see a mismatch.
    * Asserting both halves together is what catches one: an image built for
-   * the host rather than the function deploys clean and fails at invoke.
+   * the host rather than the function cannot run on it.
    */
   it('builds the CMS image for the architecture its Lambda runs on (linux/arm64)', async () => {
     const outDir = path.join(scaffoldDir, 'cdk.out')

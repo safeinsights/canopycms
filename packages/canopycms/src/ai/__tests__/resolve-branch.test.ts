@@ -31,9 +31,8 @@ describe('resolveBranchRoot', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     // Guard against a developer's shell (or CI) already exporting either build-mode
-    // switch: every test in this describe except the dedicated build-mode block below
-    // asserts RUNTIME behavior, and readsFromCheckout() is real here (no build-mode
-    // mock — see the module-level comment before the build describe).
+    // switch: every test in this describe asserts RUNTIME behavior, and this file does
+    // not mock build-mode, so readsFromCheckout() reads the real environment.
     vi.stubEnv('NEXT_PHASE', '')
     vi.stubEnv('CANOPY_BUILD_MODE', '')
   })

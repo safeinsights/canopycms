@@ -3621,8 +3621,10 @@ is authoritative on the why -- read it before changing the script. In short:
   `canopycms`, `canopycms-next`, and `canopycms-auth-dev` (`npm pack` won't do -- only pnpm
   applies `publishConfig` and rewrites `workspace:` ranges). In this workspace those packages are
   workspace links compiled through `transpilePackages`, which is not what an adopter installs.
-  The registry-shaped install externalizes sharp as `.next/node_modules/sharp-<hash>`, the shape
-  an adopter's Next 16 build produces and the one the libvips defect needs.
+  The registry-shaped install, built with Next 16's default Turbopack, externalizes sharp as
+  `.next/node_modules/sharp-<hash>`, the shape the libvips defect shows in. A webpack build under
+  pnpm bundles sharp instead (seen on Next 15.5.21; see
+  [webpack-standalone-sharp-bundled.md](.claude/future-tasks/webpack-standalone-sharp-bundled.md)).
 - **Runs in dev mode**, with a git checkout of the scaffold's `content/` on a non-`main`
   `release-base` branch copied in before boot -- see the header comment for why. The page's title
   in the working tree, which `next build` reads, differs from its title in the `release-base`
@@ -3631,11 +3633,15 @@ is authoritative on the why -- read it before changing the script. In short:
   - `whoami` answers 200;
   - `/hello` renders the `release-base` title (a request-time read of the branch clone), not the
     working-tree one;
-  - `/sitemap.xml` lists the page (a build-time read of the working tree);
+  - `/sitemap.xml` lists the page's URL. Its slug is the same in the working tree and the
+    `release-base` commit, so this check cannot yet tell a build-time read from a request-time one
+    ([cms-image-pr5-review-followups.md](.claude/future-tasks/cms-image-pr5-review-followups.md),
+    item 5);
   - `/no-such-page` is a 404 carrying the `release-base` title (the root layout's request-time
     read); `/no/such/route` is a 404 carrying the working-tree title (Next serves it from the
     not-found page `next build` prerendered); `/favicon.ico` is not a 5xx;
-  - an asset round trip: presign -> proxied upload/finalize -> original PNG -> WebP resize;
+  - an asset round trip: presign -> proxied upload/finalize -> the `orig` identity transform
+    (through sharp) as a PNG -> WebP resize;
   - sharp externalized as a `.next/node_modules/sharp-*` alias; each alias has the libvips-cpp its
     own sharp declares; each alias loads and encodes;
   - zero `ERR_DLOPEN_FAILED` in the container logs.

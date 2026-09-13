@@ -130,12 +130,12 @@ export default withCanopy({
 })
 ```
 
-`withCanopy()` handles five things:
+`withCanopy()` handles:
 
 - **Transpilation** — Canopy packages export raw TypeScript; the wrapper auto-detects which Canopy packages are installed and adds only those to `transpilePackages`. You never need to maintain this list manually.
 - **React deduplication** — When developing locally with `file:` references or linked packages (`npm link`, `pnpm link`, etc.), the bundler can follow symlinks and load a second copy of React from the linked package's `node_modules`, causing "Invalid hook call" crashes. The wrapper adds module aliases so React always resolves to your project's copy.
 - **Dual-build page extensions** — By default, adds `server.ts` and `server.tsx` to Next.js `pageExtensions`, enabling the dual-build convention (see below).
-- **Standalone image tracing** — For any build except a static export, adds sharp's libvips shared library to Next's file tracing, so an `output: 'standalone'` server can load sharp. Next can miss that library for sharp 0.35 ([vercel/next.js#97973](https://github.com/vercel/next.js/issues/97973)), and a standalone build that finds nothing to add warns. If you don't use `withCanopy()`, see the manual snippet in [Dual Build Support](docs/deploying-to-aws.md#dual-build-support).
+- **Standalone image tracing** — For any build except a static export, adds sharp's libvips shared library to Next's file tracing, so a Turbopack `output: 'standalone'` server (Next 16's default bundler) can load sharp. Next can miss that library for sharp 0.35 ([vercel/next.js#97973](https://github.com/vercel/next.js/issues/97973)), and a standalone build that finds nothing to add warns. It does not fix a webpack build, where sharp is bundled into a server chunk and image transforms fail (seen on Next 15.5.21 with pnpm). If you don't use `withCanopy()`, see the manual snippet in [Dual Build Support](docs/deploying-to-aws.md#dual-build-support), which also describes the webpack case.
 - **Turbopack guard (Next 16+)** — On Next 16 and later, sets `turbopack: {}` if your config has neither `turbopack` nor your own `webpack` and `withCanopy()` can read your installed Next version, since Next 16 defaults `next build`/`next dev` to Turbopack and exits when it sees the React-aliasing `webpack` function above with no `turbopack` config. Your own `webpack` or `turbopack` config is always left as-is, so a `turbopack: {}` you already added keeps working.
 
 The React aliases are harmless when not strictly needed (e.g., when installing from npm), so `withCanopy()` is the recommended configuration for all adopters.
@@ -3321,7 +3321,7 @@ Install the CDK dependencies it needs — the CLI, and the generated workflow, b
 npm install --save-dev canopycms canopycms-cdk aws-cdk-lib constructs tsx aws-cdk
 ```
 
-Like `init`, this command never overwrites files you already have; pass `--force` to regenerate them.
+Like `init`, this command never overwrites a file you already have without asking (and `--non-interactive` skips them); pass `--force` to regenerate them.
 
 Full walkthrough — required secrets/variables, filling in the stack, and troubleshooting — lives in [docs/deploying-to-aws.md](docs/deploying-to-aws.md).
 

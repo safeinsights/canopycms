@@ -546,8 +546,8 @@ describe('canopycms init-deploy aws', () => {
       .filter((line) => line.length > 0 && !line.startsWith('#'))
     expect(ignoreLines).not.toContain('vendor')
     expect(ignoreLines).not.toContain('vendor/')
-    // The CDK app imports aws-cdk-lib, which the image never installs; inside the
-    // build context `next build` would type-check it and fail.
+    // infrastructure/ is the CDK app, which the image never runs. In the build context
+    // `next build` would type-check it, and fail wherever aws-cdk-lib is not installed.
     expect(ignoreLines).toContain('infrastructure')
   })
 
@@ -573,8 +573,8 @@ describe('canopycms init-deploy aws', () => {
   })
 
   // A Next app's tsconfig.json includes `**/*.ts`, so without an exclude the app's own
-  // `next build` type-checks infrastructure/ and fails on aws-cdk-lib, which the app need not
-  // install. Found by the standalone image smoke test's first real build.
+  // `next build` type-checks infrastructure/ and fails wherever aws-cdk-lib is not installed.
+  // Found by the standalone image smoke test's first real build.
   describe('tsconfig.json exclusion of infrastructure/', () => {
     const tsconfigPath = () => path.join(tmpDir, 'tsconfig.json')
     const runInitDeploy = () =>

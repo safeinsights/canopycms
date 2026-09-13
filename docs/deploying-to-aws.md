@@ -103,7 +103,7 @@ export default withCanopy({
 - `npm run build` → static export for S3 (public site)
 - `CANOPY_BUILD=cms npm run build` → standalone server for Lambda (CMS)
 
-**sharp in the standalone image.** For the CMS build, `withCanopy()` also adds sharp's libvips shared library to Next's file tracing. Next can miss that library for sharp 0.35 ([vercel/next.js#97973](https://github.com/vercel/next.js/issues/97973)). An image built without it fails to load sharp at runtime with `ERR_DLOPEN_FAILED`.
+**sharp in the standalone image.** For the CMS build, `withCanopy()` also adds sharp's libvips shared library to Next's file tracing. Next can miss that library for sharp 0.35 ([vercel/next.js#97973](https://github.com/vercel/next.js/issues/97973)). An image built without it fails to load sharp at runtime with `ERR_DLOPEN_FAILED`. The include fixes Turbopack builds, Next 16's default. It does not fix a webpack build (Next 13 to 15, or `next build --webpack`): on Next 15.5.21 with pnpm, Next bundles sharp's JavaScript into a server chunk, so image transforms fail with or without the include. Other Next versions, Next 16's `--webpack` and npm installs have not been checked ([webpack-standalone-sharp-bundled.md](../.claude/future-tasks/webpack-standalone-sharp-bundled.md)).
 
 If you don't use `withCanopy()`, or your standalone build prints `CanopyCMS: could not add sharp's libvips…`, add the directory yourself. Paths are relative to the Next.js project directory. With pnpm:
 
@@ -118,7 +118,7 @@ export default {
 
 - **npm.** npm's hoisted layout puts the same directory at `node_modules/@img/sharp-libvips-*/lib`.
 - **Monorepo.** Prefix the glob with the path from the app to the directory that holds `node_modules`, e.g. `../../`. That directory must be inside Next's tracing root: `outputFileTracingRoot`, or the lockfile directory Next infers.
-- **Next 13 or 14.** Nest `outputFileTracingIncludes` under `experimental`.
+- **Next 13 or 14.** Nest `outputFileTracingIncludes` under `experimental`. These versions build with webpack, so read the note above first.
 
 For a content route shared by both builds (e.g. `app/[slug]/`, or a fixed page like the home route), don't use a single `page.tsx`: `output: 'export'` requires `dynamicParams = false`, but on the CMS Lambda that makes an unknown slug throw Next's internal `NoFallbackError` (a 500) before your page's `notFound()` runs — and Next statically parses route-segment config, so the value can't be a conditional expression. The CMS build also must not prerender content pages: a build-time prerender serves build-time content to anonymous visitors (bypassing runtime path ACLs), and rendering a not-prerendered slug as on-demand static generation makes the request-scoped read throw `DYNAMIC_SERVER_USAGE` (also a 500). Split the page instead:
 
@@ -203,8 +203,8 @@ gets `pnpm-workspace.yaml`, where pnpm 11 keeps its `allowBuilds` decisions. The
 deploy trigger branch comes from `origin/HEAD`, and the worker's repo from your
 `origin` remote.
 
-`init-deploy aws` never overwrites a file you already have — re-run it with
-`--force` to replace them. The one existing file it edits is `tsconfig.json`: it
+`init-deploy aws` never overwrites a file you already have without asking, and
+`--non-interactive` skips them — re-run it with `--force` to replace them. The one existing file it edits is `tsconfig.json`: it
 adds `infrastructure` to `exclude`, because the CDK app imports `aws-cdk-lib`
 and your app's own `next build` would otherwise type-check it. A `tsconfig.json`
 with comments, or one that inherits `exclude` through `extends` with no list of
@@ -493,11 +493,12 @@ does not decide what ends up in the image:
   default). It always passes the function a resolved architecture, and CDK
   derives a `fromImageAsset` image's build platform from it. Leave `platform`
   off `fromImageAsset`: an explicit one overrides the derived value, and an
-  image built for the other architecture deploys clean, then
-  [fails at invoke with `Runtime.InvalidEntrypoint`][lambda-arch-mismatch]
-  (its binaries are for the wrong architecture, which
-  [`execve` rejects][execve-enoexec]). A prebuilt `fromEcr` image has no build for CDK to
-  steer, so build it with the matching `--platform` yourself.
+  image built for the other architecture cannot run on the function: its
+  binaries are for the wrong architecture, which
+  [`execve` rejects][execve-enoexec]. An arm64 image on an x86_64 function
+  [fails at invoke with `Runtime.InvalidEntrypoint`][lambda-arch-mismatch].
+  A prebuilt `fromEcr` image has no build for CDK to steer, so build it with
+  the matching `--platform` yourself.
 - **Everything native comes from inside the build.** The Node binary comes
   from the `node:22-slim` base image, pulled for the target platform; git from
   an `apt-get` step; sharp and its libvips from the package install. All of

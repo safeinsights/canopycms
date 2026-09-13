@@ -57,7 +57,9 @@ const COMMANDS: Record<PackageManager, PackageManagerCommands> = {
     // install on any dependency build script without a decision, and an app with the editor has
     // several (es5-ext through the editor, sharp through Next). The `[l]` glob keeps the file
     // optional: COPY rejects a missing literal source, but accepts a pattern that matches
-    // nothing when another source matches.
+    // nothing when another source matches. Measured 2026-09-13 on Docker Engine 29.6.2 (BuildKit
+    // v0.31.2): `COPY package.json pnpm-workspace.yam[l] ./` builds with no pnpm-workspace.yaml
+    // in the context, and the same line with the literal name fails with "not found".
     dockerCopy: 'COPY package.json pnpm-lock.yaml pnpm-workspace.yam[l] ./',
     dockerInstall: 'RUN corepack enable && pnpm install --frozen-lockfile',
     build: 'pnpm run build',

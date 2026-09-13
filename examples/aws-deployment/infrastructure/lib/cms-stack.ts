@@ -92,8 +92,9 @@ export class CmsStack extends Stack {
       // The one place the CMS image's CPU architecture is decided. CDK derives
       // the Docker build platform from it, so do not add `platform` to
       // fromImageAsset above: an explicit one overrides this, and an image
-      // built for the other architecture deploys clean, then fails at invoke
-      // with Runtime.InvalidEntrypoint. arm64 matches the EC2 worker and is
+      // built for the other architecture cannot run on the function (an arm64
+      // image on an x86_64 function fails at invoke with
+      // Runtime.InvalidEntrypoint). arm64 matches the EC2 worker and is
       // CanopyCmsService's default. deploy-cms.yml runs on an arm64 runner to
       // match; see "Where the image is built" in
       // docs/deploying-to-aws.md before changing either.
