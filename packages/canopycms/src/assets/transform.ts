@@ -3,8 +3,15 @@
  * source image bytes with sharp. Server-only - never import this from
  * client/editor code (this is why it lives in its own file, separate from
  * the dependency-free transform-directives.ts). Used by the dev-mode lazy
- * `/assets/t/*` emulation in api/assets.ts today, and will be reused
- * unchanged by the prod transform Lambda (PR 7).
+ * `/assets/t/*` emulation in api/assets.ts and, unchanged, by the prod
+ * transform Lambda (packages/canopycms-cdk/lambda/asset-transform).
+ *
+ * sharp is imported for its TYPES only and loaded on first use through
+ * `loadSharp()` (sharp-loader.ts), so importing this module never loads
+ * libvips. That matters because this module sits in the import graph of
+ * `canopycms/server` and `canopycms/http`: see sharp-loader.ts for the
+ * adopter outage a static import caused, and eslint.config.mjs for the rule
+ * that keeps it from coming back.
  *
  * Pipeline: a cheap metadata-only probe (`limitInputPixels: MAX_INPUT_PIXELS`,
  * decompression-bomb defense #1) learns the real page count, so animated
@@ -29,9 +36,10 @@
  * because GIF needs stripping.
  */
 
-import sharp from 'sharp'
+import type { Sharp as SharpPipeline } from 'sharp'
 
 import { getErrorMessage } from '../utils/error'
+import { loadSharp } from './sharp-loader'
 import {
   MAX_ANIMATED_FRAMES,
   MAX_INPUT_PIXELS,
@@ -39,15 +47,6 @@ import {
   type OutputFormat,
   type TransformDirectives,
 } from './transform-directives'
-
-/**
- * `sharp`'s type declarations use `export =`, which doesn't let a default
- * import (`import sharp from 'sharp'`) reference the merged `sharp.Sharp`
- * namespace type directly under this repo's `esModuleInterop`/`Bundler`
- * module settings. `ReturnType<typeof sharp>` gets the same instance type
- * without needing a namespace import.
- */
-type SharpPipeline = ReturnType<typeof sharp>
 
 /** Raster formats the transform engine accepts as input. svg/pdf never reach here - they're served statically. */
 const ALLOWED_INPUT_EXTS = new Set(['png', 'jpg', 'jpeg', 'webp', 'gif'])
@@ -184,6 +183,11 @@ function encodeSourceFormat(
   }
 }
 
+/**
+ * Resolves a `TransformRejection` for anything wrong with the input or the
+ * output. REJECTS (throws) when sharp itself cannot be loaded in this process
+ * - see the comment at the `loadSharp()` call below.
+ */
 export async function applyTransform(
   input: ApplyTransformInput,
   directives: TransformDirectives,
@@ -196,6 +200,15 @@ export async function applyTransform(
       error: `Unsupported input format for transform: '${sourceExt}'`,
     }
   }
+
+  // After the format check and OUTSIDE the try below, both on purpose. A load
+  // failure is a fault in this environment (the native binary is missing or
+  // built for another platform), not a fact about these bytes, so it must
+  // reach the caller as a thrown error - a 500 from http/handler.ts's
+  // top-level catch or from the transform Lambda's - and never the 422 the
+  // catch below means "sharp could not process this input". The 400 above
+  // needs no decoder, so it keeps working where sharp cannot load.
+  const sharp = await loadSharp()
 
   const resize = directives.identity ? undefined : directives
   const format = resize?.format
