@@ -1,9 +1,13 @@
+import path from 'node:path'
 import { describe, it, expect } from 'vitest'
 import { CfnElement, Duration, Stack } from 'aws-cdk-lib'
 import { Template, Match } from 'aws-cdk-lib/assertions'
 import { RetentionDays } from 'aws-cdk-lib/aws-logs'
+import { Manifest } from 'aws-cdk-lib/cloud-assembly-schema'
+import { AssetManifestArtifact } from 'aws-cdk-lib/cx-api'
 import {
   aws_ecr as ecr,
+  aws_ecr_assets as ecrAssets,
   aws_iam as iam,
   aws_lambda as lambda,
   aws_route53 as route53,
@@ -1085,30 +1089,108 @@ describe('CanopyCmsService B1: the Lambda can actually reach S3', () => {
   })
 })
 
-describe('CanopyCmsService: Lambda architecture', () => {
-  it('defaults to x86_64 (no explicit Architectures override) when architecture is omitted', () => {
-    const template = synth()
-    // Lambda's own default is x86_64; CDK renders that as no `Architectures`
-    // property at all rather than an explicit 'x86_64' entry - assert
-    // whichever of the two the template actually contains.
-    const fns = template.findResources('AWS::Lambda::Function', {
-      Properties: Match.objectLike({ PackageType: 'Image' }),
-    })
-    const architectures = Object.values(fns).map(
-      (fn) => (fn.Properties as { Architectures?: string[] }).Architectures,
+/**
+ * A build context holding only a Dockerfile. Synth stages and fingerprints it
+ * as an image asset but never runs `docker build`, so no Docker is needed.
+ */
+const DOCKER_IMAGE_ASSET_FIXTURE = path.join(
+  __dirname,
+  '..',
+  '..',
+  'test-support',
+  'fixtures',
+  'docker-image-asset',
+)
+
+/** `Architectures` of every image-backed Lambda in the template (undefined where unset). */
+function imageFunctionArchitectures(template: Template): (string[] | undefined)[] {
+  const fns = template.findResources('AWS::Lambda::Function', {
+    Properties: Match.objectLike({ PackageType: 'Image' }),
+  })
+  return Object.values(fns).map(
+    (fn) => (fn.Properties as { Architectures?: string[] }).Architectures,
+  )
+}
+
+/**
+ * Synthesizes the service around a real `fromImageAsset` image, which the
+ * `fromEcr` image every other synth in this file uses cannot exercise: an ECR
+ * image has no build, so nothing to give a platform.
+ *
+ * Returns the platform of every Docker image asset, read from the asset
+ * manifest -- where CDK records the `--platform` that `cdk deploy` builds
+ * with, and which the CloudFormation template never contains -- beside the
+ * `Architectures` of every image-backed function in the template.
+ */
+function synthWithImageAsset(
+  overrides: Partial<CanopyCmsServiceProps> = {},
+  assetProps: lambda.AssetImageCodeProps = {},
+): { dockerPlatforms: (string | undefined)[]; architectures: (string[] | undefined)[] } {
+  const app = newTestApp()
+  const stack = new Stack(app, 'TestStack', {
+    env: { account: '123456789012', region: 'us-east-1' },
+  })
+  new CanopyCmsService(stack, 'Cms', {
+    cmsDockerImage: lambda.DockerImageCode.fromImageAsset(DOCKER_IMAGE_ASSET_FIXTURE, assetProps),
+    githubOwner: 'acme',
+    githubRepo: 'site',
+    ...overrides,
+  })
+  const assembly = app.synth()
+
+  const dockerPlatforms = assembly.artifacts
+    .filter(AssetManifestArtifact.isAssetManifestArtifact)
+    .flatMap((artifact) =>
+      Object.values(Manifest.loadAssetManifest(artifact.file).dockerImages ?? {}).map(
+        (image) => image.source.platform,
+      ),
     )
-    expect(architectures.length).toBeGreaterThan(0)
-    for (const arch of architectures) {
-      expect(arch === undefined || arch?.[0] === 'x86_64').toBe(true)
-    }
+  return {
+    dockerPlatforms,
+    architectures: imageFunctionArchitectures(
+      Template.fromJSON(assembly.getStackByName(stack.stackName).template),
+    ),
+  }
+}
+
+describe('CanopyCmsService: Lambda architecture and image platform', () => {
+  it('defaults to arm64 when architecture is omitted', () => {
+    expect(imageFunctionArchitectures(synth())).toEqual([['arm64']])
   })
 
-  it('sets Architectures to arm64 when architecture: Architecture.ARM_64 is passed', () => {
-    const template = synth(false, { architecture: lambda.Architecture.ARM_64 })
-    template.hasResourceProperties(
-      'AWS::Lambda::Function',
-      Match.objectLike({ Architectures: ['arm64'] }),
-    )
+  it('passes an explicit Architecture.X86_64 through', () => {
+    const template = synth(false, { architecture: lambda.Architecture.X86_64 })
+    expect(imageFunctionArchitectures(template)).toEqual([['x86_64']])
+  })
+
+  // The platform half. CDK sets a `fromImageAsset` image's build platform from
+  // the architecture the function binds it with, and records it in the asset
+  // manifest. These fail if the construct ever passes `architecture` through
+  // unresolved again: with none bound, CDK records no platform at all and
+  // Docker builds for whatever machine runs `cdk deploy`.
+  it('builds a fromImageAsset image for linux/arm64 when architecture is omitted', () => {
+    expect(synthWithImageAsset()).toEqual({
+      dockerPlatforms: ['linux/arm64'],
+      architectures: [['arm64']],
+    })
+  })
+
+  it('builds a fromImageAsset image for linux/amd64 when architecture is X86_64', () => {
+    expect(synthWithImageAsset({ architecture: lambda.Architecture.X86_64 })).toEqual({
+      dockerPlatforms: ['linux/amd64'],
+      architectures: [['x86_64']],
+    })
+  })
+
+  // Pins the warning in `architecture`'s doc comment, which is why the
+  // scaffold and docs say to omit `platform`: an explicit one beats the derived
+  // value, leaving an image and a function that disagree. If a CDK upgrade
+  // changes that precedence, this fails and that guidance needs revisiting.
+  it('lets an explicit fromImageAsset platform override the derived one', () => {
+    expect(synthWithImageAsset({}, { platform: ecrAssets.Platform.LINUX_AMD64 })).toEqual({
+      dockerPlatforms: ['linux/amd64'],
+      architectures: [['arm64']],
+    })
   })
 })
 

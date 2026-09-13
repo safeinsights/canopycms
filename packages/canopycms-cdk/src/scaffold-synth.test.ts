@@ -32,6 +32,7 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
+import { Manifest } from 'aws-cdk-lib/cloud-assembly-schema'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
 const execFileAsync = promisify(execFile)
@@ -298,6 +299,33 @@ describe('canopycms init-deploy aws produces a synthesizable CDK app', () => {
     },
     TIMEOUT_MS,
   )
+
+  /**
+   * The image's architecture is the platform `cdk deploy` builds it for, and
+   * CDK records that platform in the asset manifest, never in the
+   * CloudFormation template -- so no template assertion can see a mismatch.
+   * Asserting both halves together is what catches one: an image built for
+   * the host rather than the function deploys clean and fails at invoke.
+   */
+  it('builds the CMS image for the architecture its Lambda runs on (linux/arm64)', async () => {
+    const outDir = path.join(scaffoldDir, 'cdk.out')
+    const manifests = (await fs.readdir(outDir)).filter((f) => f.endsWith('.assets.json'))
+    const platforms = manifests.flatMap((file) =>
+      Object.values(Manifest.loadAssetManifest(path.join(outDir, file)).dockerImages ?? {}).map(
+        (image) => image.source.platform,
+      ),
+    )
+    expect(platforms).toEqual(['linux/arm64'])
+
+    const imageFunctionArchitectures = resources
+      .filter(
+        (resource) =>
+          readJsonField(resource, 'Type') === 'AWS::Lambda::Function' &&
+          readJsonField(readJsonField(resource, 'Properties'), 'PackageType') === 'Image',
+      )
+      .map((fn) => readJsonField(readJsonField(fn, 'Properties'), 'Architectures'))
+    expect(imageFunctionArchitectures).toEqual([['arm64']])
+  })
 
   it('names the stack exactly what the generated workflow deploys', async () => {
     // `--all` would deploy any other stacks in the adopter's repo, so the

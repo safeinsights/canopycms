@@ -90,7 +90,13 @@ concurrency:
 
 jobs:
   deploy:
-    runs-on: ubuntu-latest
+    # An arm64 runner, because `cdk deploy` builds the CMS image right here and
+    # the stack's `architecture` is arm64. On an x86 runner that build needs
+    # QEMU emulation (docker/setup-qemu-action), which is slow for `next build`.
+    # This image ships Docker and Buildx (github.com/actions/partner-runner-images);
+    # in a private repository it has 2 vCPUs. Change it together with
+    # `architecture` in infrastructure/lib/cms-stack.ts.
+    runs-on: ubuntu-24.04-arm
     permissions:
       id-token: write # required for OIDC
       contents: read

@@ -2486,6 +2486,10 @@ That surfaced an unrelated gotcha the fix had to account for: CDK only attaches 
 
 The accepted prop is deliberately a concrete, mutable role object rather than a reference to an already-existing one: granting further permissions to an externally-referenced role is a silent no-op with nothing in that call path to raise an error, so the narrower type is what moves that failure to compile time instead of leaving it undetectable at runtime.
 
+### Why does the CMS Lambda build for arm64?
+
+CDK derives a `fromImageAsset` image's Docker build platform from the architecture the function binds it with, unless `platform` is set explicitly. `CanopyCmsService` used to bind none, so the function defaulted to x86_64 while Docker built for whatever the build host was — a mismatch that deploys cleanly and fails only at invoke. It now always resolves an architecture (default arm64), matching the EC2 worker and the asset transform Lambda, which were already arm64, and the scaffold sets no `platform`. See [Where the image is built](docs/deploying-to-aws.md#where-the-image-is-built) for the build-host mechanics.
+
 ### Why branch-per-workspace?
 
 Each branch gets its own git clone to prevent conflicts. Editors can work simultaneously without stepping on each other. The workspace isolation also means a crash or bad edit on one branch can't affect others.

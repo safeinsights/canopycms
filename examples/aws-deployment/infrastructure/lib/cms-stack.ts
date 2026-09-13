@@ -14,7 +14,6 @@ import { Stack, StackProps } from 'aws-cdk-lib'
 import { Construct } from 'constructs'
 import * as lambda from 'aws-cdk-lib/aws-lambda'
 import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager'
-import { Platform } from 'aws-cdk-lib/aws-ecr-assets'
 import { CanopyCmsService, CanopyCmsDistribution } from 'canopycms-cdk'
 // The SAME config file the CMS Lambda reads at request time -- imported here,
 // at synth time, so `baseBranch`/`settingsBranch` below can never drift from
@@ -76,18 +75,27 @@ export class CmsStack extends Stack {
       // `cdk deploy` touching the function silently reverts your code.
       cmsDockerImage: lambda.DockerImageCode.fromImageAsset('.', {
         file: 'Dockerfile.cms',
-        // The image platform and the Lambda architecture must agree, or the
-        // function fails at invoke with an exec-format error. Building on
-        // Apple Silicon defaults to arm64, so arm64 is the pairing that works
-        // both locally and on an x86 CI runner.
-        platform: Platform.LINUX_ARM64,
         // Next.js inlines NEXT_PUBLIC_* into the CLIENT bundle during
-        // `next build`, so this has to reach the image BUILD. A Lambda
+        // `next build`, so these have to reach the image BUILD. A Lambda
         // environment variable would be far too late.
         buildArgs: {
           NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: props.clerkPublishableKey,
+          // The browser half of the operating mode. The server half is the
+          // Lambda's CANOPY_MODE, set by CanopyCmsService; this one decides
+          // what the editor bundle believes (Clerk auth rather than dev auth,
+          // and the prod feature flags). The image's own `next build` stays in
+          // dev mode either way -- see Dockerfile.cms.
+          NEXT_PUBLIC_CANOPY_MODE: 'prod',
         },
       }),
+      // The one place the CMS image's CPU architecture is decided. CDK derives
+      // the Docker build platform from it, so do not add `platform` to
+      // fromImageAsset above: an explicit one overrides this, and an image
+      // built for the other architecture deploys clean, then fails at invoke
+      // with an exec-format error. arm64 matches the EC2 worker and is
+      // CanopyCmsService's default. The generated workflow runs on an arm64
+      // runner to match; see "Where the image is built" in
+      // docs/deploying-to-aws.md before changing either.
       architecture: lambda.Architecture.ARM_64,
 
       githubOwner: props.githubOwner,
