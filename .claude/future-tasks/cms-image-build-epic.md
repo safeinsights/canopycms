@@ -1,6 +1,6 @@
 # CMS editor image: base branch, sharp tracing, image architecture
 
-**Status:** Active
+**Status:** All six PRs merged; integration PR into `int-202609-a` open
 **Created:** 2026-09-12
 **Integration branch:** `int-202609-cms-image` (base `int-202609-a`)
 
@@ -10,7 +10,7 @@
 | 2   | `fix/sharp-lazy-load`                | Merged (d49bf279)             | https://github.com/safeinsights/canopycms/pull/324   |
 | 3   | `fix/sharp-standalone-tracing`       | Merged (92feefb3)             | https://github.com/safeinsights/canopycms/pull/327   |
 | 4   | `fix/cms-service-architecture`       | Merged (93e20fd0)             | https://github.com/safeinsights/canopycms/pull/323   |
-| 5   | `ci/standalone-image-smoke`          | In progress (not yet opened)  | —                                                     |
+| 5   | `ci/standalone-image-smoke`          | Merged (04f11dd5)             | https://github.com/safeinsights/canopycms/pull/328   |
 | 6   | `docs/cms-image-adopter-answers`     | Merged (69e30fa8)             | https://github.com/safeinsights/canopycms/pull/325   |
 
 ## Context
@@ -514,6 +514,7 @@ when they open their PR, when they hit a decision that needs a call, and when th
 - [init-deploy-aws-first-build-gaps.md](resolved/init-deploy-aws-first-build-gaps.md) (P2) — scaffold gaps the image smoke test hits. Resolved by PR 5.
 - [yarn-support-decision.md](yarn-support-decision.md) (P3) — keep or drop Yarn in `init-deploy aws`, split from the smoke-test task.
 - [webpack-standalone-sharp-bundled.md](webpack-standalone-sharp-bundled.md) (P2) — a webpack-built CMS image bundles sharp into a server chunk, so image transforms fail; found by PR 5's Next 15.5.21 probe, with Next 16 `--webpack` not yet verified.
+- [cms-image-pr5-review-followups.md](cms-image-pr5-review-followups.md) (P3) — four LOW findings from PR 5's review rounds: `init-deploy aws` re-serializing an adopter's whole `tsconfig.json`, nothing type-checking the scaffolded CDK app, a plugin wrapped around `withCanopy` losing Next 16's Turbopack error, and an unreadable Next version (e.g. Yarn PnP) getting no `turbopack` key.
 - [editor-operatingmode-option-unused.md](editor-operatingmode-option-unused.md) (P3) — unused editor `operatingMode` option.
 
 ## Verification
