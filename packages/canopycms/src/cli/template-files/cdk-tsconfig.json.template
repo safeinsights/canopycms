@@ -7,22 +7,24 @@
 // that prop's default. .github/workflows/deploy-cms.yml runs `tsc --noEmit -p infrastructure`
 // before `cdk deploy`; run the same command after editing the stack.
 {
+  // tsx reads the project's tsconfig.json too, and honours its "paths" aliases and "jsx" setting,
+  // so this file starts from it. Its other compiler options, "strict" included, apply here as well.
+  "extends": "../tsconfig.json",
   "compilerOptions": {
-    // tsx accepts extensionless relative imports whether or not package.json declares
-    // "type": "module", and so does "bundler" resolution.
+    // tsx accepts extensionless relative imports, and imports ending in .ts, whether or not
+    // package.json declares "type": "module". "bundler" resolution accepts both as well.
     "module": "esnext",
     "moduleResolution": "bundler",
-    // tsx compiles one file at a time.
-    "isolatedModules": true,
-    "target": "ES2022",
-    // No "lib", so the target's default applies, DOM types included: lib/cms-stack.ts imports
-    // canopycms.config.ts, which the editor page imports too.
+    "allowImportingTsExtensions": true,
     "types": ["node"],
-    "strict": true,
     "skipLibCheck": true,
-    // tsx runs the .ts files themselves.
-    "noEmit": true
+    // Type-check only. An inherited "incremental" would otherwise write a .tsbuildinfo file here.
+    "noEmit": true,
+    "incremental": false
   },
   // Imports are followed, so canopycms.config.ts, and anything it imports, is checked too.
-  "include": ["bin/**/*.ts", "lib/**/*.ts"]
+  "include": ["bin/**/*.ts", "lib/**/*.ts"],
+  // Not inherited: an "exclude" from the project's tsconfig.json resolves against the project
+  // directory, and that list names infrastructure/, which would exclude every file above.
+  "exclude": []
 }

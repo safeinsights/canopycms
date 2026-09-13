@@ -693,6 +693,13 @@ describe('canopycms init-deploy aws', () => {
           (m) => m.includes('No tsconfig.json found') && m.includes('"infrastructure"'),
         ),
       ).toBe(true)
+      // The scaffolded infrastructure/tsconfig.json extends the missing file, so the deploy's
+      // type-check fails until it exists.
+      expect(
+        warnings().some(
+          (m) => m.includes('No tsconfig.json found') && m.includes('infrastructure/tsconfig.json'),
+        ),
+      ).toBe(true)
     })
   })
 
