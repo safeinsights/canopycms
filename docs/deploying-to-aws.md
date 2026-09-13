@@ -456,15 +456,80 @@ it acts as itself rather than as the person who created it, and it survives that
 person leaving. A fine-grained PAT expires within a year and dies with its
 creator's account.
 
-Create the App under your organisation's settings, install it on the content
-repository with **Contents: read & write** and **Pull requests: read & write**,
-download its private key, and store the PEM in Secrets Manager:
+#### Register it with `canopycms init-github-app`
 
-| Secret                     | Value                     | Used by                        |
-| -------------------------- | ------------------------- | ------------------------------ |
-| `canopycms/github-app-key` | The App's PEM private key | EC2 worker (push, PR creation) |
+```bash
+canopycms init-github-app create -- \
+  aws secretsmanager create-secret --name canopycms/github-app-key --secret-string file:///dev/stdin
+```
 
-Then set these instead of `GITHUB_TOKEN_SECRET_ARN`:
+The command writes an HTML form to a temp file and prints the path. Open it in a
+browser **signed in to GitHub as an owner of the account**, review the
+permissions GitHub shows you, and click Create; then install the App on the
+content repository and press Enter. It prints `GITHUB_APP_ID` and
+`GITHUB_APP_INSTALLATION_ID` — both numeric, both read from the API rather than
+copied off a URL.
+
+Everything after `--` is run with the private key on its **standard input**, so
+the key never touches disk and never appears in a process listing. That example
+stores it in Secrets Manager; any command that reads a secret from stdin works
+just as well, and `--key-out <path>` writes a `0600` file instead if you have no
+such command. The command's own output is shown to you, which is how you get the
+secret's full ARN — `Secret.fromSecretCompleteArn` needs the ARN including its
+six-character suffix, not the friendly name.
+
+If you already keep one JSON document per environment, create the secret
+yourself and point `GITHUB_APP_PRIVATE_KEY_SECRET_JSON_FIELD` at the field —
+`init-github-app` deliberately will not edit an existing document, because a
+read-modify-write against a shared credential can silently drop its other
+fields.
+
+Prefer to do it by hand? Create the App under the account's settings with
+exactly the permissions below, install it on the content repository, and
+generate a private key from the App's "Private keys" section.
+
+#### The permissions, and why each one
+
+| Permission                  | Why                                                                                         |
+| --------------------------- | ------------------------------------------------------------------------------------------- |
+| Contents: read & write      | cloning, fetching and pushing content branches over HTTPS, and deleting a remote branch ref |
+| Pull requests: read & write | opening and updating the pull request that carries an edit, and the draft/ready transitions |
+| Metadata: read              | granted automatically alongside any repository permission                                   |
+
+**Nothing else.** Not Issues, not Workflows, not Administration, and no
+organisation permissions. That set is not advice — it is derived from every
+GitHub call the worker makes, declared as `CANOPY_APP_PERMISSIONS` in
+`packages/canopycms/src/cli/init-github-app.ts` with the call site that forces
+each entry, and held there by a test that drives the worker's dispatch table and
+fails if a call is added that the set does not cover.
+
+**Register one App per site.** It is tempting to share a single App across every
+repository you run CanopyCMS on, and it would be a mistake. A GitHub App's
+private key is App-level, and scoping an installation to one repository is a
+choice made when a token is minted, not a boundary GitHub enforces against
+whoever holds the key: anyone with the key can list the App's installations and
+mint a token for any of them. Since each site's worker must read the key at
+runtime, one shared App means a compromise of one site's secret store grants
+write access to every other site's repository.
+
+#### Check it before you trust it
+
+```bash
+aws secretsmanager get-secret-value --secret-id canopycms/github-app-key \
+  --query SecretString --output text |
+  canopycms init-github-app verify --app-id 123456 --key-stdin
+```
+
+Read-only and repeatable. It reports the permissions the installation actually
+holds — flagging anything **missing** and anything **wider than intended** —
+whether the installation is scoped to selected repositories or to all of them,
+whether it has been suspended, and whether a token can actually be minted. That
+last one matters because **adding a permission to an App does not reach existing
+installations until an account owner approves it**, so an App whose settings page
+looks correct can still hold a stale grant. Any token it mints is revoked
+immediately.
+
+#### Then set these instead of `GITHUB_TOKEN_SECRET_ARN`
 
 ```
 GITHUB_APP_ID=123456
@@ -496,13 +561,14 @@ Five things worth knowing before you choose:
   on demand rather than reading a credential once at boot. Both halves of its
   GitHub access — the REST API and git-over-HTTPS — share a single token cache,
   so this costs roughly one extra API call an hour, not one per operation.
-- **`GITHUB_APP_INSTALLATION_ID` is not the App ID.** It identifies the App's
-  installation on your repository; an App installed on two organisations has one
-  App ID and two installation IDs. It is the trailing number in the URL of the
-  App's install page under your organisation's settings
-  (`.../settings/installations/<installation_id>`), and `GET /app/installations`
-  authenticated as the App returns it if you would rather read it from the API
-  than off a URL.
+- **`GITHUB_APP_INSTALLATION_ID` is not the App ID**, and neither is the
+  `Iv1.…` Client ID shown beside the App ID on the settings page. The
+  installation id identifies the App's installation on your repository; an App
+  installed on two accounts has one App ID and two installation ids. Both
+  `init-github-app create` and `verify` print the pair, so you should not need to
+  read either off a URL — but if you are doing it by hand, the installation id is
+  the trailing number in the URL of the App's install page
+  (`.../settings/installations/<installation_id>`).
 
 ### JSON secret documents
 
