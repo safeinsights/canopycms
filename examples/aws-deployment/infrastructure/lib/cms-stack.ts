@@ -82,9 +82,10 @@ export class CmsStack extends Stack {
           NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: props.clerkPublishableKey,
           // The browser half of the operating mode. The server half is the
           // Lambda's CANOPY_MODE, set by CanopyCmsService; this one decides
-          // what the editor bundle believes (Clerk auth rather than dev auth,
-          // and the prod feature flags). The image's own `next build` stays in
-          // dev mode either way -- see Dockerfile.cms.
+          // what the editor bundle believes, which in CanopyCMS's client code
+          // means one thing: the edit page selects Clerk auth rather than dev
+          // auth. The image's own `next build` stays in dev mode either way --
+          // see Dockerfile.cms.
           NEXT_PUBLIC_CANOPY_MODE: 'prod',
         },
       }),
