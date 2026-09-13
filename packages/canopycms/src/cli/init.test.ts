@@ -869,6 +869,8 @@ describe('canopycms init-deploy aws', () => {
     // Lambda keeps running the old tree until an unrelated content change
     // happens to ship it.
     expect(workflow).toContain("- 'cdk.json'")
+    // infrastructure/tsconfig.json extends it, so a change to it alone can fail the type-check.
+    expect(workflow).toContain("- 'tsconfig.json'")
     expect(workflow).toContain("- 'package.json'")
     expect(workflow).toContain("- 'package-lock.json'")
   })

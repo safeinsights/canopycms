@@ -74,6 +74,8 @@ on:
       - 'Dockerfile.cms'
       - 'infrastructure/**'
       - 'cdk.json'
+      # infrastructure/tsconfig.json extends it, so it decides the type-check below.
+      - 'tsconfig.json'
       # A dependency bump alone changes what the image contains, so it has to
       # trigger a deploy too -- otherwise the Lambda keeps running the old
       # dependency tree until the next content change happens to ship it.

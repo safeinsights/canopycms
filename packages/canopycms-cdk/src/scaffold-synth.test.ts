@@ -493,6 +493,35 @@ describe('the generated workflow type-checks the CDK app', () => {
   )
 
   it(
+    "passes when the app's tsconfig.json sets options tsx does not apply to infrastructure/",
+    async () => {
+      const rootPath = path.join(appDir, 'tsconfig.json')
+      const original = await fs.readFile(rootPath, 'utf-8')
+      const root: unknown = JSON.parse(original)
+      const compilerOptions = readJsonField(root, 'compilerOptions')
+      if (typeof compilerOptions !== 'object' || compilerOptions === null) {
+        throw new Error("the scaffold's tsconfig.json has no compilerOptions")
+      }
+      // Each one, inherited, fails the generated stack, and none of them changes how tsx runs it.
+      Object.assign(compilerOptions, {
+        verbatimModuleSyntax: true,
+        exactOptionalPropertyTypes: true,
+        noPropertyAccessFromIndexSignature: true,
+        composite: true,
+      })
+      await fs.writeFile(rootPath, JSON.stringify(root), 'utf-8')
+
+      try {
+        await runInApp(await typeCheckCommand())
+      } finally {
+        await fs.writeFile(rootPath, original, 'utf-8')
+        await fs.rm(path.join(appDir, 'infrastructure/tsconfig.tsbuildinfo'), { force: true })
+      }
+    },
+    TIMEOUT_MS,
+  )
+
+  it(
     'fails on a misspelled CanopyCmsService prop',
     async () => {
       const stackPath = path.join(appDir, 'infrastructure/lib/cms-stack.ts')
