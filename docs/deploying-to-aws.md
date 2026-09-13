@@ -117,7 +117,7 @@ export default {
 ```
 
 - **npm.** npm's hoisted layout puts the same directory at `node_modules/@img/sharp-libvips-*/lib`.
-- **Monorepo.** Prefix the glob with the path from the app to the directory that holds `node_modules`, e.g. `../../`.
+- **Monorepo.** Prefix the glob with the path from the app to the directory that holds `node_modules`, e.g. `../../`. That directory must be inside Next's tracing root: `outputFileTracingRoot`, or the lockfile directory Next infers.
 - **Next 13 or 14.** Nest `outputFileTracingIncludes` under `experimental`.
 
 For a content route shared by both builds (e.g. `app/[slug]/`, or a fixed page like the home route), don't use a single `page.tsx`: `output: 'export'` requires `dynamicParams = false`, but on the CMS Lambda that makes an unknown slug throw Next's internal `NoFallbackError` (a 500) before your page's `notFound()` runs — and Next statically parses route-segment config, so the value can't be a conditional expression. The CMS build also must not prerender content pages: a build-time prerender serves build-time content to anonymous visitors (bypassing runtime path ACLs), and rendering a not-prerendered slug as on-demand static generation makes the request-scoped read throw `DYNAMIC_SERVER_USAGE` (also a 500). Split the page instead:

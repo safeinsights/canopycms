@@ -16,9 +16,14 @@ which added `packages/canopycms-next/src/sharp-tracing.ts`.
 - **Upstream.** [vercel/next.js#97973](https://github.com/vercel/next.js/issues/97973) was open on
   2026-09-12. Related on sharp's side: [lovell/sharp#4567](https://github.com/lovell/sharp/issues/4567)
   and [lovell/sharp#4543](https://github.com/lovell/sharp/issues/4543).
-- **What `withCanopy` does about it.** For every build that is not a static export, it adds each
-  installed libvips package's real `lib/` directory to `outputFileTracingIncludes['/**']`. Before
-  Next 15 it writes the key under `experimental`.
+- **What `withCanopy` does about it.** For every build that is not a static export, it adds a real
+  `lib/` directory to `outputFileTracingIncludes['/**']`:
+  - each installed libvips package's;
+  - or, for a Windows binding, the binding's own, since it carries libvips itself.
+
+  The key follows the installed Next version: `experimental` on 13 and 14, and the top level on 15
+  and later, unless a legacy `experimental` spelling is already set. `sharpTracingConfig` in
+  `packages/canopycms-next/src/with-canopy.ts` holds the full rules.
 
 ## What to check on each Next upgrade, and on each sharp minor
 
@@ -49,7 +54,11 @@ Re-check these if a standalone image fails to load sharp even though the include
   - include globs are relative to the project directory;
   - a glob that climbs above the tracing root with `../` fails the whole build;
   - symlinks found by the glob are emitted, and directories are skipped.
-- **Build cost.** Contains-mode matching walks every directory under `node_modules`, following
-  symlinks, once per build, whatever the glob names. That is upstream behaviour for any include.
-  One consequence: a symlink loop anywhere under `node_modules` would fail the build once an include
-  exists.
+- **Build cost.** Contains-mode matching leaves the glob unanchored, so Turbopack's walk is not
+  confined to the directory an include names, and it follows symlinked directories
+  (`turbo-tasks-fs/src/globset.rs:104-114` and `read_glob.rs:87-99` at v16.1.7). That is upstream
+  behaviour for any include.
+  - **Measured:** on one Next 16.1.7 app's standalone build, about 5 s more compile time (12.8 s to
+    17.9 s, mean of three runs).
+  - **Symlink loops:** one inside the walked tree makes the glob fail with an error
+    (`read_glob.rs:112-128`).

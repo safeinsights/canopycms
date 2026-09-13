@@ -162,8 +162,15 @@ inputs give the same image identity whether built on a Mac or in CI.
   - **Scope.** Builder only; it widens build mode (no ACLs) to those scripts.
   - **Alternative.** Leave it out, and such scripts fail loudly with "not a git repository".
 - **`deploy-cms.yml.template` runs on `ubuntu-24.04-arm`**, not QEMU.
-- **The sharp tracing include covers every route (`'/**'`) and every non-export build.** Next ≥15
-  only, matching `canopycms-next`'s peer range; confirm the range in PR 3.
+- **The sharp tracing include covers every route (`'/**'`) and every non-export build.**
+  - **Which key (JP, decided during PR 3).** `canopycms-next`'s peer range includes Next 13 and
+    14, so the key follows the installed Next major: `experimental.outputFileTracingIncludes` on
+    13.x and 14.x, the top-level key on 15 and later.
+  - **Unreadable version.** If Next can't be resolved or its version can't be parsed, the top-level
+    key is used, and a standalone build warns. The exception is a legacy `experimental` include the
+    adopter already set, which decides the key on every Next version.
+  - **Legacy spellings.** PR 3 also honours the legacy `experimental.*` spellings that Next 15 and
+    16 still copy over the top-level keys.
 - **No libvips check in the Dockerfile template.** The CI smoke test and a `withCanopy` warning
   cover it instead.
 - **An `imageProcessing` availability field in admin status becomes a future task.** For now, the
@@ -292,7 +299,7 @@ directory by resolving packages, never by globbing a package manager's layout.
    packages that aren't installed.
 3. **Stay inside the tracing root.**
    - The root is `outputFileTracingRoot`, else `turbopack.root`, else the directory of the outermost
-     lockfile (mirroring Next's `find-root`).
+     lockfile (mirroring Next 15+'s `find-root`; see "As built" for Next 13 and 14).
    - Refuse directories outside it: Turbopack fails the build on a `../` past the root.
    - Refuse paths containing glob metacharacters, commas included.
 4. **Emit.** A project-relative `<rel>/**/*` for each directory found.
@@ -315,6 +322,20 @@ directory by resolving packages, never by globbing a package manager's layout.
 
 **PR 3 merges after PR 2.** It verifies the "PR 3 only" image on its own. Once PR 2 has merged, it
 rebases onto the integration branch and verifies the "both" image before merging.
+
+**As built: where PR 3 departs from the plan above.** `sharpTracingConfig` in `with-canopy.ts` and
+`sharp-tracing.ts` hold the rules.
+- **Lookup.** Packages are found by walking the `node_modules` hierarchy, not by resolving
+  `<name>/package`. Resolution fails on a `canopycms` published without a `require` export
+  condition, and sharp has no `./package.json` export.
+- **Windows.** A native binding that lists no libvips package contributes its own `lib/`. sharp
+  0.35.3's win32 bindings ship the libvips DLLs there.
+- **Root.** The outermost lockfile on Next 15 and 16; the closest lockfile on Next 13 and 14, which
+  is what their `findRootDir` does.
+- **Key.** Legacy `experimental.*` spellings that Next 15 and 16 still migrate are read and written
+  where Next reads them. `undefined` and `null` count as unset, as in Next's `assignDefaults`.
+- **Deferred.** Two LOW root-lookup edge cases:
+  [sharp-tracing-lockfile-root-edge-cases.md](sharp-tracing-lockfile-root-edge-cases.md).
 
 ### PR 4: always pass the resolved architecture, arm64 by default (`fix/cms-service-architecture`)
 

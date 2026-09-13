@@ -10,7 +10,9 @@
  * Measured on a Next 16.1.7 Turbopack `output: 'standalone'` build: the route traces list
  * libvips's `package.json` and the binding's rpath symlink, but not `lib/libvips-cpp.so.*`. Every
  * load of sharp in the resulting server then fails with ERR_DLOPEN_FAILED. Whether a webpack build
- * reaches the library some other way has not been verified; if it does, Next dedupes the include.
+ * reaches the library some other way has not been verified. If it does, Next's JS tracer dedupes
+ * the include: it collects includes in a `Set` (`next/dist/build/collect-build-traces.js:459` in
+ * 16.1.7).
  *
  * Upstream: https://github.com/vercel/next.js/issues/97973 (open). On sharp's side, see
  * https://github.com/lovell/sharp/issues/4567 and https://github.com/lovell/sharp/issues/4543.
@@ -23,20 +25,26 @@
  * - find each `@img/sharp-libvips-*` optional dependency, from sharp and from each installed native
  *   binding (the binding's rpath looks for libvips beside the binding, so that is the copy it loads);
  * - an installed binding that lists no libvips package has to carry its native library itself, so
- *   take the binding instead (sharp 0.35's Windows bindings list none);
+ *   take the binding instead (sharp 0.35.3's win32-x64 and win32-arm64 bindings list none, and ship
+ *   `libvips-42.dll` and `libvips-cpp-8.18.3.dll` in their own `lib/`);
  * - take each package's real `lib/` directory.
  *
- * **Real paths, not symlinks.** The includes name real directories. A path through a pnpm symlink
- * would land the files somewhere no rpath looks.
+ * **Real paths, not symlinks.** The includes name real directories. Under pnpm, the binding's rpath
+ * reaches libvips through a sibling symlink whose target is that real directory, and the images
+ * this was verified on load the library from there.
  *
  * **What the include does NOT cover.** Under pnpm, the binding reaches the library only through its
  * sibling symlink `.pnpm/@img+sharp-<platform>@<version>/node_modules/@img/sharp-libvips-<platform>`.
- * Next 16.1.7's Turbopack traces that symlink already, and the standalone copy recreates it. If a
- * Next upgrade stops tracing it, the library is present but unreachable. Only a smoke test that
- * loads sharp inside the built image would notice.
+ * (Checked with `otool` on sharp 0.35.3's darwin-arm64 binding: none of its other rpath entries
+ * resolves in a pnpm layout.) Next 16.1.7's Turbopack traces that symlink already, and the
+ * standalone copy recreates it. If a Next upgrade stops tracing it, the library is present but
+ * unreachable. Only a smoke test that loads sharp inside the built image would notice.
  *
- * **Cost.** Turbopack matches includes in "contains" mode, which walks every directory under
- * `node_modules`, following symlinks, once per build, whatever the glob names.
+ * **Cost.** Turbopack matches includes in "contains" mode (`crates/next-api/src/nft_json.rs:312` at
+ * v16.1.7), which leaves the pattern unanchored (`turbo-tasks-fs/src/globset.rs:104-114`). Its
+ * directory walk is therefore not confined to the directory an include names, and it follows
+ * symlinked directories (`read_glob.rs:87-99`). Measured on one Next 16.1.7 app's standalone build,
+ * the include added about 5 s of compile time (12.8 s to 17.9 s, mean of three runs).
  */
 import { readFileSync, realpathSync, statSync } from 'node:fs'
 import path from 'node:path'
@@ -50,8 +58,11 @@ export interface SharpTracingInput {
   turbopackRoot?: string
   /**
    * Which lockfile a root nobody configured comes from.
-   * - `'outermost'`, the default: Next 15 and later (`findRootDirAndLockFiles`).
-   * - `'closest'`: Next 13 and 14 (`findRootDir`, called from `assignDefaults` in `server/config.ts`).
+   * - `'outermost'`, the default: Next 15 and 16 walk up to the outermost lockfile (`findRootDir` in
+   *   15.5.21, `findRootDirAndLockFiles` in 16.1.7, both in `next/dist/lib/find-root.js`).
+   * - `'closest'`: Next 13 and 14 stop at the nearest one. Their `findRootDir` is a different
+   *   function with the same name, called from `assignDefaults` in `server/config.ts` (14.2.25 lines
+   *   629-630, 13.5.7 lines 524-525).
    */
   lockfileRoot?: 'outermost' | 'closest'
 }
@@ -70,8 +81,9 @@ export interface SharpTracingResult {
 const LOCKFILES = ['pnpm-lock.yaml', 'package-lock.json', 'yarn.lock', 'bun.lock', 'bun.lockb']
 
 /**
- * The same list in Next 14.2.25, which predates `bun.lock`. Next 13.5.7 also lacks `bun.lockb`,
- * which matters only to a Bun project on Next 13.
+ * The same list in Next 14.2.25 (`lib/find-root.ts`), which predates `bun.lock`. Next 13.5.7's list
+ * also lacks `bun.lockb`. So for a Bun project on Next 13, this list can pick a wider root than
+ * Next does.
  */
 const LEGACY_LOCKFILES = ['pnpm-lock.yaml', 'package-lock.json', 'yarn.lock', 'bun.lockb']
 
@@ -84,9 +96,11 @@ const NEXT_CONFIG_FILES = ['next.config.js', 'next.config.mjs', 'next.config.ts'
 /**
  * Characters that make a path mean something else as a glob.
  *
- * - Turbopack's glob parser treats `? * [ ] { } , \` specially. The comma matters because Turbopack
- *   joins a route's includes into one `{a,b}` alternation.
- * - The JS tracer's minimatch also reads `( ) !` as extglob syntax.
+ * - Turbopack's glob parser treats `? * [ { } , \` specially (`turbo-tasks-fs/src/globset.rs:397-403`
+ *   at v16.1.7), and `]` is refused along with `[`. The comma matters because Turbopack joins a
+ *   route's includes into one `{a,b}` alternation (`crates/next-api/src/nft_json.rs:336`).
+ * - Next's JS tracer globs includes with its compiled `glob` (`collect-build-traces.js:424` in
+ *   16.1.7), whose minimatch also reads `( ) !` as extglob syntax.
  *
  * `@` and `+` stay allowed: pnpm directory names are full of them, and neither tracer gives them a
  * meaning unless `(` follows.
@@ -226,9 +240,11 @@ function findLockFileUpwards(startDir: string, names: readonly string[]): string
  * The tracing root Next will use (`loadConfig` in `next/dist/server/config.js`).
  *
  * The precedence is `outputFileTracingRoot`, then `turbopack.root`, then a lockfile's directory:
- * - by default, as in Next 15 and later: the outermost lockfile, found by searching upwards again
- *   from each found lockfile's parent (`findRootDirAndLockFiles`);
- * - with `lockfileRoot: 'closest'`, as in Next 13 and 14: the nearest one (`findRootDir`).
+ * - by default, as in Next 15 and 16: the outermost lockfile, found by searching upwards again from
+ *   each found lockfile's parent;
+ * - with `lockfileRoot: 'closest'`, as in Next 13 and 14: the nearest one.
+ *
+ * `SharpTracingInput.lockfileRoot` cites the Next source for each.
  *
  * Next resolves a relative configured root against the working directory; `withCanopy` only calls
  * this when that directory is the project dir.

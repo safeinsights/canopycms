@@ -212,8 +212,11 @@ function resolveStaticBuildId(): string | null {
 type TracingIncludes = Record<string, string[]>
 
 /**
- * Every route. Both tracers match include keys as a "contains" glob against the route: Turbopack
- * against "/" plus the page name, and the JS tracer through picomatch with `contains: true`.
+ * Every route. Both tracers match include keys as a "contains" glob against the route:
+ * - Turbopack against "/" plus the page name (`crates/next-api/src/nft_json.rs` lines 56 and 312 at
+ *   v16.1.7);
+ * - the JS tracer through picomatch with `contains: true` (`next/dist/build/collect-build-traces.js`
+ *   lines 464 and 475 in 16.1.7).
  */
 const ALL_ROUTES = '/**'
 
@@ -238,8 +241,12 @@ function stringOrUndefined(value: unknown): string | undefined {
 }
 
 /**
- * Whether Next treats a config value as set. `assignDefaults` in `next/dist/server/config.js` drops
- * every `undefined` and `null` value before anything reads the config.
+ * Whether Next treats a config value as set.
+ *
+ * `assignDefaults` in `next/dist/server/config.js` drops `undefined` and `null` values before it
+ * migrates legacy keys. That covers top-level keys and, for object options such as `experimental`,
+ * their direct keys. It does not cover Next 15's `experimental.turbo` merge, which runs on the raw
+ * config earlier.
  */
 function isSet(value: unknown): boolean {
   return value !== undefined && value !== null
@@ -275,23 +282,25 @@ function sharpTracingWarning(problem: string | undefined, nextVersionUnknown: bo
 
 /**
  * The warning for an include that WAS written, under a key chosen without knowing the Next version.
- * That choice is always the top-level key, which Next 13 and 14 ignore.
+ *
+ * That choice is always the top-level key. Next 13 and 14 ignore it, because their config schema
+ * declares the option only under `experimental` (`server/config-schema.ts` line 311 in 14.2.25).
  */
 function unknownNextVersionWarning(projectDir: string): string {
   return (
     `CanopyCMS: could not read the version of the next package installed for ${projectDir}, so ` +
     "sharp's libvips was added to the top-level outputFileTracingIncludes key, which Next 15 and " +
-    'later read. On Next 13 or 14, move that entry under experimental.outputFileTracingIncludes, ' +
-    'or the built server fails to load sharp with ERR_DLOPEN_FAILED.'
+    'later read. Next 13 and 14 ignore that key: on those versions, move the entry under ' +
+    'experimental.outputFileTracingIncludes.'
   )
 }
 
 /**
  * Whether the warning has fired in this module instance.
  *
- * Next evaluates the config more than once per build: in the main process, and again in a worker
- * thread that has its own module registry. So "once" means once per process or thread, not once
- * per build.
+ * A Turbopack build evaluates the config in the main process and again in a worker thread with its
+ * own module registry (`next/dist/build/turbopack-build/index.js:26` and `impl.js:209` in 16.1.7).
+ * So "once" means once per process or thread, not once per build.
  */
 let warnedAboutSharpTracing = false
 
@@ -311,19 +320,23 @@ function sharpTracingConfig(
   const projectDir = process.cwd()
   const nextMajor = installedNextMajor(projectDir)
   // May not be an object in an untyped config (`experimental: true` loads fine in Next), which is why
-  // every read below goes through `readProperty` and never an `in` check.
+  // every read of it below goes through `readProperty`, never an `in` check.
   const experimental = nextConfig.experimental ?? {}
 
   // Read and write each option where Next reads it (`loadConfig` in `next/dist/server/config.js`).
-  // A value of `undefined` or `null` counts as unset throughout, because Next drops those first.
-  // - Next 13 and 14 read the tracing options only under `experimental`. A top-level key is reported
-  //   as an invalid option and ignored. A root nobody configured comes from the CLOSEST lockfile
-  //   there (`findRootDir`, from `assignDefaults` in `server/config.ts`), not the outermost.
+  // A legacy `experimental` value of `undefined` or `null` counts as unset, because Next drops those
+  // before migrating legacy keys (see `isSet`).
+  // - Next 13 and 14 read the tracing options only under `experimental`.
+  //   - A top-level key is reported as an invalid option and ignored. Their config schema is a
+  //     strict object, and only `images` errors stop the build (`server/config.ts:84-90` in 14.2.25).
+  //   - A root nobody configured comes from the CLOSEST lockfile there (`findRootDir`, called from
+  //     `assignDefaults`), not the outermost.
   // - Next 15 and 16 still accept the `experimental` spellings, and copy any that is set over the
-  //   top-level key (`warnOptionHasBeenMovedOutOfExperimental`). So a legacy value wins, and an
-  //   include written only at the top level would be silently replaced.
-  // - Only Next 15 merges `experimental.turbo` into `turbopack`, as `{ ...turbo, ...turbopack }`. Any
-  //   `root` key on `turbopack` therefore wins, even an empty one.
+  //   top-level key (`warnOptionHasBeenMovedOutOfExperimental`, `config.js:542-544` in 16.1.7 and
+  //   `:546-548` in 15.5.21). So a legacy value wins, and an include written only at the top level
+  //   would be silently replaced.
+  // - Only Next 15 merges `experimental.turbo` into `turbopack`, as `{ ...turbo, ...turbopack }`
+  //   (`config.js:1190` in 15.5.21). Any `root` key on `turbopack` therefore wins, even an empty one.
   const experimentalOnly = nextMajor !== null && nextMajor < 15
   const includesUnderExperimental =
     experimentalOnly || isSet(readProperty(experimental, 'outputFileTracingIncludes'))
@@ -353,8 +366,10 @@ function sharpTracingConfig(
     ? undefined
     : (stringOrUndefined(readProperty(turbopack, 'root')) ?? legacyTurbopackRoot)
 
-  // Next never changes directory for `next build <dir>`, so a working directory with no config
-  // file in it is not the project, and any glob computed relative to it would be wrong.
+  // Next never changes directory for `next build <dir>`: in 16.1.7 its only `process.chdir` is in
+  // the generated standalone `server.js` (`next/dist/build/utils.js:1111`). So a working directory
+  // with no config file in it is not the project, and any glob computed relative to it would be
+  // wrong.
   const { includes, problem } = hasNextConfig(projectDir)
     ? sharpTracingIncludes({
         projectDir,
@@ -409,10 +424,14 @@ function sharpTracingConfig(
  * - With `staticBuild: true`, honors `CANOPY_BUILD_ID` as Next's build id (Next's default is
  *   random, which puts two builds of one source tree in different `_next/static/` directories).
  *   Unset, or on a non-static build, Next's default is used unchanged.
- * - Outside a static export, adds sharp's libvips directory to `outputFileTracingIncludes['/**']`
- *   (under `experimental` before Next 15), so an `output: 'standalone'` server can load sharp.
- *   Next's file tracing can miss that library for sharp 0.35. Your own includes are kept, and a
- *   standalone build warns if the directory cannot be found.
+ * - Outside a static export, adds sharp's libvips directory to `outputFileTracingIncludes['/**']`,
+ *   so an `output: 'standalone'` server can load sharp. Next's file tracing can miss that library
+ *   for sharp 0.35.
+ *   - The key follows your Next version (under `experimental` on 13 and 14) and any legacy
+ *     `experimental` spelling you already use.
+ *   - Your own includes are kept.
+ *   - A standalone build warns if the directory cannot be found, or if the Next version cannot be
+ *     read.
  *
  * **When you need this:**
  * - Always recommended — it replaces manual `transpilePackages` configuration
