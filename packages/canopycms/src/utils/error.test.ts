@@ -258,6 +258,27 @@ describe('error utilities', () => {
       expect(redacted).toBe('sign failed: <private-key> for app 12345')
     })
 
+    it('does not stop a key match on a label-less END line and leak the next key', () => {
+      // A lazy `-----END[^\n]*?-----` footer stopped on the dashes of
+      // `-----END-----` and consumed the five that would have started the
+      // following header -- measured: the second key came through in full.
+      // The two keys SHARE their dashes -- `-----END-----BEGIN` -- which is
+      // what makes this bite: the footer's own `-----` are the five that would
+      // have started the next header, so consuming them leaves `BEGIN PRIVATE
+      // KEY-----BBBsecretB…`, which no longer matches and comes through whole.
+      // An extra `-----` between the two does NOT reproduce it (the second key
+      // is then redacted on the next pass of the /g loop), which is exactly
+      // how a first attempt at this test passed against the broken spelling.
+      const redacted = redactCredentials(
+        '-----BEGIN PRIVATE KEY-----AAAsecretA-----END-----' +
+          'BEGIN PRIVATE KEY-----BBBsecretB-----END PRIVATE KEY-----',
+      )
+
+      expect(redacted).not.toContain('secretA')
+      expect(redacted).not.toContain('secretB')
+      expect(redacted).toContain('<private-key>')
+    })
+
     it('redacts credential shapes in linear time on adversarial input', () => {
       // Both new rules had to be written against CodeQL js/polynomial-redos,
       // and the JWT rule failed that on its first spelling: with `\b` instead

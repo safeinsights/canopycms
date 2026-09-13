@@ -13,6 +13,8 @@ import { readFile } from 'node:fs/promises'
 
 import {
   DEFAULT_GIT_TOKEN_MINT_TIMEOUT_MS,
+  MintTimeoutError,
+  isTransientAuthFailure,
   normalizeGitHubAppPrivateKey,
   resolveWorkerGitHubAuth,
   type GitHubAppAuth,
@@ -184,22 +186,43 @@ describe('resolveWorkerGitHubAuth', () => {
       expect(handed?.aborted).toBe(true)
     })
 
-    it.each([NaN, 0, -1, Infinity])(
-      'refuses a nonsensical mint timeout (%s) at construction',
+    it.each([NaN, 0, -1, Infinity, 0.5, 2 ** 31, 2 ** 32])(
+      'refuses a mint timeout AbortSignal.timeout would not honour (%s)',
       (bad) => {
-        // AbortSignal.timeout throws a RangeError for each of these, and it
-        // would throw INSIDE the mint -- where the rejection has no `.status`,
-        // so isPermanentTaskFailure reads it as transient and every push task
-        // burns its full retry budget on what is a config typo.
-        // `parseInt(process.env.X ?? '')` is NaN, which is how one arrives.
+        // Measured against Node, not assumed: AbortSignal.timeout throws a
+        // RangeError for NaN, negatives, Infinity, a non-integer (0.5) and
+        // anything above 2**32-1 -- and it SILENTLY clamps 2**31 .. 2**32-1 to
+        // 1ms, which would abort every mint instantly while reporting the
+        // configured size. The throwing cases would throw INSIDE the mint,
+        // where the rejection has no `.status`, so the task path would read a
+        // config typo as transient and burn every push's full retry budget.
+        // An environment variable through `parseInt` is NaN when unset, which
+        // is how such a value arrives.
         expect(() =>
           resolveWorkerGitHubAuth({
             gitTokenMintTimeoutMs: bad,
             githubAppAuth: appAuthWith(async () => 'ghs_minted'),
           }),
-        ).toThrow(/gitTokenMintTimeoutMs must be a positive number/)
+        ).toThrow(/gitTokenMintTimeoutMs must be a whole number of milliseconds/)
       },
     )
+
+    it('checks the mint timeout on the token path too', () => {
+      // It is ignored there, but a nonsense value is still a config error
+      // worth naming rather than silently accepting.
+      expect(() =>
+        resolveWorkerGitHubAuth({ githubToken: 'ghp_static', gitTokenMintTimeoutMs: -5 }),
+      ).toThrow(/gitTokenMintTimeoutMs/)
+    })
+
+    it('accepts the largest timeout AbortSignal.timeout honours', () => {
+      expect(() =>
+        resolveWorkerGitHubAuth({
+          gitTokenMintTimeoutMs: 2 ** 31 - 1,
+          githubAppAuth: appAuthWith(async () => 'ghs_minted'),
+        }),
+      ).not.toThrow()
+    })
 
     it('defaults the mint timeout to 30s', () => {
       expect(DEFAULT_GIT_TOKEN_MINT_TIMEOUT_MS).toBe(30_000)
@@ -239,6 +262,53 @@ describe('resolveWorkerGitHubAuth', () => {
         process.off('unhandledRejection', unhandled)
       }
     })
+  })
+})
+
+describe('isTransientAuthFailure', () => {
+  // The inverse of isPermanentTaskFailure, deliberately: that one defaults an
+  // error with NO status to transient (right on the task path, where
+  // maxRetries bounds it), and the boot-time credential check is bounded by
+  // nothing, so it must default the other way.
+  it('calls a status-less failure PERMANENT, where the task classifier calls it transient', () => {
+    // The measured real case: a private key that parses but is not this app's
+    // key makes @octokit/auth-app@6 throw from jsonwebtoken with no status.
+    const wrongKey = new Error('"alg" parameter for "ec" key type must be one of: ES256, ES384')
+
+    expect(isTransientAuthFailure(wrongKey)).toBe(false)
+    // The divergence is the point, so assert it rather than implying it.
+    expect(isPermanentTaskFailure(wrongKey)).toBe(false)
+  })
+
+  it.each([500, 502, 503, 408, 429])('calls %s transient', (status) => {
+    expect(isTransientAuthFailure(httpError(status, 'later'))).toBe(true)
+  })
+
+  it.each([400, 401, 403, 404, 422])('calls %s permanent', (status) => {
+    expect(isTransientAuthFailure(httpError(status, 'no'))).toBe(false)
+  })
+
+  it('calls a plain 403 permanent, unlike the task classifier', () => {
+    // At boot a 403 from the installation-token endpoint is a suspended or
+    // uninstalled app far more often than a rate limit -- a worker that has
+    // issued no requests yet is not the one being throttled -- and exiting is
+    // recoverable by systemd where booting on a dead credential is not.
+    expect(isTransientAuthFailure(httpError(403, 'Resource not accessible'))).toBe(false)
+  })
+
+  it.each(['ECONNRESET', 'ENOTFOUND', 'ETIMEDOUT', 'EAI_AGAIN'])(
+    'calls the network errno %s transient',
+    (code) => {
+      expect(isTransientAuthFailure(Object.assign(new Error('socket'), { code }))).toBe(true)
+    },
+  )
+
+  it('calls an unrecognised errno permanent', () => {
+    expect(isTransientAuthFailure(Object.assign(new Error('nope'), { code: 'EACCES' }))).toBe(false)
+  })
+
+  it('calls our own mint timeout transient', () => {
+    expect(isTransientAuthFailure(new MintTimeoutError(30_000))).toBe(true)
   })
 })
 

@@ -130,11 +130,17 @@ export function redactCredentials(message: string): string {
   // would rescan a long run of capitals at every start position. The lazy
   // `[\s\S]*?` is stopped by the END footer, or by end-of-string when the
   // message was truncated mid-key — without that second alternative a
-  // half-quoted key would pass through in full. The footer match is lazy up to
-  // its closing dashes rather than `[^\n]*` to end of line, so a single-line
-  // message keeps whatever follows the key instead of losing it.
+  // half-quoted key would pass through in full.
+  //
+  // The footer is spelled out, mirroring the header, rather than "`-----END`
+  // then anything up to the next dashes". Both looser spellings were measured
+  // wrong in opposite directions on a single-line message: `[^\n]*` (greedy to
+  // end of line) swallowed the text after the key, and `[^\n]*?-----` (lazy to
+  // any dashes) stopped on a label-less `-----END-----` and left a SECOND key
+  // after it unredacted. Matching only a real footer means anything else falls
+  // through to `$`, which over-redacts — the safe direction.
   result = result.replace(
-    /-----BEGIN [A-Z]{0,9} ?PRIVATE KEY-----[\s\S]*?(?:-----END[^\n]*?-----|$)/g,
+    /-----BEGIN [A-Z]{0,9} ?PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z]{0,9} ?PRIVATE KEY-----|$)/g,
     '<private-key>',
   )
   // Bare JWTs (`eyJ…`) — three dot-separated base64url runs.

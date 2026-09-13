@@ -24,7 +24,9 @@ import { initTestRepo, mockConsole, type MockConsole } from '../test-utils'
 /** buildGitHubUrl() is private; these tests are precisely about its output. */
 type GitUrlInternals = {
   buildGitHubUrl(): Promise<string>
-  octokit: { auth: (options?: unknown) => Promise<unknown> }
+  // The accessor, not the field: the client is built on first use now, so a
+  // test that read the field would see `undefined` before start().
+  octokitClient(): { auth: (options?: unknown) => Promise<unknown> }
 }
 
 /**
@@ -156,7 +158,7 @@ describe('CmsWorker GitHub App authentication', () => {
       // Octokit assigns the strategy's return value to `.auth`, so this is
       // the observable proof that the passthrough reached the constructor
       // rather than being dropped on the way through createCanopyOctokit.
-      await expect((worker as unknown as GitUrlInternals).octokit.auth()).resolves.toEqual({
+      await expect((worker as unknown as GitUrlInternals).octokitClient().auth()).resolves.toEqual({
         token: 'ghs_from_strategy',
       })
     })
@@ -164,26 +166,60 @@ describe('CmsWorker GitHub App authentication', () => {
     it('still authenticates with the bare token on the token path', async () => {
       const worker = makeWorker({ githubToken: 'ghp_static' })
 
-      await expect((worker as unknown as GitUrlInternals).octokit.auth()).resolves.toMatchObject({
+      await expect(
+        (worker as unknown as GitUrlInternals).octokitClient().auth(),
+      ).resolves.toMatchObject({
         token: 'ghp_static',
         type: 'token',
       })
     })
   })
 
-  describe('construction', () => {
-    it('refuses a worker configured with neither credential', () => {
-      expect(() => makeWorker({})).toThrow(/githubToken or githubAppAuth is required/)
-    })
+  describe('a half-configured credential', () => {
+    // #198's lesson, applied to the credential: the constructor must NOT
+    // throw. `lastFatalError` is written only by start()'s catch, and the AWS
+    // entrypoint constructs the worker before calling start(), with a
+    // `main().catch()` that only logs and exits -- so a constructor throw is
+    // an invisible ~5s systemd crash-loop that `cdk deploy` reports as
+    // success while the admin panel shows the worker absent with no reason.
+    const readStatus = async (): Promise<WorkerStatusReport> =>
+      JSON.parse(
+        await fs.readFile(path.join(workspacePath, '.tasks', WORKER_STATUS_FILE), 'utf-8'),
+      ) as WorkerStatusReport
 
-    it('refuses a worker configured with both', () => {
-      expect(() =>
-        makeWorker({
-          githubToken: 'ghp_static',
-          githubAppAuth: appAuthWith(async () => 'ghs_minted'),
-        }),
-      ).toThrow(/not both/)
-    })
+    it.each([
+      ['neither credential', {}, /githubToken or githubAppAuth is required/],
+      [
+        'both credentials',
+        { githubToken: 'ghp_static', githubAppAuth: appAuthWith(async () => 'ghs_minted') },
+        /not both/,
+      ],
+      [
+        'an unusable mint timeout',
+        { githubToken: 'ghp_static', gitTokenMintTimeoutMs: Number.NaN },
+        /gitTokenMintTimeoutMs/,
+      ],
+    ])(
+      'constructs with %s, then fails in start() where it can be recorded',
+      async (_label, auth, expected) => {
+        // 1. Construction must NOT throw -- the regression guard. If it does,
+        //    everything below is unreachable in production too.
+        const worker = makeWorker(auth as Parameters<typeof makeWorker>[0])
+
+        // 2. start() surfaces it: throws for systemd, AND records it where the
+        //    admin panel reads.
+        await expect(worker.start()).rejects.toThrow(expected)
+
+        const status = await readStatus()
+        expect(status.lastFatalError?.phase).toBe('startup')
+        expect(status.lastFatalError?.message).toMatch(expected)
+
+        // 3. The lock must not be left held: systemd restarts immediately.
+        await expect(
+          fs.access(path.join(workspacePath, '.tasks', '.worker-lock')),
+        ).rejects.toThrow()
+      },
+    )
   })
 
   describe('startup preflight', () => {
@@ -268,6 +304,37 @@ describe('CmsWorker GitHub App authentication', () => {
       } finally {
         await worker.stop()
       }
+    })
+
+    it('exits on a bad key, whose error carries no HTTP status at all', async () => {
+      // The defect this pins, and it is the whole reason the preflight uses
+      // isTransientAuthFailure rather than !isPermanentTaskFailure: a private
+      // key that parses but is not this app's key makes @octokit/auth-app
+      // throw from jsonwebtoken with NO status. Classified by the task
+      // runner's rule that is "transient", so the worker booted, wrote no
+      // lastFatalError, showed healthy in the admin panel, and failed every
+      // task and sync afterwards -- strictly worse than the crash-loop the
+      // non-fatal path was added to avoid, because a crash-loop is visible.
+      const worker = makeWorker({
+        githubAppAuth: appAuthWith(async () => {
+          throw new Error('"alg" parameter for "ec" key type must be one of: ES256, ES384')
+        }),
+      })
+
+      await expect(worker.start()).rejects.toThrow(/GitHub App authentication failed/)
+
+      const status = await readStatus()
+      expect(status.lastFatalError?.phase).toBe('startup')
+      expect(status.lastFatalError?.message).toContain('"alg" parameter')
+      expect(consoleSpy).not.toHaveWarned('Continuing')
+    })
+
+    it('exits when the injected strategy hands back an empty token', async () => {
+      // Also status-less, and also permanent: it would otherwise build
+      // `https://x-access-token:@github.com/...` and get an anonymous 403.
+      const worker = makeWorker({ githubAppAuth: appAuthWith(async () => '') })
+
+      await expect(worker.start()).rejects.toThrow(/empty installation token/)
     })
 
     it('still exits on a permanent failure, which is what the check is for', async () => {

@@ -6,7 +6,12 @@ import { Octokit } from '@octokit/rest'
 import { recoverOrphanedTasks, cmsTaskQueueLogger } from './task-queue'
 import type { Task } from './task-queue'
 import { createCanopyOctokit } from '../github-service'
-import { resolveWorkerGitHubAuth, type GitHubAuthConfig } from './github-auth'
+import {
+  isTransientAuthFailure,
+  resolveWorkerGitHubAuth,
+  type GitHubAuthConfig,
+  type ResolvedGitHubAuth,
+} from './github-auth'
 import type { BranchMetadataFile } from '../branch-metadata'
 import { type SanitizedBranchName } from '../paths/types'
 import { sanitizeBranchName, RESERVED_SETTINGS_BRANCH_PREFIX } from '../paths/branch-name'
@@ -18,7 +23,6 @@ import { workerLog, workerLogWarn, workerLogError } from './log'
 import type { WorkerContext } from './worker-context'
 import {
   executeTask,
-  isPermanentTaskFailure,
   orphanRecoveryMaxAgeMs,
   processTaskQueue,
   pushBranchToGitHub,
@@ -142,7 +146,12 @@ const DEFAULT_LOCK_STALE_MS = 60_000
  * Cloud-agnostic: uses git/Octokit directly, no AWS SDK dependency.
  */
 export class CmsWorker {
-  private octokit: Octokit
+  // Built by ensureGitHubAuth(), not the constructor, so that a credential
+  // config error is throwable somewhere start()'s catch can record it. Kept a
+  // FIELD rather than a getter because six test files assign a mock over it
+  // (worker-context.ts's INVARIANT), and ensureGitHubAuth() will not overwrite
+  // one that is already there.
+  private octokit!: Octokit
   private taskDir: string
   private remoteGitPath: string
   private contentBranchesPath: string
@@ -176,16 +185,15 @@ export class CmsWorker {
   // worker-status.json. Normally initialized once at the top of start();
   // see ensureStatusReport() for the lazy-init fallback.
   private statusReport?: WorkerStatusReport
-  // The git-over-HTTPS credential, behind buildGitHubUrl(). The token-vs-App
-  // branch is taken ONCE, here in the constructor, so Octokit above and every
-  // git URL below provably authenticate as the same identity, and so a
-  // half-configured worker fails at construction rather than at its first push.
-  private resolveGitToken: () => Promise<string>
+  // Which GitHub credential this worker uses, resolved ONCE so that Octokit
+  // and every git URL provably authenticate as the same identity.
+  //
+  // Resolved lazily by ensureGitHubAuth(), NOT in the constructor: see that
+  // method's doc comment. `undefined` here means "not resolved yet", never
+  // "no credential".
+  private githubAuth?: ResolvedGitHubAuth
 
   constructor(private config: CmsWorkerConfig) {
-    const githubAuth = resolveWorkerGitHubAuth(config)
-    this.octokit = createCanopyOctokit(githubAuth.octokitAuth)
-    this.resolveGitToken = githubAuth.resolveGitToken
     this.taskDir = path.join(config.workspacePath, '.tasks')
     this.remoteGitPath = path.join(config.workspacePath, 'remote.git')
     this.contentBranchesPath = path.join(config.workspacePath, 'content-branches')
@@ -280,7 +288,7 @@ export class CmsWorker {
       maxTasksPerCycle: this.maxTasksPerCycle,
       maxRetries: this.maxRetries,
       log: this.log,
-      octokit: () => this.octokit,
+      octokit: () => this.octokitClient(),
       buildGitHubUrl: () => this.buildGitHubUrl(),
       branchWorkspacePath: (branchRefName) => this.branchWorkspacePath(branchRefName),
       executeTask: (task, signal) => this.executeTask(task, signal),
@@ -320,6 +328,11 @@ export class CmsWorker {
       // constructor (as this used to) put the throw outside every
       // status-writing path -- see ensureSettingsBranch()'s doc comment.
       this.ensureSettingsBranch()
+
+      // Same reasoning as the line above, and the same shape: a
+      // half-configured credential throws HERE, inside the try, rather than
+      // out of `new CmsWorker(...)` where nothing could record it.
+      this.ensureGitHubAuth()
 
       // BEFORE ensureRemoteGit(): its clone is the first thing to use the
       // credential, and its catch blames the repository rather than the
@@ -756,8 +769,51 @@ export class CmsWorker {
    * through the instance (worker-context.ts's INVARIANT); a second credential
    * path would be one nothing stubs.
    */
+  /**
+   * Resolve which GitHub credential this worker uses, once, and build the
+   * Octokit client from it.
+   *
+   * DEFERRED out of the constructor deliberately, exactly as
+   * `ensureSettingsBranch()` is, and for the same reason that method records:
+   * `resolveWorkerGitHubAuth` throws for a half-configured credential (both
+   * set, neither set, an unusable mint timeout), and a throw during
+   * `new CmsWorker(...)` lands BEFORE the only code that writes
+   * `lastFatalError` — start()'s catch. The AWS entrypoint constructs the
+   * worker and calls start() separately, and its `main().catch()` only logs
+   * and exits, so a constructor throw is an invisible ~5s systemd crash-loop
+   * that `cdk deploy` reports as success while the admin panel shows the
+   * worker 'absent' with no fatal error to explain it. That is a shipped
+   * regression this codebase has already paid for once (#198).
+   *
+   * Idempotent, and it does NOT replace an `octokit` a test has already
+   * assigned onto the instance — see the field's comment.
+   */
+  private ensureGitHubAuth(): ResolvedGitHubAuth {
+    if (!this.githubAuth) {
+      this.githubAuth = resolveWorkerGitHubAuth(this.config)
+    }
+    if (!this.octokit) {
+      this.octokit = createCanopyOctokit(this.githubAuth.octokitAuth)
+    }
+    return this.githubAuth
+  }
+
+  /**
+   * The Octokit client, built on first use.
+   *
+   * Every read goes through here rather than touching the field, because the
+   * field is no longer populated by the constructor: a method reached without
+   * start() would otherwise see `undefined`. `rebaseActiveBranches()` is
+   * exactly that case — apps/test-app's e2e route calls it directly, and its
+   * `pollMergeState` dispatch reads `ctx.octokit()`.
+   */
+  private octokitClient(): Octokit {
+    this.ensureGitHubAuth()
+    return this.octokit
+  }
+
   private async buildGitHubUrl(): Promise<string> {
-    const token = await this.resolveGitToken()
+    const token = await this.ensureGitHubAuth().resolveGitToken()
     return `https://x-access-token:${token}@github.com/${this.config.githubOwner}/${this.config.githubRepo}.git`
   }
 
@@ -774,26 +830,34 @@ export class CmsWorker {
    * No-op on the token path: a PAT is a literal, so there is nothing to
    * check that the first real request would not check anyway.
    *
-   * FATAL ONLY FOR A PERMANENT FAILURE. The check exists to catch a bad
-   * credential, not a bad afternoon at GitHub, and the difference matters
-   * because the two paths must degrade alike: on the token path a GitHub 502
-   * during boot is absorbed (a warm `remote.git` short-circuits
-   * `ensureRemoteGit`, and `Promise.allSettled` swallows the initial
-   * `syncGit`), so the worker starts and its loops retry. Rethrowing every
-   * error class here would make the App path exit instead, and systemd
+   * FATAL UNLESS THE FAILURE POSITIVELY LOOKS TRANSIENT. Both halves of that
+   * are load-bearing.
+   *
+   * Not always fatal, because the two credential paths must degrade alike: on
+   * the token path a GitHub 502 during boot is absorbed (a warm `remote.git`
+   * short-circuits `ensureRemoteGit`, and `Promise.allSettled` swallows the
+   * initial `syncGit`), so the worker starts and its loops retry. Rethrowing
+   * every error class would make the App path exit instead, and systemd
    * (Restart=always) would crash-loop it until GitHub recovered — each
    * iteration telling the operator to go and check their private key.
-   * `isPermanentTaskFailure` is the same 4xx/5xx classifier the task runner
-   * uses, so the two agree about what "the credential is wrong" means.
+   *
+   * But fail CLOSED, via `isTransientAuthFailure` rather than the inverse of
+   * `isPermanentTaskFailure`. That classifier defaults an error with no HTTP
+   * status to transient, which is right on the task path (bounded by
+   * `maxRetries`) and wrong here (bounded by nothing): a private key that
+   * parses but is not this app's throws a status-less error, so "default to
+   * transient" would boot a worker with a dead credential, record no
+   * `lastFatalError`, and show healthy in the admin panel while every task and
+   * every sync failed. See isTransientAuthFailure in github-auth.ts.
    */
   private async preflightGitHubAppAuth(): Promise<void> {
     if (!this.config.githubAppAuth) return
     try {
-      await this.resolveGitToken()
+      await this.ensureGitHubAuth().resolveGitToken()
     } catch (err) {
       // [REDACT] Both messages below reach worker-status.json and the browser.
       const detail = redactCredentials(getErrorMessage(err))
-      if (!isPermanentTaskFailure(err)) {
+      if (isTransientAuthFailure(err)) {
         workerLogWarn(
           `Could not verify GitHub App authentication at startup: ${detail}. ` +
             'Continuing — this looks transient, and the credential is minted again on first use.',

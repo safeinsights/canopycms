@@ -1,6 +1,6 @@
 import { createPrivateKey } from 'node:crypto'
 import type { CanopyOctokitAuthOptions, OctokitAuthStrategyOptions } from '../github-service'
-import { getErrorMessage } from '../utils/error'
+import { getErrorMessage, isNodeError } from '../utils/error'
 
 /**
  * How the worker authenticates to GitHub, for both halves of its access:
@@ -95,6 +95,9 @@ export interface GitHubAppAuth {
 /** See `GitHubAuthConfig.gitTokenMintTimeoutMs`. */
 export const DEFAULT_GIT_TOKEN_MINT_TIMEOUT_MS = 30_000
 
+/** The largest delay `AbortSignal.timeout` honours without silently clamping. */
+const MAX_MINT_TIMEOUT_MS = 2_147_483_647
+
 export interface ResolvedGitHubAuth {
   /** Passed straight to `createCanopyOctokit`. */
   octokitAuth: CanopyOctokitAuthOptions
@@ -136,19 +139,12 @@ export function resolveWorkerGitHubAuth(config: GitHubAuthConfig): ResolvedGitHu
     )
   }
 
+  // Checked whether or not an App is configured: a nonsense value is a config
+  // error worth naming even on the path that ignores it.
+  const timeoutMs = config.gitTokenMintTimeoutMs ?? DEFAULT_GIT_TOKEN_MINT_TIMEOUT_MS
+  assertUsableMintTimeout(timeoutMs)
+
   if (app) {
-    const timeoutMs = config.gitTokenMintTimeoutMs ?? DEFAULT_GIT_TOKEN_MINT_TIMEOUT_MS
-    // Validated here, at construction, because `AbortSignal.timeout` throws a
-    // RangeError for NaN/negative/Infinity -- and it would throw INSIDE the
-    // mint, where the rejection carries no `.status`, so every push task would
-    // read it as transient and burn its whole retry budget on a config typo.
-    // `parseInt(process.env.X ?? '')` is NaN, which is exactly how such a
-    // value arrives.
-    if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
-      throw new Error(
-        `CanopyCMS worker: gitTokenMintTimeoutMs must be a positive number of milliseconds (got ${String(timeoutMs)}).`,
-      )
-    }
     return {
       octokitAuth: app.octokitAuth,
       resolveGitToken: () => mintInstallationToken(app, timeoutMs),
@@ -159,6 +155,30 @@ export function resolveWorkerGitHubAuth(config: GitHubAuthConfig): ResolvedGitHu
   return {
     octokitAuth: { auth: staticToken },
     resolveGitToken: async () => staticToken,
+  }
+}
+
+/**
+ * Reject a mint timeout that `AbortSignal.timeout` would not honour.
+ *
+ * Checked at resolution rather than at first use because the RangeError would
+ * otherwise be thrown INSIDE the mint, where it carries no `.status` — so the
+ * task path would read a config typo as transient and burn every push's full
+ * retry budget on it. An environment variable through `parseInt` yields NaN,
+ * which is exactly how such a value arrives (canopycms-cdk's worker entrypoint
+ * parses every other interval that way).
+ *
+ * The bounds are Node's, measured rather than assumed: `AbortSignal.timeout`
+ * throws for a non-integer (`0.5`) and for anything above 2**32-1, and
+ * SILENTLY clamps 2**31 … 2**32-1 to 1ms with a TimeoutOverflowWarning —
+ * which would abort every mint instantly while reporting a timeout of the
+ * configured size. 2**31-1 is the largest value with no surprise in it.
+ */
+function assertUsableMintTimeout(timeoutMs: number): void {
+  if (!Number.isInteger(timeoutMs) || timeoutMs <= 0 || timeoutMs > MAX_MINT_TIMEOUT_MS) {
+    throw new Error(
+      `CanopyCMS worker: gitTokenMintTimeoutMs must be a whole number of milliseconds between 1 and ${MAX_MINT_TIMEOUT_MS} (got ${String(timeoutMs)}).`,
+    )
   }
 }
 
@@ -182,11 +202,7 @@ async function mintInstallationToken(app: GitHubAppAuth, timeoutMs: number): Pro
   // executeTaskWithTimeout).
   minting.catch(() => {})
   const timedOut = new Promise<never>((_, reject) => {
-    signal.addEventListener(
-      'abort',
-      () => reject(new Error(`GitHub App installation token was not minted within ${timeoutMs}ms`)),
-      { once: true },
-    )
+    signal.addEventListener('abort', () => reject(new MintTimeoutError(timeoutMs)), { once: true })
   })
   const minted = await Promise.race([minting, timedOut])
   if (!minted) {
@@ -196,6 +212,78 @@ async function mintInstallationToken(app: GitHubAppAuth, timeoutMs: number): Pro
     throw new Error('GitHub App authentication returned an empty installation token')
   }
   return minted
+}
+
+/**
+ * The mint did not answer within `gitTokenMintTimeoutMs`.
+ *
+ * A named class rather than a bare Error because `isTransientAuthFailure`
+ * below has to recognise it: a timeout carries no HTTP status, and the
+ * fail-closed rule there would otherwise read "slow network" as "wrong key".
+ */
+export class MintTimeoutError extends Error {
+  constructor(timeoutMs: number) {
+    super(`GitHub App installation token was not minted within ${timeoutMs}ms`)
+    this.name = 'MintTimeoutError'
+  }
+}
+
+/**
+ * Node errnos that mean "the network was unhappy", i.e. try again later.
+ * `getaddrinfo`/connect failures during an instance's first seconds are the
+ * realistic boot-time case.
+ */
+const TRANSIENT_NETWORK_CODES = new Set([
+  'EAI_AGAIN',
+  'ECONNABORTED',
+  'ECONNREFUSED',
+  'ECONNRESET',
+  'ENETDOWN',
+  'ENETUNREACH',
+  'ENOTFOUND',
+  'EPIPE',
+  'ETIMEDOUT',
+])
+
+/**
+ * Does this mint failure positively look like a passing condition?
+ *
+ * **This is the inverse of `isPermanentTaskFailure`, deliberately, and the
+ * inversion is the point.** That classifier answers "must I stop retrying?"
+ * and so defaults to transient — an error with no HTTP status at all is
+ * retried, which is right on the task path where `maxRetries` bounds the
+ * damage.
+ *
+ * A boot-time credential check has no such bound, so it must fail CLOSED.
+ * Measured against the real `@octokit/auth-app@6`: a private key that parses
+ * but is not this app's key throws `"alg" parameter for "ec" key type must be
+ * one of: ES256…` with **no status at all** — so "default to transient" there
+ * means a worker with a dead credential boots, reports itself healthy in
+ * worker-status.json, and fails every task and every sync afterwards. That is
+ * strictly worse than the crash-loop the check was guarding against, because
+ * a crash-loop is at least visible.
+ *
+ * 403 is treated as PERMANENT here, where `isPermanentTaskFailure` carves out
+ * rate-limit 403s. At boot a 403 from the installation-token endpoint is a
+ * suspended app, an uninstalled app, or a missing permission far more often
+ * than a rate limit — a worker that has issued no requests yet is not the one
+ * being throttled — and exiting is recoverable by systemd, where booting on a
+ * dead credential is not.
+ */
+export function isTransientAuthFailure(err: unknown): boolean {
+  if (err instanceof MintTimeoutError) return true
+  const status = getHttpStatus(err)
+  if (status !== null) return status >= 500 || status === 408 || status === 429
+  return isNodeError(err) && TRANSIENT_NETWORK_CODES.has(err.code ?? '')
+}
+
+/** Extract an HTTP status from an error, if present (Octokit RequestError shape). */
+function getHttpStatus(err: unknown): number | null {
+  if (err instanceof Error && 'status' in err) {
+    const status = (err as { status: unknown }).status
+    if (typeof status === 'number') return status
+  }
+  return null
 }
 
 /**
