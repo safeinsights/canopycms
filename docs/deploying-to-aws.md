@@ -211,12 +211,13 @@ with comments, or one that inherits `exclude` through `extends` with no list of
 its own, is left alone, and the command asks you to make that edit. It asks the
 same when there is no `tsconfig.json`.
 
-The CDK app is type-checked on its own instead, with
-`infrastructure/tsconfig.json`. `cdk.json` runs it through tsx, which does not
-check types, so without that check a misspelled `CanopyCmsService` prop is
-dropped silently and the deploy uses the prop's default. The generated workflow
-runs `tsc --noEmit -p infrastructure` before deploying; run it yourself after
-editing the stack.
+The CDK app is type-checked separately, with `infrastructure/tsconfig.json`.
+`cdk.json` runs the app through tsx, which does not check types, so without that
+check a misspelled `CanopyCmsService` prop is dropped silently and the deploy
+uses the prop's default. The generated workflow runs
+`tsc --noEmit -p infrastructure` before deploying; run it yourself after editing
+the stack. `infrastructure/tsconfig.json` extends your `tsconfig.json`, so that
+check fails until the project has one.
 
 ## Step 3: Test Locally in Dev Mode
 

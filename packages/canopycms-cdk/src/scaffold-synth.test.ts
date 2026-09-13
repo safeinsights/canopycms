@@ -350,8 +350,8 @@ describe('canopycms init-deploy aws produces a synthesizable CDK app', () => {
 
 /**
  * A tsconfig.json in create-next-app 16.1.7's shape, as `scripts/smoke/standalone-image.mjs` writes
- * one. Its `paths` alias and its `incremental` are both inherited by the generated
- * infrastructure/tsconfig.json, which extends it.
+ * one. The generated infrastructure/tsconfig.json extends it, inheriting its `paths` alias and
+ * turning its `incremental` off.
  */
 const NEXT_APP_TSCONFIG = {
   compilerOptions: {
@@ -502,7 +502,7 @@ describe('the generated workflow type-checks the CDK app', () => {
       if (typeof compilerOptions !== 'object' || compilerOptions === null) {
         throw new Error("the scaffold's tsconfig.json has no compilerOptions")
       }
-      // Each one, inherited, fails the generated stack, and none of them changes how tsx runs it.
+      // Each one, inherited, fails the type-check, and tsx applies none of them to infrastructure/.
       Object.assign(compilerOptions, {
         verbatimModuleSyntax: true,
         exactOptionalPropertyTypes: true,

@@ -152,7 +152,8 @@ jobs:
       # excludes infrastructure/ from the app's tsconfig.json, so `next build`
       # skips it too. Unchecked, a misspelled CanopyCmsService prop is dropped
       # silently and the deploy uses that prop's default. The compiler
-      # settings are in infrastructure/tsconfig.json.
+      # settings are in infrastructure/tsconfig.json, which extends
+      # tsconfig.json.
       #
       # typescript is checked first: without it, `npx tsc` downloads a
       # deprecated package named `tsc` from npm, which prints a notice and

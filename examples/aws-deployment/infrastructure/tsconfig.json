@@ -20,7 +20,9 @@
     "skipLibCheck": true,
     // tsx compiles the files the project's tsconfig.json excludes, infrastructure/ among them,
     // without its compiler options. Inherited, these three would fail the generated stack on code
-    // that tsx runs: the first asks for `import type`, and the other two only add strictness.
+    // that tsx runs: the first asks for `import type`, and the other two only add strictness. The
+    // reset reaches canopycms.config.ts here too; `next build` still checks that file with the
+    // project's own options.
     "verbatimModuleSyntax": false,
     "exactOptionalPropertyTypes": false,
     "noPropertyAccessFromIndexSignature": false,
@@ -33,6 +35,7 @@
   // Imports are followed, so canopycms.config.ts, and anything it imports, is checked too.
   "include": ["bin/**/*.ts", "lib/**/*.ts"],
   // Not inherited: an "exclude" from the project's tsconfig.json resolves against the project
-  // directory, and that list names infrastructure/, which would exclude every file above.
+  // directory, and `init-deploy aws` adds infrastructure/ to that list, which would exclude every
+  // file above.
   "exclude": []
 }

@@ -413,8 +413,8 @@ export async function initDeployAws(options: InitDeployOptions): Promise<void> {
       `${reason}. Add "infrastructure" to its "exclude" list, or \`next build\` type-checks the ` +
         'CDK app and fails unless aws-cdk-lib is installed in the app.' +
         (tsconfigResult === 'missing'
-          ? " infrastructure/tsconfig.json extends it, so the deploy workflow's type-check fails " +
-            'until it exists.'
+          ? ' infrastructure/tsconfig.json, as init-deploy writes it, extends it too, so the ' +
+            "deploy workflow's type-check fails until it exists."
           : ''),
     )
   }

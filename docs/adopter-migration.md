@@ -1306,10 +1306,11 @@ if you ran `canopycms init-deploy aws` before them, or copied `Dockerfile.cms.te
 3. **`init-deploy aws` keeps `infrastructure/` out of the app.** It adds `infrastructure` to your
    `tsconfig.json` `exclude` (or asks you to, when it cannot edit the file) and to the generated
    `.dockerignore`, so `next build` no longer type-checks the CDK app.
-4. **The CDK app is type-checked on its own.** `init-deploy aws` scaffolds
-   `infrastructure/tsconfig.json`, and the generated workflow runs `tsc --noEmit -p infrastructure`
-   before `cdk deploy`. `cdk.json` runs the app through tsx, which does not check types, so without
-   that step a misspelled `CanopyCmsService` prop is dropped silently.
+4. **The CDK app is type-checked separately.** `init-deploy aws` scaffolds
+   `infrastructure/tsconfig.json`, which extends your `tsconfig.json`, and the generated workflow
+   runs `tsc --noEmit -p infrastructure` before `cdk deploy`. `cdk.json` runs the app through tsx,
+   which does not check types, so without that step a misspelled `CanopyCmsService` prop is dropped
+   silently. The workflow also runs on a change to `tsconfig.json` alone.
 5. **`CanopyCmsService` defaults to `Architecture.ARM_64`**, where it used to leave Lambda's own
    `X86_64` default, and always passes the resolved architecture to the function. CDK derives a
    `fromImageAsset` image's build platform from it. The generated workflow runs on
@@ -1337,17 +1338,17 @@ with an image built to match.
    which adds `infrastructure/tsconfig.json`, and it adds `infrastructure` to `tsconfig.json`'s
    `exclude`. It keeps your `Dockerfile.cms`, `.dockerignore`, workflow and stack as they are, so
    bring the rest across by hand:
-   - the workflow's "Type-check the CDK app" step, before "Configure AWS credentials"
-     (`examples/aws-deployment/deploy-cms.yml` has it rendered for npm);
+   - the workflow's "Type-check the CDK app" step, before "Configure AWS credentials", and
+     `tsconfig.json` in its `on.push.paths` (`examples/aws-deployment/deploy-cms.yml` has both,
+     rendered for npm);
    - an `infrastructure` line in `.dockerignore`;
    - with pnpm, `pnpm-workspace.yam[l]` in the Dockerfile's first `COPY`.
 
    `--force` replaces every generated file instead, including a stack you have edited.
 
-3. An existing hand-copied `Dockerfile.cms` keeps working: `next build` stops using its snapshot
-   repository, and nothing else requires the new lines. Update it when convenient by deleting the
-   builder's git install and snapshot commit and adding `ENV CANOPY_BUILD_MODE=true` before the build
-   command.
+3. An existing hand-copied `Dockerfile.cms` builds as it did before this change: `next build` no
+   longer reads its snapshot repository. Update it when convenient by deleting the builder's git
+   install and snapshot commit and adding `ENV CANOPY_BUILD_MODE=true` before the build command.
 
 **Now deletable.**
 
