@@ -53,20 +53,33 @@ function keysUsed(): (string | undefined)[] {
 
 let logSpy: ReturnType<typeof vi.spyOn>
 let warnSpy: ReturnType<typeof vi.spyOn>
+let errorSpy: ReturnType<typeof vi.spyOn>
 
 beforeEach(() => {
   refreshClerkCacheMock.mockReset()
   // Swallowed rather than tolerated: `quietTestOutput.onConsoleLog` in
-  // vitest.shared.ts THROWS on any stdout write under CI, which would leave a
-  // green test count and a non-zero exit. See secrets.test.ts's logSpy.
+  // vitest.shared.ts THROWS on a write to stdout OR stderr under CI, which
+  // leaves a GREEN test count and a non-zero exit. See secrets.test.ts's
+  // logSpy.
+  //
+  // All THREE levels, and `error` is not hypothetical: it was missing when the
+  // re-read-failure test below was added, and `CI=1 pnpm exec vitest run`
+  // reported `528 passed` with exit 1. Locally, where CI is unset, it passed.
   logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
   warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+  errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
 })
 
 afterEach(() => {
   logSpy.mockRestore()
   warnSpy.mockRestore()
+  errorSpy.mockRestore()
 })
+
+/** Every message a spy captured, flattened — `workerLog*` pass level and text separately. */
+function textOf(spy: ReturnType<typeof vi.spyOn>): string {
+  return spy.mock.calls.map((args: unknown[]) => args.join(' ')).join('\n')
+}
 
 /** The successful shape `refreshClerkCache` resolves to. */
 const ok = { userCount: 3, groupCount: 1, membershipCount: 2 }
@@ -183,6 +196,9 @@ describe('the circuit breaker', () => {
     // 5-minute floor.
     await expect(refresh()).rejects.toThrow('Unauthenticated')
     expect(refreshClerkCacheMock).toHaveBeenCalledTimes(1)
+    // The read failure is not silently dropped either -- it is the only record
+    // that the re-read was attempted and could not be made.
+    expect(textOf(errorSpy)).toContain('AccessDeniedException')
   })
 
   it('does not loop when the rotated key is also rejected', async () => {
