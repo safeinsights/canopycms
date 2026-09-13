@@ -433,6 +433,14 @@ GITHUB_TOKEN_SECRET_ARN=arn:aws:secretsmanager:us-east-1:123456789012:secret:my-
 GITHUB_TOKEN_SECRET_JSON_FIELD=CANOPYCMS_GITHUB_TOKEN
 ```
 
+Those are the **environment variables the CDK app reads**, which is what you set when you
+deploy from a laptop. Deploying from the generated GitHub Actions workflow, you set the
+matching repository _variables_ instead, and one of the two names differs: the GitHub one is
+stored as `CANOPY_GITHUB_TOKEN_SECRET_JSON_FIELD`, because GitHub refuses to create any
+secret or variable whose name starts with `GITHUB_` — the same reason its ARN is stored as
+`CANOPY_GITHUB_TOKEN_SECRET_ARN`. The workflow maps it back to the unprefixed name above.
+See [Repository secrets and variables](#repository-secrets-and-variables).
+
 The worker then reads that key out of the document. Leave the `_JSON_FIELD`
 variable unset and behaviour is exactly as before — the whole value is the
 credential — so nothing changes for the single-value shape above.

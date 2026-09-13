@@ -1469,8 +1469,10 @@ describe('CanopyCmsService: secret JSON-field props -> worker .env', () => {
   describe('an empty JSON field is refused at synth', () => {
     // The worker reads a blank value as "no field configured" (`|| undefined`
     // at both call sites in worker/index.ts), so stamping it would discard an
-    // explicitly set prop silently. assertEnvSafe does not catch this: an
-    // empty string has no newline, no leading quote and no ENVEOF.
+    // explicitly set prop silently. assertEnvSafe catches none of these: an
+    // empty string has no newline, no leading quote, no ENVEOF and no
+    // backslash, and it equals its own `.trim()`, so even the whitespace rule
+    // added for the cases below passes it through.
     it('githubTokenSecretJsonField', () => {
       expect(() => synthUncached(false, { ...BOTH_ARNS, githubTokenSecretJsonField: '' })).toThrow(
         /githubTokenSecretJsonField must name a key/,

@@ -224,9 +224,12 @@ function assertValidGitBranchName(propName: string, value: string): string {
  * i.e. `arn:…:secret:name-AbCdEf:MY_KEY::` rather than `arn:…:secret:name-AbCdEf`.
  *
  * Keyed on "a colon anywhere after `:secret:`", because a secret NAME cannot
- * contain one -- everything from `:secret:` to the end of a well-formed ARN is
- * the name plus the six random characters AWS appends. So a further colon can
- * only be the start of the `:json-key:version-stage:version-id` tail.
+ * contain one: Secrets Manager's documented name charset is ASCII letters,
+ * digits and `/_+=.@-`. So everything after `:secret:` in a secret ARN is the
+ * name -- plus the six random characters AWS appends, when the ARN is a
+ * complete one rather than the partial form this guard deliberately accepts --
+ * and a further colon can only begin the `:json-key:version-stage:version-id`
+ * tail.
  *
  * An earlier version of this anchored on the six-character suffix itself
  * (`-[A-Za-z0-9]{6}:`) and therefore missed the suffix form built on a
@@ -238,13 +241,21 @@ function assertValidGitBranchName(propName: string, value: string): string {
 const SECRET_ARN_WITH_FIELD_SUFFIX = /:secret:[^:]*:/
 
 /**
- * The tail of every ECS-style suffixed ARN, `…:json-key:version-stage:version-id`
- * with both version parts empty -- and the only part of that form still visible
- * when the ARN in front of it is an unresolved CDK token.
+ * The last two characters of the `…:json-key::` spelling -- the ECS suffix with
+ * `version-stage` and `version-id` left empty, which is how the convention is
+ * almost always written and how AWS's own examples show it.
  *
- * `${Token[TOKEN.42]}:MY_KEY::` has no `:secret:` for the regex above to anchor
- * on, because the ARN has not been rendered yet. No well-formed secret ARN, token
- * or literal, ends in two colons.
+ * Checked in ADDITION to the regex above, for one case the regex cannot see: an
+ * unresolved CDK token, `${Token[TOKEN.42]}:MY_KEY::`, carries no `:secret:` to
+ * anchor on because the ARN has not been rendered yet. No well-formed secret
+ * ARN, token or literal, ends in two colons, so this is safe to refuse.
+ *
+ * KNOWN LIMIT, stated rather than fixed: a token ARN with NON-empty version
+ * parts (`${Token[…]}:MY_KEY:AWSCURRENT:v1`) is caught by neither check and is
+ * stamped verbatim. Recognising it needs `Token.isUnresolved` plus a guess at
+ * where the token ends; the spelling adopters actually copy has the empty
+ * parts, and every LITERAL ARN is caught by the regex whatever its version
+ * parts say.
  */
 const SECRET_ARN_WITH_EMPTY_VERSION_TAIL = '::'
 
@@ -455,8 +466,10 @@ export interface CanopyCmsServiceProps {
    *
    * This is NOT the ECS/CloudFormation `arn:…:secret:name-AbCdEf:KEY::`
    * convention. The worker calls the `GetSecretValue` API, which does not parse
-   * that suffix; an ARN carrying one is refused at synth (see
-   * `assertSecretPropPair` below) and the field belongs here instead.
+   * that suffix; a literal ARN carrying one is refused at synth (see
+   * `assertSecretArnHasNoFieldSuffix` below, and the known limit recorded on
+   * `SECRET_ARN_WITH_EMPTY_VERSION_TAIL` for the one token spelling that gets
+   * through) and the field belongs here instead.
    */
   githubTokenSecretJsonField?: string
 
