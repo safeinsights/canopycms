@@ -7,7 +7,7 @@
  * looks like a private key is a file someone eventually treats as one.
  */
 
-import { beforeAll, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import { createPrivateKey, generateKeyPairSync, type KeyObject } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 
@@ -15,6 +15,7 @@ import type { createTokenAuth } from '@octokit/auth-token'
 
 import {
   DEFAULT_GIT_TOKEN_MINT_TIMEOUT_MS,
+  DEFAULT_GITHUB_TOKEN_REFRESH_MIN_INTERVAL_MS,
   MintTimeoutError,
   isTransientAuthFailure,
   normalizeGitHubAppPrivateKey,
@@ -413,6 +414,8 @@ describe('resolveWorkerGitHubAuth', () => {
         const resolved = resolveWorkerGitHubAuth({
           githubToken: 'ghp_first',
           refreshGitHubToken,
+          // Two back-to-back refreshes are the point of this test, not the floor.
+          refreshGitHubTokenMinIntervalMs: 0,
         })
 
         await resolved.refreshCredential()
@@ -437,7 +440,12 @@ describe('resolveWorkerGitHubAuth', () => {
             .fn<() => Promise<string | undefined>>()
             .mockReturnValueOnce(slow.promise)
             .mockResolvedValueOnce('ghp_newest')
-          const resolved = resolveWorkerGitHubAuth({ githubToken: 'ghp_boot', refreshGitHubToken })
+          const resolved = resolveWorkerGitHubAuth({
+            githubToken: 'ghp_boot',
+            refreshGitHubToken,
+            // The overlap-ordering guard is the point of this test, not the floor.
+            refreshGitHubTokenMinIntervalMs: 0,
+          })
 
           const first = resolved.refreshCredential()
           await resolved.refreshCredential()
@@ -456,7 +464,12 @@ describe('resolveWorkerGitHubAuth', () => {
             .fn<() => Promise<string | undefined>>()
             .mockReturnValueOnce(slow.promise)
             .mockResolvedValueOnce(undefined)
-          const resolved = resolveWorkerGitHubAuth({ githubToken: 'ghp_boot', refreshGitHubToken })
+          const resolved = resolveWorkerGitHubAuth({
+            githubToken: 'ghp_boot',
+            refreshGitHubToken,
+            // The overlap-ordering guard is the point of this test, not the floor.
+            refreshGitHubTokenMinIntervalMs: 0,
+          })
 
           const first = resolved.refreshCredential()
           await resolved.refreshCredential()
@@ -464,6 +477,111 @@ describe('resolveWorkerGitHubAuth', () => {
           await first
 
           expect(await resolved.resolveGitToken()).toBe('ghp_rotated')
+        })
+      })
+
+      describe('the refresh floor', () => {
+        afterEach(() => {
+          vi.useRealTimers()
+        })
+
+        it('reaches the provider once for two back-to-back calls, under the default floor', async () => {
+          const refreshGitHubToken = providerOf('ghp_rotated', 'ghp_would_be_second')
+          const resolved = resolveWorkerGitHubAuth({ githubToken: 'ghp_boot', refreshGitHubToken })
+
+          await resolved.refreshCredential()
+          await resolved.refreshCredential()
+
+          expect(refreshGitHubToken).toHaveBeenCalledTimes(1)
+          expect(await resolved.resolveGitToken()).toBe('ghp_rotated')
+        })
+
+        it('reaches the provider again once the clock has moved past the interval', async () => {
+          vi.useFakeTimers({ toFake: ['Date'] })
+          vi.setSystemTime(0)
+          const refreshGitHubToken = providerOf('ghp_rotated', 'ghp_second_round')
+          const resolved = resolveWorkerGitHubAuth({ githubToken: 'ghp_boot', refreshGitHubToken })
+
+          await resolved.refreshCredential()
+          vi.setSystemTime(DEFAULT_GITHUB_TOKEN_REFRESH_MIN_INTERVAL_MS + 1)
+          await resolved.refreshCredential()
+
+          expect(refreshGitHubToken).toHaveBeenCalledTimes(2)
+          expect(await resolved.resolveGitToken()).toBe('ghp_second_round')
+        })
+
+        it('collapses overlapping calls into a single provider call', async () => {
+          // The second call starts before the first's provider promise settles --
+          // the same shape as the "overlapping refreshes" tests above, but here
+          // it is the FLOOR, not the start-order guard, that must collapse them.
+          const deferred = () => {
+            let release!: (value: string | undefined) => void
+            const promise = new Promise<string | undefined>((resolve) => (release = resolve))
+            return { promise, release }
+          }
+          const slow = deferred()
+          const refreshGitHubToken = vi
+            .fn<() => Promise<string | undefined>>()
+            .mockReturnValueOnce(slow.promise)
+          const resolved = resolveWorkerGitHubAuth({ githubToken: 'ghp_boot', refreshGitHubToken })
+
+          const first = resolved.refreshCredential()
+          const second = resolved.refreshCredential()
+          slow.release('ghp_rotated')
+          await Promise.all([first, second])
+
+          expect(refreshGitHubToken).toHaveBeenCalledTimes(1)
+          expect(await resolved.resolveGitToken()).toBe('ghp_rotated')
+        })
+
+        it('lets every call through when the floor is disabled', async () => {
+          const refreshGitHubToken = providerOf('ghp_a', 'ghp_b')
+          const resolved = resolveWorkerGitHubAuth({
+            githubToken: 'ghp_boot',
+            refreshGitHubToken,
+            refreshGitHubTokenMinIntervalMs: 0,
+          })
+
+          await resolved.refreshCredential()
+          await resolved.refreshCredential()
+
+          expect(refreshGitHubToken).toHaveBeenCalledTimes(2)
+          expect(await resolved.resolveGitToken()).toBe('ghp_b')
+        })
+
+        it('stamps the floor even when the provider throws, so an immediate retry is skipped', async () => {
+          const refreshGitHubToken = vi.fn(async () => {
+            throw new Error('AccessDeniedException reading the secret')
+          })
+          const resolved = resolveWorkerGitHubAuth({ githubToken: 'ghp_boot', refreshGitHubToken })
+
+          await expect(resolved.refreshCredential()).rejects.toThrow('AccessDeniedException')
+          // Immediately after: within the floor, so this must not reach the
+          // provider a second time even though the first call never succeeded.
+          await resolved.refreshCredential()
+
+          expect(refreshGitHubToken).toHaveBeenCalledTimes(1)
+        })
+
+        it.each([NaN, -1, 1.5])(
+          'rejects a refresh interval that is not a usable delay (%s)',
+          (bad) => {
+            expect(() =>
+              resolveWorkerGitHubAuth({
+                githubToken: 'ghp_boot',
+                refreshGitHubTokenMinIntervalMs: bad,
+              }),
+            ).toThrow(/refreshGitHubTokenMinIntervalMs must be a whole number of milliseconds/)
+          },
+        )
+
+        it('accepts 0 as a valid refresh interval', () => {
+          expect(() =>
+            resolveWorkerGitHubAuth({
+              githubToken: 'ghp_boot',
+              refreshGitHubTokenMinIntervalMs: 0,
+            }),
+          ).not.toThrow()
         })
       })
     })

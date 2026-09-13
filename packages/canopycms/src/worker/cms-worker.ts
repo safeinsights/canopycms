@@ -56,6 +56,7 @@ export { workerLog, workerLogWarn, workerLogError, installWorkerLogger } from '.
 export {
   normalizeGitHubAppPrivateKey,
   DEFAULT_GIT_TOKEN_MINT_TIMEOUT_MS,
+  DEFAULT_GITHUB_TOKEN_REFRESH_MIN_INTERVAL_MS,
   type GitHubAppAuth,
   type GitHubAuthConfig,
 } from './github-auth'

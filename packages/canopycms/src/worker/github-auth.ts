@@ -71,6 +71,22 @@ export interface GitHubAuthConfig {
    */
   refreshGitHubToken?: () => Promise<string | undefined>
   /**
+   * Minimum time between calls that reach `refreshGitHubToken`, in ms
+   * (default: 60000). `0` disables the floor. Ignored on the GitHub App
+   * path, where `refreshCredential` never calls a provider at all.
+   *
+   * Core's own backstop, not a substitute for one the provider keeps: a
+   * failing publish retries on a 5s/10s/20s backoff (task-queue.ts), and
+   * `CmsWorker` calls `refreshCredential` after every failed task attempt AND
+   * every failed git sync, so a burst of failures would otherwise reach an
+   * adopter-supplied `refreshGitHubToken` every few seconds. The AWS provider
+   * (`packages/canopycms-cdk/worker/credential-refresh.ts`) already enforces
+   * its own five-minute floor; an adopter's own provider has none unless they
+   * write one, so core enforces this one regardless of what the provider does
+   * on its side.
+   */
+  refreshGitHubTokenMinIntervalMs?: number
+  /**
    * How long to wait for one installation-token mint before giving up, in ms
    * (default: 30000).
    *
@@ -127,6 +143,9 @@ export interface GitHubAppAuth {
 
 /** See `GitHubAuthConfig.gitTokenMintTimeoutMs`. */
 export const DEFAULT_GIT_TOKEN_MINT_TIMEOUT_MS = 30_000
+
+/** See `GitHubAuthConfig.refreshGitHubTokenMinIntervalMs`. */
+export const DEFAULT_GITHUB_TOKEN_REFRESH_MIN_INTERVAL_MS = 60_000
 
 /** The largest delay `AbortSignal.timeout` honours without silently clamping. */
 const MAX_MINT_TIMEOUT_MS = 2_147_483_647
@@ -224,6 +243,13 @@ export function resolveWorkerGitHubAuth(config: GitHubAuthConfig): ResolvedGitHu
   const timeoutMs = config.gitTokenMintTimeoutMs ?? DEFAULT_GIT_TOKEN_MINT_TIMEOUT_MS
   assertUsableMintTimeout(timeoutMs)
 
+  // Checked whether or not an App is configured, the same reason the mint
+  // timeout above is: ignored on that path, but a nonsense value is still a
+  // config error worth naming rather than silently accepting.
+  const minIntervalMs =
+    config.refreshGitHubTokenMinIntervalMs ?? DEFAULT_GITHUB_TOKEN_REFRESH_MIN_INTERVAL_MS
+  assertUsableRefreshInterval(minIntervalMs)
+
   if (app) {
     return {
       octokitAuth: app.octokitAuth,
@@ -245,6 +271,11 @@ export function resolveWorkerGitHubAuth(config: GitHubAuthConfig): ResolvedGitHu
   // Numbered as they start; see `refreshCredential` below.
   let refreshesStarted = 0
   let newestRefreshApplied = 0
+  // When a call last reached the provider, per `refreshGitHubTokenMinIntervalMs`
+  // below. `undefined` until the first call gets far enough to invoke it, so
+  // that first call is never held back by a floor with nothing to measure
+  // from yet.
+  let lastProviderReachedAt: number | undefined
   return {
     octokitAuth: {
       // NOT `{ auth: currentToken }`. That spelling resolves the token once,
@@ -255,8 +286,32 @@ export function resolveWorkerGitHubAuth(config: GitHubAuthConfig): ResolvedGitHu
     },
     resolveGitToken: async () => currentToken,
     refreshCredential: async () => {
+      // Nothing to re-read: no provider configured. Checked before the floor
+      // below so an unconfigured worker never starts a clock for a call it
+      // will never make.
+      if (!config.refreshGitHubToken) return
+      const now = Date.now()
+      // `<`, not `<=`: a `refreshGitHubTokenMinIntervalMs` of 0 (a test, or an
+      // adopter opting out) must permit every call rather than blocking on an
+      // identical timestamp -- the same reason credential-refresh.ts's own
+      // provider floor uses `<`.
+      if (lastProviderReachedAt !== undefined && now - lastProviderReachedAt < minIntervalMs) {
+        return
+      }
+      // Stamped BEFORE the await, not after, for the same reason
+      // credential-refresh.ts's does: stamping after lets two overlapping
+      // calls each see an unstamped clock and both reach the provider, which
+      // is the floor not holding. Overlap is real here -- the task loop and
+      // the git-sync loop both call `refreshCredential`, on separate loops
+      // `scheduleLoop` does not serialise against each other -- so this is
+      // what collapses them into one provider call. A provider that THROWS
+      // still counts as reached: the stamp already landed by the time the
+      // rejection surfaces, so a failing provider is bounded by the floor
+      // too, and this call is not counted in `refreshesStarted` below unless
+      // it gets this far.
+      lastProviderReachedAt = now
       const refresh = ++refreshesStarted
-      const refreshed = await config.refreshGitHubToken?.()
+      const refreshed = await config.refreshGitHubToken()
       // Falsy covers both "nothing rotated" (`undefined`) and an empty secret:
       // an empty token would build `https://x-access-token:@github.com/…`,
       // which git sends anonymously, so keeping the known-bad-but-real token
@@ -296,6 +351,26 @@ function assertUsableMintTimeout(timeoutMs: number): void {
   if (!Number.isInteger(timeoutMs) || timeoutMs <= 0 || timeoutMs > MAX_MINT_TIMEOUT_MS) {
     throw new Error(
       `CanopyCMS worker: gitTokenMintTimeoutMs must be a whole number of milliseconds between 1 and ${MAX_MINT_TIMEOUT_MS} (got ${String(timeoutMs)}).`,
+    )
+  }
+}
+
+/**
+ * Reject a refresh-floor interval that is not a usable delay.
+ *
+ * Checked at resolution, the same reason `assertUsableMintTimeout` above is:
+ * an invalid value should read as a named config error rather than as
+ * whatever `now - lastProviderReachedAt < minIntervalMs` happens to do with
+ * it -- a `NaN` floor, for instance, makes that comparison always `false` and
+ * would silently permit every call instead of failing loudly. Unlike the mint
+ * timeout, there is no upper bound to enforce: this value is only ever
+ * compared against another `Date.now()` reading, never handed to
+ * `AbortSignal.timeout`.
+ */
+function assertUsableRefreshInterval(minIntervalMs: number): void {
+  if (!Number.isInteger(minIntervalMs) || minIntervalMs < 0) {
+    throw new Error(
+      `CanopyCMS worker: refreshGitHubTokenMinIntervalMs must be a whole number of milliseconds, 0 or greater (got ${String(minIntervalMs)}).`,
     )
   }
 }
