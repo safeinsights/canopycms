@@ -237,6 +237,14 @@ function stringOrUndefined(value: unknown): string | undefined {
   return typeof value === 'string' ? value : undefined
 }
 
+/**
+ * Whether Next treats a config value as set. `assignDefaults` in `next/dist/server/config.js` drops
+ * every `undefined` and `null` value before anything reads the config.
+ */
+function isSet(value: unknown): boolean {
+  return value !== undefined && value !== null
+}
+
 /** `includes` added under `'/**'`, deduped. Every entry the adopter already wrote is kept as written. */
 function mergeTracingIncludes(
   existing: TracingIncludes | undefined,
@@ -285,42 +293,55 @@ function sharpTracingConfig(
 
   const projectDir = process.cwd()
   const nextMajor = installedNextMajor(projectDir)
+  // May not be an object in an untyped config (`experimental: true` loads fine in Next), which is why
+  // every read below goes through `readProperty` and never an `in` check.
   const experimental = nextConfig.experimental ?? {}
 
-  // Read and write each option where Next reads it (`loadConfig` in `next/dist/server/config.js`):
+  // Read and write each option where Next reads it (`loadConfig` in `next/dist/server/config.js`).
+  // A value of `undefined` or `null` counts as unset throughout, because Next drops those first.
   // - Next 13 and 14 read the tracing options only under `experimental`. A top-level key is reported
-  //   as an invalid option and ignored.
-  // - Next 15 and 16 still accept the `experimental` spellings, and copy any that is present over
-  //   the top-level key (`warnOptionHasBeenMovedOutOfExperimental`). So a legacy value wins, and an
+  //   as an invalid option and ignored. Their tracing root is `experimental.outputFileTracingRoot ||
+  //   dir`, with no lockfile inference (`build/index.ts` in Next 14.2.25).
+  // - Next 15 and 16 still accept the `experimental` spellings, and copy any that is set over the
+  //   top-level key (`warnOptionHasBeenMovedOutOfExperimental`). So a legacy value wins, and an
   //   include written only at the top level would be silently replaced.
-  // - Only Next 15 merges `experimental.turbo` into `turbopack`, with `turbopack` winning.
+  // - Only Next 15 merges `experimental.turbo` into `turbopack`, as `{ ...turbo, ...turbopack }`. Any
+  //   `root` key on `turbopack` therefore wins, even an empty one.
   const experimentalOnly = nextMajor !== null && nextMajor < 15
-  const includesUnderExperimental = experimentalOnly || 'outputFileTracingIncludes' in experimental
-  const rootUnderExperimental = experimentalOnly || 'outputFileTracingRoot' in experimental
+  const includesUnderExperimental =
+    experimentalOnly || isSet(readProperty(experimental, 'outputFileTracingIncludes'))
+  const rootUnderExperimental =
+    experimentalOnly || isSet(readProperty(experimental, 'outputFileTracingRoot'))
 
-  const existing: unknown = includesUnderExperimental
+  const writtenIncludes: unknown = includesUnderExperimental
     ? readProperty(experimental, 'outputFileTracingIncludes')
     : nextConfig.outputFileTracingIncludes
+  const existing = isSet(writtenIncludes) ? writtenIncludes : undefined
   // A malformed value is Next's to reject. Merging into it could only turn that into a crash here.
   if (existing !== undefined && !isTracingIncludes(existing)) return {}
 
-  const configuredRoot = rootUnderExperimental
-    ? stringOrUndefined(readProperty(experimental, 'outputFileTracingRoot'))
-    : nextConfig.outputFileTracingRoot
+  const configuredRoot = stringOrUndefined(
+    rootUnderExperimental
+      ? readProperty(experimental, 'outputFileTracingRoot')
+      : nextConfig.outputFileTracingRoot,
+  )
+  const turbopack: unknown = nextConfig.turbopack
+  const turbopackHasRootKey =
+    typeof turbopack === 'object' && turbopack !== null && 'root' in turbopack
   const legacyTurbopackRoot =
-    nextMajor === 15
+    nextMajor === 15 && !turbopackHasRootKey
       ? stringOrUndefined(readProperty(readProperty(experimental, 'turbo'), 'root'))
       : undefined
   const turbopackRoot = experimentalOnly
     ? undefined
-    : (nextConfig.turbopack?.root ?? legacyTurbopackRoot)
+    : (stringOrUndefined(readProperty(turbopack, 'root')) ?? legacyTurbopackRoot)
 
   // Next never changes directory for `next build <dir>`, so a working directory with no config
   // file in it is not the project, and any glob computed relative to it would be wrong.
   const { includes, problem } = hasNextConfig(projectDir)
     ? sharpTracingIncludes({
         projectDir,
-        outputFileTracingRoot: configuredRoot,
+        outputFileTracingRoot: experimentalOnly ? configuredRoot || projectDir : configuredRoot,
         turbopackRoot,
       })
     : {

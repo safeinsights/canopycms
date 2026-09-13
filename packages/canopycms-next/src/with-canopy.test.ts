@@ -589,6 +589,87 @@ describe('withCanopy', () => {
       )
     })
 
+    it.each([undefined, null])(
+      'treats experimental.outputFileTracingIncludes: %s as unset on Next 15+, since Next drops it before migrating',
+      (legacy) => {
+        tracing.nextMajor = 16
+        tracing.result = { includes: ['glob/**/*'] }
+
+        const result = withCanopy(
+          asNextConfig({
+            outputFileTracingIncludes: { '/api/x': ['data/**/*'] },
+            experimental: { outputFileTracingIncludes: legacy },
+          }),
+        )
+
+        expect(result.outputFileTracingIncludes).toEqual({
+          '/api/x': ['data/**/*'],
+          '/**': ['glob/**/*'],
+        })
+      },
+    )
+
+    it.each([undefined, null])(
+      'treats experimental.outputFileTracingRoot: %s as unset on Next 15+, keeping the top-level root',
+      (legacy) => {
+        tracing.nextMajor = 16
+
+        withCanopy(
+          asNextConfig({
+            outputFileTracingRoot: '../top-level-root',
+            experimental: { outputFileTracingRoot: legacy },
+          }),
+        )
+
+        expect(sharpTracingIncludesMock).toHaveBeenLastCalledWith(
+          expect.objectContaining({ outputFileTracingRoot: '../top-level-root' }),
+        )
+      },
+    )
+
+    it('treats a null outputFileTracingIncludes as unset rather than malformed', () => {
+      tracing.nextMajor = 16
+      tracing.result = { includes: ['glob/**/*'] }
+
+      const result = withCanopy(asNextConfig({ outputFileTracingIncludes: null }))
+
+      expect(result.outputFileTracingIncludes).toEqual({ '/**': ['glob/**/*'] })
+    })
+
+    it('ignores an experimental value that is not an object, instead of throwing', () => {
+      tracing.nextMajor = 16
+      tracing.result = { includes: ['glob/**/*'] }
+
+      const result = withCanopy(asNextConfig({ experimental: true }))
+
+      expect(result.outputFileTracingIncludes).toEqual({ '/**': ['glob/**/*'] })
+    })
+
+    it('lets a root key on turbopack beat experimental.turbo.root on Next 15, even an empty one', () => {
+      tracing.nextMajor = 15
+
+      withCanopy(
+        asNextConfig({
+          turbopack: { root: undefined },
+          experimental: { turbo: { root: '../legacy-turbo' } },
+        }),
+      )
+
+      expect(sharpTracingIncludesMock).toHaveBeenLastCalledWith(
+        expect.objectContaining({ turbopackRoot: undefined }),
+      )
+    })
+
+    it('uses the project directory as the root on Next < 15, which infers none from lockfiles', () => {
+      tracing.nextMajor = 14
+
+      withCanopy({})
+
+      expect(sharpTracingIncludesMock).toHaveBeenLastCalledWith(
+        expect.objectContaining({ outputFileTracingRoot: process.cwd() }),
+      )
+    })
+
     it('leaves a malformed existing outputFileTracingIncludes value untouched', () => {
       tracing.result = { includes: ['glob/**/*'] }
       const malformed = asNextConfig({ outputFileTracingIncludes: { '/**': 'nope' } })
