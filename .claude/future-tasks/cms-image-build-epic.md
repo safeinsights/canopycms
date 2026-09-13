@@ -493,6 +493,7 @@ when they open their PR, when they hit a decision that needs a call, and when th
 - [dev-content-watcher-relative-sourceroot.md](dev-content-watcher-relative-sourceroot.md) (P2) — dev content watcher silently off for a relative `sourceRoot`.
 - [init-deploy-aws-first-build-gaps.md](resolved/init-deploy-aws-first-build-gaps.md) (P2) — scaffold gaps the image smoke test hits. Resolved by PR 5.
 - [yarn-support-decision.md](yarn-support-decision.md) (P3) — keep or drop Yarn in `init-deploy aws`, split from the smoke-test task.
+- [webpack-standalone-sharp-bundled.md](webpack-standalone-sharp-bundled.md) (P2) — a webpack-built CMS image (Next 15, or Next 16 `--webpack`) bundles sharp into a server chunk, so image transforms fail; found by PR 5's Next 15.5.21 probe.
 - [editor-operatingmode-option-unused.md](editor-operatingmode-option-unused.md) (P3) — unused editor `operatingMode` option.
 
 ## Verification
