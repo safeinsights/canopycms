@@ -68,7 +68,7 @@ cross-host lost update is tolerable — and today no store settles for OCC alone
 `proper-lockfile` mkdir-based locks: acquisition is atomic **at the NFS server**,
 immune to client caching, auto-refreshed while the holder lives (`stale` recovers from
 crashed holders). `withOccFileLock` is tuned for brief metadata writes;
-`acquireProvisioningLock` for long build-time provisioning;
+`acquireProvisioningLock` for long workspace provisioning;
 `utils/content-write-lock.ts` for content writes vs. the worker's rebase (below).
 
 _Guarantee:_ genuine cross-process, cross-host mutual exclusion. _Cost:_ extra fs
