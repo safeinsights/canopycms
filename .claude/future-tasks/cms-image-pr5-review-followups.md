@@ -45,3 +45,15 @@ suggested fix, the same key. What is lost is the error saying so. The other orde
 `withCanopy(withBundleAnalyzer({}))`, keeps the guard.
 
 Decide: document that `withCanopy` should be the outermost wrapper, or accept this.
+
+## 4. An unreadable Next version gets no `turbopack` key, so a Next 16 build can still exit
+
+Found by the round-2 review. `installedNextMajor` finds `next` by walking `node_modules` on disk, but
+`withCanopy` resolves React with `createRequire`. Under Yarn PnP there is no `node_modules`, so the
+version reads as unknown while React still resolves. `withCanopy` then adds its `webpack` function
+but no `turbopack: {}`, and Next 16's default Turbopack build exits.
+
+Leaving the key out when the version is unknown was decided during PR 5: on Next 13 and 14 an
+unknown top-level `turbopack` is reported as an invalid option. Revisit it with
+[yarn-support-decision.md](yarn-support-decision.md). If Yarn Berry is supported, read the Next
+version through the same resolution `withCanopy` uses for React.
