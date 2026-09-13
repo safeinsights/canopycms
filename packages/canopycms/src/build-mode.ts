@@ -18,8 +18,9 @@ export const isDeployedStatic = (config: { deployedAs?: string }): boolean => {
  * inherit it. So it is true in page modules, `generateStaticParams` and
  * prerendering, but NOT yet set when `next build` loads `next.config.*`, which
  * it does first. `next dev`, `next start` and the standalone server never set
- * it. Verified in Next 15.5.21 and 16.1.7, whose `dist/build/index.js` holds
- * the only assignment -- re-check on every Next major.
+ * it. Verified in Next 15.5.21 and 16.1.7, where `build/index.js` (in both
+ * `dist/` and `dist/esm/`) holds the only assignment -- re-check on every Next
+ * major.
  *
  * `CANOPY_BUILD_MODE=true` is the framework-neutral switch: for builds Next
  * does not drive, and for scripts run alongside one (the generated
