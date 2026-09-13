@@ -1,14 +1,19 @@
 /**
- * The trigger: that a failing git sync actually re-reads the GitHub credential.
+ * The triggers: that a failing git sync, and a failing task, actually re-read
+ * the GitHub credential.
  *
  * `github-auth.test.ts` covers `refreshCredential()` itself — that a rotated
  * token reaches both consumers. This file covers the half that makes any of it
  * happen at run time, and it is the half most easily left inert: if
  * `start()` schedules `syncGit()` instead of `syncGitWithCredentialRefresh()`,
  * every test in that other file still passes and no credential is ever
- * re-read. So the wiring is exercised through a REAL `start()` against a real
- * local git fixture, with the loop interval turned down, rather than by
+ * re-read. So the sync wiring is exercised through a REAL `start()` against a
+ * real local git fixture, with the loop interval turned down, rather than by
  * calling the wrapper directly.
+ *
+ * The task wiring needs no scheduler: `processTaskQueue()` is exactly what
+ * `scheduleLoop` runs, and the call lives inside it. Those tests move the clock
+ * past each retry's backoff instead of waiting it out.
  *
  * The fixture setup is `cms-worker-github-app-auth.test.ts`'s, which
  * established that a full start() is affordable in a unit test.
@@ -21,6 +26,7 @@ import path from 'node:path'
 import { simpleGit } from 'simple-git'
 
 import { CmsWorker } from './cms-worker'
+import { enqueueTask } from './task-queue'
 import { initTestRepo, mockConsole, type MockConsole } from '../test-utils'
 
 /** `syncGit` is public but the wrapper around it is not; both are stubbed here. */
@@ -172,6 +178,168 @@ describe('CmsWorker credential refresh on a failing sync', () => {
 
       await expect(wrapperOf(worker).syncGitWithCredentialRefresh()).rejects.toThrow()
       expect(refreshGitHubToken).toHaveBeenCalledTimes(1)
+    })
+  })
+
+  describe('on a failing task', () => {
+    type TaskInternals = {
+      running: boolean
+      buildGitHubUrl(): Promise<string>
+      pushBranchToGitHub(branch: string): Promise<void>
+    }
+
+    const MAX_RETRIES = 3
+    const taskPath = (state: string, id: string) =>
+      path.join(workspacePath, '.tasks', state, `${id}.json`)
+    const exists = (p: string) =>
+      fs.stat(p).then(
+        () => true,
+        () => false,
+      )
+    const enqueuePush = () =>
+      enqueueTask(path.join(workspacePath, '.tasks'), {
+        action: 'push-branch',
+        payload: { branch: 'feature-1' },
+      })
+
+    beforeEach(() => {
+      // Date only: the backoff is a `retryAfter` timestamp compared against
+      // Date.now(), while the per-task timeout and the refresh bound are real
+      // timers that must keep running.
+      vi.useFakeTimers({ toFake: ['Date'] })
+    })
+
+    afterEach(() => {
+      vi.useRealTimers()
+    })
+
+    /**
+     * A worker whose push is rejected for as long as it holds the revoked token.
+     *
+     * The stub stands in only for GitHub refusing a dead credential. It reads
+     * the credential through the worker's REAL `buildGitHubUrl()` -- the path a
+     * real push takes -- so it sees whatever `refreshCredential()` last swapped
+     * in. Its rejection carries no `.status`, as a real `git push` failure does
+     * not, so the task path classifies it transient and retries.
+     */
+    const makeTaskWorker = (
+      refreshGitHubToken: () => Promise<string | undefined>,
+      taskTimeoutMs = 5_000,
+    ) => {
+      const worker = new CmsWorker({
+        workspacePath,
+        githubOwner: 'test-owner',
+        githubRepo: 'test-repo',
+        githubToken: 'ghp_revoked',
+        refreshGitHubToken,
+        taskTimeoutMs,
+        maxRetries: MAX_RETRIES,
+      })
+      const internals = worker as unknown as TaskInternals
+      internals.running = true
+      const push = vi.fn(async (_branch: string) => {
+        if ((await internals.buildGitHubUrl()).includes('ghp_revoked')) {
+          throw new Error(
+            "remote: Invalid username or token.\nfatal: Authentication failed for 'https://github.com/test-owner/test-repo.git/'",
+          )
+        }
+      })
+      internals.pushBranchToGitHub = push
+      return { worker, push }
+    }
+
+    /**
+     * Poll until the task settles, moving the clock past each retry's backoff.
+     * Bounded by the retry budget plus one cycle, so a task that never settles
+     * fails the test instead of hanging it.
+     */
+    const drain = async (worker: CmsWorker, id: string): Promise<'completed' | 'failed'> => {
+      for (let cycle = 0; cycle <= MAX_RETRIES + 1; cycle++) {
+        await worker.processTaskQueue()
+        if (await exists(taskPath('completed', id))) return 'completed'
+        if (await exists(taskPath('failed', id))) return 'failed'
+        vi.setSystemTime(Date.now() + 61_000)
+      }
+      throw new Error(`task ${id} never settled`)
+    }
+
+    it('saves a publish whose token rotated, which would otherwise exhaust its retries', async () => {
+      // The secret store already holds the working token when the push first
+      // fails: the provider hands it over once, then has nothing new.
+      const refreshGitHubToken = vi
+        .fn<() => Promise<string | undefined>>()
+        .mockResolvedValueOnce('ghp_rotated')
+        .mockResolvedValue(undefined)
+      const { worker, push } = makeTaskWorker(refreshGitHubToken)
+      const id = await enqueuePush()
+
+      expect(await drain(worker, id)).toBe('completed')
+      // Refused once on the revoked token, then accepted on the first retry.
+      expect(push).toHaveBeenCalledTimes(2)
+      expect(refreshGitHubToken).toHaveBeenCalledTimes(1)
+    })
+
+    it('still exhausts the budget when nothing rotated, re-reading after every attempt', async () => {
+      // The control for the test above: it proves this harness really drives a
+      // task to exhaustion, so "completed" there is the refresh's doing.
+      const refreshGitHubToken = vi.fn(async () => undefined)
+      const { worker, push } = makeTaskWorker(refreshGitHubToken)
+      const id = await enqueuePush()
+
+      expect(await drain(worker, id)).toBe('failed')
+      expect(push).toHaveBeenCalledTimes(MAX_RETRIES + 1)
+      // Ungated: every failed attempt re-reads, the final one included.
+      expect(refreshGitHubToken).toHaveBeenCalledTimes(MAX_RETRIES + 1)
+      expect(consoleSpy).toHaveErrored(`Permanently failed after ${MAX_RETRIES} retries`)
+    })
+
+    it('does NOT re-read when the task succeeds', async () => {
+      const refreshGitHubToken = vi.fn(async () => 'ghp_never_read')
+      const { worker, push } = makeTaskWorker(refreshGitHubToken)
+      push.mockResolvedValue(undefined)
+      const id = await enqueuePush()
+
+      expect(await drain(worker, id)).toBe('completed')
+      expect(refreshGitHubToken).not.toHaveBeenCalled()
+    })
+
+    it("keeps the task's own error and retry when the re-read itself fails", async () => {
+      const refreshGitHubToken = vi.fn(async () => {
+        throw new Error('AccessDeniedException reading the secret')
+      })
+      const { worker } = makeTaskWorker(refreshGitHubToken)
+      const id = await enqueuePush()
+
+      await worker.processTaskQueue()
+
+      const pending = JSON.parse(await fs.readFile(taskPath('pending', id), 'utf-8'))
+      expect(pending.retryCount).toBe(1)
+      expect(pending.error).toMatch(/Authentication failed/)
+      expect(pending.error).not.toMatch(/AccessDenied/)
+      expect(consoleSpy).toHaveErrored('Failed to re-read the GitHub credential')
+    })
+
+    it('does not let a re-read that never settles stall the task loop', async () => {
+      // Rejects long after the bound, so this also proves the losing read's
+      // eventual rejection is handled rather than surfacing as unhandled.
+      const refreshGitHubToken = vi.fn(
+        () =>
+          new Promise<string | undefined>((_, reject) => {
+            setTimeout(() => reject(new Error('late secret read')), 1_500)
+          }),
+      )
+      const { worker } = makeTaskWorker(refreshGitHubToken, 100)
+      const id = await enqueuePush()
+
+      const started = performance.now()
+      await worker.processTaskQueue()
+      expect(performance.now() - started).toBeLessThan(1_000)
+
+      const pending = JSON.parse(await fs.readFile(taskPath('pending', id), 'utf-8'))
+      expect(pending.retryCount).toBe(1)
+      expect(consoleSpy).toHaveErrored('did not settle within 100ms')
+
+      await new Promise((r) => setTimeout(r, 1_600))
     })
   })
 })

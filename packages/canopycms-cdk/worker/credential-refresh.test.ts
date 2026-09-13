@@ -130,9 +130,9 @@ describe('guard: too soon', () => {
     // `lastReadAt` is stamped BEFORE the await for this case; stamped after,
     // all three callers see an unstamped clock and all three read.
     //
-    // No production caller overlaps today -- each secret has one calling loop,
-    // and scheduleLoop awaits each cycle. This pins the property so that
-    // adding a second trigger site does not quietly defeat the floor.
+    // The GitHub token's two triggers -- a failed task and a failed git sync --
+    // run on separate loops and can overlap, so this is what keeps the floor
+    // shared between them.
     await Promise.all([secret.refresh(), secret.refresh(), secret.refresh()])
 
     expect(sendMock).toHaveBeenCalledTimes(1)
@@ -220,5 +220,34 @@ describe('reading the secret', () => {
 
     await expect(secret.refresh()).rejects.toThrow('AccessDeniedException')
     expect(secret.current()).toBe('ghp_original')
+  })
+})
+
+describe('a read that lands after a newer one', () => {
+  it('is discarded, so a stalled read cannot put the older value back', async () => {
+    const clock = fakeClock()
+    let releaseSlow!: (response: { SecretString: string }) => void
+    sendMock
+      .mockReturnValueOnce(new Promise((resolve) => (releaseSlow = resolve)))
+      .mockResolvedValueOnce({ SecretString: 'rotated' })
+    const secret = createReactiveSecret({
+      arn: ARN,
+      initial: 'boot',
+      minIntervalMs: 100,
+      now: clock.now,
+    })
+
+    // The first read reaches Secrets Manager and stalls past the floor.
+    const slow = secret.refresh()
+    await vi.waitFor(() => expect(sendMock).toHaveBeenCalledTimes(1))
+    clock.advance(100)
+
+    // A newer read, permitted by the expired floor, adopts the rotated value.
+    expect(await secret.refresh()).toBe('rotated')
+
+    // The stalled read finally answers with what the store held before.
+    releaseSlow({ SecretString: 'boot-era' })
+    expect(await slow).toBeUndefined()
+    expect(secret.current()).toBe('rotated')
   })
 })

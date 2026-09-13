@@ -627,16 +627,24 @@ its own — **you do not need to redeploy or replace the instance.**
 
 How long it takes, and why:
 
-| Secret                 | Picked up within | Noticed by                             |
-| ---------------------- | ---------------- | -------------------------------------- |
-| GitHub token           | ~5 minutes       | the git sync, which fetches that often |
-| Clerk secret key       | ~15 minutes      | the auth-cache refresh                 |
-| GitHub App private key | not re-read      | — see below                            |
+| Secret                 | Picked up within | Noticed by                                                  |
+| ---------------------- | ---------------- | ----------------------------------------------------------- |
+| GitHub token           | ~5 minutes       | a failed publish, or the git sync, which fetches that often |
+| Clerk secret key       | ~15 minutes      | the auth-cache refresh                                      |
+| GitHub App private key | not re-read      | — see below                                                 |
 
 The re-read is **reactive**: the worker re-reads a secret only after the
 operation using it has just failed, so a healthy deployment makes no
 `GetSecretValue` calls at all between boots. That is also why rotation is not
 instant — the worker finds out by trying and failing once.
+
+For the GitHub token, **store the new value before you revoke the old one.**
+Then the first publish to meet the revoked token re-reads straight away, and its
+automatic retry a few seconds later normally goes out on the new token, so the
+publish goes through. Revoke first and there can be a gap of up to five minutes
+in which a publish fails and has to be resubmitted: a failure during the gap
+re-reads the old value, and the five-minute floor described below then holds off
+the next re-read.
 
 A secret that is simply wrong, rather than rotated, does not turn into a loop.
 The worker re-reads at most once every five minutes per secret, and when the

@@ -32,18 +32,26 @@ import { getSecret, type GetSecretOptions } from './secrets'
 /**
  * Floor on how often ONE secret is re-read, in ms.
  *
- * At the worker's default loop intervals this is inert, and that is the
- * intended state: the GitHub credential is refreshed from the git-sync loop
- * (5 minutes) and the Clerk key from the auth-cache loop (15 minutes), so both
- * are already slower than this and nothing is artificially delayed — a
- * rotation is picked up as fast as the worker can possibly notice it.
+ * For the Clerk key, at the default intervals, it is inert: the key's only
+ * trigger is the auth-cache loop (15 minutes), already slower than this.
  *
- * It earns its place as a BACKSTOP, because both of those intervals are
+ * For the GitHub token it is ACTIVE, and it is what bounds the cost. That token
+ * has two triggers in core, a failed task and a failed git sync (see
+ * `CmsWorker.refreshGitHubCredential`), and a task retries on a 5s/10s/20s
+ * backoff — so a queue of publishes failing on a dead token would otherwise
+ * read every few seconds. The floor makes that one read per interval, shared by
+ * both triggers. The price of sharing it: a rotation is picked up at the first
+ * failure after it that the floor permits, which is immediately unless some
+ * failure in the last interval has already used the read, and then at most one
+ * interval later. A publish that exhausts its retries inside that wait still
+ * fails.
+ *
+ * It is also a BACKSTOP against loop tuning, because both loop intervals are
  * adopter-configurable. `CANOPYCMS_GIT_SYNC_INTERVAL=10000` against a
  * permanently-broken credential would otherwise mean a `GetSecretValue` every
  * ten seconds for the life of the instance. With the floor, the worst case is
  * twelve `refresh()` attempts an hour per secret, no matter how the loops are
- * tuned.
+ * tuned or how many tasks fail.
  *
  * That is twelve `GetSecretValue` calls an hour in the normal case, but up to
  * FOUR times that if the SDK call is itself failing: one `refresh()` is one
@@ -133,6 +141,14 @@ export function createReactiveSecret(options: ReactiveSecretOptions): ReactiveSe
   // should re-read immediately rather than waiting out an interval measured
   // from an event this object did not observe.
   let lastReadAt: number | undefined
+  // Reads are numbered as they start, and a read's result is dropped if a read
+  // that started LATER has already finished: that one saw the store more
+  // recently, so the older value can only be stale. Without this, a read that
+  // stalled past the floor could land after a newer read had adopted a rotated
+  // value and put the old one back -- and a caller that stops waiting
+  // (CmsWorker.refreshGitHubCredential) does not cancel the read it abandoned.
+  let readsStarted = 0
+  let newestReadFinished = 0
 
   return {
     current: () => value,
@@ -147,16 +163,16 @@ export function createReactiveSecret(options: ReactiveSecretOptions): ReactiveSe
       // overlapping calls each see an unstamped clock and both issue a read,
       // which is the floor not holding.
       //
-      // No production caller does that TODAY -- each secret has exactly one
-      // calling loop (the GitHub token from the git-sync loop, the Clerk key
-      // from the auth-cache loop) and `scheduleLoop` awaits each cycle before
-      // starting the next. This is defensive against a second trigger site
-      // being added later, which is a live possibility: see
-      // .claude/future-tasks/publish-fails-permanently-in-the-rotation-window.md,
-      // whose fix is exactly that.
+      // Overlap is real for the GitHub token: its two triggers, a failed task
+      // and a failed git sync, run on separate loops that `scheduleLoop` does
+      // not serialise against each other (CmsWorker.refreshGitHubCredential).
+      // The Clerk key has one calling loop, which awaits each cycle.
       lastReadAt = at
 
+      const read = ++readsStarted
       const fetched = await getSecret(arn, secretOptions)
+      if (read < newestReadFinished) return undefined
+      newestReadFinished = read
       if (fetched === value) return undefined
 
       value = fetched

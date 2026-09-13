@@ -76,8 +76,8 @@ async function main() {
     ? await getSecret(githubTokenArn, githubTokenSecretOptions)
     : githubTokenFromEnv
   // Wrapped so a rotated token reaches a RUNNING worker. Reactive: core calls
-  // `refreshGitHubToken` only when a git sync has just failed, so a healthy
-  // worker makes no Secrets Manager calls after boot at all. Constructed even
+  // `refreshGitHubToken` only when a git sync or a task has just failed, so a
+  // healthy worker makes no Secrets Manager calls after boot at all. Constructed even
   // when the deployment authenticates as a GitHub App, where it is inert --
   // `resolveWorkerGitHubAuth` never calls the provider on that path, because
   // an App mints its own tokens.
@@ -172,7 +172,7 @@ async function main() {
     githubRepo,
     githubToken,
     githubAppAuth,
-    // Re-read the PAT when a git sync fails. Inert under App auth, where
+    // Re-read the PAT when a git sync or a task fails. Inert under App auth, where
     // `resolveWorkerGitHubAuth` never calls it.
     refreshGitHubToken: () => githubTokenSecret.refresh(),
     refreshAuthCache,
