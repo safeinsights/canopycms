@@ -1,13 +1,9 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 
 vi.mock('../../branch-workspace', () => ({
   loadOrCreateBranchContext: vi.fn(async ({ branchName }: { branchName: string }) => ({
     branchRoot: `/workspace/${branchName}`,
   })),
-}))
-
-vi.mock('../../build-mode', () => ({
-  isDeployedStatic: vi.fn(() => false),
 }))
 
 vi.mock('../../utils/git', () => ({
@@ -16,9 +12,9 @@ vi.mock('../../utils/git', () => ({
 
 import { resolveBranchRoot } from '../resolve-branch'
 import { loadOrCreateBranchContext } from '../../branch-workspace'
-import { isDeployedStatic } from '../../build-mode'
 import { detectHeadBranch } from '../../utils/git'
 import type { CanopyConfig } from '../../config'
+import type { OperatingMode } from '../../operating-mode'
 
 function makeConfig(overrides: Partial<CanopyConfig> = {}): CanopyConfig {
   return {
@@ -34,11 +30,20 @@ function makeConfig(overrides: Partial<CanopyConfig> = {}): CanopyConfig {
 describe('resolveBranchRoot', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    // Guard against a developer's shell (or CI) already exporting either build-mode
+    // switch: every test in this describe except the dedicated build-mode block below
+    // asserts RUNTIME behavior, and readsFromCheckout() is real here (no build-mode
+    // mock — see the module-level comment before the build describe).
+    vi.stubEnv('NEXT_PHASE', '')
+    vi.stubEnv('CANOPY_BUILD_MODE', '')
+  })
+
+  afterEach(() => {
+    vi.unstubAllEnvs()
   })
 
   it('returns cwd for static deployments', async () => {
-    vi.mocked(isDeployedStatic).mockReturnValueOnce(true)
-    const result = await resolveBranchRoot(makeConfig())
+    const result = await resolveBranchRoot(makeConfig({ deployedAs: 'static' }))
     expect(result).toBe(process.cwd())
     expect(detectHeadBranch).not.toHaveBeenCalled()
     expect(loadOrCreateBranchContext).not.toHaveBeenCalled()
@@ -85,4 +90,32 @@ describe('resolveBranchRoot', () => {
     expect(detectHeadBranch).not.toHaveBeenCalled()
     expect(result).toBe('/workspace/main')
   })
+})
+
+describe('resolveBranchRoot at build (readsFromCheckout)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  afterEach(() => {
+    vi.unstubAllEnvs()
+  })
+
+  it.each([
+    ['dev' as OperatingMode, 'NEXT_PHASE', 'phase-production-build'] as const,
+    ['prod' as OperatingMode, 'NEXT_PHASE', 'phase-production-build'] as const,
+    ['dev' as OperatingMode, 'CANOPY_BUILD_MODE', 'true'] as const,
+    ['prod' as OperatingMode, 'CANOPY_BUILD_MODE', 'true'] as const,
+  ])(
+    'returns cwd for a %s-mode server deployment at build (%s=%s), never touching git or a branch workspace',
+    async (mode, envVar, envValue) => {
+      vi.stubEnv(envVar, envValue)
+
+      const result = await resolveBranchRoot(makeConfig({ mode, deployedAs: 'server' }))
+
+      expect(result).toBe(process.cwd())
+      expect(detectHeadBranch).not.toHaveBeenCalled()
+      expect(loadOrCreateBranchContext).not.toHaveBeenCalled()
+    },
+  )
 })

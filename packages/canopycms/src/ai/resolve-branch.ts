@@ -4,15 +4,15 @@
  */
 
 import { loadOrCreateBranchContext } from '../branch-workspace'
-import { isDeployedStatic } from '../build-mode'
+import { readsFromCheckout } from '../build-mode'
 import type { CanopyConfig } from '../config'
 import { detectHeadBranch } from '../utils/git'
 
 /**
  * Resolve the branch root directory for reading content.
  *
- * - Static deployment: current working directory (content is in the checkout)
- * - Server (prod/dev): load or create the default active branch workspace
+ * - Static deployment, or any build: current working directory (content is in the checkout)
+ * - Server (prod/dev) at run time: load or create the default active branch workspace
  *
  * Branch resolution priority (mirrors createActiveBranchDetector in services.ts):
  * 1. Explicit `defaultActiveBranch` in config
@@ -20,8 +20,8 @@ import { detectHeadBranch } from '../utils/git'
  * 3. Fall back to `defaultBaseBranch` or 'main'
  */
 export async function resolveBranchRoot(config: CanopyConfig): Promise<string> {
-  // Static deployments read content directly from the checkout — no branch workspace needed
-  if (isDeployedStatic(config)) {
+  // Static deployments and builds read content directly from the checkout — no branch workspace needed
+  if (readsFromCheckout(config)) {
     return process.cwd()
   }
 

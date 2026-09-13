@@ -216,9 +216,11 @@ first write fails with `EROFS`.
 
 **Leave `mode: 'dev'` in `canopycms.config.ts` anyway.** That one file is loaded
 by three different things — `next dev` locally, `next build` inside the
-deployment image, and the deployed server — and the first two genuinely need
-dev: a prod-mode build read looks for a branch workspace on EFS that cannot
-exist in an image builder, so a `mode: 'prod'` literal fails the image build.
+deployment image, and the deployed server. `next dev` needs dev. `next build`
+reads the working tree in either mode, so it needs nothing from prod, and a
+`mode: 'prod'` literal would only hold the image build to prod-mode checks it
+has no reason to meet: `gitBotAuthorName`/`gitBotAuthorEmail`, and an auth
+plugin that verifies credentials.
 
 The deployed value therefore comes from the environment, in two halves:
 

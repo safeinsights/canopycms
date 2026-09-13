@@ -10,10 +10,19 @@ export const isDeployedStatic = (config: { deployedAs?: string }): boolean => {
 }
 
 /**
- * Safety net: detect build phase where auth is unavailable.
- * Covers edge cases like getCanopy() called from generateStaticParams
- * in server deployments. For static deployments, isDeployedStatic()
- * is the primary check.
+ * Detect a build, where there is no request and no auth.
+ *
+ * Under Next.js this is `NEXT_PHASE === 'phase-production-build'`, which
+ * `next build` sets itself, after compiling and immediately before it creates
+ * the static worker that collects page data and prerenders; that worker's
+ * processes inherit it. So it is true in page modules, `generateStaticParams`
+ * and prerendering, but NOT while `next.config.*` is evaluated, which happens
+ * earlier. `next dev`, `next start` and the standalone server never set it.
+ * Verified against Next 15.5 and 16.1 -- re-check on every Next major.
+ *
+ * `CANOPY_BUILD_MODE=true` is the framework-neutral switch: for builds Next
+ * does not drive, and for scripts run alongside one (the generated
+ * `Dockerfile.cms` sets it for its whole builder stage).
  */
 export const isBuildMode = (): boolean => {
   // Next.js build phase
@@ -23,6 +32,24 @@ export const isBuildMode = (): boolean => {
   if (process.env.CANOPY_BUILD_MODE === 'true') return true
 
   return false
+}
+
+/**
+ * Is content read straight from the checkout, rather than from a branch
+ * workspace?
+ *
+ * This decides WHERE content is read. `isDeployedStatic` and `isBuildMode`
+ * used on their own decide WHO reads it (`STATIC_DEPLOY_USER`, no ACLs).
+ *
+ * True for a static deployment, and for every build in either mode and either
+ * deployment type. A build reads the working tree at `process.cwd()` and
+ * never touches git, `.canopy-dev` or a branch clone: CI builds exactly the
+ * checked-out commit, and a local build reads what is on disk, uncommitted
+ * files included. Editor saves not yet copied out of `.canopy-dev`
+ * (`canopycms sync pull`) are not part of a build.
+ */
+export const readsFromCheckout = (config: { deployedAs?: string }): boolean => {
+  return isDeployedStatic(config) || isBuildMode()
 }
 
 /**

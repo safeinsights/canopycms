@@ -1654,7 +1654,7 @@ export default async function PostPage({ params, searchParams }) {
 
 - **Automatic authentication**: Current user extracted from request headers via auth plugin
 - **Bootstrap admin groups**: Admin users automatically get `admins` group membership
-- **Build mode support**: Permissions bypassed during `next build` for static generation
+- **Build mode support**: During `next build`, permissions are bypassed and content is read from the working tree, never a branch workspace, so a build renders exactly what is on disk
 - **Type-safe**: Full TypeScript support with inferred types from your schema
 - **Per-request caching**: Context is cached using React's `cache()` for the request lifecycle
 

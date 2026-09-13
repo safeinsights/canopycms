@@ -1311,14 +1311,12 @@ CanopyCMS supports two deployment types, declared via the `deployedAs` config fi
 
 **The `deployedAs` field is the primary mechanism** for declaring deployment type. When `deployedAs` is `'static'`, the system uses a synthetic admin user (`STATIC_DEPLOY_USER`) and bypasses all permission checks—whether during `next build` or `next dev`. This covers the full lifecycle of a static site, not just the build phase.
 
-**Build mode detection** (`isBuildMode()`) remains as a safety net for edge cases in server deployments. It detects when auth is unavailable during build by checking environment variables:
+**Build mode detection** (`isBuildMode()`) covers the build of a server deployment, where there is no request context even though the deployment is not static. It checks environment variables:
 
-- `NEXT_PHASE=phase-production-build` (Next.js builds)
-- `CANOPY_BUILD_MODE=true` (generic builds, other frameworks)
+- `NEXT_PHASE=phase-production-build` (set by `next build` before page-data collection and prerendering, but not while `next.config` is evaluated)
+- `CANOPY_BUILD_MODE=true` (other frameworks, and scripts run beside a build)
 
-This covers situations like `getCanopy()` being called from `generateStaticParams` during a server deployment's build step, where there is no request context even though the deployment is not static.
-
-**Combined check**: The content reader and context factory use `isDeployedStatic(config) || isBuildMode()` to determine when to bypass auth. The static deployment check is config-driven (stable, explicit); the build mode check is environment-driven (dynamic, safety net).
+**WHO and WHERE**: `isDeployedStatic(config) || isBuildMode()` answers two questions. The context factory and content reader use it to decide WHO reads (`STATIC_DEPLOY_USER`, no permission checks). As `readsFromCheckout(config)` it decides WHERE: every build, in either mode and either deployment type, reads the working tree at `process.cwd()` and never touches git, a branch workspace or `.canopy-dev`, exactly like a static deployment, and a `branch` passed to a read selects nothing. CI therefore builds the checked-out commit, and a local build reads what is on disk. Only request-time reads on a server deployment resolve a branch workspace.
 
 **Two-deployment model**: A single codebase can produce both a static export and a CMS server build. The `deployedAs` field in each build's config controls which deployment type is active. This enables patterns like a public-facing static site alongside a separate CMS editor deployment, both reading from the same content repository. At the build-tooling level, the `withCanopy()` Next.js config wrapper supports this via its `staticBuild` option, which controls whether CMS-only files (using the `.server.ts`/`.server.tsx` convention) are included in `pageExtensions`. A content route whose rendering must itself differ between the two builds (prerendered vs. request-time) additionally ships a matching `.static.ts`/`.static.tsx` variant — see [Why split a dual-build content route into static and server page variants?](#why-split-a-dual-build-content-route-into-static-and-server-page-variants). See [Framework Adapters](#framework-adapters) for details.
 

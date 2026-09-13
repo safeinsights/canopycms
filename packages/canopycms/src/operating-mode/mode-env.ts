@@ -8,8 +8,11 @@
  * right for all of them:
  *
  *   - `next dev` must be `dev` (workspace at `<cwd>/.canopy-dev`).
- *   - `next build` must be `dev` too: prod-mode build reads would try to open
- *     a branch workspace on EFS that cannot exist in an image builder (see
+ *   - `next build` should stay `dev` too. Build-time reads come from the
+ *     working tree in either mode (`readsFromCheckout` in `build-mode.ts`), so
+ *     nothing in a build needs prod, while prod mode would hold the image
+ *     builder to checks it has no reason to meet: `gitBotAuthorName`/
+ *     `gitBotAuthorEmail`, and an auth plugin that verifies credentials (see
  *     the note in `cli/template-files/Dockerfile.cms.template`).
  *   - The deployed Lambda must be `prod`: dev mode resolves the workspace to
  *     `<cwd>/.canopy-dev`, and Lambda's filesystem is read-only outside /tmp,
@@ -28,7 +31,7 @@
  *
  * Server code reads `CANOPY_MODE`, which the CDK construct stamps onto the
  * Lambda (`CanopyCmsService` sets `CANOPY_MODE=prod`). It is deliberately NOT
- * set during `next build`, so build-time content reads stay in dev mode.
+ * set during `next build` (see above).
  *
  * Browser code cannot read a runtime environment at all — the editor page
  * imports `canopycms.config.ts` directly (`config.client()`), so the browser's

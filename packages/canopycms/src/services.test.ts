@@ -209,6 +209,44 @@ describe('active branch detection', () => {
     expect(detectHeadBranch).not.toHaveBeenCalled()
   })
 
+  describe('a build, for a server deployment (readsFromCheckout)', () => {
+    afterEach(() => {
+      vi.unstubAllEnvs()
+    })
+
+    it.each([
+      ['NEXT_PHASE', 'phase-production-build'] as const,
+      ['CANOPY_BUILD_MODE', 'true'] as const,
+    ])('never shells out to git, at creation or on refresh (%s=%s)', async (envVar, envValue) => {
+      vi.stubEnv(envVar, envValue)
+      const { detectHeadBranch } = await import('./utils/git')
+
+      const services = await makeServices({ mode: 'dev', deployedAs: 'server' })
+      expect(services.config.defaultActiveBranch).toBe('main')
+      expect(services.config.defaultBaseBranch).toBe('main')
+
+      await services.refreshActiveBranch()
+      expect(detectHeadBranch).not.toHaveBeenCalled()
+    })
+
+    it.each([
+      ['NEXT_PHASE', 'phase-production-build'] as const,
+      ['CANOPY_BUILD_MODE', 'true'] as const,
+    ])('serves from a non-default configured base branch (%s=%s)', async (envVar, envValue) => {
+      vi.stubEnv(envVar, envValue)
+      const { detectHeadBranch } = await import('./utils/git')
+
+      const services = await makeServices({
+        mode: 'dev',
+        deployedAs: 'server',
+        defaultBaseBranch: 'develop',
+      })
+      expect(services.config.defaultActiveBranch).toBe('develop')
+      expect(services.config.defaultBaseBranch).toBe('develop')
+      expect(detectHeadBranch).not.toHaveBeenCalled()
+    })
+  })
+
   it('explicit branch identity is never overridden by detection or refresh', async () => {
     const { detectHeadBranch } = await import('./utils/git')
 

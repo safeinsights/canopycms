@@ -2,7 +2,7 @@ import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { simpleGit } from 'simple-git'
 
 import {
@@ -14,8 +14,25 @@ import { defineCanopyTestConfig } from './config-test'
 import { BranchRegistry } from './branch-registry'
 import { GitManager } from './git-manager'
 import { initBareRepo } from './__integration__/test-utils/test-workspace'
+import type { OperatingMode } from './operating-mode'
 
 const tmpDir = async () => fs.mkdtemp(path.join(os.tmpdir(), 'canopycms-branchws-'))
+
+const testSchema = {
+  collections: [
+    {
+      name: 'posts',
+      path: 'posts',
+      entries: [
+        {
+          name: 'post',
+          format: 'md' as const,
+          schema: [{ name: 'title', type: 'string' as const }],
+        },
+      ],
+    },
+  ],
+}
 
 describe('BranchWorkspaceManager', () => {
   it('dev mode supports branching via local workspace', async () => {
@@ -246,6 +263,132 @@ describe('BranchWorkspaceManager', () => {
     } finally {
       cwdSpy.mockRestore()
     }
+  })
+
+  describe('loadOrCreateBranchContext at build, for server deployments (readsFromCheckout)', () => {
+    afterEach(() => {
+      vi.unstubAllEnvs()
+    })
+
+    it.each([
+      ['dev' as OperatingMode, 'NEXT_PHASE', 'phase-production-build'] as const,
+      ['prod' as OperatingMode, 'NEXT_PHASE', 'phase-production-build'] as const,
+      ['dev' as OperatingMode, 'CANOPY_BUILD_MODE', 'true'] as const,
+      ['prod' as OperatingMode, 'CANOPY_BUILD_MODE', 'true'] as const,
+    ])(
+      'returns a synthetic cwd context for a %s-mode server deployment (%s=%s)',
+      async (mode, envVar, envValue) => {
+        vi.stubEnv(envVar, envValue)
+        const root = await tmpDir()
+        const cwdSpy = vi.spyOn(process, 'cwd').mockReturnValue(root)
+        try {
+          const config = defineCanopyTestConfig(
+            { schema: testSchema },
+            { mode, deployedAs: 'server' },
+          )
+
+          const context = await loadOrCreateBranchContext({
+            config,
+            branchName: 'main',
+            mode,
+            createdBy: 'test-runner',
+          })
+
+          expect(context.branchRoot).toBe(root)
+          expect(context.baseRoot).toBe(root)
+          expect(context.branch.createdBy).toBe('__static_deploy__')
+          // No git ops or workspace dirs may be created
+          await expect(fs.access(path.join(root, '.canopy-dev'))).rejects.toThrow()
+          await expect(fs.access(path.join(root, '.canopy-meta'))).rejects.toThrow()
+        } finally {
+          cwdSpy.mockRestore()
+          await fs.rm(root, { recursive: true, force: true })
+        }
+      },
+    )
+  })
+
+  describe('loadOrCreateBranchContext pins the "base branch does not exist locally" build fix', () => {
+    afterEach(() => {
+      vi.unstubAllEnvs()
+    })
+
+    // Adopter bug: a `server` deployment whose `defaultBaseBranch` names a branch the
+    // repo doesn't have (yet) locally used to blow up `next build` itself, because
+    // loadOrCreateBranchContext tried to provision a real git branch clone at build
+    // time. Two repos are used deliberately: the runtime-failure half provisions
+    // `.canopy-dev` before it throws (see git-manager.ts's ensureLocalSimulatedRemote),
+    // so only the build half below may assert that directory's absence.
+    it('at runtime (no build env), a missing base branch still fails exactly as before the fix', async () => {
+      vi.stubEnv('NEXT_PHASE', '') // guard against a developer's shell (or CI) leaking either
+      vi.stubEnv('CANOPY_BUILD_MODE', '') // build-mode switch into this "runtime" case
+      const root = await tmpDir()
+      const cwdSpy = vi.spyOn(process, 'cwd').mockReturnValue(root)
+      try {
+        const git = simpleGit({ baseDir: root })
+        await git.init(['--initial-branch=main'])
+        await git.addConfig('user.name', 'Test')
+        await git.addConfig('user.email', 'test@test.com')
+        await fs.writeFile(path.join(root, 'hello.md'), '# Hello\n')
+        await git.add('-A')
+        await git.commit('initial commit')
+
+        const config = defineCanopyTestConfig(
+          { schema: testSchema },
+          { mode: 'dev', deployedAs: 'server', defaultBaseBranch: 'release-base' },
+        )
+
+        await expect(
+          loadOrCreateBranchContext({
+            config,
+            branchName: 'release-base',
+            mode: 'dev',
+            createdBy: 'test-runner',
+          }),
+        ).rejects.toThrow(/base branch 'release-base' does not exist locally/)
+      } finally {
+        cwdSpy.mockRestore()
+        await fs.rm(root, { recursive: true, force: true })
+      }
+    })
+
+    it('at build (NEXT_PHASE=phase-production-build), the same config reads the checkout instead', async () => {
+      const root = await tmpDir()
+      const cwdSpy = vi.spyOn(process, 'cwd').mockReturnValue(root)
+      try {
+        const git = simpleGit({ baseDir: root })
+        await git.init(['--initial-branch=main'])
+        await git.addConfig('user.name', 'Test')
+        await git.addConfig('user.email', 'test@test.com')
+        await fs.writeFile(path.join(root, 'hello.md'), '# Hello\n')
+        await git.add('-A')
+        await git.commit('initial commit')
+
+        vi.stubEnv('NEXT_PHASE', 'phase-production-build')
+
+        const config = defineCanopyTestConfig(
+          { schema: testSchema },
+          { mode: 'dev', deployedAs: 'server', defaultBaseBranch: 'release-base' },
+        )
+
+        const context = await loadOrCreateBranchContext({
+          config,
+          branchName: 'release-base',
+          mode: 'dev',
+          createdBy: 'test-runner',
+        })
+
+        expect(context.branchRoot).toBe(root)
+        expect(context.baseRoot).toBe(root)
+        // The build never touches git or provisions a branch workspace, so the
+        // directory that the runtime-failure case above creates before throwing
+        // must never appear here.
+        await expect(fs.access(path.join(root, '.canopy-dev'))).rejects.toThrow()
+      } finally {
+        cwdSpy.mockRestore()
+        await fs.rm(root, { recursive: true, force: true })
+      }
+    })
   })
 
   it('loadOrCreateBranchContext creates workspace when missing', async () => {

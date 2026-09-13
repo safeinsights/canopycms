@@ -9,11 +9,11 @@
  *
  * PHASE-AWARE: at build time (`isBuildMode`) or for a static deployment
  * (`isDeployedStatic`) it authorizes as `STATIC_DEPLOY_USER` instead of a real
- * user. Note that this changes WHO the read is authorized as, not WHERE it reads
- * from — in dev mode every read resolves to the branch clone under
- * `.canopy-dev/content-branches/`, during `next build` exactly as during
- * `next dev`. See DEVELOPING.md's "Dev Content Sync" section; this has cost
- * several people real time.
+ * user (WHO), and it reads the working tree at `process.cwd()` instead of a
+ * branch workspace (WHERE: `readsFromCheckout`, applied inside
+ * `loadOrCreateBranchContext`), so a `branch` passed to a read selects nothing.
+ * Only request-time reads on a server deployment resolve a branch workspace --
+ * in dev mode, the clone under `.canopy-dev/content-branches/`.
  *
  * The Next.js adapter wraps this in React `cache()` for per-request memoization
  * (`canopycms-next/src/context-wrapper.ts`).
