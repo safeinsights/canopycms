@@ -71,6 +71,27 @@ passed EC2 health checks forever, and did nothing.
       (The grant is now the union of `secretsArns` and the individual ARN
       props, so a stack setting only the latter should now work.)
 
+## 5b. Reactive secret re-read (PR #334)
+
+Every mechanism below is unit-tested; none has been exercised against real
+Secrets Manager, real Clerk or real GitHub. The unit tests inject a clock and a
+faked `send`, so what they prove is the logic, not the integration.
+
+- [ ] Rotate `canopycms/github-token` on a live deployment. Within ~5 minutes
+      the worker log shows `Secret arn:… changed since boot` and the next push
+      succeeds — **with no instance replacement**.
+- [ ] Rotate `canopycms/clerk-secret-key`. Within ~15 minutes the auth-cache
+      refresh recovers and logs its user/group counts. This one also proves the
+      401/403 gate: a real Clerk rejection must carry `.status`, which is read
+      structurally. If Clerk's SDK reports the status somewhere else, the gate
+      never fires and the retry never happens.
+- [ ] Set a secret to a deliberately wrong value and leave it for an hour.
+      CloudTrail should show **at most ~12 `GetSecretValue` calls per hour** for
+      it — not one per loop tick. This is the circuit breaker, and CloudTrail is
+      the only place its real rate is observable.
+- [ ] Confirm the worker did **not** start making `GetSecretValue` calls in the
+      steady state: a healthy hour should show **zero**.
+
 ## 6. Release pipeline (no deploy needed, but verify on the next release)
 
 - [ ] The next push to main shows publish.yml **waiting** on the "Wait for CI to

@@ -548,6 +548,43 @@ Three things worth knowing before you choose:
   arg respectively. Both are public key material, so they are deliberately not
   routed through Secrets Manager; see [Security Model](#security-model).
 
+### Rotating a secret
+
+Update the secret's value in Secrets Manager. The running worker picks it up on
+its own — **you do not need to redeploy or replace the instance.**
+
+How long it takes, and why:
+
+| Secret                 | Picked up within | Noticed by                             |
+| ---------------------- | ---------------- | -------------------------------------- |
+| GitHub token           | ~5 minutes       | the git sync, which fetches that often |
+| Clerk secret key       | ~15 minutes      | the auth-cache refresh                 |
+| GitHub App private key | not re-read      | — see below                            |
+
+The re-read is **reactive**: the worker re-reads a secret only after the
+operation using it has just failed, so a healthy deployment makes no
+`GetSecretValue` calls at all between boots. That is also why rotation is not
+instant — the worker finds out by trying and failing once.
+
+A secret that is simply wrong, rather than rotated, does not turn into a loop.
+The worker re-reads at most once every five minutes per secret, and when the
+re-read comes back identical to the value it already holds it does not retry the
+operation, since that retry could not succeed. It keeps checking indefinitely at
+that rate, so a later correction is still picked up — it never gives up and it
+never hammers.
+
+Two things to know:
+
+- **A GitHub App private key is read once, at boot.** Rotating one needs an
+  instance replacement (`cdk deploy`, or terminate the instance and let the ASG
+  replace it). This is rarely a problem in practice: an App private key does not
+  expire, which is much of why an App is worth having. The hourly installation
+  tokens minted from it refresh themselves and need nothing here.
+- **A plain env var is never re-read.** If you set `CANOPYCMS_GITHUB_TOKEN` or
+  `CLERK_SECRET_KEY` directly instead of pointing at an ARN, the value is
+  whatever the instance booted with. Re-reading an ARN you deliberately
+  overrode would swap your override back out, so the worker leaves it alone.
+
 ## Content Publishing Flow
 
 1. Editor creates/edits content in the CMS at `cms.docs.example.org/edit`
