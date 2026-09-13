@@ -18,8 +18,10 @@ import {
   appSlug,
   creationForm,
   handOffKey,
+  handOffWithRetry,
   manifestPostUrl,
   askLine,
+  parseKeyRetryAnswer,
   pressEnter,
   readbackVerdict,
   resetStdinStateForTesting,
@@ -521,6 +523,171 @@ describe('prompting after stdin has ended', () => {
     const answer = askLine('type something')
     stream.write('  /tmp/somewhere.pem  \n')
     expect(await answer).toBe('/tmp/somewhere.pem')
+  })
+})
+
+describe('parseKeyRetryAnswer', () => {
+  // Table test: every rule, in the order the function applies them.
+  it.each<[string | null, string]>([
+    [null, 'give-up'],
+    ['', 'reprompt'],
+    ['   ', 'reprompt'],
+    ['give up', 'give-up'],
+    ['GIVE   up', 'give-up'],
+    ['  give up  ', 'give-up'],
+    ['|', 'reprompt'],
+    ['| pbcopy', 'command'],
+    ['pbcopy', 'reprompt'],
+    ['wl-copy', 'reprompt'],
+    ['./key.pem', 'file'],
+    ['dir\\key.pem', 'file'],
+    ['aws secretsmanager create-secret --secret-string file:///dev/stdin', 'command'],
+  ])('routes %j to %s', (answer, expectedKind) => {
+    expect(parseKeyRetryAnswer(answer).kind).toBe(expectedKind)
+  })
+
+  it('never gives up on a blank line, even though that used to be the rule', () => {
+    // THE DEFECT: nothing reads stdin until a readline interface exists, so a
+    // stray Enter pressed during the earlier wait sits buffered and is read as
+    // the FIRST answer to this prompt. Treating blank as "give up" discarded
+    // the only copy of the key without the operator ever seeing the question.
+    expect(parseKeyRetryAnswer('')).toEqual({ kind: 'reprompt', reason: 'nothing was entered' })
+    expect(parseKeyRetryAnswer('   ')).toEqual({
+      kind: 'reprompt',
+      reason: 'nothing was entered',
+    })
+  })
+
+  it('only a closed stdin (null) gives up implicitly', () => {
+    expect(parseKeyRetryAnswer(null)).toEqual({ kind: 'give-up' })
+  })
+
+  it('treats "give up" as case-insensitive with normalised whitespace', () => {
+    expect(parseKeyRetryAnswer('give up')).toEqual({ kind: 'give-up' })
+    expect(parseKeyRetryAnswer('GIVE   up')).toEqual({ kind: 'give-up' })
+    expect(parseKeyRetryAnswer('  Give Up  ')).toEqual({ kind: 'give-up' })
+  })
+
+  it('routes a leading `|` to a command, even for a single word', () => {
+    expect(parseKeyRetryAnswer('| pbcopy')).toEqual({ kind: 'command', argv: ['pbcopy'] })
+  })
+
+  it('reprompts when nothing follows a lone `|`', () => {
+    const result = parseKeyRetryAnswer('|')
+    expect(result.kind).toBe('reprompt')
+  })
+
+  it('reprompts a one-word answer with no path separator, and writes nothing', () => {
+    // THE DEFECT: a bare word used to be routed to `{ kind: 'file' }`, which
+    // wrote the PEM to that name in process.cwd() — normally the repo root.
+    const result = parseKeyRetryAnswer('pbcopy')
+    expect(result).toEqual({
+      kind: 'reprompt',
+      reason:
+        '"pbcopy" could be a file or a command. Enter ./pbcopy to write a file here, ' +
+        'or | pbcopy to pipe the key into it.',
+    })
+  })
+
+  it('routes a single word containing a path separator to a file', () => {
+    expect(parseKeyRetryAnswer('./key.pem')).toEqual({ kind: 'file', filePath: './key.pem' })
+    expect(parseKeyRetryAnswer('dir\\key.pem')).toEqual({
+      kind: 'file',
+      filePath: 'dir\\key.pem',
+    })
+  })
+
+  it('routes two or more tokens to a command, split on whitespace with no shell', () => {
+    expect(
+      parseKeyRetryAnswer('aws secretsmanager create-secret --secret-string file:///dev/stdin'),
+    ).toEqual({
+      kind: 'command',
+      argv: ['aws', 'secretsmanager', 'create-secret', '--secret-string', 'file:///dev/stdin'],
+    })
+  })
+})
+
+describe('handOffWithRetry', () => {
+  const PEM = '-----BEGIN RSA PRIVATE KEY-----\nnot-a-real-key\n-----END RSA PRIVATE KEY-----\n'
+  const realStdin = Object.getOwnPropertyDescriptor(process, 'stdin')
+  const realCwd = process.cwd()
+  let consoleSpy: MockConsole
+
+  beforeEach(() => {
+    consoleSpy = mockConsole()
+  })
+
+  afterEach(() => {
+    consoleSpy.restore()
+    if (realStdin) Object.defineProperty(process, 'stdin', realStdin)
+    resetStdinStateForTesting()
+    process.chdir(realCwd)
+  })
+
+  /** A live stdin the test can `.write()` lines into. */
+  function liveStdin(): PassThrough {
+    const stream = new PassThrough()
+    Object.defineProperty(process, 'stdin', { value: stream, configurable: true })
+    return stream
+  }
+
+  it('recovers from a stray blank Enter instead of giving up, and stores the key', async () => {
+    // Reproduces the reported failure: the FIRST hand-off fails, the operator's
+    // first answer is a blank line (the stray Enter, buffered before this
+    // prompt existed), and only the SECOND answer is a real path. Before the
+    // fix, the blank line alone was read as "give up" and the key was gone.
+    const dir = await mkdtemp(join(tmpdir(), 'canopy-retry-'))
+    const badDestination = { kind: 'file' as const, filePath: join(dir, 'missing', 'key.pem') }
+    const goodPath = join(dir, 'key.pem')
+
+    const stdin = liveStdin()
+    const resultPromise = handOffWithRetry(PEM, badDestination)
+    // Let the first (failing) attempt run and the prompt print before answering.
+    await new Promise((resolve) => setImmediate(resolve))
+    stdin.write('\n')
+    await new Promise((resolve) => setImmediate(resolve))
+    stdin.write(`${goodPath}\n`)
+
+    const stored = await resultPromise
+    expect(stored).toBe(true)
+    expect(await readFile(goodPath, 'utf8')).toBe(PEM)
+  })
+
+  it('re-prompts on a one-word answer and never writes a file for it', async () => {
+    // THE OTHER DEFECT: a one-word answer like `pbcopy` used to be written to
+    // that name in process.cwd() — normally the repository root. Chdir into a
+    // throwaway directory so a regression would leave file evidence right here
+    // rather than in the real repo.
+    const dir = await mkdtemp(join(tmpdir(), 'canopy-retry-cwd-'))
+    process.chdir(dir)
+    const badDestination = { kind: 'file' as const, filePath: join(dir, 'missing', 'key.pem') }
+    const goodPath = join(dir, 'key.pem')
+
+    const stdin = liveStdin()
+    const resultPromise = handOffWithRetry(PEM, badDestination)
+    await new Promise((resolve) => setImmediate(resolve))
+    stdin.write('pbcopy\n')
+    await new Promise((resolve) => setImmediate(resolve))
+    // No file named `pbcopy` must exist in the cwd after that ambiguous answer.
+    await expect(readFile(join(dir, 'pbcopy'), 'utf8')).rejects.toThrow()
+    stdin.write(`${goodPath}\n`)
+
+    const stored = await resultPromise
+    expect(stored).toBe(true)
+    await expect(readFile(join(dir, 'pbcopy'), 'utf8')).rejects.toThrow()
+    expect(await readFile(goodPath, 'utf8')).toBe(PEM)
+  })
+
+  it('still gives up when the operator types "give up"', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'canopy-retry-giveup-'))
+    const badDestination = { kind: 'file' as const, filePath: join(dir, 'missing', 'key.pem') }
+
+    const stdin = liveStdin()
+    const resultPromise = handOffWithRetry(PEM, badDestination)
+    await new Promise((resolve) => setImmediate(resolve))
+    stdin.write('give up\n')
+
+    expect(await resultPromise).toBe(false)
   })
 })
 

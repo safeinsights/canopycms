@@ -938,6 +938,90 @@ export function resetStdinStateForTesting(): void {
 }
 
 /**
+ * What to do with one answer to the retry prompt: send the key to a
+ * destination, ask again, or stop asking.
+ *
+ * `reprompt` carries WHY, so `handOffWithRetry` can tell the operator what was
+ * wrong with what they typed instead of silently asking again.
+ */
+export type KeyRetryChoice =
+  | { kind: 'give-up' }
+  | { kind: 'reprompt'; reason: string }
+  | KeyDestination
+
+/**
+ * Route one line of operator input at the retry prompt. Exported and pure so
+ * every rule below is a table test rather than something only reachable by
+ * driving a live prompt end to end.
+ *
+ * ORDER MATTERS, and two of these rules exist because of a measured failure:
+ *
+ * - `null` (stdin has already ended — see `stdinEnded` above) gives up: there
+ *   is nobody left who could answer.
+ * - A blank or whitespace-only line MUST NOT give up. Nothing reads stdin
+ *   until a readline interface exists, so an Enter pressed during the long
+ *   wait for GitHub's redirect — or while the FIRST destination's command was
+ *   running — sits in the terminal's line buffer. When that first hand-off
+ *   then fails, `askLine` reads the buffered blank line immediately, before
+ *   the operator has even seen this prompt. Treating that as "give up"
+ *   discarded the only copy of the key without anyone actually answering.
+ *   Re-prompting instead costs nothing when the blank line really was
+ *   intentional, because the very next prompt still offers "give up" as
+ *   something the operator has to type.
+ * - The words "give up", case-insensitively and with whitespace normalised, is
+ *   the one deliberate way to give up once stdin is live.
+ * - A leading `|` is unambiguous operator intent to run a command, even for a
+ *   single word: `| pbcopy` cannot be mistaken for a path.
+ * - A single token containing `/` or `\` is a path — `./key.pem`,
+ *   `dir\key.pem`.
+ * - A single token with NO path separator — `pbcopy`, `wl-copy`, any script on
+ *   PATH — used to be routed to `{ kind: 'file' }` by a "one word is a path"
+ *   rule. That let `writeFile('pbcopy', pem, { flag: 'wx' })` succeed in
+ *   `process.cwd()` — normally the git repository root — leaving a
+ *   `contents: write` private key sitting untracked on disk, while the
+ *   operator read "written to pbcopy (mode 0600)" and believed it had been
+ *   piped into the command they meant. This is re-prompted instead, naming the
+ *   ambiguity and both escape hatches (a leading `./` for a file, a leading
+ *   `|` for a command).
+ * - Two or more whitespace-separated tokens is a command. Split on whitespace
+ *   rather than through a shell: there is no shell here, so nothing to inject
+ *   into.
+ */
+export function parseKeyRetryAnswer(answer: string | null): KeyRetryChoice {
+  if (answer === null) return { kind: 'give-up' }
+
+  const trimmed = answer.trim()
+  if (trimmed === '') return { kind: 'reprompt', reason: 'nothing was entered' }
+
+  if (trimmed.toLowerCase().replace(/\s+/g, ' ') === 'give up') {
+    return { kind: 'give-up' }
+  }
+
+  if (trimmed.startsWith('|')) {
+    const words = trimmed.slice(1).trim().split(/\s+/).filter(Boolean)
+    return words.length === 0
+      ? { kind: 'reprompt', reason: 'nothing followed the `|`' }
+      : { kind: 'command', argv: words }
+  }
+
+  const words = trimmed.split(/\s+/).filter(Boolean)
+  if (words.length === 1) {
+    const token = words[0]
+    if (token.includes('/') || token.includes('\\')) {
+      return { kind: 'file', filePath: token }
+    }
+    return {
+      kind: 'reprompt',
+      reason:
+        `"${token}" could be a file or a command. Enter ./${token} to write a file here, ` +
+        `or | ${token} to pipe the key into it.`,
+    }
+  }
+
+  return { kind: 'command', argv: words }
+}
+
+/**
  * Hand the key over, and keep asking while the operator still has a chance.
  *
  * The pre-flight can only refuse a MISSING destination — it cannot know whether
@@ -949,10 +1033,12 @@ export function resetStdinStateForTesting(): void {
  *
  * So a failure asks for somewhere else instead, while the key is still in
  * memory. `create` already requires a TTY, so there is someone there to answer.
- * A blank line (or a closed stdin) gives up deliberately and says what that
- * costs.
+ * Only a closed stdin (nobody left to answer) or the operator typing "give up"
+ * ends the loop without a destination — a blank line re-prompts instead, since
+ * that is exactly what a stray Enter pressed before this prompt existed leaves
+ * buffered. See `parseKeyRetryAnswer` for the exact routing rules.
  */
-async function handOffWithRetry(pem: string, destination: KeyDestination): Promise<boolean> {
+export async function handOffWithRetry(pem: string, destination: KeyDestination): Promise<boolean> {
   let attempt = destination
   for (;;) {
     const result = await handOffKey(pem, attempt)
@@ -966,31 +1052,29 @@ async function handOffWithRetry(pem: string, destination: KeyDestination): Promi
         '  The App exists and this process holds the only copy of its key, which is gone when\n' +
         '  this command exits. You can send it somewhere else right now.',
     )
-    const answer = await askLine(
-      '\n  Enter a path to write it to (mode 0600), or a command to pipe it into\n' +
-        '  (e.g. `aws secretsmanager create-secret --name canopycms/github-app-key\n' +
-        '  --secret-string file:///dev/stdin`). Leave blank to give up:',
-    )
-    if (!answer) {
-      console.error(
-        '\n  Giving up on storing the key. The App still exists — generate a fresh private key\n' +
-          '  from its "Private keys" section, or delete the App and run `create` again.',
+
+    for (;;) {
+      const answer = await askLine(
+        '\n  Enter a path to write it to (mode 0600, e.g. `./canopycms-app-key.pem`), or a\n' +
+          '  command to pipe it into — `| command` for a single word, or a command with its\n' +
+          '  arguments (e.g. `aws secretsmanager create-secret --name canopycms/github-app-key\n' +
+          '  --secret-string file:///dev/stdin`). Type "give up" to discard the key.',
       )
-      return false
+      const choice = parseKeyRetryAnswer(answer)
+      if (choice.kind === 'reprompt') {
+        console.error(`\n  ${choice.reason}`)
+        continue
+      }
+      if (choice.kind === 'give-up') {
+        console.error(
+          '\n  Giving up on storing the key. The App still exists — generate a fresh private key\n' +
+            '  from its "Private keys" section, or delete the App and run `create` again.',
+        )
+        return false
+      }
+      attempt = choice
+      break
     }
-    // ONE word is a path; anything with arguments is a command. Split on
-    // whitespace rather than through a shell: there is no shell here, so
-    // nothing to inject into.
-    //
-    // An earlier version also routed a single word CONTAINING `=` to the
-    // command branch, which only ever misrouted legitimate paths — a directory
-    // named `stage=dev` was unreachable — because `VAR=x cmd`, the case it was
-    // reaching for, is two words and already handled. The residual ambiguity is
-    // a one-word command name, or a path containing spaces; both fail with
-    // ENOENT and come straight back here, which is loud rather than silent.
-    const words = answer.split(/\s+/).filter(Boolean)
-    attempt =
-      words.length === 1 ? { kind: 'file', filePath: words[0] } : { kind: 'command', argv: words }
   }
 }
 
