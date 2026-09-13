@@ -78,8 +78,8 @@ describe('resolveWorkerGitHubAuth', () => {
       // including everyone on a personal access token, which is most of them.
       // `pnpm lint:bundle` guards the CLIENT boundary only and would not
       // notice. The App-side dependency belongs to canopycms-cdk
-      // (package.json devDependencies), whose worker entrypoint is wired to
-      // construct and inject the strategy in the PR that follows this one.
+      // (package.json devDependencies), whose worker constructs and injects the
+      // strategy -- see packages/canopycms-cdk/worker/github-app-auth.ts.
       const manifest = JSON.parse(
         await readFile(new URL('../../package.json', import.meta.url), 'utf-8'),
       ) as { dependencies?: Record<string, string>; peerDependencies?: Record<string, string> }

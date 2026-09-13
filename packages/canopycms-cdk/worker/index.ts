@@ -29,6 +29,7 @@ import { getErrorMessage } from 'canopycms/utils/error'
 import path from 'node:path'
 
 import { getSecret } from './secrets'
+import { buildGitHubAppAuth } from './github-app-auth'
 
 async function main() {
   // FIRST, before anything that could log. The imports above only cover code
@@ -64,8 +65,65 @@ async function main() {
       jsonFieldEnvVar: 'CANOPYCMS_GITHUB_TOKEN_SECRET_JSON_FIELD',
     })
   }
-  if (!githubToken)
-    throw new Error('CANOPYCMS_GITHUB_TOKEN or CANOPYCMS_GITHUB_TOKEN_SECRET_ARN is required')
+  // GitHub App authentication, if this deployment uses it instead of a token.
+  //
+  // Read as a group and checked all-or-nothing here as well as at synth
+  // (assertGitHubAuthProps in src/constructs/cms-service.ts): the construct is
+  // the normal way these arrive, but not the only one -- an adopter can set the
+  // instance's environment directly, and half a credential fails at the first
+  // push otherwise, hours after boot.
+  //
+  // Nothing here touches the token path above. Both are passed to CmsWorker
+  // when both are configured, and core's resolveWorkerGitHubAuth refuses that
+  // pair by name -- deliberately, rather than picking a winner here, because a
+  // silent precedence would leave it undefined which identity the worker's
+  // pushes and pull requests act as.
+  const githubAppId = process.env.CANOPYCMS_GITHUB_APP_ID
+  const githubAppInstallationId = process.env.CANOPYCMS_GITHUB_APP_INSTALLATION_ID
+  const githubAppPrivateKeySecretArn = process.env.CANOPYCMS_GITHUB_APP_PRIVATE_KEY_SECRET_ARN
+  const githubAppVars: Array<[string, string | undefined]> = [
+    ['CANOPYCMS_GITHUB_APP_ID', githubAppId],
+    ['CANOPYCMS_GITHUB_APP_INSTALLATION_ID', githubAppInstallationId],
+    ['CANOPYCMS_GITHUB_APP_PRIVATE_KEY_SECRET_ARN', githubAppPrivateKeySecretArn],
+  ]
+  const githubAppMissing = githubAppVars.filter(([, value]) => !value).map(([name]) => name)
+  if (githubAppMissing.length > 0 && githubAppMissing.length < githubAppVars.length) {
+    throw new Error(
+      `GitHub App authentication needs all of ${githubAppVars.map(([name]) => name).join(', ')}, ` +
+        `but ${githubAppMissing.join(' and ')} ` +
+        `${githubAppMissing.length === 1 ? 'is' : 'are'} not set. An installation token is minted ` +
+        `from all three together, so a partial set cannot authenticate at all.`,
+    )
+  }
+
+  const githubAppAuth =
+    githubAppId && githubAppInstallationId && githubAppPrivateKeySecretArn
+      ? buildGitHubAppAuth({
+          appId: githubAppId,
+          installationId: githubAppInstallationId,
+          // An App private key is the credential most likely to live inside a
+          // JSON document rather than alone in a secret -- which is why the
+          // JSON-field option exists at all. Same `|| undefined` as the other
+          // two `getSecret` call sites in this file (the GitHub token above and
+          // the Clerk key below), and for the same reason: a blank var means
+          // "not configured", not "read the field named ''".
+          privateKey: await getSecret(githubAppPrivateKeySecretArn, {
+            jsonField: process.env.CANOPYCMS_GITHUB_APP_PRIVATE_KEY_SECRET_JSON_FIELD || undefined,
+            jsonFieldEnvVar: 'CANOPYCMS_GITHUB_APP_PRIVATE_KEY_SECRET_JSON_FIELD',
+          }),
+        })
+      : undefined
+
+  // `!githubAppAuth` as well: an App-authenticated worker has no token and must
+  // not be told one is required. With neither configured this still reports the
+  // token first, because the token is the default path and the one nearly every
+  // deployment uses.
+  if (!githubToken && !githubAppAuth)
+    throw new Error(
+      'CANOPYCMS_GITHUB_TOKEN or CANOPYCMS_GITHUB_TOKEN_SECRET_ARN is required ' +
+        '(or the CANOPYCMS_GITHUB_APP_ID / _INSTALLATION_ID / _PRIVATE_KEY_SECRET_ARN trio, ' +
+        'to authenticate as a GitHub App installation instead)',
+    )
 
   let clerkSecretKey = process.env.CLERK_SECRET_KEY
   if (!clerkSecretKey && process.env.CLERK_SECRET_KEY_SECRET_ARN) {
@@ -99,6 +157,7 @@ async function main() {
     githubOwner,
     githubRepo,
     githubToken,
+    githubAppAuth,
     refreshAuthCache,
     baseBranch: process.env.CANOPYCMS_BASE_BRANCH ?? 'main',
     // deploymentName is deliberately NOT passed: CmsWorker resolves it through

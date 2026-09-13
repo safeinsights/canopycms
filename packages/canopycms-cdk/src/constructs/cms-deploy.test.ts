@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { CfnElement, Duration, Stack } from 'aws-cdk-lib'
+import { CfnElement, Duration, Fn, Stack, Token } from 'aws-cdk-lib'
 import { Template, Match } from 'aws-cdk-lib/assertions'
 import { RetentionDays } from 'aws-cdk-lib/aws-logs'
 import {
@@ -117,6 +117,25 @@ function workerUserDataBlobs(template: Template): string {
     JSON.stringify(template.findResources('AWS::AutoScaling::LaunchConfiguration')) +
     JSON.stringify(template.findResources('AWS::EC2::LaunchTemplate'))
   )
+}
+
+/**
+ * A complete, valid GitHub App configuration.
+ *
+ * Module-level because three separate describes below need the same one, and
+ * because an App configuration is only ever valid as a SET -- the construct
+ * refuses two of the three. Keeping the trio in one constant means a test that
+ * wants App auth cannot accidentally half-configure it and end up asserting
+ * against the all-or-nothing guard instead of the thing it meant to test.
+ *
+ * The IDs are strings, not numbers, and deliberately so: they reach the worker
+ * through its `.env`, where everything is a string.
+ */
+const APP_KEY_ARN = 'arn:aws:secretsmanager:us-east-1:123456789012:secret:app-key-AbCdEf'
+const APP_PROPS: Partial<CanopyCmsServiceProps> = {
+  githubAppId: '123456',
+  githubAppInstallationId: '78901234',
+  githubAppPrivateKeySecretArn: APP_KEY_ARN,
 }
 
 describe('CanopyCmsService deploy blockers', () => {
@@ -1357,6 +1376,37 @@ describe('CanopyCmsService: secret ARN props feed the IAM policy', () => {
     expect(secretResources(template)).toEqual(expect.arrayContaining([other, GITHUB_ARN]))
   })
 
+  it('grants the GitHub App private-key ARN', () => {
+    // The App private key is read by the same getSecret call path, from the
+    // same instance profile, as the token it replaces -- so leaving it out of
+    // the union reproduces the AccessDenied restart-loop above exactly, on the
+    // credential path an adopter reaches for BECAUSE the token was not good
+    // enough. No githubTokenSecretArn here: the two are mutually exclusive.
+    const template = synthUncached(false, {
+      ...APP_PROPS,
+      clerkSecretKeySecretArn: CLERK_ARN,
+    })
+    expect(secretResources(template)).toEqual(expect.arrayContaining([APP_KEY_ARN, CLERK_ARN]))
+  })
+
+  it('grants the App private-key ARN exactly once when it is passed in secretsArns too', () => {
+    // What this can and cannot catch, stated because the obvious reading is
+    // wrong: `PolicyStatement` collapses a repeated `resources` entry by itself
+    // (measured against aws-cdk-lib 2.265 -- deleting the construct's own
+    // `new Set` leaves every assertion in this file green), so this does NOT
+    // pin that dedupe. `secretResources` reads across ALL statements, so what
+    // it does pin is that the ARN is granted by ONE statement rather than
+    // picking up a second grant from a separate `addToPolicy` call -- the
+    // realistic regression, since the union above is assembled from two prop
+    // families that were once granted separately.
+    const template = synthUncached(false, {
+      ...APP_PROPS,
+      secretsArns: [APP_KEY_ARN],
+    })
+    const occurrences = secretResources(template).filter((r) => r === APP_KEY_ARN)
+    expect(occurrences).toHaveLength(1)
+  })
+
   it('a JSON-field prop leaves the policy byte-identical -- a field is not a grantable resource', () => {
     // GetSecretValue returns the WHOLE secret value and the worker picks the
     // field out of it in getSecret, so the grant that already exists for the
@@ -1606,6 +1656,283 @@ describe('CanopyCmsService: secret JSON-field props -> worker .env', () => {
 })
 
 /**
+ * The `githubApp*` props -> the worker's `.env` (adopter request #45).
+ *
+ * That `.env` is the only way the worker entrypoint can be told to authenticate
+ * as a GitHub App at all: user-data rewrites /opt/canopy-worker/.env on every
+ * instance launch and `cdk deploy` rolls the ASG, so a hand-edited value does
+ * not survive. `worker/index.ts` reads exactly these four names.
+ */
+describe('CanopyCmsService: githubApp* props -> worker .env', () => {
+  const GITHUB_ARN = 'arn:aws:secretsmanager:us-east-1:123456789012:secret:gh-AbCdEf'
+  // Not the name of any env var stamped into the same .env -- an
+  // implementation that wrote a variable's own NAME as its value would
+  // otherwise pass.
+  const APP_KEY_FIELD = 'appKeyFieldProbe'
+
+  it('stamps all three App vars when the props are set', () => {
+    const all = workerUserDataBlobs(synthUncached(false, APP_PROPS))
+    expect(all).toContain('CANOPYCMS_GITHUB_APP_ID=123456')
+    expect(all).toContain('CANOPYCMS_GITHUB_APP_INSTALLATION_ID=78901234')
+    expect(all).toContain(`CANOPYCMS_GITHUB_APP_PRIVATE_KEY_SECRET_ARN=${APP_KEY_ARN}`)
+  })
+
+  it('stamps none of them on a token-authenticated deployment', () => {
+    const all = workerUserDataBlobs(synthUncached(false, { githubTokenSecretArn: GITHUB_ARN }))
+    // Positive anchor FIRST: every assertion below is an absence, and all four
+    // pass just as happily against a blob that lost its .env entirely or whose
+    // resource type was renamed.
+    expect(all).toContain(`CANOPYCMS_GITHUB_TOKEN_SECRET_ARN=${GITHUB_ARN}`)
+    expect(all).not.toContain('CANOPYCMS_GITHUB_APP_ID')
+    expect(all).not.toContain('CANOPYCMS_GITHUB_APP_INSTALLATION_ID')
+    expect(all).not.toContain('CANOPYCMS_GITHUB_APP_PRIVATE_KEY_SECRET_ARN')
+    expect(all).not.toContain('CANOPYCMS_GITHUB_APP_PRIVATE_KEY_SECRET_JSON_FIELD')
+  })
+
+  it('stamps the App private key JSON field when that prop is set', () => {
+    const all = workerUserDataBlobs(
+      synthUncached(false, { ...APP_PROPS, githubAppPrivateKeySecretJsonField: APP_KEY_FIELD }),
+    )
+    expect(all).toContain(`CANOPYCMS_GITHUB_APP_PRIVATE_KEY_SECRET_JSON_FIELD=${APP_KEY_FIELD}`)
+  })
+
+  it('omits the JSON-field var when only the App trio is set', () => {
+    const all = workerUserDataBlobs(synthUncached(false, APP_PROPS))
+    // An absent var and an empty one are not the same to getSecret: it takes
+    // the whole-value path only when the var is unset, so stamping an empty one
+    // would send a PEM-bearing secret down the JSON-field path with the field
+    // name ''.
+    expect(all).toContain(`CANOPYCMS_GITHUB_APP_PRIVATE_KEY_SECRET_ARN=${APP_KEY_ARN}`)
+    expect(all).not.toContain('CANOPYCMS_GITHUB_APP_PRIVATE_KEY_SECRET_JSON_FIELD')
+  })
+
+  it('does not stamp a GitHub token var on an App-authenticated deployment', () => {
+    const all = workerUserDataBlobs(synthUncached(false, APP_PROPS))
+    expect(all).toContain('CANOPYCMS_GITHUB_APP_ID=123456')
+    expect(all).not.toContain('CANOPYCMS_GITHUB_TOKEN_SECRET_ARN')
+  })
+
+  describe('the three App props are all-or-nothing at synth', () => {
+    // Two of three is not a partial configuration that could still work: an
+    // installation token is minted from all three together. Refused at synth
+    // rather than at boot, where systemd's Restart=always turns it into a
+    // 5-second restart loop that `cdk deploy` reports as success.
+    const NAMES = [
+      'githubAppId',
+      'githubAppInstallationId',
+      'githubAppPrivateKeySecretArn',
+    ] as const
+
+    for (const only of NAMES) {
+      it(`${only} alone throws, naming the two that are missing`, () => {
+        const missing = NAMES.filter((n) => n !== only)
+        expect(() => synthUncached(false, { [only]: APP_PROPS[only] })).toThrow(
+          // A substring match, not a RegExp built from a non-literal (the names
+          // come from the fixed tuple above, but a dynamic RegExp still trips
+          // eslint-plugin-security's detect-non-literal-regexp).
+          `${missing[0]} and ${missing[1]} are not set`,
+        )
+      })
+    }
+
+    for (const omitted of NAMES) {
+      it(`the other two without ${omitted} throw, naming it`, () => {
+        const partial: Partial<CanopyCmsServiceProps> = { ...APP_PROPS }
+        delete partial[omitted]
+        expect(() => synthUncached(false, partial)).toThrow(`${omitted} is not set`)
+      })
+    }
+
+    it('all three together synthesize', () => {
+      expect(() => synthUncached(false, APP_PROPS)).not.toThrow()
+    })
+  })
+
+  describe('an App and a static token together are refused at synth', () => {
+    // EXACTLY one, which is the rule core enforces too
+    // (resolveWorkerGitHubAuth, packages/canopycms/src/worker/github-auth.ts):
+    // neither is an error AND both is an error. Both is rejected rather than
+    // resolved by precedence, because it would otherwise be undefined which
+    // identity a push or a pull request acts as -- and a PR opened by the wrong
+    // identity is not something an adopter notices quickly.
+    it('throws', () => {
+      expect(() =>
+        synthUncached(false, { ...APP_PROPS, githubTokenSecretArn: GITHUB_ARN }),
+      ).toThrow(/configure either the githubToken\* props or the githubApp\* props, not both/)
+    })
+
+    it('says which one to drop, rather than only refusing', () => {
+      expect(() =>
+        synthUncached(false, { ...APP_PROPS, githubTokenSecretArn: GITHUB_ARN }),
+      ).toThrow(/drop githubTokenSecretArn/)
+    })
+
+    it('the token alone still synthesizes -- it is the default path, not deprecated', () => {
+      expect(() => synthUncached(false, { githubTokenSecretArn: GITHUB_ARN })).not.toThrow()
+    })
+
+    it('neither is NOT a synth error', () => {
+      // The worker can also be handed CANOPYCMS_GITHUB_TOKEN directly, outside
+      // this construct, and core refuses the genuinely empty case at boot
+      // naming both options. Pinned because an earlier statement of this rule
+      // said "configuring neither is the only error", which is the opposite of
+      // what ships: exactly one, so neither AND both are errors.
+      expect(() => synthUncached(false, {})).not.toThrow()
+    })
+  })
+
+  describe('the App identifiers must be numeric', () => {
+    // The two wrong values are on the same settings page as the right one: the
+    // app's slug, and its 'Iv1.…' OAuth client id. They fail DIFFERENTLY at
+    // boot and both are worse than failing here -- `createAppAuth` names a bad
+    // appId, but checks installationId only for falsiness, so a non-numeric one
+    // is interpolated into /app/installations/NaN/access_tokens and returns a
+    // 404 that reads as "the app is not installed".
+    for (const bad of ['my-app-slug', 'Iv1.a1b2c3d4e5f6', '12345 ', '12.5']) {
+      it(`rejects githubAppId=${JSON.stringify(bad)}`, () => {
+        expect(() => synthUncached(false, { ...APP_PROPS, githubAppId: bad })).toThrow(
+          /githubAppId must be the numeric id/,
+        )
+      })
+    }
+
+    it('rejects a non-numeric githubAppInstallationId', () => {
+      expect(() =>
+        synthUncached(false, { ...APP_PROPS, githubAppInstallationId: 'my-org' }),
+      ).toThrow(/githubAppInstallationId must be the numeric id/)
+    })
+
+    it('names both the slug and the client id, which are what adopters reach for', () => {
+      expect(() => synthUncached(false, { ...APP_PROPS, githubAppId: 'my-app-slug' })).toThrow(
+        /slug and its 'Iv1/,
+      )
+    })
+
+    it('accepts ordinary numeric ids -- negative control', () => {
+      // Without this, every assertion above would pass against a guard that
+      // rejected everything.
+      expect(() =>
+        synthUncached(false, { ...APP_PROPS, githubAppId: '1', githubAppInstallationId: '9' }),
+      ).not.toThrow()
+    })
+
+    it('reports an EMPTY id as absent, not as malformed', () => {
+      // `process.env.GITHUB_APP_ID ?? ''` and an Actions `vars.` reference to a
+      // variable nobody created both produce ''. That is an absent id, not a
+      // wrong one, and "must be the numeric id (got \"\")" would send the
+      // adopter to correct a value they never set.
+      expect(() => synthUncached(false, { ...APP_PROPS, githubAppId: '' })).toThrow(
+        /githubAppId is not set/,
+      )
+    })
+
+    it('accepts an unresolved CDK token, which cannot be checked here either way', () => {
+      // `ssm.StringParameter.valueForStringParameter(...)` / `Fn.importValue(...)`
+      // is a legitimate way to supply an id, and refusing it would make that
+      // configuration unrepresentable. githubAppPrivateKeySecretArn already
+      // accepts one, so this keeps the App props consistent.
+      const stack = new Stack(newTestApp(), 'TokenStack', {
+        env: { account: '123456789012', region: 'us-east-1' },
+      })
+      const tokenId = Fn.importValue('CanopyGitHubAppId')
+      expect(Token.isUnresolved(tokenId)).toBe(true)
+      expect(
+        () =>
+          new CanopyCmsService(stack, 'Cms', {
+            cmsDockerImage: lambda.DockerImageCode.fromEcr(
+              ecr.Repository.fromRepositoryName(stack, 'Repo', 'cms'),
+            ),
+            githubOwner: 'acme',
+            githubRepo: 'site',
+            ...APP_PROPS,
+            githubAppId: tokenId,
+          }),
+      ).not.toThrow()
+    })
+
+    it('the numeric check runs BEFORE the all-or-nothing one', () => {
+      // A partial set carrying a bad id. Ordering is unpinned otherwise --
+      // measured: moving both assertNumericId calls after the two throws left
+      // every other test in this file green.
+      expect(() => synthUncached(false, { githubAppId: 'my-app-slug' })).toThrow(
+        /githubAppId must be the numeric id/,
+      )
+    })
+  })
+
+  describe('which credential is decided before whether each is well formed', () => {
+    it('an App alongside a leftover token JSON field names the real problem', () => {
+      // The exact state docs/adopter-migration.md step 2 leads to when an
+      // adopter removes githubTokenSecretArn and overlooks its JSON field.
+      // Reversed, assertSecretPropPair answers first with "Set
+      // githubTokenSecretArn, or drop githubTokenSecretJsonField" -- pointing
+      // back at the credential they were just told to delete, and at a
+      // configuration the exclusivity rule would refuse anyway.
+      expect(() =>
+        synthUncached(false, {
+          ...APP_PROPS,
+          githubTokenSecretJsonField: 'CANOPYCMS_GITHUB_TOKEN',
+        }),
+      ).toThrow(/configure either the githubToken\* props or the githubApp\* props, not both/)
+    })
+
+    it('names the leftover prop specifically, so the fix is unambiguous', () => {
+      expect(() =>
+        synthUncached(false, {
+          ...APP_PROPS,
+          githubTokenSecretJsonField: 'CANOPYCMS_GITHUB_TOKEN',
+        }),
+      ).toThrow(/drop githubTokenSecretJsonField when you adopt it/)
+    })
+
+    it('still reports a stranded token JSON field when no App is configured', () => {
+      // The reorder must not cost the token-only path its own diagnosis;
+      // assertGitHubAuthProps is silent when no App prop is set.
+      expect(() =>
+        synthUncached(false, { githubTokenSecretJsonField: 'CANOPYCMS_GITHUB_TOKEN' }),
+      ).toThrow(/githubTokenSecretJsonField is set but githubTokenSecretArn is not/)
+    })
+  })
+
+  describe('a PEM passed where an ARN or an identifier belongs is named at synth', () => {
+    // There is deliberately no plaintext private-key prop: the value would go
+    // into the worker's .env, which systemd reads as EnvironmentFile where a
+    // newline begins a new variable. So the realistic mistake is pasting the
+    // key into the prop whose name contains "PrivateKey". Without this guard
+    // that lands on assertEnvSafe's generic rule and reports "must not contain
+    // a newline" about an ARN -- the mechanism, not the mistake.
+    const PEM = '-----BEGIN RSA PRIVATE KEY-----\nMIIEowIB\n-----END RSA PRIVATE KEY-----\n'
+
+    it('githubAppPrivateKeySecretArn', () => {
+      expect(() =>
+        synthUncached(false, { ...APP_PROPS, githubAppPrivateKeySecretArn: PEM }),
+      ).toThrow(/githubAppPrivateKeySecretArn looks like a PEM private key, not a secret ARN/)
+    })
+
+    it('names the ARN-only rule and what to do instead', () => {
+      expect(() =>
+        synthUncached(false, { ...APP_PROPS, githubAppPrivateKeySecretArn: PEM }),
+      ).toThrow(/Store the PEM in Secrets Manager and pass that secret's full ARN/)
+    })
+
+    it('githubAppId, where the same misunderstanding also puts it', () => {
+      expect(() => synthUncached(false, { ...APP_PROPS, githubAppId: PEM })).toThrow(
+        /githubAppId looks like a PEM private key, not an identifier/,
+      )
+    })
+
+    it('beats the generic newline rule to it', () => {
+      // assertEnvSafe would also refuse this value, with a message about .env
+      // line structure that explains nothing about the actual error. The named
+      // guard has to run first, or it may as well not exist.
+      expect(() =>
+        synthUncached(false, { ...APP_PROPS, githubAppPrivateKeySecretArn: PEM }),
+      ).not.toThrow(/must not contain a newline/)
+    })
+  })
+})
+
+/**
  * The scaffold templates and the checked-in example teach the same wiring, and
  * scaffold-synth.test.ts exercises only the templates -- it runs the real CLI,
  * which never reads `examples/`. So the example is exactly the copy that can
@@ -1632,6 +1959,15 @@ describe('secret JSON-field wiring: the scaffold template and the example stay i
         'clerkSecretKeySecretJsonField?: string',
         'githubTokenSecretJsonField: props.githubTokenSecretJsonField,',
         'clerkSecretKeySecretJsonField: props.clerkSecretKeySecretJsonField,',
+        // GitHub App auth (#45). The token prop went optional in the same
+        // change -- an App-authenticated stack has no token to point at, and
+        // the construct refuses both at once -- so the `?` is load-bearing and
+        // pinned with the rest.
+        'githubTokenSecretArn?: string',
+        'githubAppId: props.githubAppId,',
+        'githubAppInstallationId: props.githubAppInstallationId,',
+        'githubAppPrivateKeySecretArn: githubAppPrivateKey?.secretArn,',
+        'githubAppPrivateKeySecretJsonField: props.githubAppPrivateKeySecretJsonField,',
       ],
     ],
     [
@@ -1640,6 +1976,20 @@ describe('secret JSON-field wiring: the scaffold template and the example stay i
       [
         'githubTokenSecretJsonField: process.env.GITHUB_TOKEN_SECRET_JSON_FIELD || undefined,',
         'clerkSecretKeySecretJsonField: process.env.CLERK_SECRET_KEY_SECRET_JSON_FIELD || undefined,',
+        // `|| undefined`, never `required()`: App auth is optional, and a
+        // `required()` here would make every existing token deployment fail at
+        // synth the moment it upgraded.
+        'githubAppInstallationId: process.env.GITHUB_APP_INSTALLATION_ID || undefined,',
+        'githubAppPrivateKeySecretArn: process.env.GITHUB_APP_PRIVATE_KEY_SECRET_ARN || undefined,',
+        // The token ARN stays `required()` on the token path -- an unset one
+        // must still fail loudly at synth -- and is only relaxed when the App
+        // variables are set.
+        "required('GITHUB_TOKEN_SECRET_ARN')",
+        // ANY of the three App variables, not just the app id. Gating on the id
+        // alone answers a two-of-three configuration with "GITHUB_TOKEN_SECRET_ARN
+        // must be set" -- telling the adopter to restore the credential the
+        // migration guide just told them to remove.
+        'githubTokenSecretArn: usingGitHubApp',
       ],
     ],
     [
@@ -1648,6 +1998,13 @@ describe('secret JSON-field wiring: the scaffold template and the example stay i
       [
         'GITHUB_TOKEN_SECRET_JSON_FIELD: ${{ vars.CANOPY_GITHUB_TOKEN_SECRET_JSON_FIELD }}',
         'CLERK_SECRET_KEY_SECRET_JSON_FIELD: ${{ vars.CLERK_SECRET_KEY_SECRET_JSON_FIELD }}',
+        // CANOPY_-prefixed on the GitHub side, unprefixed on the env side.
+        // GitHub refuses to CREATE an Actions secret or variable whose name
+        // starts with GITHUB_, so the prefixed spelling is the only one that
+        // can exist -- and this trap has already bitten twice in this epic.
+        'GITHUB_APP_ID: ${{ vars.CANOPY_GITHUB_APP_ID }}',
+        'GITHUB_APP_INSTALLATION_ID: ${{ vars.CANOPY_GITHUB_APP_INSTALLATION_ID }}',
+        'GITHUB_APP_PRIVATE_KEY_SECRET_ARN: ${{ secrets.CANOPY_GITHUB_APP_PRIVATE_KEY_SECRET_ARN }}',
       ],
     ],
   ]
@@ -1690,6 +2047,40 @@ describe('secret JSON-field wiring: the scaffold template and the example stay i
     for (const [exampleRelative, templatePath] of PAIRS) {
       for (const file of [templatePath, examplePathFor(exampleRelative)]) {
         expect(read(file), file).not.toMatch(ECS_SUFFIX)
+      }
+    }
+  })
+
+  it('neither copy reads a repository secret or variable named GITHUB_*', () => {
+    // GitHub refuses to CREATE an Actions secret OR variable whose name starts
+    // with GITHUB_, so a workflow referencing one reads an empty string forever
+    // and the deploy fails at synth -- or, for an optional value, succeeds with
+    // the feature silently inert, which is worse. This trap has now been hit
+    // twice in this line of work, so it is checked mechanically rather than
+    // remembered: every such value is stored CANOPY_-prefixed and mapped onto
+    // the unprefixed env var the CDK app reads.
+    //
+    // `secrets.GITHUB_TOKEN` is carved out and is the ONE legitimate spelling:
+    // Actions provides it automatically, so it is not a secret anyone created.
+    const USER_CREATED_GITHUB_REF = /\$\{\{\s*(?:secrets|vars)\.GITHUB_(?!TOKEN\s*\}\})/
+
+    // POSITIVE CONTROL first: this assertion is an absence, and an absence
+    // checked with a regex that matches nothing passes because the instrument
+    // is broken. Both kinds, since the variable half is the half people forget.
+    for (const sample of [
+      'GITHUB_APP_ID: ${{ vars.GITHUB_APP_ID }}',
+      'ARN: ${{ secrets.GITHUB_TOKEN_SECRET_ARN }}',
+    ]) {
+      expect(sample).toMatch(USER_CREATED_GITHUB_REF)
+    }
+    // ...and a negative control, so the carve-out is not silently swallowing
+    // everything it was meant to admit alone.
+    expect('token: ${{ secrets.GITHUB_TOKEN }}').not.toMatch(USER_CREATED_GITHUB_REF)
+
+    for (const [exampleRelative, templatePath] of PAIRS) {
+      if (!exampleRelative.endsWith('.yml')) continue
+      for (const file of [templatePath, examplePathFor(exampleRelative)]) {
+        expect(read(file), file).not.toMatch(USER_CREATED_GITHUB_REF)
       }
     }
   })
@@ -2312,6 +2703,20 @@ describe('CanopyCmsService: worker .env values are heredoc-safe', () => {
         clerkSecretKeySecretJsonField: value,
       }),
     ],
+    // Each App prop carries its two siblings, because an incomplete App set is
+    // refused by an EARLIER guard (assertGitHubAuthProps) with a different
+    // message -- these cases are about assertEnvSafe, so they have to reach it.
+    // Same reason the JSON-field entries above carry their ARNs.
+    ['githubAppId', (value) => ({ ...APP_PROPS, githubAppId: value })],
+    ['githubAppInstallationId', (value) => ({ ...APP_PROPS, githubAppInstallationId: value })],
+    [
+      'githubAppPrivateKeySecretArn',
+      (value) => ({ ...APP_PROPS, githubAppPrivateKeySecretArn: value }),
+    ],
+    [
+      'githubAppPrivateKeySecretJsonField',
+      (value) => ({ ...APP_PROPS, githubAppPrivateKeySecretJsonField: value }),
+    ],
   ]
 
   // baseBranch/settingsBranch/deploymentName each have their OWN stricter
@@ -2323,6 +2728,25 @@ describe('CanopyCmsService: worker .env values are heredoc-safe', () => {
   // instead of the generic message.
   const GIT_REF_VALIDATED_FIELDS = new Set(['baseBranch', 'settingsBranch', 'deploymentName'])
 
+  // The two GitHub App identifiers are the same situation one step stricter:
+  // `assertNumericId` allows digits ONLY, so no value that could offend
+  // assertEnvSafe can reach it -- a numeric string has no newline, no quote, no
+  // backslash, no whitespace and no ENVEOF. They stay in the table because
+  // membership is the point: a prop dropped from it is a prop nobody notices
+  // has stopped being guarded, whichever guard does the rejecting.
+  const NUMERIC_ID_FIELDS = new Set(['githubAppId', 'githubAppInstallationId'])
+
+  /**
+   * The numeric guard runs before assertEnvSafe, so for those two fields every
+   * hostile value below is rejected by IT rather than by the rule under test.
+   * Applied per-rule rather than folded into a single helper with
+   * GIT_REF_VALIDATED_FIELDS, because the two sets do not carve out the same
+   * rules: an ENVEOF-bearing branch name passes the git-ref charset and DOES
+   * reach assertEnvSafe, while a numeric id never reaches it at all.
+   */
+  const numericIdOr = (field: string, otherwise: string | RegExp): string | RegExp =>
+    NUMERIC_ID_FIELDS.has(field) ? 'must be the numeric id' : otherwise
+
   for (const [field, build] of fields) {
     it(`rejects a newline in ${field}`, () => {
       expect(() => synth(false, build('acme\nCANOPYCMS_DEPLOYMENT_NAME=hijacked'))).toThrow(
@@ -2330,12 +2754,17 @@ describe('CanopyCmsService: worker .env values are heredoc-safe', () => {
         // constructing a RegExp from a non-literal (field names come from the
         // fixed `fields` array above, but a dynamic RegExp still trips
         // eslint-plugin-security's detect-non-literal-regexp).
-        GIT_REF_VALIDATED_FIELDS.has(field) ? `invalid ${field}` : 'must not contain a newline',
+        numericIdOr(
+          field,
+          GIT_REF_VALIDATED_FIELDS.has(field) ? `invalid ${field}` : 'must not contain a newline',
+        ),
       )
     })
 
     it(`rejects an ENVEOF-bearing ${field}`, () => {
-      expect(() => synth(false, build('acmeENVEOFrm'))).toThrow(/must not contain "ENVEOF"/i)
+      expect(() => synth(false, build('acmeENVEOFrm'))).toThrow(
+        numericIdOr(field, /must not contain "ENVEOF"/i),
+      )
     })
 
     it(`rejects a leading quote in ${field}`, () => {
@@ -2348,7 +2777,10 @@ describe('CanopyCmsService: worker .env values are heredoc-safe', () => {
       // through and assertEnvSafe is what must catch it. deploymentName is the
       // exception: its charset rule rejects the quote first.
       expect(() => synth(false, build('"acme'))).toThrow(
-        field === 'deploymentName' ? `invalid ${field}` : 'must not start with a quote',
+        numericIdOr(
+          field,
+          field === 'deploymentName' ? `invalid ${field}` : 'must not start with a quote',
+        ),
       )
     })
 
@@ -2358,7 +2790,10 @@ describe('CanopyCmsService: worker .env values are heredoc-safe', () => {
       // .env entry that follows. Same class as the leading quote, but it
       // corrupts a neighbouring variable rather than its own.
       expect(() => synth(false, build('acme\\'))).toThrow(
-        GIT_REF_VALIDATED_FIELDS.has(field) ? `invalid ${field}` : 'must not contain a backslash',
+        numericIdOr(
+          field,
+          GIT_REF_VALIDATED_FIELDS.has(field) ? `invalid ${field}` : 'must not contain a backslash',
+        ),
       )
     })
 
@@ -2367,9 +2802,12 @@ describe('CanopyCmsService: worker .env values are heredoc-safe', () => {
       // than the one configured here -- and for a JSON field that means the
       // whole-document fallback, silently.
       expect(() => synth(false, build(' acme'))).toThrow(
-        GIT_REF_VALIDATED_FIELDS.has(field)
-          ? `invalid ${field}`
-          : 'must not start or end with whitespace',
+        numericIdOr(
+          field,
+          GIT_REF_VALIDATED_FIELDS.has(field)
+            ? `invalid ${field}`
+            : 'must not start or end with whitespace',
+        ),
       )
     })
   }

@@ -34,9 +34,10 @@ export interface GitHubAuthConfig {
    * injected here — the same seam `refreshAuthCache` uses, and for the same
    * reason: the package it needs must not enter core's dependency graph.
    *
-   * No entrypoint in this repo supplies it yet — `canopycms-cdk`'s worker is
-   * wired up in the PR that follows this one. `docs/adopter-migration.md`
-   * carries the wiring an adopter driving `CmsWorker` themselves would write.
+   * `canopycms-cdk`'s EC2 worker supplies it from three CDK props — see
+   * `packages/canopycms-cdk/worker/github-app-auth.ts`, which is also the
+   * worked example an adopter driving `CmsWorker` from their own entrypoint
+   * should copy, and `docs/adopter-migration.md` for that case written out.
    *
    * Exactly one of this and `githubToken` must be set: configuring both is an
    * error, and so is configuring neither.

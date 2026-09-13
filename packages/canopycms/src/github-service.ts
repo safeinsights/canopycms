@@ -47,8 +47,9 @@ export const shouldRetrySecondaryRateLimit = (retryAfter: number, retryCount: nu
  *
  * A deployment that does use an App constructs the strategy and passes it
  * through here. That is the seam `packages/canopycms-cdk/worker/index.ts`
- * already uses for `refreshAuthCache`; its App wiring lands in the PR after
- * this one, and `docs/adopter-migration.md` carries the shape meanwhile.
+ * already uses for `refreshAuthCache`, and its App wiring goes through the same
+ * one — see `packages/canopycms-cdk/worker/github-app-auth.ts`, with
+ * `docs/adopter-migration.md` carrying the shape for a hand-written entrypoint.
  */
 export interface OctokitAuthStrategyOptions {
   /**
