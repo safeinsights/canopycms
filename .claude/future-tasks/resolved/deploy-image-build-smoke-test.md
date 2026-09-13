@@ -12,13 +12,15 @@ the workspace from `pnpm pack` tarballs, runs `init` and `init-deploy aws`, and 
 generated `Dockerfile.cms`. Its only edit to that file is the vendored-tarball COPY the file's own
 comment asks for. It then boots the image and checks:
 
-- build-time and request-time content reads on a non-`main` base branch;
-- not-found responses;
+- build-time and request-time content reads on a non-`main` base branch, told apart by giving the
+  page one title in the working tree and another in its `release-base` commit;
+- not-found responses, including which of those two reads the root layout rendered;
 - an upload, its finalize, and a transform;
 - that the externalized sharp loads its own libvips.
 
 The Yarn question below moved to [yarn-support-decision.md](../yarn-support-decision.md). The
-job's first build found three scaffold defects, fixed in the same PR; see
+job's first build hit the two scaffold gaps PR 1's Docker verification had found, and found a
+third; all three are fixed in the same PR. See
 [init-deploy-aws-first-build-gaps.md](init-deploy-aws-first-build-gaps.md).
 
 ## What is unverified

@@ -433,7 +433,8 @@ function sharpTracingConfig(
  *   - A standalone build warns if the directory cannot be found, or if the Next version cannot be
  *     read.
  * - On Next 16 and later, sets `turbopack: {}` when your config has neither `turbopack` nor
- *   `webpack`. Next 16 builds and runs `next dev` with Turbopack by default, and exits when the
+ *   `webpack` and the installed Next version can be read (an unreadable version gets no key).
+ *   Next 16 builds and runs `next dev` with Turbopack by default, and exits when the
  *   config has a `webpack` function (the React aliases above add one) but no `turbopack` config.
  *   A `turbopack` you already set, `turbopack: {}` included, is kept as it is.
  *
@@ -520,10 +521,10 @@ export function withCanopy(
   // Turbopack works fine when canopycms is installed from npm (no symlinks).
 
   // Next 16 defaults both `next build` and `next dev` to Turbopack, marking the default with
-  // `TURBOPACK=auto` (`next/dist/lib/bundler.js`), and then exits with "This build is using
+  // `TURBOPACK=auto` (`next/dist/lib/bundler.js:76`), and then exits with "This build is using
   // Turbopack, with a `webpack` config and no `turbopack` config" whenever the exported config's
   // `webpack` is truthy and its `turbopack` is not (`validateTurboNextConfig` in
-  // `next/dist/lib/turbopack-warning.js`, 16.1.7).
+  // `next/dist/lib/turbopack-warning.js:158-174`, 16.1.7).
   //
   // The `webpack` function above is withCanopy's own, and Turbopack never runs a `webpack`
   // function, so its React aliases never applied under Turbopack. That is why the NOTE above sends
@@ -533,8 +534,10 @@ export function withCanopy(
   //   For theirs, Next's guard is the right one.
   // - Never over a `turbopack` the adopter set, so a config that already has `turbopack: {}` keeps
   //   its own value.
-  // - Only on a detected Next 16 or later. Next 15 only warns here, and Next 13 and 14 report an
-  //   unknown top-level `turbopack` as an invalid option, so an unreadable version gets no key.
+  // - Only on a detected Next 16 or later. Next 15 only warns here (`turbopack-warning.js:172-175`,
+  //   15.5.21), and Next 13 and 14 report an unknown top-level `turbopack` as an invalid option
+  //   (their config schema is a strict object with no such key), so an unreadable version gets no
+  //   key.
   const nextMajor = installedNextMajor(process.cwd())
   const answerTurbopackGuard =
     webpack !== undefined &&

@@ -5,18 +5,19 @@ image smoke test ([deploy-image-build-smoke-test.md](deploy-image-build-smoke-te
 this scaffold in CI.
 
 - **Gap 1.** `init-deploy aws` adds `"infrastructure"` to a plain-JSON `tsconfig.json`'s
-  `exclude` (`excludeFromTsconfig` in `cli/init.ts`). A `tsconfig.json` with comments, or none, is
-  left alone with a warning asking for the edit. The generated `.dockerignore` also excludes
+  `exclude` (`excludeFromTsconfig` in `cli/init.ts`). A `tsconfig.json` with comments, one that
+  inherits `exclude` through `extends` with no list of its own, or none at all, gets a warning
+  asking for the edit instead. The generated `.dockerignore` also excludes
   `infrastructure`. Reproduced in Docker with both fixes disabled: the image's `next build` failed
   type-checking `./infrastructure/bin/app.ts` with `Cannot find module 'aws-cdk-lib'`.
 - **Gap 2.** The pnpm COPY line is `COPY package.json pnpm-lock.yaml pnpm-workspace.yam[l] ./`
   (`cli/project-detect.ts`), and the glob keeps the file optional. Reproduced in Docker, which this
   file had recorded as not run: without the COPY, the image's `pnpm install --frozen-lockfile`
   failed with `ERR_PNPM_IGNORED_BUILDS` for es5-ext and sharp.
-- **A third gap, found by the smoke test.** `withCanopy` always adds a `webpack` function, and
-  Next 16 exits a `next build` or `next dev` that defaulted to Turbopack when the config has a
-  `webpack` and no `turbopack`. On Next 16 and later, `withCanopy` now sets `turbopack: {}` when
-  the adopter's config has neither (`with-canopy.ts`).
+- **A third gap, found by the smoke test.** `withCanopy` adds a `webpack` function whenever it can
+  resolve React, and Next 16 exits a `next build` or `next dev` that defaulted to Turbopack when
+  the config has a `webpack` and no `turbopack`. On a detected Next 16 or later, `withCanopy` now
+  sets `turbopack: {}` when the adopter's config has neither (`with-canopy.ts`).
 
 One correction to gap 2 below: create-next-app 16.1.7 writes `ignoredBuiltDependencies` for sharp
 and unrs-resolver, and pnpm 11 does not read it. The smoke fixture's host install also failed on

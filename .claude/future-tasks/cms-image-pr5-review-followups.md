@@ -1,9 +1,9 @@
 # [P3] Follow-ups from the review of the CMS image smoke test
 
 **Priority:** P3. Each item was rated LOW, and none breaks a build or a deploy that works today.
-**Found:** 2026-09-12, by the round-1 code review of PR 5 of
+**Found:** 2026-09-12, by the code review of PR 5 of
 [cms-image-build-epic.md](cms-image-build-epic.md) (the `standalone-image` smoke test and its
-scaffold fixes). All three were left out of that PR.
+scaffold fixes): items 1-3 in round 1, item 4 in round 2. All four were left out of that PR.
 
 ## 1. `init-deploy aws` rewrites the whole of an adopter's `tsconfig.json`
 

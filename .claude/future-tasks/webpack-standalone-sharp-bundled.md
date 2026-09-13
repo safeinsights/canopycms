@@ -1,8 +1,9 @@
 # [P2] A webpack-built CMS image bundles sharp, so image transforms fail
 
-**Priority:** P2. It affects adopters who build the CMS image with webpack: Next 15.x, or Next 16
-with `next build --webpack`. Routes keep serving, and only image work fails. The first adopter
-builds with Next 16's default Turbopack and is not affected.
+**Priority:** P2. It was seen on a Next 15.5.21 (webpack) build with pnpm, and probably affects any
+webpack build of the CMS image; other Next 15 versions, npm, and Next 16 with
+`next build --webpack` are not yet verified. Routes keep serving, and only image work fails. The
+first adopter builds with Next 16's default Turbopack and is not affected.
 **Found:** 2026-09-12, by a Next 15.5.21 probe of the `standalone-image` smoke test, while PR 5 of
 [cms-image-build-epic.md](cms-image-build-epic.md) weighed adding a webpack leg.
 
@@ -29,6 +30,11 @@ Inside the running image:
 - Both libvips libraries are present under `/app`: `libvips-cpp.so.8.18.6` (1.3.3) and
   `libvips-cpp.so.8.17.3` (1.2.4). So this is not the missing-libvips defect PR 3 fixed. The
   bundled copy of sharp cannot reach its native binding.
+
+The check results and the log lines above are in the probe's saved output. The chunk's contents,
+the `require.resolve` result and the two libvips files are not; the `serverExternalPackages` run
+below saved its own `require.resolve` failure and the sharp packages in its image. To re-check
+them, re-run the probe with `--keep` and inspect the container.
 
 ## Not yet verified
 

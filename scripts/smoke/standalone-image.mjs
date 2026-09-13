@@ -7,8 +7,8 @@
  *   node scripts/smoke/standalone-image.mjs --pm pnpm            # or --pm npm
  *   node scripts/smoke/standalone-image.mjs --pm npm --tarballs /path/with/tgzs --keep
  *
- * Needs Docker, Node 22+, pnpm (to pack) and, for `--pm pnpm`, corepack. CI runs it as the
- * `standalone-image` job in .github/workflows/ci.yml.
+ * Needs Docker, Node >= 22.2 (`zlib.crc32`), pnpm (to pack) and, for `--pm pnpm`, corepack. CI
+ * runs it as the `standalone-image` job in .github/workflows/ci.yml.
  *
  * Why it exists. Until this job, nothing built `Dockerfile.cms.template`: every test of it was a
  * string match on the generated text, or a CDK synth that stops at staging the build context.
@@ -18,12 +18,13 @@
  * every image operation failed to dlopen at run time.
  *
  * Why the app lives OUTSIDE the workspace and installs `pnpm pack` tarballs. Inside this monorepo
- * the canopycms packages are workspace links compiled through `transpilePackages`, and Next
- * bundles sharp into a server chunk. An adopter's registry install of Next 16 instead
- * externalizes it as `.next/node_modules/sharp-<hash>`, and tracing behaves differently for the
- * two shapes; the libvips defect only shows in the second. `pnpm pack` rather than `npm pack`
- * because only pnpm applies `publishConfig` (the dist/ exports map an adopter actually gets) and
- * rewrites `workspace:` ranges.
+ * the canopycms packages are workspace links compiled through `transpilePackages`, which is not
+ * what an adopter installs. An adopter's registry install of Next 16 externalizes sharp as
+ * `.next/node_modules/sharp-<hash>`, the shape the libvips defect shows in, and the
+ * "externalized" check below fails if a build stops producing it. What an in-workspace build does
+ * with sharp has not been measured. `pnpm pack` rather than `npm pack` because only pnpm applies
+ * `publishConfig` (the dist/ exports map an adopter actually gets) and rewrites `workspace:`
+ * ranges.
  *
  * Why the generated Dockerfile gets one edit. The tarballs are `file:vendor/...` dependencies,
  * and the template's own comment tells an adopter with vendored tarballs to COPY that directory
@@ -36,10 +37,11 @@
  * EFS-style workspace, neither of which a CI container has, and the scaffold uses the dev auth
  * plugin. Dev mode serves request-time reads from a branch clone under `/app/.canopy-dev`, seeded
  * from the git repository at the server's cwd (`server.js` chdirs to `/app`). The image has no
- * repository and no content at all (the runner copies only the standalone output), so the
- * script commits the scaffold's `content/` on `release-base` and copies that checkout into
+ * repository (the runner stage copies only `.next/standalone`, `.next/static` and `public/`), so
+ * the script commits the scaffold's `content/` on `release-base` and copies that checkout into
  * `/app` before starting. The runner runs as root, so `/app/.canopy-dev` is writable. That makes
- * every request below exercise the non-`main` base branch at run time too, not just at build.
+ * every request-time read below exercise the non-`main` base branch at run time too, not just at
+ * build.
  */
 
 import { spawnSync } from 'node:child_process'
@@ -191,7 +193,7 @@ function vendorTarballs(vendorDir, tarballDir) {
       const file = findTarball(tarballDir, pkg)
       copyFileSync(path.join(tarballDir, file), path.join(vendorDir, file))
     } else {
-      // Each package's `prepack` builds it first, exactly as the publish workflow relies on.
+      // `pnpm pack` runs each package's `prepack` (`pnpm run build`), so this builds it first.
       run('pnpm', ['pack', '--pack-destination', vendorDir], {
         cwd: path.join(REPO_ROOT, 'packages', pkg),
       })
@@ -313,8 +315,10 @@ function scaffold(appDir, options) {
     )
   }
   // The root layout reads content, so every page renders through that read, not-found pages
-  // included. An adopter's image with such a layout answered its not-found page and /favicon.ico
-  // with 500s. The not-found checks below assert which copy of the content the layout rendered.
+  // included: at request time on a dynamic page, at build time on a prerendered one. An adopter's
+  // image whose root layout imported `lib/canopy` answered its not-found page and /favicon.ico
+  // with 500s (cms-image-build-epic.md, "Why 404s fail"). The two exact-404 checks below assert
+  // which copy of the content the layout rendered.
   writeText(
     path.join(appDir, 'app/layout.tsx'),
     [
@@ -829,8 +833,8 @@ async function assertContainer(baseUrl, container) {
 async function main() {
   const options = parseOptions()
   const workDir = options.workDir ?? mkdtempSync(path.join(os.tmpdir(), 'canopy-standalone-smoke-'))
-  // Checked before anything is created, both as given and through the real path of its nearest
-  // existing ancestor, so a symlink cannot lead a new directory back into the checkout.
+  // A --work-dir is checked before it is created, both as given and through the real path of its
+  // nearest existing ancestor, so a symlink cannot lead a new directory back into the checkout.
   for (const dir of [workDir, realpathOfNearestExisting(workDir)]) {
     if (isInside(dir, REPO_ROOT) || isInside(dir, realpathSync(REPO_ROOT))) {
       throw new SmokeError(

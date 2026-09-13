@@ -345,7 +345,8 @@ export async function initDeployAws(options: InitDeployOptions): Promise<void> {
   if (!dockerignoreWritten) {
     p.log.warn(
       'Existing .dockerignore kept — verify it excludes .env* (secrets would otherwise ' +
-        'enter the build context) and does NOT exclude vendor/ (needed by the ' +
+        "enter the build context) and infrastructure (the image's next build would otherwise " +
+        'type-check the CDK app), and does NOT exclude vendor/ (needed by the ' +
         'Dockerfile.cms install step with file: deps).',
     )
   }
@@ -394,7 +395,8 @@ export async function initDeployAws(options: InitDeployOptions): Promise<void> {
   } else if (tsconfigResult !== 'already-excluded') {
     const reason = {
       missing: 'No tsconfig.json found',
-      unreadable: 'tsconfig.json is not plain JSON, so it was left alone',
+      unreadable:
+        'tsconfig.json is not plain JSON, or its "exclude" is not a list of strings, so it was left alone',
       'inherits-exclude':
         'tsconfig.json inherits its "exclude" list through "extends", so it was left alone ' +
         '(an "exclude" in the file replaces the base config\'s list rather than adding to it)',

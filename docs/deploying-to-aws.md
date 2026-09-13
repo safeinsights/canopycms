@@ -206,7 +206,9 @@ deploy trigger branch comes from `origin/HEAD`, and the worker's repo from your
 `--force` to replace them. The one existing file it edits is `tsconfig.json`: it
 adds `infrastructure` to `exclude`, because the CDK app imports `aws-cdk-lib`
 and your app's own `next build` would otherwise type-check it. A `tsconfig.json`
-with comments is left alone, and the command asks you to make that edit.
+with comments, or one that inherits `exclude` through `extends` with no list of
+its own, is left alone, and the command asks you to make that edit. It asks the
+same when there is no `tsconfig.json`.
 
 ## Step 3: Test Locally in Dev Mode
 

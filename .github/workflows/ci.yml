@@ -429,7 +429,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # amd64, native and fast here. Neither defect above depends on architecture.
+          # amd64, native and fast here. The epic found that neither defect above depends on
+          # architecture (cms-image-build-epic.md, "What is actually happening"); this PR
+          # reproduced both on arm64.
           - pm: pnpm
             runner: ubuntu-latest
           - pm: npm
@@ -453,8 +455,8 @@ jobs:
             # and its checks go through most of the server: the CLI templates, request-time
             # dev-mode reads (context, services, git-manager, operating-mode), the API, http and
             # auth layers, assets and sharp tracing. A narrower list let changes on those paths
-            # report a green "Skipped". Each leg takes about 2.5 minutes, which pays for running
-            # on most PRs.
+            # report a green "Skipped". Each leg took 1m43s-2m43s across this PR's CI runs, which
+            # pays for running on most PRs.
             relevant:
               - 'packages/canopycms/src/**'
               - 'packages/canopycms/scripts/**'
