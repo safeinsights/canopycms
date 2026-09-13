@@ -323,9 +323,27 @@ function assertSecretPropPair(
  */
 function assertSecretArnHasNoFieldSuffix(
   propName: string,
-  arn: string,
+  arn: unknown,
   jsonFieldPropName?: string,
 ): void {
+  // `unknown`, and narrowed here, because the types are not the whole story:
+  // `secretsArns: [process.env.EXTRA_SECRET_ARN!]` is the idiom a CDK app that
+  // reads its config from the environment reaches for -- the scaffolded
+  // `bin/app.ts` does exactly that everywhere else -- and `!` turns an unset
+  // variable into `undefined` with the compiler none the wiser.
+  //
+  // Throwing is a deliberate change from what that used to do. The entry was
+  // silently dropped by the `typeof arn === 'string'` filter on the IAM union
+  // below, so the worker was told to read a secret it had no grant for and got
+  // AccessDenied at boot -- the failure that filter's own comment is about.
+  if (typeof arn !== 'string' || arn.length === 0) {
+    throw new Error(
+      `CanopyCmsService: ${propName} must be a non-empty secret ARN string, but it is ` +
+        `${JSON.stringify(arn) ?? String(arn)}. An unset environment variable asserted with '!' ` +
+        `arrives here as undefined; it would otherwise be dropped from the worker's IAM policy ` +
+        `in silence, leaving a worker that knows which secret to read and cannot read it.`,
+    )
+  }
   if (!SECRET_ARN_WITH_FIELD_SUFFIX.test(arn) && !arn.endsWith(SECRET_ARN_WITH_EMPTY_VERSION_TAIL))
     return
   const alternative = jsonFieldPropName

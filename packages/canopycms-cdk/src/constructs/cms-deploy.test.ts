@@ -1558,6 +1558,19 @@ describe('CanopyCmsService: secret JSON-field props -> worker .env', () => {
       ).toThrow(/carries a ':KEY::' JSON-field suffix/)
     })
 
+    it('a secretsArns entry that is not a string names the prop rather than raising a TypeError', () => {
+      // `secretsArns: [process.env.EXTRA_SECRET_ARN!]` with the variable unset,
+      // which is the idiom a CDK app that reads its config from the environment
+      // reaches for -- the scaffolded bin/app.ts does exactly that everywhere
+      // else. Before the suffix guard the entry was dropped from the IAM policy
+      // in silence and the worker got AccessDenied at boot; adding the guard
+      // turned that into an anonymous "Cannot read properties of undefined".
+      // Neither names the prop, which is the whole job of a synth-time error.
+      expect(() => synthUncached(false, { secretsArns: [undefined as unknown as string] })).toThrow(
+        /secretsArns\[0\] must be a non-empty secret ARN string/,
+      )
+    })
+
     it('points the adopter at the supported prop instead of just refusing', () => {
       expect(() => synthUncached(false, { githubTokenSecretArn: SUFFIXED_GITHUB })).toThrow(
         /name the key with githubTokenSecretJsonField instead/,
@@ -1654,12 +1667,42 @@ describe('secret JSON-field wiring: the scaffold template and the example stay i
   }
 
   it('neither copy reaches for the ECS :KEY:: ARN suffix the construct refuses', () => {
+    // [A-Za-z0-9_]+, with the digits: a JSON key may contain one, and
+    // `GITHUB_TOKEN2` slipped past the first version of this class.
+    const ECS_SUFFIX = /:secret:[^:'"`\s]*:[A-Za-z0-9_]+::/
+
+    // POSITIVE CONTROL, first. Every assertion below is an absence, and an
+    // absence checked with a regex that matches nothing passes because the
+    // instrument is broken rather than because the files are clean. Both
+    // spellings, since the digit-bearing one is what got through before.
+    for (const sample of [
+      'arn:aws:secretsmanager:us-east-1:123456789012:secret:gh-AbCdEf:CANOPYCMS_GITHUB_TOKEN::',
+      'arn:aws:secretsmanager:us-east-1:123456789012:secret:gh-AbCdEf:GITHUB_TOKEN2::',
+    ]) {
+      expect(sample).toMatch(ECS_SUFFIX)
+    }
+
     // The suffix form is the obvious-looking thing to write, and a scaffold
     // that taught it would hand every adopter a synth error. Both copies, not
     // just the templates: the example is the one this describe exists for.
     for (const [exampleRelative, templatePath] of PAIRS) {
       for (const file of [templatePath, examplePathFor(exampleRelative)]) {
-        expect(read(file), file).not.toMatch(/:secret:[^:'"`\s]*:[A-Za-z_]+::/)
+        expect(read(file), file).not.toMatch(ECS_SUFFIX)
+      }
+    }
+  })
+
+  it("both copies build the image with NEXT_PUBLIC_CANOPY_MODE: 'prod'", () => {
+    // Not JSON-field wiring, but the same drift class and found by the same
+    // review round: the example had lost this line while the template kept it,
+    // so an adopter who copied the example shipped an editor bundle built in
+    // DEV browser mode -- dev auth rather than Clerk -- while the server half
+    // came up prod and the deploy looked clean. scaffold-synth.test.ts pins the
+    // generated path; nothing could see the example.
+    for (const [exampleRelative, templatePath] of PAIRS) {
+      if (!exampleRelative.endsWith('cms-stack.ts')) continue
+      for (const file of [templatePath, examplePathFor(exampleRelative)]) {
+        expect(read(file), file).toContain("NEXT_PUBLIC_CANOPY_MODE: 'prod'")
       }
     }
   })

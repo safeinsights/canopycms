@@ -15,18 +15,24 @@ templates only; it never reads `examples/`. The one existing cross-copy check is
 media-block suite in `asset-support.test.ts`, added precisely because a fix landed in the
 template while the example went on teaching a dead API — and it covers only that block.
 
-At least one real difference is live right now:
+One real difference was live when this was filed, and is **fixed** (PR #322, along with a
+test pinning both copies):
 
 | Template | Example | Effect |
 | --- | --- | --- |
-| `cms-stack.ts.template:107` sets `NEXT_PUBLIC_CANOPY_MODE: 'prod'` in the image build args | absent | An adopter who copies the example ships an editor bundle built with the **dev** browser mode — dev auth rather than Clerk, and the dev feature flags |
+| `cms-stack.ts.template` sets `NEXT_PUBLIC_CANOPY_MODE: 'prod'` in the image build args | was absent | An adopter who copied the example shipped an editor bundle built with the **dev** browser mode — dev auth rather than Clerk, and the dev feature flags |
 
-That one matters: `scaffold-synth.test.ts` has a dedicated test ("deploys a prod-mode CMS:
+That one mattered: `scaffold-synth.test.ts` has a dedicated test ("deploys a prod-mode CMS:
 CANOPY_MODE on the Lambda, NEXT_PUBLIC_CANOPY_MODE in the image build") asserting exactly
-this value, so the generated path is pinned and the example is the only way to get it wrong.
-The server half (`CANOPY_MODE`) is set by `CanopyCmsService` either way, so the deployment
-comes up and the failure is confined to what the editor bundle believes — which is the kind
-that is found by a person, late.
+this value, so the generated path was pinned and the example was the only way to get it
+wrong. The server half (`CANOPY_MODE`) is set by `CanopyCmsService` either way, so the
+deployment came up and the failure was confined to what the editor bundle believes — the kind
+found by a person, late.
+
+**The instance is fixed; the class is not, which is why this stays open.** Nothing compared
+the two copies before, and nothing compares them now beyond three per-feature textual checks
+(the media block, the JSON-field wiring, and a one-line pin for the value above) — each
+covering only what its author happened to think of.
 
 Comment text also differs in places (the example is a slightly older render). That is
 cosmetic on its own, but it is the same drift with a lower cost, and it makes a diff of the
@@ -47,8 +53,8 @@ check. Two such checks now exist — the media block, and the JSON-field wiring 
 PR that found this — and each only covers the feature whose author happened to think of it.
 That pattern does not converge.
 
-Either way, fix the `NEXT_PUBLIC_CANOPY_MODE` difference itself, which is a live defect for
-anyone who copied the example.
+The `NEXT_PUBLIC_CANOPY_MODE` difference itself is already fixed — what remains here is the
+mechanism that let it happen and will let the next one happen.
 
 ## Related
 
