@@ -3188,6 +3188,10 @@ Interrupting a run needs no cleanup from you. Ctrl-C makes vitest exit without r
 
 `test-support/` is treated like `lambda/`, `canary/`, and `worker/`: a non-shipped directory with its own `tsconfig.json`, appended to the package's `typecheck` and `lint` scripts. That config also includes `../src/**/*.test.ts`, which nothing else typechecks -- the package `tsconfig.json` is its build/publish config and excludes test files -- and it sets no `rootDir`, which is what lets those suites' deliberate cross-package imports resolve.
 
+### Testing a Docker Image Asset's Build (Without Docker)
+
+`DockerImageCode.fromEcr(...)` -- what every other synth in `cms-deploy.test.ts` uses -- has no build step, so it can't exercise build-time behavior like the `--platform` CDK picks. For that, use `fromImageAsset(...)` pointed at the Dockerfile-only fixture `test-support/fixtures/docker-image-asset/`: `cdk synth` stages and fingerprints it as an image asset without ever invoking `docker build`. The platform lands in the synthesized **asset manifest**, not the CloudFormation template; read it via `app.synth().artifacts.filter(AssetManifestArtifact.isAssetManifestArtifact)` (`aws-cdk-lib/cx-api`) then `Manifest.loadAssetManifest(artifact.file).dockerImages[*].source.platform` (`aws-cdk-lib/cloud-assembly-schema`). See `synthWithImageAsset` in `cms-deploy.test.ts` and the equivalent check in `scaffold-synth.test.ts`.
+
 ### Diffing Synthesized Output Across a Construct Refactor
 
 Moving a builder out of a construct (e.g., a method pulled into a module-local free function) can pass every existing test while still changing the emitted template -- and in CDK a renamed logical ID replaces live resources on the next deploy, so a passing suite is not the relevant proof. Assertions on individual `Template.fromStack()` matchers can all stay green while the underlying JSON has shifted underneath them.
