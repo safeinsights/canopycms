@@ -4,14 +4,14 @@
 **Created:** 2026-09-12
 **Integration branch:** `int-202609-cms-image` (base `int-202609-a`)
 
-| PR  | Branch                              | Status      | PR link |
-| --- | ------------------------------------ | ----------- | ------- |
-| 1   | `fix/build-reads-working-tree`       | Not started |         |
-| 2   | `fix/sharp-lazy-load`                | Not started |         |
-| 3   | `fix/sharp-standalone-tracing`       | Not started |         |
-| 4   | `fix/cms-service-architecture`       | Not started |         |
-| 5   | `ci/standalone-image-smoke`          | Not started |         |
-| 6   | `docs/cms-image-adopter-answers`     | Not started |         |
+| PR  | Branch                              | Status                       | PR link                                             |
+| --- | ------------------------------------ | ----------------------------- | ---------------------------------------------------- |
+| 1   | `fix/build-reads-working-tree`       | Merged (287438d3)             | https://github.com/safeinsights/canopycms/pull/326   |
+| 2   | `fix/sharp-lazy-load`                | Merged (d49bf279)             | https://github.com/safeinsights/canopycms/pull/324   |
+| 3   | `fix/sharp-standalone-tracing`       | Merged (92feefb3)             | https://github.com/safeinsights/canopycms/pull/327   |
+| 4   | `fix/cms-service-architecture`       | Merged (93e20fd0)             | https://github.com/safeinsights/canopycms/pull/323   |
+| 5   | `ci/standalone-image-smoke`          | In progress (not yet opened)  | —                                                     |
+| 6   | `docs/cms-image-adopter-answers`     | Merged (69e30fa8)             | https://github.com/safeinsights/canopycms/pull/325   |
 
 ## Context
 
@@ -145,7 +145,7 @@ Two defects compound. Neither depends on architecture.
 | --- | --- |
 | Apple Silicon Mac | Native, fast |
 | GitHub `ubuntu-24.04-arm` | Native. Standard runner in private repos since 2026-01-29, with 2 vCPU |
-| GitHub `ubuntu-latest` (x86) | Needs QEMU (`docker/setup-qemu-action`). Emulated `next build` is slow, with segfault reports on 24.04 |
+| GitHub `ubuntu-latest` (x86) | Needs QEMU (`docker/setup-qemu-action`). Emulated `next build` is slow, with build-failure reports on 24.04 (actions/runner-images#11561: a QEMU arm64 build failed at the configure step on 24.04, working on 22.04) |
 
 The asset hash covers the build inputs, including the platform, not the machine building. The same
 inputs give the same image identity whether built on a Mac or in CI.
@@ -457,6 +457,17 @@ when they open their PR, when they hit a decision that needs a call, and when th
 - PR 3 merges after PR 2.
 - PR 5's chip starts after PRs 1–4 have merged.
 - PRs 1, 4 and 6 are independent.
+
+## Follow-up tasks filed during the epic
+
+- [examples-aws-deployment-drift.md](examples-aws-deployment-drift.md) (P3) — `examples/aws-deployment` drifted from the `init-deploy` templates.
+- [admin-status-image-processing-availability.md](admin-status-image-processing-availability.md) (P3) — surface sharp availability in admin status.
+- [upstream-next-sharp-tracing-recheck.md](upstream-next-sharp-tracing-recheck.md) (P3) — re-check vercel/next.js#97973 on each Next upgrade; remove the include once upstream traces libvips.
+- [sharp-tracing-lockfile-root-edge-cases.md](sharp-tracing-lockfile-root-edge-cases.md) (P3) — two low-severity tracing-root lookup edge cases.
+- [build-canopy-scripts-outside-next-build.md](build-canopy-scripts-outside-next-build.md) (P2) — `createBuildCanopy` / `generate-ai-content` CLI still read a branch clone for server deployments unless `CANOPY_BUILD_MODE=true`; **awaiting a maintainer decision**.
+- [dev-content-watcher-relative-sourceroot.md](dev-content-watcher-relative-sourceroot.md) (P2) — dev content watcher silently off for a relative `sourceRoot`.
+- [init-deploy-aws-first-build-gaps.md](init-deploy-aws-first-build-gaps.md) (P2) — scaffold gaps the image smoke test hits (PR 5 addresses them).
+- [editor-operatingmode-option-unused.md](editor-operatingmode-option-unused.md) (P3) — unused editor `operatingMode` option.
 
 ## Verification
 
