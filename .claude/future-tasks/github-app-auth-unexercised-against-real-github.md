@@ -51,7 +51,16 @@ can never run in CI.
    `GITHUB_APP_PRIVATE_KEY_SECRET_ARN`, with `GITHUB_TOKEN_SECRET_ARN` removed) and drive one
    full publish: submit an edit, watch the branch push and the PR open, withdraw it to exercise
    `convert-to-draft`, resubmit to exercise `markPullRequestReadyForReview`.
-4. **Then narrow it deliberately** — drop the installation to `pull_requests: read` and confirm
+4. **Leave that worker running past the hour and publish again.** An installation token lasts
+   about an hour, and this is the one step nothing else approximates. It is the reason request
+   #45 exists at all: before the epic the worker read its credential once in `main()`, so an
+   App token would have worked for an hour and then failed until the ASG replaced the instance.
+   PR #334 added the refresh that is supposed to prevent that, driven from the git-sync loop
+   rather than from a task failure — so this step tests #321, #329 and #334 together, and it is
+   the only step whose failure mode is *silence an hour in* rather than an error at setup.
+   Worth doing with a JSON-field private key too (`#46` composed with `#45`), since one
+   credential document per environment is the shape an organisation actually uses.
+5. **Then narrow it deliberately** — drop the installation to `pull_requests: read` and confirm
    `verify` catches it, and that the worker's failure looks the way this file predicts. That is
    the half that proves `verify` is worth having.
 5. **Two cases added by the epic's review (2026-09-13).**
