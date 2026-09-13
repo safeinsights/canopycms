@@ -34,7 +34,6 @@ import {
 } from '../../../canopycms/src/operating-mode/deployment-name-fixtures'
 import { newTestApp } from '../../test-support/test-synth'
 import { readFileSync } from 'node:fs'
-import path from 'node:path'
 
 /**
  * Synthesizes a stack with the CMS service (and optionally the distribution) so
