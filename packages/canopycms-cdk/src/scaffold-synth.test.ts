@@ -70,8 +70,12 @@ const SYNTH_ENV = {
   // and a break anywhere along that chain is invisible to a synth that leaves
   // them unset. The stamps are asserted below. Unset behaviour is covered at
   // the construct level in cms-deploy.test.ts, which can afford both cases.
-  GITHUB_TOKEN_SECRET_JSON_FIELD: 'CANOPYCMS_GITHUB_TOKEN',
-  CLERK_SECRET_KEY_SECRET_JSON_FIELD: 'CLERK_SECRET_KEY',
+  // Values chosen NOT to be substrings of any env-var name stamped into the
+  // same .env: 'CANOPYCMS_GITHUB_TOKEN' is a prefix of
+  // CANOPYCMS_GITHUB_TOKEN_SECRET_ARN, so an implementation that wrote a
+  // variable's own NAME as its value would have satisfied the assertion below.
+  GITHUB_TOKEN_SECRET_JSON_FIELD: 'ghFieldProbe',
+  CLERK_SECRET_KEY_SECRET_JSON_FIELD: 'clerkFieldProbe',
 }
 
 /** Two cold Node boots, one of which imports all of aws-cdk-lib and stages two assets. */
@@ -355,7 +359,7 @@ describe('canopycms init-deploy aws produces a synthesizable CDK app', () => {
       'utf-8',
     )
     expect(workflow).toContain(
-      'GITHUB_TOKEN_SECRET_JSON_FIELD: ${{ vars.GITHUB_TOKEN_SECRET_JSON_FIELD }}',
+      'GITHUB_TOKEN_SECRET_JSON_FIELD: ${{ vars.CANOPY_GITHUB_TOKEN_SECRET_JSON_FIELD }}',
     )
     expect(workflow).toContain(
       'CLERK_SECRET_KEY_SECRET_JSON_FIELD: ${{ vars.CLERK_SECRET_KEY_SECRET_JSON_FIELD }}',

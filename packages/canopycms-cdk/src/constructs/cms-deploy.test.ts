@@ -1401,17 +1401,23 @@ describe('CanopyCmsService: secret JSON-field props -> worker .env', () => {
     githubTokenSecretArn: GITHUB_ARN,
     clerkSecretKeySecretArn: CLERK_ARN,
   }
+  // Deliberately NOT the real key names an adopter would use
+  // ('CANOPYCMS_GITHUB_TOKEN', 'CLERK_SECRET_KEY'): each of those is a prefix
+  // of an env-var name stamped into the same .env, so an implementation that
+  // wrote a variable's own NAME as its value would pass every assertion here.
+  const GITHUB_FIELD = 'ghFieldProbe'
+  const CLERK_FIELD = 'clerkFieldProbe'
 
   it('stamps both JSON-field vars when the props are set', () => {
     const all = workerUserDataBlobs(
       synthUncached(false, {
         ...BOTH_ARNS,
-        githubTokenSecretJsonField: 'CANOPYCMS_GITHUB_TOKEN',
-        clerkSecretKeySecretJsonField: 'CLERK_SECRET_KEY',
+        githubTokenSecretJsonField: GITHUB_FIELD,
+        clerkSecretKeySecretJsonField: CLERK_FIELD,
       }),
     )
-    expect(all).toContain('CANOPYCMS_GITHUB_TOKEN_SECRET_JSON_FIELD=CANOPYCMS_GITHUB_TOKEN')
-    expect(all).toContain('CLERK_SECRET_KEY_SECRET_JSON_FIELD=CLERK_SECRET_KEY')
+    expect(all).toContain(`CANOPYCMS_GITHUB_TOKEN_SECRET_JSON_FIELD=${GITHUB_FIELD}`)
+    expect(all).toContain(`CLERK_SECRET_KEY_SECRET_JSON_FIELD=${CLERK_FIELD}`)
   })
 
   it('stamps neither JSON-field var when the props are omitted', () => {
@@ -1429,9 +1435,9 @@ describe('CanopyCmsService: secret JSON-field props -> worker .env', () => {
 
   it('stamps one without the other', () => {
     const all = workerUserDataBlobs(
-      synthUncached(false, { ...BOTH_ARNS, clerkSecretKeySecretJsonField: 'CLERK_SECRET_KEY' }),
+      synthUncached(false, { ...BOTH_ARNS, clerkSecretKeySecretJsonField: CLERK_FIELD }),
     )
-    expect(all).toContain('CLERK_SECRET_KEY_SECRET_JSON_FIELD=CLERK_SECRET_KEY')
+    expect(all).toContain(`CLERK_SECRET_KEY_SECRET_JSON_FIELD=${CLERK_FIELD}`)
     expect(all).not.toContain('CANOPYCMS_GITHUB_TOKEN_SECRET_JSON_FIELD')
   })
 
@@ -1467,15 +1473,26 @@ describe('CanopyCmsService: secret JSON-field props -> worker .env', () => {
     // empty string has no newline, no leading quote and no ENVEOF.
     it('githubTokenSecretJsonField', () => {
       expect(() => synthUncached(false, { ...BOTH_ARNS, githubTokenSecretJsonField: '' })).toThrow(
-        /githubTokenSecretJsonField must not be empty/,
+        /githubTokenSecretJsonField must name a key/,
       )
     })
 
     it('clerkSecretKeySecretJsonField', () => {
       expect(() =>
         synthUncached(false, { ...BOTH_ARNS, clerkSecretKeySecretJsonField: '' }),
-      ).toThrow(/clerkSecretKeySecretJsonField must not be empty/)
+      ).toThrow(/clerkSecretKeySecretJsonField must name a key/)
     })
+
+    // systemd strips surrounding whitespace from an EnvironmentFile value, so
+    // ' ' arrives at the worker as '' and takes the same silently-ignored path
+    // -- the empty case again, by a route a bare `=== ''` check cannot see.
+    for (const value of [' ', '\t', '  ']) {
+      it(`whitespace-only ${JSON.stringify(value)} is refused like an empty one`, () => {
+        expect(() =>
+          synthUncached(false, { ...BOTH_ARNS, githubTokenSecretJsonField: value }),
+        ).toThrow(/githubTokenSecretJsonField must name a key/)
+      })
+    }
   })
 
   describe("a secret ARN carrying the ECS ':KEY::' suffix is refused at synth", () => {
@@ -1502,6 +1519,43 @@ describe('CanopyCmsService: secret JSON-field props -> worker .env', () => {
       expect(() => synthUncached(false, { secretsArns: [GITHUB_ARN, SUFFIXED_CLERK] })).toThrow(
         /secretsArns\[1\] .* carries a ':KEY::' JSON-field suffix/,
       )
+    })
+
+    it('a suffix built on a NAME-ONLY ARN, which is the form ECS documentation shows', () => {
+      // The first version of this guard anchored on the six random characters
+      // AWS appends, so an ARN without them carried the suffix straight through
+      // to the IAM policy -- the failure the guard exists to prevent.
+      //
+      // Fully-specified version parts, deliberately: the far commoner
+      // `…:MY_KEY::` spelling ends in two colons, so the empty-version-tail
+      // check below would catch it whatever the regex did, and this case would
+      // pass without proving anything about the regex at all.
+      expect(() =>
+        synthUncached(false, {
+          githubTokenSecretArn:
+            'arn:aws:secretsmanager:us-east-1:123456789012:secret:gh:CANOPYCMS_GITHUB_TOKEN:AWSCURRENT:v1',
+        }),
+      ).toThrow(/carries a ':KEY::' JSON-field suffix/)
+    })
+
+    it('the same name-only ARN with empty version parts', () => {
+      expect(() =>
+        synthUncached(false, {
+          githubTokenSecretArn:
+            'arn:aws:secretsmanager:us-east-1:123456789012:secret:gh:CANOPYCMS_GITHUB_TOKEN::',
+        }),
+      ).toThrow(/carries a ':KEY::' JSON-field suffix/)
+    })
+
+    it('a suffix appended to an unresolved CDK token', () => {
+      // `${secret.secretArn}:KEY::` has no ':secret:' to anchor on at synth,
+      // because the ARN is still a token. The empty version tail is all that is
+      // left to recognise, and no well-formed ARN ends in two colons.
+      expect(() =>
+        synthUncached(false, {
+          githubTokenSecretArn: '${Token[TOKEN.42]}:CANOPYCMS_GITHUB_TOKEN::',
+        }),
+      ).toThrow(/carries a ':KEY::' JSON-field suffix/)
     })
 
     it('points the adopter at the supported prop instead of just refusing', () => {
@@ -1577,17 +1631,16 @@ describe('secret JSON-field wiring: the scaffold template and the example stay i
       'deploy-cms.yml',
       'packages/canopycms/src/cli/template-files/deploy-cms.yml.template',
       [
-        'GITHUB_TOKEN_SECRET_JSON_FIELD: ${{ vars.GITHUB_TOKEN_SECRET_JSON_FIELD }}',
+        'GITHUB_TOKEN_SECRET_JSON_FIELD: ${{ vars.CANOPY_GITHUB_TOKEN_SECRET_JSON_FIELD }}',
         'CLERK_SECRET_KEY_SECRET_JSON_FIELD: ${{ vars.CLERK_SECRET_KEY_SECRET_JSON_FIELD }}',
       ],
     ],
   ]
 
+  const examplePathFor = (relative: string): string => `examples/aws-deployment/${relative}`
+
   for (const [exampleRelative, templatePath, required] of PAIRS) {
-    const examplePath =
-      exampleRelative === 'deploy-cms.yml'
-        ? 'examples/aws-deployment/deploy-cms.yml'
-        : `examples/aws-deployment/${exampleRelative}`
+    const examplePath = examplePathFor(exampleRelative)
 
     it(`${templatePath} carries the JSON-field wiring`, () => {
       const source = read(templatePath)
@@ -1602,9 +1655,12 @@ describe('secret JSON-field wiring: the scaffold template and the example stay i
 
   it('neither copy reaches for the ECS :KEY:: ARN suffix the construct refuses', () => {
     // The suffix form is the obvious-looking thing to write, and a scaffold
-    // that taught it would hand every adopter a synth error.
-    for (const [, templatePath] of PAIRS) {
-      expect(read(templatePath)).not.toMatch(/:secret:.*-[A-Za-z0-9]{6}:[A-Z_]+::/)
+    // that taught it would hand every adopter a synth error. Both copies, not
+    // just the templates: the example is the one this describe exists for.
+    for (const [exampleRelative, templatePath] of PAIRS) {
+      for (const file of [templatePath, examplePathFor(exampleRelative)]) {
+        expect(read(file), file).not.toMatch(/:secret:[^:'"`\s]*:[A-Za-z_]+::/)
+      }
     }
   })
 })
@@ -2248,6 +2304,27 @@ describe('CanopyCmsService: worker .env values are heredoc-safe', () => {
       // exception: its charset rule rejects the quote first.
       expect(() => synth(false, build('"acme'))).toThrow(
         field === 'deploymentName' ? `invalid ${field}` : 'must not start with a quote',
+      )
+    })
+
+    it(`rejects a backslash in ${field}`, () => {
+      // systemd's EnvironmentFile parser reads a backslash as an escape, and a
+      // TRAILING one continues the value onto the next line -- consuming the
+      // .env entry that follows. Same class as the leading quote, but it
+      // corrupts a neighbouring variable rather than its own.
+      expect(() => synth(false, build('acme\\'))).toThrow(
+        GIT_REF_VALIDATED_FIELDS.has(field) ? `invalid ${field}` : 'must not contain a backslash',
+      )
+    })
+
+    it(`rejects surrounding whitespace in ${field}`, () => {
+      // Stripped by that same parser, so the worker would see a different value
+      // than the one configured here -- and for a JSON field that means the
+      // whole-document fallback, silently.
+      expect(() => synth(false, build(' acme'))).toThrow(
+        GIT_REF_VALIDATED_FIELDS.has(field)
+          ? `invalid ${field}`
+          : 'must not start or end with whitespace',
       )
     })
   }

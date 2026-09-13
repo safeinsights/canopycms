@@ -337,12 +337,16 @@ deploy at synth — before anything is changed in the account.
 | `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`         | variable  | no, but the editor cannot sign in without it |
 | `CANOPY_BOOTSTRAP_ADMIN_IDS`                | variable  | no                                           |
 | `CANOPYCMS_DEPLOYMENT_NAME`                 | variable  | no (defaults to `prod`)                      |
-| `GITHUB_TOKEN_SECRET_JSON_FIELD`            | variable  | no (only for a JSON secret document)         |
+| `CANOPY_GITHUB_TOKEN_SECRET_JSON_FIELD`     | variable  | no (only for a JSON secret document)         |
 | `CLERK_SECRET_KEY_SECRET_JSON_FIELD`        | variable  | no (only for a JSON secret document)         |
 | `CMS_DOMAIN_NAME`, `CMS_HOSTED_ZONE_DOMAIN` | variables | no (enables CloudFront + Route53)            |
 
 The two `_JSON_FIELD` entries are variables, not secrets, for the same reason
-`CLERK_JWT_KEY` is: they carry the _name_ of a key, not the key's value.
+`CLERK_JWT_KEY` is: they carry the _name_ of a key, not the key's value. The GitHub one
+takes the `CANOPY_` prefix for the same reason its ARN secret does — GitHub rejects
+**variables** starting with `GITHUB_` as well as secrets — and the workflow maps it onto the
+unprefixed `GITHUB_TOKEN_SECRET_JSON_FIELD` environment variable the CDK app reads, exactly
+as it does for the ARN.
 
 > **Why is `CLERK_JWT_KEY` a variable and not a secret?** Because it is a _public_ key —
 > Clerk's JWKS PEM, retrievable from your instance's public JWKS endpoint, and used only to

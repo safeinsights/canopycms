@@ -82,9 +82,12 @@ set the matching `CanopyCmsService` prop to the key you want:
 | `clerkSecretKeySecretJsonField` | `CLERK_SECRET_KEY_SECRET_JSON_FIELD`       | `clerkSecretKeySecretArn` |
 
 Through the scaffolded stack (`canopycms init-deploy aws`) they are wired to the optional
-env vars `GITHUB_TOKEN_SECRET_JSON_FIELD` and `CLERK_SECRET_KEY_SECRET_JSON_FIELD`, passed
-through by the generated `deploy-cms.yml` as repository _variables_ — they carry a key's
-name, not its value. If you scaffolded before this release, add the two props to
+env vars `GITHUB_TOKEN_SECRET_JSON_FIELD` and `CLERK_SECRET_KEY_SECRET_JSON_FIELD`, which the
+generated `deploy-cms.yml` fills from repository _variables_ — they carry a key's name, not
+its value. The variables are named `CANOPY_GITHUB_TOKEN_SECRET_JSON_FIELD` and
+`CLERK_SECRET_KEY_SECRET_JSON_FIELD`: the GitHub one needs the `CANOPY_` prefix because
+GitHub refuses to create any secret **or variable** whose name begins with `GITHUB_`, which
+is why its ARN secret is already spelled that way. If you scaffolded before this release, add the two props to
 `infrastructure/bin/app.ts` and `infrastructure/lib/cms-stack.ts`, or re-run the generator
 and diff. Leave everything unset and nothing changes.
 

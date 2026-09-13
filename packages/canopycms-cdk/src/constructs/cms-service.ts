@@ -120,6 +120,31 @@ function assertEnvSafe(name: string, value: string): string {
         `<< '${ENV_HEREDOC_DELIMITER}' heredoc, which that value would terminate early.`,
     )
   }
+  // The same systemd `EnvironmentFile=` parser the leading-quote rule above is
+  // about also treats a backslash as an escape: `a\b` arrives as `ab`, and a
+  // value ENDING in a backslash continues onto the next line, swallowing the
+  // .env entry that follows it. That is the quote hazard again in a quieter
+  // form -- it corrupts a neighbouring variable rather than the one it appears
+  // in -- so it is refused here rather than debugged on an instance.
+  if (value.includes('\\')) {
+    throw new Error(
+      `CanopyCmsService: ${name} must not contain a backslash (got ${JSON.stringify(value)}). ` +
+        `It is written into the worker's .env file, which systemd reads as EnvironmentFile -- ` +
+        `there a backslash escapes the next character, and a trailing one continues the value ` +
+        `onto the following line, consuming the next variable entirely.`,
+    )
+  }
+  // Leading/trailing whitespace is stripped by that same parser, so a value
+  // that is only whitespace reaches the worker as an empty string and every
+  // caller downstream treats it as unset -- the silent-discard case, arriving
+  // by a route no charset check upstream can see.
+  if (value !== value.trim()) {
+    throw new Error(
+      `CanopyCmsService: ${name} must not start or end with whitespace ` +
+        `(got ${JSON.stringify(value)}). systemd strips it when reading the worker's .env, so ` +
+        `the value the worker sees would differ from the one configured here.`,
+    )
+  }
   return value
 }
 
@@ -198,12 +223,30 @@ function assertValidGitBranchName(propName: string, value: string): string {
  * A Secrets Manager ARN carrying the ECS/CloudFormation JSON-field suffix,
  * i.e. `arn:…:secret:name-AbCdEf:MY_KEY::` rather than `arn:…:secret:name-AbCdEf`.
  *
- * The `-AbCdEf:` tail is what distinguishes the two: a complete secret ARN ends
- * at the six-character suffix AWS appends to the name, and a secret name cannot
- * itself contain a ':' -- so any colon AFTER that suffix is the start of the
- * `:json-key:version-stage:version-id` form.
+ * Keyed on "a colon anywhere after `:secret:`", because a secret NAME cannot
+ * contain one -- everything from `:secret:` to the end of a well-formed ARN is
+ * the name plus the six random characters AWS appends. So a further colon can
+ * only be the start of the `:json-key:version-stage:version-id` tail.
+ *
+ * An earlier version of this anchored on the six-character suffix itself
+ * (`-[A-Za-z0-9]{6}:`) and therefore missed the suffix form built on a
+ * name-only ARN -- `arn:…:secret:gh:MY_KEY::`, which is the shape ECS's own
+ * documentation shows. That ARN was accepted, stamped, and written into the IAM
+ * policy, producing exactly the AccessDenied restart-loop this guard exists to
+ * prevent.
  */
-const SECRET_ARN_WITH_FIELD_SUFFIX = /:secret:.*-[A-Za-z0-9]{6}:/
+const SECRET_ARN_WITH_FIELD_SUFFIX = /:secret:[^:]*:/
+
+/**
+ * The tail of every ECS-style suffixed ARN, `…:json-key:version-stage:version-id`
+ * with both version parts empty -- and the only part of that form still visible
+ * when the ARN in front of it is an unresolved CDK token.
+ *
+ * `${Token[TOKEN.42]}:MY_KEY::` has no `:secret:` for the regex above to anchor
+ * on, because the ARN has not been rendered yet. No well-formed secret ARN, token
+ * or literal, ends in two colons.
+ */
+const SECRET_ARN_WITH_EMPTY_VERSION_TAIL = '::'
 
 /**
  * Guards one (secret ARN, JSON field) prop pair at synth.
@@ -243,12 +286,16 @@ function assertSecretPropPair(
   jsonField: string | undefined,
 ): void {
   if (jsonField !== undefined) {
-    if (jsonField === '') {
+    // `.trim()`, not `=== ''`: systemd's EnvironmentFile parser strips leading
+    // and trailing whitespace from a value, so `" "` reaches the worker as `""`
+    // and takes the same silently-ignored path an empty string would. The
+    // untrimmed check let exactly the case it was written for through.
+    if (jsonField.trim() === '') {
       throw new Error(
-        `CanopyCmsService: ${jsonFieldPropName} must not be empty. ` +
-          `The worker reads a blank value as "no field configured" and falls back to using the ` +
-          `secret's whole value, silently ignoring this prop -- name the key you want, or omit ` +
-          `the prop entirely.`,
+        `CanopyCmsService: ${jsonFieldPropName} must name a key, but it is ` +
+          `${JSON.stringify(jsonField)}. The worker reads a blank value as "no field configured" ` +
+          `and falls back to using the secret's whole value, silently ignoring this prop -- name ` +
+          `the key you want, or omit the prop entirely.`,
       )
     }
     if (!arn) {
@@ -279,7 +326,8 @@ function assertSecretArnHasNoFieldSuffix(
   arn: string,
   jsonFieldPropName?: string,
 ): void {
-  if (!SECRET_ARN_WITH_FIELD_SUFFIX.test(arn)) return
+  if (!SECRET_ARN_WITH_FIELD_SUFFIX.test(arn) && !arn.endsWith(SECRET_ARN_WITH_EMPTY_VERSION_TAIL))
+    return
   const alternative = jsonFieldPropName
     ? `Pass the plain secret ARN (everything up to and including the six-character suffix) and ` +
       `name the key with ${jsonFieldPropName} instead.`
