@@ -22,7 +22,9 @@
  * - find that copy's `sharp`, and also any `sharp` the project resolves directly;
  * - find each `@img/sharp-libvips-*` optional dependency, from sharp and from each installed native
  *   binding (the binding's rpath looks for libvips beside the binding, so that is the copy it loads);
- * - take that package's real `lib/` directory.
+ * - an installed binding that lists no libvips package has to carry its native library itself, so
+ *   take the binding instead (sharp 0.35's Windows bindings list none);
+ * - take each package's real `lib/` directory.
  *
  * **Real paths, not symlinks.** The includes name real directories. A path through a pnpm symlink
  * would land the files somewhere no rpath looks.
@@ -36,7 +38,7 @@
  * **Cost.** Turbopack matches includes in "contains" mode, which walks every directory under
  * `node_modules`, following symlinks, once per build, whatever the glob names.
  */
-import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs'
+import { readFileSync, realpathSync, statSync } from 'node:fs'
 import path from 'node:path'
 
 export interface SharpTracingInput {
@@ -49,7 +51,7 @@ export interface SharpTracingInput {
 }
 
 export interface SharpTracingResult {
-  /** Project-relative POSIX globs, one per libvips `lib/` directory found. */
+  /** Project-relative POSIX globs, one per native-library `lib/` directory found. */
   includes: string[]
   /** Why nothing was found. Set exactly when `includes` is empty. */
   problem?: string
@@ -96,12 +98,28 @@ function messageOf(err: unknown): string {
   return String(err)
 }
 
+/**
+ * Whether `candidate` is a regular file.
+ *
+ * Any failed stat answers false instead of throwing: a missing path, a race with a delete, or a
+ * permission error. `hasNextConfig` calls this outside any `try`, and it runs inside the adopter's
+ * `next.config`.
+ */
 function isFile(candidate: string): boolean {
-  return existsSync(candidate) && statSync(candidate).isFile()
+  try {
+    return statSync(candidate).isFile()
+  } catch {
+    return false
+  }
 }
 
+/** Whether `candidate` is a directory, answering false on any failed stat, as `isFile` does. */
 function isDirectory(candidate: string): boolean {
-  return existsSync(candidate) && statSync(candidate).isDirectory()
+  try {
+    return statSync(candidate).isDirectory()
+  } catch {
+    return false
+  }
 }
 
 /** True when `target` is not `root` itself or somewhere beneath it. */
@@ -217,10 +235,16 @@ export function resolveTracingRoot(input: SharpTracingInput): string {
   return path.dirname(lockFile)
 }
 
-/** Every installed libvips package directory reachable from one copy of sharp. */
-function libvipsDirsFor(sharpDir: string): string[] {
+/**
+ * Every installed package directory, reachable from one copy of sharp, whose `lib/` holds sharp's
+ * native library.
+ *
+ * That is each `@img/sharp-libvips-*` package, plus any installed native binding that lists no
+ * libvips package and so has to carry the library itself.
+ */
+function nativeLibraryDirsFor(sharpDir: string): string[] {
   const found = new Set<string>()
-  const collect = (fromDir: string, dependencyNames: string[]) => {
+  const collectLibvips = (fromDir: string, dependencyNames: string[]) => {
     for (const name of dependencyNames.filter((n) => LIBVIPS_PACKAGE.test(n))) {
       const dir = findInstalledPackage(fromDir, name)
       if (dir) found.add(dir)
@@ -228,10 +252,16 @@ function libvipsDirsFor(sharpDir: string): string[] {
   }
 
   const sharpDependencies = readManifest(sharpDir).optionalDependencyNames
-  collect(sharpDir, sharpDependencies)
+  collectLibvips(sharpDir, sharpDependencies)
   for (const bindingName of sharpDependencies.filter((n) => NATIVE_BINDING_PACKAGE.test(n))) {
     const bindingDir = findInstalledPackage(sharpDir, bindingName)
-    if (bindingDir) collect(bindingDir, readManifest(bindingDir).optionalDependencyNames)
+    if (!bindingDir) continue
+    const bindingDependencies = readManifest(bindingDir).optionalDependencyNames
+    if (bindingDependencies.some((n) => LIBVIPS_PACKAGE.test(n))) {
+      collectLibvips(bindingDir, bindingDependencies)
+    } else {
+      found.add(bindingDir)
+    }
   }
   return [...found]
 }
@@ -273,12 +303,14 @@ export function sharpTracingIncludes(input: SharpTracingInput): SharpTracingResu
     const includes = new Set<string>()
     const notes: string[] = []
     for (const sharpDir of sharpDirs) {
-      const libvipsDirs = libvipsDirsFor(sharpDir)
-      if (libvipsDirs.length === 0) {
-        notes.push(`no @img/sharp-libvips-* package is installed for sharp at ${sharpDir}`)
+      const libraryDirs = nativeLibraryDirsFor(sharpDir)
+      if (libraryDirs.length === 0) {
+        notes.push(
+          `no libvips package is installed for sharp at ${sharpDir}, and no installed native binding carries its own library`,
+        )
       }
-      for (const libvipsDir of libvipsDirs) {
-        const libDir = path.join(libvipsDir, 'lib')
+      for (const libraryDir of libraryDirs) {
+        const libDir = path.join(libraryDir, 'lib')
         if (!isDirectory(libDir)) {
           notes.push(`${libDir} does not exist`)
           continue

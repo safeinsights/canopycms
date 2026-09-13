@@ -535,6 +535,60 @@ describe('withCanopy', () => {
       expect(result).not.toHaveProperty('experimental')
     })
 
+    it('merges under experimental on Next 15+ when the adopter still uses that spelling, since Next copies it over the top-level key', () => {
+      tracing.nextMajor = 16
+      tracing.result = { includes: ['glob/**/*'] }
+
+      const result = withCanopy(
+        asNextConfig({ experimental: { outputFileTracingIncludes: { '/**': ['legacy/**/*'] } } }),
+      )
+
+      expect(result).not.toHaveProperty('outputFileTracingIncludes')
+      expect(result.experimental).toEqual({
+        outputFileTracingIncludes: { '/**': ['legacy/**/*', 'glob/**/*'] },
+      })
+    })
+
+    it('takes experimental.outputFileTracingRoot over the top-level value on Next 15+, as Next does', () => {
+      tracing.nextMajor = 16
+
+      withCanopy(
+        asNextConfig({
+          outputFileTracingRoot: '../top-level-root',
+          experimental: { outputFileTracingRoot: '../legacy-root' },
+        }),
+      )
+
+      expect(sharpTracingIncludesMock).toHaveBeenLastCalledWith(
+        expect.objectContaining({ outputFileTracingRoot: '../legacy-root' }),
+      )
+    })
+
+    it('reads experimental.turbo.root on Next 15 only, with turbopack.root winning', () => {
+      tracing.nextMajor = 15
+      withCanopy(asNextConfig({ experimental: { turbo: { root: '../legacy-turbo' } } }))
+      expect(sharpTracingIncludesMock).toHaveBeenLastCalledWith(
+        expect.objectContaining({ turbopackRoot: '../legacy-turbo' }),
+      )
+
+      withCanopy(
+        asNextConfig({
+          turbopack: { root: '../turbopack' },
+          experimental: { turbo: { root: '../legacy-turbo' } },
+        }),
+      )
+      expect(sharpTracingIncludesMock).toHaveBeenLastCalledWith(
+        expect.objectContaining({ turbopackRoot: '../turbopack' }),
+      )
+
+      // Next 16 dropped the `experimental.turbo` migration, so the legacy value no longer counts.
+      tracing.nextMajor = 16
+      withCanopy(asNextConfig({ experimental: { turbo: { root: '../legacy-turbo' } } }))
+      expect(sharpTracingIncludesMock).toHaveBeenLastCalledWith(
+        expect.objectContaining({ turbopackRoot: undefined }),
+      )
+    })
+
     it('leaves a malformed existing outputFileTracingIncludes value untouched', () => {
       tracing.result = { includes: ['glob/**/*'] }
       const malformed = asNextConfig({ outputFileTracingIncludes: { '/**': 'nope' } })

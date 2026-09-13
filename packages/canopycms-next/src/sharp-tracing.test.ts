@@ -157,6 +157,21 @@ describe('sharpTracingIncludes', () => {
     })
   })
 
+  describe('project directory reached through a symlink', () => {
+    it('emits the same include as for the real directory', () => {
+      // Pins `realpathSync(projectDir)` on every platform. On macOS `os.tmpdir()` is already behind
+      // a symlink, but on a Linux CI runner it is not, so without this fixture nothing would.
+      const real = path.join(tmp, 'real')
+      setupPnpmSharpInstall(real)
+      const alias = path.join(tmp, 'alias')
+      link(real, alias)
+
+      expect(sharpTracingIncludes({ projectDir: alias })).toEqual({
+        includes: [EXPECTED_PNPM_LIBVIPS_INCLUDE],
+      })
+    })
+  })
+
   describe('binding-sibling only', () => {
     it('still finds libvips when only reachable beside the native binding', () => {
       writeText(path.join(tmp, 'pnpm-lock.yaml'))
@@ -341,6 +356,30 @@ describe('sharpTracingIncludes', () => {
     })
   })
 
+  describe('native binding that carries its own library', () => {
+    it("takes the binding's own lib/ when it lists no libvips package, as sharp 0.35's Windows bindings do", () => {
+      const nm = path.join(tmp, 'node_modules')
+      pkg(path.join(nm, 'canopycms'), { name: 'canopycms', version: '1.0.0' })
+      pkg(path.join(nm, 'sharp'), {
+        name: 'sharp',
+        version: '0.35.3',
+        // Real sharp lists every platform. Only the Windows binding is installed here.
+        optionalDependencies: {
+          '@img/sharp-win32-x64': '0.35.3',
+          '@img/sharp-linux-arm64': '0.35.3',
+          '@img/sharp-libvips-linux-arm64': '1.3.2',
+        },
+      })
+      const binding = path.join(nm, '@img/sharp-win32-x64')
+      pkg(binding, { name: '@img/sharp-win32-x64', version: '0.35.3' })
+      writeText(path.join(binding, 'lib/sharp-win32-x64-0.35.3.node'))
+
+      expect(sharpTracingIncludes({ projectDir: tmp })).toEqual({
+        includes: ['node_modules/@img/sharp-win32-x64/lib/**/*'],
+      })
+    })
+  })
+
   // The absence tests here, in `installedNextMajor` and in `findInstalledPackage` also pin that the
   // lookup walks only the fixture's own `node_modules` hierarchy. Under vitest,
   // `require.resolve.paths` also returns this repo's hoisted `node_modules/.pnpm/node_modules`, so a
@@ -361,7 +400,7 @@ describe('sharpTracingIncludes', () => {
       expect(result.problem).toContain('no sharp is installed for canopycms')
     })
 
-    it('reports libvips missing when sharp has no @img/sharp-libvips-* optional dependency', () => {
+    it('reports libvips missing when the binding lists a libvips package that is not installed', () => {
       const nm = path.join(tmp, 'node_modules')
       pkg(path.join(nm, 'canopycms'), { name: 'canopycms', version: '1.0.0' })
       pkg(path.join(nm, 'sharp'), {
@@ -369,14 +408,18 @@ describe('sharpTracingIncludes', () => {
         version: '0.35.3',
         optionalDependencies: { '@img/sharp-linux-arm64': '0.35.3' },
       })
+      // Lists libvips, as every Linux and macOS binding does, so the binding's own lib/ is not a
+      // candidate. The libvips package itself was never installed.
       pkg(path.join(nm, '@img/sharp-linux-arm64'), {
         name: '@img/sharp-linux-arm64',
         version: '0.35.3',
+        optionalDependencies: { '@img/sharp-libvips-linux-arm64': '1.3.2' },
       })
+      writeText(path.join(nm, '@img/sharp-linux-arm64/lib/sharp-linux-arm64-0.35.3.node'))
 
       const result = sharpTracingIncludes({ projectDir: tmp })
       expect(result.includes).toEqual([])
-      expect(result.problem).toContain('no @img/sharp-libvips-* package is installed')
+      expect(result.problem).toContain('no libvips package is installed')
     })
 
     it('reports a missing lib/ directory inside an installed libvips package', () => {

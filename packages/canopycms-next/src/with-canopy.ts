@@ -228,6 +228,15 @@ function isTracingIncludes(value: unknown): value is TracingIncludes {
   )
 }
 
+/** `value[key]` for any object, else undefined: for config keys Next's types no longer declare. */
+function readProperty(value: unknown, key: string): unknown {
+  return typeof value === 'object' && value !== null ? Reflect.get(value, key) : undefined
+}
+
+function stringOrUndefined(value: unknown): string | undefined {
+  return typeof value === 'string' ? value : undefined
+}
+
 /** `includes` added under `'/**'`, deduped. Every entry the adopter already wrote is kept as written. */
 function mergeTracingIncludes(
   existing: TracingIncludes | undefined,
@@ -275,27 +284,36 @@ function sharpTracingConfig(
   if (options.staticBuild || nextConfig.output === 'export') return {}
 
   const projectDir = process.cwd()
-  // `outputFileTracingIncludes` and `outputFileTracingRoot` became top-level options in Next 15.
-  // Next 13 and 14 read them under `experimental`, and report a top-level key as an invalid option
-  // and ignore it.
   const nextMajor = installedNextMajor(projectDir)
-  const underExperimental = nextMajor !== null && nextMajor < 15
   const experimental = nextConfig.experimental ?? {}
 
-  const existing: unknown = underExperimental
-    ? 'outputFileTracingIncludes' in experimental
-      ? experimental.outputFileTracingIncludes
-      : undefined
+  // Read and write each option where Next reads it (`loadConfig` in `next/dist/server/config.js`):
+  // - Next 13 and 14 read the tracing options only under `experimental`. A top-level key is reported
+  //   as an invalid option and ignored.
+  // - Next 15 and 16 still accept the `experimental` spellings, and copy any that is present over
+  //   the top-level key (`warnOptionHasBeenMovedOutOfExperimental`). So a legacy value wins, and an
+  //   include written only at the top level would be silently replaced.
+  // - Only Next 15 merges `experimental.turbo` into `turbopack`, with `turbopack` winning.
+  const experimentalOnly = nextMajor !== null && nextMajor < 15
+  const includesUnderExperimental = experimentalOnly || 'outputFileTracingIncludes' in experimental
+  const rootUnderExperimental = experimentalOnly || 'outputFileTracingRoot' in experimental
+
+  const existing: unknown = includesUnderExperimental
+    ? readProperty(experimental, 'outputFileTracingIncludes')
     : nextConfig.outputFileTracingIncludes
   // A malformed value is Next's to reject. Merging into it could only turn that into a crash here.
   if (existing !== undefined && !isTracingIncludes(existing)) return {}
 
-  const configuredRoot = underExperimental
-    ? 'outputFileTracingRoot' in experimental &&
-      typeof experimental.outputFileTracingRoot === 'string'
-      ? experimental.outputFileTracingRoot
-      : undefined
+  const configuredRoot = rootUnderExperimental
+    ? stringOrUndefined(readProperty(experimental, 'outputFileTracingRoot'))
     : nextConfig.outputFileTracingRoot
+  const legacyTurbopackRoot =
+    nextMajor === 15
+      ? stringOrUndefined(readProperty(readProperty(experimental, 'turbo'), 'root'))
+      : undefined
+  const turbopackRoot = experimentalOnly
+    ? undefined
+    : (nextConfig.turbopack?.root ?? legacyTurbopackRoot)
 
   // Next never changes directory for `next build <dir>`, so a working directory with no config
   // file in it is not the project, and any glob computed relative to it would be wrong.
@@ -303,7 +321,7 @@ function sharpTracingConfig(
     ? sharpTracingIncludes({
         projectDir,
         outputFileTracingRoot: configuredRoot,
-        turbopackRoot: nextConfig.turbopack?.root,
+        turbopackRoot,
       })
     : {
         includes: [],
@@ -319,7 +337,7 @@ function sharpTracingConfig(
   }
 
   const merged = mergeTracingIncludes(existing, includes)
-  if (!underExperimental) return { outputFileTracingIncludes: merged }
+  if (!includesUnderExperimental) return { outputFileTracingIncludes: merged }
   // Built as a variable, not returned as a literal, because Next 15's `ExperimentalConfig` type no
   // longer declares this key.
   const legacyExperimental = { ...experimental, outputFileTracingIncludes: merged }
