@@ -6,17 +6,20 @@
  *
  * Server-only - never import this module from client/editor code. It pulls
  * in `file-type`, `image-size`, and the SVG sanitizer, none of which belong
- * in a browser bundle. `sharp` is loaded dynamically (see
- * `rasterIsDecodable` below) rather than statically imported, but is just as
- * server-only - it is never reachable from a browser bundle either way.
+ * in a browser bundle. `sharp` is loaded on first use through `loadSharp()`
+ * (sharp-loader.ts; see `rasterIsDecodable` below) rather than statically
+ * imported, but is just as server-only - it is never reachable from a browser
+ * bundle either way.
  */
 
 import { fileTypeFromBuffer } from 'file-type'
 import { imageSize } from 'image-size'
 import { create as createContentDisposition } from 'content-disposition'
+import type { SharpConstructor } from 'sharp'
 
 import { getErrorMessage } from '../utils/error'
 import { hashBytes, publicKey, slugifyFilename } from './keys'
+import { loadSharp } from './sharp-loader'
 import { sanitizeSvg } from './svg-sanitizer'
 import { MAX_ANIMATED_FRAMES, MAX_INPUT_PIXELS } from './transform-directives'
 import type { AssetMeta } from './types'
@@ -227,14 +230,11 @@ const UNDECODABLE_RASTER_ERROR =
  *   same bytes from its own probe with the same 422.
  */
 async function rasterIsDecodable(data: Uint8Array): Promise<boolean> {
-  // Typed as the whole module (not just its callable default export) and
-  // dereferenced via `.default` below - sharp's own types ship an
-  // `export const sharp: SharpConstructor; export default sharp;` pair for
-  // the ESM entry point resolved by `import()`, so `typeof import('sharp')`
-  // is the two-property namespace object, not the callable itself.
-  let sharpModule: typeof import('sharp')
+  // `loadSharp()` has already logged the load failure once for the process;
+  // this warning is per upload, and names what the failure costs here.
+  let sharp: SharpConstructor
   try {
-    sharpModule = await import('sharp')
+    sharp = await loadSharp()
   } catch (err: unknown) {
     console.warn(
       `[canopycms] sharp could not be loaded - skipping raster decode validation at finalize: ${getErrorMessage(err)}`,
@@ -243,13 +243,10 @@ async function rasterIsDecodable(data: Uint8Array): Promise<boolean> {
   }
 
   try {
-    const probeMeta = await sharpModule
-      .default(data, { limitInputPixels: MAX_INPUT_PIXELS })
-      .metadata()
+    const probeMeta = await sharp(data, { limitInputPixels: MAX_INPUT_PIXELS }).metadata()
     const pagesToRead = Math.min(probeMeta.pages ?? 1, MAX_ANIMATED_FRAMES)
 
-    await sharpModule
-      .default(data, { pages: pagesToRead, limitInputPixels: MAX_INPUT_PIXELS })
+    await sharp(data, { pages: pagesToRead, limitInputPixels: MAX_INPUT_PIXELS })
       .resize({ width: DECODE_CHECK_SIZE, height: DECODE_CHECK_SIZE, fit: 'fill' })
       .toBuffer()
     return true
