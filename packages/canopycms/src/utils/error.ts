@@ -120,6 +120,45 @@ export function redactCredentials(message: string): string {
   // outside URL userinfo): GitHub token prefixes and Bearer values.
   result = result.replace(/\b(?:gh[pousr]|github_pat)_[A-Za-z0-9_]{8,}/g, '***')
   result = result.replace(/\b(Bearer\s+)[A-Za-z0-9._~+/=-]{8,}/g, '$1***')
+  // PEM private-key blocks — a GitHub App's private key. Defense-in-depth,
+  // exactly like the bare-token rules above: no site today puts key material
+  // into an error (checked — `createPrivateKey` failures report
+  // `error:1E08010C:DECODER routines::unsupported` and jsonwebtoken's report
+  // neither `BEGIN` nor the body), and a rule added before the first leak
+  // costs nothing. None of the rules above would match one: a PEM has no URL
+  // userinfo, no `gh*_` prefix and no `Bearer`.
+  //
+  // Linear by construction. The label is `[A-Z]{0,9} ?` (bounded, so its
+  // backtracking is a constant factor) rather than an open `[A-Z ]*`, which
+  // would rescan a long run of capitals at every start position. The lazy
+  // `[\s\S]*?` is stopped by the END footer, or by end-of-string when the
+  // message was truncated mid-key — without that second alternative a
+  // half-quoted key would pass through in full.
+  //
+  // The footer is spelled out, mirroring the header, rather than "`-----END`
+  // then anything up to the next dashes". Both looser spellings were measured
+  // wrong in opposite directions on a single-line message: `[^\n]*` (greedy to
+  // end of line) swallowed the text after the key, and `[^\n]*?-----` (lazy to
+  // any dashes) stopped on a label-less `-----END-----` and left a SECOND key
+  // after it unredacted. Matching only a real footer means anything else falls
+  // through to `$`, which over-redacts — the safe direction.
+  result = result.replace(
+    /-----BEGIN [A-Z]{0,9} ?PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z]{0,9} ?PRIVATE KEY-----|$)/g,
+    '<private-key>',
+  )
+  // Bare JWTs (`eyJ…`) — three dot-separated base64url runs.
+  //
+  // The leading boundary is `(?<![\w-])`, NOT `\b`. `-` is in the run class but
+  // is not a word character, so under `\b` every `-eyJ` inside one long
+  // `[\w-]` run starts a fresh match attempt that rescans the rest of the run
+  // for a `.` that never comes — quadratic, and measured on `'-eyJ'.repeat(n)`:
+  // roughly 200ms at 20KB, 900ms at 40KB, 13-16s at 160KB (the absolute
+  // numbers are machine-dependent; the quadrupling per doubling is not). With
+  // the lookbehind the same 160KB input is under a millisecond. It gives up
+  // exactly one case: a JWT
+  // glued directly to a preceding hyphen (`x-eyJ…`); every real prefix —
+  // whitespace, `"`, `=`, `(`, `Bearer ` — still matches.
+  result = result.replace(/(?<![\w-])eyJ[\w-]{8,}\.[\w-]{8,}\.[\w-]+/g, '***')
   return result
 }
 

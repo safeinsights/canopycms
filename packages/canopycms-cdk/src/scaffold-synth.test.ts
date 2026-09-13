@@ -27,7 +27,7 @@
  */
 
 import { execFile } from 'node:child_process'
-import { existsSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -66,6 +66,47 @@ const SYNTH_ENV = {
   CLERK_SECRET_KEY_SECRET_ARN:
     'arn:aws:secretsmanager:us-east-1:111111111111:secret:canopycms/clerk-secret-key-Ef34Gh',
   CLERK_JWT_KEY: '-----BEGIN PUBLIC KEY-----\nplaceholder\n-----END PUBLIC KEY-----',
+  // Optional, and set here anyway: these two have to travel bin/app.ts ->
+  // CmsStackProps -> lib/cms-stack.ts -> CanopyCmsService -> the worker's .env,
+  // and a break anywhere along that chain is invisible to a synth that leaves
+  // them unset. The stamps are asserted below. Unset behaviour is covered at
+  // the construct level in cms-deploy.test.ts, which can afford both cases.
+  // Values chosen NOT to be substrings of any env-var name stamped into the
+  // same .env: 'CANOPYCMS_GITHUB_TOKEN' is a prefix of
+  // CANOPYCMS_GITHUB_TOKEN_SECRET_ARN, so an implementation that wrote a
+  // variable's own NAME as its value would have satisfied the assertion below.
+  GITHUB_TOKEN_SECRET_JSON_FIELD: 'ghFieldProbe',
+  CLERK_SECRET_KEY_SECRET_JSON_FIELD: 'clerkFieldProbe',
+  // Cleared, not merely unset: the synth below spreads `process.env`, and a
+  // developer with any one of these exported (plausible — they are the
+  // variables this feature is configured with) would put the generated app in
+  // App mode, where it refuses to synth alongside GITHUB_TOKEN_SECRET_ARN.
+  // Measured: one exported GITHUB_APP_INSTALLATION_ID took the whole file down
+  // in `beforeAll`, with an error that blamed the scaffold. The App test below
+  // clears the token variables for the mirror-image reason.
+  GITHUB_APP_ID: '',
+  GITHUB_APP_INSTALLATION_ID: '',
+  GITHUB_APP_PRIVATE_KEY_SECRET_ARN: '',
+  GITHUB_APP_PRIVATE_KEY_SECRET_JSON_FIELD: '',
+}
+
+/**
+ * The GitHub App credential, for the second synth below.
+ *
+ * Kept apart from `SYNTH_ENV` rather than folded into it because the two are
+ * mutually exclusive by design: `CanopyCmsService` refuses an App alongside
+ * `githubTokenSecretArn`, so a single environment carrying both would fail the
+ * synth every other test in this file depends on.
+ *
+ * Values chosen not to be substrings of any env-var NAME stamped into the same
+ * `.env`, for the reason spelled out above `GITHUB_TOKEN_SECRET_JSON_FIELD`.
+ */
+const APP_SYNTH_ENV = {
+  GITHUB_APP_ID: '424242',
+  GITHUB_APP_INSTALLATION_ID: '515151',
+  GITHUB_APP_PRIVATE_KEY_SECRET_ARN:
+    'arn:aws:secretsmanager:us-east-1:111111111111:secret:canopycms/github-app-key-Ij56Kl',
+  GITHUB_APP_PRIVATE_KEY_SECRET_JSON_FIELD: 'appKeyFieldProbe',
 }
 
 /** Two cold Node boots, one of which imports all of aws-cdk-lib and stages two assets. */
@@ -77,6 +118,22 @@ let synthesizedStacks: string[]
 let resourceTypes: Set<string>
 /** Every resource in every synthesized template, so assertions can look inside them. */
 let resources: unknown[]
+/**
+ * The raw text of every synthesized template, concatenated.
+ *
+ * The worker's `.env` is written by a user-data heredoc, so its lines are
+ * literal substrings of the template rather than structured fields -- searching
+ * the text is what makes an assertion on them robust to how CDK chunks the
+ * UserData `Fn::Join`. Same reasoning as the branch-probe test below.
+ */
+let renderedTemplates: string
+/**
+ * The `platform` of every Docker image asset in the asset manifests `beforeAll`'s synth wrote.
+ * Captured here rather than read by the test asserting on it, because the GitHub App test
+ * re-synths into the same `cdk.out` and relies on no other test reading that directory after
+ * `beforeAll`.
+ */
+let imagePlatforms: (string | undefined)[]
 
 function readJsonField(value: unknown, field: string): unknown {
   return typeof value === 'object' && value !== null && field in value
@@ -153,8 +210,11 @@ beforeAll(async () => {
 
   resourceTypes = new Set()
   resources = []
+  renderedTemplates = ''
   for (const file of templateFiles) {
-    const template: unknown = JSON.parse(await fs.readFile(path.join(outDir, file), 'utf-8'))
+    const raw = await fs.readFile(path.join(outDir, file), 'utf-8')
+    renderedTemplates += raw
+    const template: unknown = JSON.parse(raw)
     const templateResources = readJsonField(template, 'Resources')
     if (typeof templateResources !== 'object' || templateResources === null) continue
     for (const resource of Object.values(templateResources)) {
@@ -162,6 +222,13 @@ beforeAll(async () => {
       const type = readJsonField(resource, 'Type')
       if (typeof type === 'string') resourceTypes.add(type)
     }
+  }
+
+  // CDK records the image's platform in the asset manifest, not the template.
+  imagePlatforms = []
+  for (const file of (await fs.readdir(outDir)).filter((f) => f.endsWith('.assets.json'))) {
+    const dockerImages = Manifest.loadAssetManifest(path.join(outDir, file)).dockerImages ?? {}
+    for (const image of Object.values(dockerImages)) imagePlatforms.push(image.source.platform)
   }
 }, TIMEOUT_MS)
 
@@ -308,15 +375,8 @@ describe('canopycms init-deploy aws produces a synthesizable CDK app', () => {
    * Asserting both halves together is what catches one: an image built for
    * the host rather than the function cannot run on it.
    */
-  it('builds the CMS image for the architecture its Lambda runs on (linux/arm64)', async () => {
-    const outDir = path.join(scaffoldDir, 'cdk.out')
-    const manifests = (await fs.readdir(outDir)).filter((f) => f.endsWith('.assets.json'))
-    const platforms = manifests.flatMap((file) =>
-      Object.values(Manifest.loadAssetManifest(path.join(outDir, file)).dockerImages ?? {}).map(
-        (image) => image.source.platform,
-      ),
-    )
-    expect(platforms).toEqual(['linux/arm64'])
+  it('builds the CMS image for the architecture its Lambda runs on (linux/arm64)', () => {
+    expect(imagePlatforms).toEqual(['linux/arm64'])
 
     const imageFunctionArchitectures = resources
       .filter(
@@ -326,6 +386,162 @@ describe('canopycms init-deploy aws produces a synthesizable CDK app', () => {
       )
       .map((fn) => readJsonField(readJsonField(fn, 'Properties'), 'Architectures'))
     expect(imageFunctionArchitectures).toEqual([['arm64']])
+  })
+
+  /**
+   * The scaffold half of adopter request #46. Four files carry this wiring --
+   * `bin/app.ts`, `lib/cms-stack.ts`'s props, that file's pass-through to
+   * `CanopyCmsService`, and the workflow's `env:` block -- and a break in any
+   * one of them produces a deployment where the prop is simply inert: the
+   * worker keeps warning that a JSON field should be configured, and the
+   * adopter keeps configuring one that never arrives.
+   *
+   * Synthesizing successfully proves nothing here, because these inputs are
+   * OPTIONAL: drop the pass-through in `cms-stack.ts` and synth still succeeds.
+   * Only the stamp proves the value travelled.
+   */
+  it('carries the optional JSON-field inputs through bin/app.ts and cms-stack.ts into the worker .env', () => {
+    expect(renderedTemplates).toContain(
+      `CANOPYCMS_GITHUB_TOKEN_SECRET_JSON_FIELD=${SYNTH_ENV.GITHUB_TOKEN_SECRET_JSON_FIELD}`,
+    )
+    expect(renderedTemplates).toContain(
+      `CLERK_SECRET_KEY_SECRET_JSON_FIELD=${SYNTH_ENV.CLERK_SECRET_KEY_SECRET_JSON_FIELD}`,
+    )
+    // The ARNs travel by the same route and are asserted alongside so a
+    // template that lost its .env heredoc entirely cannot pass the two above
+    // by some accident of substring matching.
+    expect(renderedTemplates).toContain(
+      `CANOPYCMS_GITHUB_TOKEN_SECRET_ARN=${SYNTH_ENV.GITHUB_TOKEN_SECRET_ARN}`,
+    )
+  })
+
+  /**
+   * The scaffold half of adopter request #45, and the only place the GitHub App
+   * chain is exercised end to end: `bin/app.ts` -> `CmsStackProps` ->
+   * `lib/cms-stack.ts`'s pass-through -> `CanopyCmsService` -> the worker's
+   * `.env`. Every link is optional, so a synth that succeeds proves nothing;
+   * only the stamps do.
+   *
+   * A SECOND synth of the same scaffold, because the App path is defined by the
+   * absence of `GITHUB_TOKEN_SECRET_ARN` -- configuring both is refused at
+   * synth, so it cannot share `beforeAll`'s environment. It deliberately reuses
+   * `cdk.out` (see CDK_OUTDIR's note above, which is a correctness constraint
+   * rather than a preference); no other test in this file reads `cdk.out` after
+   * `beforeAll` has captured what it needs, so overwriting it here is invisible
+   * to them.
+   */
+  it(
+    'carries the GitHub App inputs through bin/app.ts and cms-stack.ts into the worker .env',
+    async () => {
+      const cdkJson: unknown = JSON.parse(
+        await fs.readFile(path.join(scaffoldDir, 'cdk.json'), 'utf-8'),
+      )
+      await execFileAsync('sh', ['-c', appCommand], {
+        cwd: scaffoldDir,
+        timeout: TIMEOUT_MS,
+        env: {
+          ...process.env,
+          ...SYNTH_ENV,
+          // The App path's defining condition. Empty rather than deleted: that
+          // is how an unset GitHub Actions secret actually arrives, and
+          // bin/app.ts's `|| undefined` is what has to read it as absent.
+          GITHUB_TOKEN_SECRET_ARN: '',
+          GITHUB_TOKEN_SECRET_JSON_FIELD: '',
+          ...APP_SYNTH_ENV,
+          CDK_OUTDIR: 'cdk.out',
+          CDK_CONTEXT_JSON: JSON.stringify(readJsonField(cdkJson, 'context') ?? {}),
+        },
+      })
+
+      const outDir = path.join(scaffoldDir, 'cdk.out')
+      const files = (await fs.readdir(outDir)).filter((f) => f.endsWith('.template.json'))
+      let templates = ''
+      for (const file of files) templates += await fs.readFile(path.join(outDir, file), 'utf-8')
+
+      expect(templates).toContain(`CANOPYCMS_GITHUB_APP_ID=${APP_SYNTH_ENV.GITHUB_APP_ID}`)
+      expect(templates).toContain(
+        `CANOPYCMS_GITHUB_APP_INSTALLATION_ID=${APP_SYNTH_ENV.GITHUB_APP_INSTALLATION_ID}`,
+      )
+      expect(templates).toContain(
+        `CANOPYCMS_GITHUB_APP_PRIVATE_KEY_SECRET_ARN=${APP_SYNTH_ENV.GITHUB_APP_PRIVATE_KEY_SECRET_ARN}`,
+      )
+      expect(templates).toContain(
+        `CANOPYCMS_GITHUB_APP_PRIVATE_KEY_SECRET_JSON_FIELD=${APP_SYNTH_ENV.GITHUB_APP_PRIVATE_KEY_SECRET_JSON_FIELD}`,
+      )
+      // The grant, not just the .env: a worker told which secret to read with
+      // no permission to read it deploys clean and then AccessDenied-loops
+      // every 5s forever.
+      //
+      // What this pins, precisely: that the GENERATED stack grants it by some
+      // route. It does NOT pin the construct's prop-to-IAM union, and measuring
+      // that was worth doing -- removing the App ARN from that union leaves
+      // this green, because `cms-stack.ts` also lists the key in `secretsArns`.
+      // The union is pinned at the construct level in cms-deploy.test.ts, where
+      // no `secretsArns` masks it. Both matter: an adopter who hand-writes the
+      // stack has only the union.
+      //
+      // Parsed, NOT a substring search of the template text: the .env stamp
+      // asserted above contains that same ARN, so `templates.toContain(arn)`
+      // would pass with no IAM statement at all -- coverage that is not there.
+      const grantedSecretArns = files.flatMap((file) => {
+        const doc: unknown = JSON.parse(readFileSync(path.join(outDir, file), 'utf-8'))
+        const policies = Object.values(readJsonField(doc, 'Resources') ?? {}).filter(
+          (r) => readJsonField(r, 'Type') === 'AWS::IAM::Policy',
+        )
+        return policies.flatMap((policy) => {
+          const statements = readJsonField(
+            readJsonField(readJsonField(policy, 'Properties'), 'PolicyDocument'),
+            'Statement',
+          )
+          return (Array.isArray(statements) ? statements : []).flatMap((s: unknown) => {
+            if (!JSON.stringify(readJsonField(s, 'Action')).includes('GetSecretValue')) return []
+            const resource = readJsonField(s, 'Resource')
+            return (Array.isArray(resource) ? resource : [resource]).filter(
+              (r): r is string => typeof r === 'string',
+            )
+          })
+        })
+      })
+      expect(grantedSecretArns).toContain(APP_SYNTH_ENV.GITHUB_APP_PRIVATE_KEY_SECRET_ARN)
+      // ...and the token path is genuinely gone, rather than both being stamped.
+      expect(templates).not.toContain('CANOPYCMS_GITHUB_TOKEN_SECRET_ARN=')
+    },
+    TIMEOUT_MS,
+  )
+
+  it('passes the App variables through the generated workflow, CANOPY_-prefixed', async () => {
+    // GitHub refuses to create an Actions secret OR variable named GITHUB_*, so
+    // the stored names must carry the prefix and the workflow must map them
+    // back. A variable missing from this block is not a synth error -- it is a
+    // prop no adopter deploying through CI can ever set.
+    const workflow = await fs.readFile(
+      path.join(scaffoldDir, '.github/workflows/deploy-cms.yml'),
+      'utf-8',
+    )
+    expect(workflow).toContain('GITHUB_APP_ID: ${{ vars.CANOPY_GITHUB_APP_ID }}')
+    expect(workflow).toContain(
+      'GITHUB_APP_INSTALLATION_ID: ${{ vars.CANOPY_GITHUB_APP_INSTALLATION_ID }}',
+    )
+    expect(workflow).toContain(
+      'GITHUB_APP_PRIVATE_KEY_SECRET_ARN: ${{ secrets.CANOPY_GITHUB_APP_PRIVATE_KEY_SECRET_ARN }}',
+    )
+  })
+
+  it('passes the JSON-field variables through the generated workflow, which is the only way CI can set them', async () => {
+    // bin/app.ts reads these with `|| undefined` rather than `required()`, so a
+    // variable missing from the workflow's env: block is not a synth error --
+    // it is a prop no adopter deploying through CI can ever set. The workflow
+    // file says as much next to the block; this is the check behind that note.
+    const workflow = await fs.readFile(
+      path.join(scaffoldDir, '.github/workflows/deploy-cms.yml'),
+      'utf-8',
+    )
+    expect(workflow).toContain(
+      'GITHUB_TOKEN_SECRET_JSON_FIELD: ${{ vars.CANOPY_GITHUB_TOKEN_SECRET_JSON_FIELD }}',
+    )
+    expect(workflow).toContain(
+      'CLERK_SECRET_KEY_SECRET_JSON_FIELD: ${{ vars.CLERK_SECRET_KEY_SECRET_JSON_FIELD }}',
+    )
   })
 
   it('names the stack exactly what the generated workflow deploys', async () => {

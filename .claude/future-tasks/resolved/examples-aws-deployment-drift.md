@@ -1,5 +1,7 @@
 # [P3] `examples/aws-deployment/` lags the `init-deploy aws` scaffold it claims to mirror
 
+**Duplicate of [example-aws-deployment-drift-from-template.md](../example-aws-deployment-drift-from-template.md), merged during the base merge (#341).**
+
 Found 2026-09-12 by the round-1 review of PR #323 (the CMS image architecture fix), which
 touched only `runs-on` in the example workflow and the `platform`/build-arg lines in the
 example stack. Not a regression from that PR; filed so it isn't mistaken for one.

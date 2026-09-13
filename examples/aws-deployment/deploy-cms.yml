@@ -57,9 +57,37 @@
 #                                            and the CMS Lambda takes public values only
 #        CANOPY_BOOTSTRAP_ADMIN_IDS          comma-separated Clerk user IDs
 #      Optional:
+#        CANOPY_GITHUB_TOKEN_SECRET_JSON_FIELD  set ONLY if that secret holds a JSON
+#                                            document instead of the bare token; names the
+#                                            key to read out of it. CANOPY_ prefix for the
+#                                            same reason as the ARN secret above -- GitHub
+#                                            rejects VARIABLES starting with GITHUB_ too
+#        CLERK_SECRET_KEY_SECRET_JSON_FIELD  same, for the Clerk secret. A key
+#                                            NAME, not key material, so a
+#                                            variable rather than a secret
 #        CANOPYCMS_DEPLOYMENT_NAME           defaults to 'prod'
 #        CMS_DOMAIN_NAME                     enables CloudFront + Route53
 #        CMS_HOSTED_ZONE_DOMAIN              required alongside CMS_DOMAIN_NAME
+#      Optional, and only if your organisation requires the worker to act as a
+#      GitHub App rather than as a PAT. Set ALL THREE or none; with them set,
+#      CANOPY_GITHUB_TOKEN_SECRET_ARN must be left UNSET (configuring both is
+#      refused at synth). The PAT remains the default and is not deprecated.
+#        CANOPY_GITHUB_APP_ID                variable. The App's own ID
+#        CANOPY_GITHUB_APP_INSTALLATION_ID   variable. The App's installation on
+#                                            THIS repo -- not the App ID
+#        CANOPY_GITHUB_APP_PRIVATE_KEY_SECRET_ARN
+#                                            secret. FULL Secrets Manager ARN of
+#                                            the secret holding the PEM. The key
+#                                            itself is never an Actions secret:
+#                                            it is multi-line, and only the ARN
+#                                            reaches the worker's environment
+#        CANOPY_GITHUB_APP_PRIVATE_KEY_SECRET_JSON_FIELD
+#                                            variable. Only if that secret holds
+#                                            a JSON document rather than the
+#                                            bare PEM
+#      All four take the CANOPY_ prefix for the same reason the token ARN does:
+#      GitHub rejects Actions secrets AND variables whose names start with
+#      GITHUB_. The Deploy step maps each onto the unprefixed name app.ts reads.
 
 name: Deploy CMS
 
@@ -163,10 +191,30 @@ jobs:
       # Every variable below is consumed by infrastructure/bin/app.ts. Keep
       # this block in step with the `required()` calls there: a variable added
       # in one place and not the other fails the deploy at synth.
+      #
+      # OPTIONAL variables belong here too, and fail more quietly: app.ts reads
+      # them with `|| undefined`, so one that is missing from this block is not
+      # a synth error, it is a prop that can never be set from CI at all -- the
+      # deploy succeeds and the feature is simply inert.
       - name: Deploy
         env:
           GITHUB_TOKEN_SECRET_ARN: ${{ secrets.CANOPY_GITHUB_TOKEN_SECRET_ARN }}
           CLERK_SECRET_KEY_SECRET_ARN: ${{ secrets.CLERK_SECRET_KEY_SECRET_ARN }}
+          GITHUB_TOKEN_SECRET_JSON_FIELD: ${{ vars.CANOPY_GITHUB_TOKEN_SECRET_JSON_FIELD }}
+          CLERK_SECRET_KEY_SECRET_JSON_FIELD: ${{ vars.CLERK_SECRET_KEY_SECRET_JSON_FIELD }}
+          # Optional: GitHub App authentication for the worker, instead of the
+          # token above. Leave the repository secrets and variables unset and
+          # these arrive empty, which app.ts reads as "not configured".
+          #
+          # Every one is stored under a CANOPY_ prefix and mapped here onto the
+          # unprefixed name app.ts reads: GitHub refuses to CREATE any Actions
+          # secret or variable whose name starts with GITHUB_, so the obvious
+          # names do not exist -- the same reason CANOPY_GITHUB_TOKEN_SECRET_ARN
+          # is spelled that way.
+          GITHUB_APP_ID: ${{ vars.CANOPY_GITHUB_APP_ID }}
+          GITHUB_APP_INSTALLATION_ID: ${{ vars.CANOPY_GITHUB_APP_INSTALLATION_ID }}
+          GITHUB_APP_PRIVATE_KEY_SECRET_ARN: ${{ secrets.CANOPY_GITHUB_APP_PRIVATE_KEY_SECRET_ARN }}
+          GITHUB_APP_PRIVATE_KEY_SECRET_JSON_FIELD: ${{ vars.CANOPY_GITHUB_APP_PRIVATE_KEY_SECRET_JSON_FIELD }}
           CLERK_JWT_KEY: ${{ vars.CLERK_JWT_KEY }}
           NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${{ vars.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY }}
           CANOPY_BOOTSTRAP_ADMIN_IDS: ${{ vars.CANOPY_BOOTSTRAP_ADMIN_IDS }}

@@ -2644,6 +2644,10 @@ The worker daemon handles **internet-requiring** operations that can't happen in
 
 On a single server with internet access, no worker is needed — `githubService` handles PR operations synchronously and the auth plugin calls the provider API directly. The worker architecture is additive, not required.
 
+### Why one GitHub App per site, not one shared across an organisation?
+
+The worker can authenticate to GitHub as a registered GitHub App instead of a personal access token, and CanopyCMS registers one App **per site**, never a single App installed across every repository an organisation owns. That runs against the obvious economy — one App, installed everywhere, is less to set up — because of where the App's key actually lives: a GitHub App's private key is scoped to the App itself, not to any one installation. Restricting a token to a single repository is a choice the key-holder makes when minting it, not a boundary GitHub enforces against whoever holds the key — anyone holding it can enumerate every installation the App has and mint a token for any of them. CanopyCMS's key can't be kept in one guarded place: each site's worker reads it at runtime from that site's own secret store, on that site's own host. A single App with write access to repository contents would therefore mean that compromising one site's secret store grants write access to every other site's repository. The cost is accepted rather than hidden: one App per site means one key per site, and one more credential to rotate for every site added.
+
 ### Why layer git operations (GitManager vs service methods)?
 
 The three-layer architecture separates concerns and improves maintainability:

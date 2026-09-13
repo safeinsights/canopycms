@@ -73,23 +73,46 @@ or a field whose value is not a string — including an empty string, which the 
 path has always rejected and which every caller downstream would otherwise treat, silently,
 as no credential at all. No secret value ever appears in those messages.
 
-**To adopt.** Nothing yet — and if you deploy through `CanopyCmsService`, nothing you _can_
-do yet. This release wires the env vars in the worker entrypoint only. The construct builds
-the worker's `.env` from a closed list with no passthrough, so there is no prop for either
-var, and editing `/opt/canopy-worker/.env` on the instance does not survive: user-data
-rewrites it on every launch and the ASG replaces instances on every `cdk deploy`. The props
-are the next change. Until they land, a JSON-document secret keeps working exactly as it does
-today, with a warning on each worker boot that you cannot yet act on.
+**To adopt.** Nothing, unless one of those two secrets holds a JSON document. If one does,
+set the matching `CanopyCmsService` prop to the key you want:
+
+| Prop                            | Sets                                       | Names a field in          |
+| ------------------------------- | ------------------------------------------ | ------------------------- |
+| `githubTokenSecretJsonField`    | `CANOPYCMS_GITHUB_TOKEN_SECRET_JSON_FIELD` | `githubTokenSecretArn`    |
+| `clerkSecretKeySecretJsonField` | `CLERK_SECRET_KEY_SECRET_JSON_FIELD`       | `clerkSecretKeySecretArn` |
+
+Through the scaffolded stack (`canopycms init-deploy aws`) they are wired to the optional
+env vars `GITHUB_TOKEN_SECRET_JSON_FIELD` and `CLERK_SECRET_KEY_SECRET_JSON_FIELD`, which the
+generated `deploy-cms.yml` fills from repository _variables_ — they carry a key's name, not
+its value. The variables are named `CANOPY_GITHUB_TOKEN_SECRET_JSON_FIELD` and
+`CLERK_SECRET_KEY_SECRET_JSON_FIELD` ([why the prefix](deploying-to-aws.md#repository-secrets-and-variables)).
+
+If you scaffolded before this release, add the two props to `infrastructure/bin/app.ts` and
+`infrastructure/lib/cms-stack.ts`, or re-run the generator and diff. Leave everything unset
+and nothing changes.
+
+Two ways to get it wrong now fail at `cdk synth` instead of at worker boot, because both
+previously produced a worker that deployed clean and then restart-looped every five seconds:
+setting a `…JsonField` prop without its `…SecretArn` prop (the field would be stamped, the
+ARN would not, and the credential would be read from nowhere — for Clerk, silently disabling
+auth-cache refresh with no log line), and passing an ARN that carries the ECS `:KEY::` suffix
+described below. Neither check changes the worker's IAM policy: a field is a key inside a
+secret's value, not a separately grantable resource, so the existing
+`secretsmanager:GetSecretValue` grant on the secret already covers it.
 
 **Two forms that deliberately do NOT work**, because both are widespread conventions from
 neighbouring AWS services and both would fail confusingly here:
 
 - The ECS/CloudFormation suffix form, `arn:…:secret:my-secret-AbCdEf:CLERK_SECRET_KEY::`.
   That suffix is a CloudFormation dynamic-reference and ECS task-definition convention;
-  `GetSecretValue` takes it as part of the `SecretId` rather than parsing it. CDK rejects it
-  before you get that far — on aws-cdk-lib 2.265.0, `Secret.fromSecretCompleteArn` with a
-  suffixed ARN throws `` `secretCompleteArn` does not appear to be complete; missing
-6-character suffix ``. Use the separate field env var.
+  `GetSecretValue` takes it as part of the `SecretId` rather than parsing it. Two things now
+  refuse it before it can reach a running worker: `CanopyCmsService` throws at synth, naming
+  the `…JsonField` prop to use instead, and — through the scaffolded stack, which resolves
+  the ARN first — CDK gets there even earlier with its own less helpful message (on
+  aws-cdk-lib 2.265.0, `Secret.fromSecretCompleteArn` with a suffixed ARN throws
+  `` `secretCompleteArn` does not appear to be complete; missing 6-character suffix ``).
+  `secretsArns` entries are checked the same way, since those go verbatim into the worker's
+  IAM policy where a suffixed ARN matches nothing.
 - CDK's `secretValueFromJson`. It resolves the **plaintext** into the CloudFormation template
   at deploy time, which would end the "the `.env` carries the ARN, never the value" posture
   that [deploying-to-aws.md](deploying-to-aws.md) describes.
@@ -106,6 +129,212 @@ does not give you that.
 re-exports one field into the worker's environment before starting it — a shell `jq` step in
 user-data, or a wrapper entrypoint around `canopy-worker`. If that wrapper also validated the
 field exists, the package now does it with a better message.
+
+### The worker can authenticate to GitHub as an App (the token still works, unchanged)
+
+**What changed.** `CmsWorkerConfig` gained an optional `githubAppAuth`. Supply it _instead of_
+`githubToken` to have the worker act as a GitHub App installation rather than as a personal
+access token. Exactly one of the two: setting both is an error, and so is setting neither.
+(Both is rejected rather than resolved by precedence, because it would otherwise be undefined
+which identity a push or a pull request acts as.)
+
+**Nothing about the token path changed.** `githubToken` is not deprecated, warns about nothing,
+and stays the documented default. Registering a GitHub App under an organisation takes an
+owner of that organisation (or a GitHub App manager for all its Apps), which many adopters
+are not — so this is an option, not a direction.
+The token path also keeps working with `@octokit/auth-app` absent from your install entirely:
+`canopycms` does not depend on it and never imports it.
+
+**To adopt** — only if you want App auth. This entry is the _package_ side: what an adopter
+driving `CmsWorker` from their own entrypoint writes. If you deploy with `canopycms-cdk`,
+you do not write any of this — see
+[the CDK entry below](#the-cdk-worker-can-authenticate-as-a-github-app-45), which wires it
+for you from three props.
+
+```ts
+import { createAppAuth } from '@octokit/auth-app' // YOUR dependency, not canopycms's
+import { CmsWorker, normalizeGitHubAppPrivateKey } from 'canopycms/worker/cms-worker'
+
+// ONE instance: it holds the installation-token cache, so sharing it keeps the REST
+// and git halves on the same hourly token.
+const appAuth = createAppAuth({
+  appId,
+  installationId,
+  privateKey: normalizeGitHubAppPrivateKey(rawPrivateKey),
+})
+
+new CmsWorker({
+  ...rest,
+  githubAppAuth: {
+    mintInstallationToken: async () => (await appAuth({ type: 'installation' })).token,
+    // A closure, not `authStrategy: createAppAuth` — that would have Octokit build a
+    // SECOND instance with its own separate cache.
+    octokitAuth: { authStrategy: () => appAuth, auth: {} },
+  },
+})
+```
+
+**Run your private key through `normalizeGitHubAppPrivateKey`.** What it buys you today is
+that a key mangled on its way through configuration still works: `\n` escapes turned into real
+newlines, and a base64-wrapped PEM unwrapped (both orders — escaped-then-wrapped and
+wrapped-then-escaped). That is where a multi-line secret usually ends up after a single-line
+config field. Anything unusable throws where the key is configured, naming the key, instead of
+surfacing later as an opaque JWT signing failure.
+
+It also converts PKCS#1 to PKCS#8 — insurance, not a fix: GitHub's PKCS#1 keys sign today
+under the worker's `esbuild --platform=node` build, but a `module`-preferring bundler, or
+`@octokit/auth-app@7` outside the `node` condition of its dependency's `imports` map (per the
+published package), can reject them. `normalizeGitHubAppPrivateKey`'s comment has the detail.
+
+**One caveat on the `authStrategy: () => appAuth` closure.** Octokit calls the strategy with
+its own `request`, and its REST calls mint through that — not through any `request` you passed
+to `createAppAuth`. The shared token cache still works (that lives on the instance), but if you
+configured `createAppAuth({ request })` to reach a GitHub Enterprise host, the git half honours
+it and the REST half does not; set Octokit's own `baseUrl` too in that case.
+
+**Now deletable.** If you hand-rolled App auth around `CmsWorker`, the pieces this replaces are:
+your own PEM conversion; any code that mints a token at boot and holds it (installation tokens
+last about an hour — `buildGitHubUrl` now resolves one per use); and any wrapper that catches
+and re-throws a mint failure. That last one is worth checking specifically: re-throwing as a
+new `Error` drops the HTTP status, and CanopyCMS's task classifier reads that status to decide
+permanent-vs-retry — without it a permanently bad key burns every publish's whole retry budget,
+and fails every sync, instead of failing fast.
+
+**`GitHubService` is unaffected** and remains static-token-only; the Lambda-side GitHub client
+still takes a token.
+
+### The CDK worker can authenticate as a GitHub App (#45)
+
+**What changed.** `CanopyCmsServiceProps` gained `githubAppId`,
+`githubAppInstallationId`, `githubAppPrivateKeySecretArn` and
+`githubAppPrivateKeySecretJsonField`. Set the first three and `canopycms-cdk`'s EC2 worker
+entrypoint builds the App credential for you — you write none of the `createAppAuth` wiring
+in the entry above. This closes adopter request #45.
+
+**To adopt** — only if you want App auth (existing stacks need no edit):
+
+1. Register the App under your organisation, install it on the content repository with
+   **Contents: read & write** and **Pull requests: read & write**, and store its PEM private
+   key in Secrets Manager.
+2. Set the three props and **remove `githubTokenSecretArn`** (with its JSON field). Exactly
+   one credential: a partial set of the three is refused at synth, and so is an App alongside
+   a token — two credentials would leave it undefined which identity a push or a pull request
+   acts as.
+3. From the generated GitHub Actions workflow, store them as `CANOPY_GITHUB_APP_ID`,
+   `CANOPY_GITHUB_APP_INSTALLATION_ID` and `CANOPY_GITHUB_APP_PRIVATE_KEY_SECRET_ARN`. **The
+   `CANOPY_` prefix is not cosmetic:** GitHub refuses to create an Actions secret _or
+   variable_ whose name starts with `GITHUB_`, so the obvious names cannot exist. The workflow
+   maps each onto the unprefixed environment variable the CDK app reads.
+
+The private key is **ARN-only**, and passing the key itself where the ARN belongs is refused
+at synth ([why](deploying-to-aws.md#authenticating-as-a-github-app)).
+
+The private-key ARN is unioned into the worker's IAM policy automatically, exactly as
+`githubTokenSecretArn` is — you do not repeat it in `secretsArns`. It also honours
+`githubAppPrivateKeySecretJsonField`, which is the case that motivated JSON-field support in
+the first place: an App private key is exactly the sort of material an organisation keeps
+inside one credential document per environment.
+
+**Now deletable.** If you were driving `CmsWorker` from a hand-written entrypoint purely to
+get App auth onto an otherwise-CDK deployment, that entrypoint can go. Also any user-data or
+wrapper step that fetched the PEM and re-exported it into the worker's environment — that
+path could not have worked for a multi-line key anyway, which is part of why this landed as
+a prop.
+
+See [deploying-to-aws.md](deploying-to-aws.md#authenticating-as-a-github-app) for the full
+walkthrough.
+
+### `canopycms init-github-app` registers that App for you
+
+**What changed.** A new CLI command, `canopycms init-github-app <create|verify>`. `create`
+registers the App from a manifest — so GitHub shows you the exact permission set before you
+click Create — captures its private key over a loopback redirect, and hands the key to a
+destination you name. `verify` reads an existing installation back and changes nothing.
+
+**Nothing is required of you.** The App entries above still work exactly as documented, by
+hand. This is a faster and less error-prone way to do the same setup.
+
+**What it is actually for.** The two entries above tell you to install the App with
+`Contents: read & write` and `Pull requests: read & write`, and until now that was prose
+nothing verified. That set is now `CANOPY_APP_PERMISSIONS` in
+`packages/canopycms/src/cli/init-github-app.ts`, each entry carrying the call site that
+forces it, held in step with the code by a test that drives the worker's dispatch table and
+fails when a GitHub call is added that the set does not cover. An App one permission short
+does not fail loudly — `convert-to-draft`'s GraphQL failure carries no HTTP status, so the
+worker classifies a permission denial as transient and retries the branch into `sync-failed`.
+`verify` finds that at setup time instead.
+
+**Register one App per site, not one shared across repositories:** anyone holding an App's key
+can mint a token for any of its installations
+([why](../ARCHITECTURE.md#why-one-github-app-per-site-not-one-shared-across-an-organisation)).
+
+**The key's destination is yours to choose.** Everything after `--` is run with the PEM on its
+standard input — so it never touches disk and never appears in a process listing — and that
+command's own output is shown to you, which is how you learn the ARN of a secret you just
+created. `--key-out <path>` writes a `0600` file instead. The command knows nothing about AWS
+or any other secret store.
+
+```bash
+canopycms init-github-app create -- \
+  aws secretsmanager create-secret --name canopycms/github-app-key --secret-string file:///dev/stdin
+```
+
+If that command fails, `create` asks for a **file path** to write the key to, never a command,
+and a first word containing `=` is refused
+([details](deploying-to-aws.md#register-it-with-canopycms-init-github-app)).
+
+**Two things it will not do**, both deliberate: it will not edit an existing JSON secret
+document (a read-modify-write against a shared credential can silently drop its other
+fields — create the secret yourself and point `GITHUB_APP_PRIVATE_KEY_SECRET_JSON_FIELD` at
+the field), and it will not run without an interactive terminal, because it waits twice for a
+human and hanging in CI would leave a live App whose only key dies with the job.
+
+**Now deletable.** Any runbook step that said "download the .pem from the App's settings page
+and upload it to the secret store" — that is the hop this removes, and the one where a private
+key most often ends up in a downloads folder or a clipboard.
+
+### A rotated secret reaches the running worker, without an instance replacement
+
+**What changed.** The EC2 worker read both of its Secrets Manager secrets once, at boot,
+before `new CmsWorker(...)`, and never again. Rotating the GitHub token or the Clerk secret
+key therefore had no effect until the instance was replaced — and in the Clerk case there
+was no signal that anything was wrong, because `CmsWorker.refreshAuthCache()` logs and
+swallows its errors. The symptom was a stale auth cache and one log line every fifteen
+minutes.
+
+The worker now re-reads a secret when the operation using it fails, so a rotation is picked
+up without an instance replacement; timings, costs and the store-before-revoke order are in
+[deploying-to-aws.md](deploying-to-aws.md#rotating-a-secret).
+
+**To adopt.** Nothing. This is automatic for any deployment whose credentials come from
+`*_SECRET_ARN`, which is every deployment the scaffold generates.
+
+Two limits worth knowing, both deliberate:
+
+- A **GitHub App private key** is still read only at boot. Store the new key, replace the
+  instance, and only then delete the old key on GitHub — the reverse order fails every publish
+  about an hour later ([details](deploying-to-aws.md#rotating-a-secret)).
+- A credential supplied as a **plain env var** (`CANOPYCMS_GITHUB_TOKEN`, `CLERK_SECRET_KEY`)
+  is never re-read. Re-reading the ARN you overrode would swap your override back out.
+
+**Now deletable.** Any operational runbook step that says "rotate the secret, then run
+`cdk deploy` (or terminate the worker instance) to pick it up". If you scripted that — a
+scheduled `cdk deploy` after a rotation, or an ASG instance-refresh triggered by a Secrets
+Manager rotation event — it can go, unless it exists for a GitHub App private key.
+
+One consequence for anyone driving `CmsWorker` from their own entrypoint: `CmsWorkerConfig`
+gains an optional `refreshGitHubToken?: () => Promise<string | undefined>`. Return the new
+token, or `undefined` for "nothing to do" — no ARN, read too recently, or a value identical
+to the one already held. Leave it unset and behaviour is exactly as before. Core calls it
+after a failed git sync or a failed task, but at most once per
+`refreshGitHubTokenMinIntervalMs` (default `60000`; `0` disables it). That floor has a cost
+when your provider has no floor of its own: a call in the minute before a rotation holds off
+every retry of a publish (they span roughly 35–50 seconds), so that publish fails and must be
+resubmitted. A call still unsettled after `taskTimeoutMs` is abandoned rather than awaited.
+`packages/canopycms-cdk/worker/credential-refresh.ts` is the worked example; it keeps a
+five-minute floor of its own.
+
+See [deploying-to-aws.md](deploying-to-aws.md#rotating-a-secret).
 
 ### `assetUploadBehavior()` builds the upload route from a bucket alone
 

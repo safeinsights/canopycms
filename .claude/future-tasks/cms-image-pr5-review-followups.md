@@ -5,8 +5,9 @@
 [cms-image-build-epic.md](cms-image-build-epic.md) (the `standalone-image` smoke test and its
 scaffold fixes): items 1-3 in round 1, item 4 in round 2. All four were left out of that PR.
 Item 5 was found on 2026-09-13 by the first review round of the epic's integration PR, #331.
-Items 2 and 3 were resolved on 2026-09-13 by PR #332 (`fix/scaffold-cdk-typecheck`). Items 1, 4
-and 5 are open.
+Item 6 was noted, unrated, on 2026-09-13 by the code review of the base merge into the epic branch,
+#341. Items 2 and 3 were resolved on 2026-09-13 by PR #332 (`fix/scaffold-cdk-typecheck`). Items
+1, 4, 5 and 6 are open.
 
 ## 1. `init-deploy aws` rewrites the whole of an adopter's `tsconfig.json`
 
@@ -98,3 +99,15 @@ the working-tree title, from the not-found page `next build` prerendered.
 
 Direction: give the working-tree copy a slug the `release-base` commit does not have, and assert
 that the sitemap lists that slug and not the branch's.
+
+## 6. The type-check tests depend on the other scaffold's synth
+
+Found by the code review of the base merge, #341. In
+`packages/canopycms-cdk/src/scaffold-synth.test.ts`, the `beforeAll` that scaffolds a project and
+synthesizes it into `cdk.out` sits at file level, so vitest runs it before the second describe,
+`the generated workflow type-checks the CDK app`, too, although that describe builds a scaffold of
+its own. If the first scaffold fails, for example because `worker/dist` is missing, the four
+type-check tests fail with it, on an error about a scaffold they never use. Running them alone with
+`-t` still pays for the first scaffold and its synth.
+
+Direction: move the first scaffold's `beforeAll` and `afterAll` into its own describe.

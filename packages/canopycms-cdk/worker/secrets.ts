@@ -17,15 +17,72 @@
  * as a re-export that must survive any reshuffle.
  */
 
+import type { SecretsManagerClientConfig } from '@aws-sdk/client-secrets-manager'
 import { workerLog, workerLogWarn } from 'canopycms/worker/cms-worker'
 
 /**
- * Reads a secret's string value, retrying only TRANSPORT failures.
+ * Transport options for the worker's `SecretsManagerClient`.
  *
- * The retry loop is deliberately narrow: it covers `client.send` throwing
- * (throttling, a cold IMDS credential chain, EC2 network still settling at
- * boot) and nothing else. Anything about the VALUE we got back is decided after
- * the loop, where it costs one call and fails immediately.
+ * For `@aws-sdk/client-secrets-manager@3.1018.0` → `@smithy/node-http-handler@4.5.0`
+ * (`@aws-sdk/client-s3` in this package resolves 4.9.9; re-check on any bump):
+ * - `new SecretsManagerClient({})` arms no timer at all: a send to a server
+ *   that accepts the connection and never answers never settles.
+ * - `requestTimeout` only logs a WARN unless `throwOnRequestTimeout: true`
+ *   (dist-cjs/index.js, `setRequestTimeout`, ~81-100).
+ * - `maxAttempts` defaults to 3 and the SDK retries on its own; it is 1 here
+ *   because `fetchSecretString` owns retry and backoff.
+ * - None of these bounds a response BODY. `handle()` resolves on headers and
+ *   clears every timer it armed (~277-285), and a `socketTimeout` of 6000ms or
+ *   more is armed only after a 3000ms deferral that is itself one of those
+ *   timers (`setSocketTimeout`, ~125-144). So before headers arrive,
+ *   `requestTimeout` rejects at ~15s (`connectionTimeout` at 3s for a handshake
+ *   that never completes); once headers arrive inside that 3s deferral, the
+ *   normal case, only `fetchSecretString`'s per-attempt `AbortSignal.timeout`
+ *   (`DEFAULT_ATTEMPT_TIMEOUT_MS`) bounds the call, by destroying the socket.
+ *
+ * Worst case for one `getSecret` with the defaults (4 attempts × 20s, plus
+ * 1s + 2s + 4s of backoff): 87s. Before `maxAttempts: 1`, the SDK's own three
+ * attempts made that up to 4 × 3 = 12 requests.
+ */
+export function secretsManagerClientConfig(
+  timeouts: { connectionTimeout?: number; requestTimeout?: number } = {},
+): SecretsManagerClientConfig {
+  const { connectionTimeout = 3_000, requestTimeout = 15_000 } = timeouts
+  return {
+    requestHandler: {
+      connectionTimeout,
+      requestTimeout,
+      throwOnRequestTimeout: true,
+      socketTimeout: requestTimeout,
+    },
+    // fetchSecretString below is the retry authority; see its own comment.
+    maxAttempts: 1,
+  }
+}
+
+/**
+ * Default per-attempt deadline for one `client.send(...)` call inside
+ * `fetchSecretString`'s retry loop — the bound that covers the WHOLE call,
+ * response body included, per the comment above `secretsManagerClientConfig`.
+ * Chosen to sit above that function's default `requestTimeout` (15000ms): a
+ * live endpoint that is merely slow, and still within its own request
+ * timeout, should not be cut off first by a shorter attempt deadline.
+ * Injectable via `GetSecretOptions.attemptTimeoutMs` so tests can use a short
+ * one; production code should not need to set it.
+ */
+const DEFAULT_ATTEMPT_TIMEOUT_MS = 20_000
+
+/** The largest delay `AbortSignal.timeout` accepts without silently clamping. */
+const MAX_ATTEMPT_TIMEOUT_MS = 2_147_483_647
+
+/**
+ * Reads a secret's string value, retrying every failure of `client.send`.
+ *
+ * The retry covers `client.send` throwing, whatever the cause — transport,
+ * throttling, a cold IMDS credential chain, EC2 network still settling at boot,
+ * and service errors alike, `AccessDeniedException` included — and logs each as
+ * "Secrets Manager unavailable". Anything about the VALUE we got back is decided
+ * after the loop, where it costs one call and fails immediately.
  *
  * That split is the point of this function's existence. When the value check sat
  * inside the `try` — as `if (!response.SecretString) throw` did — a secret that
@@ -35,11 +92,19 @@ import { workerLog, workerLogWarn } from 'canopycms/worker/cms-worker'
  *
  * @param retries number of retries AFTER the first call, so the default 3 means
  *   up to 4 `GetSecretValue` calls.
+ * @param attemptTimeoutMs per-attempt deadline (ms) passed to each `client.send`
+ *   as an `AbortSignal.timeout`, covering that whole call including a stalled
+ *   response body — see `DEFAULT_ATTEMPT_TIMEOUT_MS` and the comment above
+ *   `secretsManagerClientConfig`.
  */
-async function fetchSecretString(secretArn: string, retries: number): Promise<string> {
+async function fetchSecretString(
+  secretArn: string,
+  retries: number,
+  attemptTimeoutMs: number,
+): Promise<string> {
   const { SecretsManagerClient, GetSecretValueCommand } =
     await import('@aws-sdk/client-secrets-manager')
-  const client = new SecretsManagerClient({})
+  const client = new SecretsManagerClient(secretsManagerClientConfig())
 
   // Normalized so the loop ALWAYS terminates through `break` or `throw`, never
   // by falling out of the condition, and never without bound. Three shapes,
@@ -57,7 +122,15 @@ async function fetchSecretString(secretArn: string, retries: number): Promise<st
   let secretString: string | undefined
   for (let attempt = 0; attempt <= lastAttempt; attempt++) {
     try {
-      const response = await client.send(new GetSecretValueCommand({ SecretId: secretArn }))
+      // A fresh AbortSignal.timeout() every iteration: a single one created
+      // before the loop would already be expired by a later retry. Measured
+      // (see the comment above `secretsManagerClientConfig`) to bound the
+      // WHOLE send — a stalled response body included — by destroying the
+      // socket and rejecting with an ordinary Error, which the catch below
+      // retries like any other failed send.
+      const response = await client.send(new GetSecretValueCommand({ SecretId: secretArn }), {
+        abortSignal: AbortSignal.timeout(attemptTimeoutMs),
+      })
       secretString = response.SecretString
       break
     } catch (err) {
@@ -242,6 +315,13 @@ export interface GetSecretOptions {
   jsonFieldEnvVar?: string
   /** Retries AFTER the first call, so the default 3 means up to 4 calls. */
   retries?: number
+  /**
+   * Per-attempt deadline (ms) for one `client.send(...)` call, covering the
+   * whole call including a stalled response body. Defaults to
+   * `DEFAULT_ATTEMPT_TIMEOUT_MS`; internal knob mainly so tests can use a
+   * short one — see the comment above `secretsManagerClientConfig`.
+   */
+  attemptTimeoutMs?: number
 }
 
 /**
@@ -255,8 +335,30 @@ export async function getSecret(
   secretArn: string,
   options: GetSecretOptions = {},
 ): Promise<string> {
-  const { jsonField, jsonFieldEnvVar, retries = 3 } = options
-  const secretString = await fetchSecretString(secretArn, retries)
+  const {
+    jsonField,
+    jsonFieldEnvVar,
+    retries = 3,
+    attemptTimeoutMs = DEFAULT_ATTEMPT_TIMEOUT_MS,
+  } = options
+  // Checked here, before any network call, rather than left to
+  // `AbortSignal.timeout` inside `fetchSecretString`'s try: there NaN,
+  // Infinity, a fraction, a negative or anything above 2**32-1 throws a
+  // RangeError, and 0 or 2**31…2**32-1 aborts every attempt at once. The catch
+  // reads either as a transport failure, so it was retried with backoff and
+  // logged as "Secrets Manager unavailable" before failing -- the same
+  // misdiagnosis `fetchSecretString` exists to prevent. Same bounds as
+  // `gitTokenMintTimeoutMs` in canopycms core (github-auth.ts).
+  if (
+    !Number.isInteger(attemptTimeoutMs) ||
+    attemptTimeoutMs < 1 ||
+    attemptTimeoutMs > MAX_ATTEMPT_TIMEOUT_MS
+  ) {
+    throw new Error(
+      `getSecret: attemptTimeoutMs must be a whole number of milliseconds between 1 and ${MAX_ATTEMPT_TIMEOUT_MS} (got ${String(attemptTimeoutMs)}).`,
+    )
+  }
+  const secretString = await fetchSecretString(secretArn, retries, attemptTimeoutMs)
 
   // Truthiness, not `=== undefined`: an env var that is set-but-empty arrives as
   // `''`, and "the operator left it blank" means "not configured", not "read the

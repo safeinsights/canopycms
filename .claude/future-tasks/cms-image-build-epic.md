@@ -509,7 +509,7 @@ when they open their PR, when they hit a decision that needs a call, and when th
 
 ## Follow-up tasks filed during the epic
 
-- [examples-aws-deployment-drift.md](examples-aws-deployment-drift.md) (P3) — `examples/aws-deployment` drifted from the `init-deploy` templates.
+- [examples-aws-deployment-drift.md](resolved/examples-aws-deployment-drift.md) (P3) — `examples/aws-deployment` drifted from the `init-deploy` templates. Filed twice more on `int-202609-a`, and merged into [example-aws-deployment-drift-from-template.md](example-aws-deployment-drift-from-template.md) (P1) during the base merge (#341).
 - [admin-status-image-processing-availability.md](admin-status-image-processing-availability.md) (P3) — surface sharp availability in admin status.
 - [upstream-next-sharp-tracing-recheck.md](upstream-next-sharp-tracing-recheck.md) (P3) — re-check vercel/next.js#97973 on each Next upgrade; remove the include once upstream traces libvips.
 - [sharp-tracing-lockfile-root-edge-cases.md](sharp-tracing-lockfile-root-edge-cases.md) (P3) — two low-severity tracing-root lookup edge cases.

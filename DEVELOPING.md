@@ -2609,6 +2609,22 @@ A `Harness` carries an `assertsNewestFirst` flag because `LocalAssetStore` guara
 
 **Why this pattern:** adapter-specific test files only prove each adapter is internally consistent with itself -- they can't catch the two implementations silently drifting apart on edge cases (error shapes, precondition semantics, metadata field names). Running the identical suite against both catches drift immediately. **When you touch the `AssetStore` contract** (add a method, change an error case, change what a read returns), add the assertion to the shared suite in `store-parity.test.ts` rather than to one adapter's test file only.
 
+### Guarding Every Call Site of X (Behavioural, Not Source-Grep)
+
+A guard meant to catch every call site of some API -- "every Octokit call," "every raw `fetch`," "every direct `console.*`" -- is easy to first draft as a source-text regex, and easy to get wrong the same way: call sites end up spelled several different ways across a codebase (`octokit.pulls.list`, `this.octokit.git.deleteRef`, `ctx.octokit().pulls.create`), and one may span lines, which no single-line regex matches at all. Three spellings is the point where the instrument itself is wrong, not merely incomplete.
+
+Prefer a **behavioural** guard instead: wrap the real dependency in a recording `Proxy` that records every `namespace.method` invoked, then drive every real caller (every enum value through its dispatcher, every method on a class, every branch of a function with more than one path) against it. Compare the observed operation set against a checked-in map **in both directions**:
+
+- an operation observed that the map doesn't list -> something new landed uncovered
+- an operation the map lists that was never observed -> either the call was removed/renamed (stale entry), or -- the failure that matters most -- the harness stopped reaching it and the guard is now watching nothing
+
+Two details worth keeping when you write one of these:
+
+- **Assert coverage per driver, not on the union.** If two drivers happen to invoke the same operation, a unioned set can't see one of them go dark.
+- **Keep a source-level backstop for what the harness can't reach**, and pin its own regex with a test asserting both what it should and shouldn't match -- a regex that quietly stops matching turns "files with calls" into a vacuous "no files have calls," green.
+
+Worked example: `packages/canopycms/src/cli/github-app-permission-drift.test.ts` (Octokit calls vs. the declared GitHub App permissions).
+
 ### Testing postMessage Listeners (Framed-Window Simulation)
 
 The preview-bridge listeners validate both `event.origin` and `event.source === window.parent`, so jsdom tests can't just dispatch a bare `MessageEvent` — the source check needs a genuine `WindowProxy` distinct from the test window. Use the `simulateFramed()` pattern from `src/editor/preview-bridge.test.tsx`:

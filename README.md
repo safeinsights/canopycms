@@ -3373,11 +3373,30 @@ CLERK_AUTHORIZED_PARTIES=... # Optional: comma-separated domains
 
 `CLERK_SECRET_KEY` is resolved lazily, the first time the plugin calls Clerk's backend API -- not at build/startup. This means a zero-editor static/public build (`deployedAs: 'static'`, no auth plugin exercised) never needs the secret at all. It is needed only where that API is called: the worker daemon's auth-cache refresh, and in dev mode the dev server's lazy refresh. A deployed CMS server verifies tokens with `CLERK_JWT_KEY` alone, unless it also runs `clerkMiddleware`, which needs the secret wherever it runs (see [Security Model](docs/deploying-to-aws.md#security-model)).
 
-For GitHub integration (production mode):
+For GitHub integration (production mode), the worker authenticates with either a personal
+access token (default) or a GitHub App:
 
 ```env
 GITHUB_BOT_TOKEN=ghp_...    # Bot token for PR creation
 ```
+
+GitHub App auth is optional -- a PAT stays the documented default, since registering an App
+under an organisation takes an owner of it (or a GitHub App manager for all its Apps), which
+many adopters are not. To use one instead, register a per-site
+App via GitHub's App-manifest flow, which shows you the exact permissions before you click
+Create:
+
+```bash
+npx canopycms init-github-app create -- <a command that reads the key from stdin>
+```
+
+You must say where the key goes, and `create` refuses to start without it: everything after
+`--` is run with the private key on its standard input, so it never touches disk, or
+`--key-out <path>` writes a `0600` file instead. `init-github-app verify` re-checks an
+existing installation and changes nothing. Both print `GITHUB_APP_ID` and
+`GITHUB_APP_INSTALLATION_ID`. Register one App per site, never one shared across
+repositories. Full walkthrough, with a worked command, in
+[docs/deploying-to-aws.md](docs/deploying-to-aws.md#authenticating-as-a-github-app).
 
 ## Documentation
 

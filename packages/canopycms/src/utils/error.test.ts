@@ -195,5 +195,111 @@ describe('error utilities', () => {
       const msg = "base branch 'fix/thing' does not exist at /mnt/efs/workspace"
       expect(redactCredentials(msg)).toBe(msg)
     })
+
+    // GitHub App auth puts two new credential shapes into worker error text,
+    // and `task.error` / worker-status.json are served to a browser by the
+    // admin panel. Each case below asserts what SURVIVES as well as what is
+    // gone -- an absence check alone passes vacuously on an empty result.
+    it('redacts a PKCS#1 private-key block, keeping the surrounding message', () => {
+      // The body is deliberately not key-shaped base64 -- the rule keys on the
+      // header, and a realistic-looking body in a committed file is the kind of
+      // thing a secret scanner flags for the rest of the repo's life.
+      const msg = [
+        'failed to sign JWT with key',
+        '-----BEGIN RSA PRIVATE KEY-----',
+        'NOT-A-REAL-KEY-body-line-one',
+        'NOT-A-REAL-KEY-body-line-two',
+        '-----END RSA PRIVATE KEY-----',
+        'for app 12345',
+      ].join('\n')
+
+      const redacted = redactCredentials(msg)
+
+      expect(redacted).toContain('failed to sign JWT with key')
+      expect(redacted).toContain('for app 12345')
+      expect(redacted).toContain('<private-key>')
+      expect(redacted).not.toContain('NOT-A-REAL-KEY-body')
+      expect(redacted).not.toContain('BEGIN RSA PRIVATE KEY')
+    })
+
+    it('redacts a PKCS#8 block too, and one truncated mid-key', () => {
+      const labelled = redactCredentials(
+        'key: -----BEGIN PRIVATE KEY-----\nNOT-A-REAL-KEY-body\n-----END PRIVATE KEY-----',
+      )
+      expect(labelled).toBe('key: <private-key>')
+
+      // No END footer: a message cut off mid-key must not pass the body
+      // through just because the terminator never arrived.
+      const truncated = redactCredentials(
+        'key: -----BEGIN RSA PRIVATE KEY-----\nNOT-A-REAL-KEY-body-cut-off',
+      )
+      expect(truncated).toBe('key: <private-key>')
+    })
+
+    it('redacts a bare JWT, keeping the surrounding message', () => {
+      const jwt =
+        'eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJpYXQiOjE2MDAwMDAwMDAsImlzcyI6IjEyMzQ1In0.c2lnbmF0dXJlLWJ5dGVz'
+      const msg = `POST /app/installations/42/access_tokens failed: token ${jwt} is invalid`
+
+      const redacted = redactCredentials(msg)
+
+      expect(redacted).toBe('POST /app/installations/42/access_tokens failed: token *** is invalid')
+      expect(redacted).not.toContain('eyJhbGciOiJSUzI1NiI')
+    })
+
+    it('does not mistake ordinary dotted words for a JWT', () => {
+      const msg = 'no such file: config.settings.json'
+      expect(redactCredentials(msg)).toBe(msg)
+    })
+
+    it('keeps the text after a single-line PEM footer', () => {
+      // The footer match stops at its own closing dashes rather than running
+      // to end of line, so a one-line message does not lose its context.
+      const redacted = redactCredentials(
+        'sign failed: -----BEGIN PRIVATE KEY-----NOT-A-REAL-KEY-----END PRIVATE KEY----- for app 12345',
+      )
+      expect(redacted).toBe('sign failed: <private-key> for app 12345')
+    })
+
+    it('does not stop a key match on a label-less END line and leak the next key', () => {
+      // A lazy `-----END[^\n]*?-----` footer stopped on the dashes of
+      // `-----END-----` and consumed the five that would have started the
+      // following header -- measured: the second key came through in full.
+      // The two keys SHARE their dashes -- `-----END-----BEGIN` -- which is
+      // what makes this bite: the footer's own `-----` are the five that would
+      // have started the next header, so consuming them leaves `BEGIN PRIVATE
+      // KEY-----BBBsecretB…`, which no longer matches and comes through whole.
+      // An extra `-----` between the two does NOT reproduce it (the second key
+      // is then redacted on the next pass of the /g loop), which is exactly
+      // how a first attempt at this test passed against the broken spelling.
+      const redacted = redactCredentials(
+        '-----BEGIN PRIVATE KEY-----AAAsecretA-----END-----' +
+          'BEGIN PRIVATE KEY-----BBBsecretB-----END PRIVATE KEY-----',
+      )
+
+      expect(redacted).not.toContain('secretA')
+      expect(redacted).not.toContain('secretB')
+      expect(redacted).toContain('<private-key>')
+    })
+
+    it('redacts credential shapes in linear time on adversarial input', () => {
+      // Both new rules had to be written against CodeQL js/polynomial-redos,
+      // and the JWT rule failed that on its first spelling: with `\b` instead
+      // of a `(?<![\w-])` lookbehind, `-` being a non-word character inside
+      // the run class made every `-eyJ` a fresh start position: roughly 200ms
+      // at 20KB, 900ms at 40KB and 13-16s at 160KB, quadrupling per doubling.
+      // This input is the 160KB one. The bound is deliberately loose -- a slow
+      // CI box must not flake it -- because four orders of magnitude separate
+      // the two spellings here, not a few percent.
+      const adversarial = '-eyJ'.repeat(40_000)
+      const startedAt = Date.now()
+      expect(redactCredentials(adversarial)).toBe(adversarial)
+      expect(Date.now() - startedAt).toBeLessThan(1_000)
+
+      const unterminatedKey = '-----BEGIN RSA PRIVATE KEY-----' + 'A'.repeat(200_000)
+      const keyStartedAt = Date.now()
+      expect(redactCredentials(unterminatedKey)).toBe('<private-key>')
+      expect(Date.now() - keyStartedAt).toBeLessThan(1_000)
+    })
   })
 })
