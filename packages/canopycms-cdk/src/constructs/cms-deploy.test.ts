@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { CfnElement, Duration, Stack } from 'aws-cdk-lib'
+import { CfnElement, Duration, Fn, Stack, Token } from 'aws-cdk-lib'
 import { Template, Match } from 'aws-cdk-lib/assertions'
 import { RetentionDays } from 'aws-cdk-lib/aws-logs'
 import {
@@ -1758,7 +1758,7 @@ describe('CanopyCmsService: githubApp* props -> worker .env', () => {
     it('throws', () => {
       expect(() =>
         synthUncached(false, { ...APP_PROPS, githubTokenSecretArn: GITHUB_ARN }),
-      ).toThrow(/configure either githubTokenSecretArn or the githubApp\* props, not both/)
+      ).toThrow(/configure either the githubToken\* props or the githubApp\* props, not both/)
     })
 
     it('says which one to drop, rather than only refusing', () => {
@@ -1814,6 +1814,83 @@ describe('CanopyCmsService: githubApp* props -> worker .env', () => {
       expect(() =>
         synthUncached(false, { ...APP_PROPS, githubAppId: '1', githubAppInstallationId: '9' }),
       ).not.toThrow()
+    })
+
+    it('reports an EMPTY id as absent, not as malformed', () => {
+      // `process.env.GITHUB_APP_ID ?? ''` and an Actions `vars.` reference to a
+      // variable nobody created both produce ''. That is an absent id, not a
+      // wrong one, and "must be the numeric id (got \"\")" would send the
+      // adopter to correct a value they never set.
+      expect(() => synthUncached(false, { ...APP_PROPS, githubAppId: '' })).toThrow(
+        /githubAppId is not set/,
+      )
+    })
+
+    it('accepts an unresolved CDK token, which cannot be checked here either way', () => {
+      // `ssm.StringParameter.valueForStringParameter(...)` / `Fn.importValue(...)`
+      // is a legitimate way to supply an id, and refusing it would make that
+      // configuration unrepresentable. githubAppPrivateKeySecretArn already
+      // accepts one, so this keeps the App props consistent.
+      const stack = new Stack(newTestApp(), 'TokenStack', {
+        env: { account: '123456789012', region: 'us-east-1' },
+      })
+      const tokenId = Fn.importValue('CanopyGitHubAppId')
+      expect(Token.isUnresolved(tokenId)).toBe(true)
+      expect(
+        () =>
+          new CanopyCmsService(stack, 'Cms', {
+            cmsDockerImage: lambda.DockerImageCode.fromEcr(
+              ecr.Repository.fromRepositoryName(stack, 'Repo', 'cms'),
+            ),
+            githubOwner: 'acme',
+            githubRepo: 'site',
+            ...APP_PROPS,
+            githubAppId: tokenId,
+          }),
+      ).not.toThrow()
+    })
+
+    it('the numeric check runs BEFORE the all-or-nothing one', () => {
+      // A partial set carrying a bad id. Ordering is unpinned otherwise --
+      // measured: moving both assertNumericId calls after the two throws left
+      // every other test in this file green.
+      expect(() => synthUncached(false, { githubAppId: 'my-app-slug' })).toThrow(
+        /githubAppId must be the numeric id/,
+      )
+    })
+  })
+
+  describe('which credential is decided before whether each is well formed', () => {
+    it('an App alongside a leftover token JSON field names the real problem', () => {
+      // The exact state docs/adopter-migration.md step 2 leads to when an
+      // adopter removes githubTokenSecretArn and overlooks its JSON field.
+      // Reversed, assertSecretPropPair answers first with "Set
+      // githubTokenSecretArn, or drop githubTokenSecretJsonField" -- pointing
+      // back at the credential they were just told to delete, and at a
+      // configuration the exclusivity rule would refuse anyway.
+      expect(() =>
+        synthUncached(false, {
+          ...APP_PROPS,
+          githubTokenSecretJsonField: 'CANOPYCMS_GITHUB_TOKEN',
+        }),
+      ).toThrow(/configure either the githubToken\* props or the githubApp\* props, not both/)
+    })
+
+    it('names the leftover prop specifically, so the fix is unambiguous', () => {
+      expect(() =>
+        synthUncached(false, {
+          ...APP_PROPS,
+          githubTokenSecretJsonField: 'CANOPYCMS_GITHUB_TOKEN',
+        }),
+      ).toThrow(/drop githubTokenSecretJsonField when you adopt it/)
+    })
+
+    it('still reports a stranded token JSON field when no App is configured', () => {
+      // The reorder must not cost the token-only path its own diagnosis;
+      // assertGitHubAuthProps is silent when no App prop is set.
+      expect(() =>
+        synthUncached(false, { githubTokenSecretJsonField: 'CANOPYCMS_GITHUB_TOKEN' }),
+      ).toThrow(/githubTokenSecretJsonField is set but githubTokenSecretArn is not/)
     })
   })
 

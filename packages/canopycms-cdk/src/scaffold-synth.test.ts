@@ -76,6 +76,17 @@ const SYNTH_ENV = {
   // variable's own NAME as its value would have satisfied the assertion below.
   GITHUB_TOKEN_SECRET_JSON_FIELD: 'ghFieldProbe',
   CLERK_SECRET_KEY_SECRET_JSON_FIELD: 'clerkFieldProbe',
+  // Cleared, not merely unset: the synth below spreads `process.env`, and a
+  // developer with any one of these exported (plausible — they are the
+  // variables this feature is configured with) would put the generated app in
+  // App mode, where it refuses to synth alongside GITHUB_TOKEN_SECRET_ARN.
+  // Measured: one exported GITHUB_APP_INSTALLATION_ID took the whole file down
+  // in `beforeAll`, with an error that blamed the scaffold. The App test below
+  // clears the token variables for the mirror-image reason.
+  GITHUB_APP_ID: '',
+  GITHUB_APP_INSTALLATION_ID: '',
+  GITHUB_APP_PRIVATE_KEY_SECRET_ARN: '',
+  GITHUB_APP_PRIVATE_KEY_SECRET_JSON_FIELD: '',
 }
 
 /**

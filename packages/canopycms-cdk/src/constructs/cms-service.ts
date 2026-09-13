@@ -5,6 +5,7 @@ import {
   Duration,
   RemovalPolicy,
   Stack,
+  Token,
   aws_ec2 as ec2,
   aws_efs as efs,
   aws_iam as iam,
@@ -378,6 +379,15 @@ const GITHUB_APP_PROP_NAMES = [
 ] as const
 
 /**
+ * The props that mean "this deployment authenticates with a personal access
+ * token". The JSON field belongs here as well as the ARN: on its own it cannot
+ * authenticate anything, but its PRESENCE still says which credential the
+ * adopter thinks they are configuring, which is what the exclusivity rule needs
+ * to know.
+ */
+const GITHUB_TOKEN_PROP_NAMES = ['githubTokenSecretArn', 'githubTokenSecretJsonField'] as const
+
+/**
  * Rejects a PEM private key passed where a prop expects an identifier or an ARN.
  *
  * There is no plaintext private-key prop, and there cannot be one: the value
@@ -430,9 +440,26 @@ function assertNotInlinePrivateKey(propName: string, value: string | undefined):
  *
  * Stricter than `createAppAuth`'s own `+value` coercion, deliberately: that
  * accepts `' 12 '`, `12.5` and `0x1f`. None of them is an id.
+ *
+ * Two values pass through untouched, and both would otherwise be reported as the
+ * wrong problem:
+ *
+ * - **Empty**, which is what `process.env.GITHUB_APP_ID ?? ''` and an Actions
+ *   `vars.` reference to a variable nobody created both produce. That is not a
+ *   malformed id, it is an ABSENT one, and `assertGitHubAuthProps` says so by
+ *   name. Reporting `must be the numeric id (got "")` instead would send the
+ *   adopter to correct a value they never set.
+ * - **An unresolved CDK token**, e.g.
+ *   `ssm.StringParameter.valueForStringParameter(…)` or `Fn.importValue(…)`,
+ *   whose value does not exist until deploy. Refusing it would make a legitimate
+ *   configuration unrepresentable; it is unverifiable here either way, so it
+ *   goes through and fails at the worker if it is wrong. `githubAppPrivateKeySecretArn`
+ *   already accepts a token (one trips neither the `:secret:X:` regex nor
+ *   `assertEnvSafe`), so this keeps the App props consistent with each other.
  */
 function assertNumericId(propName: string, value: string | undefined): void {
-  if (value === undefined || /^\d+$/.test(value)) return
+  if (value === undefined || value === '' || /^\d+$/.test(value)) return
+  if (Token.isUnresolved(value)) return
   throw new Error(
     `CanopyCmsService: ${propName} must be the numeric id GitHub shows for the app ` +
       `(got ${JSON.stringify(value)}). The app's slug and its 'Iv1.…' client id both appear on ` +
@@ -488,13 +515,22 @@ function assertGitHubAuthProps(props: CanopyCmsServiceProps): void {
     )
   }
 
-  if (provided.length > 0 && props.githubTokenSecretArn) {
+  // The JSON field counts as "a token is configured", not just the ARN. An
+  // adopter following docs/adopter-migration.md removes `githubTokenSecretArn`
+  // and overlooks `githubTokenSecretJsonField`; left out of this check, that
+  // lands on `assertSecretPropPair` instead, which answers "Set
+  // githubTokenSecretArn, or drop githubTokenSecretJsonField" -- pointing them
+  // back at the credential they were just told to delete, and at a
+  // configuration this rule would then refuse anyway.
+  const tokenPropsSet = GITHUB_TOKEN_PROP_NAMES.filter((name) => props[name])
+  if (provided.length > 0 && tokenPropsSet.length > 0) {
     throw new Error(
-      `CanopyCmsService: configure either githubTokenSecretArn or the githubApp* props, not ` +
-        `both. Two credentials would leave it undefined which identity the worker's pushes and ` +
-        `pull requests act as. A personal access token is the default and needs no App props; ` +
-        `GitHub App auth replaces it, so drop githubTokenSecretArn (and its JSON field) when ` +
-        `you adopt it.`,
+      `CanopyCmsService: configure either the githubToken* props or the githubApp* props, not ` +
+        `both (${tokenPropsSet.join(' and ')} ${tokenPropsSet.length === 1 ? 'is' : 'are'} set ` +
+        `alongside ${provided.join(' and ')}). Two credentials would leave it undefined which ` +
+        `identity the worker's pushes and pull requests act as. A personal access token is the ` +
+        `default and needs no App props; GitHub App auth replaces it, so drop ` +
+        `${tokenPropsSet.join(' and ')} when you adopt it.`,
     )
   }
 }
@@ -976,6 +1012,17 @@ export class CanopyCmsService extends Construct {
     // Checked here, at the top, so a misconfigured pair fails `cdk synth`
     // rather than `cdk deploy`-then-restart-loop. See `assertSecretPropPair`
     // for what each of the two checks costs when it is absent.
+    //
+    // WHICH CREDENTIAL first, then whether each is well formed. The order is
+    // load-bearing and the reverse produces self-contradictory advice: an
+    // adopter following docs/adopter-migration.md removes `githubTokenSecretArn`
+    // and overlooks `githubTokenSecretJsonField`, and the pair check answers
+    // "Set githubTokenSecretArn, or drop githubTokenSecretJsonField" -- pointing
+    // them straight back at the credential they were just told to delete, and at
+    // a configuration the exclusivity rule below would then refuse anyway.
+    // `assertGitHubAuthProps` is silent when no App prop is set, so this costs
+    // the token-only path nothing.
+    assertGitHubAuthProps(props)
     assertSecretPropPair(
       'githubTokenSecretArn',
       props.githubTokenSecretArn,
@@ -994,10 +1041,6 @@ export class CanopyCmsService extends Construct {
       'githubAppPrivateKeySecretJsonField',
       props.githubAppPrivateKeySecretJsonField,
     )
-    // After the pair checks, so an App private-key ARN that is malformed is
-    // reported as such before this asks whether the SET of App props is
-    // complete. Both messages are right; the more specific one is more useful.
-    assertGitHubAuthProps(props)
     // `secretsArns` gets the suffix half of the same guard: it has no
     // JSON-field prop, but its entries are written verbatim into the worker's
     // IAM policy below, so a suffixed ARN fails there in precisely the way the
