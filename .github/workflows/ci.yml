@@ -430,7 +430,7 @@ jobs:
       matrix:
         include:
           # amd64, native and fast here. The epic found that neither defect above depends on
-          # architecture (cms-image-build-epic.md, "What is actually happening"); this PR
+          # architecture (cms-image-build-epic.md, "PR 5: CI image smoke test"); this PR
           # reproduced both on arm64.
           - pm: pnpm
             runner: ubuntu-latest
