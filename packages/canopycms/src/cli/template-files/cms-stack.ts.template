@@ -29,10 +29,42 @@ export interface CmsStackProps extends StackProps {
   /** GitHub repository the EC2 worker pushes branches and opens PRs against. */
   githubOwner: string
   githubRepo: string
-  /** FULL Secrets Manager ARN, including the random six-character suffix. */
-  githubTokenSecretArn: string
+  /**
+   * FULL Secrets Manager ARN, including the random six-character suffix.
+   *
+   * Optional only because GitHub App authentication replaces it -- one of this
+   * and the `githubApp*` trio below must be set, and setting both is refused at
+   * synth. A personal access token is the default.
+   */
+  githubTokenSecretArn?: string
+  /**
+   * Optional. GitHub App authentication, instead of the token above. Set all
+   * three or none.
+   */
+  githubAppId?: string
+  githubAppInstallationId?: string
+  /** FULL Secrets Manager ARN of the secret holding the App's PEM private key. */
+  githubAppPrivateKeySecretArn?: string
+  /**
+   * Optional. Key to read out of the App private-key secret when that secret
+   * holds a JSON document rather than the bare PEM.
+   */
+  githubAppPrivateKeySecretJsonField?: string
   /** FULL Secrets Manager ARN, including the random six-character suffix. */
   clerkSecretKeySecretArn: string
+  /**
+   * Optional. Key to read out of the GitHub token secret when that secret holds
+   * a JSON document rather than the bare token. Unset means the whole value is
+   * the token.
+   */
+  githubTokenSecretJsonField?: string
+  /**
+   * Optional. Key to read out of the Clerk secret when it holds a JSON
+   * document. Note this covers CLERK_SECRET_KEY only -- CLERK_JWT_KEY below and
+   * the publishable key are public material and are passed as plain values, so
+   * a JSON document holding all three still supplies those two separately.
+   */
+  clerkSecretKeySecretJsonField?: string
   /** Clerk's public JWKS PEM, for networkless session verification. */
   clerkJwtKey: string
   /** Clerk publishable key, baked into the client bundle at image-build time. */
@@ -55,11 +87,20 @@ export class CmsStack extends Stack {
     // written verbatim into the worker's IAM policy, so a partial or
     // name-based ARN never matches the real secret and the worker fails with
     // AccessDenied at boot rather than at deploy.
-    const githubToken = secretsmanager.Secret.fromSecretCompleteArn(
-      this,
-      'GitHubToken',
-      props.githubTokenSecretArn,
-    )
+    const githubToken = props.githubTokenSecretArn
+      ? secretsmanager.Secret.fromSecretCompleteArn(this, 'GitHubToken', props.githubTokenSecretArn)
+      : undefined
+    // The App private key, when this deployment authenticates as a GitHub App
+    // instead. Resolved the same way and for the same reason -- the worker
+    // reads it with GetSecretValue under its own IAM grant, so the ARN must be
+    // the complete one.
+    const githubAppPrivateKey = props.githubAppPrivateKeySecretArn
+      ? secretsmanager.Secret.fromSecretCompleteArn(
+          this,
+          'GitHubAppPrivateKey',
+          props.githubAppPrivateKeySecretArn,
+        )
+      : undefined
     const clerkSecretKey = secretsmanager.Secret.fromSecretCompleteArn(
       this,
       'ClerkSecret',
@@ -115,9 +156,25 @@ export class CmsStack extends Stack {
       settingsBranch: canopyConfig.server.settingsBranch,
 
       // Secrets the EC2 worker reads. The Lambda needs none of them.
-      secretsArns: [githubToken.secretArn, clerkSecretKey.secretArn],
-      githubTokenSecretArn: githubToken.secretArn,
+      secretsArns: [
+        githubToken?.secretArn,
+        githubAppPrivateKey?.secretArn,
+        clerkSecretKey.secretArn,
+      ].filter((arn): arn is string => arn !== undefined),
+      githubTokenSecretArn: githubToken?.secretArn,
       clerkSecretKeySecretArn: clerkSecretKey.secretArn,
+      // GitHub App auth, when configured instead of the token above. Undefined
+      // unless the adopter set all three; CanopyCmsService refuses a partial
+      // set, and refuses an App alongside githubTokenSecretArn.
+      githubAppId: props.githubAppId,
+      githubAppInstallationId: props.githubAppInstallationId,
+      githubAppPrivateKeySecretArn: githubAppPrivateKey?.secretArn,
+      githubAppPrivateKeySecretJsonField: props.githubAppPrivateKeySecretJsonField,
+      // Undefined unless the adopter set one, which is the supported way to
+      // point at a field of a JSON secret. The ':KEY::' ARN suffix is NOT --
+      // GetSecretValue does not parse it, and CanopyCmsService throws on it.
+      githubTokenSecretJsonField: props.githubTokenSecretJsonField,
+      clerkSecretKeySecretJsonField: props.clerkSecretKeySecretJsonField,
 
       // Lambda environment: public config only, never secrets.
       environment: {

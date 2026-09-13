@@ -71,6 +71,41 @@ passed EC2 health checks forever, and did nothing.
       (The grant is now the union of `secretsArns` and the individual ARN
       props, so a stack setting only the latter should now work.)
 
+## 5b. Reactive secret re-read (PR #334)
+
+Every mechanism below is unit-tested; none has been exercised against real
+Secrets Manager, real Clerk or real GitHub. The unit tests inject a clock and a
+faked `send`, so what they prove is the logic, not the integration.
+
+- [ ] Rotate `canopycms/github-token` on a live deployment. Within ~5 minutes (up to ~10
+      when core's floor shifts the provider's —
+      [core-floor-shifts-provider-floor-phase.md](core-floor-shifts-provider-floor-phase.md))
+      the worker log shows `Secret arn:… changed since boot` and the next push
+      succeeds — **with no instance replacement**.
+- [ ] Rotate it again, this time storing the new token **before** revoking the
+      old one on GitHub, then publish straight away. The log should show the
+      task's `failed:` line, then `Secret arn:… changed since boot`, then the
+      retry succeeding, and the branch should not reach `sync-failed` (it can if another
+      failure used the re-read in the five minutes before). If
+      `changed since boot` comes first, the git sync got there before the
+      publish and the task-failure trigger was not exercised.
+- [ ] Rotate `canopycms/clerk-secret-key`. Within ~15 minutes the auth-cache
+      refresh recovers and logs its user/group counts. This one also proves the
+      401/403 gate: a real Clerk rejection must carry `.status`, which is read
+      structurally. If Clerk's SDK reports the status somewhere else, the gate
+      never fires and the retry never happens.
+- [ ] Set a secret to a deliberately wrong value and leave it for an hour.
+      CloudTrail should show **at most ~12 `GetSecretValue` calls per hour** for
+      it — not one per loop tick — including while you publish a few times
+      during that hour, since every failed task triggers a re-read too and the
+      floor has to hold across both triggers. (Up to ~48 if every read is
+      failing — an outage, or AccessDenied — since `fetchSecretString` retries
+      any failed `send` three times; a wrong value is one call per re-read.)
+      This is the circuit breaker, and CloudTrail is the only place its real
+      rate is observable.
+- [ ] Confirm the worker did **not** start making `GetSecretValue` calls in the
+      steady state: a healthy hour should show **zero**.
+
 ## 6. Release pipeline (no deploy needed, but verify on the next release)
 
 - [ ] The next push to main shows publish.yml **waiting** on the "Wait for CI to

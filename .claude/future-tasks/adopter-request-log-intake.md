@@ -162,6 +162,76 @@ the same generator and was deliberately left on a live clock — correct for a r
 demand. So a `SOURCE_DATE_EPOCH` exported in a *server* environment does not (and must not) freeze
 the CMS server's manifest timestamps. Only the build path reads it.
 
+### Items 45 and 46 — worker credential sources, filed 2026-09-12
+
+**Both DELIVERED 2026-09-12/13** on `int-202609-a`, as five PRs: #320 (secret reader),
+#322 (its CDK props), #319 (async URL groundwork), #321 (App auth in core), #329 (its CDK
+props and entrypoint wiring). Every premise in both items was re-verified here against the
+source before any code was written, and **both held exactly as reported**.
+
+| # | Their claim | Verdict | Disposition |
+| - | ----------- | ------- | ----------- |
+| 46 | The worker reads a secret's ENTIRE value, so a JSON credential document cannot be pointed at | **Confirmed** — `getSecret` returned `SecretString` verbatim, no `JSON.parse` on that path, `SecretId` unmodified | Fixed — a `jsonField` option plus two CDK props, **and a loud warning that closes the trap they actually described** |
+| 45 | The worker can only authenticate with a static token, and reads secrets once at boot, so a GitHub App is unusable | **Confirmed, both halves** — both `getSecret` calls are inside `main()` before `new CmsWorker(...)`, and nothing re-reads them | Fixed — App auth with tokens minted on demand. The PAT remains the documented default, untouched |
+
+**Their suggested shape for #46 was wrong for this call path, and it matters.** They proposed
+honouring Secrets Manager's `arn:...:secret:name-AbCdEf:KEY::` suffix, or CDK's
+`secretValueFromJson`. Neither works here: the suffix is a CloudFormation-dynamic-reference
+and ECS-task convention, and the `GetSecretValue` API the worker actually calls does not
+parse it; `secretValueFromJson` resolves the **plaintext into the CloudFormation template at
+deploy time**, which would destroy the "the worker's `.env` carries the ARN, never the value"
+posture that `docs/deploying-to-aws.md`'s Security Model rests on. Verified in
+`aws-cdk-lib@2.265.0`: `fromSecretCompleteArn` gates on `/-[a-z0-9]{6}$/i` and throws on a
+suffixed ARN, so their own scaffolded stack would have rejected it. The delivered shape is a
+separate field prop and our own parse — and a **synth-time guard that refuses a suffixed ARN
+by name**, so an adopter who tries the ECS convention is told what to use instead of getting
+either CDK's cryptic suffix error or an unmatchable IAM `Resource` and a 5s restart-loop.
+
+**#46 closes for two of their three keys, and this needs saying plainly.** Their document
+holds `CLERK_SECRET_KEY`, `CLERK_JWT_KEY` and the publishable key. Only the first (plus the
+GitHub token) is read by the worker's secret path. `CLERK_JWT_KEY` is threaded as a plain CDK
+prop into the Lambda's environment and the publishable key is a Docker build arg — **neither
+can point at a Secrets Manager ARN at any level.** That is defensible, since both are public
+material, but unsaid it reads as the request being half-done.
+
+**Where #45's fix went beyond the request, and one place their reasoning was better than
+ours.** They noted the remote-URL half needed no change because the worker already uses the
+`x-access-token:` form — correct, and it is cheaper still than they knew: no tokenized URL is
+ever persisted to `.git/config` (`scrubPersistedRemote` removes *and verifies* removal), and
+`redactCredentials` already matched `ghs_`. What it did **not** match was a PEM block or a
+bare JWT, both of which App auth introduces into worker error text that reaches `task.error`
+and the admin panel; those rules were added.
+
+**A premise WE got wrong, recorded because this log is a two-way document.** Our own plan
+asserted that an unconverted PKCS#1 private key would fail today, because
+`universal-github-app-jwt`'s WebCrypto path accepts only PKCS#8. Measured with the worker's
+exact esbuild flags, that is false: `@octokit/auth-app@6` resolves
+`universal-github-app-jwt@1`, which signs via `jsonwebtoken`, and `--platform=node` selects
+that build (lockfile confirms `universal-github-app-jwt@1.2.0` depending on
+`@types/jsonwebtoken`). The WebCrypto-only constraint belongs to v2, i.e. `auth-app@7`. The
+key normalization shipped anyway — it also accepts base64-wrapped and `\n`-escaped keys and
+turns a bad key into a loud boot error — but as **insurance against a bundler-flag change or
+an auth-app@7 bump, not a fix for a present bug**, and the code says so with a resolution
+table.
+
+**Found by us while implementing, absent from both items.** An empty-string credential is now
+rejected rather than returned: it is not a credential, and every downstream consumer treated
+it as absent *silently* — an empty Clerk key left `refreshAuthCache` undefined, disabling
+auth-cache refresh with no log line at all. Two new `assertEnvSafe` rules (backslash,
+surrounding whitespace) now cover every worker `.env` value, both grounded in how systemd's
+`EnvironmentFile` parser actually behaves.
+
+**Still open, and they should know.** (a) The boot-only read is only half-solved: under App
+auth the token renews itself on expiry, but **a PAT adopter who rotates still holds the
+boot-time token until the ASG rolls** — their item's own "Related" note, and the majority case
+since most adopters cannot register an App. Tracked as the reactive-re-read task. (b) The App
+path ships **unexercised against real GitHub**: every test generates its key with
+`node:crypto` and makes no network call, so nothing has yet proven a real installation token
+authenticates, or survives the ~1-hour expiry boundary that is the entire reason #45 exists.
+Planned against the `canopycms` org and its `deploy-test` repo. (c) `GitHubService` is still
+static-token-only — inert on the shipped AWS deployment, filed as
+[github-service-static-token-only.md](github-service-static-token-only.md).
+
 ### Where our verification disagreed with theirs
 
 Recording these because the log is a two-way document and its accuracy is the reason it is worth

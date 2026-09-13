@@ -12,18 +12,20 @@ authoritative**; this file is the map to where those rules live.
 (`start()`). Split 2026-08-23; each cluster is now its own module, reached through a
 `WorkerContext`.
 
-| File                 | What it owns                                                                                                                                                                                                                                     |
-| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `cms-worker.ts`      | The `CmsWorker` class: fields, constructor, `start`/`stop`, the cross-host worker lock, `scheduleLoop`, `remote.git` provisioning, `buildGitHubUrl`/`branchWorkspacePath`, `refreshAuthCache`, and one delegating method per cluster entry point |
-| `worker-context.ts`  | `WorkerContext` — the only channel between the class and the extracted clusters                                                                                                                                                                  |
-| `task-runner.ts`     | The task-queue cluster: `processTaskQueue` and everything below it                                                                                                                                                                               |
-| `git-sync.ts`        | The git-sync cluster: `syncGit` and everything below it except the rebase loop                                                                                                                                                                   |
-| `rebase.ts`          | The rebase loop, the deepest leaf of the git-sync cluster                                                                                                                                                                                        |
-| `history-rewrite.ts` | The [SYNC-H1] kernel all three clusters touch                                                                                                                                                                                                    |
-| `log.ts`             | `workerLog`/`workerLogWarn`/`workerLogError`                                                                                                                                                                                                     |
+| File                 | What it owns                                                                                                                                                                                                                                                               |
+| -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `cms-worker.ts`      | The `CmsWorker` class: fields, constructor, `start`/`stop`, the cross-host worker lock, `scheduleLoop`, `remote.git` provisioning, `buildGitHubUrl`/`refreshGitHubCredential`/`branchWorkspacePath`, `refreshAuthCache`, and one delegating method per cluster entry point |
+| `worker-context.ts`  | `WorkerContext` — the only channel between the class and the extracted clusters                                                                                                                                                                                            |
+| `task-runner.ts`     | The task-queue cluster: `processTaskQueue` and everything below it                                                                                                                                                                                                         |
+| `git-sync.ts`        | The git-sync cluster: `syncGit` and everything below it except the rebase loop                                                                                                                                                                                             |
+| `rebase.ts`          | The rebase loop, the deepest leaf of the git-sync cluster                                                                                                                                                                                                                  |
+| `history-rewrite.ts` | The [SYNC-H1] kernel all three clusters touch                                                                                                                                                                                                                              |
+| `log.ts`             | `workerLog`/`workerLogWarn`/`workerLogError`                                                                                                                                                                                                                               |
+| `github-auth.ts`     | Which GitHub credential this worker uses (token or App), how an installation token is minted, the PAT swap in `refreshCredential` behind its 60s floor, and PEM normalization                                                                                              |
 
 Imports run one way only — `cms-worker` → {`task-runner`, `git-sync`} → `rebase` →
-`history-rewrite` → `worker-context`. `pnpm lint:cycles` enforces that the graph stays
+`history-rewrite` → `worker-context`. `github-auth` sits outside that chain as a leaf:
+`cms-worker` imports it, and it imports nothing from `worker/`. `pnpm lint:cycles` enforces that the graph stays
 ACYCLIC, which is not the same thing: a new `rebase.ts` → `task-runner.ts` edge would pass
 lint and still break the layering above. Keep the direction by review.
 
@@ -113,6 +115,26 @@ SPECIFIC commit this worker knows its own rebase replaced — the marker, or the
 tip — never on "whatever `remote.git` holds right now". A lease on the current tip is
 satisfied by a reviewer's direct push to the PR branch and would delete it, silently, from
 `remote.git` and then from GitHub.
+
+## `github-auth.ts`
+
+**`@octokit/auth-app` must never become a dependency of `canopycms`.** This is the one rule
+here that spans files, which is why it is in this document and the rest are in the code.
+`github-service.ts` is reachable from `services.ts`, so anything it imports is in every
+adopter's Next.js **server** bundle — including the large majority who use a personal access
+token and will never register a GitHub App (under an organisation, that takes an owner or a GitHub App manager). The
+package therefore holds only the SHAPE (`OctokitAuthStrategyOptions` in `github-service.ts`,
+`GitHubAppAuth` here), and a deployment that uses an App constructs the strategy in its own
+entrypoint and injects it — the seam `refreshAuthCache` already uses.
+
+Two guards hold it, and **neither is `pnpm lint:bundle`**, which cruises only the two client
+entries and never reaches `github-service.ts`: the `core-no-github-app-auth`
+dependency-cruiser rule, evaluated by `pnpm lint:cycles` (CI, and the pre-commit hook), and a
+manifest assertion in `github-auth.test.ts`.
+
+The module's other invariants — fail-closed boot classification, the mint timeout's bounds,
+never caching a resolved token, and never re-wrapping a mint rejection — are stated at the
+point of the rule in `github-auth.ts`, which is authoritative. Do not copy them here.
 
 ## `log.ts`
 

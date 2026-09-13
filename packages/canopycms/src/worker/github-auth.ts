@@ -1,0 +1,616 @@
+import { createPrivateKey } from 'node:crypto'
+// A DIRECT dependency, though `@octokit/rest` already pulls it in: this module
+// imports it by name, and relying on a transitive resolution for that is how a
+// minor bump elsewhere turns into a missing module here. Declared at the same
+// `^4.0.0` `@octokit/core@5` asks for, so pnpm dedupes to the one copy rather
+// than installing a second.
+import { createTokenAuth } from '@octokit/auth-token'
+import type { CanopyOctokitAuthOptions, OctokitAuthStrategyOptions } from '../github-service'
+import { getErrorMessage, isNodeError } from '../utils/error'
+
+/** What `createTokenAuth(token)` hands back: callable, plus a `.hook`. */
+type TokenAuth = ReturnType<typeof createTokenAuth>
+
+/**
+ * How the worker authenticates to GitHub, for both halves of its access:
+ * Octokit (the REST API) and git-over-HTTPS (push/fetch, which carries the
+ * credential in the remote URL).
+ *
+ * Two shapes are supported, and they are equals — nothing here deprecates,
+ * warns on, or nudges away from the token.
+ *
+ * - **A personal access token** (`githubToken`). The documented default, and
+ *   the only one most adopters will ever use: registering a GitHub App under
+ *   an organisation takes an owner of that organisation (or a GitHub App
+ *   manager for all its Apps), which many adopters are not. Nothing in this
+ *   module imports `@octokit/auth-app`, so
+ *   this path works with that package absent from the install entirely.
+ * - **A GitHub App** (`githubAppAuth`). An App's private key does not expire
+ *   and installs across repositories, where a fine-grained PAT expires within
+ *   a year, acts as the person who created it, and dies when they leave the
+ *   organisation. The cost is that its installation tokens last about an
+ *   hour, so the credential must be minted on demand rather than read once at
+ *   boot — which is why `CmsWorker.buildGitHubUrl()` is async.
+ */
+export interface GitHubAuthConfig {
+  /**
+   * GitHub bot token (a PAT) for pushing and PR operations.
+   *
+   * Exactly one of this and `githubAppAuth` must be set.
+   */
+  githubToken?: string
+  /**
+   * GitHub App authentication, constructed by the deployment entrypoint and
+   * injected here — the same seam `refreshAuthCache` uses, and for the same
+   * reason: the package it needs must not enter core's dependency graph.
+   *
+   * `canopycms-cdk`'s EC2 worker supplies it from three CDK props — see
+   * `packages/canopycms-cdk/worker/github-app-auth.ts`, which is also the
+   * worked example an adopter driving `CmsWorker` from their own entrypoint
+   * should copy, and `docs/adopter-migration.md` for that case written out.
+   *
+   * Exactly one of this and `githubToken` must be set: configuring both is an
+   * error, and so is configuring neither.
+   */
+  githubAppAuth?: GitHubAppAuth
+  /**
+   * Re-read the personal access token, for when the one in hand has stopped
+   * working — a rotation, or a revocation.
+   *
+   * Resolves to the new token, or to `undefined` for "nothing to do", which
+   * covers every no-op case: no ARN configured, re-read too recently, or a
+   * re-read whose value is identical to the one already held. That judgement
+   * lives in the provider (core adds only the floor below) — see
+   * `packages/canopycms-cdk/worker/credential-refresh.ts`, which is also the
+   * worked example for an adopter driving `CmsWorker` from their own
+   * entrypoint.
+   *
+   * **Only the token path uses this.** A GitHub App renews its token on
+   * expiry: its `@octokit/auth-app` strategy caches the installation token for
+   * 59 minutes and mints a new one after that, so `refreshCredential()` below
+   * is a no-op on that path. It does NOT recover a rotated private key or an
+   * early-revoked token — see
+   * .claude/future-tasks/worker-app-auth-cannot-recover-a-rotated-key.md.
+   */
+  refreshGitHubToken?: () => Promise<string | undefined>
+  /**
+   * Minimum time between calls that reach `refreshGitHubToken`, in ms
+   * (default: 60000). `0` disables the floor. Ignored on the GitHub App
+   * path, where `refreshCredential` never calls a provider at all.
+   *
+   * Core's own backstop, not a substitute for one the provider keeps: a
+   * failing publish retries on a 5s/10s/20s backoff (task-queue.ts), and
+   * `CmsWorker` calls `refreshCredential` after every failed task attempt AND
+   * every failed git sync, so a burst of failures would otherwise reach an
+   * adopter-supplied `refreshGitHubToken` every few seconds. The AWS provider
+   * (`packages/canopycms-cdk/worker/credential-refresh.ts`) already enforces
+   * its own five-minute floor; an adopter's own provider has none unless they
+   * write one, so core enforces this one regardless of what the provider does
+   * on its side.
+   *
+   * The cost, where the provider has no floor of its own: a call in the minute
+   * before a rotation holds off every retry of a publish that then meets the
+   * revoked token (its retries span roughly 35-50s), so that publish fails and
+   * must be resubmitted.
+   */
+  refreshGitHubTokenMinIntervalMs?: number
+  /**
+   * How long to wait for one installation-token mint before giving up, in ms
+   * (default: 30000).
+   *
+   * The bound lives here rather than being threaded down from the task's own
+   * AbortSignal because the two git credential call paths do not share one:
+   * `pushBranchToGitHub` runs under `executeTaskWithTimeout`, but git-sync.ts's
+   * two resolutions run on the sync loop and are bounded by nothing at all. A
+   * local timeout covers both.
+   */
+  gitTokenMintTimeoutMs?: number
+}
+
+/**
+ * The two facets of a GitHub App credential that the worker needs, supplied
+ * by whoever constructs the `@octokit/auth-app` strategy.
+ *
+ * **Derive both from ONE `createAppAuth(…)` instance.** That instance holds
+ * the installation-token cache (an LRU keyed by installation, refreshed only
+ * within ~60s of expiry), so sharing it is what keeps the REST and git halves
+ * on the same hourly token instead of minting twice. Concretely:
+ *
+ * ```ts
+ * const appAuth = createAppAuth({ appId, privateKey, installationId })
+ * const githubAppAuth = {
+ *   mintInstallationToken: async () => (await appAuth({ type: 'installation' })).token,
+ *   // A closure, not `authStrategy: createAppAuth` — that would have Octokit
+ *   // build a SECOND instance with its own separate cache.
+ *   octokitAuth: { authStrategy: () => appAuth, auth: {} },
+ * }
+ * ```
+ */
+export interface GitHubAppAuth {
+  /**
+   * Mint (or return the cached) installation access token, used as the
+   * password in the git remote URL.
+   *
+   * `signal` aborts when the caller's timeout fires. Forward it to the
+   * underlying HTTP request if the strategy allows it — `@octokit/auth-app@6`
+   * does not accept a per-call signal, so with the stock strategy this is
+   * advisory and `resolveGitToken` below is what actually bounds the wait.
+   *
+   * Reject with the error as thrown, do NOT re-wrap it: a `RequestError`'s
+   * `.status` is what `isPermanentTaskFailure` classifies on, and a
+   * `new Error(getErrorMessage(err))` would turn every 401 into a retried
+   * transient failure.
+   */
+  mintInstallationToken: (options: { signal: AbortSignal }) => Promise<string>
+  /**
+   * Octokit's `{ authStrategy, auth }` passthrough, so the REST client
+   * authenticates as the App installation too.
+   */
+  octokitAuth: OctokitAuthStrategyOptions
+}
+
+/** See `GitHubAuthConfig.gitTokenMintTimeoutMs`. */
+export const DEFAULT_GIT_TOKEN_MINT_TIMEOUT_MS = 30_000
+
+/** See `GitHubAuthConfig.refreshGitHubTokenMinIntervalMs`. */
+export const DEFAULT_GITHUB_TOKEN_REFRESH_MIN_INTERVAL_MS = 60_000
+
+/** The largest delay `AbortSignal.timeout` honours without silently clamping. */
+const MAX_MINT_TIMEOUT_MS = 2_147_483_647
+
+export interface ResolvedGitHubAuth {
+  /** Passed straight to `createCanopyOctokit`. */
+  octokitAuth: CanopyOctokitAuthOptions
+  /**
+   * The git-over-HTTPS credential, resolved fresh on every call.
+   *
+   * Never cache what this returns: an installation token expires in about an
+   * hour, so a URL built from one is only good for that long. Resolving per
+   * use is cheap — `@octokit/auth-app` answers from its own cache until the
+   * token is within ~60s of expiry, so the common case is a resolved
+   * microtask, and the PAT case is a bare `async` return.
+   */
+  resolveGitToken: () => Promise<string>
+  /**
+   * Re-read the credential, because the operation that used it just failed.
+   *
+   * **The one place the two credential shapes differ, and the reason nothing
+   * outside this module has to know which one it holds.** On the App path it
+   * is a no-op: the strategy owns its own token cache and mints a new token on
+   * expiry (expiry only — see `GitHubAuthConfig.refreshGitHubToken`). On the
+   * token path it calls `GitHubAuthConfig.refreshGitHubToken`, at most once per
+   * `refreshGitHubTokenMinIntervalMs`, and swaps the result in.
+   *
+   * Nothing needs rebuilding afterwards, on either path. Both consumers read
+   * the credential per use — `resolveGitToken` on every `buildGitHubUrl()`,
+   * and Octokit through a strategy hook that reads it per request — so a
+   * swapped token is live at the next use with no cache to invalidate.
+   *
+   * Never throws for "nothing rotated": a provider that has nothing to offer
+   * resolves `undefined` and this leaves the credential alone. A failure to
+   * READ the secret does propagate, since the caller is already in a failure
+   * path and the message is worth surfacing.
+   */
+  refreshCredential: () => Promise<void>
+}
+
+/**
+ * An `@octokit/auth-token` strategy whose token is read at REQUEST time.
+ *
+ * The stock spelling, `{ auth: token }`, resolves the token once in Octokit's
+ * constructor (`@octokit/core@5`: `createTokenAuth(options.auth)`, then
+ * `hook.wrap("request", auth.hook)`), so a rotated token would never reach a
+ * client that had already been built — and rebuilding the client on rotation
+ * is precisely the coupling `refreshCredential` exists to avoid.
+ *
+ * `createTokenAuth` is called per use rather than once: it is two `bind`s and
+ * no I/O, and calling it per use is the whole mechanism by which the token is
+ * late-bound. Delegating to it — rather than setting an `authorization` header
+ * here — keeps the real implementation's token-type detection (`ghs_`, `ghu_`,
+ * `v1.`, and a three-segment JWT), which `octokit.auth()` reports.
+ */
+function dynamicTokenAuth(getToken: () => string): TokenAuth {
+  type HookArgs = Parameters<TokenAuth['hook']>
+  // The cast is for the OVERLOAD, not to paper over a mismatch: `hook` is
+  // declared with two call signatures and a wrapper written against the
+  // widest one is not assignable to the pair. The delegation below forwards
+  // whatever it was handed, unchanged.
+  const hook = ((request: HookArgs[0], route: HookArgs[1], parameters?: HookArgs[2]) =>
+    createTokenAuth(getToken()).hook(request, route, parameters)) as TokenAuth['hook']
+  return Object.assign(async () => createTokenAuth(getToken())(), { hook })
+}
+
+/**
+ * Choose how this worker authenticates, ONCE, from its config.
+ *
+ * Called from `CmsWorker.ensureGitHubAuth()`, which start() invokes inside
+ * its try — NOT from the constructor, so that a half-configured worker still
+ * constructs and the throw lands where start()'s catch can record it in
+ * worker-status.json. Resolved once, so both consumers (Octokit and the git
+ * URL) provably agree about which identity they act as.
+ */
+export function resolveWorkerGitHubAuth(config: GitHubAuthConfig): ResolvedGitHubAuth {
+  const token = config.githubToken
+  const app = config.githubAppAuth
+  const hasToken = typeof token === 'string' && token.length > 0
+
+  if (hasToken && app) {
+    throw new Error(
+      'CanopyCMS worker: configure either githubToken or githubAppAuth, not both. ' +
+        'Two credentials would leave it undefined which identity a push or a pull request acts as.',
+    )
+  }
+  if (!hasToken && !app) {
+    throw new Error(
+      'CanopyCMS worker: githubToken or githubAppAuth is required. ' +
+        'A personal access token (githubToken) is the default; githubAppAuth authenticates as a GitHub App installation instead.',
+    )
+  }
+
+  // Checked whether or not an App is configured: a nonsense value is a config
+  // error worth naming even on the path that ignores it.
+  const timeoutMs = config.gitTokenMintTimeoutMs ?? DEFAULT_GIT_TOKEN_MINT_TIMEOUT_MS
+  assertUsableMintTimeout(timeoutMs)
+
+  // Checked whether or not an App is configured, the same reason the mint
+  // timeout above is: ignored on that path, but a nonsense value is still a
+  // config error worth naming rather than silently accepting.
+  const minIntervalMs =
+    config.refreshGitHubTokenMinIntervalMs ?? DEFAULT_GITHUB_TOKEN_REFRESH_MIN_INTERVAL_MS
+  assertUsableRefreshInterval(minIntervalMs)
+
+  if (app) {
+    return {
+      octokitAuth: app.octokitAuth,
+      resolveGitToken: () => mintInstallationToken(app, timeoutMs),
+      // Deliberately a no-op, not an oversight, and not wired to
+      // `refreshGitHubToken`: an App holds no token to re-read. Its private
+      // key does not expire, and `@octokit/auth-app`'s own cache mints a new
+      // installation token when the old one expires. A rotated key or an
+      // early-revoked token is NOT recovered here — see
+      // .claude/future-tasks/worker-app-auth-cannot-recover-a-rotated-key.md.
+      refreshCredential: async () => {},
+    }
+  }
+  // Narrowed by hasToken, which TypeScript cannot carry through the branch above.
+  //
+  // `let`, not `const`: this binding IS the credential from here on, and both
+  // consumers below read it per use rather than capturing its value. That is
+  // what lets `refreshCredential` swap a rotated token in with nothing to
+  // rebuild and no cache to invalidate.
+  let currentToken = token as string
+  // Numbered as they start; see `refreshCredential` below.
+  let refreshesStarted = 0
+  let newestRefreshApplied = 0
+  // When a call last reached the provider, per `refreshGitHubTokenMinIntervalMs`
+  // below. `undefined` until the first call gets far enough to invoke it, so
+  // that first call is never held back by a floor with nothing to measure
+  // from yet.
+  let lastProviderReachedAt: number | undefined
+  return {
+    octokitAuth: {
+      // NOT `{ auth: currentToken }`. That spelling resolves the token once,
+      // inside Octokit's constructor, so a rotation would never reach a client
+      // already built. See dynamicTokenAuth.
+      authStrategy: () => dynamicTokenAuth(() => currentToken),
+      auth: {},
+    },
+    resolveGitToken: async () => currentToken,
+    refreshCredential: async () => {
+      // Nothing to re-read: no provider configured. Checked before the floor
+      // below so an unconfigured worker never starts a clock for a call it
+      // will never make.
+      if (!config.refreshGitHubToken) return
+      const now = Date.now()
+      // `<`, not `<=`: a `refreshGitHubTokenMinIntervalMs` of 0 (a test, or an
+      // adopter opting out) must permit every call rather than blocking on an
+      // identical timestamp -- the same reason credential-refresh.ts's own
+      // provider floor uses `<`.
+      // `now >= lastProviderReachedAt`: a wall clock that stepped BACKWARDS (an
+      // NTP correction at boot, a VM resume) counts as the floor having expired.
+      // Otherwise the negative difference is always `< minIntervalMs`, and the
+      // floor would stay shut for however far the clock stepped.
+      if (
+        lastProviderReachedAt !== undefined &&
+        now >= lastProviderReachedAt &&
+        now - lastProviderReachedAt < minIntervalMs
+      ) {
+        return
+      }
+      // Stamped BEFORE the await, not after, for the same reason
+      // credential-refresh.ts's does: stamping after lets two overlapping
+      // calls each see an unstamped clock and both reach the provider, which
+      // is the floor not holding. Overlap is real here -- the task loop and
+      // the git-sync loop both call `refreshCredential`, on separate loops
+      // `scheduleLoop` does not serialise against each other -- so this is
+      // what collapses them into one provider call. A provider that THROWS
+      // still counts as reached: the stamp already landed by the time the
+      // rejection surfaces, so a failing provider is bounded by the floor
+      // too, and this call is not counted in `refreshesStarted` below unless
+      // it gets this far.
+      lastProviderReachedAt = now
+      const refresh = ++refreshesStarted
+      const refreshed = await config.refreshGitHubToken()
+      // Falsy covers both "nothing rotated" (`undefined`) and an empty secret:
+      // an empty token would build `https://x-access-token:@github.com/…`,
+      // which git sends anonymously, so keeping the known-bad-but-real token
+      // fails more legibly than replacing it with nothing.
+      if (!refreshed) return
+      // A refresh that STARTED before one already applied read the store
+      // earlier, so its value can only be older. Refreshes do overlap: the task
+      // loop and the git-sync loop both call this, and
+      // CmsWorker.refreshGitHubCredential stops waiting after `taskTimeoutMs`
+      // without cancelling. Only a refresh that returned a value counts as
+      // applied -- one that returned `undefined` (a provider's floor, say) says
+      // nothing about how recent it is, so it must not block a slower real read.
+      if (refresh < newestRefreshApplied) return
+      newestRefreshApplied = refresh
+      currentToken = refreshed
+    },
+  }
+}
+
+/**
+ * Reject a mint timeout that `AbortSignal.timeout` would not honour.
+ *
+ * Checked at resolution rather than at first use because the RangeError would
+ * otherwise be thrown INSIDE the mint, where it carries no `.status` — so the
+ * task path would read a config typo as transient and burn every push's full
+ * retry budget on it. An environment variable through `parseInt` yields NaN,
+ * which is exactly how such a value arrives (canopycms-cdk's worker entrypoint
+ * parses every other interval that way).
+ *
+ * The bounds are Node's, measured rather than assumed: `AbortSignal.timeout`
+ * throws for a non-integer (`0.5`) and for anything above 2**32-1, and
+ * SILENTLY clamps 2**31 … 2**32-1 to 1ms with a TimeoutOverflowWarning —
+ * which would abort every mint instantly while reporting a timeout of the
+ * configured size. 2**31-1 is the largest value with no surprise in it.
+ */
+function assertUsableMintTimeout(timeoutMs: number): void {
+  if (!Number.isInteger(timeoutMs) || timeoutMs <= 0 || timeoutMs > MAX_MINT_TIMEOUT_MS) {
+    throw new Error(
+      `CanopyCMS worker: gitTokenMintTimeoutMs must be a whole number of milliseconds between 1 and ${MAX_MINT_TIMEOUT_MS} (got ${String(timeoutMs)}).`,
+    )
+  }
+}
+
+/**
+ * Reject a refresh-floor interval that is not a usable delay.
+ *
+ * Checked at resolution, the same reason `assertUsableMintTimeout` above is:
+ * an invalid value should read as a named config error rather than as
+ * whatever `now - lastProviderReachedAt < minIntervalMs` happens to do with
+ * it -- a `NaN` floor, for instance, makes that comparison always `false` and
+ * would silently permit every call instead of failing loudly. Unlike the mint
+ * timeout, there is no upper bound to enforce: this value is only ever
+ * compared against another `Date.now()` reading, never handed to
+ * `AbortSignal.timeout`.
+ */
+function assertUsableRefreshInterval(minIntervalMs: number): void {
+  if (!Number.isInteger(minIntervalMs) || minIntervalMs < 0) {
+    throw new Error(
+      `CanopyCMS worker: refreshGitHubTokenMinIntervalMs must be a whole number of milliseconds, 0 or greater (got ${String(minIntervalMs)}).`,
+    )
+  }
+}
+
+/**
+ * Mint an installation token, bounded by `timeoutMs`.
+ *
+ * Deliberately has NO try/catch around the mint. A rejection must reach
+ * `isPermanentTaskFailure` (task-runner.ts) carrying the `.status` its
+ * `RequestError` was thrown with, because that is the whole of the
+ * classification: 4xx is permanent, so a bad key (401), a suspended app (403)
+ * or a revoked installation (404) fails the task immediately instead of
+ * burning its retry budget, while a 5xx or a network error with no status at
+ * all is retried. Catching and re-throwing `new Error(getErrorMessage(err))`
+ * here would silently make every mint failure transient.
+ */
+async function mintInstallationToken(app: GitHubAppAuth, timeoutMs: number): Promise<string> {
+  const signal = AbortSignal.timeout(timeoutMs)
+  const minting = app.mintInstallationToken({ signal })
+  // No `minting.catch(() => {})` guard here, deliberately, though the same
+  // shape in executeTaskWithTimeout has one: `Promise.race` subscribes a
+  // reject handler to EVERY input, so a mint that rejects after the timeout
+  // has already won is handled by the race itself. Measured — adding the
+  // guard changes nothing, and removing it produces no unhandled rejection.
+  const timedOut = new Promise<never>((_, reject) => {
+    signal.addEventListener('abort', () => reject(new MintTimeoutError(timeoutMs)), { once: true })
+  })
+  const minted = await Promise.race([minting, timedOut])
+  if (!minted) {
+    // An empty token would build `https://x-access-token:@github.com/…`, which
+    // git sends as an anonymous request and GitHub answers with a 403 that
+    // says nothing about the credential.
+    throw new Error('GitHub App authentication returned an empty installation token')
+  }
+  return minted
+}
+
+/**
+ * The mint did not answer within `gitTokenMintTimeoutMs`.
+ *
+ * A named class rather than a bare Error because `isTransientAuthFailure`
+ * below has to recognise it: a timeout carries no HTTP status, and the
+ * fail-closed rule there would otherwise read "slow network" as "wrong key".
+ */
+export class MintTimeoutError extends Error {
+  constructor(timeoutMs: number) {
+    super(`GitHub App installation token was not minted within ${timeoutMs}ms`)
+    this.name = 'MintTimeoutError'
+  }
+}
+
+/**
+ * Node errnos that mean "the network was unhappy", i.e. try again later.
+ * `getaddrinfo`/connect failures during an instance's first seconds are the
+ * realistic boot-time case.
+ */
+const TRANSIENT_NETWORK_CODES = new Set([
+  'EAI_AGAIN',
+  'ECONNABORTED',
+  'ECONNREFUSED',
+  'ECONNRESET',
+  'ENETDOWN',
+  'ENETUNREACH',
+  'ENOTFOUND',
+  'EPIPE',
+  'ETIMEDOUT',
+])
+
+/**
+ * Does this mint failure positively look like a passing condition?
+ *
+ * **This is the inverse of `isPermanentTaskFailure`, deliberately, and the
+ * inversion is the point.** That classifier answers "must I stop retrying?"
+ * and so defaults to transient — an error with no HTTP status at all is
+ * retried, which is right on the task path where `maxRetries` bounds the
+ * damage.
+ *
+ * A boot-time credential check has no such bound, so it must fail CLOSED.
+ * Status-less permanent failures are real: measured against the real
+ * `@octokit/auth-app@6.1.4`, a key of the wrong TYPE throws `"alg" parameter
+ * for "ec" key type must be one of: ES256, ES384, ES512.` and an unusable one
+ * throws `secretOrPrivateKey must be an asymmetric key when using RS256` —
+ * both `status === undefined`, because the JWT is signed locally and the
+ * request never leaves the box. "Default to transient" there means a worker
+ * with a dead credential boots, reports itself healthy in worker-status.json,
+ * and fails every task and every sync afterwards — strictly worse than the
+ * crash-loop the check guards against, because a crash-loop is visible.
+ *
+ * (A valid RSA key belonging to a DIFFERENT app is NOT one of these: it signs
+ * fine locally and GitHub refuses it with a 401, which both classifiers
+ * already agree is permanent.)
+ *
+ * 403 is treated as PERMANENT here, where `isPermanentTaskFailure` carves out
+ * rate-limit 403s. At boot a 403 from the installation-token endpoint is a
+ * suspended app, an uninstalled app, or a missing permission far more often
+ * than a rate limit — a worker that has issued no requests yet is not the one
+ * being throttled — and exiting is recoverable by systemd, where booting on a
+ * dead credential is not.
+ */
+export function isTransientAuthFailure(err: unknown): boolean {
+  if (err instanceof MintTimeoutError) return true
+  const status = getHttpStatus(err)
+  if (status !== null) return status >= 500 || status === 408 || status === 429
+  return TRANSIENT_NETWORK_CODES.has(networkErrorCode(err) ?? '')
+}
+
+/**
+ * The errno behind a network failure, whether it is on the error or one level
+ * down in its `cause`.
+ *
+ * The nesting is not hypothetical: measured on Node 24, a `fetch()` DNS
+ * failure is a `TypeError: fetch failed` whose own `.code` is `undefined` and
+ * whose `.cause.code` is `ENOTFOUND`. Reading only the top level would call
+ * that permanent and kill a booting worker over a DNS blip.
+ *
+ * `@octokit/request` happens to convert that particular TypeError into a
+ * `RequestError(…, 500)`, which the status branch above already handles — so
+ * with the stock strategy this path is belt and braces. It is what a
+ * `mintInstallationToken` built on raw `fetch` would produce, and the
+ * injection point invites exactly that.
+ */
+function networkErrorCode(err: unknown): string | undefined {
+  if (isNodeError(err) && err.code) return err.code
+  // Read through a structural cast, not `err.cause`: this repo compiles with
+  // `target: ES2021` and no `lib` override, where `Error.cause` is not in the
+  // type surface even though every supported runtime (node >= 22.12) has it.
+  const cause = err instanceof Error ? (err as { cause?: unknown }).cause : undefined
+  return isNodeError(cause) ? cause.code : undefined
+}
+
+/** Extract an HTTP status from an error, if present (Octokit RequestError shape). */
+function getHttpStatus(err: unknown): number | null {
+  if (err instanceof Error && 'status' in err) {
+    const status = (err as { status: unknown }).status
+    if (typeof status === 'number') return status
+  }
+  return null
+}
+
+/**
+ * Normalize a GitHub App private key to a PKCS#8 PEM.
+ *
+ * What this does TODAY, and it is the reason to call it: accept the two
+ * wrappings a key picks up on its way through configuration, and fail loudly
+ * and locally on anything unusable.
+ * - `\n` escaped as a literal backslash-n (a `.env` value, or JSON that was
+ *   never parsed);
+ * - the whole PEM base64-encoded (a common way to get a multi-line secret
+ *   through a single-line field).
+ *
+ * Both are indistinguishable from corruption at the point of failure, and
+ * anything `crypto.createPrivateKey` cannot parse throws here — where the key
+ * is configured, naming the key — rather than surfacing later as an opaque
+ * JWT signing failure.
+ *
+ * The PKCS#1 → PKCS#8 conversion is INSURANCE, not a fix for a current
+ * failure. GitHub issues App keys as PKCS#1 (`-----BEGIN RSA PRIVATE KEY-----`),
+ * and whether that is accepted depends on which build of
+ * `universal-github-app-jwt` a bundler resolves, never on the key:
+ * - At the pin we install (`@octokit/auth-app@6` → `universal-github-app-jwt@1.2.0`,
+ *   which has no `exports` field) the worker's own flags,
+ *   `esbuild --platform=node --format=esm`, resolve `main` → the `dist-node`
+ *   build, which signs via `jsonwebtoken` and takes PKCS#1 happily. Measured
+ *   by bundling with exactly those flags: an unconverted key works.
+ * - That same package's `module`/`browser` entry is a WebCrypto build that
+ *   throws "Private Key is in PKCS#1 format, but only PKCS#8 is supported".
+ *   Any resolver preferring `module` reaches it.
+ * - Per their published package.json files (neither is installed here),
+ *   `@octokit/auth-app@7` moves to `universal-github-app-jwt@2`, which is
+ *   WebCrypto-only and converts PKCS#1 solely under the **`node` condition of
+ *   its `imports` map** (`"#crypto"` → `lib/crypto-node.js`); the `default`
+ *   sibling's `convertPrivateKey` is a literal no-op, and the key throws.
+ *
+ * So a bundler flag or a dependency bump can turn a working key into a boot
+ * failure without the key changing. Three lines here remove that coupling.
+ */
+export function normalizeGitHubAppPrivateKey(privateKey: string): string {
+  // Unescape on BOTH sides of the unwrap. The two manglings compose in either
+  // order -- a PEM can be escaped and then base64-wrapped (the escapes are
+  // then inside the encoded bytes), or wrapped and then escaped (the escapes
+  // are on the base64 itself, and would stop it being recognised as base64 at
+  // all). Each pass is a no-op when there is nothing to undo.
+  //
+  // Re-trimmed BETWEEN the passes, not only at the start: unescaping a value
+  // that ended in a trailing `\n` escape (which is what `base64 -w 64` output
+  // becomes after a trip through a single-line field) leaves a real trailing
+  // newline, and decodeIfBase64's shape test is anchored at both ends.
+  // Trimming inside that function instead would mean a `\s*$` tail on its
+  // regex, whose whitespace overlaps the body class -- the polynomial
+  // backtracking shape redactCredentials (utils/error.ts) avoids deliberately.
+  //
+  // No trim after the second pass: `createPrivateKey` accepts a PEM with
+  // surrounding whitespace, so one there would be unexercised.
+  const pem = unescapeNewlines(decodeIfBase64(unescapeNewlines(privateKey.trim()).trim()))
+  try {
+    return createPrivateKey(pem).export({ type: 'pkcs8', format: 'pem' }).toString()
+  } catch (err) {
+    throw new Error(
+      `CanopyCMS: the GitHub App private key could not be parsed (${getErrorMessage(err)}). ` +
+        'Supply the PEM GitHub generated for the app — PKCS#1, PKCS#8, base64-encoded or with \\n escapes are all accepted.',
+    )
+  }
+}
+
+/**
+ * Turn literal `\n` / `\r\n` escapes back into real newlines. Unconditional,
+ * because no PEM and no base64 alphabet contains a backslash, so this cannot
+ * corrupt a key that was already well-formed.
+ */
+function unescapeNewlines(value: string): string {
+  return value.replace(/\\r\\n|\\r|\\n/g, '\n')
+}
+
+/**
+ * Undo a base64 wrapping of the whole PEM. Gated on the result actually
+ * looking like a PEM, so a malformed key is reported as a key-parse failure
+ * rather than as whatever bytes a stray base64 decode produced.
+ */
+function decodeIfBase64(value: string): string {
+  if (value.includes('-----BEGIN')) return value
+  if (!/^[A-Za-z0-9+/\s]+={0,2}$/.test(value)) return value
+  const decoded = Buffer.from(value, 'base64').toString('utf8')
+  return decoded.includes('-----BEGIN') ? decoded : value
+}

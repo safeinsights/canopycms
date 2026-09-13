@@ -23,7 +23,7 @@ import type { WorkerStatusReport } from '../types'
  *
  * Everything below the divider is resolved by CALLING back onto the live
  * `CmsWorker` instance, never snapshotted into the context object. That is
- * load-bearing, not stylistic. The worker's eight test files drive it by
+ * load-bearing, not stylistic. The worker's ten `cms-worker*.test.ts` files drive it by
  * reaching through the instance:
  *
  * - `cms-worker.test.ts` and `cms-worker-sync-reconcile.test.ts` REPLACE
@@ -91,9 +91,9 @@ export interface WorkerContext {
    *
    * Async because the credential need not be something the worker already
    * holds: a credential that has to be fetched or minted cannot be assembled
-   * synchronously out of config. No such credential exists yet -- today's only
-   * implementation reads `config.githubToken` and resolves immediately -- so
-   * this signature is groundwork, not a description of current behaviour.
+   * synchronously out of config. Under GitHub App auth it is minted on
+   * demand and lasts about an hour (see worker/github-auth.ts); the personal
+   * access token path still resolves immediately.
    *
    * A caller that needs the URL more than once must resolve it ONCE into a
    * local and reuse that, rather than calling again per push -- see
@@ -105,6 +105,18 @@ export interface WorkerContext {
    * `redactCredentials` first.
    */
   buildGitHubUrl(): Promise<string>
+  /**
+   * Re-read the GitHub credential because an operation that used it just
+   * failed, read at call time.
+   *
+   * Best-effort and NEVER throws: a failed read, or one that does not settle
+   * within `taskTimeoutMs`, is logged and swallowed, because every caller is
+   * already handling a failure and that failure is the one to report. Once it
+   * resolves, the next `buildGitHubUrl()` or `octokit()` call sees any rotated
+   * value. See `CmsWorker.refreshGitHubCredential` for the two call sites and
+   * why neither is gated on the error's shape.
+   */
+  refreshGitHubCredential(): Promise<void>
   /**
    * Workspace directory for a branch named by its GIT REF name — the form task
    * payloads carry. Sanitizes; `feature/x` lives in `feature-x`.

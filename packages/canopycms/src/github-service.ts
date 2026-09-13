@@ -30,15 +30,66 @@ export const shouldRetrySecondaryRateLimit = (retryAfter: number, retryCount: nu
   retryCount < 1 && retryAfter <= 60
 
 /**
+ * Octokit's pluggable-auth options, typed STRUCTURALLY.
+ *
+ * `@octokit/core` calls `authStrategy(…)` once in its constructor and wraps
+ * the returned object's `.hook` into its request chain, so handing it a
+ * strategy is the whole of "authenticate every request some other way".
+ *
+ * Declared as a shape rather than imported because this module is reachable
+ * from `services.ts` and therefore lands in every adopter's Next.js server
+ * bundle: an `import { createAppAuth } from '@octokit/auth-app'` here would
+ * put that package (and its `universal-github-app-jwt` dependency) into the
+ * bundle of every adopter, including the overwhelming majority who
+ * authenticate with a personal access token and will never register a GitHub
+ * App. `pnpm lint:bundle` guards the *client* boundary only and would not
+ * catch that, so the structural typing is the guard.
+ *
+ * A deployment that does use an App constructs the strategy and passes it
+ * through here. That is the seam `packages/canopycms-cdk/worker/index.ts`
+ * already uses for `refreshAuthCache`, and its App wiring goes through the same
+ * one — see `packages/canopycms-cdk/worker/github-app-auth.ts`, with
+ * `docs/adopter-migration.md` carrying the shape for a hand-written entrypoint.
+ */
+export interface OctokitAuthStrategyOptions {
+  /**
+   * Octokit calls this with `{ request, log, octokit, octokitOptions }`, with
+   * the fields of `auth` below merged over them, and expects an object
+   * carrying a `.hook`.
+   * `createAppAuth(…)`'s return value satisfies that; so does a closure
+   * returning an already-constructed one, which is how a single auth instance
+   * (and therefore a single installation-token cache) can be shared with a
+   * caller that also needs to mint tokens outside Octokit.
+   */
+  authStrategy: (options: Record<string, unknown>) => unknown
+  /** Merged into the strategy's options by Octokit. */
+  auth: unknown
+}
+
+/** Either a bare token (the PAT path) or a pluggable auth strategy. */
+export type CanopyOctokitAuthOptions = { auth: string } | OctokitAuthStrategyOptions
+
+/**
  * Create an Octokit instance with the throttling plugin attached, so it
  * proactively respects GitHub's `retry-after` guidance on rate limits
  * instead of failing immediately (see worker/task-runner.ts's isPermanentTaskFailure
  * for the safety net this doesn't cover: exhausted plugin retries and
  * errors the plugin never sees, like non-403 network failures).
  */
-export function createCanopyOctokit(options: { auth: string }): Octokit {
+export function createCanopyOctokit(options: CanopyOctokitAuthOptions): Octokit {
+  // The two auth fields are picked out EXPLICITLY rather than spread. A spread
+  // would forward anything else the caller's object happened to carry --
+  // `baseUrl`, `request`, `log`, `userAgent` are all live `OctokitOptions`,
+  // and a non-literal argument (a widened variable, not an inline object)
+  // slips past TypeScript's excess-property check. This function's contract is
+  // "our Octokit, authenticated the way you say", not "our Octokit, configured
+  // however you like".
+  const auth =
+    'authStrategy' in options
+      ? { authStrategy: options.authStrategy, auth: options.auth }
+      : { auth: options.auth }
   return new ThrottledOctokit({
-    auth: options.auth,
+    ...auth,
     throttle: {
       onRateLimit: (retryAfter, requestOptions, _octokit, retryCount) => {
         canopyLogWarn(

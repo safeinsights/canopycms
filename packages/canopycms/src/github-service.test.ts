@@ -573,5 +573,54 @@ describe('GitHubService', () => {
       expect(octokit.pulls).toBeDefined()
       expect(typeof octokit.graphql).toBe('function')
     })
+
+    it('authenticates with the bare token when one is given', async () => {
+      const octokit = createCanopyOctokit({ auth: 'test-token' })
+      await expect(octokit.auth()).resolves.toMatchObject({
+        type: 'token',
+        token: 'test-token',
+      })
+    })
+
+    it('forwards only the auth fields, not whatever else the argument carries', async () => {
+      // Excess-property checks stop an inline literal, but a widened variable
+      // type-checks and would otherwise hand Octokit a live `baseUrl` (or
+      // `request`, `log`, `userAgent`). This function's contract is "our
+      // Octokit, authenticated the way you say", not "configured however you
+      // like".
+      const smuggled = {
+        auth: 'test-token',
+        baseUrl: 'https://evil.example.com',
+      } as unknown as Parameters<typeof createCanopyOctokit>[0]
+
+      const octokit = createCanopyOctokit(smuggled)
+
+      // Non-vacuous: the auth half of the same object DID get through.
+      await expect(octokit.auth()).resolves.toMatchObject({ token: 'test-token' })
+      expect(octokit.request.endpoint.DEFAULTS.baseUrl).toBe('https://api.github.com')
+    })
+
+    it('passes a pluggable auth strategy through to Octokit', async () => {
+      // The GitHub App path. Core must never import `@octokit/auth-app` (it
+      // would land in every adopter's server bundle via services.ts), so the
+      // strategy is injected structurally; this is what proves the options
+      // survive the trip rather than being flattened to `{ auth }`.
+      const instance = Object.assign(async () => ({ token: 'ghs_installation' }), {
+        hook: () => {},
+      })
+      const authStrategy = vi.fn((_options: Record<string, unknown>) => instance)
+
+      const octokit = createCanopyOctokit({ authStrategy, auth: { appId: 42 } })
+
+      expect(authStrategy).toHaveBeenCalledTimes(1)
+      // Octokit merges `auth` over its own `{ request, log, octokit,
+      // octokitOptions }`, so the injected values are there.
+      expect(authStrategy.mock.calls[0][0]).toMatchObject({ appId: 42 })
+      await expect(octokit.auth()).resolves.toEqual({ token: 'ghs_installation' })
+      // Still the same client otherwise: the REST surface and the throttling
+      // plugin (which throws at construction when its handlers are missing)
+      // are unaffected by the auth shape.
+      expect(octokit.pulls).toBeDefined()
+    })
   })
 })

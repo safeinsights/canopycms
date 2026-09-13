@@ -33,3 +33,11 @@ AssetSupport members and `editorOrigins`. Nothing else keeps the pair in step.
 
 Option 1 or 2 keeps the example useful to read on GitHub; option 3 removes the drift
 surface entirely.
+
+## Overlaps
+
+The same drift was filed independently, also on 2026-09-12, on `int-202609-a`:
+[example-aws-deployment-drift-from-template.md](example-aws-deployment-drift-from-template.md)
+(the whole directory, and the case for generating it) and
+[example-deploy-workflow-drifted.md](example-deploy-workflow-drifted.md) (the workflow file).
+The three met when `int-202609-a` was merged into `int-202609-cms-image`; fix them as one.

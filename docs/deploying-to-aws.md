@@ -327,13 +327,23 @@ successful deploy.
 
 | Variable                                     | Required | Notes                                                                                                                                                                                |
 | -------------------------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `GITHUB_TOKEN_SECRET_ARN`                    | yes      | **Full** ARN including the six-character suffix — it goes verbatim into the worker's IAM policy, so a name-based ARN silently never matches and the worker gets AccessDenied at boot |
+| `GITHUB_TOKEN_SECRET_ARN`                    | yes\*    | **Full** ARN including the six-character suffix — it goes verbatim into the worker's IAM policy, so a name-based ARN silently never matches and the worker gets AccessDenied at boot |
 | `CLERK_SECRET_KEY_SECRET_ARN`                | yes      | Full ARN, same reason                                                                                                                                                                |
+| `GITHUB_TOKEN_SECRET_JSON_FIELD`             | no       | Set only if that secret holds a JSON document rather than the bare token; names the key to read out of it. See [JSON secret documents](#json-secret-documents)                       |
+| `CLERK_SECRET_KEY_SECRET_JSON_FIELD`         | no       | Same, for the Clerk secret                                                                                                                                                           |
+| `GITHUB_APP_ID`                              | no       | GitHub App authentication instead of a token — see [Authenticating as a GitHub App](#authenticating-as-a-github-app). Set all three App variables or none                            |
+| `GITHUB_APP_INSTALLATION_ID`                 | no       | The App's installation on _this_ repository, not the App ID                                                                                                                          |
+| `GITHUB_APP_PRIVATE_KEY_SECRET_ARN`          | no       | Full ARN of the secret holding the App's PEM. ARN-only: the key is multi-line and never reaches the worker as a plain value                                                          |
+| `GITHUB_APP_PRIVATE_KEY_SECRET_JSON_FIELD`   | no       | Set only if that secret holds a JSON document rather than the bare PEM                                                                                                               |
 | `CLERK_JWT_KEY`                              | yes      | Clerk's public JWKS PEM. Unset, Clerk falls back to a network JWKS fetch and the no-internet Lambda hangs at sign-in                                                                 |
 | `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`          | no       | Deploys fine when empty and ships an editor that cannot sign in                                                                                                                      |
 | `CANOPY_BOOTSTRAP_ADMIN_IDS`                 | no       | Comma-separated Clerk user IDs granted admin on first boot                                                                                                                           |
 | `CANOPYCMS_DEPLOYMENT_NAME`                  | no       | Defaults to `prod`. Two stacks sharing one GitHub repo **must** differ — see [Two deployments, one repository](#two-deployments-one-repository)                                      |
 | `CMS_DOMAIN_NAME` / `CMS_HOSTED_ZONE_DOMAIN` | no       | Set both to add CloudFront + Route53; leave unset to use the Lambda Function URL directly                                                                                            |
+
+\* Required unless you set the `GITHUB_APP_*` variables instead. A personal
+access token is the default; exactly one of the two credentials must be
+configured, and setting both is refused at synth.
 
 Then edit `infrastructure/lib/cms-stack.ts` for anything beyond that — memory
 and concurrency, `AssetSupport` for media (a commented block in the generated
@@ -411,17 +421,31 @@ The Deploy step passes these through to `infrastructure/bin/app.ts`. The
 required ones are read by `required()` there, so a missing value fails the
 deploy at synth — before anything is changed in the account.
 
-| Name                                        | Kind      | Required                                     |
-| ------------------------------------------- | --------- | -------------------------------------------- |
-| `AWS_DEPLOY_ROLE_ARN`                       | secret    | yes                                          |
-| `CANOPY_GITHUB_TOKEN_SECRET_ARN`            | secret    | yes (see note below)                         |
-| `CLERK_SECRET_KEY_SECRET_ARN`               | secret    | yes                                          |
-| `AWS_REGION`                                | variable  | yes                                          |
-| `CLERK_JWT_KEY`                             | variable  | yes (see note below)                         |
-| `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`         | variable  | no, but the editor cannot sign in without it |
-| `CANOPY_BOOTSTRAP_ADMIN_IDS`                | variable  | no                                           |
-| `CANOPYCMS_DEPLOYMENT_NAME`                 | variable  | no (defaults to `prod`)                      |
-| `CMS_DOMAIN_NAME`, `CMS_HOSTED_ZONE_DOMAIN` | variables | no (enables CloudFront + Route53)            |
+| Name                                              | Kind      | Required                                     |
+| ------------------------------------------------- | --------- | -------------------------------------------- |
+| `AWS_DEPLOY_ROLE_ARN`                             | secret    | yes                                          |
+| `CANOPY_GITHUB_TOKEN_SECRET_ARN`                  | secret    | yes (see note below)                         |
+| `CLERK_SECRET_KEY_SECRET_ARN`                     | secret    | yes                                          |
+| `AWS_REGION`                                      | variable  | yes                                          |
+| `CLERK_JWT_KEY`                                   | variable  | yes (see note below)                         |
+| `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`               | variable  | no, but the editor cannot sign in without it |
+| `CANOPY_BOOTSTRAP_ADMIN_IDS`                      | variable  | no                                           |
+| `CANOPYCMS_DEPLOYMENT_NAME`                       | variable  | no (defaults to `prod`)                      |
+| `CANOPY_GITHUB_TOKEN_SECRET_JSON_FIELD`           | variable  | no (only for a JSON secret document)         |
+| `CLERK_SECRET_KEY_SECRET_JSON_FIELD`              | variable  | no (only for a JSON secret document)         |
+| `CANOPY_GITHUB_APP_ID`                            | variable  | no (only for GitHub App auth)                |
+| `CANOPY_GITHUB_APP_INSTALLATION_ID`               | variable  | no (only for GitHub App auth)                |
+| `CANOPY_GITHUB_APP_PRIVATE_KEY_SECRET_ARN`        | secret    | no (only for GitHub App auth)                |
+| `CANOPY_GITHUB_APP_PRIVATE_KEY_SECRET_JSON_FIELD` | variable  | no (only for a JSON secret document)         |
+| `CMS_DOMAIN_NAME`, `CMS_HOSTED_ZONE_DOMAIN`       | variables | no (enables CloudFront + Route53)            |
+
+`CANOPY_GITHUB_TOKEN_SECRET_ARN` is required **unless** you configure GitHub App
+authentication instead, in which case it must be left unset — exactly one of the
+two. See [Authenticating as a GitHub App](#authenticating-as-a-github-app).
+
+The App ID and `_JSON_FIELD` entries are variables, not secrets, because they identify or
+name something rather than carry key material; the App private key reaches Actions only as
+the ARN of the secret holding it.
 
 > **Why is `CLERK_JWT_KEY` a variable and not a secret?** Because it is a _public_ key —
 > Clerk's JWKS PEM, retrievable from your instance's public JWKS endpoint, and used only to
@@ -438,7 +462,8 @@ deploy at synth — before anything is changed in the account.
 > reserves the `GITHUB_` prefix and rejects any Actions secret or variable whose name
 > starts with it, so the obvious name cannot be created. The generated workflow maps this
 > secret onto an unprefixed `GITHUB_TOKEN_SECRET_ARN` environment variable, which is what
-> the CDK app reads — only the _secret_ name needs the prefix.
+> the CDK app reads — only the _secret_ name needs the prefix. Every other `CANOPY_GITHUB_*`
+> entry above is spelled that way for the same reason, and mapped the same way.
 
 > **CloudFront requires a us-east-1 certificate.** When `CMS_DOMAIN_NAME` is set,
 > `CanopyCmsDistribution` creates an ACM certificate in the **stack's own region**, and
@@ -547,6 +572,236 @@ Before deploying, create these secrets in AWS Secrets Manager:
 
 CanopyCMS's code on the Lambda needs neither secret — only the EC2 worker reads them.
 Keeping `clerkMiddleware` changes that for the Clerk key; see [Security Model](#security-model).
+
+### Authenticating as a GitHub App
+
+A personal access token is the default and is fully supported; this section is
+for organisations that require an App. Registering an App under an organisation
+takes an owner of that organisation (or a GitHub App manager for all its Apps),
+which many adopters are not, so nothing here deprecates the token or asks you to
+migrate.
+
+What an App buys you, when you can have one: its private key does not expire,
+it acts as itself rather than as the person who created it, and it survives that
+person leaving. A fine-grained PAT expires within a year and dies with its
+creator's account.
+
+#### Register it with `canopycms init-github-app`
+
+```bash
+canopycms init-github-app create -- \
+  aws secretsmanager create-secret --name canopycms/github-app-key --secret-string file:///dev/stdin
+```
+
+The command writes an HTML form to a temp file and prints the path. Open it in a
+browser **signed in to GitHub as the repository's owner** (for an organisation:
+an owner, or a GitHub App manager for all its Apps), review the
+permissions GitHub shows you, and click Create; then install the App on the
+content repository and press Enter. It prints `GITHUB_APP_ID` and
+`GITHUB_APP_INSTALLATION_ID` — both numeric, both read from the API rather than
+copied off a URL.
+
+Everything after `--` is run with the private key on its **standard input**, so
+the key never touches disk and never appears in a process listing. That example
+stores it in Secrets Manager; any command that reads a secret from stdin works
+just as well, and `--key-out <path>` writes a `0600` file instead if you have no
+such command. The command's own output is shown to you, which is how you get the
+secret's full ARN — `Secret.fromSecretCompleteArn` needs the ARN including its
+six-character suffix, not the friendly name.
+
+If that command fails, `create` keeps the key in memory and asks for a **file
+path** to write it to (created `0600`, never overwriting); commands are not
+accepted at that prompt. A first word after `--` containing `=` is refused: set
+variables in your shell before `canopycms`, e.g.
+`AWS_PROFILE=prod canopycms init-github-app create -- aws …`.
+
+If you already keep one JSON document per environment, create the secret
+yourself and point `GITHUB_APP_PRIVATE_KEY_SECRET_JSON_FIELD` at the field —
+`init-github-app` deliberately will not edit an existing document, because a
+read-modify-write against a shared credential can silently drop its other
+fields.
+
+Prefer to do it by hand? Create the App under the account's settings with
+exactly the permissions below, install it on the content repository, and
+generate a private key from the App's "Private keys" section.
+
+#### The permissions, and why each one
+
+| Permission                  | Why                                                                                         |
+| --------------------------- | ------------------------------------------------------------------------------------------- |
+| Contents: read & write      | cloning, fetching and pushing content branches over HTTPS, and deleting a remote branch ref |
+| Pull requests: read & write | opening and updating the pull request that carries an edit, and the draft/ready transitions |
+| Metadata: read              | granted automatically alongside any repository permission                                   |
+
+**Nothing else.** Not Issues, not Workflows, not Administration, and no
+organisation permissions. That set is not advice — it is derived from every
+GitHub call the worker makes, declared as `CANOPY_APP_PERMISSIONS` in
+`packages/canopycms/src/cli/init-github-app.ts` with the call site that forces
+each entry, and held there by a test that drives the worker's dispatch table and
+fails if a call is added that the set does not cover.
+
+One known gap, reported in public GitHub issues and not reproduced here: GitHub
+refuses a push that creates or updates a file under `.github/workflows/` without
+the workflows permission (the `workflow` scope, for a classic PAT), and a content
+branch rebased across a base-branch workflow change may count as one.
+
+**Register one App per site.** Anyone holding an App's key can mint a token for
+any of its installations, so one App shared across sites lets a compromise of
+one site's secret store write to every other site's repository — see
+[ARCHITECTURE.md](../ARCHITECTURE.md#why-one-github-app-per-site-not-one-shared-across-an-organisation).
+
+#### Check it before you trust it
+
+```bash
+aws secretsmanager get-secret-value --secret-id canopycms/github-app-key \
+  --query SecretString --output text |
+  canopycms init-github-app verify --app-id 123456 --key-stdin
+```
+
+Read-only and repeatable. It reports the permissions the installation actually
+holds — flagging anything **missing** and anything **wider than intended**,
+including a level stronger than needed — whether the installation is scoped to
+selected repositories or to all of them, whether it has been suspended, whether
+the App is installed exactly **once** (a second installation means this key
+reaches another account's repositories), and whether a token can actually be
+minted. That last one matters because **adding a permission to an App does not
+reach existing installations until an account owner approves it**, so an App
+whose settings page looks correct can still hold a stale grant. Any token it
+mints is revoked immediately.
+
+A check that could not run is reported as a failure, not passed over — "could
+not list this App's installations" is not the same as "installed once", and only
+one of those is a reason to trust the credential.
+
+#### Then set these instead of `GITHUB_TOKEN_SECRET_ARN`
+
+```
+GITHUB_APP_ID=123456
+GITHUB_APP_INSTALLATION_ID=78901234
+GITHUB_APP_PRIVATE_KEY_SECRET_ARN=arn:aws:secretsmanager:us-east-1:123456789012:secret:canopycms/github-app-key-AbCdEf
+```
+
+From the generated GitHub Actions workflow you set the matching repository
+variables and secret, all `CANOPY_`-prefixed, which the workflow maps back onto
+the unprefixed names above. See
+[Repository secrets and variables](#repository-secrets-and-variables).
+
+Four things worth knowing before you choose:
+
+- **The private key is ARN-only.** There is no plain-value alternative and there
+  cannot be one: the worker's configuration arrives as a `.env` file that systemd
+  reads as `EnvironmentFile=`, where a newline starts a new variable, and a PEM
+  is multi-line. Pasting the key into `GITHUB_APP_PRIVATE_KEY_SECRET_ARN` is
+  caught at synth with a message saying so.
+- **The key may live in a JSON document**, like any other credential here — set
+  `GITHUB_APP_PRIVATE_KEY_SECRET_JSON_FIELD`. The worker also accepts a PEM whose
+  newlines arrived as literal `\n` escapes, or one that was base64-wrapped to get
+  it through a single-line field, so a key mangled in transit still boots.
+- **The App's installation tokens last about an hour**, so the worker mints one
+  on demand rather than reading a credential once at boot. Both halves of its
+  GitHub access — the REST API and git-over-HTTPS — share a single token cache,
+  so this costs roughly one extra API call an hour, not one per operation.
+- **`GITHUB_APP_INSTALLATION_ID` is not the App ID**, and neither is the
+  `Iv1.…` Client ID shown beside the App ID on the settings page. The
+  installation id identifies the App's installation on your repository; an App
+  installed on two accounts has one App ID and two installation ids. Both
+  `init-github-app create` and `verify` print the pair, so you should not need to
+  read either off a URL — but if you are doing it by hand, the installation id is
+  the trailing number in the URL of the App's install page
+  (`.../settings/installations/<installation_id>`).
+
+### JSON secret documents
+
+The table above is the simple shape: one secret per credential, whose entire
+value _is_ the credential. If you instead keep one JSON document per
+environment — a common convention, and what Secrets Manager's console offers
+first — point the deployment at the field you want:
+
+```
+GITHUB_TOKEN_SECRET_ARN=arn:aws:secretsmanager:us-east-1:123456789012:secret:my-app/prod-AbCdEf
+GITHUB_TOKEN_SECRET_JSON_FIELD=CANOPYCMS_GITHUB_TOKEN
+```
+
+Those are the **environment variables the CDK app reads**, for a deploy from a laptop. From
+the generated GitHub Actions workflow, set the repository variable
+`CANOPY_GITHUB_TOKEN_SECRET_JSON_FIELD` instead
+([why the prefix](#repository-secrets-and-variables)).
+
+The worker then reads that key out of the document. Leave the `_JSON_FIELD`
+variable unset and behaviour is exactly as before — the whole value is the
+credential — so nothing changes for the single-value shape above.
+
+Three things worth knowing before you choose:
+
+- **Do not append the field to the ARN.** `arn:…:secret:my-app/prod-AbCdEf:CANOPYCMS_GITHUB_TOKEN::`
+  is the ECS / CloudFormation dynamic-reference convention, and the worker does
+  not use either — it calls `GetSecretValue`, which returns the whole document
+  and does not parse that suffix. `CanopyCmsService` rejects such an ARN at
+  synth rather than letting it reach the worker's IAM policy, where it would
+  match nothing and produce AccessDenied at boot.
+- **A missing or misspelled field fails loudly, at boot**, naming the field you
+  asked for and the keys the document actually has. A secret that holds a JSON
+  document with _no_ field configured is warned about on every boot, since the
+  whole document would otherwise silently become the credential.
+- **Only these credentials can come from a secret at all** — the GitHub token,
+  the Clerk secret key, and (see
+  [Authenticating as a GitHub App](#authenticating-as-a-github-app)) a GitHub App
+  private key. If your document also holds `CLERK_JWT_KEY` and
+  `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`, those two still have to be supplied separately — as a repository variable and a build
+  arg respectively. Both are public key material, so they are deliberately not
+  routed through Secrets Manager; see [Security Model](#security-model).
+
+### Rotating a secret
+
+Update the secret's value in Secrets Manager. The running worker picks it up on
+its own — **you do not need to redeploy or replace the instance.**
+
+How long it takes, and why:
+
+| Secret                 | Picked up within       | Noticed by                                                    |
+| ---------------------- | ---------------------- | ------------------------------------------------------------- |
+| GitHub token           | ~5 minutes (up to ~10) | a failed publish, or the git sync, which runs every 5 minutes |
+| Clerk secret key       | ~15 minutes            | the auth-cache refresh                                        |
+| GitHub App private key | not re-read            | — see below                                                   |
+
+The re-read is **reactive**: the worker re-reads a secret only after the
+operation using it has just failed, so a healthy deployment makes no
+`GetSecretValue` calls at all between boots. That is also why rotation is not
+instant — the worker finds out by trying and failing once.
+
+For the GitHub token, **store the new value before you revoke the old one.**
+Then the first publish to meet the revoked token normally re-reads straight away,
+and its automatic retry goes out on the new token. Normally, not always: the
+worker re-reads at most once every five minutes (and calls its credential
+provider at most once a minute), and any failure — a sync, or an unrelated
+publish — can use that read. If one landed shortly before your revocation, that
+publish can still fail and need resubmitting. The two limits can also stack,
+which is where the table's ~10 minutes comes from. Revoke first and a failure in
+the gap re-reads the old value, so publishes can fail for up to about six
+minutes.
+
+A secret that is simply wrong, rather than rotated, does not turn into a loop.
+The worker re-reads at most once every five minutes per secret, and when the
+re-read comes back identical to the value it already holds it does not retry the
+operation, since that retry could not succeed. It keeps checking indefinitely at
+that rate, so a later correction is still picked up — it never gives up and it
+never hammers. Twelve re-reads an hour per secret is the ceiling, and each is
+normally one `GetSecretValue` call (up to four if the call itself is failing,
+which is the existing boot-time retry).
+
+Two things to know:
+
+- **A GitHub App private key is read once, at boot.** To rotate one: generate
+  the new key, store it in Secrets Manager, **replace the instance**
+  (`cdk deploy`, or terminate it and let the ASG replace it), and only then
+  delete the old key on GitHub. Delete first and nothing fails at once — tokens
+  already minted keep working for up to an hour — then every publish fails with
+  a 401 until the instance is replaced, and each branch that failed meanwhile
+  must be resubmitted.
+- **A plain env var is never re-read.** If you set `CANOPYCMS_GITHUB_TOKEN` or
+  `CLERK_SECRET_KEY` directly instead of pointing at an ARN, the value is
+  whatever the instance booted with. Re-reading an ARN you deliberately
+  overrode would swap your override back out, so the worker leaves it alone.
 
 ## Content Publishing Flow
 
@@ -734,16 +989,17 @@ a worker code change), check the new instance's log stream (see
 
 ## Security Model
 
-| CMS Lambda                       | EC2 Worker                                      |
-| -------------------------------- | ----------------------------------------------- |
-| No internet access               | Outbound HTTPS only                             |
-| No sensitive secrets             | GitHub token + Clerk key (from Secrets Manager) |
-| Public keys only (CLERK_JWT_KEY) | Full API access                                 |
-| Read/write EFS only              | Read/write EFS + internet                       |
+| CMS Lambda                       | EC2 Worker                                                               |
+| -------------------------------- | ------------------------------------------------------------------------ |
+| No internet access               | Outbound HTTPS only                                                      |
+| No sensitive secrets             | GitHub token _or_ an App private key, + Clerk key (from Secrets Manager) |
+| Public keys only (CLERK_JWT_KEY) | Full API access                                                          |
+| Read/write EFS only              | Read/write EFS + internet                                                |
 
 **The CMS Lambda is intended to receive public configuration only.** Every genuinely
 sensitive value is meant to go to the worker instead: pass the GitHub token and Clerk
-secret key to `CanopyCmsService` as `githubTokenSecretArn` / `clerkSecretKeySecretArn`,
+secret key to `CanopyCmsService` as `githubTokenSecretArn` / `clerkSecretKeySecretArn`
+(or, for App auth, `githubAppPrivateKeySecretArn` in place of the first),
 and the worker reads them at boot with its own IAM grant. The Lambda's `environment`
 should carry nothing you would mind reading in the output of
 `aws lambda get-function-configuration`.
