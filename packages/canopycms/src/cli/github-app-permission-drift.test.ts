@@ -507,6 +507,25 @@ describe('the source-level backstop', () => {
     // eslint-disable-next-line security/detect-unsafe-regex -- linear, see above
     /\boctokit(?:\(\))?\s*(?:\.\s*[A-Za-z_$][\w$]*\s*){1,3}\(/
 
+  /**
+   * Source with comments removed, because this scan is about call SITES and a
+   * comment is not one.
+   *
+   * Added after a real false positive: `worker/github-auth.ts` arrived on the
+   * base branch with the prose "which `octokit.auth()` reports" in a docstring,
+   * and the backstop reported a fourth file with Octokit calls when that file
+   * makes none. A backstop that cries wolf gets an exception added to it, and an
+   * exception list is how a guard goes blind — so the instrument is fixed rather
+   * than the expectation.
+   *
+   * Stripping is deliberately conservative: it can only ever remove text, so the
+   * risk is a MISSED call, not a false one. That direction is pinned by the
+   * matcher test below, which asserts a real call still matches after stripping.
+   */
+  function withoutComments(source: string): string {
+    return source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '')
+  }
+
   function filesWithOctokitCalls(): string[] {
     const root = join(__dirname, '..')
     const found: string[] = []
@@ -519,7 +538,7 @@ describe('the source-level backstop', () => {
         }
         if (!full.endsWith('.ts')) continue
         if (full.includes('.test.') || full.includes(`${join('src', 'test-utils')}`)) continue
-        if (OCTOKIT_CALL.test(readFileSync(full, 'utf8'))) {
+        if (OCTOKIT_CALL.test(withoutComments(readFileSync(full, 'utf8')))) {
           found.push(relative(root, full).split('\\').join('/'))
         }
       }
@@ -550,5 +569,20 @@ describe('the source-level backstop', () => {
     // And does not match the declaration or the similarly-named accessor.
     expect(OCTOKIT_CALL.test('octokit(): Octokit')).toBe(false)
     expect(OCTOKIT_CALL.test('return this.octokitClient()')).toBe(false)
+    // A MENTION in a comment is not a call site. Real case: `worker/github-auth.ts`
+    // landed on the base branch saying "which `octokit.auth()` reports" in a
+    // docstring, and the backstop reported it as a fourth file with Octokit calls.
+    expect(
+      OCTOKIT_CALL.test(
+        withoutComments('/**\n * which `octokit.auth()` reports.\n */\nexport function f() {}'),
+      ),
+    ).toBe(false)
+    expect(OCTOKIT_CALL.test(withoutComments('// see octokit.pulls.list(...)'))).toBe(false)
+    expect(OCTOKIT_CALL.test(withoutComments('/* octokit.pulls.get( */'))).toBe(false)
+    // ...and stripping must not eat the real thing, which is the direction that
+    // would make this go quietly blind.
+    expect(
+      OCTOKIT_CALL.test(withoutComments('// a note\nawait octokit.pulls.list({ owner })')),
+    ).toBe(true)
   })
 })
