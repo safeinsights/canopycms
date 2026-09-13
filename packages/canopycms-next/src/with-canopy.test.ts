@@ -17,6 +17,35 @@ vi.mock('node:module', () => ({
   })),
 }))
 
+/**
+ * `./sharp-tracing` has its own real-filesystem test suite (sharp-tracing.test.ts). Here it's
+ * mocked to a controllable stub, driven by `tracing`, so withCanopy's own logic — which key to
+ * write under, how to merge, when to warn — can be tested without touching the filesystem.
+ * `vi.hoisted` is required because `vi.mock`'s factory is hoisted above these imports, so the
+ * state and spies it closes over must be created inside that same hoisted call.
+ */
+const { tracing, sharpTracingIncludesMock, installedNextMajorMock, hasNextConfigMock } = vi.hoisted(
+  () => {
+    const tracing = {
+      result: { includes: [] as string[], problem: undefined as string | undefined },
+      nextMajor: 16 as number | null,
+      hasConfig: true,
+    }
+    return {
+      tracing,
+      sharpTracingIncludesMock: vi.fn(() => tracing.result),
+      installedNextMajorMock: vi.fn(() => tracing.nextMajor),
+      hasNextConfigMock: vi.fn(() => tracing.hasConfig),
+    }
+  },
+)
+
+vi.mock('./sharp-tracing', () => ({
+  sharpTracingIncludes: sharpTracingIncludesMock,
+  installedNextMajor: installedNextMajorMock,
+  hasNextConfig: hasNextConfigMock,
+}))
+
 import { withCanopy } from './with-canopy'
 
 /** Helper to invoke the webpack function from a withCanopy result */
@@ -25,9 +54,28 @@ function invokeWebpack(config: NextConfig, webpackConfig: unknown) {
   return webpackFn(webpackConfig as any, {} as any)
 }
 
+/**
+ * Builds a NextConfig from a value that would not type-check as one directly (e.g. a malformed
+ * `outputFileTracingIncludes`) -- without reaching for `any`. `unknown` plus this one guard is
+ * the whole cast; callers construct genuinely-malformed fixtures, so the guard only rules out
+ * non-objects, not the shape withCanopy itself is meant to reject at runtime.
+ */
+function asNextConfig(value: unknown): NextConfig {
+  if (typeof value !== 'object' || value === null) {
+    throw new Error('test fixture must be an object')
+  }
+  return value as NextConfig
+}
+
 describe('withCanopy', () => {
   beforeEach(() => {
     unresolvablePackages = []
+    tracing.result = { includes: [], problem: undefined }
+    tracing.nextMajor = 16
+    tracing.hasConfig = true
+    sharpTracingIncludesMock.mockClear()
+    installedNextMajorMock.mockClear()
+    hasNextConfigMock.mockClear()
   })
 
   describe('transpilePackages', () => {
@@ -371,6 +419,195 @@ describe('withCanopy', () => {
       expect(rewrites.beforeFiles).toEqual([])
       expect(rewrites.fallback).toEqual([])
       expect(rewrites.afterFiles).toEqual([{ source: '/x', destination: '/y' }, ASSETS_REWRITE])
+    })
+  })
+
+  describe('sharp libvips tracing (outputFileTracingIncludes)', () => {
+    afterEach(() => {
+      // Several tests below spy on or stub console.warn; restore between tests so a leaked spy
+      // from one test cannot swallow or misattribute another test's warning.
+      vi.restoreAllMocks()
+    })
+
+    it('adds the tracer include under "/**" for a server build and for output: standalone', () => {
+      tracing.result = { includes: ['node_modules/@img/sharp-libvips-linux-arm64/lib/**/*'] }
+
+      const server = withCanopy({})
+      expect(server.outputFileTracingIncludes).toEqual({
+        '/**': ['node_modules/@img/sharp-libvips-linux-arm64/lib/**/*'],
+      })
+
+      const standalone = withCanopy({ output: 'standalone' })
+      expect(standalone.outputFileTracingIncludes).toEqual({
+        '/**': ['node_modules/@img/sharp-libvips-linux-arm64/lib/**/*'],
+      })
+    })
+
+    it('skips tracing entirely for a static export, without calling the tracer', () => {
+      tracing.result = { includes: ['node_modules/@img/sharp-libvips-linux-arm64/lib/**/*'] }
+
+      const exported = withCanopy({ output: 'export' })
+      expect(exported).not.toHaveProperty('outputFileTracingIncludes')
+
+      const staticBuild = withCanopy({}, { staticBuild: true })
+      expect(staticBuild).not.toHaveProperty('outputFileTracingIncludes')
+
+      expect(sharpTracingIncludesMock).not.toHaveBeenCalled()
+    })
+
+    it('merges into an existing "/**", dedupes, keeps other route keys, and does not mutate the input', () => {
+      tracing.result = { includes: ['new/glob/**/*'] }
+
+      const input = Object.freeze({
+        outputFileTracingIncludes: Object.freeze({
+          '/**': Object.freeze(['existing/glob/**/*', 'new/glob/**/*']),
+          '/api/*': Object.freeze(['other/glob/**/*']),
+        }),
+      })
+      const snapshot: unknown = JSON.parse(JSON.stringify(input))
+
+      const result = withCanopy(input)
+
+      expect(result.outputFileTracingIncludes?.['/**']).toHaveLength(2)
+      expect(result.outputFileTracingIncludes?.['/**']).toEqual(
+        expect.arrayContaining(['existing/glob/**/*', 'new/glob/**/*']),
+      )
+      expect(result.outputFileTracingIncludes?.['/api/*']).toEqual(['other/glob/**/*'])
+
+      // Freezing above makes any real mutation throw; this is the belt-and-suspenders check that
+      // the value withCanopy handed back is a genuinely separate object from the frozen input.
+      expect(input).toEqual(snapshot)
+    })
+
+    it('adds no key when includes are empty and the adopter had none, and leaves an existing value untouched', () => {
+      tracing.result = { includes: [] }
+
+      const withoutExisting = withCanopy({})
+      expect(withoutExisting).not.toHaveProperty('outputFileTracingIncludes')
+
+      const existingValue = { '/**': ['keep/me/**/*'] }
+      const withExisting = withCanopy({ outputFileTracingIncludes: existingValue })
+      expect(withExisting.outputFileTracingIncludes).toEqual(existingValue)
+    })
+
+    it('passes projectDir, outputFileTracingRoot, and turbopack.root through to the tracer', () => {
+      withCanopy({
+        outputFileTracingRoot: '../shared-root',
+        turbopack: { root: '../turbo-root' },
+      })
+
+      expect(sharpTracingIncludesMock).toHaveBeenCalledWith({
+        projectDir: process.cwd(),
+        outputFileTracingRoot: '../shared-root',
+        turbopackRoot: '../turbo-root',
+      })
+    })
+
+    it('writes under experimental for Next < 15, merging with an existing experimental value', () => {
+      tracing.nextMajor = 14
+      tracing.result = { includes: ['glob/**/*'] }
+
+      const result = withCanopy({
+        experimental: {
+          outputFileTracingIncludes: { '/**': ['existing/**/*'] },
+          outputFileTracingRoot: '../root-a',
+          optimizeCss: true,
+        },
+      })
+
+      expect(result).not.toHaveProperty('outputFileTracingIncludes')
+      expect(result.experimental).toEqual({
+        optimizeCss: true,
+        outputFileTracingRoot: '../root-a',
+        outputFileTracingIncludes: { '/**': ['existing/**/*', 'glob/**/*'] },
+      })
+      expect(sharpTracingIncludesMock).toHaveBeenCalledWith(
+        expect.objectContaining({ outputFileTracingRoot: '../root-a' }),
+      )
+    })
+
+    it('writes at the top level when the installed Next major is unreadable (null)', () => {
+      tracing.nextMajor = null
+      tracing.result = { includes: ['glob/**/*'] }
+
+      const result = withCanopy({})
+      expect(result.outputFileTracingIncludes).toEqual({ '/**': ['glob/**/*'] })
+      expect(result).not.toHaveProperty('experimental')
+    })
+
+    it('leaves a malformed existing outputFileTracingIncludes value untouched', () => {
+      tracing.result = { includes: ['glob/**/*'] }
+      const malformed = asNextConfig({ outputFileTracingIncludes: { '/**': 'nope' } })
+
+      const result = withCanopy(malformed)
+
+      expect(result.outputFileTracingIncludes).toEqual({ '/**': 'nope' })
+      // Detected and rejected before the tracer would even be asked to run.
+      expect(sharpTracingIncludesMock).not.toHaveBeenCalled()
+    })
+
+    describe('warns once per module instance when standalone tracing fails', () => {
+      // The warned-once flag is module-level state (see with-canopy.ts's `warnedAboutSharpTracing`),
+      // so every test here gets its own fresh module instance via vi.resetModules() + a dynamic
+      // import -- the vi.mock('./sharp-tracing', ...) factory above still applies to it -- rather
+      // than sharing the top-level `withCanopy` import the rest of this file uses. Without that,
+      // whichever of these tests runs first would "use up" the flag for the others.
+
+      it('does not call the tracer when there is no next.config, and the warning says so', async () => {
+        tracing.hasConfig = false
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+        vi.resetModules()
+        try {
+          const fresh = await import('./with-canopy')
+          fresh.withCanopy({ output: 'standalone' })
+
+          expect(sharpTracingIncludesMock).not.toHaveBeenCalled()
+          expect(warn).toHaveBeenCalledWith(expect.stringContaining('no next.config'))
+        } finally {
+          vi.resetModules()
+        }
+      })
+
+      it('warns exactly once across two withCanopy calls in the same module instance', async () => {
+        tracing.result = { includes: [], problem: 'boom' }
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+        vi.resetModules()
+        try {
+          const fresh = await import('./with-canopy')
+          fresh.withCanopy({ output: 'standalone' })
+          fresh.withCanopy({ output: 'standalone' })
+
+          expect(warn).toHaveBeenCalledTimes(1)
+          const message = warn.mock.calls[0]?.[0]
+          expect(message).toEqual(expect.stringContaining('boom'))
+          expect(message).toEqual(
+            expect.stringContaining(
+              'node_modules/.pnpm/@img+sharp-libvips-*/node_modules/@img/*/lib/**/*',
+            ),
+          )
+          expect(message).toEqual(
+            expect.stringContaining('node_modules/@img/sharp-libvips-*/lib/**/*'),
+          )
+        } finally {
+          vi.resetModules()
+        }
+      })
+
+      it('does not warn for a non-standalone build even with empty includes', async () => {
+        tracing.result = { includes: [], problem: 'boom' }
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+        vi.resetModules()
+        try {
+          const fresh = await import('./with-canopy')
+          fresh.withCanopy({})
+          expect(warn).not.toHaveBeenCalled()
+        } finally {
+          vi.resetModules()
+        }
+      })
     })
   })
 })

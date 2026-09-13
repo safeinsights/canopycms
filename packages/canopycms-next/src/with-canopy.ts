@@ -1,6 +1,7 @@
 import { createRequire } from 'node:module'
 import path from 'node:path'
 import type { NextConfig } from 'next'
+import { hasNextConfig, installedNextMajor, sharpTracingIncludes } from './sharp-tracing'
 
 /** The core package — always required when using withCanopy. */
 const REQUIRED_PACKAGES = ['canopycms']
@@ -207,6 +208,124 @@ function resolveStaticBuildId(): string | null {
   return trimmed
 }
 
+/** Next's `outputFileTracingIncludes` shape: a route glob mapped to project-relative file globs. */
+type TracingIncludes = Record<string, string[]>
+
+/**
+ * Every route. Both tracers match include keys as a "contains" glob against the route: Turbopack
+ * against "/" plus the page name, and the JS tracer through picomatch with `contains: true`.
+ */
+const ALL_ROUTES = '/**'
+
+function isTracingIncludes(value: unknown): value is TracingIncludes {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    Object.values(value).every(
+      (globs: unknown) =>
+        Array.isArray(globs) && globs.every((g: unknown) => typeof g === 'string'),
+    )
+  )
+}
+
+/** `includes` added under `'/**'`, deduped. Every entry the adopter already wrote is kept as written. */
+function mergeTracingIncludes(
+  existing: TracingIncludes | undefined,
+  includes: string[],
+): TracingIncludes {
+  return {
+    ...existing,
+    [ALL_ROUTES]: [...new Set([...(existing?.[ALL_ROUTES] ?? []), ...includes])],
+  }
+}
+
+function sharpTracingWarning(problem: string | undefined): string {
+  return (
+    "CanopyCMS: could not add sharp's libvips to this standalone build's file tracing" +
+    (problem ? ` (${problem})` : '') +
+    '. Next.js file tracing can miss that library for sharp 0.35 ' +
+    '(https://github.com/vercel/next.js/issues/97973), and the built server then fails to load ' +
+    'sharp with ERR_DLOPEN_FAILED. Add it in next.config yourself, with paths relative to the ' +
+    "project directory. For pnpm: outputFileTracingIncludes: { '/**': " +
+    "['node_modules/.pnpm/@img+sharp-libvips-*/node_modules/@img/*/lib/**/*'] }. For npm: " +
+    "outputFileTracingIncludes: { '/**': ['node_modules/@img/sharp-libvips-*/lib/**/*'] }."
+  )
+}
+
+/**
+ * Whether the warning has fired in this module instance.
+ *
+ * Next evaluates the config more than once per build: in the main process, and again in a worker
+ * thread that has its own module registry. So "once" means once per process or thread, not once
+ * per build.
+ */
+let warnedAboutSharpTracing = false
+
+/**
+ * The config keys that make an `output: 'standalone'` server able to load sharp.
+ *
+ * The rules live in `./sharp-tracing`. This function decides only whether to apply them, and under
+ * which key.
+ */
+function sharpTracingConfig(
+  nextConfig: NextConfig,
+  options: WithCanopyOptions,
+): Pick<NextConfig, 'outputFileTracingIncludes' | 'experimental'> {
+  // A static export has no server, so there is nothing to trace for.
+  if (options.staticBuild || nextConfig.output === 'export') return {}
+
+  const projectDir = process.cwd()
+  // `outputFileTracingIncludes` and `outputFileTracingRoot` became top-level options in Next 15.
+  // Next 13 and 14 read them under `experimental`, and report a top-level key as an invalid option
+  // and ignore it.
+  const nextMajor = installedNextMajor(projectDir)
+  const underExperimental = nextMajor !== null && nextMajor < 15
+  const experimental = nextConfig.experimental ?? {}
+
+  const existing: unknown = underExperimental
+    ? 'outputFileTracingIncludes' in experimental
+      ? experimental.outputFileTracingIncludes
+      : undefined
+    : nextConfig.outputFileTracingIncludes
+  // A malformed value is Next's to reject. Merging into it could only turn that into a crash here.
+  if (existing !== undefined && !isTracingIncludes(existing)) return {}
+
+  const configuredRoot = underExperimental
+    ? 'outputFileTracingRoot' in experimental &&
+      typeof experimental.outputFileTracingRoot === 'string'
+      ? experimental.outputFileTracingRoot
+      : undefined
+    : nextConfig.outputFileTracingRoot
+
+  // Next never changes directory for `next build <dir>`, so a working directory with no config
+  // file in it is not the project, and any glob computed relative to it would be wrong.
+  const { includes, problem } = hasNextConfig(projectDir)
+    ? sharpTracingIncludes({
+        projectDir,
+        outputFileTracingRoot: configuredRoot,
+        turbopackRoot: nextConfig.turbopack?.root,
+      })
+    : {
+        includes: [],
+        problem: `the working directory ${projectDir} has no next.config file, so withCanopy cannot tell where the project is`,
+      }
+
+  if (includes.length === 0) {
+    if (nextConfig.output === 'standalone' && !warnedAboutSharpTracing) {
+      warnedAboutSharpTracing = true
+      console.warn(sharpTracingWarning(problem))
+    }
+    return {}
+  }
+
+  const merged = mergeTracingIncludes(existing, includes)
+  if (!underExperimental) return { outputFileTracingIncludes: merged }
+  // Built as a variable, not returned as a literal, because Next 15's `ExperimentalConfig` type no
+  // longer declares this key.
+  const legacyExperimental = { ...experimental, outputFileTracingIncludes: merged }
+  return { experimental: legacyExperimental }
+}
+
 /**
  * Wrap your Next.js config to set up module transpilation and React
  * resolution for CanopyCMS packages.
@@ -224,6 +343,10 @@ function resolveStaticBuildId(): string | null {
  * - With `staticBuild: true`, honors `CANOPY_BUILD_ID` as Next's build id (Next's default is
  *   random, which puts two builds of one source tree in different `_next/static/` directories).
  *   Unset, or on a non-static build, Next's default is used unchanged.
+ * - Outside a static export, adds sharp's libvips directory to `outputFileTracingIncludes['/**']`
+ *   (under `experimental` before Next 15), so an `output: 'standalone'` server can load sharp.
+ *   Next's file tracing can miss that library for sharp 0.35. Your own includes are kept, and a
+ *   standalone build warns if the directory cannot be found.
  *
  * **When you need this:**
  * - Always recommended — it replaces manual `transpilePackages` configuration
@@ -344,6 +467,7 @@ export function withCanopy(
     pageExtensions,
     webpack,
     rewrites: withAssetsRewrite(nextConfig.rewrites),
+    ...sharpTracingConfig(nextConfig, options),
     // Spread conditionally: emitting `generateBuildId: undefined` would be a key Next has to
     // reason about, where absence is unambiguous.
     ...(generateBuildId ? { generateBuildId } : {}),
