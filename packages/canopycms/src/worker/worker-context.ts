@@ -106,6 +106,18 @@ export interface WorkerContext {
    */
   buildGitHubUrl(): Promise<string>
   /**
+   * Re-read the GitHub credential because an operation that used it just
+   * failed, read at call time.
+   *
+   * Best-effort and NEVER throws: a failed read, or one that does not settle
+   * within `taskTimeoutMs`, is logged and swallowed, because every caller is
+   * already handling a failure and that failure is the one to report. Once it
+   * resolves, the next `buildGitHubUrl()` or `octokit()` call sees any rotated
+   * value. See `CmsWorker.refreshGitHubCredential` for the two call sites and
+   * why neither is gated on the error's shape.
+   */
+  refreshGitHubCredential(): Promise<void>
+  /**
    * Workspace directory for a branch named by its GIT REF name — the form task
    * payloads carry. Sanitizes; `feature/x` lives in `feature-x`.
    */

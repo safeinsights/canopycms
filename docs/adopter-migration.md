@@ -322,7 +322,9 @@ minutes.
 
 The worker now re-reads a secret when the operation using it fails. Rotation is picked up
 within about five minutes for the GitHub token (the git-sync interval) and fifteen for the
-Clerk key (the auth-cache interval).
+Clerk key (the auth-cache interval). A publish that meets a revoked GitHub token re-reads
+too, so when the new token is stored before the old one is revoked, the publish's automatic
+retry goes out on the new token instead of failing.
 
 It is **reactive, not polled**: between failures the worker makes no `GetSecretValue` calls
 at all, so this costs nothing in the healthy case. A secret that is wrong rather than rotated
@@ -349,7 +351,10 @@ Manager rotation event — it can go, unless it exists for a GitHub App private 
 One consequence for anyone driving `CmsWorker` from their own entrypoint: `CmsWorkerConfig`
 gains an optional `refreshGitHubToken?: () => Promise<string | undefined>`. Return the new
 token, or `undefined` for "nothing to do" — no ARN, read too recently, or a value identical
-to the one already held. Leave it unset and behaviour is exactly as before.
+to the one already held. Leave it unset and behaviour is exactly as before. Core calls it
+after every failed git sync **and every failed task**, so a burst of failing publishes calls
+it every few seconds — keep a floor on how often it actually reads. A call still unsettled
+after `taskTimeoutMs` is abandoned rather than awaited.
 `packages/canopycms-cdk/worker/credential-refresh.ts` is the worked example, guards included.
 
 See [deploying-to-aws.md](deploying-to-aws.md#rotating-a-secret).

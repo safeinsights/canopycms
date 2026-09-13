@@ -45,6 +45,7 @@ export type TaskRunnerContext = Pick<
   | 'log'
   | 'octokit'
   | 'buildGitHubUrl'
+  | 'refreshGitHubCredential'
   | 'branchWorkspacePath'
   // Both are implemented in THIS module, and are still reached through the
   // context rather than called directly. cms-worker.test.ts replaces each on
@@ -242,6 +243,17 @@ export async function processTaskQueue(ctx: TaskRunnerContext): Promise<void> {
             : `  Permanently failed after ${maxRetries} retries`,
         )
       }
+
+      // The credential may have rotated. Without this, a push meeting a revoked
+      // token spent its whole retry budget (5s/10s/20s backoff) waiting on the
+      // git-sync loop's refresh, up to 5 minutes away, and failed permanently
+      // while the working token sat in the secret store. With it, the retry
+      // resolves buildGitHubUrl() afresh and picks the new token up.
+      //
+      // Ungated, and after the outcome is recorded rather than before: the task
+      // is safely in pending/ or failed/ while a network read runs, and that
+      // read is bounded and never throws. See CmsWorker.refreshGitHubCredential.
+      await ctx.refreshGitHubCredential()
     }
     processed++
   }
