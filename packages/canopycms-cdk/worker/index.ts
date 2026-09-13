@@ -20,16 +20,16 @@
 import {
   CmsWorker,
   workerLog,
-  workerLogWarn,
   workerLogError,
   installWorkerLogger,
 } from 'canopycms/worker/cms-worker'
-import { refreshClerkCache } from 'canopycms-auth-clerk/cache-writer'
 import { getErrorMessage } from 'canopycms/utils/error'
 import path from 'node:path'
 
 import { getSecret } from './secrets'
 import { buildGitHubAppAuth } from './github-app-auth'
+import { createReactiveSecret } from './credential-refresh'
+import { createClerkAuthCacheRefresher } from './clerk-refresh'
 
 async function main() {
   // FIRST, before anything that could log. The imports above only cover code
@@ -52,19 +52,40 @@ async function main() {
   const githubRepo = process.env.CANOPYCMS_GITHUB_REPO
   if (!githubRepo) throw new Error('CANOPYCMS_GITHUB_REPO is required')
 
-  // Secrets from Secrets Manager or env vars
-  let githubToken = process.env.CANOPYCMS_GITHUB_TOKEN
-  if (!githubToken && process.env.CANOPYCMS_GITHUB_TOKEN_SECRET_ARN) {
-    githubToken = await getSecret(process.env.CANOPYCMS_GITHUB_TOKEN_SECRET_ARN, {
-      // `|| undefined` rather than passing the env var straight through: a var
-      // that is present but blank means "not configured", so `getSecret` should
-      // take the unchanged whole-value path rather than hunt for a field named
-      // ''. The var name is passed too, so the warning `getSecret` logs when it
-      // finds an unread JSON document can name the exact thing to set.
-      jsonField: process.env.CANOPYCMS_GITHUB_TOKEN_SECRET_JSON_FIELD || undefined,
-      jsonFieldEnvVar: 'CANOPYCMS_GITHUB_TOKEN_SECRET_JSON_FIELD',
-    })
+  // Secrets from Secrets Manager or env vars.
+  //
+  // The ARN is resolved to `undefined` when the plain env var supplied the
+  // value, which keeps the existing precedence (env var wins, the ARN is read
+  // only in its absence) AND is what tells the reactive reader below there is
+  // nothing behind this credential to re-read. Re-reading an ARN the
+  // deployment deliberately overrode would swap the override back out.
+  const githubTokenFromEnv = process.env.CANOPYCMS_GITHUB_TOKEN
+  const githubTokenArn = githubTokenFromEnv
+    ? undefined
+    : process.env.CANOPYCMS_GITHUB_TOKEN_SECRET_ARN
+  const githubTokenSecretOptions = {
+    // `|| undefined` rather than passing the env var straight through: a var
+    // that is present but blank means "not configured", so `getSecret` should
+    // take the unchanged whole-value path rather than hunt for a field named
+    // ''. The var name is passed too, so the warning `getSecret` logs when it
+    // finds an unread JSON document can name the exact thing to set.
+    jsonField: process.env.CANOPYCMS_GITHUB_TOKEN_SECRET_JSON_FIELD || undefined,
+    jsonFieldEnvVar: 'CANOPYCMS_GITHUB_TOKEN_SECRET_JSON_FIELD',
   }
+  const githubToken = githubTokenArn
+    ? await getSecret(githubTokenArn, githubTokenSecretOptions)
+    : githubTokenFromEnv
+  // Wrapped so a rotated token reaches a RUNNING worker. Reactive: core calls
+  // `refreshGitHubToken` only when a git sync has just failed, so a healthy
+  // worker makes no Secrets Manager calls after boot at all. Constructed even
+  // when the deployment authenticates as a GitHub App, where it is inert --
+  // `resolveWorkerGitHubAuth` never calls the provider on that path, because
+  // an App mints its own tokens.
+  const githubTokenSecret = createReactiveSecret({
+    arn: githubTokenArn,
+    initial: githubToken,
+    ...githubTokenSecretOptions,
+  })
   // GitHub App authentication, if this deployment uses it instead of a token.
   //
   // Read as a group and checked all-or-nothing here as well as at synth
@@ -125,32 +146,25 @@ async function main() {
         'to authenticate as a GitHub App installation instead)',
     )
 
-  let clerkSecretKey = process.env.CLERK_SECRET_KEY
-  if (!clerkSecretKey && process.env.CLERK_SECRET_KEY_SECRET_ARN) {
-    clerkSecretKey = await getSecret(process.env.CLERK_SECRET_KEY_SECRET_ARN, {
-      jsonField: process.env.CLERK_SECRET_KEY_SECRET_JSON_FIELD || undefined,
-      jsonFieldEnvVar: 'CLERK_SECRET_KEY_SECRET_JSON_FIELD',
-    })
+  // Same shape as the GitHub token above, and for the same reasons.
+  const clerkKeyFromEnv = process.env.CLERK_SECRET_KEY
+  const clerkKeyArn = clerkKeyFromEnv ? undefined : process.env.CLERK_SECRET_KEY_SECRET_ARN
+  const clerkKeySecretOptions = {
+    jsonField: process.env.CLERK_SECRET_KEY_SECRET_JSON_FIELD || undefined,
+    jsonFieldEnvVar: 'CLERK_SECRET_KEY_SECRET_JSON_FIELD',
   }
+  const clerkSecret = createReactiveSecret({
+    arn: clerkKeyArn,
+    initial: clerkKeyArn ? await getSecret(clerkKeyArn, clerkKeySecretOptions) : clerkKeyFromEnv,
+    ...clerkKeySecretOptions,
+  })
 
-  // Build auth cache refresher (Clerk-specific)
-  const cachePath = path.join(workspacePath, '.cache')
-  const refreshAuthCache = clerkSecretKey
-    ? async () => {
-        const result = await refreshClerkCache({
-          secretKey: clerkSecretKey,
-          cachePath,
-          useOrganizationsAsGroups: true,
-          // Injected rather than left to default `console.warn`: this runs in
-          // the worker, so its per-user membership-fetch warning needs the
-          // ISO-8601 prefix like everything else here. canopycms is only a
-          // peer dependency of canopycms-auth-clerk, so the join happens at
-          // this entrypoint, which already imports both.
-          warn: workerLogWarn,
-        })
-        workerLog(`  ${result.userCount} users, ${result.groupCount} groups`)
-      }
-    : undefined
+  // Build auth cache refresher (Clerk-specific). The re-read on a rejected key
+  // lives inside it rather than in core -- see clerk-refresh.ts for why.
+  const refreshAuthCache = createClerkAuthCacheRefresher({
+    secret: clerkSecret,
+    cachePath: path.join(workspacePath, '.cache'),
+  })
 
   const worker = new CmsWorker({
     workspacePath,
@@ -158,6 +172,9 @@ async function main() {
     githubRepo,
     githubToken,
     githubAppAuth,
+    // Re-read the PAT when a git sync fails. Inert under App auth, where
+    // `resolveWorkerGitHubAuth` never calls it.
+    refreshGitHubToken: () => githubTokenSecret.refresh(),
     refreshAuthCache,
     baseBranch: process.env.CANOPYCMS_BASE_BRANCH ?? 'main',
     // deploymentName is deliberately NOT passed: CmsWorker resolves it through
