@@ -31,14 +31,22 @@ let loading: Promise<SharpConstructor> | undefined
 
 /** Resolve sharp's callable constructor, loading the native module on the first call only. */
 export function loadSharp(): Promise<SharpConstructor> {
-  loading ??= import('sharp').then(
-    (mod) => mod.default,
-    (err: unknown) => {
-      canopyLogError(
-        `[canopycms] sharp failed to load - image transforms and upload decode validation are unavailable in this process: ${getErrorMessage(err)}`,
-      )
-      throw err
-    },
-  )
+  if (!loading) {
+    loading = import('sharp').then(
+      (mod) => mod.default,
+      (err: unknown) => {
+        canopyLogError(
+          `[canopycms] sharp failed to load - image transforms and upload decode validation are unavailable in this process: ${getErrorMessage(err)}`,
+        )
+        throw err
+      },
+    )
+    // Marks the stored promise handled; every caller still gets the rejection.
+    // Without it, a caller that does not await - a warm-up `void loadSharp()` -
+    // leaves a rejected promise with no handler, which Node treats as fatal by
+    // default: a whole-process outage, the shape this module exists to prevent.
+    // The failure is already logged above.
+    loading.catch(() => undefined)
+  }
   return loading
 }

@@ -237,10 +237,13 @@ const eslintConfig = [
   // declaration, so this rule does not see it - which is what lets
   // sharp-loader.ts exist, and also means a second loader elsewhere would pass.
   //
+  // canopycms-next is covered too: it sits in the same adopter server graph. It
+  // declares no sharp dependency today, so there the rule stops one being added.
+  //
   // Tests are excluded: their fixtures are built with real sharp, and no test
   // file is ever in an adopter's module graph.
   {
-    files: ['packages/canopycms/src/**/*.{ts,tsx}'],
+    files: ['packages/canopycms/src/**/*.{ts,tsx}', 'packages/canopycms-next/src/**/*.{ts,tsx}'],
     ignores: [
       '**/*.test.{ts,tsx}',
       '**/__tests__/**',

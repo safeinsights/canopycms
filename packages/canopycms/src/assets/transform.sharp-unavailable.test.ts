@@ -90,6 +90,17 @@ describe('applyTransform - sharp unavailable', () => {
     )
   })
 
+  it('does not leave an un-awaited first load as an unhandled rejection', async () => {
+    const { loadSharp } = await import('./sharp-loader')
+
+    void loadSharp()
+    // One macrotask is enough for Node to report an unhandled rejection, which
+    // vitest turns into a failed run.
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(consoleSpy.all().error).toHaveLength(1)
+  })
+
   it('logs the load failure exactly once across repeated transforms', async () => {
     const { applyTransform } = await import('./transform')
 
