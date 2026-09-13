@@ -73,6 +73,19 @@ all, and deploy-test works precisely because it deviates.
 Not "remove the passthrough" but "reconcile the security model with the shipped
 middleware", which is a real architectural call and not a deploy-test-local cleanup:
 
+**0. Drop `clerkMiddleware`.** Added 2026-09-12. The options below all assume the Lambda keeps
+the middleware, but CanopyCMS's own auth doesn't need it: `createNextCanopyContext` wraps
+`ClerkAuthPlugin` in `CachingAuthPlugin`, whose token check is `verifyTokenOnly()`, which uses
+`CLERK_JWT_KEY` only, with user and group metadata from the worker-refreshed cache
+(`canopycms-next/src/context-wrapper.ts`, `canopycms-auth-clerk/src/clerk-plugin.ts`). Deleting
+the generated middleware keeps the Security Model true with no endpoint cost. It gives up turning
+signed-out requests away before they reach the app. `docs/deploying-to-aws.md` now documents it
+as a supported shape, and `middleware-clerk.ts.template` states the middleware's cost. Not yet
+exercised against a live Clerk instance; see
+[clerk-middleware-runtime-key-unverified.md](clerk-middleware-runtime-key-unverified.md). For
+deploy-test, it makes the middleware and the plaintext `CLERK_SECRET_KEY` passthrough removable
+**together**. Removing only the passthrough still breaks the editor, per the correction above.
+
 1. **Bring `CLERK_SECRET_KEY` into the CMS Lambda as a plaintext env var** and retract
    the "no sensitive secrets" half of the Security Model. Honest, but gives up the
    property that makes a Lambda compromise survivable.
@@ -89,8 +102,9 @@ middleware", which is a real architectural call and not a deploy-test-local clea
    Manager needs the *interface* variety rather than the free gateway one, so it costs an
    hourly rate plus per-GB — a cost argument, not an impossibility.
 
-   This is the only option that makes the documented Security Model **true** rather than
-   requiring it to be softened, which is why it is worth the endpoint cost. Note the
+   Of the options that keep the middleware, this is the only one that makes the documented
+   Security Model **true** rather than requiring it to be softened, which is why it is worth
+   the endpoint cost if the middleware stays (option 0 avoids both). Note the
    adopter's observation that their request #37 is now on its third version and **version
    one was right**: it was filed as "no fetch path is a gap", retracted on the
    no-internet objection, and re-filed once that objection turned out not to hold.
@@ -246,9 +260,9 @@ middleware on 16.x.
 
 **Consequences for this task.** Since `canopycms-next`'s peer range admits 16.x, 1b's
 fetch-at-init path is currently **blocked at the build** for a 16.x adopter, not merely
-unproven. For such a deployment the Clerk secret as a Lambda environment variable is
-presently the only option, which is a point in favour of correcting the Security Model
-table rather than waiting to make it true.
+unproven. For such a deployment that keeps `clerkMiddleware`, the Clerk secret as a Lambda
+environment variable is presently the only option. Option 0 avoids the question by not
+needing the secret on the Lambda at all.
 
 **If the template is ever changed**, it must carry the version constraint explicitly —
 the rule this whole thread produced, applied to the thing the thread was about.
