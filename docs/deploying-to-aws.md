@@ -12,8 +12,8 @@ This guide walks through deploying CanopyCMS on AWS using Lambda + EFS + EC2 Wor
 > `CanopyCmsService`'s architecture, arm64 by default — see
 > [Where the image is built](#where-the-image-is-built));
 > **`clerkMiddleware` needs an explicit `jwtKey`** (the env var alone is never
-> read → the no-internet Lambda hangs on sign-in) and the shipped template
-> asserts a secret key; the raw-CloudFront path needs the managed
+> read → the no-internet Lambda hangs on sign-in) and a secret key, if you keep
+> it — it is optional, see [Dual Build Support](#dual-build-support); the raw-CloudFront path needs the managed
 > `CACHING_DISABLED` policy and an `x-forwarded-host`-only CloudFront Function;
 > and a two-pass deploy for bucket CORS + `CLERK_AUTHORIZED_PARTIES`. The
 > EC2 worker's logs now ship to CloudWatch by default (see
@@ -119,7 +119,29 @@ Anonymous/public read on the CMS Lambda also needs `defaultPathAccess: { read: '
 
 **Where a Clerk (or any auth SDK) provider goes.** A dual-build adopter cannot mount `<ClerkProvider>` in the app's root layout: the root layout is shared by both builds, so merely importing `@clerk/nextjs` there reaches the static export too — and in practice this is worse than dead code shipping to public visitors, because `ClerkProvider` pulls in React Server Actions internally, which `output: 'export'` rejects outright (`next build` fails with "Server Actions are not supported with static export"). Put the provider in a layout scoped to the editor subtree instead, named under the CMS-only extension, e.g. `app/edit/layout.server.tsx`. This works because `withCanopy()`'s `pageExtensions` handling is **additive, not subtractive**: `staticBuild: true` adds `static.ts`/`static.tsx` to `pageExtensions` _instead of_ `server.ts`/`server.tsx` — nothing is removed from a shared list, the two build flavors just add different extensions on top of Next's defaults. Next's app-dir loader resolves every special file (`layout`, `page`, `route`, `loading`, `error`, …) through that same `pageExtensions`-derived resolver, with no special case for `layout` — so a `layout.server.tsx` is picked up as a real layout, scoped to its subtree, exactly like `page.server.tsx` is picked up as a page, whenever `server.tsx` is present, and is invisible whenever it isn't. `apps/dual-build-fixture` enforces both halves of this in CI (`dual-build.test.ts`): the CMS build's compiled `/edit` output must reference `@clerk/nextjs`, and the static build's output must not contain a single byte of it — so this is a guarantee the build enforces, not just advice you have to trust.
 
-**The publishable key still ships per Docker image, not per request.** `<ClerkProvider>` accepts an explicit `publishableKey` prop, and `@clerk/nextjs` gives that prop precedence over `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` — so reading a plain (non-`NEXT_PUBLIC_`-prefixed) runtime environment variable inside `layout.server.tsx` and passing it explicitly is not blocked by the SDK; a real server component's `process.env` read happens at request time, not at build time. That is not the same as one Docker image working across every Clerk instance/tier, though: `clerkMiddleware` (see `middleware-clerk.ts.template`) resolves its own `publishableKey`/`secretKey` independently of whatever the provider receives — there is no shared state between Next middleware and the React render tree — and the shipped middleware template does not thread a runtime-only key through to it, so it falls back to the build-time-baked `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`. Worse, `clerkMiddleware` unconditionally requires a non-empty `secretKey` (it throws if one can't be resolved, `jwtKey` alone does not satisfy it), and `CLERK_SECRET_KEY` is deliberately kept out of the CMS Lambda today (see Step 6) — so making one image genuinely serve multiple Clerk instances would mean also passing matching explicit keys to `clerkMiddleware`, sourced the same way, and revisiting whether `CLERK_SECRET_KEY` belongs in the Lambda at all. **This is unverified** — nothing in this repo demonstrates it end-to-end, and no real Clerk instance was exercised to check it — so treat `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` as a per-tier Docker `buildArg` (see [Build-time client keys](#build-time-client-keys)) until someone does.
+**One image for every Clerk tier.** `<ClerkProvider>` takes an explicit `publishableKey` prop, and `@clerk/nextjs` prefers it over `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`, so the editor layout can read the key from a plain run-time variable instead of baking it into the image:
+
+```tsx
+// app/edit/layout.server.tsx
+import { ClerkProvider } from '@clerk/nextjs'
+
+// Render per request. Without this, Next prerenders /edit at `next build`
+// and bakes in whatever the variable held then.
+export const dynamic = 'force-dynamic'
+
+export default function EditLayout({ children }: { children: React.ReactNode }) {
+  return (
+    <ClerkProvider publishableKey={process.env.CLERK_PUBLISHABLE_KEY}>{children}</ClerkProvider>
+  )
+}
+```
+
+The `dynamic` export has to be in the layout. The scaffolded edit page is a `'use client'` module, and a `dynamic` export from a `'use client'` page didn't stop the prerender when measured on Next 15.5. `apps/dual-build-fixture` builds without the variable, serves with it, and checks that `/edit` carries the served key. Two more things make the image tier-independent:
+
+- **No `clerkMiddleware`.** Delete the `middleware.ts` that `canopycms init --auth clerk` generates. The middleware reads the build-time key rather than the provider's prop, and it needs `CLERK_SECRET_KEY` on the Lambda (see [Security Model](#security-model)). CanopyCMS doesn't depend on it: `createNextCanopyContext` wraps the Clerk plugin in `CachingAuthPlugin`, which verifies each request's token (an `Authorization` bearer or the `__session` cookie) with `CLERK_JWT_KEY` alone. What you give up is having signed-out requests turned away before they reach the app. A signed-out visitor to `/edit` gets the editor, whose API calls are rejected, so send them to sign-in yourself, for instance by rendering Clerk's `<RedirectToSignIn />` when `useAuth()` reports them signed out.
+- **Per-tier values in the Lambda's `environment`.** Pass the publishable-key variable to `CanopyCmsService` alongside `CLERK_JWT_KEY`; both are public. The `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` build arg then no longer decides which Clerk instance the editor uses. Other `NEXT_PUBLIC_CLERK_*` settings are inlined at build the same way, and the common ones (`signInUrl`, `proxyUrl`, `domain`) have matching provider props.
+
+This is a supported shape that nobody has yet run against a real Clerk instance: what CanopyCMS does with the token is read from its source, and the fixture uses a fake key. On a first live deploy, check sign-in from `/edit`, a save, and an editor request after the tab has sat idle longer than a Clerk session token lives. Without the middleware nothing on the server refreshes an expired `__session` cookie, and `verifyTokenOnly()` rejects it.
 
 ### Preview Support
 
@@ -213,14 +235,35 @@ other than `prod`/`dev` rather than falling back — a typo like
 `CANOPY_MODE=production` would otherwise deploy dev auth semantics silently.
 
 Both are wired up by `canopycms init-deploy aws`; you only need this section if
-you hand-edit the stack or the Dockerfile. Two things to know if you do:
+you hand-edit the stack or the Dockerfile, or build the image some other way:
 
 - `environment: { CANOPY_MODE: ... }` on `CanopyCmsService` accepts only
   `'prod'`, and rejects anything else at synth.
-- If you build the image yourself, pass
-  `--build-arg NEXT_PUBLIC_CANOPY_MODE=prod`. Without it the deployed editor
-  believes it is in dev mode: it sends dev-auth headers at a server enforcing
-  Clerk (every editor call rejected) and hides the pull-request UI.
+- **Set `NEXT_PUBLIC_CANOPY_MODE=prod` as a constant in the image's build
+  stage**: an `ENV` line in your own Dockerfile, or
+  `--build-arg NEXT_PUBLIC_CANOPY_MODE=prod` against the generated one. Every
+  deployed tier runs `prod`, so one image still serves them all, and the
+  build's own content reads stay in dev mode, because `resolveOperatingMode`
+  reads this variable only where `window` exists. Expect one browser console
+  warning per editor page load,
+  `CanopyCMS: NEXT_PUBLIC_CANOPY_MODE="prod" overrides config.mode="dev"`; that
+  is the override working.
+- **Without it, the browser resolves `dev`,** and the scaffolded edit page
+  (`edit-page.tsx.template`) selects dev auth rather than Clerk against a
+  server that accepts only Clerk tokens, unless `NEXT_PUBLIC_CANOPY_AUTH_MODE=clerk`
+  was also set at build. That is the only thing CanopyCMS's client code takes
+  from the mode: the editor's capability checks answer the same in both modes,
+  and `supportsPullRequests`, the one that differs, is only consulted on the
+  server.
+- **Don't compute `mode` in `canopycms.config.ts` from either variable.** Not
+  from `NEXT_PUBLIC_CANOPY_MODE`: it is set while `next build` runs, and
+  Next.js inlines `NEXT_PUBLIC_*` into server bundles too, so the build's
+  server-side reads would resolve `prod`, which the `dev` literal is there to
+  prevent. Not from `CANOPY_MODE` either
+  (`process.env.CANOPY_MODE === 'prod' ? 'prod' : 'dev'`): Next.js doesn't
+  inline it into the browser bundle, so that literal is always `dev` there,
+  while server code on the Lambda gets `prod`. The server half looks
+  right, and the missing browser half goes unnoticed.
 
 ## Step 4: CDK Stack
 
@@ -350,8 +393,8 @@ deploy at synth — before anything is changed in the account.
 > it is worth being precise: classifying it as a secret is what invites the conclusion that
 > the CMS Lambda accepts secrets, which it does not (see
 > [Security Model](#security-model)). The genuinely sensitive Clerk value is
-> `CLERK_SECRET_KEY`, which never goes near the Lambda — it lives in Secrets Manager and is
-> read by the worker.
+> `CLERK_SECRET_KEY`, which lives in Secrets Manager and is read by the worker. CanopyCMS
+> doesn't need it on the Lambda; `clerkMiddleware` does, as that section explains.
 
 > **Why `CANOPY_GITHUB_TOKEN_SECRET_ARN` and not `GITHUB_TOKEN_SECRET_ARN`?** GitHub
 > reserves the `GITHUB_` prefix and rejects any Actions secret or variable whose name
@@ -373,11 +416,12 @@ rename it in the workflow's Deploy step too.
 
 ### Build-time client keys
 
-`NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` and `NEXT_PUBLIC_CANOPY_MODE` are inlined
-into the **client** bundle by Next.js at image-build time, so they have to reach
-the image _build_ — a Lambda environment variable is far too late. Because CDK
-builds the image, they must be passed through `buildArgs` in the stack, not
-through a `docker build --build-arg` step in CI:
+The generated stack bakes `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` and
+`NEXT_PUBLIC_CANOPY_MODE` into the image. Next.js inlines them into the
+**client** bundle at image-build time, so they have to reach the image _build_ —
+a Lambda environment variable is far too late. Because CDK builds the image,
+they must be passed through `buildArgs` in the stack, not through a
+`docker build --build-arg` step in CI:
 
 ```ts
 cmsDockerImage: lambda.DockerImageCode.fromImageAsset('.', {
@@ -394,6 +438,12 @@ The workflow sets the publishable key on the `cdk deploy` step from a
 repository variable. If it is missing, the deploy still succeeds and the editor
 ships with an empty publishable key. `NEXT_PUBLIC_CANOPY_MODE` is a literal;
 [Operating mode](#operating-mode) explains why it is needed.
+
+That bakes one Clerk instance into each image, which is what the generated
+`clerkMiddleware` needs: the middleware reads the build-time publishable key, not
+the key a `<ClerkProvider>` receives. Without the middleware, the key can come
+from a run-time variable instead, and one image serves every tier; see
+[Dual Build Support](#dual-build-support).
 
 ### Where the image is built
 
@@ -456,7 +506,8 @@ Before deploying, create these secrets in AWS Secrets Manager:
 | `canopycms/github-token`     | GitHub PAT with `repo` scope | EC2 worker (push, PR creation)  |
 | `canopycms/clerk-secret-key` | Clerk backend secret key     | EC2 worker (user cache refresh) |
 
-The Lambda does NOT need these secrets — only the EC2 worker reads them.
+CanopyCMS's code on the Lambda needs neither secret — only the EC2 worker reads them.
+Keeping `clerkMiddleware` changes that for the Clerk key; see [Security Model](#security-model).
 
 ## Content Publishing Flow
 
@@ -672,24 +723,22 @@ impossibility argument.
 So the honest statement of today's position is: the Lambda holds no secrets **because
 nothing has built that path yet**, not because the path cannot exist.
 
-Concretely, for Clerk: `CLERK_JWT_KEY` (a public PEM) belongs on the Lambda.
-`CLERK_SECRET_KEY` (full Clerk API access) should not — but read the note below before
-removing it from a deployment where it is currently set, because the shipped middleware
-appears to need it.
+Concretely, for Clerk: `CLERK_JWT_KEY` (a public PEM) belongs on the Lambda, and
+`CLERK_SECRET_KEY` (full Clerk API access) does not. CanopyCMS's own request authentication
+never reads the secret there: `createNextCanopyContext` wraps the Clerk plugin in
+`CachingAuthPlugin`, which checks each token with `verifyTokenOnly()` (the JWT key only) and
+takes user and group metadata from the auth cache on EFS. The calls that need the secret, to
+Clerk's backend API for that cache, run on the worker.
 
-> **Known tension, unresolved as of 2026-09-08.** The posture above is the design; the
-> shipped Clerk middleware template may not currently satisfy it. `clerkMiddleware`
-> resolves `secretKey` as `process.env.CLERK_SECRET_KEY || ''` and asserts it is non-empty
-> (`@clerk/nextjs@6.39.5`, `server/clerkMiddleware.js:62-65` via `assertKey`), while
-> `middleware-clerk.ts.template` passes only `jwtKey` and matches `/edit(.*)` and
-> `/api/canopycms(.*)`. On that reading an authenticated editor request to a Lambda with no
-> `CLERK_SECRET_KEY` throws inside middleware. This has been read from the SDK source but
-> **not confirmed on a live deploy**, so it is filed rather than fixed — see
-> `.claude/future-tasks/deploy-test-lambda-plaintext-clerk-secret.md` for the options and
-> what to verify first — including a fetch-at-init path over a Secrets Manager interface
-> endpoint, which is the only option that makes the posture above true rather than
-> requiring it to be softened. If you are standing up a Clerk-authenticated deployment now,
-> test sign-in early and treat this as the first thing to check if editor requests 500.
+**`clerkMiddleware` is the exception.** `canopycms init --auth clerk` generates one
+(`middleware-clerk.ts.template`), and it throws on every request it matches unless it can
+resolve a secret key; `jwtKey` doesn't satisfy that check. So the posture above holds for a
+deployment without that middleware, and one that keeps it needs `CLERK_SECRET_KEY` in the
+Lambda's environment, or a fetch of it at run time (see
+`.claude/future-tasks/deploy-test-lambda-plaintext-clerk-secret.md`). What dropping the
+middleware gives up is under [Dual Build Support](#dual-build-support). The middleware shape
+was deploy-tested against a real Clerk instance in 2026-07; the shape without it has not
+been yet, so test sign-in early.
 
 If the CMS Lambda is compromised, an attacker can read/write content on EFS but cannot exfiltrate data, push to GitHub, or access any external service.
 

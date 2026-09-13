@@ -111,7 +111,7 @@ export function assertAuthPluginAllowedForMode(
         '`verifiesCredentials: true`. This plugin performs no real credential verification, ' +
         'so anyone could impersonate any user (including admins). Configure a verifying auth ' +
         "plugin for production (e.g. createClerkAuthPlugin from 'canopycms-auth-clerk' with " +
-        "CLERK_SECRET_KEY set), or run with mode: 'dev' for local development.",
+        "CLERK_JWT_KEY set), or run with mode: 'dev' for local development.",
     )
   }
 }
