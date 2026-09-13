@@ -397,7 +397,11 @@ export class CmsWorker {
     const gitInterval = this.config.gitSyncInterval ?? 5 * 60_000
 
     this.scheduleLoop(() => this.processTaskQueue(), taskInterval)
-    this.scheduleLoop(() => this.syncGit(), gitInterval)
+    // The wrapper, not syncGit() itself: a failed sync is where a rotated or
+    // revoked GitHub credential is noticed. See its doc comment. start()'s own
+    // initial syncGit() above stays unwrapped -- there is no stale credential
+    // to refresh one line after reading it at boot.
+    this.scheduleLoop(() => this.syncGitWithCredentialRefresh(), gitInterval)
 
     if (this.config.refreshAuthCache) {
       const cacheInterval = this.config.authCacheRefreshInterval ?? 15 * 60_000
@@ -955,6 +959,61 @@ export class CmsWorker {
 
   async syncGit(): Promise<void> {
     return syncGit(this.ctx())
+  }
+
+  /**
+   * `syncGit`, plus "the credential may have rotated" on the way out.
+   *
+   * **The sync loop is the trigger because it is the fastest detector.** It
+   * fetches from GitHub every `gitSyncInterval` (default 5 minutes) whether or
+   * not anyone is editing, so a credential that has stopped working surfaces
+   * here first. A push only runs when an editor publishes, which can be days.
+   *
+   * One trigger site is enough for all of them. Five places resolve the
+   * credential — this fetch, `pushBranchToGitHub`, `pushSettingsBranches`,
+   * `ensureRemoteGit`'s clone, and every Octokit call — and all five reach it
+   * through `ensureGitHubAuth()`, whose resolution reads the credential per
+   * use. Refreshing it here therefore repairs all five for their NEXT use,
+   * with nothing to invalidate.
+   *
+   * What it does not repair is an operation already in flight, or one that has
+   * already spent its retry budget. A push task meeting a dead token fails
+   * permanently after ~35-50s, which is inside this loop's 5-minute interval —
+   * so a publish attempted in that window still fails, even once a good token
+   * is available. Not a regression (before this, it failed forever), and filed
+   * rather than fixed here:
+   * .claude/future-tasks/publish-fails-permanently-in-the-rotation-window.md.
+   *
+   * NOT gated on the error looking auth-shaped, deliberately, and this is the
+   * one place that differs from the Clerk half. There is nothing to classify
+   * on: a `git fetch` rejected for a dead token throws a plain simple-git
+   * error — exit 128, no HTTP `.status` — so `isPermanentTaskFailure` reads it
+   * as transient and would never fire. It costs nothing to skip the check: the
+   * provider re-reads at most once per its own minimum interval and returns
+   * `undefined` when the value has not changed, so a GitHub outage costs a
+   * bounded trickle of Secrets Manager reads and no GitHub traffic at all.
+   *
+   * The refresh is best-effort and must never replace the error being
+   * reported: a failure to read the secret is logged and swallowed, and the
+   * original sync failure is what propagates to `scheduleLoop`'s catch.
+   */
+  private async syncGitWithCredentialRefresh(): Promise<void> {
+    try {
+      await this.syncGit()
+    } catch (err) {
+      try {
+        await this.ensureGitHubAuth().refreshCredential()
+      } catch (refreshErr) {
+        // [REDACT] The message can name the secret and, on a malformed-secret
+        // path, quote what was read. Console only, but the rule here is
+        // uniform -- see redactCredentials in utils/error.ts.
+        workerLogError(
+          'Failed to re-read the GitHub credential after a sync failure:',
+          redactCredentials(getErrorMessage(refreshErr)),
+        )
+      }
+      throw err
+    }
   }
 
   private async pushSettingsBranches(

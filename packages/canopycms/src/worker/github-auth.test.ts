@@ -11,6 +11,8 @@ import { beforeAll, describe, expect, it, vi } from 'vitest'
 import { createPrivateKey, generateKeyPairSync, type KeyObject } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 
+import type { createTokenAuth } from '@octokit/auth-token'
+
 import {
   DEFAULT_GIT_TOKEN_MINT_TIMEOUT_MS,
   MintTimeoutError,
@@ -19,7 +21,10 @@ import {
   resolveWorkerGitHubAuth,
   type GitHubAppAuth,
 } from './github-auth'
+import type { OctokitAuthStrategyOptions } from '../github-service'
 import { isPermanentTaskFailure } from './task-runner'
+
+type TokenAuthHook = ReturnType<typeof createTokenAuth>['hook']
 
 /** An `@octokit/auth-app`-shaped injection whose mint is fully under test control. */
 const appAuthWith = (
@@ -33,12 +38,50 @@ const appAuthWith = (
 const httpError = (status: number, message: string): Error =>
   Object.assign(new Error(message), { status })
 
+/**
+ * Drive a resolution's Octokit auth the way Octokit does, and report the
+ * `authorization` header it produced.
+ *
+ * This is how every token-path assertion below is made, and the indirection is
+ * the point: the header is what GitHub sees, and it is the only thing that
+ * stays constant across a change in how the token reaches Octokit. Asserting
+ * the shape of `octokitAuth` instead pins an implementation detail, which is
+ * exactly what had to be rewritten when the token path gained a strategy.
+ *
+ * `@octokit/auth-token`'s hook does `request.endpoint.merge(route, parameters)`,
+ * sets `endpoint.headers.authorization`, then calls `request(endpoint)` — so a
+ * `request` stub carrying an `endpoint.merge` observes the real thing.
+ */
+async function authorizationHeaderFrom(resolved: {
+  octokitAuth: unknown
+}): Promise<string | undefined> {
+  const auth = resolved.octokitAuth as OctokitAuthStrategyOptions
+  let sent: { headers: Record<string, string> } | undefined
+  const request = Object.assign(
+    async (endpoint: { headers: Record<string, string> }) => {
+      sent = endpoint
+      return { status: 200 }
+    },
+    { endpoint: { merge: () => ({ headers: {} as Record<string, string> }) } },
+  ) as unknown as Parameters<TokenAuthHook>[0]
+
+  const strategy = auth.authStrategy({}) as { hook: TokenAuthHook }
+  await strategy.hook(request, 'GET /user')
+  return sent?.headers.authorization
+}
+
 describe('resolveWorkerGitHubAuth', () => {
   describe('exactly one credential', () => {
-    it('accepts a token alone, and hands Octokit the bare token', async () => {
+    it('accepts a token alone, and authenticates Octokit as that token', async () => {
       const resolved = resolveWorkerGitHubAuth({ githubToken: 'ghp_static' })
 
-      expect(resolved.octokitAuth).toEqual({ auth: 'ghp_static' })
+      // Asserted through what Octokit actually sends, not as
+      // `{ auth: 'ghp_static' }`. The token path used to hand Octokit the bare
+      // string; it now hands over a strategy that reads the token per request,
+      // so that a rotation reaches a client already built (see
+      // dynamicTokenAuth). The header is the behaviour either spelling owes,
+      // and it is unchanged.
+      expect(await authorizationHeaderFrom(resolved)).toBe('token ghp_static')
       expect(await resolved.resolveGitToken()).toBe('ghp_static')
     })
 
@@ -271,6 +314,142 @@ describe('resolveWorkerGitHubAuth', () => {
       } finally {
         process.off('unhandledRejection', unhandled)
       }
+    })
+  })
+
+  describe('refreshCredential', () => {
+    /** A provider handing out each value in turn, then nothing. */
+    const providerOf = (...values: (string | undefined)[]) => vi.fn(async () => values.shift())
+
+    describe('the token path', () => {
+      it('swaps a rotated token into BOTH consumers', async () => {
+        const refreshGitHubToken = providerOf('ghp_rotated')
+        const resolved = resolveWorkerGitHubAuth({
+          githubToken: 'ghp_revoked',
+          refreshGitHubToken,
+        })
+
+        expect(await resolved.resolveGitToken()).toBe('ghp_revoked')
+        expect(await authorizationHeaderFrom(resolved)).toBe('token ghp_revoked')
+
+        await resolved.refreshCredential()
+
+        // Both halves of GitHub access, from the one resolution. The git half
+        // would pass on its own if only `resolveGitToken` were rewired, which
+        // is why the header is asserted too: Octokit is the half that used to
+        // bake the token in at construction.
+        expect(await resolved.resolveGitToken()).toBe('ghp_rotated')
+        expect(await authorizationHeaderFrom(resolved)).toBe('token ghp_rotated')
+      })
+
+      it('reaches an Octokit client BUILT BEFORE the rotation', async () => {
+        const refreshGitHubToken = providerOf('ghp_rotated')
+        const resolved = resolveWorkerGitHubAuth({
+          githubToken: 'ghp_revoked',
+          refreshGitHubToken,
+        })
+
+        // The strategy is invoked ONCE, as Octokit invokes it once in its
+        // constructor and then reuses the returned hook forever. This is the
+        // property that lets CmsWorker refresh with nothing to rebuild -- and
+        // the one a per-resolution assertion above cannot see, because it
+        // builds a fresh strategy each time.
+        const auth = resolved.octokitAuth as OctokitAuthStrategyOptions
+        const strategy = auth.authStrategy({}) as { hook: TokenAuthHook }
+        const headerVia = async (): Promise<string | undefined> => {
+          let sent: { headers: Record<string, string> } | undefined
+          const request = Object.assign(
+            async (endpoint: { headers: Record<string, string> }) => {
+              sent = endpoint
+              return { status: 200 }
+            },
+            { endpoint: { merge: () => ({ headers: {} as Record<string, string> }) } },
+          ) as unknown as Parameters<TokenAuthHook>[0]
+          await strategy.hook(request, 'GET /user')
+          return sent?.headers.authorization
+        }
+
+        expect(await headerVia()).toBe('token ghp_revoked')
+        await resolved.refreshCredential()
+        expect(await headerVia()).toBe('token ghp_rotated')
+      })
+
+      it('keeps the token when the provider reports nothing to do', async () => {
+        const refreshGitHubToken = providerOf(undefined)
+        const resolved = resolveWorkerGitHubAuth({
+          githubToken: 'ghp_original',
+          refreshGitHubToken,
+        })
+
+        await resolved.refreshCredential()
+
+        expect(refreshGitHubToken).toHaveBeenCalledTimes(1)
+        expect(await resolved.resolveGitToken()).toBe('ghp_original')
+      })
+
+      it('keeps the token rather than adopting an empty one', async () => {
+        const resolved = resolveWorkerGitHubAuth({
+          githubToken: 'ghp_original',
+          refreshGitHubToken: providerOf(''),
+        })
+
+        await resolved.refreshCredential()
+
+        // An empty token builds `https://x-access-token:@github.com/...`, which
+        // git sends anonymously for a 403 that says nothing about the
+        // credential. Keeping the known-bad-but-real token fails legibly.
+        expect(await resolved.resolveGitToken()).toBe('ghp_original')
+      })
+
+      it('is a no-op when no provider is configured', async () => {
+        const resolved = resolveWorkerGitHubAuth({ githubToken: 'ghp_only' })
+
+        await expect(resolved.refreshCredential()).resolves.toBeUndefined()
+        expect(await resolved.resolveGitToken()).toBe('ghp_only')
+      })
+
+      it('compares against the ROTATED token on a second round', async () => {
+        const refreshGitHubToken = providerOf('ghp_second', 'ghp_third')
+        const resolved = resolveWorkerGitHubAuth({
+          githubToken: 'ghp_first',
+          refreshGitHubToken,
+        })
+
+        await resolved.refreshCredential()
+        expect(await resolved.resolveGitToken()).toBe('ghp_second')
+        await resolved.refreshCredential()
+        expect(await resolved.resolveGitToken()).toBe('ghp_third')
+      })
+    })
+
+    describe('the GitHub App path', () => {
+      it('never calls the provider — the strategy refreshes itself', async () => {
+        const refreshGitHubToken = providerOf('ghp_should_not_be_used')
+        const resolved = resolveWorkerGitHubAuth({
+          githubAppAuth: appAuthWith(async () => 'ghs_minted'),
+          refreshGitHubToken,
+        })
+
+        await resolved.refreshCredential()
+
+        // An App holds no token to re-read: its private key does not expire,
+        // and `@octokit/auth-app`'s own cache mints the hourly installation
+        // token as the old one nears expiry. Calling the provider here would
+        // read a GitHub-token secret this deployment does not even have.
+        expect(refreshGitHubToken).not.toHaveBeenCalled()
+      })
+
+      it('still mints through the App after a refresh', async () => {
+        const mint = vi.fn(async () => 'ghs_minted')
+        const resolved = resolveWorkerGitHubAuth({
+          githubAppAuth: appAuthWith(mint),
+          refreshGitHubToken: providerOf('ghp_should_not_be_used'),
+        })
+
+        await resolved.refreshCredential()
+
+        expect(await resolved.resolveGitToken()).toBe('ghs_minted')
+      })
     })
   })
 })

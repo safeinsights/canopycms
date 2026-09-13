@@ -1,6 +1,15 @@
 import { createPrivateKey } from 'node:crypto'
+// A DIRECT dependency, though `@octokit/rest` already pulls it in: this module
+// imports it by name, and relying on a transitive resolution for that is how a
+// minor bump elsewhere turns into a missing module here. Declared at the same
+// `^4.0.0` `@octokit/core@5` asks for, so pnpm dedupes to the one copy rather
+// than installing a second.
+import { createTokenAuth } from '@octokit/auth-token'
 import type { CanopyOctokitAuthOptions, OctokitAuthStrategyOptions } from '../github-service'
 import { getErrorMessage, isNodeError } from '../utils/error'
+
+/** What `createTokenAuth(token)` hands back: callable, plus a `.hook`. */
+type TokenAuth = ReturnType<typeof createTokenAuth>
 
 /**
  * How the worker authenticates to GitHub, for both halves of its access:
@@ -43,6 +52,24 @@ export interface GitHubAuthConfig {
    * error, and so is configuring neither.
    */
   githubAppAuth?: GitHubAppAuth
+  /**
+   * Re-read the personal access token, for when the one in hand has stopped
+   * working — a rotation, or a revocation.
+   *
+   * Resolves to the new token, or to `undefined` for "nothing to do", which
+   * covers every no-op case: no ARN configured, re-read too recently, or a
+   * re-read whose value is identical to the one already held. All of that
+   * judgement lives in the provider, not here — see
+   * `packages/canopycms-cdk/worker/credential-refresh.ts`, which is also the
+   * worked example for an adopter driving `CmsWorker` from their own
+   * entrypoint.
+   *
+   * **Only the token path uses this.** A GitHub App refreshes itself: its
+   * `@octokit/auth-app` strategy holds an installation-token cache and mints
+   * a new hourly token as the old one nears expiry, so `refreshCredential()`
+   * below is a no-op on that path.
+   */
+  refreshGitHubToken?: () => Promise<string | undefined>
   /**
    * How long to wait for one installation-token mint before giving up, in ms
    * (default: 30000).
@@ -117,6 +144,52 @@ export interface ResolvedGitHubAuth {
    * microtask, and the PAT case is a bare `async` return.
    */
   resolveGitToken: () => Promise<string>
+  /**
+   * Re-read the credential, because the operation that used it just failed.
+   *
+   * **The one place the two credential shapes differ, and the reason nothing
+   * outside this module has to know which one it holds.** On the App path it
+   * is a no-op: the strategy owns its own token cache and mints on demand. On
+   * the token path it calls `GitHubAuthConfig.refreshGitHubToken` and swaps
+   * the result in.
+   *
+   * Nothing needs rebuilding afterwards, on either path. Both consumers read
+   * the credential per use — `resolveGitToken` on every `buildGitHubUrl()`,
+   * and Octokit through a strategy hook that reads it per request — so a
+   * swapped token is live at the next use with no cache to invalidate.
+   *
+   * Never throws for "nothing rotated": a provider that has nothing to offer
+   * resolves `undefined` and this leaves the credential alone. A failure to
+   * READ the secret does propagate, since the caller is already in a failure
+   * path and the message is worth surfacing.
+   */
+  refreshCredential: () => Promise<void>
+}
+
+/**
+ * An `@octokit/auth-token` strategy whose token is read at REQUEST time.
+ *
+ * The stock spelling, `{ auth: token }`, resolves the token once in Octokit's
+ * constructor (`@octokit/core@5`: `createTokenAuth(options.auth)`, then
+ * `hook.wrap("request", auth.hook)`), so a rotated token would never reach a
+ * client that had already been built — and rebuilding the client on rotation
+ * is precisely the coupling `refreshCredential` exists to avoid.
+ *
+ * `createTokenAuth` is called per use rather than once: it is two `bind`s and
+ * no I/O, and calling it per use is the whole mechanism by which the token is
+ * late-bound. Delegating to it — rather than setting an `authorization` header
+ * here — keeps the real implementation's token-type detection (`ghs_`, `ghu_`,
+ * `v1.`, and a three-segment JWT), which `octokit.auth()` reports.
+ */
+function dynamicTokenAuth(getToken: () => string): TokenAuth {
+  type HookArgs = Parameters<TokenAuth['hook']>
+  // The cast is for the OVERLOAD, not to paper over a mismatch: `hook` is
+  // declared with two call signatures and a wrapper written against the
+  // widest one is not assignable to the pair. The delegation below forwards
+  // whatever it was handed, unchanged.
+  const hook = ((request: HookArgs[0], route: HookArgs[1], parameters?: HookArgs[2]) =>
+    createTokenAuth(getToken()).hook(request, route, parameters)) as TokenAuth['hook']
+  return Object.assign(async () => createTokenAuth(getToken())(), { hook })
 }
 
 /**
@@ -155,13 +228,37 @@ export function resolveWorkerGitHubAuth(config: GitHubAuthConfig): ResolvedGitHu
     return {
       octokitAuth: app.octokitAuth,
       resolveGitToken: () => mintInstallationToken(app, timeoutMs),
+      // Deliberately a no-op, not an oversight, and not wired to
+      // `refreshGitHubToken`: an App holds no token to re-read. Its private
+      // key does not expire, and the hourly installation token it mints is
+      // refreshed by `@octokit/auth-app`'s own cache as it nears expiry.
+      refreshCredential: async () => {},
     }
   }
   // Narrowed by hasToken, which TypeScript cannot carry through the branch above.
-  const staticToken = token as string
+  //
+  // `let`, not `const`: this binding IS the credential from here on, and both
+  // consumers below read it per use rather than capturing its value. That is
+  // what lets `refreshCredential` swap a rotated token in with nothing to
+  // rebuild and no cache to invalidate.
+  let currentToken = token as string
   return {
-    octokitAuth: { auth: staticToken },
-    resolveGitToken: async () => staticToken,
+    octokitAuth: {
+      // NOT `{ auth: currentToken }`. That spelling resolves the token once,
+      // inside Octokit's constructor, so a rotation would never reach a client
+      // already built. See dynamicTokenAuth.
+      authStrategy: () => dynamicTokenAuth(() => currentToken),
+      auth: {},
+    },
+    resolveGitToken: async () => currentToken,
+    refreshCredential: async () => {
+      const refreshed = await config.refreshGitHubToken?.()
+      // Falsy covers both "nothing rotated" (`undefined`) and an empty secret:
+      // an empty token would build `https://x-access-token:@github.com/…`,
+      // which git sends anonymously, so keeping the known-bad-but-real token
+      // fails more legibly than replacing it with nothing.
+      if (refreshed) currentToken = refreshed
+    },
   }
 }
 

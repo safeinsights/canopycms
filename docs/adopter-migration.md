@@ -263,6 +263,49 @@ a prop.
 See [deploying-to-aws.md](deploying-to-aws.md#authenticating-as-a-github-app) for the full
 walkthrough.
 
+### A rotated secret reaches the running worker, without an instance replacement
+
+**What changed.** The EC2 worker read both of its Secrets Manager secrets once, at boot,
+before `new CmsWorker(...)`, and never again. Rotating the GitHub token or the Clerk secret
+key therefore had no effect until the instance was replaced — and in the Clerk case there
+was no signal that anything was wrong, because `CmsWorker.refreshAuthCache()` logs and
+swallows its errors. The symptom was a stale auth cache and one log line every fifteen
+minutes.
+
+The worker now re-reads a secret when the operation using it fails. Rotation is picked up
+within about five minutes for the GitHub token (the git-sync interval) and fifteen for the
+Clerk key (the auth-cache interval).
+
+It is **reactive, not polled**: between failures the worker makes no `GetSecretValue` calls
+at all, so this costs nothing in the healthy case. A secret that is wrong rather than rotated
+is re-read at most once every five minutes and never retried against an unchanged value, so
+it settles instead of looping — and it keeps checking indefinitely, so a later fix is still
+picked up.
+
+**To adopt.** Nothing. This is automatic for any deployment whose credentials come from
+`*_SECRET_ARN`, which is every deployment the scaffold generates.
+
+Two limits worth knowing, both deliberate:
+
+- A **GitHub App private key** is still read only at boot. An App key does not expire, and
+  the hourly installation tokens minted from it already refresh themselves; rotating the key
+  itself needs an instance replacement.
+- A credential supplied as a **plain env var** (`CANOPYCMS_GITHUB_TOKEN`, `CLERK_SECRET_KEY`)
+  is never re-read. Re-reading the ARN you overrode would swap your override back out.
+
+**Now deletable.** Any operational runbook step that says "rotate the secret, then run
+`cdk deploy` (or terminate the worker instance) to pick it up". If you scripted that — a
+scheduled `cdk deploy` after a rotation, or an ASG instance-refresh triggered by a Secrets
+Manager rotation event — it can go, unless it exists for a GitHub App private key.
+
+One consequence for anyone driving `CmsWorker` from their own entrypoint: `CmsWorkerConfig`
+gains an optional `refreshGitHubToken?: () => Promise<string | undefined>`. Return the new
+token, or `undefined` for "nothing to do" — no ARN, read too recently, or a value identical
+to the one already held. Leave it unset and behaviour is exactly as before.
+`packages/canopycms-cdk/worker/credential-refresh.ts` is the worked example, guards included.
+
+See [deploying-to-aws.md](deploying-to-aws.md#rotating-a-secret).
+
 ### `assetUploadBehavior()` builds the upload route from a bucket alone
 
 **What changed.** `canopycms-cdk` now exports a free function beside `AssetSupport`:
