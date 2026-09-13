@@ -70,18 +70,18 @@ const PACKAGES = ['canopycms', 'canopycms-next', 'canopycms-auth-dev']
 /** Deliberately not `main`: the pre-fix builder could only ever build a `main` base branch. */
 const BASE_BRANCH = 'release-base'
 
+/**
+ * One content entry, titled differently in each place it can be read from, so a check can tell
+ * which copy served a response: `next build` reads the working tree, and a request reads the branch
+ * clone of BASE_BRANCH. Neither title contains the other, so a text match cannot pass on the wrong
+ * copy.
+ */
 const PAGE = {
   slug: 'hello',
   id: 'Smoke1Page2x',
-  title: 'Standalone smoke page',
+  workingTreeTitle: 'Working-tree smoke page',
+  branchTitle: 'Release-base smoke page',
 }
-
-/**
- * Text only the root layout's content read puts on a not-found response. Matched as text, not as
- * `<header>` markup: a force-dynamic route that calls notFound() answers with an empty HTML shell
- * and carries the layout's output in Next's RSC flight payload instead.
- */
-const LAYOUT_MARK = PAGE.title
 
 /** The sitemap's origin. Any absolute URL does; nothing resolves it. */
 const SITE_URL = 'https://smoke.canopycms.test'
@@ -142,6 +142,17 @@ function run(cmd, args, { cwd, env, capture = false, allowFailure = false } = {}
     throw new SmokeError(`\`${cmd} ${args.join(' ')}\` exited with status ${result.status}`)
   }
   return result
+}
+
+/** The real path `dir` would have, resolving symlinks through its nearest existing ancestor. */
+function realpathOfNearestExisting(dir) {
+  let existing = path.resolve(dir)
+  const missing = []
+  while (!existsSync(existing)) {
+    missing.unshift(path.basename(existing))
+    existing = path.dirname(existing)
+  }
+  return path.join(realpathSync(existing), ...missing)
 }
 
 /** Whether `child` is `parent` or below it, comparing the paths as given. */
@@ -301,9 +312,9 @@ function scaffold(appDir, options) {
       ),
     )
   }
-  // The root layout reads content, so every page renders through a request-scoped read, not-found
-  // pages included. An adopter's image with such a layout answered its not-found page and
-  // /favicon.ico with 500s, and the not-found checks below assert the layout rendered.
+  // The root layout reads content, so every page renders through that read, not-found pages
+  // included. An adopter's image with such a layout answered its not-found page and /favicon.ico
+  // with 500s. The not-found checks below assert which copy of the content the layout rendered.
   writeText(
     path.join(appDir, 'app/layout.tsx'),
     [
@@ -377,8 +388,8 @@ function scaffold(appDir, options) {
     path.join(appDir, `content/page.${PAGE.slug}.${PAGE.id}.md`),
     [
       '---',
-      `title: ${PAGE.title}`,
-      `description: Read at request time from the ${BASE_BRANCH} branch.`,
+      `title: ${PAGE.workingTreeTitle}`,
+      'description: A page for the standalone image smoke test.',
       '---',
       '',
       'Served by the standalone image smoke test.',
@@ -448,9 +459,19 @@ function scaffold(appDir, options) {
   )
 }
 
-/** A git checkout of the scaffold's content on BASE_BRANCH, for dev mode's run-time reads. */
+/**
+ * A git checkout of the scaffold's content, for dev mode's run-time reads. BASE_BRANCH commits the
+ * page under `branchTitle`, and the working tree is then put back to `workingTreeTitle`. A request
+ * that read `/app/content` instead of the branch clone would show the wrong title.
+ */
 function seedCheckout(appDir, seedDir) {
-  cpSync(path.join(appDir, 'content'), path.join(seedDir, 'content'), { recursive: true })
+  const contentDir = path.join(seedDir, 'content')
+  cpSync(path.join(appDir, 'content'), contentDir, { recursive: true })
+  patchOnce(
+    path.join(contentDir, `page.${PAGE.slug}.${PAGE.id}.md`),
+    `title: ${PAGE.workingTreeTitle}\n`,
+    `title: ${PAGE.branchTitle}\n`,
+  )
   const git = (...args) =>
     run(
       'git',
@@ -468,6 +489,7 @@ function seedCheckout(appDir, seedDir) {
   git('init', '-q', '-b', BASE_BRANCH)
   git('add', 'content')
   git('commit', '-q', '-m', 'Seed content for the standalone image smoke test')
+  cpSync(path.join(appDir, 'content'), contentDir, { recursive: true, force: true })
 }
 
 async function waitForServer(baseUrl, container) {
@@ -628,13 +650,17 @@ async function assertContainer(baseUrl, container) {
   })
 
   await check(
-    `GET /${PAGE.slug} renders content read from ${BASE_BRANCH} at request time`,
+    `GET /${PAGE.slug} renders the page from the ${BASE_BRANCH} branch clone at request time`,
     async () => {
       const response = await request(baseUrl, `/${PAGE.slug}`)
       if (response.status !== 200) throw new SmokeError(`status ${response.status}`)
-      // The page's own heading: the layout's header carries the same title on every page.
-      if (!response.body.toString('utf8').includes(`<h1>${PAGE.title}</h1>`)) {
-        throw new SmokeError(`status 200, but no <h1>${PAGE.title}</h1>`)
+      // The page's own heading. The layout's header carries a title on every page.
+      const body = response.body.toString('utf8')
+      if (body.includes(`<h1>${PAGE.workingTreeTitle}</h1>`)) {
+        throw new SmokeError('status 200, but the page was read from the working tree')
+      }
+      if (!body.includes(`<h1>${PAGE.branchTitle}</h1>`)) {
+        throw new SmokeError(`status 200, but no <h1>${PAGE.branchTitle}</h1>`)
       }
     },
   )
@@ -651,23 +677,30 @@ async function assertContainer(baseUrl, container) {
     },
   )
 
-  // The adopter's image answered these with 500s. Three shapes of not-found: an unknown slug
-  // reaching the dynamic route's notFound(), a path no route matches, and /favicon.ico (this app
-  // ships none).
-  for (const [pathname, expectExactly404] of [
-    ['/no-such-page', true],
-    ['/no/such/route', true],
-    ['/favicon.ico', false],
+  // The adopter's image answered not-found responses with 500s. Three shapes:
+  // - an unknown slug reaching the force-dynamic route's notFound(), whose root layout renders at
+  //   request time, from the branch clone;
+  // - a path no route matches, which Next serves from the not-found page `next build` prerendered,
+  //   so its layout read the working tree;
+  // - /favicon.ico, which this app does not ship.
+  // The layout's title is matched as text, not as `<header>` markup. A force-dynamic route that
+  // calls notFound() answers with an empty HTML shell and carries the layout's output in Next's RSC
+  // flight payload.
+  for (const { pathname, layoutTitle, source } of [
+    { pathname: '/no-such-page', layoutTitle: PAGE.branchTitle, source: 'request-time' },
+    { pathname: '/no/such/route', layoutTitle: PAGE.workingTreeTitle, source: 'build-time' },
+    { pathname: '/favicon.ico' },
   ]) {
-    await check(`GET ${pathname} is ${expectExactly404 ? '404' : 'not a 5xx'}`, async () => {
+    const name = layoutTitle
+      ? `GET ${pathname} is 404, rendered through the root layout's ${source} read`
+      : `GET ${pathname} is not a 5xx`
+    await check(name, async () => {
       const response = await request(baseUrl, pathname)
       const { status } = response
-      if (expectExactly404 ? status !== 404 : status >= 500) {
-        throw new SmokeError(`status ${status}`)
-      }
-      if (expectExactly404 && !response.body.toString('utf8').includes(LAYOUT_MARK)) {
+      if (layoutTitle ? status !== 404 : status >= 500) throw new SmokeError(`status ${status}`)
+      if (layoutTitle && !response.body.toString('utf8').includes(layoutTitle)) {
         throw new SmokeError(
-          `status 404, but the root layout's content read ("${LAYOUT_MARK}") is not in the response`,
+          `status 404, but the layout title "${layoutTitle}" is not in the response`,
         )
       }
       return `status ${status}`
@@ -796,19 +829,17 @@ async function assertContainer(baseUrl, container) {
 async function main() {
   const options = parseOptions()
   const workDir = options.workDir ?? mkdtempSync(path.join(os.tmpdir(), 'canopy-standalone-smoke-'))
-  // Checked on the path as given before anything is created, then again on the real path, which
-  // only exists once the directory does: a symlink could still lead back into the checkout.
-  const assertOutsideRepo = (dir) => {
+  // Checked before anything is created, both as given and through the real path of its nearest
+  // existing ancestor, so a symlink cannot lead a new directory back into the checkout.
+  for (const dir of [workDir, realpathOfNearestExisting(workDir)]) {
     if (isInside(dir, REPO_ROOT) || isInside(dir, realpathSync(REPO_ROOT))) {
       throw new SmokeError(
         `--work-dir must be outside the repository: inside it the packages resolve as workspace ` +
-          `links and sharp is bundled rather than externalized (${workDir})`,
+          `links and sharp is bundled rather than externalized (${dir})`,
       )
     }
   }
-  assertOutsideRepo(workDir)
   mkdirSync(workDir, { recursive: true })
-  assertOutsideRepo(realpathSync(workDir))
   const appDir = path.join(workDir, 'app')
   if (existsSync(appDir)) throw new SmokeError(`${appDir} already exists; use a fresh --work-dir`)
   log(`work dir: ${workDir}`)
@@ -844,9 +875,16 @@ async function main() {
     // Read before cleanup on every path. When the server dies before answering, its own output is
     // the only record of why, and `docker rm` would discard it.
     if (created) {
-      const containerLog = outcome?.containerLog ?? readContainerLog(container)
-      writeFileSync(path.join(workDir, 'container.log'), containerLog)
-      if (!outcome) printLogTail(containerLog)
+      // Reading or saving the log must never skip the cleanup below, or replace the error in flight.
+      try {
+        const containerLog = outcome?.containerLog ?? readContainerLog(container)
+        writeFileSync(path.join(workDir, 'container.log'), containerLog)
+        if (!outcome) printLogTail(containerLog)
+      } catch (err) {
+        console.error(
+          `[smoke] could not save the container log: ${err instanceof Error ? err.message : String(err)}`,
+        )
+      }
     }
     if (!options.keep) {
       if (created) run('docker', ['rm', '-f', container], { capture: true, allowFailure: true })

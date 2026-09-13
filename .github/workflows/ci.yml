@@ -466,8 +466,17 @@ jobs:
               - 'packages/canopycms-auth-dev/src/**'
               - 'packages/canopycms-auth-dev/package.json'
               - 'packages/canopycms-auth-dev/tsconfig.build.json'
+              - 'packages/canopycms/tsconfig.json'
+              - 'packages/canopycms-next/tsconfig.json'
+              - 'packages/canopycms-auth-dev/tsconfig.json'
+              # Every package tsconfig above extends this, so it shapes all three tarballs' dist/.
+              - 'tsconfig.base.json'
               - 'scripts/add-js-extensions.mjs'
               - 'pnpm-lock.yaml'
+              # `packageManager` picks the pnpm that runs `pnpm pack`, and .nvmrc the Node that
+              # runs the script.
+              - 'package.json'
+              - '.nvmrc'
               - 'scripts/smoke/**'
               - '.github/workflows/ci.yml'
 
@@ -491,6 +500,16 @@ jobs:
           node scripts/smoke/standalone-image.mjs
           --pm ${{ matrix.pm }}
           --work-dir "${{ runner.temp }}/standalone-image-smoke"
+
+      # The step log keeps only the last 200 lines of the container's output; this keeps all of it.
+      - name: Upload the container log
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: failure() && steps.filter.outputs.relevant == 'true'
+        with:
+          name: standalone-image-container-log-${{ matrix.pm }}-${{ matrix.runner }}
+          path: ${{ runner.temp }}/standalone-image-smoke/container.log
+          retention-days: 14
+          if-no-files-found: ignore
 
       - name: Skipped (no standalone-image-relevant changes)
         if: steps.filter.outputs.relevant != 'true'
