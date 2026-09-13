@@ -510,6 +510,8 @@ jobs:
           path: ${{ runner.temp }}/standalone-image-smoke/container.log
           retention-days: 14
           if-no-files-found: ignore
+          # A re-run of a failed leg uploads under the same name; keep the newer log.
+          overwrite: true
 
       - name: Skipped (no standalone-image-relevant changes)
         if: steps.filter.outputs.relevant != 'true'
