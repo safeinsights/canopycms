@@ -100,6 +100,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { createInterface } from 'node:readline'
 import { getErrorMessage, isNodeError, redactCredentials } from '../utils/error'
+import { normalizeGitHubAppPrivateKey } from '../worker/github-auth'
 
 /** Permission levels GitHub uses for App repository permissions, weakest first. */
 export const PERMISSION_LEVELS = ['read', 'write', 'admin'] as const
@@ -892,6 +893,29 @@ export async function checkNameAvailable(slug: string): Promise<boolean | null> 
  * App id, the operator's only handle for generating a replacement key, was never
  * reached.
  *
+ * A SECOND, subtler way to reach the same hole: EOF landing on a line that DID
+ * get answered. Node's readline flushes a pending partial line as a final
+ * `'line'` event BEFORE `'close'` when the input ends, so "text then EOF" (a
+ * pipe like `printf 'abc'` with no trailing newline, or a TTY operator typing
+ * text and pressing Ctrl-D twice) answers the prompt normally — `answered` is
+ * true when `'close'` fires. The stream having also ended in that same moment
+ * used to go unrecorded, because the `'close'` handler only ever set this flag
+ * on the `!answered` branch. The next prompt then created a readline interface
+ * on an already-ended stream that never emits, and — with nothing else keeping
+ * it alive — the event loop emptied and node exited 0 silently: no "Giving up",
+ * no "Stopping here … GITHUB_APP_ID" block, no readback, no `finally`.
+ * MEASURED with a scratch driver: `printf 'abc' | node --import tsx <driver>`
+ * resolved the first prompt to `"abc"` and left the second prompt printed but
+ * never resolved, node exiting 0 with nothing after it.
+ *
+ * So the flag must be set from whether the STREAM ended, not from whether THIS
+ * prompt got an answer — the two are independent. `readableEnded` is checked
+ * unconditionally in the `'close'` handler below, before the `answered` branch,
+ * so it applies whether or not a line came back. This still tells apart the
+ * ordinary case from this one: our OWN `rl.close()` call after a line, by
+ * itself, fires `'close'` while stdin usually remains open and `readableEnded`
+ * stays false — only an input stream that has actually finished sets it.
+ *
  * Every prompt below consults this first. Nothing else may create a readline
  * interface on `process.stdin` in this file.
  */
@@ -914,6 +938,18 @@ function readLineOnce(prompt: string): Promise<string | null> {
       resolve(line)
     })
     rl.once('close', () => {
+      // Checked FIRST and unconditionally: `'close'` fires both when WE call
+      // `rl.close()` after a line (stdin can still be open) and when the
+      // stream itself ends — including the case where a final partial line was
+      // just flushed as `'line'`, so `answered` is true but the stream is
+      // ALSO finished. `readableEnded` is the one signal that distinguishes
+      // "we closed the interface" from "the stream is actually done", and by
+      // the time readline's own `'close'` fires, the input stream has already
+      // finished emitting `'end'` (readline listens for it internally before
+      // closing itself), so the flag is reliable here.
+      if (process.stdin.readableEnded) {
+        stdinEnded = true
+      }
       if (answered) return
       stdinEnded = true
       resolve(null)
@@ -986,6 +1022,16 @@ export type KeyRetryChoice =
  * - Two or more whitespace-separated tokens is a command. Split on whitespace
  *   rather than through a shell: there is no shell here, so nothing to inject
  *   into.
+ * - A `|` ANYWHERE ELSE in the resulting argv — not just as the leading
+ *   marker — is re-prompted rather than built into a command. Only a LEADING
+ *   `|` is special-cased above; a `|` later in the answer is otherwise just
+ *   another word to `split(/\s+/)`, because there is no shell here to give it
+ *   meaning. An answer written from habit as a pipeline (`tee key.txt |
+ *   pbcopy`) would otherwise run `tee` with `key.txt`, `|` and `pbcopy` as
+ *   three ordinary file names — writing 0644 copies of the private key into
+ *   `process.cwd()` (normally the repo root) while also echoing the PEM to
+ *   the terminal, and reporting it as stored. There being no shell means a
+ *   `|` can never mean "pipe" here, so this is refused rather than guessed at.
  */
 export function parseKeyRetryAnswer(answer: string | null): KeyRetryChoice {
   if (answer === null) return { kind: 'give-up' }
@@ -999,9 +1045,10 @@ export function parseKeyRetryAnswer(answer: string | null): KeyRetryChoice {
 
   if (trimmed.startsWith('|')) {
     const words = trimmed.slice(1).trim().split(/\s+/).filter(Boolean)
-    return words.length === 0
-      ? { kind: 'reprompt', reason: 'nothing followed the `|`' }
-      : { kind: 'command', argv: words }
+    if (words.length === 0) {
+      return { kind: 'reprompt', reason: 'nothing followed the `|`' }
+    }
+    return embeddedPipeReprompt(words) ?? { kind: 'command', argv: words }
   }
 
   const words = trimmed.split(/\s+/).filter(Boolean)
@@ -1018,7 +1065,26 @@ export function parseKeyRetryAnswer(answer: string | null): KeyRetryChoice {
     }
   }
 
-  return { kind: 'command', argv: words }
+  return embeddedPipeReprompt(words) ?? { kind: 'command', argv: words }
+}
+
+/**
+ * `null` when no argv word contains a `|`; a `reprompt` naming why otherwise.
+ *
+ * Checked on the argv that would otherwise become a command — after the
+ * leading-`|` marker (if any) has already been stripped — so this only ever
+ * sees a `|` that landed INSIDE a word, which is never the marker.
+ */
+function embeddedPipeReprompt(words: string[]): KeyRetryChoice | null {
+  if (!words.some((word) => word.includes('|'))) return null
+  return {
+    kind: 'reprompt',
+    reason:
+      'there is no shell here, so `|` only works as the first character, to mark a single ' +
+      'command — a pipeline like `a | b` is not supported and would run `a`, `|` and `b` as ' +
+      'three separate file names. Run the pipeline yourself and enter the one command that ' +
+      'should receive the key, or a path to write it to a file instead.',
+  }
 }
 
 /**
@@ -1155,9 +1221,38 @@ async function readBackInstallation(
   privateKey: string,
   target: AppTarget,
 ): Promise<{ ok: boolean; installationId: number | null }> {
+  // Normalised the same way the worker normalises its own key
+  // (`normalizeGitHubAppPrivateKey`, `worker/github-auth.ts`) BEFORE it is ever
+  // used to sign — trims it, unescapes a literal `\n`, unwraps a base64-wrapped
+  // PEM, and re-exports PKCS#8. `cli.ts` reads `--key-file`/`--key-stdin`
+  // verbatim, and `docs/deploying-to-aws.md` tells operators to pipe that exact
+  // secret — `\n`-escaped or base64-wrapped, however it left Secrets Manager —
+  // into `verify --key-stdin`. Without this, `verify` failed with "could not
+  // sign a JWT" on a key the worker boots on fine. Called here rather than in
+  // `cli.ts` so `create` goes through it too: GitHub's own freshly-minted PEM is
+  // already normal, so this is a no-op for it.
+  let normalizedKey: string
+  try {
+    normalizedKey = normalizeGitHubAppPrivateKey(privateKey)
+  } catch (err) {
+    // Distinct from the "could not sign a JWT" failure below: this key does not
+    // even parse as a PEM once the common manglings are undone, so signing was
+    // never reached. `getErrorMessage` here is `createPrivateKey`'s own parse
+    // error, which names a PEM format problem, never key material — redacted
+    // anyway, on the same belt-and-braces basis as every other error surfaced
+    // in this file.
+    console.error(
+      `\nThe private key could not be normalised: ${redactCredentials(getErrorMessage(err))}\n` +
+        '  Check that this is the App private key (the downloaded .pem), NOT the "client\n' +
+        '  secret" listed a few sections above it on the App\'s settings page — that one is\n' +
+        '  for OAuth user flows, is unused by this App, and fails confusingly here.',
+    )
+    return { ok: false, installationId: null }
+  }
+
   let jwt: string
   try {
-    jwt = appJwt(appId, privateKey)
+    jwt = appJwt(appId, normalizedKey)
   } catch (err) {
     // A PEM that cannot sign fails here, where the key is, rather than later as
     // an opaque 401 from GitHub.
