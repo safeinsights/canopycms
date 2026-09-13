@@ -31,7 +31,13 @@ const PNG_MAGIC = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a
  */
 function messagesInCauseChain(err: unknown): string[] {
   const messages: string[] = []
-  for (let current: unknown = err; current instanceof Error; current = current.cause) {
+  // `'cause' in` rather than `.cause`: the package targets ES2021, whose lib
+  // types `Error` without it.
+  for (
+    let current: unknown = err;
+    current instanceof Error;
+    current = 'cause' in current ? current.cause : undefined
+  ) {
     messages.push(current.message)
   }
   return messages
