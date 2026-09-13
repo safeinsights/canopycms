@@ -1,5 +1,7 @@
 # [P3] `examples/aws-deployment/` lags the `init-deploy aws` scaffold it claims to mirror
 
+**Duplicate of [example-aws-deployment-drift-from-template.md](../example-aws-deployment-drift-from-template.md), merged during the base merge (#341).**
+
 Found 2026-09-12 by the round-1 review of PR #323 (the CMS image architecture fix), which
 touched only `runs-on` in the example workflow and the `platform`/build-arg lines in the
 example stack. Not a regression from that PR; filed so it isn't mistaken for one.
@@ -33,11 +35,3 @@ AssetSupport members and `editorOrigins`. Nothing else keeps the pair in step.
 
 Option 1 or 2 keeps the example useful to read on GitHub; option 3 removes the drift
 surface entirely.
-
-## Overlaps
-
-The same drift was filed independently, also on 2026-09-12, on `int-202609-a`:
-[example-aws-deployment-drift-from-template.md](example-aws-deployment-drift-from-template.md)
-(the whole directory, and the case for generating it) and
-[example-deploy-workflow-drifted.md](example-deploy-workflow-drifted.md) (the workflow file).
-The three met when `int-202609-a` was merged into `int-202609-cms-image`; fix them as one.

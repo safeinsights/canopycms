@@ -1,65 +1,102 @@
 # `examples/aws-deployment/` has drifted from the scaffold templates it mirrors, and nothing compares the two
 
-**Status: open.** Found 2026-09-12 while wiring the secret JSON-field props (PR A2 of the
-adopter-request-#45/#46 plan), which had to edit both copies by hand.
+**Status: open. Priority: P1.** Filed three times, independently, on 2026-09-12, and merged into
+this file during the base merge of `int-202609-a` into `int-202609-cms-image` (#341). The other
+two filings are kept as history:
+[example-deploy-workflow-drifted.md](resolved/example-deploy-workflow-drifted.md) and
+[examples-aws-deployment-drift.md](resolved/examples-aws-deployment-drift.md).
+
+## How it was found
+
+- While wiring the secret JSON-field props (PR A2 of the adopter-request-#45/#46 plan), which had
+  to edit both copies by hand.
+- While wiring the GitHub App props (PR B3 of adopter request #45), by diffing the example
+  workflow against its template.
+- By the round-1 review of PR #323 (the CMS image architecture fix), which touched only `runs-on`
+  in the example workflow and the `platform`/build-arg lines in the example stack. Not a
+  regression from that PR.
 
 ## Problem
 
-Four files exist in two copies: the scaffold templates under
-`packages/canopycms/src/cli/template-files/` and the checked-in example under
-`examples/aws-deployment/`. They teach the same wiring to two different audiences — the
-generator's output, and the thing a human reads on GitHub before running the generator.
+`examples/aws-deployment/README.md` says these files are what `npx canopycms init-deploy aws`
+scaffolds. Five files exist in two copies: the templates under
+`packages/canopycms/src/cli/template-files/`, and the checked-in example, which is the copy a
+human reads on GitHub before running the generator, and may copy from instead.
 
-**Nothing compares them.** `scaffold-synth.test.ts` runs the real CLI, so it exercises the
-templates only; it never reads `examples/`. The one existing cross-copy check is the
-media-block suite in `asset-support.test.ts`, added precisely because a fix landed in the
-template while the example went on teaching a dead API — and it covers only that block.
+| Template                     | Example copy                      | State after the #341 merge                                                                 |
+| ---------------------------- | --------------------------------- | ------------------------------------------------------------------------------------------ |
+| `cdk.json.template`          | `cdk.json`                        | identical                                                                                  |
+| `cdk-tsconfig.json.template` | `infrastructure/tsconfig.json`    | identical                                                                                  |
+| `cdk-app.ts.template`        | `infrastructure/bin/app.ts`       | differs only in its three placeholder lines (`{{STACK_NAME}}`, `{{GITHUB_OWNER}}`, `{{GITHUB_REPO}}`) |
+| `cms-stack.ts.template`      | `infrastructure/lib/cms-stack.ts` | comment drift, below                                                                       |
+| `deploy-cms.yml.template`    | `deploy-cms.yml`                  | several changes behind, below                                                              |
 
-One real difference was live when this was filed, and is **fixed** (PR #322, along with a
-test pinning both copies):
+### `deploy-cms.yml` vs `deploy-cms.yml.template`
 
-| Template | Example | Effect |
-| --- | --- | --- |
-| `cms-stack.ts.template` sets `NEXT_PUBLIC_CANOPY_MODE: 'prod'` in the image build args | was absent | An adopter who copied the example shipped an editor bundle built with the **dev** browser mode — dev auth rather than Clerk, and the dev feature flags |
+- **Missing `paths:` triggers.** The template fires on `next.config.*`, `middleware.ts` and
+  `public/**`; the example does not. The template's own comment says why they were added: an edit
+  to one of them shipped days later, piggybacked on an unrelated content change, so any breakage
+  was attributed to the wrong commit.
+- **Shorter dependency check.** The template checks
+  `tsx aws-cdk-lib constructs canopycms canopycms-cdk aws-cdk`; the example checks
+  `tsx aws-cdk-lib constructs canopycms-cdk`. The template's comment gives the reasons for the two
+  extras: `canopycms-cdk` peer-depends on `canopycms`, and without `aws-cdk` in `node_modules`,
+  `npx cdk` silently fetches whatever version is current that day.
+- **Stale install strings.** The header's and the error message's install lines omit `canopycms`.
 
-That one mattered: `scaffold-synth.test.ts` has a dedicated test ("deploys a prod-mode CMS:
-CANOPY_MODE on the Lambda, NEXT_PUBLIC_CANOPY_MODE in the image build") asserting exactly
-this value, so the generated path was pinned and the example was the only way to get it
-wrong. The server half (`CANOPY_MODE`) is set by `CanopyCmsService` either way, so the
-deployment came up and the failure was confined to what the editor bundle believes — the kind
-found by a person, late.
+### `infrastructure/lib/cms-stack.ts` vs `cms-stack.ts.template`
 
-**The instance is fixed; the class is not, which is why this stays open.** Nothing compared
-the two copies before, and nothing compares them now beyond three per-feature textual checks
-(the media block, the JSON-field wiring, and a one-line pin for the value above) — each
-covering only what its author happened to think of.
+- The commented media block's `editorOrigins` paragraph is an older, shorter wording that lacks the
+  template's note about when to include `http://localhost:3000`.
 
-Comment text also differs in places (the example is a slightly older render). That is
-cosmetic on its own, but it is the same drift with a lower cost, and it makes a diff of the
-two files noisy enough that the substantive difference above hid in it.
+### What guards the pair today
+
+`scaffold-synth.test.ts` runs the real CLI, so it exercises the templates only and never reads
+`examples/`. Every cross-copy check is a per-feature textual pin, covering only what its author
+thought of:
+
+- `asset-support.test.ts`, "cms-stack template: the media block names a real API": every
+  `assetSupport.<member>` either copy of the stack references exists on `AssetSupport`, and both
+  copies mention `editorOrigins`.
+- `cms-deploy.test.ts`, "secret JSON-field wiring: the scaffold template and the example stay in
+  step": a hand-maintained list of required lines per file pair, plus three checks over both
+  copies: no ECS `:KEY::` ARN suffix, no repository secret or variable named `GITHUB_*`, and
+  `NEXT_PUBLIC_CANOPY_MODE: 'prod'` in the stack.
+
+None of them covers the drift listed above.
+
+### The instance that makes this P1
+
+One live difference was **fixed in PR #322**, with a test pinning both copies:
+`cms-stack.ts.template` set `NEXT_PUBLIC_CANOPY_MODE: 'prod'` in the image build args and the
+example did not. An adopter who copied the example shipped an editor bundle built with the **dev**
+browser mode, which selects dev auth rather than Clerk. `CanopyCmsService` sets the server half
+(`CANOPY_MODE`) either way, so the deployment came up and the failure was confined to what the
+editor bundle believes — the kind found by a person, late. `scaffold-synth.test.ts` already pinned
+that value on the generated path, so the example was the only way left to get it wrong.
+
+The instance is closed; the class that produced it is what stays open here.
 
 ## Shape of the fix
 
-Decide first **whether the example should be generated rather than maintained**. If
-`examples/aws-deployment/` were produced by running `canopycms init-deploy aws` into a
-fixture directory (with the placeholders resolved) and checked in, the drift class
-disappears rather than being tested for. That is the strictly better outcome if the
-placeholder substitution is total; check `{{STACK_NAME}}`, `{{GITHUB_OWNER}}`,
-`{{GITHUB_REPO}}`, `{{ADD_DEV}}`, `{{LOCKFILE}}` and `{{DEFAULT_BRANCH}}` before assuming it.
+Decide first **whether the example should be generated rather than maintained**:
 
-If the example must stay hand-maintained, add a **whole-file** comparison (template with
-placeholders substituted vs the example) as a test, rather than another per-feature textual
-check. Two such checks now exist — the media block, and the JSON-field wiring added in the
-PR that found this — and each only covers the feature whose author happened to think of it.
-That pattern does not converge.
+1. **Generate it.** Render the templates for the npm case into `examples/aws-deployment/` with a
+   script, and have CI fail when the checked-in copies differ. The drift class then disappears
+   instead of being tested for. The substitution has to be total. The templates use seven
+   placeholders, `{{STACK_NAME}}`, `{{GITHUB_OWNER}}`, `{{GITHUB_REPO}}`, `{{ADD_DEV}}`,
+   `{{CI_INSTALL}}`, `{{LOCKFILE}}` and `{{DEFAULT_BRANCH}}`, and the example already resolves them
+   as `CanopyCms`, `your-org`, `your-docs-site`, `npm install --save-dev`, `npm ci`,
+   `package-lock.json` and `main`.
+2. **Keep it hand-maintained, and compare whole files.** A test renders each template with those
+   values and diffs the result against the example, replacing the per-feature pins. Adding another
+   per-feature pin does not converge.
+3. **Delete the copies.** Keep only the README, pointing at `init-deploy aws` output. This removes
+   the drift surface, at the cost of an example readable on GitHub.
 
-The `NEXT_PUBLIC_CANOPY_MODE` difference itself is already fixed — what remains here is the
-mechanism that let it happen and will let the next one happen.
+Re-syncing the files by hand, without (1) or (2), repeats the history this file records.
 
 ## Related
 
-- [worker-secret-json-field-cdk-props.md](resolved/worker-secret-json-field-cdk-props.md) —
-  the task that ran into this; its PR added the third per-feature drift check.
-- [examples-aws-deployment-drift.md](examples-aws-deployment-drift.md) and
-  [example-deploy-workflow-drifted.md](example-deploy-workflow-drifted.md) — the same drift,
-  filed independently on 2026-09-12 (the first on `int-202609-cms-image`); fix the three as one.
+- [worker-secret-json-field-cdk-props.md](resolved/worker-secret-json-field-cdk-props.md) — the
+  task that ran into this; its PR added the JSON-field drift check.

@@ -1,5 +1,7 @@
 # `examples/aws-deployment/deploy-cms.yml` has drifted from its template
 
+**Duplicate of [example-aws-deployment-drift-from-template.md](../example-aws-deployment-drift-from-template.md), merged during the base merge (#341).**
+
 **Priority:** P2
 **Found:** 2026-09-12, while wiring the GitHub App props (PR B3 of adopter request #45)
 
@@ -44,10 +46,3 @@ catches only the drift someone remembered to add a line for. Everything above sl
 
 `infrastructure/lib/cms-stack.ts` also carries one unrelated comment-only drift (the
 `uploadBehavior` CORS paragraph is a shorter, older wording than the template's).
-
-## Overlaps
-
-The same drift was filed independently on 2026-09-12 as
-[examples-aws-deployment-drift.md](examples-aws-deployment-drift.md) (on `int-202609-cms-image`)
-and [example-aws-deployment-drift-from-template.md](example-aws-deployment-drift-from-template.md);
-fix the three as one.
