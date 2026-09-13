@@ -7,7 +7,9 @@ This guide walks through deploying CanopyCMS on AWS using Lambda + EFS + EC2 Wor
 > [`.claude/future-tasks/resolved/cms-service-deployment-test.md`](../.claude/future-tasks/resolved/cms-service-deployment-test.md)
 > for the full account of what broke and the fixes. Load-bearing gotchas that
 > guide is the source of truth for: reference secrets by their **full** ARN
-> (below); Lambda **architecture must match the Docker image platform**;
+> (below); the CMS image's **build platform must match the Lambda
+> architecture** (`CanopyCmsService` now derives it, arm64 by default — see
+> [Where the image is built](#where-the-image-is-built));
 > **`clerkMiddleware` needs an explicit `jwtKey`** (the env var alone is never
 > read → the no-internet Lambda hangs on sign-in) and the shipped template
 > asserts a secret key; the raw-CloudFront path needs the managed
@@ -312,10 +314,12 @@ Prerequisites that an update-function-code pipeline did not need:
    (`cdk-hnb659fds-*-deploy-role`, `-file-publishing-role`,
    `-image-publishing-role`, `-lookup-role`). `cdk deploy` mutates
    infrastructure, so this is a wider grant than updating a function's code.
-3. **A Docker daemon on the runner** (`ubuntu-latest` has one). On a
-   self-hosted runner, you also need Actions Runner v2.327.1 or later: the
-   workflow's pinned actions run on Node 24, and their docs give that as the
-   minimum.
+3. **A Docker daemon on the runner.** The generated workflow's
+   `ubuntu-24.04-arm` has one; read
+   [Where the image is built](#where-the-image-is-built) before changing the
+   runner. On a self-hosted runner, you also need Actions Runner v2.327.1 or
+   later: the workflow's pinned actions run on Node 24, and their docs give
+   that as the minimum.
 4. **The CDK devDependencies from Step 4**, committed to `package.json`. The
    workflow checks for them before deploying.
 
@@ -368,24 +372,59 @@ rename it in the workflow's Deploy step too.
 
 ### Build-time client keys
 
-`NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` is inlined into the **client** bundle by
-Next.js at image-build time, so it has to reach the image _build_ — a Lambda
-environment variable is far too late. Because CDK builds the image, it must be
-passed through `buildArgs` in the stack, not through a `docker build
---build-arg` step in CI:
+`NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` and `NEXT_PUBLIC_CANOPY_MODE` are inlined
+into the **client** bundle by Next.js at image-build time, so they have to reach
+the image _build_ — a Lambda environment variable is far too late. Because CDK
+builds the image, they must be passed through `buildArgs` in the stack, not
+through a `docker build --build-arg` step in CI:
 
 ```ts
 cmsDockerImage: lambda.DockerImageCode.fromImageAsset('.', {
   file: 'Dockerfile.cms',
+  // No `platform`: see "Where the image is built" below.
   buildArgs: {
     NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY ?? '',
+    NEXT_PUBLIC_CANOPY_MODE: 'prod',
   },
 }),
 ```
 
-The workflow sets that variable on the `cdk deploy` step from a repository
-variable. If it is missing, the deploy still succeeds and the editor ships with
-an empty publishable key.
+The workflow sets the publishable key on the `cdk deploy` step from a
+repository variable. If it is missing, the deploy still succeeds and the editor
+ships with an empty publishable key. `NEXT_PUBLIC_CANOPY_MODE` is a literal;
+[Operating mode](#operating-mode) explains why it is needed.
+
+### Where the image is built
+
+`cdk deploy` builds the CMS image on whichever machine runs it, but that machine
+does not decide what ends up in the image:
+
+- **The image's architecture is the docker build's target platform**, and
+  `CanopyCmsService` fixes that from its `architecture` prop (`ARM_64` by
+  default). It always passes the function a resolved architecture, and CDK
+  derives a `fromImageAsset` image's build platform from it. Leave `platform`
+  off `fromImageAsset`: an explicit one overrides the derived value, and an
+  image built for the other architecture deploys clean, then fails at invoke
+  with an exec format error. A prebuilt `fromEcr` image has no build for CDK to
+  steer, so build it with the matching `--platform` yourself.
+- **Everything native comes from inside the build.** The Node binary is the
+  `node:22-slim` base image's, pulled for the target platform, and git and
+  sharp (with libvips) are installed by `Dockerfile.cms`'s own steps.
+  `.dockerignore` keeps the host's `node_modules` out of the build context.
+
+What the host does decide is whether that build runs natively, and so how fast:
+
+| `cdk deploy` runs on         | Building the default `linux/arm64` image                                                                                                                                                               |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Apple Silicon Mac            | Native, fast                                                                                                                                                                                           |
+| GitHub `ubuntu-24.04-arm`    | Native. The generated workflow's runner; a standard GitHub-hosted runner in private repositories since 2026-01-29, with 2 vCPUs there                                                                  |
+| GitHub `ubuntu-latest` (x86) | Needs QEMU emulation (`docker/setup-qemu-action`). Emulated `next build` is slow, and emulated arm64 builds have failure reports on 24.04 runners ([actions/runner-images#11561][runner-images-11561]) |
+
+[runner-images-11561]: https://github.com/actions/runner-images/issues/11561
+
+The asset's hash covers its build inputs — the directory contents, `file`,
+`buildArgs` and the platform among them — and not the machine that built it, so
+the same inputs give the same asset hash on a Mac or in CI.
 
 ### Worker outage during deploy
 

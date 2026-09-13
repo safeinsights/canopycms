@@ -234,11 +234,17 @@ export interface CanopyCmsServiceProps {
   reservedConcurrency?: number
 
   /**
-   * Lambda architecture (default: `Architecture.X86_64`, Lambda's own
-   * default). MUST match the platform the Docker image was built for - e.g.
-   * an image built for `Platform.LINUX_ARM64` requires
-   * `Architecture.ARM_64` here, or the function fails at invoke time with
-   * an exec format error.
+   * Lambda architecture (default: `Architecture.ARM_64`, matching the EC2
+   * worker and AssetSupport's transform Lambda).
+   *
+   * This also decides the image's architecture for
+   * `DockerImageCode.fromImageAsset`: the construct always passes a resolved
+   * architecture to the function, and CDK derives the Docker build platform
+   * from it. So omit `platform` on `fromImageAsset`. An explicit `platform`
+   * overrides the derived one, and an image built for the other architecture
+   * deploys clean, then fails at invoke with an exec format error. A prebuilt
+   * image (`DockerImageCode.fromEcr`) has no build for CDK to steer, so it
+   * must already be built for this architecture.
    */
   architecture?: lambda.Architecture
 
@@ -716,6 +722,14 @@ export class CanopyCmsService extends Construct {
       attachLambdaExecutionPolicies(props.lambdaRole, { vpc: true })
     }
 
+    // Always resolved, never passed through as `undefined`. DockerImageFunction
+    // hands it to the image code's `_bind`, and for `fromImageAsset` that is
+    // what sets the Docker build platform. Unset, CDK sets no platform at all:
+    // Docker builds for whatever machine runs `cdk deploy` (arm64 on Apple
+    // Silicon, amd64 on an x86 CI runner) while the function stays x86_64, and
+    // the mismatch only shows at invoke. See `architecture`'s doc comment.
+    const architecture = props.architecture ?? lambda.Architecture.ARM_64
+
     this.lambdaFunction = new lambda.DockerImageFunction(this, 'CmsFunction', {
       code: props.cmsDockerImage,
       // Default (unset) leaves CDK to create the execution role, with its own
@@ -724,7 +738,7 @@ export class CanopyCmsService extends Construct {
       memorySize: props.memorySize ?? 2048,
       timeout: this.timeout,
       reservedConcurrentExecutions: props.reservedConcurrency ?? 10,
-      architecture: props.architecture,
+      architecture,
       vpc: this.vpc,
       vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_ISOLATED },
       securityGroups: [lambdaSg],
