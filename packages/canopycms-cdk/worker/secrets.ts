@@ -17,7 +17,67 @@
  * as a re-export that must survive any reshuffle.
  */
 
+import type { SecretsManagerClientConfig } from '@aws-sdk/client-secrets-manager'
 import { workerLog, workerLogWarn } from 'canopycms/worker/cms-worker'
+
+/**
+ * Bounds every network op `SecretsManagerClient` performs, so a stalled
+ * endpoint fails instead of hanging forever.
+ *
+ * Measured against the installed `@aws-sdk/client-secrets-manager@3.1018.0`,
+ * which resolves `@smithy/node-http-handler@4.5.0` (confirmed with
+ * `pnpm why @smithy/node-http-handler` — `@aws-sdk/client-s3` in this same
+ * package resolves a separate `4.9.9` copy, so this is specific to this
+ * client). `new SecretsManagerClient({})` arms NO timeout at all in that
+ * version: a probe against a `node:net` server that accepts the connection and
+ * never writes a byte was still pending after 10s with zero options set
+ * (1 connection made, `send` unsettled). Per-option probes against the same
+ * server, and against a genuine SYN black hole for the handshake case
+ * (loopback/reserved ranges get an immediate local EHOSTUNREACH on this
+ * network and can't be used to test a hung *connection*):
+ *   - `connectionTimeout: 1000` rejected at ~1021ms with `TimeoutError` when
+ *     the TCP handshake never completed.
+ *   - `socketTimeout: 1000` rejected at ~1023ms with `TimeoutError` on its own
+ *     — no extra flag needed.
+ *   - `requestTimeout: 1000` alone did NOT reject — after 5s it had only
+ *     logged `@smithy/node-http-handler - [WARN] ... Init client
+ *     requestHandler with throwOnRequestTimeout=true to turn this into an
+ *     error.` (dist-cjs/index.js's `setRequestTimeout`). Adding
+ *     `throwOnRequestTimeout: true` made the same 1000ms bound reject at
+ *     ~1023ms.
+ *   - Default `maxAttempts` resolves to 3 (`client.config.maxAttempts()`), and
+ *     the SDK retries failures on its own: one failing `send()` against the
+ *     black-holed server hit it 3 times. `maxAttempts: 1` cut that to exactly
+ *     1 — required here because `fetchSecretString` below already owns retry
+ *     and backoff, so the SDK's own retries would multiply it again.
+ *
+ * Chosen bounds: a `connectionTimeout` of a few seconds (the handshake should
+ * be near-instant against a healthy endpoint) and a `requestTimeout` —
+ * `throwOnRequestTimeout: true` so it actually fires per the measurement above
+ * — in the 10-20s range as the overall per-call cap, plus `socketTimeout` at
+ * the same bound as a second, independent trip wire against a connection that
+ * goes quiet mid-response rather than never starting. With `maxAttempts: 1`,
+ * one `fetchSecretString` call (default `retries: 3`, so up to 4 attempts) now
+ * has a worst case of `4 × requestTimeout + (1s + 2s + 4s backoff) = 67s` when
+ * every attempt hangs — bounded, versus previously unbounded (and previously
+ * up to `4 × 3 = 12` transport attempts per `getSecret`, per
+ * `credential-refresh.ts`'s cost arithmetic, before this change).
+ */
+export function secretsManagerClientConfig(
+  timeouts: { connectionTimeout?: number; requestTimeout?: number } = {},
+): SecretsManagerClientConfig {
+  const { connectionTimeout = 3_000, requestTimeout = 15_000 } = timeouts
+  return {
+    requestHandler: {
+      connectionTimeout,
+      requestTimeout,
+      throwOnRequestTimeout: true,
+      socketTimeout: requestTimeout,
+    },
+    // fetchSecretString below is the retry authority; see its own comment.
+    maxAttempts: 1,
+  }
+}
 
 /**
  * Reads a secret's string value, retrying only TRANSPORT failures.
@@ -39,7 +99,7 @@ import { workerLog, workerLogWarn } from 'canopycms/worker/cms-worker'
 async function fetchSecretString(secretArn: string, retries: number): Promise<string> {
   const { SecretsManagerClient, GetSecretValueCommand } =
     await import('@aws-sdk/client-secrets-manager')
-  const client = new SecretsManagerClient({})
+  const client = new SecretsManagerClient(secretsManagerClientConfig())
 
   // Normalized so the loop ALWAYS terminates through `break` or `throw`, never
   // by falling out of the condition, and never without bound. Three shapes,
