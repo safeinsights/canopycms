@@ -56,8 +56,10 @@
  * and `POST /app-manifests/{code}/conversions` exchanges that code for the App's
  * id, client id and **the private key itself**. So `create` runs a one-shot
  * loopback server, captures the key in memory, and hands it straight to a
- * destination the operator named — **the key never touches disk**, and nobody has
- * to find a downloaded `.pem`.
+ * destination the operator named. Sent to a command's stdin — the recommended
+ * route — **the key never touches disk**, and nobody has to find a downloaded
+ * `.pem`. `--key-out` deliberately does write it to a file, for an operator with
+ * no such command; that is the trade, not an oversight.
  *
  * MEASURED (2026-09-05, in a sibling project) and it contradicts the
  * documentation: GitHub's REST docs list `redirect_url` as OPTIONAL, and the
@@ -81,7 +83,8 @@
  *
  * THE KEY'S DESTINATION IS NOT THIS TOOL'S BUSINESS
  *
- * `create` takes either a command to pipe the PEM into, or a file to write. It
+ * `create` takes either a command to pipe the PEM into (`-- <cmd>`) or a file to
+ * write (`--key-out`), and asks for another of either if the first fails. It
  * knows nothing about AWS, or any other secret store: an adopter may not deploy
  * to AWS at all, and a setup tool that hardcodes one cloud is a setup tool for
  * one adopter. `docs/deploying-to-aws.md` carries the worked invocation.
@@ -346,9 +349,11 @@ export type GitHubResponse<T> = {
   status: number
   body: T | null
   /**
-   * On a FAILURE: GitHub's own `message`, or a redacted prefix of the response
-   * text. Empty string on success — a success body here is App credentials, and
-   * a prefix of one is not worth handing to a caller that might print it.
+   * On a FAILURE: GitHub's own `message`, a redacted prefix of the response text,
+   * or — when `status` is 0, meaning the request or the body read never completed
+   * — the redacted client-side error, since there is no response to quote. Empty
+   * string on success: a success body here is App credentials, and a prefix of one
+   * is not worth handing to a caller that might print it.
    */
   message: string
 }
@@ -558,13 +563,20 @@ export type SpawnFn = (command: string, args: string[]) => ChildProcess
  *
  * WHAT `stored: true` DOES AND DOES NOT MEAN. It means the command exited zero
  * and nothing went wrong writing to it. It does NOT mean the command read the
- * key, and it cannot: **a PEM is around 1.7KB and a pipe buffer is 64KB, so the
- * write completes into the kernel buffer whether or not the child ever reads
- * it.** MEASURED against real children — `sh -c 'exec 0<&-; exit 0'` (closes its
- * input and exits) and `sh -c 'head -c 5 >/dev/null; exit 0'` (reads five bytes)
- * both report stored, and no EPIPE is generated in either case because the write
- * never had to block. There is no local signal that distinguishes them from a
- * command that stored the key properly.
+ * key, and it cannot: **the write lands in the kernel's pipe buffer before the
+ * child gets as far as closing its end, and a completed write reports nothing
+ * about whether anyone read it.** MEASURED against real children —
+ * `sh -c 'exec 0<&-; exit 0'` (closes its input and exits) and
+ * `sh -c 'head -c 5 >/dev/null; exit 0'` (reads five bytes) both report stored,
+ * with no EPIPE in either case.
+ *
+ * The reason is TIMING, not size, and the difference matters because the size
+ * explanation is the tempting one and it is wrong. EPIPE is raised when the read
+ * end is ALREADY closed at the moment of writing, whatever the size. Measured
+ * against `sh -c 'exec 0<&-; sleep 0.4'`: writing 1.7KB immediately → no error;
+ * writing the same 1.7KB 200ms later → EPIPE; writing **8 bytes** 200ms later →
+ * EPIPE. So a small payload does not avoid EPIPE — it merely never blocks, which
+ * is what lets the write win the race.
  *
  * So the child's EXIT CODE is the contract, and the operator is responsible for
  * naming a command that fails loudly. That is stated here rather than papered
@@ -589,7 +601,9 @@ export async function handOffKey(
       if (isNodeError(err) && err.code === 'EEXIST') {
         return {
           stored: false,
-          detail: `${destination.filePath} already exists — refusing to overwrite it`,
+          detail:
+            `${destination.filePath} already exists (as a file or a directory) — refusing ` +
+            'to overwrite it',
         }
       }
       return { stored: false, detail: redactCredentials(getErrorMessage(err)) }
@@ -711,8 +725,9 @@ export function startCallbackServer(
     `<body style="font:16px system-ui;padding:3rem"><h1>${escapeHtml(title)}</h1>` +
     `<p>${escapeHtml(detail)}</p></body>`
 
-  // Set once the code has been captured, so `stopListening` is reachable from
-  // inside the handler before the caller's `close()` runs.
+  // Assigned once the socket is listening, and CALLED by the request handler as
+  // soon as it has the code — so the listener closes itself rather than waiting
+  // for the caller's `finally`. Declared out here only so both can reach it.
   let stopListening = () => {}
 
   const server = createServerFn((req, res) => {
@@ -1346,7 +1361,8 @@ async function createCommand(options: InitGitHubAppOptions): Promise<number> {
       `Registering "${name}" for ${target.owner}/${target.repo}.\n\n` +
         'Its permissions, which is the part that matters:\n\n' +
         `${JSON.stringify(CANOPY_APP_PERMISSIONS, null, 2)}\n\n` +
-        `The key will go to ${describeDestination(destination)}.\n\n` +
+        `The key will go to ${describeDestination(destination)} — and if that fails you will\n` +
+        `be asked for somewhere else before it is discarded.\n\n` +
         '1. Open this file in a browser:\n\n' +
         `     ${formFile}\n\n` +
         '   The browser matters, twice over. It must be LOGGED IN TO GITHUB as an owner of\n' +
@@ -1378,13 +1394,18 @@ async function createCommand(options: InitGitHubAppOptions): Promise<number> {
     const created = await convertManifest(code)
     if (!created) {
       console.error(
-        '  the exchange failed. The code is valid for one hour; re-run `create` for a new one.\n' +
-          '  See the recovery note above — the App itself may well exist.',
+        '  the exchange failed, so this command never received the private key.\n\n' +
+          '  Do NOT simply re-run `create`: it submits a fresh manifest and would register a\n' +
+          '  SECOND App. The App you just created almost certainly exists — open it, generate\n' +
+          '  a key from its "Private keys" section (see the recovery note above), and then run\n' +
+          '  `canopycms init-github-app verify`. Delete the App instead if you would rather\n' +
+          '  start over.',
       )
       return 1
     }
     console.log(
-      `  created App ${created.slug} (id ${created.id}) — private key held in memory, not written to disk`,
+      `  created App ${created.slug} (id ${created.id}) — private key captured; sending it to` +
+        ` ${describeDestination(destination)}`,
     )
 
     // THE KEY IS HANDED OFF FIRST, before the install prompt and the readback,

@@ -3371,13 +3371,21 @@ GITHUB_BOT_TOKEN=ghp_...    # Bot token for PR creation
 ```
 
 GitHub App auth is optional -- a PAT stays the documented default, since registering an App
-needs account-owner rights many adopters don't have. To use one instead, run
-`npx canopycms init-github-app create` to register a per-site App via GitHub's App-manifest
-flow (so GitHub shows you the exact permissions before you click Create) and capture its
-private key without it ever touching disk; `init-github-app verify` re-checks an existing
-installation and changes nothing. Both print `GITHUB_APP_ID` and `GITHUB_APP_INSTALLATION_ID`.
-Register one App per site, never one shared across repositories. Full walkthrough (including
-where the key ends up and how the worker reads it) in [docs/deploying-to-aws.md](docs/deploying-to-aws.md#authenticating-as-a-github-app).
+needs account-owner rights many adopters don't have. To use one instead, register a per-site
+App via GitHub's App-manifest flow, which shows you the exact permissions before you click
+Create:
+
+```bash
+npx canopycms init-github-app create -- <a command that reads the key from stdin>
+```
+
+You must say where the key goes, and `create` refuses to start without it: everything after
+`--` is run with the private key on its standard input, so it never touches disk, or
+`--key-out <path>` writes a `0600` file instead. `init-github-app verify` re-checks an
+existing installation and changes nothing. Both print `GITHUB_APP_ID` and
+`GITHUB_APP_INSTALLATION_ID`. Register one App per site, never one shared across
+repositories. Full walkthrough, with a worked command, in
+[docs/deploying-to-aws.md](docs/deploying-to-aws.md#authenticating-as-a-github-app).
 
 ## Documentation
 

@@ -521,13 +521,19 @@ aws secretsmanager get-secret-value --secret-id canopycms/github-app-key \
 ```
 
 Read-only and repeatable. It reports the permissions the installation actually
-holds — flagging anything **missing** and anything **wider than intended** —
-whether the installation is scoped to selected repositories or to all of them,
-whether it has been suspended, and whether a token can actually be minted. That
-last one matters because **adding a permission to an App does not reach existing
-installations until an account owner approves it**, so an App whose settings page
-looks correct can still hold a stale grant. Any token it mints is revoked
-immediately.
+holds — flagging anything **missing** and anything **wider than intended**,
+including a level stronger than needed — whether the installation is scoped to
+selected repositories or to all of them, whether it has been suspended, whether
+the App is installed exactly **once** (a second installation means this key
+reaches another account's repositories), and whether a token can actually be
+minted. That last one matters because **adding a permission to an App does not
+reach existing installations until an account owner approves it**, so an App
+whose settings page looks correct can still hold a stale grant. Any token it
+mints is revoked immediately.
+
+A check that could not run is reported as a failure, not passed over — "could
+not list this App's installations" is not the same as "installed once", and only
+one of those is a reason to trust the credential.
 
 #### Then set these instead of `GITHUB_TOKEN_SECRET_ARN`
 
