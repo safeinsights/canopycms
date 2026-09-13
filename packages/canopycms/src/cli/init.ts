@@ -384,6 +384,21 @@ export async function initDeployAws(options: InitDeployOptions): Promise<void> {
     writeOpts,
   )
 
+  // infrastructure/ imports aws-cdk-lib and canopycms-cdk, which the app itself need not install,
+  // and a Next app's tsconfig.json includes `**/*.ts`. Unexcluded, the app's own `next build`
+  // type-checks the CDK app and fails with "Cannot find module 'aws-cdk-lib'". The image build is
+  // covered separately: the generated .dockerignore keeps infrastructure/ out of its context.
+  const tsconfigResult = await excludeFromTsconfig(projectDir, 'infrastructure')
+  if (tsconfigResult === 'added') {
+    p.log.success('updated: tsconfig.json (infrastructure/ excluded from type-checking)')
+  } else if (tsconfigResult === 'missing' || tsconfigResult === 'unreadable') {
+    p.log.warn(
+      `${tsconfigResult === 'missing' ? 'No tsconfig.json found' : 'tsconfig.json is not plain JSON, so it was left alone'}. ` +
+        'Add "infrastructure" to its "exclude" list, or `next build` type-checks the CDK app ' +
+        'and fails unless aws-cdk-lib is installed in the app.',
+    )
+  }
+
   // An adopter with their own CDK app keeps it (writeFile skips), which leaves
   // the scaffolded infrastructure/ unreachable. Say so: the generated workflow
   // deploys by stack name, so it will fail with "no stacks match" rather than
@@ -471,6 +486,60 @@ export async function initDeployAws(options: InitDeployOptions): Promise<void> {
   )
 
   p.outro('Done!')
+}
+
+/** What `excludeFromTsconfig` did. */
+type TsconfigExcludeResult = 'added' | 'already-excluded' | 'missing' | 'unreadable'
+
+/**
+ * Add `dir` to the project's tsconfig.json `exclude`, keeping every other key.
+ *
+ * Only plain JSON is rewritten. A tsconfig.json may legally carry comments and trailing commas,
+ * which `JSON.parse` rejects, and re-serializing such a file would delete them, so the caller asks
+ * for the edit by hand instead. The rewrite uses two-space indentation, as create-next-app does.
+ *
+ * An absent `exclude` becomes `['node_modules', dir]` rather than `[dir]`: setting `exclude`
+ * replaces TypeScript's default list, and create-next-app spells `node_modules` out too.
+ */
+async function excludeFromTsconfig(
+  projectDir: string,
+  dir: string,
+): Promise<TsconfigExcludeResult> {
+  const tsconfigPath = path.join(projectDir, 'tsconfig.json')
+  let text: string
+  try {
+    text = await fs.readFile(tsconfigPath, 'utf-8')
+  } catch (err) {
+    if (isNotFoundError(err)) return 'missing'
+    throw err
+  }
+
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(text)
+  } catch {
+    return 'unreadable'
+  }
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return 'unreadable'
+
+  const exclude: unknown = 'exclude' in parsed ? parsed.exclude : undefined
+  const isStringArray = (value: unknown): value is string[] =>
+    Array.isArray(value) && value.every((item) => typeof item === 'string')
+  if (exclude !== undefined && !isStringArray(exclude)) return 'unreadable'
+
+  const current = exclude ?? ['node_modules']
+  // `infrastructure`, `./infrastructure/`, `infrastructure/**` and `infrastructure/**/*` all
+  // exclude the same tree.
+  const coversDir = (pattern: string) =>
+    pattern.replace(/^\.\//, '').replace(/\/(\*\*(\/\*)?)?$/, '') === dir
+  if (current.some(coversDir)) return 'already-excluded'
+
+  await fs.writeFile(
+    tsconfigPath,
+    `${JSON.stringify({ ...parsed, exclude: [...current, dir] }, null, 2)}\n`,
+    'utf-8',
+  )
+  return 'added'
 }
 
 /**

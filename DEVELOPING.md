@@ -3610,6 +3610,52 @@ The rewrite pattern is the most fragile part and fails silently in both directio
 
 When changing either the rewrite or the guard, verify the guard still fails. Strip a `.js` off one relative specifier in a built `dist/**/*.d.ts` and re-run `pnpm check:esm`: the runtime probe should stay green and the type pass should go red. Deleting a built `.d.ts` outright should also go red. If either stays green, the guard is not testing what it claims -- and confirm the mutation actually landed before trusting the result (see [Diffing Synthesized Output Across a Construct Refactor](#diffing-synthesized-output-across-a-construct-refactor)).
 
+### Standalone CMS Image Smoke Test (`standalone-image` CI job)
+
+`scripts/smoke/standalone-image.mjs` builds the CMS editor image that `canopycms init-deploy aws`
+generates (`Dockerfile.cms.template`), boots it, and sends it real requests. Its header comment
+is authoritative on the why -- read it before changing the script. In short:
+
+- **Scaffolded OUTSIDE this workspace.** A Next 16.1.7 app installs `pnpm pack` tarballs of
+  `canopycms`, `canopycms-next`, and `canopycms-auth-dev` (`npm pack` won't do -- only pnpm
+  applies `publishConfig`). An in-workspace build resolves those as workspace links and bundles
+  sharp into a chunk; this registry-shaped install externalizes it as
+  `.next/node_modules/sharp-<hash>` instead, the shape an adopter's build actually produces.
+- **Runs in dev mode**, with a git checkout of the scaffold's `content/` on a non-`main`
+  `release-base` branch copied in before boot -- see the header comment for why.
+- **Checks (`assertContainer`):** `whoami` answers 200; a request-time content read from the
+  non-`main` base branch; a build-time read (prerendered `/sitemap.xml`); three not-found shapes
+  stay non-500; an asset round trip (presign -> proxied upload/finalize -> original PNG -> WebP
+  resize transform); sharp externalized as a `.next/node_modules/sharp-*` alias; each alias has
+  the libvips-cpp its own sharp declares; each alias loads and encodes; zero `ERR_DLOPEN_FAILED`
+  in the container logs.
+
+Run it locally (needs Docker running, Node >= 22.2, pnpm, and corepack for `--pm pnpm`):
+
+```bash
+node scripts/smoke/standalone-image.mjs --pm pnpm
+node scripts/smoke/standalone-image.mjs --pm npm
+```
+
+Flags: `--pm pnpm|npm`, `--next <version>` (default 16.1.7), `--pnpm-version` (default 11.27.0,
+written as the scaffold's `packageManager`), `--tarballs <dir>` (reuse pre-packed tarballs instead
+of packing), `--work-dir <dir>` (must be outside the repo), `--keep` (keep the container/image).
+
+**Red-before-green:** `pnpm pack --pack-destination <dir>` from `packages/<name>` against a
+deliberately broken copy of that package, copy the other two tarballs into the same directory,
+then run with `--tarballs <dir>`. Restore the source from a scratch copy afterward -- never
+`git checkout --`.
+
+**Pitfall:** a fixture that bundles sharp instead of externalizing it fails the "externalized"
+check on purpose -- that's the guard working, not a fixture bug.
+
+CI runs it as `standalone-image`, matrixed over pnpm+npm on `ubuntu-latest` and pnpm on
+`ubuntu-24.04-arm` (the Lambda's default architecture). Gated by `dorny/paths-filter` like
+`dual-build` -- the job always reports, only the expensive build+boot steps are skipped -- on
+paths able to break the image: the CLI's template/scaffold code, sharp tracing/config, the
+assets and branch-workspace/build-mode/content-reader read path, the three vendored packages'
+`package.json`s, the lockfile, and the script and workflow themselves.
+
 ### Future-Tasks Backlog Check
 
 `.claude/future-tasks/` is the durable backlog, and AGENTS.md requires every deferred issue to exist as a task file **plus** an `index.md` row. Four failure modes kept slipping through review, so they are now enforced:

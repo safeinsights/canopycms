@@ -409,6 +409,92 @@ jobs:
         if: steps.filter.outputs.relevant != 'true'
         run: echo "No changes under the dual-build-relevant paths -- skipping the two next builds."
 
+  standalone-image:
+    name: Standalone CMS Image (${{ matrix.pm }}, ${{ matrix.runner }})
+    # Builds the CMS editor image that `canopycms init-deploy aws` generates, boots it, and sends
+    # it real requests. The app is scaffolded OUTSIDE this workspace from `pnpm pack` tarballs,
+    # because only a registry-shaped install externalizes sharp the way an adopter's build does.
+    # scripts/smoke/standalone-image.mjs holds the scaffold, every check, and the reason for each;
+    # this job only supplies the matrix, and the script runs the same way locally.
+    #
+    # Until this job, nothing built Dockerfile.cms.template: its tests were string matches and a
+    # CDK synth that stops at staging the build context. A base branch the builder could not
+    # build, and a libvips library missing from the standalone output, both reached the first
+    # adopter to build the image.
+    #
+    # Path-gated the same way `dual-build` is above, and for the same reason: the job always runs
+    # and reports a conclusion, and only its expensive steps are skipped.
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # amd64, native and fast here. Neither defect above depends on architecture.
+          - pm: pnpm
+            runner: ubuntu-latest
+          - pm: npm
+            runner: ubuntu-latest
+          # arm64: the runner deploy-cms.yml.template puts adopters on, to match the Lambda's
+          # default architecture. This leg is the only CI build of the image there.
+          - pm: pnpm
+            runner: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # paths-filter diffs against the PR base/previous push
+
+      - name: Check for standalone-image-relevant changes
+        id: filter
+        uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
+        with:
+          filters: |
+            # What the image is generated from, what decides where build-time reads come from,
+            # how sharp is traced and loaded, and what the smoke app installs.
+            relevant:
+              - 'packages/canopycms/src/cli/template-files/**'
+              - 'packages/canopycms/src/cli/cli.ts'
+              - 'packages/canopycms/src/cli/init.ts'
+              - 'packages/canopycms/src/cli/project-detect.ts'
+              - 'packages/canopycms/src/cli/templates.ts'
+              - 'packages/canopycms-next/src/config.ts'
+              - 'packages/canopycms-next/src/sharp-tracing.ts'
+              - 'packages/canopycms-next/src/with-canopy.ts'
+              - 'packages/canopycms/src/assets/**'
+              - 'packages/canopycms/src/branch-workspace.ts'
+              - 'packages/canopycms/src/build-mode.ts'
+              - 'packages/canopycms/src/content-reader.ts'
+              - 'packages/canopycms/package.json'
+              - 'packages/canopycms-auth-dev/package.json'
+              - 'packages/canopycms-next/package.json'
+              - 'pnpm-lock.yaml'
+              - 'scripts/smoke/**'
+              - '.github/workflows/ci.yml'
+
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        if: steps.filter.outputs.relevant == 'true'
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        if: steps.filter.outputs.relevant == 'true'
+        with:
+          node-version-file: '.nvmrc'
+          cache: 'pnpm'
+
+      # Only for `pnpm pack`: each package's prepack builds it from this checkout.
+      - name: Install dependencies
+        if: steps.filter.outputs.relevant == 'true'
+        run: pnpm install --frozen-lockfile
+
+      - name: Build, boot and check the CMS image
+        if: steps.filter.outputs.relevant == 'true'
+        run: >-
+          node scripts/smoke/standalone-image.mjs
+          --pm ${{ matrix.pm }}
+          --work-dir "${{ runner.temp }}/standalone-image-smoke"
+
+      - name: Skipped (no standalone-image-relevant changes)
+        if: steps.filter.outputs.relevant != 'true'
+        run: echo "No changes under the standalone-image-relevant paths -- skipping the image build."
+
   example1-build:
     name: Example1 Build & Content Gate
     # apps/example1 is the reference app most doc snippets and e2e

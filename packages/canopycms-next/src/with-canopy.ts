@@ -432,6 +432,10 @@ function sharpTracingConfig(
  *   - Your own includes are kept.
  *   - A standalone build warns if the directory cannot be found, or if the Next version cannot be
  *     read.
+ * - On Next 16 and later, or when the Next version cannot be read, sets `turbopack: {}` when your
+ *   config has neither `turbopack` nor `webpack`. Next 16 builds and runs `next dev` with Turbopack
+ *   by default, and exits when the config has a `webpack` function (the React aliases above add
+ *   one) but no `turbopack` config.
  *
  * **When you need this:**
  * - Always recommended — it replaces manual `transpilePackages` configuration
@@ -515,6 +519,23 @@ export function withCanopy(
   // file: symlinks must use `next dev --webpack` for local development.
   // Turbopack works fine when canopycms is installed from npm (no symlinks).
 
+  // Next 16 defaults both `next build` and `next dev` to Turbopack, marking the default with
+  // `TURBOPACK=auto` (`next/dist/lib/bundler.js`), and then exits with "This build is using
+  // Turbopack, with a `webpack` config and no `turbopack` config" whenever the exported config's
+  // `webpack` is truthy and its `turbopack` is not (`validateTurboNextConfig` in
+  // `next/dist/lib/turbopack-warning.js`, 16.1.7). The `webpack` function above is withCanopy's,
+  // and its aliases matter only to the `file:` symlink installs the NOTE above already sends to
+  // `--webpack`. So withCanopy answers for it with an empty, truthy `turbopack` object. It does so
+  // only when the adopter wrote no `webpack` of their own, for which Next's guard is the right one,
+  // and never over a `turbopack` they set. Next 15 only warns here, so the default starts at 16;
+  // an unreadable version is treated as current, as the sharp tracing below does.
+  const nextMajor = installedNextMajor(process.cwd())
+  const answerTurbopackGuard =
+    webpack !== undefined &&
+    !isSet(existingWebpack) &&
+    !isSet(nextConfig.turbopack) &&
+    (nextMajor === null || nextMajor >= 16)
+
   // Dual-build support: a static build gets STATIC_PAGE_EXTENSIONS (e.g. `page.static.tsx`)
   // instead of CMS_PAGE_EXTENSIONS, so CMS-only files (`route.server.ts`, `page.server.tsx`)
   // are excluded from static export while the static-only page variants are included.
@@ -556,5 +577,6 @@ export function withCanopy(
     // Spread conditionally: emitting `generateBuildId: undefined` would be a key Next has to
     // reason about, where absence is unambiguous.
     ...(generateBuildId ? { generateBuildId } : {}),
+    ...(answerTurbopackGuard ? { turbopack: {} } : {}),
   }
 }

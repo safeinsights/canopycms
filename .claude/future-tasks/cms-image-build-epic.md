@@ -385,6 +385,31 @@ Implements `deploy-image-build-smoke-test.md`. Its chip is spawned only after PR
   this PR.
 - **Backlog.** Resolve the task and move its index rows. The Yarn decision stays in its own task.
 
+**As built.**
+- **Fixture.** A hand-written Next 16.1.7 app in create-next-app's shape, using its `tsconfig.json`
+  verbatim, rather than `create-next-app` itself. It adds a force-dynamic `[slug]` route, a
+  prerendered `sitemap.ts` as the build-time read, `media: { adapter: 'local' }` and
+  `defaultBaseBranch: 'release-base'`. The container runs in dev mode, with a git checkout on
+  `release-base` copied into `/app` before it starts.
+- **The watched `DYNAMIC_SERVER_USAGE` 500s did not reproduce.** The fixture's root layout reads
+  content through the scaffold's `readByUrlPath` on every page. Its not-found responses are 404s
+  rendered through that layout, and the container logs zero `DYNAMIC_SERVER_USAGE`. Nothing was
+  filed.
+- **The libvips check follows the alias's own sharp.** Next's own sharp 0.34.5 brings libvips
+  1.2.4, which its tracer copies unaided, so "some `libvips-cpp` under `/app`" passes with the
+  defect present.
+- **A third scaffold defect.** Next 16 exits a `next build` or `next dev` that defaulted to
+  Turbopack when the config has `webpack` and no `turbopack`, and `withCanopy` always adds
+  `webpack`. Fixed in `with-canopy.ts` for Next 16 and later.
+- **Red before green, on local arm64.**
+  - (a) The pre-PR-1 builder snapshot plus the pre-PR-1 `readsFromCheckout`: the build fails
+    prerendering `/sitemap.xml` with `base branch 'release-base' does not exist locally`.
+  - (b) PR 3's include disabled: 5 of 14 checks fail, and the container log has 4
+    `ERR_DLOPEN_FAILED`.
+- **pnpm version.** The fixture pins `packageManager`. Without it, corepack in `node:22-slim`
+  takes the latest pnpm (12.4.1 on 2026-09-12), which still installed the pnpm 11 lockfile
+  frozen.
+
 ### PR 6: adopter-answer docs (`docs/cms-image-adopter-answers`)
 
 - **Runtime publishable key as a supported shape.** `deploying-to-aws.md:119`: `<ClerkProvider
@@ -466,7 +491,8 @@ when they open their PR, when they hit a decision that needs a call, and when th
 - [sharp-tracing-lockfile-root-edge-cases.md](sharp-tracing-lockfile-root-edge-cases.md) (P3) — two low-severity tracing-root lookup edge cases.
 - [build-canopy-scripts-outside-next-build.md](build-canopy-scripts-outside-next-build.md) (P2) — `createBuildCanopy` / `generate-ai-content` CLI still read a branch clone for server deployments unless `CANOPY_BUILD_MODE=true`; **awaiting a maintainer decision**.
 - [dev-content-watcher-relative-sourceroot.md](dev-content-watcher-relative-sourceroot.md) (P2) — dev content watcher silently off for a relative `sourceRoot`.
-- [init-deploy-aws-first-build-gaps.md](init-deploy-aws-first-build-gaps.md) (P2) — scaffold gaps the image smoke test hits (PR 5 addresses them).
+- [init-deploy-aws-first-build-gaps.md](resolved/init-deploy-aws-first-build-gaps.md) (P2) — scaffold gaps the image smoke test hits. Resolved by PR 5.
+- [yarn-support-decision.md](yarn-support-decision.md) (P3) — keep or drop Yarn in `init-deploy aws`, split from the smoke-test task.
 - [editor-operatingmode-option-unused.md](editor-operatingmode-option-unused.md) (P3) — unused editor `operatingMode` option.
 
 ## Verification

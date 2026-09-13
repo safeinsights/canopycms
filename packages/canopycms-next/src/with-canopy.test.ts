@@ -161,11 +161,55 @@ describe('withCanopy', () => {
     })
   })
 
-  describe('turbopack limitation', () => {
+  describe('turbopack', () => {
     it('does not set turbopack aliases (absolute paths unsupported)', () => {
-      const result = withCanopy({}) as any
-      expect(result.turbopack).toBeUndefined()
+      const result = withCanopy({})
+      expect(result.turbopack?.resolveAlias).toBeUndefined()
       expect(result.experimental?.turbo).toBeUndefined()
+    })
+
+    // Next 16 exits a `next build` or `next dev` that defaulted to Turbopack when the config has
+    // a `webpack` key and no `turbopack` key -- and the alias function above is such a key.
+    it('sets an empty turbopack config on Next 16, answering for its own webpack function', () => {
+      tracing.nextMajor = 16
+      const result = withCanopy({})
+      expect(result.webpack).toBeTypeOf('function')
+      expect(result.turbopack).toEqual({})
+    })
+
+    it('does the same when the Next version cannot be read', () => {
+      tracing.nextMajor = null
+      expect(withCanopy({}).turbopack).toEqual({})
+    })
+
+    it('does the same for a static export build', () => {
+      expect(withCanopy({ output: 'export' }, { staticBuild: true }).turbopack).toEqual({})
+    })
+
+    it('leaves turbopack unset on Next 15, which only warns', () => {
+      tracing.nextMajor = 15
+      expect(withCanopy({})).not.toHaveProperty('turbopack')
+    })
+
+    it("keeps the adopter's own turbopack config", () => {
+      const turbopack = { resolveAlias: { foo: './bar' } }
+      expect(withCanopy({ turbopack }).turbopack).toBe(turbopack)
+    })
+
+    it("treats turbopack: null as unset, as Next's guard does", () => {
+      expect(withCanopy(asNextConfig({ turbopack: null })).turbopack).toEqual({})
+    })
+
+    it("leaves Next's guard in place for the adopter's own webpack config", () => {
+      const result = withCanopy({ webpack: (config) => config })
+      expect(result).not.toHaveProperty('turbopack')
+    })
+
+    it('adds nothing when there is no webpack function to answer for', () => {
+      unresolvablePackages = ['react', 'react-dom']
+      const result = withCanopy({})
+      expect(result.webpack).toBeUndefined()
+      expect(result).not.toHaveProperty('turbopack')
     })
   })
 

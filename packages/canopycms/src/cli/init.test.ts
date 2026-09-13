@@ -5,6 +5,7 @@ import os from 'node:os'
 import { init, initDeployAws, workerRunOnce } from './init'
 import { CDK_DEPENDENCIES } from './project-detect'
 import { mockConsole } from '../test-utils/console-spy'
+import * as p from '@clack/prompts'
 
 // Mock @clack/prompts to avoid interactive prompts in tests
 vi.mock('@clack/prompts', () => ({
@@ -545,6 +546,9 @@ describe('canopycms init-deploy aws', () => {
       .filter((line) => line.length > 0 && !line.startsWith('#'))
     expect(ignoreLines).not.toContain('vendor')
     expect(ignoreLines).not.toContain('vendor/')
+    // The CDK app imports aws-cdk-lib, which the image never installs; inside the
+    // build context `next build` would type-check it and fail.
+    expect(ignoreLines).toContain('infrastructure')
   })
 
   it('skips existing .dockerignore in non-interactive mode', async () => {
@@ -566,6 +570,105 @@ describe('canopycms init-deploy aws', () => {
     const content = await fs.readFile(dockerignorePath, 'utf-8')
     expect(content).not.toBe('existing')
     expect(content).toContain('node_modules')
+  })
+
+  // A Next app's tsconfig.json includes `**/*.ts`, so without an exclude the app's own
+  // `next build` type-checks infrastructure/ and fails on aws-cdk-lib, which the app need not
+  // install. Found by the standalone image smoke test's first real build.
+  describe('tsconfig.json exclusion of infrastructure/', () => {
+    const tsconfigPath = () => path.join(tmpDir, 'tsconfig.json')
+    const runInitDeploy = () =>
+      initDeployAws({ cloud: 'aws', projectDir: tmpDir, force: false, nonInteractive: true })
+    const readTsconfig = async (): Promise<unknown> =>
+      JSON.parse(await fs.readFile(tsconfigPath(), 'utf-8'))
+    const warnings = () => vi.mocked(p.log.warn).mock.calls.map(([message]) => String(message))
+    // create-next-app 16.1.7's tsconfig.json, trimmed to a few representative keys.
+    const nextAppTsconfig = {
+      compilerOptions: { strict: true, jsx: 'react-jsx', plugins: [{ name: 'next' }] },
+      include: ['next-env.d.ts', '**/*.ts', '**/*.tsx', '.next/types/**/*.ts'],
+      exclude: ['node_modules'],
+    }
+
+    beforeEach(() => {
+      vi.mocked(p.log.warn).mockClear()
+    })
+
+    it('adds infrastructure to exclude and keeps every other key', async () => {
+      await fs.writeFile(tsconfigPath(), JSON.stringify(nextAppTsconfig, null, 2), 'utf-8')
+
+      await runInitDeploy()
+
+      expect(await readTsconfig()).toEqual({
+        ...nextAppTsconfig,
+        exclude: ['node_modules', 'infrastructure'],
+      })
+    })
+
+    it('keeps node_modules excluded when the tsconfig had no exclude list', async () => {
+      // Setting `exclude` replaces TypeScript's default list rather than adding to it.
+      const withoutExclude = {
+        compilerOptions: nextAppTsconfig.compilerOptions,
+        include: nextAppTsconfig.include,
+      }
+      await fs.writeFile(tsconfigPath(), JSON.stringify(withoutExclude), 'utf-8')
+
+      await runInitDeploy()
+
+      expect(await readTsconfig()).toEqual({
+        ...withoutExclude,
+        exclude: ['node_modules', 'infrastructure'],
+      })
+    })
+
+    it('adds the entry once across re-runs', async () => {
+      await fs.writeFile(tsconfigPath(), JSON.stringify(nextAppTsconfig), 'utf-8')
+
+      await runInitDeploy()
+      await runInitDeploy()
+
+      expect(await readTsconfig()).toEqual({
+        ...nextAppTsconfig,
+        exclude: ['node_modules', 'infrastructure'],
+      })
+    })
+
+    it.each(['infrastructure', './infrastructure/', 'infrastructure/**', 'infrastructure/**/*'])(
+      'leaves a tsconfig that already excludes %s byte-for-byte untouched',
+      async (pattern) => {
+        // Unindented, so any rewrite would show as a byte difference.
+        const text = JSON.stringify({ ...nextAppTsconfig, exclude: ['node_modules', pattern] })
+        await fs.writeFile(tsconfigPath(), text, 'utf-8')
+
+        await runInitDeploy()
+
+        expect(await fs.readFile(tsconfigPath(), 'utf-8')).toBe(text)
+      },
+    )
+
+    it('does not rewrite a tsconfig.json with comments, and asks for the edit instead', async () => {
+      // Legal in a tsconfig.json, rejected by JSON.parse. A rewrite would delete the comment.
+      const text =
+        '{\n  // strict mode\n  "compilerOptions": { "strict": true },\n  "exclude": ["node_modules"]\n}\n'
+      await fs.writeFile(tsconfigPath(), text, 'utf-8')
+
+      await runInitDeploy()
+
+      expect(await fs.readFile(tsconfigPath(), 'utf-8')).toBe(text)
+      expect(
+        warnings().some((m) => m.includes('not plain JSON') && m.includes('"infrastructure"')),
+      ).toBe(true)
+    })
+
+    it('asks for the edit when there is no tsconfig.json', async () => {
+      await runInitDeploy()
+
+      await expect(fs.access(tsconfigPath())).rejects.toThrow()
+      expect(
+        warnings().some(
+          (m) => m.includes('No tsconfig.json found') && m.includes('"infrastructure"'),
+        ),
+      ).toBe(true)
+    })
   })
 
   it('creates GitHub Actions workflow', async () => {
@@ -760,7 +863,11 @@ describe('canopycms init-deploy aws', () => {
     expect(workflow).toContain('pnpm install --frozen-lockfile')
     expect(workflow).toContain("- 'pnpm-lock.yaml'")
     expect(workflow).not.toContain('run: npm ci')
-    expect(dockerfile).toContain('COPY package.json pnpm-lock.yaml ./')
+    // pnpm-workspace.yaml carries pnpm 11's allowBuilds decisions, without which
+    // the image's frozen install fails on unapproved dependency build scripts
+    // (es5-ext through the editor, sharp through Next). The `[l]` glob keeps it
+    // optional for projects that have none.
+    expect(dockerfile).toContain('COPY package.json pnpm-lock.yaml pnpm-workspace.yam[l] ./')
     expect(dockerfile).toContain('RUN corepack enable && pnpm install --frozen-lockfile')
     expect(dockerfile).toContain('RUN pnpm run build')
     expect(dockerfile).not.toContain('npm ci')
