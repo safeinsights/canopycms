@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { EventEmitter } from 'node:events'
 import { generateKeyPairSync, randomUUID } from 'node:crypto'
 import { mkdtemp, readFile, writeFile, stat } from 'node:fs/promises'
@@ -19,10 +19,14 @@ import {
   creationForm,
   handOffKey,
   manifestPostUrl,
+  askLine,
+  pressEnter,
   readbackVerdict,
+  resetStdinStateForTesting,
   startCallbackServer,
   type AppTarget,
 } from './init-github-app'
+import { mockConsole, type MockConsole } from '../test-utils'
 
 const TARGET: AppTarget = { owner: 'an-org', repo: 'a-content-site', isOrganization: true }
 const REDIRECT = 'http://127.0.0.1:12345/callback'
@@ -462,6 +466,61 @@ describe('handOffKey', () => {
     expect(result.stored).toBe(false)
     expect(result.detail).toContain('already exists')
     expect(await readFile(target, 'utf8')).toBe('an existing key')
+  })
+})
+
+describe('prompting after stdin has ended', () => {
+  // REGRESSION, and the worst outcome this command had. `process.stdin` ends
+  // ONCE: a readline interface created after that never emits 'line' or
+  // 'close', so a second prompt waits forever. Measured on a real pty as well
+  // as a pipe — an operator answering the retry prompt with Ctrl-D ended stdin
+  // in `askLine`, the later `pressEnter` never resolved, `createCommand` never
+  // returned, and because the exit code is assigned from its result node exited
+  // **0** on the one outcome where the App exists and its only key was
+  // discarded. The temp directory leaked and the App id — the operator's only
+  // handle for generating a replacement key — was never printed.
+  const realStdin = Object.getOwnPropertyDescriptor(process, 'stdin')
+  // These prompts print. CI turns any stdout OR stderr from a test into an
+  // unhandled rejection, and a local run without `CI=1` shows none of it — so
+  // the spy goes in whenever a new test can reach a log line, not only when
+  // the code under test is "logging code".
+  let consoleSpy: MockConsole
+
+  beforeEach(() => {
+    consoleSpy = mockConsole()
+  })
+
+  afterEach(() => {
+    consoleSpy.restore()
+    if (realStdin) Object.defineProperty(process, 'stdin', realStdin)
+    resetStdinStateForTesting()
+  })
+
+  /** A stdin that is already at end-of-input, as Ctrl-D leaves it. */
+  function endedStdin() {
+    const stream = new PassThrough()
+    stream.end()
+    Object.defineProperty(process, 'stdin', { value: stream, configurable: true })
+  }
+
+  it('returns from a SECOND prompt once the first has seen EOF', async () => {
+    endedStdin()
+    // The first prompt consumes the end-of-input...
+    expect(await askLine('first')).toBeNull()
+    // ...and the second must still return. Before the fix this never settled,
+    // so the test would time out rather than fail.
+    await expect(pressEnter('second')).resolves.toBeUndefined()
+    // A third, for good measure: the state is sticky, not one-shot.
+    expect(await askLine('third')).toBeNull()
+  })
+
+  it('still reads a real line when stdin has not ended', async () => {
+    // The other direction — the short-circuit must not swallow live input.
+    const stream = new PassThrough()
+    Object.defineProperty(process, 'stdin', { value: stream, configurable: true })
+    const answer = askLine('type something')
+    stream.write('  /tmp/somewhere.pem  \n')
+    expect(await answer).toBe('/tmp/somewhere.pem')
   })
 })
 

@@ -858,20 +858,37 @@ export async function checkNameAvailable(slug: string): Promise<boolean | null> 
   return null
 }
 
-function pressEnter(prompt: string): Promise<void> {
-  const rl = createInterface({ input: process.stdin, terminal: false })
-  return new Promise((resolve) => {
-    console.log(prompt)
-    rl.once('line', () => {
-      rl.close()
-      resolve()
-    })
-    rl.once('close', () => resolve())
-  })
-}
+/**
+ * Whether stdin has already delivered end-of-input to an earlier prompt.
+ *
+ * `process.stdin` can only end ONCE, and a `readline` interface created after it
+ * has ended never emits `'line'` or `'close'` — the stream is already
+ * `endEmitted` and the constructor's `resume()` cannot re-deliver it. So a
+ * per-prompt interface is a footgun the moment a command has two prompts: the
+ * second one waits forever.
+ *
+ * Measured, on a real pty as well as a pipe: with `--key-out` pointing at a bad
+ * path, an operator who answers the retry prompt with Ctrl-D (the other reflex
+ * to "leave blank to give up") ended stdin in `askLine`, and the later
+ * `pressEnter` never resolved. `createCommand` never returned, so
+ * `process.exitCode` was never assigned and node exited **0** — on the one
+ * outcome where the App exists and its only key was just discarded — while the
+ * `finally` that removes the temp directory never ran and the block printing the
+ * App id, the operator's only handle for generating a replacement key, was never
+ * reached.
+ *
+ * Every prompt below consults this first. Nothing else may create a readline
+ * interface on `process.stdin` in this file.
+ */
+let stdinEnded = false
 
-/** Read one line from the operator. `null` when stdin closed instead. */
-function askLine(prompt: string): Promise<string | null> {
+function readLineOnce(prompt: string): Promise<string | null> {
+  if (stdinEnded) {
+    // Already at EOF: answer immediately rather than waiting for input that can
+    // never arrive.
+    console.log(prompt)
+    return Promise.resolve(null)
+  }
   const rl = createInterface({ input: process.stdin, terminal: false })
   return new Promise((resolve) => {
     console.log(prompt)
@@ -879,12 +896,30 @@ function askLine(prompt: string): Promise<string | null> {
     rl.once('line', (line) => {
       answered = true
       rl.close()
-      resolve(line.trim())
+      resolve(line)
     })
     rl.once('close', () => {
-      if (!answered) resolve(null)
+      if (answered) return
+      stdinEnded = true
+      resolve(null)
     })
   })
+}
+
+/** Wait for the operator to continue. Returns at once if stdin has ended. */
+export async function pressEnter(prompt: string): Promise<void> {
+  await readLineOnce(prompt)
+}
+
+/** Read one line from the operator. `null` when stdin ended instead. */
+export async function askLine(prompt: string): Promise<string | null> {
+  const line = await readLineOnce(prompt)
+  return line === null ? null : line.trim()
+}
+
+/** Reset between tests. Not used by the command itself. */
+export function resetStdinStateForTesting(): void {
+  stdinEnded = false
 }
 
 /**
@@ -928,15 +963,19 @@ async function handOffWithRetry(pem: string, destination: KeyDestination): Promi
       )
       return false
     }
-    // A bare path is a file; anything with arguments is a command. Split on
+    // ONE word is a path; anything with arguments is a command. Split on
     // whitespace rather than through a shell: there is no shell here, so
-    // nothing to inject into, and an operator who needs shell syntax can run
-    // the command themselves against a file destination.
+    // nothing to inject into.
+    //
+    // An earlier version also routed a single word CONTAINING `=` to the
+    // command branch, which only ever misrouted legitimate paths — a directory
+    // named `stage=dev` was unreachable — because `VAR=x cmd`, the case it was
+    // reaching for, is two words and already handled. The residual ambiguity is
+    // a one-word command name, or a path containing spaces; both fail with
+    // ENOENT and come straight back here, which is loud rather than silent.
     const words = answer.split(/\s+/).filter(Boolean)
     attempt =
-      words.length === 1 && !words[0].includes('=')
-        ? { kind: 'file', filePath: words[0] }
-        : { kind: 'command', argv: words }
+      words.length === 1 ? { kind: 'file', filePath: words[0] } : { kind: 'command', argv: words }
   }
 }
 
@@ -1039,7 +1078,19 @@ async function readBackInstallation(
   if (!found.ok || !found.body) {
     // Say WHICH of the two it is. Reporting "not installed" for an auth failure
     // sends the operator to check a page that is correct.
-    if (found.status === 401 || found.status === 403) {
+    if (found.status === 0) {
+      // THREE cases, not two. `githubRequest` reports a transport failure as
+      // status 0 with the real cause in `message`, and folding that into the
+      // else below produced a confident "not installed on this repository" for
+      // a DNS failure, a proxy refusal or a timeout — with the actual error
+      // discarded. Reading the body inside the try made this strictly more
+      // reachable, since a reset mid-body now lands here instead of throwing.
+      console.error(
+        `\nCould not reach api.github.com: ${found.message}\n` +
+          '  This says nothing about the App or its installation. Check network access and\n' +
+          '  run `canopycms init-github-app verify` again.',
+      )
+    } else if (found.status === 401 || found.status === 403) {
       console.error(
         `\nThe App could not AUTHENTICATE (HTTP ${found.status}: ${found.message}).\n` +
           '  This is not about the installation. Either the private key does not belong to this\n' +
@@ -1074,12 +1125,25 @@ async function readBackInstallation(
   // The one-App-per-site invariant, observed rather than asserted. A second
   // installation means this App's key reaches a second account's repositories,
   // which is the arrangement the whole design exists to avoid.
-  let extraInstallations = false
+  // EXACTLY one is the pass, and everything else fails — including "could not
+  // check". The looser first version printed a ✓ for a count of 0 (a state that
+  // should not occur, but a tick for an unobserved fact is the failure these
+  // comments exist to prevent) and let `null` leave the overall verdict at
+  // "All checks passed", which is a check that did not run reported as one that
+  // did. `repository_selection` is strict about `undefined` for the same
+  // reason, and these two now agree.
+  let installationsOk = false
   const installations = await installationCount(jwt)
   if (installations === null) {
-    console.log('    - could not list this App\'s installations, so "installed once" is unchecked')
+    console.error(
+      '    ✗ could not list this App\'s installations, so "installed once" is UNCHECKED.\n' +
+        '      Reported as a failure rather than passed over: this is the check that observes\n' +
+        '      the one-App-per-site rule, and an unread check is not a satisfied one.',
+    )
+  } else if (installations === 1) {
+    installationsOk = true
+    console.log('    ✓ installed once, so this key reaches no other account')
   } else if (installations > 1) {
-    extraInstallations = true
     console.error(
       `    ✗ this App is installed ${installations} times, and should be installed ONCE.\n` +
         '      Its private key is App-level: whoever holds it can mint a token for any of\n' +
@@ -1087,7 +1151,10 @@ async function readBackInstallation(
         '      the installations that do not belong to this one.',
     )
   } else {
-    console.log('    ✓ installed once, so this key reaches no other account')
+    console.error(
+      `    ✗ GitHub reports ${installations} installations of this App, yet one was just read\n` +
+        '      back for this repository. Something is inconsistent; re-run before trusting it.',
+    )
   }
 
   const mint = await proveTokenMint(jwt, installation.id, target.repo)
@@ -1105,7 +1172,7 @@ async function readBackInstallation(
   }
 
   return {
-    ok: findings.length === 0 && mint.ok && !extraInstallations,
+    ok: findings.length === 0 && mint.ok && installationsOk,
     installationId: installation.id,
   }
 }
@@ -1140,6 +1207,17 @@ async function resolveTarget(options: InitGitHubAppOptions): Promise<AppTarget |
         '  Pass them explicitly:  --owner <account> --repo <repository>',
     )
     return null
+  }
+
+  // Only `create` needs the account type, and only to choose which URL the
+  // manifest form posts to. `verify` never reaches `manifestPostUrl`, so making
+  // it depend on an unauthenticated lookup gave the read-only, non-interactive,
+  // CI-safe command a way to hard-fail that had nothing to do with the App —
+  // unauthenticated requests are rate-limited at 60/hour per IP, which a shared
+  // egress address reaches without anyone doing anything wrong. `verify`
+  // validates the owner far better anyway, by looking the installation up.
+  if (options.mode !== 'create') {
+    return { owner, repo, isOrganization: false }
   }
 
   const isOrganization = await detectAccountType(owner)
@@ -1324,6 +1402,20 @@ async function createCommand(options: InitGitHubAppOptions): Promise<number> {
     // carry the key across either. Doing it here reduces the window to the
     // conversion call itself.
     const stored = await handOffWithRetry(created.pem, destination)
+
+    if (!stored) {
+      // No point asking anyone to install an App whose key was just discarded:
+      // the installation could not be used. Say what IS still actionable — the
+      // App id, which is the handle for generating a replacement key — and stop.
+      console.error(
+        `\nStopping here: the App exists but its key was not stored, so installing it now\n` +
+          '  would achieve nothing. To recover, open the App and generate a private key from\n' +
+          '  its "Private keys" section, then run `verify`; or delete the App and start again.\n\n' +
+          `  GITHUB_APP_ID=${created.id}\n` +
+          `  App settings: https://github.com/settings/apps/${created.slug}`,
+      )
+      return 1
+    }
 
     console.log(
       `\n2. Install it on ${target.owner}/${target.repo}:\n\n` +

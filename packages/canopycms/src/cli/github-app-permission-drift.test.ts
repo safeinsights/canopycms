@@ -37,6 +37,13 @@
  * `pollMergeState` is invisible to it — which is what the source-level backstop
  * at the bottom of this file is for, and why that backstop is also a set
  * comparison rather than a one-way check.
+ *
+ * One more it sees only PARTLY, named here so nobody has to rediscover it:
+ * `octokit.paginate(octokit.pulls.list, …)` records `paginate`, not the method
+ * passed to it — that method is handed over as a reference and never applied
+ * through this proxy. The result still goes red, because `paginate` is not in
+ * `OPERATION_PERMISSIONS`, but it names the wrong operation. Nothing in this
+ * package paginates today.
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
@@ -110,10 +117,16 @@ type Responses = Record<string, unknown>
  * exists to close.
  */
 export function graphqlOperationName(document: string): string {
-  // Skip the operation header (`query`/`mutation`, an optional name, and its
-  // variable declarations) and take the first field selected inside the braces.
-  const body = document.slice(document.indexOf('{') + 1)
-  const field = /[A-Za-z_][\w]*/.exec(body)
+  // Comments and string literals are stripped FIRST, because the parse keys off
+  // the first `{` and either can carry one: a `#` comment mentioning a brace, or
+  // a variable default like `mutation($x: String = "{")`. Both would shift the
+  // parse onto the wrong token and produce a confidently wrong key.
+  const cleaned = document.replace(/#[^\n]*/g, '').replace(/"(?:[^"\\]|\\.)*"/g, '""')
+  // Then skip the operation header (`query`/`mutation`, an optional name, and
+  // its variable declarations) and take the first field inside the braces.
+  const brace = cleaned.indexOf('{')
+  if (brace === -1) return 'unknown'
+  const field = /[A-Za-z_]\w*/.exec(cleaned.slice(brace + 1))
   return field ? field[0] : 'unknown'
 }
 
@@ -410,6 +423,12 @@ describe('the declared App permissions cover every GitHub call this package make
     ).toBe('markPullRequestReadyForReview')
     expect(graphqlOperationName('{ viewer { login } }')).toBe('viewer')
     expect(graphqlOperationName('')).toBe('unknown')
+    // A `{` BEFORE the selection set, in each of the two places one can hide.
+    // Either would otherwise shift the parse and yield a confidently wrong key.
+    expect(graphqlOperationName('# a brace { in a comment\nmutation { realField { x } }')).toBe(
+      'realField',
+    )
+    expect(graphqlOperationName('mutation($x: String = "{") { realField { x } }')).toBe('realField')
   })
 
   it('records the octokit.rest.* spelling as the same operation', async () => {
