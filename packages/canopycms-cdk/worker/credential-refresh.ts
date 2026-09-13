@@ -141,6 +141,14 @@ export function createReactiveSecret(options: ReactiveSecretOptions): ReactiveSe
   // should re-read immediately rather than waiting out an interval measured
   // from an event this object did not observe.
   let lastReadAt: number | undefined
+  // Reads are numbered as they start, and a read's result is dropped if a read
+  // that started LATER has already finished: that one saw the store more
+  // recently, so the older value can only be stale. Without this, a read that
+  // stalled past the floor could land after a newer read had adopted a rotated
+  // value and put the old one back -- and a caller that stops waiting
+  // (CmsWorker.refreshGitHubCredential) does not cancel the read it abandoned.
+  let readsStarted = 0
+  let newestReadFinished = 0
 
   return {
     current: () => value,
@@ -161,7 +169,10 @@ export function createReactiveSecret(options: ReactiveSecretOptions): ReactiveSe
       // The Clerk key has one calling loop, which awaits each cycle.
       lastReadAt = at
 
+      const read = ++readsStarted
       const fetched = await getSecret(arn, secretOptions)
+      if (read < newestReadFinished) return undefined
+      newestReadFinished = read
       if (fetched === value) return undefined
 
       value = fetched

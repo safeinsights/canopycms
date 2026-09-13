@@ -242,6 +242,9 @@ export function resolveWorkerGitHubAuth(config: GitHubAuthConfig): ResolvedGitHu
   // what lets `refreshCredential` swap a rotated token in with nothing to
   // rebuild and no cache to invalidate.
   let currentToken = token as string
+  // Numbered as they start; see `refreshCredential` below.
+  let refreshesStarted = 0
+  let newestRefreshApplied = 0
   return {
     octokitAuth: {
       // NOT `{ auth: currentToken }`. That spelling resolves the token once,
@@ -252,12 +255,23 @@ export function resolveWorkerGitHubAuth(config: GitHubAuthConfig): ResolvedGitHu
     },
     resolveGitToken: async () => currentToken,
     refreshCredential: async () => {
+      const refresh = ++refreshesStarted
       const refreshed = await config.refreshGitHubToken?.()
       // Falsy covers both "nothing rotated" (`undefined`) and an empty secret:
       // an empty token would build `https://x-access-token:@github.com/…`,
       // which git sends anonymously, so keeping the known-bad-but-real token
       // fails more legibly than replacing it with nothing.
-      if (refreshed) currentToken = refreshed
+      if (!refreshed) return
+      // A refresh that STARTED before one already applied read the store
+      // earlier, so its value can only be older. Refreshes do overlap: the task
+      // loop and the git-sync loop both call this, and
+      // CmsWorker.refreshGitHubCredential stops waiting after `taskTimeoutMs`
+      // without cancelling. Only a refresh that returned a value counts as
+      // applied -- one that returned `undefined` (a provider's floor, say) says
+      // nothing about how recent it is, so it must not block a slower real read.
+      if (refresh < newestRefreshApplied) return
+      newestRefreshApplied = refresh
+      currentToken = refreshed
     },
   }
 }

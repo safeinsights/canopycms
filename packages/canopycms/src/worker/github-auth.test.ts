@@ -420,6 +420,52 @@ describe('resolveWorkerGitHubAuth', () => {
         await resolved.refreshCredential()
         expect(await resolved.resolveGitToken()).toBe('ghp_third')
       })
+
+      describe('overlapping refreshes', () => {
+        /** A provider result the test releases by hand, so a refresh can be made to land late. */
+        const deferred = () => {
+          let release!: (value: string | undefined) => void
+          const promise = new Promise<string | undefined>((resolve) => (release = resolve))
+          return { promise, release }
+        }
+
+        it('does not let a slow refresh that lands late put an older token back', async () => {
+          // The first refresh read the store before the rotation and stalled;
+          // the second started later, read the rotated value, and landed first.
+          const slow = deferred()
+          const refreshGitHubToken = vi
+            .fn<() => Promise<string | undefined>>()
+            .mockReturnValueOnce(slow.promise)
+            .mockResolvedValueOnce('ghp_newest')
+          const resolved = resolveWorkerGitHubAuth({ githubToken: 'ghp_boot', refreshGitHubToken })
+
+          const first = resolved.refreshCredential()
+          await resolved.refreshCredential()
+          expect(await resolved.resolveGitToken()).toBe('ghp_newest')
+
+          slow.release('ghp_older')
+          await first
+          expect(await resolved.resolveGitToken()).toBe('ghp_newest')
+        })
+
+        it('still adopts a slow refresh when the newer one had nothing to report', async () => {
+          // `undefined` from the newer call (a provider's floor) is not evidence
+          // that the slower real read is stale, so it must still land.
+          const slow = deferred()
+          const refreshGitHubToken = vi
+            .fn<() => Promise<string | undefined>>()
+            .mockReturnValueOnce(slow.promise)
+            .mockResolvedValueOnce(undefined)
+          const resolved = resolveWorkerGitHubAuth({ githubToken: 'ghp_boot', refreshGitHubToken })
+
+          const first = resolved.refreshCredential()
+          await resolved.refreshCredential()
+          slow.release('ghp_rotated')
+          await first
+
+          expect(await resolved.resolveGitToken()).toBe('ghp_rotated')
+        })
+      })
     })
 
     describe('the GitHub App path', () => {

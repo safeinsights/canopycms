@@ -222,3 +222,32 @@ describe('reading the secret', () => {
     expect(secret.current()).toBe('ghp_original')
   })
 })
+
+describe('a read that lands after a newer one', () => {
+  it('is discarded, so a stalled read cannot put the older value back', async () => {
+    const clock = fakeClock()
+    let releaseSlow!: (response: { SecretString: string }) => void
+    sendMock
+      .mockReturnValueOnce(new Promise((resolve) => (releaseSlow = resolve)))
+      .mockResolvedValueOnce({ SecretString: 'rotated' })
+    const secret = createReactiveSecret({
+      arn: ARN,
+      initial: 'boot',
+      minIntervalMs: 100,
+      now: clock.now,
+    })
+
+    // The first read reaches Secrets Manager and stalls past the floor.
+    const slow = secret.refresh()
+    await vi.waitFor(() => expect(sendMock).toHaveBeenCalledTimes(1))
+    clock.advance(100)
+
+    // A newer read, permitted by the expired floor, adopts the rotated value.
+    expect(await secret.refresh()).toBe('rotated')
+
+    // The stalled read finally answers with what the store held before.
+    releaseSlow({ SecretString: 'boot-era' })
+    expect(await slow).toBeUndefined()
+    expect(secret.current()).toBe('rotated')
+  })
+})

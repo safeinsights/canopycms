@@ -1019,8 +1019,9 @@ export class CmsWorker {
    * that never settled would stop every publish queued behind it. The AWS
    * provider is exactly that shape: it builds `new SecretsManagerClient({})`, and
    * with no timeout configured `@smithy/node-http-handler` arms no connection,
-   * request or socket timer. A read that loses the race is not cancelled; if it
-   * later swaps a rotated token in, that is harmless.
+   * request or socket timer. A read that loses the race is not cancelled, and
+   * may still land later; `refreshCredential` discards a result older than one
+   * it has already applied, so a late landing cannot put a stale token back.
    */
   private async refreshGitHubCredential(): Promise<void> {
     let timer: NodeJS.Timeout | undefined
