@@ -22,8 +22,8 @@ Options:
 
 - have `init-deploy aws` add the exclusion, or give `infrastructure/` its own `tsconfig.json`
   and exclude it from the app's;
-- or state the step as required where the CLI's closing note currently presents the CDK
-  install as optional.
+- or say so where the CLI's closing note (`cli/init.ts`) lists "Install the CDK dependencies (if
+  you have not already)" as a deploy step: without them the app's own `next build` fails too.
 
 Also consider adding `infrastructure/` to the generated `.dockerignore`, since the image never
 uses it.
@@ -32,8 +32,9 @@ uses it.
 
 pnpm 11 hard-errors (`ERR_PNPM_IGNORED_BUILDS`) on dependency build scripts that
 `pnpm-workspace.yaml`'s `allowBuilds` does not approve. CanopyCMS's editor pulls in `es5-ext`
-(via `@mdxeditor/editor`), whose postinstall needs approving, and `create-next-app` seeds that
-block only for `sharp` and `unrs-resolver`. The generated `Dockerfile.cms` copies only
+(`@mdxeditor/editor` → `@codesandbox/sandpack-react` → `react-devtools-inline` → `es6-symbol` →
+`d`), whose postinstall needs approving, and the scaffold's `create-next-app` seeded that block
+only for `sharp` and `unrs-resolver`. The generated `Dockerfile.cms` copies only
 `package.json pnpm-lock.yaml` before `pnpm install --frozen-lockfile`, so an approval in
 `pnpm-workspace.yaml` never reaches the builder's install.
 

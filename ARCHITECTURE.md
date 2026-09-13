@@ -1314,7 +1314,7 @@ CanopyCMS supports two deployment types, declared via the `deployedAs` config fi
 
 **Build mode detection** (`isBuildMode()`) covers the build of a server deployment, where there is no request context even though the deployment is not static. It checks environment variables:
 
-- `NEXT_PHASE=phase-production-build` (set by `next build` before page-data collection and prerendering, but not while `next.config` is evaluated)
+- `NEXT_PHASE=phase-production-build` (set by `next build` before page-data collection and prerendering, but not yet when it loads `next.config`)
 - `CANOPY_BUILD_MODE=true` (other frameworks, and scripts run beside a build)
 
 **WHO and WHERE**: `isDeployedStatic(config) || isBuildMode()` answers two questions. The context factory and content reader use it to decide WHO reads (`STATIC_DEPLOY_USER`, no permission checks). As `readsFromCheckout(config)` it decides WHERE: every build, in either mode and either deployment type, reads the working tree at `process.cwd()` and never touches git, a branch workspace or `.canopy-dev`, exactly like a static deployment, and a `branch` passed to a read selects nothing. CI therefore builds the checked-out commit, and a local build reads what is on disk. Only request-time reads on a server deployment resolve a branch workspace.

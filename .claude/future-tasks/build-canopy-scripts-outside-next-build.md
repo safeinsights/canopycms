@@ -25,12 +25,12 @@ directory without git, an error:
    `build/generate-ai-content.ts` → `ai/resolve-branch.ts`'s `resolveBranchRoot`). Same
    predicate, same outcome; in dev mode `resolveBranchRoot` detects the branch from git HEAD.
 3. **A content read from `next.config.*`** (for example, computing redirects from content). Next
-   loads the config before it sets `NEXT_PHASE` — in 15.5 and 16.1, `loadConfig(PHASE_PRODUCTION_BUILD, …)`
+   loads the config before it sets `NEXT_PHASE` — in 15.5.21 and 16.1.7, `loadConfig(PHASE_PRODUCTION_BUILD, …)`
    runs long before `process.env.NEXT_PHASE` is assigned, immediately ahead of creating the static
    worker — so `isBuildMode()` is false there. The `isBuildMode` JSDoc says so.
 
-The generated `Dockerfile.cms` sets `ENV CANOPY_BUILD_MODE=true` for its whole builder stage, so
-inside the image build all three read the working tree. The exposure is everywhere else: local
+The generated `Dockerfile.cms` sets `ENV CANOPY_BUILD_MODE=true` in its builder stage, ahead of the
+build command, so inside the image build all three read the working tree. The exposure is everywhere else: local
 runs, CI steps, and adopter scripts.
 
 ## Decision needed

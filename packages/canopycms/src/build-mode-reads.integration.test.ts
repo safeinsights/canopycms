@@ -1,8 +1,10 @@
 /**
  * End-to-end proof that at build time every public read comes from the working
- * tree (process.cwd()) with ZERO git invocations, regardless of operating mode,
- * deployment type, or which build-mode switch fired — the behavior
- * `readsFromCheckout` (build-mode.ts) is meant to guarantee.
+ * tree (process.cwd()) with ZERO git invocations — for a server deployment, in
+ * dev and prod mode, under either build-mode switch (`NEXT_PHASE` or
+ * `CANOPY_BUILD_MODE`) — the behavior `readsFromCheckout` (build-mode.ts) is
+ * meant to guarantee. Static deployments already took this path; their test
+ * sits beside the build-mode twins in branch-workspace.test.ts.
  *
  * Unlike branch-workspace.test.ts / services.test.ts / ai/resolve-branch.test.ts,
  * which each pin one module's use of the predicate, this test drives the REAL

@@ -63,8 +63,8 @@ export class BranchWorkspaceManager {
         // and would otherwise both clone into it ("destination path already
         // exists"), so guard the workspace init with a cross-process lock too.
         // initializeWorkspace is idempotent, so the waiter simply finds the
-        // workspace already cloned. (Builds never get here: they read the
-        // checkout, see loadOrCreateBranchContext.)
+        // workspace already cloned. (A build's content reads never get here:
+        // loadOrCreateBranchContext returns the checkout before provisioning.)
         let releaseLock: (() => Promise<void>) | undefined
         try {
           log.debug('workspace', 'Ensuring git workspace', {

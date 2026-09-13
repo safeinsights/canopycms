@@ -12,8 +12,10 @@
  *     working tree in either mode (`readsFromCheckout` in `build-mode.ts`), so
  *     nothing in a build needs prod, while prod mode would hold the image
  *     builder to checks it has no reason to meet: `gitBotAuthorName`/
- *     `gitBotAuthorEmail`, and an auth plugin that verifies credentials (see
- *     the note in `cli/template-files/Dockerfile.cms.template`).
+ *     `gitBotAuthorEmail` (the prod strategy's `validateConfig`, run by
+ *     `createCanopyServices`) and an auth plugin that verifies credentials
+ *     (`assertAuthPluginAllowedForMode`). See the note in
+ *     `cli/template-files/Dockerfile.cms.template`.
  *   - The deployed Lambda must be `prod`: dev mode resolves the workspace to
  *     `<cwd>/.canopy-dev`, and Lambda's filesystem is read-only outside /tmp,
  *     so the first write fails with EROFS.

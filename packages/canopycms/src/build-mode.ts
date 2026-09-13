@@ -13,16 +13,17 @@ export const isDeployedStatic = (config: { deployedAs?: string }): boolean => {
  * Detect a build, where there is no request and no auth.
  *
  * Under Next.js this is `NEXT_PHASE === 'phase-production-build'`, which
- * `next build` sets itself, after compiling and immediately before it creates
- * the static worker that collects page data and prerenders; that worker's
- * processes inherit it. So it is true in page modules, `generateStaticParams`
- * and prerendering, but NOT while `next.config.*` is evaluated, which happens
- * earlier. `next dev`, `next start` and the standalone server never set it.
- * Verified against Next 15.5 and 16.1 -- re-check on every Next major.
+ * `next build` sets itself: after compiling, and immediately before it creates
+ * the static worker that collects page data and prerenders, whose processes
+ * inherit it. So it is true in page modules, `generateStaticParams` and
+ * prerendering, but NOT yet set when `next build` loads `next.config.*`, which
+ * it does first. `next dev`, `next start` and the standalone server never set
+ * it. Verified in Next 15.5.21 and 16.1.7, whose `dist/build/index.js` holds
+ * the only assignment -- re-check on every Next major.
  *
  * `CANOPY_BUILD_MODE=true` is the framework-neutral switch: for builds Next
  * does not drive, and for scripts run alongside one (the generated
- * `Dockerfile.cms` sets it for its whole builder stage).
+ * `Dockerfile.cms` sets it in its builder stage, ahead of the build command).
  */
 export const isBuildMode = (): boolean => {
   // Next.js build phase

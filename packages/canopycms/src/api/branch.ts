@@ -221,8 +221,8 @@ export const createBranchHandler = async (
     // further down) apply ONLY to this user-facing creation path.
     // http/handler.ts's auto-create (base/active/settings branches) and
     // branch-workspace.ts's loadOrCreateBranchContext (reached from run-time
-    // content reads and the AI pipeline; builds read the checkout and never
-    // provision) provision system/known branch names, not
+    // content reads and the AI pipeline; build-time reads return the checkout
+    // and never provision) provision system/known branch names, not
     // user-chosen ones, and deliberately stay uncovered -- intentional, not
     // an oversight.
 
