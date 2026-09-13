@@ -4,7 +4,7 @@
  * CanopyCMS CLI entrypoint.
  *
  * Routes commands to their implementations:
- *   init, init-deploy, worker, generate-ai-content, sync, migrate
+ *   init, init-deploy, init-github-app, worker, generate-ai-content, sync, migrate
  *
  * Command implementations live in separate files (init.ts, sync.ts, etc.)
  * and are dynamically imported to keep startup fast.
@@ -21,7 +21,7 @@ import { getErrorMessage } from '../utils/error'
 /** Parse raw CLI args into structured flags and positional command. Exported for testing. */
 export function parseArgs(rawArgs: string[]) {
   const argv = minimist(rawArgs, {
-    boolean: ['force', 'non-interactive', 'dry-run'],
+    boolean: ['force', 'non-interactive', 'dry-run', 'key-stdin'],
     string: [
       'app-dir',
       'branch',
@@ -32,7 +32,20 @@ export function parseArgs(rawArgs: string[]) {
       'format',
       'schema',
       'auth',
+      'owner',
+      'repo',
+      'name',
+      'app-id',
+      'key-out',
+      'key-file',
     ],
+    // `init-github-app create -- <command> [args…]` hands everything after the
+    // `--` to spawn() as the destination for the App's private key. Without
+    // this option minimist folds those words straight into `argv._`, where they
+    // are indistinguishable from the command's own positionals and the `--`
+    // itself is discarded — so there would be no way to recover a clean argv.
+    // Additive for every other command: nothing else passes a literal `--`.
+    '--': true,
     // --dual-build is intentionally NOT declared boolean here: minimist defaults
     // declared-boolean flags to `false` when absent, which would make "not passed"
     // indistinguishable from "explicitly disabled". Left undeclared, it parses to
@@ -44,6 +57,21 @@ export function parseArgs(rawArgs: string[]) {
   const flags = argv as Record<string, string | boolean>
   const command = argv._[0] as string | undefined
   return { argv, flags, command }
+}
+
+/**
+ * The argv after a literal `--`, as a real string array.
+ *
+ * minimist types its parsed object with an `any` index signature, so reading
+ * `argv['--']` directly would hand an `any` straight to spawn(). Narrowed here
+ * through `unknown` instead, and returned as `[]` when absent so callers can
+ * treat "no passthrough" and "empty passthrough" the same way. Exported for
+ * testing.
+ */
+export function passthroughArgs(argv: Record<string, unknown>): string[] {
+  const raw: unknown = argv['--']
+  if (!Array.isArray(raw)) return []
+  return raw.filter((value): value is string => typeof value === 'string')
 }
 
 const AUTH_PROVIDERS = ['clerk', 'dev'] as const
@@ -222,6 +250,54 @@ async function main() {
       force: flags['force'] === true,
       nonInteractive: flags['non-interactive'] === true,
     })
+  } else if (command === 'init-github-app') {
+    const { initGitHubApp } = await import('./init-github-app')
+    const mode = argv._[1]
+    if (mode !== 'create' && mode !== 'verify') {
+      console.error('Usage: canopycms init-github-app <create|verify> [options]')
+      console.error('  create   Register the App from a manifest and capture its private key')
+      console.error("  verify   Read an existing App's installation back. Changes nothing")
+      process.exit(1)
+    }
+
+    const keyOut = typeof flags['key-out'] === 'string' ? flags['key-out'] : undefined
+    const passthrough = passthroughArgs(argv)
+    // Exactly one destination, refused here rather than after the App exists.
+    // Both would leave it undefined which one holds the key that matters.
+    if (keyOut && passthrough.length > 0) {
+      console.error(
+        'Pass either --key-out <path> or `-- <command>`, not both — the private key goes to ' +
+          'one destination.',
+      )
+      process.exit(1)
+    }
+    const destination = keyOut
+      ? ({ kind: 'file', filePath: keyOut } as const)
+      : passthrough.length > 0
+        ? ({ kind: 'command', argv: passthrough } as const)
+        : undefined
+
+    let privateKey: string | undefined
+    const keyFile = typeof flags['key-file'] === 'string' ? flags['key-file'] : undefined
+    if (keyFile) {
+      const { readFile } = await import('node:fs/promises')
+      privateKey = await readFile(keyFile, 'utf8')
+    } else if (flags['key-stdin'] === true) {
+      const chunks: Buffer[] = []
+      for await (const chunk of process.stdin) chunks.push(Buffer.from(chunk))
+      privateKey = Buffer.concat(chunks).toString('utf8')
+    }
+
+    process.exitCode = await initGitHubApp({
+      mode,
+      projectDir: process.cwd(),
+      owner: typeof flags['owner'] === 'string' ? flags['owner'] : undefined,
+      repo: typeof flags['repo'] === 'string' ? flags['repo'] : undefined,
+      name: typeof flags['name'] === 'string' ? flags['name'] : undefined,
+      appId: typeof flags['app-id'] === 'string' ? flags['app-id'] : undefined,
+      destination,
+      privateKey,
+    })
   } else if (command === 'worker') {
     const { workerRunOnce } = await import('./init')
     const subcommand = argv._[1]
@@ -329,6 +405,17 @@ async function main() {
     console.log('  init-deploy aws         Generate AWS deployment artifacts')
     console.log('    --force               Overwrite existing files without asking')
     console.log('    --non-interactive     Use defaults, no prompts')
+    console.log('')
+    console.log('  init-github-app <mode>  Register the GitHub App the worker publishes as')
+    console.log('    create                Create it from a manifest, capture its private key')
+    console.log('    verify                Read an existing App back. Changes nothing')
+    console.log('    --owner/--repo <x>    Target repository (default: detected from origin)')
+    console.log('    --name <name>         App display name (default: "<repo> CanopyCMS")')
+    console.log('    --key-out <path>      create: write the key to a new file, mode 0600')
+    console.log('    -- <command> [args]   create: pipe the key into a command on its stdin')
+    console.log("    --app-id <id>         verify: the App's numeric id")
+    console.log('    --key-file <path>     verify: read the key from a file')
+    console.log('    --key-stdin           verify: read the key from standard input')
     console.log('')
     console.log('  worker run-once         Process tasks, sync git, refresh auth cache')
     console.log('  generate-ai-content     Generate static AI-ready content files')
