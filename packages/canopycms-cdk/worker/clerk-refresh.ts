@@ -16,8 +16,9 @@
  * same reason, as `secrets.ts` and `github-app-auth.ts`.
  */
 
-import { workerLog, workerLogWarn } from 'canopycms/worker/cms-worker'
+import { workerLog, workerLogWarn, workerLogError } from 'canopycms/worker/cms-worker'
 import { refreshClerkCache } from 'canopycms-auth-clerk/cache-writer'
+import { getErrorMessage, redactCredentials } from 'canopycms/utils/error'
 
 import type { ReactiveSecret } from './credential-refresh'
 
@@ -98,11 +99,35 @@ export function createClerkAuthCacheRefresher(
     } catch (err) {
       if (!isClerkAuthRejection(err)) throw err
 
+      // The re-read is best-effort, and its own failure must never REPLACE the
+      // Clerk rejection being handled. Without the inner try, an IAM policy
+      // narrowed after boot turns every tick into an AccessDeniedException and
+      // the 401 that actually explains the stale cache is never logged at all
+      // -- indefinitely, since the 15-minute auth-cache interval is longer than
+      // the reader's own floor, so the read is re-attempted and re-fails every
+      // tick. `CmsWorker.syncGitWithCredentialRefresh` has the same shape for
+      // the same reason; this is the Clerk half of it.
+      let rotated: string | undefined
+      try {
+        rotated = await secret.refresh()
+      } catch (refreshErr) {
+        // [REDACT] `getSecret`'s messages carry key NAMES, never values -- but
+        // this line is one edit away from carrying a value, and the rule in
+        // this repo is uniform rather than case-by-case. Note it is not
+        // sufficient on its own: a Clerk `sk_live_…` matches none of
+        // redactCredentials' current rules (see
+        // .claude/future-tasks/refresh-auth-cache-error-handling.md).
+        workerLogError(
+          'Failed to re-read the Clerk secret key after Clerk rejected it:',
+          redactCredentials(getErrorMessage(refreshErr)),
+        )
+        throw err
+      }
+
       // `undefined` means nothing to do -- no ARN, re-read too recently, or a
       // value identical to the one Clerk just refused. In all three the retry
       // below cannot succeed, so rethrow the original rejection rather than
       // paying for a second guaranteed failure.
-      const rotated = await secret.refresh()
       if (rotated === undefined) throw err
 
       workerLogWarn(

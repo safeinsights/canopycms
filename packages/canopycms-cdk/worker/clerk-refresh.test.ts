@@ -166,6 +166,25 @@ describe('the circuit breaker', () => {
     expect(refreshClerkCacheMock).toHaveBeenCalledTimes(1)
   })
 
+  it('keeps the Clerk rejection when the re-read ITSELF fails', async () => {
+    refreshClerkCacheMock.mockRejectedValue(clerkError(401, 'Unauthenticated'))
+    const secret = {
+      current: () => 'sk_live_wrong',
+      // An IAM policy narrowed after boot is the realistic case.
+      refresh: vi.fn(async () => {
+        throw new Error('AccessDeniedException')
+      }),
+    }
+    const refresh = createClerkAuthCacheRefresher({ secret, cachePath: '/tmp/cache' })!
+
+    // The 401 is what explains the stale auth cache. Letting the read failure
+    // propagate instead would suppress it on every tick for as long as the IAM
+    // condition lasts, since the 15-minute interval always clears the reader's
+    // 5-minute floor.
+    await expect(refresh()).rejects.toThrow('Unauthenticated')
+    expect(refreshClerkCacheMock).toHaveBeenCalledTimes(1)
+  })
+
   it('does not loop when the rotated key is also rejected', async () => {
     refreshClerkCacheMock.mockRejectedValue(clerkError(401, 'still wrong'))
     const secret = fakeSecret('sk_live_wrong', 'sk_live_also_wrong')
