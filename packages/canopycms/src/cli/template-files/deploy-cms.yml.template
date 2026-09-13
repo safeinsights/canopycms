@@ -145,6 +145,25 @@ jobs:
             exit 1
           fi
 
+      # The only type-check the CDK app gets. cdk.json runs it through tsx,
+      # which strips types without checking them, and `init-deploy aws`
+      # excludes infrastructure/ from the app's tsconfig.json, so `next build`
+      # skips it too. Unchecked, a misspelled CanopyCmsService prop is dropped
+      # silently and the deploy uses that prop's default. The compiler
+      # settings are in infrastructure/tsconfig.json.
+      #
+      # typescript is checked first: without it, `npx tsc` downloads a
+      # deprecated package named `tsc` from npm, which prints a notice and
+      # exits. Next.js requires typescript in a TypeScript app anyway.
+      - name: Type-check the CDK app
+        run: |
+          if [ ! -e node_modules/typescript ]; then
+            echo "::error::typescript is not installed, so the CDK app cannot be type-checked"
+            echo "::error::Install it with: {{ADD_DEV}} typescript @types/node"
+            exit 1
+          fi
+          npx tsc --noEmit -p infrastructure
+
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@cbe3b392738ccf3f987d68400dafcf4b0624a56c # v6.2.4
         with:

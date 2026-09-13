@@ -311,7 +311,7 @@ export async function init(options: InitOptions): Promise<void> {
 export async function initDeployAws(options: InitDeployOptions): Promise<void> {
   const { projectDir, force, nonInteractive } = options
   const writeOpts = { force, nonInteractive }
-  const { dockerfileCms, dockerignore, githubWorkflowCms, cdkJson, cdkApp, cmsStack } =
+  const { dockerfileCms, dockerignore, githubWorkflowCms, cdkJson, cdkApp, cmsStack, cdkTsconfig } =
     await import('./templates')
   const {
     detectPackageManager,
@@ -382,6 +382,14 @@ export async function initDeployAws(options: InitDeployOptions): Promise<void> {
   await writeFile(
     path.join(projectDir, 'infrastructure/lib/cms-stack.ts'),
     await cmsStack(),
+    writeOpts,
+  )
+  // The only type-check the CDK app gets. tsx runs it without one, and the exclusion below keeps
+  // `next build` out of it, so the generated workflow runs `tsc --noEmit -p infrastructure` with
+  // this file before deploying.
+  await writeFile(
+    path.join(projectDir, 'infrastructure/tsconfig.json'),
+    await cdkTsconfig(),
     writeOpts,
   )
 

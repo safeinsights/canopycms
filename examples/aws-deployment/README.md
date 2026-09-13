@@ -17,6 +17,9 @@ See [docs/deploying-to-aws.md](../../docs/deploying-to-aws.md) for the full walk
   works locally and in CI; the values with no default refuse to synth when unset.
 - `infrastructure/lib/cms-stack.ts` — the stack: VPC + EFS + CMS Lambda + EC2 worker, and optionally
   CloudFront + Route53.
+- `infrastructure/tsconfig.json` — compiler settings for type-checking the CDK app. `cdk.json` runs the app
+  through tsx, which does not check types, so the workflow runs `tsc --noEmit -p infrastructure` before
+  deploying.
 - `deploy-cms.yml` — GitHub Actions workflow. Belongs at `.github/workflows/deploy-cms.yml`.
 
 `cdk deploy` is the only thing that ships code here — see the comments in `deploy-cms.yml` for why pairing it

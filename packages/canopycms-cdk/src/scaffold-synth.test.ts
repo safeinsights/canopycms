@@ -347,3 +347,82 @@ describe('canopycms init-deploy aws produces a synthesizable CDK app', () => {
     expect(synthesizedStacks).toContain(deployedStack)
   })
 })
+
+/**
+ * The synth above cannot catch a type error: cdk.json runs the app through tsx, which strips types
+ * without checking them. So a misspelled `CanopyCmsService` prop synthesizes, and the deploy uses
+ * that prop's default. The generated workflow's type-check step is the only check, and these tests
+ * run its command, read from the workflow the way `appCommand` is read from cdk.json.
+ */
+describe('the generated workflow type-checks the CDK app', () => {
+  async function typeCheckCommand(): Promise<string> {
+    const workflow = await fs.readFile(
+      path.join(scaffoldDir, '.github/workflows/deploy-cms.yml'),
+      'utf-8',
+    )
+    const command = workflow
+      .split('\n')
+      .map((line) => line.trim())
+      .find((line) => line.startsWith('npx tsc '))
+    if (!command) throw new Error('generated workflow has no `npx tsc` type-check command')
+    return command
+  }
+
+  /** tsc prints its diagnostics to stdout, which execFile's rejection message leaves out. */
+  async function runInScaffold(command: string): Promise<string> {
+    try {
+      const { stdout } = await execFileAsync('sh', ['-c', command], {
+        cwd: scaffoldDir,
+        timeout: TIMEOUT_MS,
+      })
+      return stdout
+    } catch (err) {
+      throw new Error(`\`${command}\` failed:\n${String(readJsonField(err, 'stdout'))}`)
+    }
+  }
+
+  it(
+    'passes on the scaffold, and checks the CDK app without the rest of the Next app',
+    async () => {
+      const command = await typeCheckCommand()
+      await runInScaffold(command)
+
+      // Imports are followed, so canopycms.config.ts is checked with the stack that imports it.
+      // Nothing else from the project may be: app/, middleware.ts and next.config.ts need the
+      // Next app's dependencies and compiler settings.
+      const listed = await runInScaffold(`${command} --listFilesOnly`)
+      const projectFiles = listed
+        .split('\n')
+        .map((file) => path.relative(scaffoldDir, file.trim()))
+        .filter((file) => file && !file.startsWith('..'))
+      expect(projectFiles.sort()).toEqual([
+        'canopycms.config.ts',
+        'infrastructure/bin/app.ts',
+        'infrastructure/lib/cms-stack.ts',
+      ])
+    },
+    TIMEOUT_MS,
+  )
+
+  it(
+    'fails on a misspelled CanopyCmsService prop',
+    async () => {
+      const stackPath = path.join(scaffoldDir, 'infrastructure/lib/cms-stack.ts')
+      const original = await fs.readFile(stackPath, 'utf-8')
+      // Anchored on a prop the template is known to set, so a change to the template fails here
+      // loudly rather than misspelling nothing.
+      expect(original).toContain('memorySize: 2048,')
+      await fs.writeFile(stackPath, original.replace('memorySize: 2048,', 'memorySzie: 2048,'))
+
+      try {
+        // The diagnostic, not just a non-zero exit: a missing tsconfig.json fails too.
+        await expect(runInScaffold(await typeCheckCommand())).rejects.toThrow(
+          /error TS2561: .*'memorySzie' does not exist in type 'CanopyCmsServiceProps'/,
+        )
+      } finally {
+        await fs.writeFile(stackPath, original, 'utf-8')
+      }
+    },
+    TIMEOUT_MS,
+  )
+})

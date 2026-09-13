@@ -1,0 +1,28 @@
+// Type-checks the CDK app. `canopycms init-deploy aws` generated this file, and it is yours to
+// edit.
+//
+// Nothing else checks these files. cdk.json runs the app with tsx, which strips types without
+// checking them, and the project's tsconfig.json excludes infrastructure/, so `next build` skips
+// them too. Unchecked, a misspelled CanopyCmsService prop is dropped silently and the deploy uses
+// that prop's default. .github/workflows/deploy-cms.yml runs `tsc --noEmit -p infrastructure`
+// before `cdk deploy`; run the same command after editing the stack.
+{
+  "compilerOptions": {
+    // tsx accepts extensionless relative imports whether or not package.json declares
+    // "type": "module", and so does "bundler" resolution.
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    // tsx compiles one file at a time.
+    "isolatedModules": true,
+    "target": "ES2022",
+    // No "lib", so the target's default applies, DOM types included: lib/cms-stack.ts imports
+    // canopycms.config.ts, which the editor page imports too.
+    "types": ["node"],
+    "strict": true,
+    "skipLibCheck": true,
+    // tsx runs the .ts files themselves.
+    "noEmit": true
+  },
+  // Imports are followed, so canopycms.config.ts, and anything it imports, is checked too.
+  "include": ["bin/**/*.ts", "lib/**/*.ts"]
+}
