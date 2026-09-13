@@ -51,17 +51,58 @@ import { workerLog, workerLogWarn } from 'canopycms/worker/cms-worker'
  *     1 — required here because `fetchSecretString` below already owns retry
  *     and backoff, so the SDK's own retries would multiply it again.
  *
+ * IMPORTANT — those three options do NOT add up to a bound on the whole call.
+ * Measured with these exact production values against a real `http.Server`
+ * that flushes valid response headers and then withholds the body (three
+ * shapes: 10 bytes then silence, no body at all, one byte every 2s):
+ * `@smithy/node-http-handler@4.5.0`'s `handle()` (dist-cjs/index.js) resolves
+ * its promise the moment response HEADERS arrive and then clears every timer
+ * it armed — `requestTimeout` included (the `resolve` wrapper at ~line
+ * 277-279 does `timeouts.forEach(timing.clearTimeout)` before settling).
+ * `socketTimeout` fares no better here: for any value ≥ 6000ms (production
+ * uses 15000), `setSocketTimeout` (~line 144) does not call
+ * `request.socket.setTimeout` immediately — it defers that call 3000ms behind
+ * a `setTimeout` that is itself one of the timers `resolve` clears. Headers
+ * routinely arrive inside that 3s window, so the deferred call never runs and
+ * NO idle timeout is ever armed on the socket. Net effect: all three stall
+ * shapes were still pending at 90s under these options with nothing above
+ * bounding them; a fourth shape (headers 4s late, then a stall) was bounded
+ * only by the *already-armed* socket timer, rejecting at ~16.1s
+ * (15000 − 3000 deferred + 4000 late-headers ≈ 16000).
+ *
+ * The actual per-attempt, whole-call bound is `fetchSecretString`'s
+ * `attemptTimeoutMs` (see `DEFAULT_ATTEMPT_TIMEOUT_MS` below): each
+ * `client.send(...)` there passes `{ abortSignal:
+ * AbortSignal.timeout(attemptTimeoutMs) }`. Measured against the same server
+ * and the same production requestHandler options above, that rejected all
+ * three stall shapes in ~2000-2013ms (an ordinary `Error`, message
+ * `"aborted"`, wrapped by the SDK's response deserialization) with the
+ * socket destroyed (0 sockets left open server-side afterward), and left a
+ * normal fast response untouched (resolved in 25ms with the same signal
+ * armed). `Promise.race([client.send(...), timer]) + client.destroy()` on
+ * the loser was measured too and also works — the losing promise settles
+ * (rejects) within a few ms of `destroy()`, no unhandled rejection — but
+ * needs nothing extra here: a client whose `send()` was raced away and then
+ * `destroy()`-ed was measured to `send()` successfully again in ~10ms once
+ * the endpoint recovered, so a fresh client per attempt is not required
+ * either way. `AbortSignal.timeout` was chosen over the race because it is
+ * less code for the same measured result.
+ *
  * Chosen bounds: a `connectionTimeout` of a few seconds (the handshake should
  * be near-instant against a healthy endpoint) and a `requestTimeout` —
  * `throwOnRequestTimeout: true` so it actually fires per the measurement above
- * — in the 10-20s range as the overall per-call cap, plus `socketTimeout` at
- * the same bound as a second, independent trip wire against a connection that
- * goes quiet mid-response rather than never starting. With `maxAttempts: 1`,
- * one `fetchSecretString` call (default `retries: 3`, so up to 4 attempts) now
- * has a worst case of `4 × requestTimeout + (1s + 2s + 4s backoff) = 67s` when
- * every attempt hangs — bounded, versus previously unbounded (and previously
- * up to `4 × 3 = 12` transport attempts per `getSecret`, per
- * `credential-refresh.ts`'s cost arithmetic, before this change).
+ * — in the 10-20s range as the bound on time to response headers, plus
+ * `socketTimeout` at the same bound as a second, independent trip wire for
+ * the < 6s branch above (a connection that goes quiet before headers arrive).
+ * None of the three bound a stalled body, per the measurement above —
+ * `attemptTimeoutMs` is what does. With `maxAttempts: 1`, one
+ * `fetchSecretString` call (default `retries: 3`, so up to 4 attempts,
+ * default `attemptTimeoutMs: 20_000`) has a worst case of
+ * `4 × attemptTimeoutMs + (1s + 2s + 4s backoff) = 87s` when every attempt
+ * hangs — bounded, including a stalled body, versus previously unbounded on
+ * that path (and previously up to `4 × 3 = 12` transport attempts per
+ * `getSecret`, per `credential-refresh.ts`'s cost arithmetic, before this
+ * change).
  */
 export function secretsManagerClientConfig(
   timeouts: { connectionTimeout?: number; requestTimeout?: number } = {},
@@ -80,6 +121,18 @@ export function secretsManagerClientConfig(
 }
 
 /**
+ * Default per-attempt deadline for one `client.send(...)` call inside
+ * `fetchSecretString`'s retry loop — the bound that covers the WHOLE call,
+ * response body included, per the measurement above `secretsManagerClientConfig`.
+ * Chosen to sit above that function's default `requestTimeout` (15000ms): a
+ * live endpoint that is merely slow, and still within its own request
+ * timeout, should not be cut off first by a shorter attempt deadline.
+ * Injectable via `GetSecretOptions.attemptTimeoutMs` so tests can use a short
+ * one; production code should not need to set it.
+ */
+const DEFAULT_ATTEMPT_TIMEOUT_MS = 20_000
+
+/**
  * Reads a secret's string value, retrying only TRANSPORT failures.
  *
  * The retry loop is deliberately narrow: it covers `client.send` throwing
@@ -95,8 +148,16 @@ export function secretsManagerClientConfig(
  *
  * @param retries number of retries AFTER the first call, so the default 3 means
  *   up to 4 `GetSecretValue` calls.
+ * @param attemptTimeoutMs per-attempt deadline (ms) passed to each `client.send`
+ *   as an `AbortSignal.timeout`, covering that whole call including a stalled
+ *   response body — see `DEFAULT_ATTEMPT_TIMEOUT_MS` and the measurement above
+ *   `secretsManagerClientConfig`.
  */
-async function fetchSecretString(secretArn: string, retries: number): Promise<string> {
+async function fetchSecretString(
+  secretArn: string,
+  retries: number,
+  attemptTimeoutMs: number,
+): Promise<string> {
   const { SecretsManagerClient, GetSecretValueCommand } =
     await import('@aws-sdk/client-secrets-manager')
   const client = new SecretsManagerClient(secretsManagerClientConfig())
@@ -117,7 +178,15 @@ async function fetchSecretString(secretArn: string, retries: number): Promise<st
   let secretString: string | undefined
   for (let attempt = 0; attempt <= lastAttempt; attempt++) {
     try {
-      const response = await client.send(new GetSecretValueCommand({ SecretId: secretArn }))
+      // A fresh AbortSignal.timeout() every iteration: a single one created
+      // before the loop would already be expired by a later retry. Measured
+      // (see the comment above `secretsManagerClientConfig`) to bound the
+      // WHOLE send — a stalled response body included — by destroying the
+      // socket and rejecting with an ordinary Error, which the catch below
+      // treats like any other transport failure.
+      const response = await client.send(new GetSecretValueCommand({ SecretId: secretArn }), {
+        abortSignal: AbortSignal.timeout(attemptTimeoutMs),
+      })
       secretString = response.SecretString
       break
     } catch (err) {
@@ -302,6 +371,13 @@ export interface GetSecretOptions {
   jsonFieldEnvVar?: string
   /** Retries AFTER the first call, so the default 3 means up to 4 calls. */
   retries?: number
+  /**
+   * Per-attempt deadline (ms) for one `client.send(...)` call, covering the
+   * whole call including a stalled response body. Defaults to
+   * `DEFAULT_ATTEMPT_TIMEOUT_MS`; internal knob mainly so tests can use a
+   * short one — see the measurement above `secretsManagerClientConfig`.
+   */
+  attemptTimeoutMs?: number
 }
 
 /**
@@ -315,8 +391,13 @@ export async function getSecret(
   secretArn: string,
   options: GetSecretOptions = {},
 ): Promise<string> {
-  const { jsonField, jsonFieldEnvVar, retries = 3 } = options
-  const secretString = await fetchSecretString(secretArn, retries)
+  const {
+    jsonField,
+    jsonFieldEnvVar,
+    retries = 3,
+    attemptTimeoutMs = DEFAULT_ATTEMPT_TIMEOUT_MS,
+  } = options
+  const secretString = await fetchSecretString(secretArn, retries, attemptTimeoutMs)
 
   // Truthiness, not `=== undefined`: an env var that is set-but-empty arrives as
   // `''`, and "the operator left it blank" means "not configured", not "read the
