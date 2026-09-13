@@ -238,10 +238,15 @@ describe('resolveWorkerGitHubAuth', () => {
     })
 
     it('leaves no unhandled rejection behind when the timeout wins the race', async () => {
-      // The losing mint settles after the race is decided. Without the
-      // `minting.catch(() => {})` guard that is an unhandled rejection, which
-      // vitest reports separately from the pass count and CI treats as a
-      // failure.
+      // A PROPERTY test, not a mutation-pinned one, and the distinction is
+      // worth stating because this test first shipped guarding a line that did
+      // nothing: `Promise.race` subscribes a reject handler to every input, so
+      // the losing mint's late rejection is already handled, and deleting the
+      // `minting.catch(() => {})` that used to sit there left this green.
+      // Measured, and the dead line is gone. What is still worth asserting is
+      // the property itself -- an unhandled rejection here is reported by
+      // vitest separately from the pass count and fails CI -- so a future
+      // rewrite that stops racing would be caught.
       const unhandled = vi.fn()
       process.on('unhandledRejection', unhandled)
       try {
@@ -302,6 +307,24 @@ describe('isTransientAuthFailure', () => {
       expect(isTransientAuthFailure(Object.assign(new Error('socket'), { code }))).toBe(true)
     },
   )
+
+  it('finds the errno one level down in `cause`, where fetch actually puts it', () => {
+    // Measured on Node 24: a fetch() DNS failure is `TypeError: fetch failed`
+    // whose own `.code` is undefined and whose `.cause.code` is ENOTFOUND.
+    // Reading only the top level called that permanent and would kill a
+    // booting worker over a DNS blip.
+    const fetchFailed = new Error('fetch failed')
+    fetchFailed.cause = Object.assign(new Error('getaddrinfo ENOTFOUND'), { code: 'ENOTFOUND' })
+
+    expect(isTransientAuthFailure(fetchFailed)).toBe(true)
+  })
+
+  it('does not treat an unrecognised errno in `cause` as transient', () => {
+    const wrapped = new Error('boom')
+    wrapped.cause = Object.assign(new Error('denied'), { code: 'EACCES' })
+
+    expect(isTransientAuthFailure(wrapped)).toBe(false)
+  })
 
   it('calls an unrecognised errno permanent', () => {
     expect(isTransientAuthFailure(Object.assign(new Error('nope'), { code: 'EACCES' }))).toBe(false)

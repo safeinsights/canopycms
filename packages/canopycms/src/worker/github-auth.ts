@@ -197,10 +197,11 @@ function assertUsableMintTimeout(timeoutMs: number): void {
 async function mintInstallationToken(app: GitHubAppAuth, timeoutMs: number): Promise<string> {
   const signal = AbortSignal.timeout(timeoutMs)
   const minting = app.mintInstallationToken({ signal })
-  // If the timeout wins the race, the losing promise must not surface an
-  // unhandled rejection when it eventually settles (same guard as
-  // executeTaskWithTimeout).
-  minting.catch(() => {})
+  // No `minting.catch(() => {})` guard here, deliberately, though the same
+  // shape in executeTaskWithTimeout has one: `Promise.race` subscribes a
+  // reject handler to EVERY input, so a mint that rejects after the timeout
+  // has already won is handled by the race itself. Measured — adding the
+  // guard changes nothing, and removing it produces no unhandled rejection.
   const timedOut = new Promise<never>((_, reject) => {
     signal.addEventListener('abort', () => reject(new MintTimeoutError(timeoutMs)), { once: true })
   })
@@ -274,7 +275,28 @@ export function isTransientAuthFailure(err: unknown): boolean {
   if (err instanceof MintTimeoutError) return true
   const status = getHttpStatus(err)
   if (status !== null) return status >= 500 || status === 408 || status === 429
-  return isNodeError(err) && TRANSIENT_NETWORK_CODES.has(err.code ?? '')
+  return TRANSIENT_NETWORK_CODES.has(networkErrorCode(err) ?? '')
+}
+
+/**
+ * The errno behind a network failure, whether it is on the error or one level
+ * down in its `cause`.
+ *
+ * The nesting is not hypothetical: measured on Node 24, a `fetch()` DNS
+ * failure is a `TypeError: fetch failed` whose own `.code` is `undefined` and
+ * whose `.cause.code` is `ENOTFOUND`. Reading only the top level would call
+ * that permanent and kill a booting worker over a DNS blip.
+ *
+ * `@octokit/request` happens to convert that particular TypeError into a
+ * `RequestError(…, 500)`, which the status branch above already handles — so
+ * with the stock strategy this path is belt and braces. It is what a
+ * `mintInstallationToken` built on raw `fetch` would produce, and the
+ * injection point invites exactly that.
+ */
+function networkErrorCode(err: unknown): string | undefined {
+  if (isNodeError(err) && err.code) return err.code
+  const cause = err instanceof Error ? (err.cause as unknown) : undefined
+  return isNodeError(cause) ? cause.code : undefined
 }
 
 /** Extract an HTTP status from an error, if present (Octokit RequestError shape). */
