@@ -136,7 +136,7 @@ export default function EditLayout({ children }: { children: React.ReactNode }) 
 }
 ```
 
-The `dynamic` export has to be in the layout. The scaffolded edit page is a `'use client'` module, and a `dynamic` export from it didn't stop the prerender when measured on Next 15.5. `apps/dual-build-fixture` builds without the variable, serves with it, and checks that `/edit` carries the served key. Two more things make the image tier-independent:
+The `dynamic` export has to be in the layout. The scaffolded edit page is a `'use client'` module, and a `dynamic` export from a `'use client'` page didn't stop the prerender when measured on Next 15.5. `apps/dual-build-fixture` builds without the variable, serves with it, and checks that `/edit` carries the served key. Two more things make the image tier-independent:
 
 - **No `clerkMiddleware`.** Delete the `middleware.ts` that `canopycms init --auth clerk` generates. The middleware reads the build-time key rather than the provider's prop, and it needs `CLERK_SECRET_KEY` on the Lambda (see [Security Model](#security-model)). CanopyCMS doesn't depend on it: `createNextCanopyContext` wraps the Clerk plugin in `CachingAuthPlugin`, which verifies each request's token (an `Authorization` bearer or the `__session` cookie) with `CLERK_JWT_KEY` alone. What you give up is having signed-out requests turned away before they reach the app. A signed-out visitor to `/edit` gets the editor, whose API calls are rejected, so send them to sign-in yourself, for instance by rendering Clerk's `<RedirectToSignIn />` when `useAuth()` reports them signed out.
 - **Per-tier values in the Lambda's `environment`.** Pass the publishable-key variable to `CanopyCmsService` alongside `CLERK_JWT_KEY`; both are public. The `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` build arg then no longer decides which Clerk instance the editor uses. Other `NEXT_PUBLIC_CLERK_*` settings are inlined at build the same way, and the common ones (`signInUrl`, `proxyUrl`, `domain`) have matching provider props.
@@ -736,8 +736,9 @@ resolve a secret key; `jwtKey` doesn't satisfy that check. So the posture above 
 deployment without that middleware, and one that keeps it needs `CLERK_SECRET_KEY` in the
 Lambda's environment, or a fetch of it at run time (see
 `.claude/future-tasks/deploy-test-lambda-plaintext-clerk-secret.md`). What dropping the
-middleware gives up is under [Dual Build Support](#dual-build-support). Neither shape has
-been exercised against a live Clerk instance yet, so test sign-in early.
+middleware gives up is under [Dual Build Support](#dual-build-support). The middleware shape
+was deploy-tested against a real Clerk instance in 2026-07; the shape without it has not
+been yet, so test sign-in early.
 
 If the CMS Lambda is compromised, an attacker can read/write content on EFS but cannot exfiltrate data, push to GitHub, or access any external service.
 

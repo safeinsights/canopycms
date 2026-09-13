@@ -3363,7 +3363,7 @@ CLERK_JWT_KEY=...           # Public JWKS PEM. Optional locally; load-bearing on
 CLERK_AUTHORIZED_PARTIES=... # Optional: comma-separated domains
 ```
 
-`CLERK_SECRET_KEY` is resolved lazily, on the first authenticated request -- not at build/startup. This means a zero-editor static/public build (`deployedAs: 'static'`, no auth plugin exercised) never needs the secret at all. It's still required wherever authentication actually runs: the CMS server build/deployment and the worker daemon's auth-cache refresh.
+`CLERK_SECRET_KEY` is resolved lazily, the first time the plugin calls Clerk's backend API -- not at build/startup. This means a zero-editor static/public build (`deployedAs: 'static'`, no auth plugin exercised) never needs the secret at all. It is needed only where that API is called: the worker daemon's auth-cache refresh, and in dev mode the dev server's lazy refresh. A deployed CMS server verifies tokens with `CLERK_JWT_KEY` alone, unless it also runs `clerkMiddleware`, which needs the secret wherever it runs (see [Security Model](docs/deploying-to-aws.md#security-model)).
 
 For GitHub integration (production mode):
 

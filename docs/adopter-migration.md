@@ -567,9 +567,11 @@ a secret. The reclassification is about not teaching that the Lambda handles sec
 
 **Worth checking while you are here.** Confirm your own `bin/app.ts` passes
 `CLERK_SECRET_KEY` to `CanopyCmsService` as `clerkSecretKeySecretArn` (a Secrets Manager
-ARN read by the EC2 worker) and **not** as an entry in the Lambda's `environment`. No
-Lambda code path reads that value, so passing it there gains nothing and makes a real
-secret readable by anyone holding `lambda:GetFunctionConfiguration`.
+ARN read by the EC2 worker) and **not** as an entry in the Lambda's `environment`.
+CanopyCMS's own Lambda code never reads that value, so passing it there gains nothing and
+makes a real secret readable by anyone holding `lambda:GetFunctionConfiguration`. The
+exception is `clerkMiddleware`, if you keep it: it needs the secret wherever it runs (see
+the Security Model in [deploying-to-aws.md](deploying-to-aws.md#security-model)).
 
 ### `basePath` deployments are supported, and `assetUrl`'s `baseUrl` is now safe for path prefixes (#24)
 
