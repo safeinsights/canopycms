@@ -295,7 +295,15 @@ export function resolveWorkerGitHubAuth(config: GitHubAuthConfig): ResolvedGitHu
       // adopter opting out) must permit every call rather than blocking on an
       // identical timestamp -- the same reason credential-refresh.ts's own
       // provider floor uses `<`.
-      if (lastProviderReachedAt !== undefined && now - lastProviderReachedAt < minIntervalMs) {
+      // `now >= lastProviderReachedAt`: a wall clock that stepped BACKWARDS (an
+      // NTP correction at boot, a VM resume) counts as the floor having expired.
+      // Otherwise the negative difference is always `< minIntervalMs`, and the
+      // floor would stay shut for however far the clock stepped.
+      if (
+        lastProviderReachedAt !== undefined &&
+        now >= lastProviderReachedAt &&
+        now - lastProviderReachedAt < minIntervalMs
+      ) {
         return
       }
       // Stamped BEFORE the await, not after, for the same reason

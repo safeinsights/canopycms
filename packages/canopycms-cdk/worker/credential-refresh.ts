@@ -158,7 +158,11 @@ export function createReactiveSecret(options: ReactiveSecretOptions): ReactiveSe
       const at = now()
       // `>=`, so a minIntervalMs of 0 (a test, or an adopter opting out)
       // permits every call rather than blocking on an identical timestamp.
-      if (lastReadAt !== undefined && at - lastReadAt < minIntervalMs) return undefined
+      // `at >= lastReadAt`: a clock that stepped BACKWARDS counts as the floor
+      // having expired, rather than holding it shut for however far it stepped.
+      if (lastReadAt !== undefined && at >= lastReadAt && at - lastReadAt < minIntervalMs) {
+        return undefined
+      }
       // Stamped BEFORE the await, not after: stamping after lets two
       // overlapping calls each see an unstamped clock and both issue a read,
       // which is the floor not holding.

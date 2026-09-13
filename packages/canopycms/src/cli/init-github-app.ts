@@ -694,6 +694,21 @@ export async function handOffKey(
   if (destination.argv.length === 0) {
     return { stored: false, detail: 'no command was given to send the key to' }
   }
+  // Refused before spawning, for parity with the direct spawn this replaced:
+  // `env` reads a leading word containing `=` as a variable assignment, not a
+  // command, so `-- FOO=bar` (or a whole command mis-quoted into one word) made
+  // it print the environment and exit 0 -- the key reported stored, and gone.
+  // A direct spawn of such a word always failed with ENOENT instead.
+  if (destination.argv[0].includes('=')) {
+    return {
+      stored: false,
+      detail:
+        `\`${destination.argv[0]}\` is not a command: a first word containing \`=\` would be read ` +
+        'as an environment variable assignment and nothing would run. To set a variable for the ' +
+        'command, set it in your shell before `canopycms` (e.g. `AWS_PROFILE=prod canopycms ' +
+        'init-github-app create -- aws …`).',
+    }
+  }
   const [command, ...args] = destination.argv
   return new Promise<HandOffResult>((resolve) => {
     let child: ChildProcess

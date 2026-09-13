@@ -510,6 +510,25 @@ describe('resolveWorkerGitHubAuth', () => {
           expect(await resolved.resolveGitToken()).toBe('ghp_second_round')
         })
 
+        it('treats a wall clock that stepped backwards as the floor having expired', async () => {
+          // An NTP correction at boot, or a VM resume, can move Date.now() back.
+          // Without the `now >= lastProviderReachedAt` check the negative
+          // difference is always under the interval, so the floor stayed shut for
+          // however far the clock stepped -- here, two hours.
+          const tenHours = 10 * 60 * 60_000
+          vi.useFakeTimers({ toFake: ['Date'] })
+          vi.setSystemTime(tenHours)
+          const refreshGitHubToken = providerOf('ghp_first', 'ghp_after_clock_step')
+          const resolved = resolveWorkerGitHubAuth({ githubToken: 'ghp_boot', refreshGitHubToken })
+
+          await resolved.refreshCredential()
+          vi.setSystemTime(tenHours - 2 * 60 * 60_000)
+          await resolved.refreshCredential()
+
+          expect(refreshGitHubToken).toHaveBeenCalledTimes(2)
+          expect(await resolved.resolveGitToken()).toBe('ghp_after_clock_step')
+        })
+
         it('collapses overlapping calls into a single provider call', async () => {
           // The second call starts before the first's provider promise settles --
           // the same shape as the "overlapping refreshes" tests above, but here

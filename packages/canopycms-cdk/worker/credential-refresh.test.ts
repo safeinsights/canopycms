@@ -104,6 +104,22 @@ describe('guard: too soon', () => {
     expect(sendMock).toHaveBeenCalledTimes(2)
   })
 
+  it('treats a clock that stepped backwards as the floor having expired', async () => {
+    const clock = fakeClock()
+    secretReturns('same', 'same')
+    const secret = createReactiveSecret({ arn: ARN, initial: 'same', now: clock.now })
+
+    await secret.refresh()
+    expect(sendMock).toHaveBeenCalledTimes(1)
+
+    // An NTP correction steps the clock back two hours. Without the
+    // `at >= lastReadAt` check the negative difference stays under the
+    // interval, and the floor would be shut for those two hours.
+    clock.advance(-2 * 60 * 60_000)
+    await secret.refresh()
+    expect(sendMock).toHaveBeenCalledTimes(2)
+  })
+
   it('caps a permanently-failing fast loop at one read per interval', async () => {
     const clock = fakeClock()
     // A wrong-but-unchanging secret, asked about far more often than the floor.

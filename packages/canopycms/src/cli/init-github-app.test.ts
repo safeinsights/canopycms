@@ -607,6 +607,21 @@ describe('handOffKey', () => {
     expect(result.detail).toContain('already exists')
     expect(await readFile(target, 'utf8')).toBe('an existing key')
   })
+
+  it('refuses a first command word containing `=`, before spawning anything', async () => {
+    // Through the sh bridge (`exec env -- "$@"`) a leading word containing `=` is
+    // an environment assignment, not a command. With nothing after it, `env`
+    // printed the environment and exited 0, so the key was reported stored and
+    // discarded. A direct spawn of such a word always failed with ENOENT.
+    for (const argv of [
+      ['FOO=bar'],
+      ['AWS_PROFILE=prod aws secretsmanager create-secret --secret-string file:///dev/stdin'],
+    ]) {
+      const result = await handOffKey(PEM, { kind: 'command', argv })
+      expect(result.stored).toBe(false)
+      expect(result.detail).toContain('is not a command')
+    }
+  })
 })
 
 describe.skipIf(process.platform === 'win32')(
