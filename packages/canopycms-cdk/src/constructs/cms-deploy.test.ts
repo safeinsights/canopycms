@@ -1390,18 +1390,25 @@ describe('CanopyCmsService: secret ARN props feed the IAM policy', () => {
   })
 
   it('grants the App private-key ARN exactly once when it is passed in secretsArns too', () => {
-    // What this can and cannot catch, stated because the obvious reading is
-    // wrong: `PolicyStatement` collapses a repeated `resources` entry by itself
-    // (measured against aws-cdk-lib 2.265 -- deleting the construct's own
-    // `new Set` leaves every assertion in this file green), so this does NOT
-    // pin that dedupe. `secretResources` reads across ALL statements, so what
-    // it does pin is that the ARN is granted by ONE statement rather than
-    // picking up a second grant from a separate `addToPolicy` call -- the
-    // realistic regression, since the union above is assembled from two prop
-    // families that were once granted separately.
+    // Pins that the ARN is granted by ONE statement, not also by a second,
+    // separate `addToPolicy` -- the realistic regression, since the union above
+    // is assembled from prop families that were once granted separately.
+    //
+    // aws-cdk-lib 2.265 hides that regression twice over, so the setup matters:
+    // - `PolicyStatement` collapses a repeated `resources` entry itself, so this
+    //   does NOT pin the construct's own `new Set`
+    //   (.claude/future-tasks/iam-dedupe-tests-pass-vacuously.md).
+    // - `PolicyDocument` also drops a statement that renders byte-identical to
+    //   another. With `secretsArns: [APP_KEY_ARN]` alone, a stray single-ARN grant
+    //   rendered exactly like the union and was collapsed away, so this test
+    //   stayed green with that bug reintroduced.
+    // `other` defeats the second: the union now lists two ARNs, a stray grant of
+    // one renders as a distinct statement, and `secretResources` -- which reads
+    // across every statement -- sees the ARN twice.
+    const other = 'arn:aws:secretsmanager:us-east-1:123456789012:secret:other-AbCdEf'
     const template = synthUncached(false, {
       ...APP_PROPS,
-      secretsArns: [APP_KEY_ARN],
+      secretsArns: [APP_KEY_ARN, other],
     })
     const occurrences = secretResources(template).filter((r) => r === APP_KEY_ARN)
     expect(occurrences).toHaveLength(1)
