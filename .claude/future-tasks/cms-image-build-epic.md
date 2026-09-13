@@ -1,6 +1,7 @@
 # CMS editor image: base branch, sharp tracing, image architecture
 
-**Status:** All six PRs merged; integration PR into `int-202609-a` open
+**Status:** All six PRs merged; integration PR into `int-202609-a` open at
+https://github.com/safeinsights/canopycms/pull/331
 **Created:** 2026-09-12
 **Integration branch:** `int-202609-cms-image` (base `int-202609-a`)
 
