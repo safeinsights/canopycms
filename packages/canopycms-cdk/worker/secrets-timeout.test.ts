@@ -94,11 +94,14 @@ type BodyStallBehavior = 'headers-then-silence' | 'headers-only' | 'headers-then
 function startBodyStallServer(behavior: BodyStallBehavior): Promise<{
   port: number
   openSocketCount: () => number
+  requestCount: () => number
   close: () => Promise<void>
 }> {
   const sockets = new Set<import('node:net').Socket>()
   let trickle: NodeJS.Timeout | undefined
+  let requests = 0
   const server = http.createServer((_req, res) => {
+    requests++
     if (behavior === 'headers-then-silence') {
       res.writeHead(200, { 'Content-Type': 'application/json' })
       res.write(Buffer.alloc(10, 'x')) // 10 body bytes, then stall forever
@@ -125,6 +128,7 @@ function startBodyStallServer(behavior: BodyStallBehavior): Promise<{
       resolve({
         port: address.port,
         openSocketCount: () => sockets.size,
+        requestCount: () => requests,
         close: () =>
           new Promise<void>((r) => {
             if (trickle) clearInterval(trickle)
@@ -241,6 +245,7 @@ describe('getSecret() wiring', () => {
     const prevRegion = process.env.AWS_REGION
     const prevAccessKeyId = process.env.AWS_ACCESS_KEY_ID
     const prevSecretAccessKey = process.env.AWS_SECRET_ACCESS_KEY
+    const prevProfile = process.env.AWS_PROFILE
 
     // `AWS_ENDPOINT_URL_<SERVICE>` is honoured by the installed
     // `@aws-sdk/client-secrets-manager@3.1018.0` with no explicit `endpoint`
@@ -253,6 +258,10 @@ describe('getSecret() wiring', () => {
     process.env.AWS_REGION = 'us-east-1'
     process.env.AWS_ACCESS_KEY_ID = 'x'
     process.env.AWS_SECRET_ACCESS_KEY = 'y'
+    // An ambient AWS_PROFILE makes the SDK's credential chain skip the keys
+    // above and fail before any request is sent -- fast, and a rejection, so
+    // the assertions below would mistake it for the deadline working.
+    delete process.env.AWS_PROFILE
 
     try {
       const start = Date.now()
@@ -261,11 +270,15 @@ describe('getSecret() wiring', () => {
           retries: 0, // exactly one attempt, no backoff — isolates the deadline itself
           attemptTimeoutMs: 1000, // short injected deadline, far below the 15000ms production default
         }),
-      ).rejects.toThrow()
-      // If the deadline were not actually wired into `fetchSecretString`'s
-      // `client.send`, this would hang on the production requestTimeout/
-      // socketTimeout (15000ms) at best, or forever (the original defect).
+      ).rejects.toThrow(/aborted/)
+      // Without the deadline wired into `fetchSecretString`'s `client.send`,
+      // this headers-only response hangs forever: once headers have arrived,
+      // neither the request timeout nor the socket timeout fires.
       expect(Date.now() - start).toBeLessThan(3000)
+      // The request really reached the stalled server. Any failure BEFORE a
+      // request is sent -- credentials, endpoint resolution -- is also fast and
+      // also rejects, so without this the test passes with the deadline gone.
+      expect(server.requestCount()).toBe(1)
     } finally {
       const restore = (name: string, value: string | undefined) => {
         if (value === undefined) delete process.env[name]
@@ -275,6 +288,25 @@ describe('getSecret() wiring', () => {
       restore('AWS_REGION', prevRegion)
       restore('AWS_ACCESS_KEY_ID', prevAccessKeyId)
       restore('AWS_SECRET_ACCESS_KEY', prevSecretAccessKey)
+      restore('AWS_PROFILE', prevProfile)
     }
   })
+})
+
+describe('getSecret() attemptTimeoutMs validation', () => {
+  it.each([Number.NaN, Number.POSITIVE_INFINITY, 1.5, 0, -1])(
+    'rejects attemptTimeoutMs %s before any request, naming the option',
+    async (attemptTimeoutMs) => {
+      const start = Date.now()
+      await expect(
+        getSecret('arn:aws:secretsmanager:us-east-1:123456789012:secret:test-XXXXXX', {
+          retries: 3,
+          attemptTimeoutMs,
+        }),
+      ).rejects.toThrow(/attemptTimeoutMs must be a whole number/)
+      // Unvalidated, AbortSignal.timeout threw inside the retry loop's try, so
+      // this backed off for ~7s and then rejected with a RangeError.
+      expect(Date.now() - start).toBeLessThan(1000)
+    },
+  )
 })

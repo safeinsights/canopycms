@@ -132,6 +132,9 @@ export function secretsManagerClientConfig(
  */
 const DEFAULT_ATTEMPT_TIMEOUT_MS = 20_000
 
+/** The largest delay `AbortSignal.timeout` accepts without silently clamping. */
+const MAX_ATTEMPT_TIMEOUT_MS = 2_147_483_647
+
 /**
  * Reads a secret's string value, retrying only TRANSPORT failures.
  *
@@ -397,6 +400,22 @@ export async function getSecret(
     retries = 3,
     attemptTimeoutMs = DEFAULT_ATTEMPT_TIMEOUT_MS,
   } = options
+  // Checked here, before any network call, rather than left to
+  // `AbortSignal.timeout` inside `fetchSecretString`'s try: there a NaN,
+  // Infinity, fractional or non-positive value throws a RangeError that the
+  // catch reads as a transport failure, so it was retried with backoff and
+  // logged as "Secrets Manager unavailable" before failing -- the same
+  // misdiagnosis `fetchSecretString` exists to prevent. Same bounds as
+  // `gitTokenMintTimeoutMs` in canopycms core (github-auth.ts).
+  if (
+    !Number.isInteger(attemptTimeoutMs) ||
+    attemptTimeoutMs < 1 ||
+    attemptTimeoutMs > MAX_ATTEMPT_TIMEOUT_MS
+  ) {
+    throw new Error(
+      `getSecret: attemptTimeoutMs must be a whole number of milliseconds between 1 and ${MAX_ATTEMPT_TIMEOUT_MS} (got ${String(attemptTimeoutMs)}).`,
+    )
+  }
   const secretString = await fetchSecretString(secretArn, retries, attemptTimeoutMs)
 
   // Truthiness, not `=== undefined`: an env var that is set-but-empty arrives as
