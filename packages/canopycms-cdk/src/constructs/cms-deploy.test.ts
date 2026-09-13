@@ -1165,9 +1165,10 @@ describe('CanopyCmsService: Lambda architecture and image platform', () => {
 
   // The platform half. CDK sets a `fromImageAsset` image's build platform from
   // the architecture the function binds it with, and records it in the asset
-  // manifest. These fail if the construct ever passes `architecture` through
-  // unresolved again: with none bound, CDK records no platform at all and
-  // Docker builds for whatever machine runs `cdk deploy`.
+  // manifest. The arm64 test fails if the construct ever passes `architecture`
+  // through unresolved again: with none bound, CDK records no platform at all and
+  // Docker builds for whatever machine runs `cdk deploy`. The amd64 test pins that
+  // an explicit architecture still reaches the platform.
   it('builds a fromImageAsset image for linux/arm64 when architecture is omitted', () => {
     expect(synthWithImageAsset()).toEqual({
       dockerPlatforms: ['linux/arm64'],

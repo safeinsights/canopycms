@@ -33,7 +33,7 @@ which added `packages/canopycms-next/src/sharp-tracing.ts`.
    canopycms-next with that change, put the other two packages' tarballs in the same directory,
    and run `scripts/smoke/standalone-image.mjs --tarballs <dir>`
    ([deploy-image-build-smoke-test.md](resolved/deploy-image-build-smoke-test.md)). While the
-   include is still needed, 5 of its 14 checks fail: the original-PNG and WebP requests, the
+   include is still needed, 5 of its 14 checks fail: the `orig` PNG and WebP requests, the
    libvips check, the alias load and the `ERR_DLOPEN_FAILED` count. The "externalized" check still
    passes. Or check by hand:
    - the builder's `.next/server/app/_not-found/page.js.nft.json` lists `libvips-cpp`;

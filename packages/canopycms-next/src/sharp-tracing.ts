@@ -7,12 +7,18 @@
  * fires on a path ending in `sharp/lib/index.js`, which is sharp 0.34's entry point. sharp 0.35
  * ships `dist/index.{cjs,mjs}` instead.
  *
- * Measured on a Next 16.1.7 Turbopack `output: 'standalone'` build: the route traces list
- * libvips's `package.json` and the binding's rpath symlink, but not `lib/libvips-cpp.so.*`. Every
- * load of sharp in the resulting server then fails with ERR_DLOPEN_FAILED. Whether a webpack build
- * reaches the library some other way has not been verified. If it does, Next's JS tracer dedupes
- * the include: it collects includes in a `Set` (`next/dist/build/collect-build-traces.js:459` in
- * 16.1.7).
+ * Measured on a Next 16.1.7 Turbopack `output: 'standalone'` build (`.claude/future-tasks/`
+ * `cms-image-build-epic.md`, "The tracer misses the `.so`"): the route traces list libvips's
+ * `package.json` and the binding's rpath symlink, but not `lib/libvips-cpp.so.*`. Every load of
+ * sharp in the resulting server then fails with ERR_DLOPEN_FAILED.
+ *
+ * A webpack build under pnpm has a different problem. On Next 15.5.21, Next's webpack externals
+ * resolution bundles sharp's JavaScript into a server chunk, so no sharp 0.35 package is traced and
+ * the bundled copy cannot reach its native binding, whether or not this include ships libvips (root
+ * cause in `.claude/future-tasks/webpack-standalone-sharp-bundled.md`). An npm install and Next
+ * 16's `next build --webpack` have not been checked. Where Next's JS tracer does trace the library
+ * itself, the include adds no duplicate: it merges traced and included files into one `Set`
+ * (`next/dist/build/collect-build-traces.js:505` in 16.1.7).
  *
  * Upstream: https://github.com/vercel/next.js/issues/97973 (open). On sharp's side, see
  * https://github.com/lovell/sharp/issues/4567 and https://github.com/lovell/sharp/issues/4543.
@@ -44,7 +50,8 @@
  * v16.1.7), which leaves the pattern unanchored (`turbo-tasks-fs/src/globset.rs:104-114`). Its
  * directory walk is therefore not confined to the directory an include names, and it follows
  * symlinked directories (`read_glob.rs:87-99`). Measured on one Next 16.1.7 app's standalone build,
- * the include added about 5 s of compile time (12.8 s to 17.9 s, mean of three runs).
+ * the include added about 5 s of compile time (12.8 s to 17.9 s, mean of three runs; recorded in
+ * `.claude/future-tasks/upstream-next-sharp-tracing-recheck.md`).
  */
 import { readFileSync, realpathSync, statSync } from 'node:fs'
 import path from 'node:path'
@@ -182,8 +189,9 @@ function readManifest(packageDir: string): Manifest {
  * This is only the hierarchy half of Node's lookup (`Module._nodeModulePaths`), on purpose.
  * `require.resolve.paths` also appends Node's global folders (`~/.node_modules`,
  * `~/.node_libraries`, the install prefix's `lib/node`, and `NODE_PATH`), which bundlers do not
- * search. A test runner can add more: vitest puts its own pnpm store there. A package found that
- * way is not one the build resolves.
+ * search. pnpm's bin shims add more: running vitest through `node_modules/.bin`, `NODE_PATH` also
+ * holds vitest's store directories and the repo's hoisted `node_modules/.pnpm/node_modules`. A
+ * package found that way is not one the build resolves.
  */
 function nodeModulesLookupDirs(fromDir: string): string[] {
   const dirs: string[] = []

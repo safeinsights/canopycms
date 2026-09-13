@@ -393,10 +393,11 @@ export async function initDeployAws(options: InitDeployOptions): Promise<void> {
     writeOpts,
   )
 
-  // infrastructure/ imports aws-cdk-lib and canopycms-cdk, which the app itself need not install,
-  // and a Next app's tsconfig.json includes `**/*.ts`. Unexcluded, the app's own `next build`
-  // type-checks the CDK app and fails with "Cannot find module 'aws-cdk-lib'". The image build is
-  // covered separately: the generated .dockerignore keeps infrastructure/ out of its context.
+  // A Next app's tsconfig.json includes `**/*.ts`, so unexcluded, the app's own `next build`
+  // type-checks infrastructure/ under the app's compiler options: it fails with "Cannot find
+  // module 'aws-cdk-lib'" wherever the CDK packages are not installed, and on options such as
+  // verbatimModuleSyntax that reject the generated stack. The image build is covered separately:
+  // the generated .dockerignore keeps infrastructure/ out of its context.
   const tsconfigResult = await excludeFromTsconfig(projectDir, 'infrastructure')
   if (tsconfigResult === 'added') {
     p.log.success('updated: tsconfig.json (infrastructure/ excluded from type-checking)')

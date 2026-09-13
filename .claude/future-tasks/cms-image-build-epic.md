@@ -1,6 +1,6 @@
 # CMS editor image: base branch, sharp tracing, image architecture
 
-**Status:** All six PRs merged; integration PR into `int-202609-a` open at
+**Status:** All six PRs and the follow-up #332 merged; integration PR into `int-202609-a` open at
 https://github.com/safeinsights/canopycms/pull/331
 **Created:** 2026-09-12
 **Integration branch:** `int-202609-cms-image` (base `int-202609-a`)
@@ -13,6 +13,7 @@ https://github.com/safeinsights/canopycms/pull/331
 | 4   | `fix/cms-service-architecture`       | Merged (93e20fd0)             | https://github.com/safeinsights/canopycms/pull/323   |
 | 5   | `ci/standalone-image-smoke`          | Merged (04f11dd5)             | https://github.com/safeinsights/canopycms/pull/328   |
 | 6   | `docs/cms-image-adopter-answers`     | Merged (69e30fa8)             | https://github.com/safeinsights/canopycms/pull/325   |
+| 7 (follow-up) | `fix/scaffold-cdk-typecheck` | Merged (d63d4367)             | https://github.com/safeinsights/canopycms/pull/332   |
 
 ## Context
 
@@ -334,7 +335,8 @@ rebases onto the integration branch and verifies the "both" image before merging
 - **Root.** The outermost lockfile on Next 15 and 16; the closest lockfile on Next 13 and 14, which
   is what their `findRootDir` does.
 - **Key.** Legacy `experimental.*` spellings that Next 15 and 16 still migrate are read and written
-  where Next reads them. `undefined` and `null` count as unset, as in Next's `assignDefaults`.
+  where Next reads them. `undefined` and `null` count as unset, as in Next's `assignDefaults`
+  (`assignDefaultsAndValidate` in 16.1.7).
 - **Deferred.** Two LOW root-lookup edge cases:
   [sharp-tracing-lockfile-root-edge-cases.md](sharp-tracing-lockfile-root-edge-cases.md).
 
@@ -426,7 +428,8 @@ Implements `deploy-image-build-smoke-test.md`. Its chip is spawned only after PR
 - **CI.** The first run (on `b4d7eb1e`) failed on all three legs, each with 13 of 14 checks green:
   the `/no-such-page` check required the root layout's `<header>` markup, which a force-dynamic
   route calling `notFound()` does not send. `8581b501` matched the layout's text instead. Every leg
-  of the six runs that followed, through `de626711`, passed all 14 checks, in 1m43s to 2m43s.
+  of the six runs that followed, through `de626711`, passed all 14 checks, in 1m43s to 2m43s from
+  job start to completion (runs 34738615784 to 34740434195).
 - **pnpm version.** The fixture pins `packageManager`. Without it, corepack in `node:22-slim`
   takes the latest pnpm (12.4.1 on 2026-09-12), which still installed the pnpm 11 lockfile without
   re-resolving it.
@@ -515,8 +518,10 @@ when they open their PR, when they hit a decision that needs a call, and when th
 - [init-deploy-aws-first-build-gaps.md](resolved/init-deploy-aws-first-build-gaps.md) (P2) — scaffold gaps the image smoke test hits. Resolved by PR 5.
 - [yarn-support-decision.md](yarn-support-decision.md) (P3) — keep or drop Yarn in `init-deploy aws`, split from the smoke-test task.
 - [webpack-standalone-sharp-bundled.md](webpack-standalone-sharp-bundled.md) (P2) — a webpack-built CMS image bundles sharp into a server chunk, so image transforms fail; found by PR 5's Next 15.5.21 probe, with Next 16 `--webpack` not yet verified.
-- [cms-image-pr5-review-followups.md](cms-image-pr5-review-followups.md) (P3) — four LOW findings from PR 5's review rounds: `init-deploy aws` re-serializing an adopter's whole `tsconfig.json`, nothing type-checking the scaffolded CDK app, a plugin wrapped around `withCanopy` losing Next 16's Turbopack error, and an unreadable Next version (e.g. Yarn PnP) getting no `turbopack` key. The second and third were resolved 2026-09-13 by PR #332 (`fix/scaffold-cdk-typecheck`).
+- [cms-image-pr5-review-followups.md](cms-image-pr5-review-followups.md) (P3) — four LOW findings from PR 5's review rounds: `init-deploy aws` re-serializing an adopter's whole `tsconfig.json`, nothing type-checking the scaffolded CDK app, a plugin wrapped around `withCanopy` losing Next 16's Turbopack error, and an unreadable Next version (e.g. Yarn PnP) getting no `turbopack` key. The second and third were resolved 2026-09-13 by PR #332 (`fix/scaffold-cdk-typecheck`). A fifth, from the integration PR's first review round: the smoke test's sitemap check cannot tell a build-time read from a request-time one.
 - [editor-operatingmode-option-unused.md](editor-operatingmode-option-unused.md) (P3) — unused editor `operatingMode` option.
+- [scaffold-cdk-typecheck-published-shape.md](scaffold-cdk-typecheck-published-shape.md) (P3) — from PR #332's review rounds: CI runs the CDK app's `tsc --noEmit -p infrastructure` only against workspace `src/`, never the published `.d.ts`; a project `typeRoots` without `node_modules/@types` (TS2688) or a narrower `rootDir` (TS6059) fails the check.
+- [sharp-loader-rejection-test-strength.md](sharp-loader-rejection-test-strength.md) (P3) — from the integration PR's claims pass: the un-awaited-load test in `transform.sharp-unavailable.test.ts` still passes with `loading.catch` removed from `sharp-loader.ts`; only vitest's run-level error fails the run.
 
 ## Verification
 

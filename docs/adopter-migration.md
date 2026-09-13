@@ -1315,18 +1315,21 @@ if you ran `canopycms init-deploy aws` before them, or copied `Dockerfile.cms.te
    `X86_64` default, and always passes the resolved architecture to the function. CDK derives a
    `fromImageAsset` image's build platform from it. The generated workflow runs on
    `ubuntu-24.04-arm`, so that image builds natively.
-6. **`withCanopy()` makes a standalone server able to load sharp.** For any build except a static
-   export it adds sharp's libvips to Next's file tracing. On Next 16 and later it also sets
+6. **`withCanopy()` makes a Turbopack standalone server able to load sharp.** For any build except
+   a static export it adds sharp's libvips to Next's file tracing. On Next 16 and later it also sets
    `turbopack: {}` when your config has neither `turbopack` nor your own `webpack` and it can read
-   your installed Next version.
+   your installed Next version. A webpack build still fails its image transforms: on Next 15.5.21
+   with pnpm, sharp is bundled into a server chunk (see
+   [deploying-to-aws.md](deploying-to-aws.md#dual-build-support)).
 
 **Breaking, for one stack shape.** A stack that sets `platform` on `fromImageAsset` and leaves
 `architecture` unset used to get an x86_64 function. It now gets an arm64 one, while the explicit
-`platform` still decides the image, so `platform: Platform.LINUX_AMD64` deploys clean and then fails
-at invoke with `Runtime.InvalidEntrypoint`. The stack `init-deploy aws` generated before this change
-sets both `platform: Platform.LINUX_ARM64` and `architecture: lambda.Architecture.ARM_64`, which
-still agree. A stack that sets neither moves its function from x86_64 to arm64 on the next deploy,
-with an image built to match.
+`platform` still decides the image, so `platform: Platform.LINUX_AMD64` builds an x86_64 image that
+the arm64 function cannot run. The stack `init-deploy aws` generated before this change sets both
+`platform: Platform.LINUX_ARM64` and `architecture: lambda.Architecture.ARM_64`, which still agree.
+A stack that sets neither moves its function from x86_64 to arm64 on the next deploy, with an image
+built to match: natively on an arm64 host, and on an x86 one only under QEMU emulation (see
+[Where the image is built](deploying-to-aws.md#where-the-image-is-built)).
 
 **To adopt.**
 
@@ -1334,13 +1337,17 @@ with an image built to match.
    `architecture` on `CanopyCmsService` only if you want x86_64. Read "Where the image is built" in
    [deploying-to-aws.md](deploying-to-aws.md#where-the-image-is-built) before changing the
    architecture or the workflow's runner.
-2. Re-run `canopycms init-deploy aws`. Without `--force` it writes only the files you don't have,
-   which adds `infrastructure/tsconfig.json`, and it adds `infrastructure` to `tsconfig.json`'s
-   `exclude`. It keeps your `Dockerfile.cms`, `.dockerignore`, workflow and stack as they are, so
-   bring the rest across by hand:
+2. Re-run `canopycms init-deploy aws`. Without `--force` it asks before replacing each file you
+   already have, and `--non-interactive` skips them without asking. Either way it adds
+   `infrastructure/tsconfig.json` if you don't have one, and adds `infrastructure` to
+   `tsconfig.json`'s `exclude`. For the `Dockerfile.cms`, `.dockerignore`, workflow and stack you
+   keep, bring the rest across by hand:
    - the workflow's "Type-check the CDK app" step, before "Configure AWS credentials", and
      `tsconfig.json` in its `on.push.paths` (`examples/aws-deployment/deploy-cms.yml` has both,
      rendered for npm);
+   - `runs-on: ubuntu-24.04-arm` in the workflow, if yours still says `ubuntu-latest`, so the arm64
+     image builds natively (see
+     [Where the image is built](deploying-to-aws.md#where-the-image-is-built));
    - an `infrastructure` line in `.dockerignore`;
    - with pnpm, `pnpm-workspace.yam[l]` in the Dockerfile's first `COPY`.
 

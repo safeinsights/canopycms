@@ -413,7 +413,7 @@ jobs:
     name: Standalone CMS Image (${{ matrix.pm }}, ${{ matrix.runner }})
     # Builds the CMS editor image that `canopycms init-deploy aws` generates, boots it, and sends
     # it real requests. The app is scaffolded OUTSIDE this workspace from `pnpm pack` tarballs,
-    # because only a registry-shaped install externalizes sharp the way an adopter's build does.
+    # because inside it the packages are workspace links, not the shape an adopter installs.
     # scripts/smoke/standalone-image.mjs holds the scaffold, every check, and the reason for each;
     # this job only supplies the matrix, and the script runs the same way locally.
     #
@@ -430,8 +430,8 @@ jobs:
       matrix:
         include:
           # amd64, native and fast here. The epic found that neither defect above depends on
-          # architecture (cms-image-build-epic.md, "PR 5: CI image smoke test"); this PR
-          # reproduced both on arm64.
+          # architecture (cms-image-build-epic.md, "PR 5: CI image smoke test"); PR #328
+          # reproduced both on local arm64.
           - pm: pnpm
             runner: ubuntu-latest
           - pm: npm
@@ -455,8 +455,8 @@ jobs:
             # and its checks go through most of the server: the CLI templates, request-time
             # dev-mode reads (context, services, git-manager, operating-mode), the API, http and
             # auth layers, assets and sharp tracing. A narrower list let changes on those paths
-            # report a green "Skipped". Each leg took 1m43s-2m43s across this PR's CI runs, which
-            # pays for running on most PRs.
+            # report a green "Skipped". Each leg takes about two to three minutes, which pays for
+            # running on most PRs.
             relevant:
               - 'packages/canopycms/src/**'
               - 'packages/canopycms/scripts/**'

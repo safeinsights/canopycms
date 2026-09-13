@@ -4,8 +4,9 @@
 **Found:** 2026-09-12, by the code review of PR 5 of
 [cms-image-build-epic.md](cms-image-build-epic.md) (the `standalone-image` smoke test and its
 scaffold fixes): items 1-3 in round 1, item 4 in round 2. All four were left out of that PR.
-Items 2 and 3 were resolved on 2026-09-13 by PR #332 (`fix/scaffold-cdk-typecheck`). Items 1 and 4
-are open.
+Item 5 was found on 2026-09-13 by the first review round of the epic's integration PR, #331.
+Items 2 and 3 were resolved on 2026-09-13 by PR #332 (`fix/scaffold-cdk-typecheck`). Items 1, 4
+and 5 are open.
 
 ## 1. `init-deploy aws` rewrites the whole of an adopter's `tsconfig.json`
 
@@ -81,3 +82,19 @@ Leaving the key out when the version is unknown was decided during PR 5: on Next
 unknown top-level `turbopack` is reported as an invalid option. Revisit it with
 [yarn-support-decision.md](yarn-support-decision.md). If Yarn Berry is supported, read the Next
 version through the same resolution `withCanopy` uses for React.
+
+## 5. The smoke test's sitemap check cannot tell a build-time read from a request-time one
+
+Found by the first review round of the integration PR, #331. In
+`scripts/smoke/standalone-image.mjs`, the check now named `` GET /sitemap.xml lists /${PAGE.slug} ``
+(named "GET /sitemap.xml lists the content `next build` read from the working tree" until the
+claims pass over #331) asserts only that the response contains `<loc>…/hello</loc>`. The working
+tree and the `release-base` commit hold the same page under the same slug, `hello`: only its title
+differs, and a sitemap carries no titles. So a sitemap rendered at request time from the branch
+clone passes identically.
+
+Build-time reads are still pinned by the not-found checks: `/no/such/route` must be a 404 carrying
+the working-tree title, from the not-found page `next build` prerendered.
+
+Direction: give the working-tree copy a slug the `release-base` commit does not have, and assert
+that the sitemap lists that slug and not the branch's.

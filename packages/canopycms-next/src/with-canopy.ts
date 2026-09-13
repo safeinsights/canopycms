@@ -243,10 +243,10 @@ function stringOrUndefined(value: unknown): string | undefined {
 /**
  * Whether Next treats a config value as set.
  *
- * `assignDefaults` in `next/dist/server/config.js` drops `undefined` and `null` values before it
- * migrates legacy keys. That covers top-level keys and, for object options such as `experimental`,
- * their direct keys. It does not cover Next 15's `experimental.turbo` merge, which runs on the raw
- * config earlier.
+ * `assignDefaults` in `next/dist/server/config.js` (`assignDefaultsAndValidate` in 16.1.7) drops
+ * `undefined` and `null` values before it migrates legacy keys. That covers top-level keys and, for
+ * object options such as `experimental`, their direct keys. It does not cover Next 15's
+ * `experimental.turbo` merge, which runs on the raw config earlier.
  */
 function isSet(value: unknown): boolean {
   return value !== undefined && value !== null
@@ -305,7 +305,7 @@ function unknownNextVersionWarning(projectDir: string): string {
 let warnedAboutSharpTracing = false
 
 /**
- * The config keys that make an `output: 'standalone'` server able to load sharp.
+ * The config keys that make a Turbopack `output: 'standalone'` server able to load sharp.
  *
  * The rules live in `./sharp-tracing`. This function decides only whether to apply them, and under
  * which key.
@@ -394,7 +394,7 @@ function sharpTracingConfig(
   const merged = mergeTracingIncludes(existing, includes)
   if (!includesUnderExperimental) {
     // An unreadable version falls back to the key Next 15 and later read. A standalone build says
-    // so, because Next 13 and 14 ignore that key and the server would fail to load sharp.
+    // so: Next 13 and 14 ignore that key, so libvips would not be traced.
     if (nextVersionUnknown && nextConfig.output === 'standalone' && !warnedAboutSharpTracing) {
       warnedAboutSharpTracing = true
       console.warn(unknownNextVersionWarning(projectDir))
@@ -425,13 +425,14 @@ function sharpTracingConfig(
  *   random, which puts two builds of one source tree in different `_next/static/` directories).
  *   Unset, or on a non-static build, Next's default is used unchanged.
  * - Outside a static export, adds sharp's libvips directory to `outputFileTracingIncludes['/**']`,
- *   so an `output: 'standalone'` server can load sharp. Next's file tracing can miss that library
- *   for sharp 0.35.
+ *   so a Turbopack `output: 'standalone'` server can load sharp. Next's file tracing can miss that
+ *   library for sharp 0.35. This does not fix a webpack build: under pnpm, Next 15.5.21 bundles
+ *   sharp into a server chunk that cannot load its native binding.
  *   - The key follows your Next version (under `experimental` on 13 and 14) and any legacy
  *     `experimental` spelling you already use.
  *   - Your own includes are kept.
  *   - A standalone build warns if the directory cannot be found, or if the Next version cannot be
- *     read.
+ *     read and the entry went under the top-level key.
  * - On Next 16 and later, sets `turbopack: {}` when your config has neither `turbopack` nor
  *   `webpack` and the installed Next version can be read (an unreadable version gets no key).
  *   Next 16 builds and runs `next dev` with Turbopack by default, and exits when the
@@ -523,8 +524,9 @@ export function withCanopy(
   // Next 16 defaults both `next build` and `next dev` to Turbopack, marking the default with
   // `TURBOPACK=auto` (`next/dist/lib/bundler.js:76`), and then exits with "This build is using
   // Turbopack, with a `webpack` config and no `turbopack` config" whenever the exported config's
-  // `webpack` is truthy and its `turbopack` is not (`validateTurboNextConfig` in
-  // `next/dist/lib/turbopack-warning.js:158-174`, 16.1.7).
+  // `webpack` is truthy, its `turbopack` is not, and it has no `experimental.turbo*` key
+  // (`validateTurboNextConfig` in `next/dist/lib/turbopack-warning.js:137-138` and `:158-174`,
+  // 16.1.7).
   //
   // The `webpack` function above is withCanopy's own, and Turbopack never runs a `webpack`
   // function, so its React aliases never applied under Turbopack. That is why the NOTE above sends

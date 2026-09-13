@@ -8,7 +8,8 @@
  * static `import sharp from 'sharp'` makes importing the MODULE GRAPH load
  * libvips. With sharp external, as in an adopter's Next 16 standalone build,
  * Turbopack wraps it in an async module that awaits the load when the graph is
- * evaluated. transform.ts is reachable from `canopycms/server` and, through
+ * evaluated (cms-image-build-epic.md in `.claude/future-tasks/`, "Every route
+ * loads sharp"). transform.ts is reachable from `canopycms/server` and, through
  * api/assets.ts, from `canopycms/http` and so from `canopycms-next`, which a
  * host app's root layout can import (that adopter's did). When the libvips
  * `.so` was missing from its standalone output, that one static import turned

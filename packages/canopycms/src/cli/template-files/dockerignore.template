@@ -6,7 +6,8 @@ out
 *.tgz
 cdk.out
 # The CDK app from `init-deploy aws`. The image never runs it, and inside the
-# build context `next build` would type-check it and fail on aws-cdk-lib.
+# build context `next build` would type-check it, failing wherever aws-cdk-lib
+# is not installed.
 infrastructure
 
 # Secrets must never enter the image build context.

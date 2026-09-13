@@ -155,9 +155,9 @@ jobs:
       # settings are in infrastructure/tsconfig.json, which extends
       # tsconfig.json.
       #
-      # typescript is checked first: without it, `npx tsc` downloads a
-      # deprecated package named `tsc` from npm, which prints a notice and
-      # exits. Next.js requires typescript in a TypeScript app anyway.
+      # typescript is checked first: without it, `npx tsc` runs a deprecated
+      # npm package named `tsc` instead of the TypeScript compiler. Next.js
+      # requires typescript in a TypeScript app anyway.
       - name: Type-check the CDK app
         run: |
           if [ ! -e node_modules/typescript ]; then

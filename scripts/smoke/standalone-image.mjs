@@ -19,9 +19,11 @@
  *
  * Why the app lives OUTSIDE the workspace and installs `pnpm pack` tarballs. Inside this monorepo
  * the canopycms packages are workspace links compiled through `transpilePackages`, which is not
- * what an adopter installs. An adopter's registry install of Next 16 externalizes sharp as
- * `.next/node_modules/sharp-<hash>`, the shape the libvips defect shows in, and the
- * "externalized" check below fails if a build stops producing it. What an in-workspace build does
+ * what an adopter installs. An adopter's registry install, built with Next 16's default Turbopack,
+ * externalizes sharp as `.next/node_modules/sharp-<hash>`, the shape the libvips defect shows in,
+ * and the "externalized" check below fails if a build stops producing it. A webpack build under
+ * pnpm bundles sharp instead (seen on Next 15.5.21; see
+ * `.claude/future-tasks/webpack-standalone-sharp-bundled.md`). What an in-workspace build does
  * with sharp has not been measured. `pnpm pack` rather than `npm pack` because only pnpm applies
  * `publishConfig` (the dist/ exports map an adopter actually gets) and rewrites `workspace:`
  * ranges.
@@ -669,17 +671,14 @@ async function assertContainer(baseUrl, container) {
     },
   )
 
-  await check(
-    'GET /sitemap.xml lists the content `next build` read from the working tree',
-    async () => {
-      const response = await request(baseUrl, '/sitemap.xml')
-      if (response.status !== 200) throw new SmokeError(`status ${response.status}`)
-      const loc = `<loc>${SITE_URL}/${PAGE.slug}</loc>`
-      if (!response.body.toString('utf8').includes(loc)) {
-        throw new SmokeError(`status 200, but no ${loc}`)
-      }
-    },
-  )
+  await check(`GET /sitemap.xml lists /${PAGE.slug}`, async () => {
+    const response = await request(baseUrl, '/sitemap.xml')
+    if (response.status !== 200) throw new SmokeError(`status ${response.status}`)
+    const loc = `<loc>${SITE_URL}/${PAGE.slug}</loc>`
+    if (!response.body.toString('utf8').includes(loc)) {
+      throw new SmokeError(`status 200, but no ${loc}`)
+    }
+  })
 
   // The adopter's image answered not-found responses with 500s. Three shapes:
   // - an unknown slug reaching the force-dynamic route's notFound(), whose root layout renders at
@@ -746,14 +745,17 @@ async function assertContainer(baseUrl, container) {
     asset = record
     return asset.src
   })
-  await check('GET the asset src serves the original PNG', async () => {
-    if (!asset) throw new SmokeError('skipped: the upload failed')
-    const response = await request(baseUrl, asset.src)
-    if (response.status !== 200) throw new SmokeError(`status ${response.status}`)
-    if (!response.contentType.startsWith('image/png')) {
-      throw new SmokeError(`content-type ${response.contentType}`)
-    }
-  })
+  await check(
+    'GET the asset src (the `orig` identity transform, through sharp) serves a PNG',
+    async () => {
+      if (!asset) throw new SmokeError('skipped: the upload failed')
+      const response = await request(baseUrl, asset.src)
+      if (response.status !== 200) throw new SmokeError(`status ${response.status}`)
+      if (!response.contentType.startsWith('image/png')) {
+        throw new SmokeError(`content-type ${response.contentType}`)
+      }
+    },
+  )
   await check(`GET a w=${TRANSFORM_WIDTH} WebP transform is resized by sharp`, async () => {
     if (!asset) throw new SmokeError('skipped: the upload failed')
     const transformPath = `/assets/t/w=${TRANSFORM_WIDTH},f=webp/${asset.hash32}/${asset.slug}.webp`
@@ -777,7 +779,8 @@ async function assertContainer(baseUrl, container) {
     if (aliases.length === 0) {
       throw new SmokeError(
         'no sharp-* alias: Next bundled sharp into a chunk (or never emitted it), which is not the ' +
-          "shape an adopter's registry install builds -- this job would no longer test that shape",
+          "shape a Turbopack build of an adopter's registry install produces -- this job would no " +
+          'longer test that shape',
       )
     }
     return aliases.map(({ alias, sharpVersion }) => `${alias} -> sharp@${sharpVersion}`).join(', ')
@@ -839,7 +842,7 @@ async function main() {
     if (isInside(dir, REPO_ROOT) || isInside(dir, realpathSync(REPO_ROOT))) {
       throw new SmokeError(
         `--work-dir must be outside the repository: inside it the packages resolve as workspace ` +
-          `links and sharp is bundled rather than externalized (${dir})`,
+          `links, not in the published shape an adopter installs (${dir})`,
       )
     }
   }

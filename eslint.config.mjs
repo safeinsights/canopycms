@@ -229,7 +229,8 @@ const eslintConfig = [
   //
   // A static value import makes importing the module graph load libvips. With
   // sharp external, as in an adopter's Next 16 standalone build, Turbopack wraps
-  // it in an async module that awaits the load when the graph is evaluated.
+  // it in an async module that awaits the load when the graph is evaluated
+  // (cms-image-build-epic.md in .claude/future-tasks/, "Every route loads sharp").
   // transform.ts had one, and it sits under canopycms/server and canopycms/http,
   // so when that image lacked the libvips `.so` every on-demand route returned
   // 500, 404s included, and pipeline.ts's deliberate fail-open never ran.

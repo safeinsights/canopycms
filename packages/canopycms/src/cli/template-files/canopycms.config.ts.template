@@ -20,12 +20,14 @@ export default defineCanopyConfig({
   defaultBranchAccess: 'deny',
   defaultPathAccess: { read: 'allow' },
   // Leave this as 'dev'. This file is loaded by `next dev`, by `next build`
-  // inside the deployment image, and by the deployed server -- and the first
-  // two must be 'dev' (a prod-mode build read would look for a branch
-  // workspace that only exists on the deployed filesystem). A deployment
-  // supplies its own mode at run time through the CANOPY_MODE environment
-  // variable, which wins over this value; `canopycms init-deploy aws` wires
-  // that up for you. See docs/deploying-to-aws.md, "Operating mode".
+  // inside the deployment image, and by the deployed server. `next dev` needs
+  // 'dev', and the image build should stay 'dev' too: it reads content from the
+  // working tree in either mode, so nothing in it needs prod, and prod would
+  // hold it to checks meant for a deployed server, such as a
+  // credential-verifying auth plugin. A deployment supplies its own mode at run
+  // time through the CANOPY_MODE environment variable, which wins over this
+  // value; `canopycms init-deploy aws` wires that up for you. See
+  // docs/deploying-to-aws.md, "Operating mode".
   mode: '{{MODE}}',
 {{DEPLOYED_AS}}  gitBotAuthorName: 'CanopyCMS Bot',
   gitBotAuthorEmail: 'canopycms-bot@example.com',
