@@ -222,6 +222,52 @@ const eslintConfig = [
     },
   },
 
+  // sharp is loaded lazily, through assets/sharp-loader.ts's `loadSharp()`, and
+  // never by a static import.
+  //
+  // A static value import makes importing the module graph load libvips. With
+  // sharp external, as in an adopter's Next 16 standalone build, Turbopack wraps
+  // it in an async module that awaits the load when the graph is evaluated.
+  // transform.ts had one, and it sits under canopycms/server and canopycms/http,
+  // so when that image lacked the libvips `.so` every on-demand route returned
+  // 500, 404s included, and pipeline.ts's deliberate fail-open never ran.
+  //
+  // `allowTypeImports` keeps `import type { Sharp } from 'sharp'` legal: it is
+  // erased at compile time. A dynamic `import('sharp')` is not an import
+  // declaration, so this rule does not see it - which is what lets
+  // sharp-loader.ts exist, and also means a second loader elsewhere would pass.
+  //
+  // canopycms-next is covered too: it sits in the same adopter server graph and
+  // declares no sharp dependency today, so any static import there would be new.
+  //
+  // Tests are excluded: their fixtures are built with real sharp, and no test
+  // file is ever in an adopter's module graph.
+  {
+    files: ['packages/canopycms/src/**/*.{ts,tsx}', 'packages/canopycms-next/src/**/*.{ts,tsx}'],
+    ignores: [
+      '**/*.test.{ts,tsx}',
+      '**/__tests__/**',
+      '**/__test__/**',
+      '**/__integration__/**',
+      '**/test-utils/**',
+    ],
+    rules: {
+      '@typescript-eslint/no-restricted-imports': [
+        'error',
+        {
+          paths: [
+            {
+              name: 'sharp',
+              allowTypeImports: true,
+              message:
+                'Load sharp only through loadSharp() in canopycms/src/assets/sharp-loader.ts, and use `import type` for its types. A static import loads libvips whenever this module graph is imported, so a missing native binary fails every route that imports it instead of only the image operation that needs it.',
+            },
+          ],
+        },
+      ],
+    },
+  },
+
   // Expressed as `no-restricted-syntax` rather than `no-console`, for two
   // reasons that both bit during this change:
   //   1. `no-console` cannot express "allow nothing" - its schema rejects
