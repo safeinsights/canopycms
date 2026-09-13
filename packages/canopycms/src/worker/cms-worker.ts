@@ -148,9 +148,10 @@ const DEFAULT_LOCK_STALE_MS = 60_000
 export class CmsWorker {
   // Built by ensureGitHubAuth(), not the constructor, so that a credential
   // config error is throwable somewhere start()'s catch can record it. Kept a
-  // FIELD rather than a getter because six test files assign a mock over it
-  // (worker-context.ts's INVARIANT), and ensureGitHubAuth() will not overwrite
-  // one that is already there.
+  // FIELD rather than a getter because two test files assign a mock over it
+  // -- cms-worker.test.ts:487 and cms-worker-merge-poll.test.ts:68, the same
+  // two worker-context.ts's INVARIANT names -- and ensureGitHubAuth() will not
+  // overwrite one that is already there.
   private octokit!: Octokit
   private taskDir: string
   private remoteGitPath: string
@@ -749,27 +750,6 @@ export class CmsWorker {
   }
 
   /**
-   * The single seam through which every git-over-HTTPS credential reaches a
-   * git command (the only other consumer of the credential is Octokit, wired
-   * once in the constructor).
-   *
-   * Async because the credential need not be a value the worker already
-   * holds: under GitHub App auth `resolveGitToken` mints an installation
-   * token, which lasts about an hour. Nothing may cache what this returns —
-   * a URL built from an installation token goes stale with it. Resolving per
-   * use is cheap: `@octokit/auth-app` answers from its own cache until the
-   * token is near expiry, so the usual cost is a resolved microtask, and the
-   * token path is a bare `async` return.
-   *
-   * A mint failure propagates AS THROWN, carrying the `.status` that
-   * `isPermanentTaskFailure` classifies on — see github-auth.ts.
-   *
-   * Do NOT add a parallel token accessor alongside it. Every instance-backed
-   * WorkerContext member stays a function precisely so tests can replace it
-   * through the instance (worker-context.ts's INVARIANT); a second credential
-   * path would be one nothing stubs.
-   */
-  /**
    * Resolve which GitHub credential this worker uses, once, and build the
    * Octokit client from it.
    *
@@ -812,6 +792,28 @@ export class CmsWorker {
     return this.octokit
   }
 
+  /**
+   * The single seam through which every git-over-HTTPS credential reaches a
+   * git command. The only other consumer of the credential is Octokit, built
+   * from the same resolution by `ensureGitHubAuth()` above.
+   *
+   * Async because the credential need not be a value the worker already
+   * holds: under GitHub App auth `resolveGitToken` mints an installation
+   * token, which lasts about an hour. Nothing may cache what this returns —
+   * a URL built from an installation token goes stale with it. Resolving per
+   * use is cheap: `@octokit/auth-app` answers from its own cache until the
+   * token is near expiry, so the usual cost is a resolved microtask, and the
+   * token path is a bare `async` return.
+   *
+   * A mint failure propagates AS THROWN, carrying the `.status` that
+   * `isPermanentTaskFailure` (task-runner.ts:91) classifies on — see
+   * github-auth.ts.
+   *
+   * Do NOT add a parallel token accessor alongside it. Every instance-backed
+   * WorkerContext member stays a function precisely so tests can replace it
+   * through the instance (worker-context.ts's INVARIANT); a second credential
+   * path would be one nothing stubs.
+   */
   private async buildGitHubUrl(): Promise<string> {
     const token = await this.ensureGitHubAuth().resolveGitToken()
     return `https://x-access-token:${token}@github.com/${this.config.githubOwner}/${this.config.githubRepo}.git`
@@ -844,11 +846,12 @@ export class CmsWorker {
    * But fail CLOSED, via `isTransientAuthFailure` rather than the inverse of
    * `isPermanentTaskFailure`. That classifier defaults an error with no HTTP
    * status to transient, which is right on the task path (bounded by
-   * `maxRetries`) and wrong here (bounded by nothing): a private key that
-   * parses but is not this app's throws a status-less error, so "default to
-   * transient" would boot a worker with a dead credential, record no
-   * `lastFatalError`, and show healthy in the admin panel while every task and
-   * every sync failed. See isTransientAuthFailure in github-auth.ts.
+   * `maxRetries`) and wrong here (bounded by nothing): a key that never
+   * reaches GitHub at all — the wrong key type, or one too mangled to sign
+   * with — fails locally and status-lessly, so "default to transient" would
+   * boot a worker with a dead credential, record no `lastFatalError`, and show
+   * healthy in the admin panel while every task and every sync failed. See
+   * isTransientAuthFailure in github-auth.ts.
    */
   private async preflightGitHubAppAuth(): Promise<void> {
     if (!this.config.githubAppAuth) return

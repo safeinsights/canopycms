@@ -120,9 +120,12 @@ export function redactCredentials(message: string): string {
   // outside URL userinfo): GitHub token prefixes and Bearer values.
   result = result.replace(/\b(?:gh[pousr]|github_pat)_[A-Za-z0-9_]{8,}/g, '***')
   result = result.replace(/\b(Bearer\s+)[A-Za-z0-9._~+/=-]{8,}/g, '$1***')
-  // PEM private-key blocks — a GitHub App's private key, which a worker error
-  // path can carry because the key is a configured value that appears in
-  // messages about itself. None of the rules above matches one: it has no URL
+  // PEM private-key blocks — a GitHub App's private key. Defense-in-depth,
+  // exactly like the bare-token rules above: no site today puts key material
+  // into an error (checked — `createPrivateKey` failures report
+  // `error:1E08010C:DECODER routines::unsupported` and jsonwebtoken's report
+  // neither `BEGIN` nor the body), and a rule added before the first leak
+  // costs nothing. None of the rules above would match one: a PEM has no URL
   // userinfo, no `gh*_` prefix and no `Bearer`.
   //
   // Linear by construction. The label is `[A-Z]{0,9} ?` (bounded, so its
@@ -148,9 +151,11 @@ export function redactCredentials(message: string): string {
   // The leading boundary is `(?<![\w-])`, NOT `\b`. `-` is in the run class but
   // is not a word character, so under `\b` every `-eyJ` inside one long
   // `[\w-]` run starts a fresh match attempt that rescans the rest of the run
-  // for a `.` that never comes — quadratic, and measured: `'-eyJ'.repeat(n)`
-  // took 190ms at 20KB, 831ms at 40KB, 12.7s at 160KB. With the lookbehind the
-  // same 160KB input is under a millisecond. The one case it gives up is a JWT
+  // for a `.` that never comes — quadratic, and measured on `'-eyJ'.repeat(n)`:
+  // roughly 200ms at 20KB, 900ms at 40KB, 13-16s at 160KB (the absolute
+  // numbers are machine-dependent; the quadrupling per doubling is not). With
+  // the lookbehind the same 160KB input is under a millisecond. It gives up
+  // exactly one case: a JWT
   // glued directly to a preceding hyphen (`x-eyJ…`); every real prefix —
   // whitespace, `"`, `=`, `(`, `Bearer ` — still matches.
   result = result.replace(/(?<![\w-])eyJ[\w-]{8,}\.[\w-]{8,}\.[\w-]+/g, '***')

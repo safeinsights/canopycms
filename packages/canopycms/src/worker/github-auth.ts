@@ -34,7 +34,12 @@ export interface GitHubAuthConfig {
    * injected here — the same seam `refreshAuthCache` uses, and for the same
    * reason: the package it needs must not enter core's dependency graph.
    *
-   * Exactly one of this and `githubToken` must be set.
+   * No entrypoint in this repo supplies it yet — `canopycms-cdk`'s worker is
+   * wired up in the PR that follows this one. `docs/adopter-migration.md`
+   * carries the wiring an adopter driving `CmsWorker` themselves would write.
+   *
+   * Exactly one of this and `githubToken` must be set: configuring both is an
+   * error, and so is configuring neither.
    */
   githubAppAuth?: GitHubAppAuth
   /**
@@ -116,10 +121,11 @@ export interface ResolvedGitHubAuth {
 /**
  * Choose how this worker authenticates, ONCE, from its config.
  *
- * Called from `CmsWorker`'s constructor so the branch is taken a single time
- * and both consumers (Octokit and the git URL) provably agree about it, and
- * so a half-configured worker fails at construction rather than at its first
- * push.
+ * Called from `CmsWorker.ensureGitHubAuth()`, which start() invokes inside
+ * its try — NOT from the constructor, so that a half-configured worker still
+ * constructs and the throw lands where start()'s catch can record it in
+ * worker-status.json. Resolved once, so both consumers (Octokit and the git
+ * URL) provably agree about which identity they act as.
  */
 export function resolveWorkerGitHubAuth(config: GitHubAuthConfig): ResolvedGitHubAuth {
   const token = config.githubToken
@@ -256,13 +262,19 @@ const TRANSIENT_NETWORK_CODES = new Set([
  * damage.
  *
  * A boot-time credential check has no such bound, so it must fail CLOSED.
- * Measured against the real `@octokit/auth-app@6`: a private key that parses
- * but is not this app's key throws `"alg" parameter for "ec" key type must be
- * one of: ES256…` with **no status at all** — so "default to transient" there
- * means a worker with a dead credential boots, reports itself healthy in
- * worker-status.json, and fails every task and every sync afterwards. That is
- * strictly worse than the crash-loop the check was guarding against, because
- * a crash-loop is at least visible.
+ * Status-less permanent failures are real: measured against the real
+ * `@octokit/auth-app@6.1.4`, a key of the wrong TYPE throws `"alg" parameter
+ * for "ec" key type must be one of: ES256, ES384, ES512.` and an unusable one
+ * throws `secretOrPrivateKey must be an asymmetric key when using RS256` —
+ * both `status === undefined`, because the JWT is signed locally and the
+ * request never leaves the box. "Default to transient" there means a worker
+ * with a dead credential boots, reports itself healthy in worker-status.json,
+ * and fails every task and every sync afterwards — strictly worse than the
+ * crash-loop the check guards against, because a crash-loop is visible.
+ *
+ * (A valid RSA key belonging to a DIFFERENT app is NOT one of these: it signs
+ * fine locally and GitHub refuses it with a 401, which both classifiers
+ * already agree is permanent.)
  *
  * 403 is treated as PERMANENT here, where `isPermanentTaskFailure` carves out
  * rate-limit 403s. At boot a 403 from the installation-token endpoint is a
@@ -295,7 +307,10 @@ export function isTransientAuthFailure(err: unknown): boolean {
  */
 function networkErrorCode(err: unknown): string | undefined {
   if (isNodeError(err) && err.code) return err.code
-  const cause = err instanceof Error ? (err.cause as unknown) : undefined
+  // Read through a structural cast, not `err.cause`: this repo compiles with
+  // `target: ES2021` and no `lib` override, where `Error.cause` is not in the
+  // type surface even though every supported runtime (node >= 22.12) has it.
+  const cause = err instanceof Error ? (err as { cause?: unknown }).cause : undefined
   return isNodeError(cause) ? cause.code : undefined
 }
 
@@ -337,9 +352,9 @@ function getHttpStatus(err: unknown): number | null {
  *   throws "Private Key is in PKCS#1 format, but only PKCS#8 is supported".
  *   Any resolver preferring `module` reaches it.
  * - `@octokit/auth-app@7` moves to `universal-github-app-jwt@2`, which is
- *   WebCrypto-only and converts PKCS#1 solely under the **`node` export
- *   condition** (`#crypto` → `lib/crypto-node.js`); its `default` sibling's
- *   converter is a no-op, and the key throws.
+ *   WebCrypto-only and converts PKCS#1 solely under the **`node` condition of
+ *   its `imports` map** (`"#crypto"` → `lib/crypto-node.js`); the `default`
+ *   sibling's `convertPrivateKey` is a literal no-op, and the key throws.
  *
  * So a bundler flag or a dependency bump can turn a working key into a boot
  * failure without the key changing. Three lines here remove that coupling.

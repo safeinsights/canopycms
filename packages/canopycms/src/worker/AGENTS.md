@@ -23,8 +23,9 @@ authoritative**; this file is the map to where those rules live.
 | `log.ts`             | `workerLog`/`workerLogWarn`/`workerLogError`                                                                                                                                                                                                     |
 | `github-auth.ts`     | Which GitHub credential this worker uses (token or App), how an installation token is minted, and PEM normalization                                                                                                                              |
 
-Imports run one way only — `cms-worker` → {`task-runner`, `git-sync`, `github-auth`} →
-`rebase` → `history-rewrite` → `worker-context`. `pnpm lint:cycles` enforces that the graph stays
+Imports run one way only — `cms-worker` → {`task-runner`, `git-sync`} → `rebase` →
+`history-rewrite` → `worker-context`. `github-auth` sits outside that chain as a leaf:
+`cms-worker` imports it, and it imports nothing from `worker/`. `pnpm lint:cycles` enforces that the graph stays
 ACYCLIC, which is not the same thing: a new `rebase.ts` → `task-runner.ts` edge would pass
 lint and still break the layering above. Keep the direction by review.
 
@@ -117,28 +118,23 @@ satisfied by a reviewer's direct push to the PR branch and would delete it, sile
 
 ## `github-auth.ts`
 
-**`@octokit/auth-app` must never become a dependency of `canopycms`.** `github-service.ts` is
-reachable from `services.ts`, so anything it imports is in every adopter's Next.js **server**
-bundle — including the large majority who use a personal access token and will never register
-a GitHub App (registering one needs org-admin rights). `pnpm lint:bundle` cruises the _client_
-entries only and does not see this. The package therefore holds only the SHAPE
-(`OctokitAuthStrategyOptions` in `github-service.ts`, `GitHubAppAuth` here), and the deployment
-entrypoint constructs the strategy and injects it — the seam `refreshAuthCache` already uses.
-Held by the `core-no-github-app-auth` dependency-cruiser rule (run by `pnpm lint:cycles`) and
-by a manifest assertion in `github-auth.test.ts`.
+**`@octokit/auth-app` must never become a dependency of `canopycms`.** This is the one rule
+here that spans files, which is why it is in this document and the rest are in the code.
+`github-service.ts` is reachable from `services.ts`, so anything it imports is in every
+adopter's Next.js **server** bundle — including the large majority who use a personal access
+token and will never register a GitHub App (registering one needs org-admin rights). The
+package therefore holds only the SHAPE (`OctokitAuthStrategyOptions` in `github-service.ts`,
+`GitHubAppAuth` here), and a deployment that uses an App constructs the strategy in its own
+entrypoint and injects it — the seam `refreshAuthCache` already uses.
 
-**The token path is not a legacy path.** `githubToken` is the documented default and must keep
-working with `@octokit/auth-app` absent from the install entirely. Exactly one of the two
-credentials is configured; neither is the only error.
+Two guards hold it, and **neither is `pnpm lint:bundle`**, which cruises only the two client
+entries and never reaches `github-service.ts`: the `core-no-github-app-auth`
+dependency-cruiser rule, evaluated by `pnpm lint:cycles` (CI, and the pre-commit hook), and a
+manifest assertion in `github-auth.test.ts`.
 
-**A mint rejection must reach `isPermanentTaskFailure` as thrown.** That classifier reads an
-Octokit `RequestError`'s `.status` — 4xx permanent, 5xx and status-less transient. Any `catch`
-that rethrows `new Error(getErrorMessage(err))` on this path silently turns a permanently bad
-key into an infinitely retried transient failure.
-
-**Nothing may cache what `resolveGitToken` returns**, and no caller may cache a URL built from
-it: an installation token lasts about an hour. (`pushBranchToGitHub` resolving ONCE per call is
-a different rule, and a required one — see `task-runner.ts`.)
+The module's other invariants — fail-closed boot classification, the mint timeout's bounds,
+never caching a resolved token, and never re-wrapping a mint rejection — are stated at the
+point of the rule in `github-auth.ts`, which is authoritative. Do not copy them here.
 
 ## `log.ts`
 

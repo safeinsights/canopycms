@@ -308,10 +308,11 @@ describe('CmsWorker GitHub App authentication', () => {
 
     it('exits on a bad key, whose error carries no HTTP status at all', async () => {
       // The defect this pins, and it is the whole reason the preflight uses
-      // isTransientAuthFailure rather than !isPermanentTaskFailure: a private
-      // key that parses but is not this app's key makes @octokit/auth-app
-      // throw from jsonwebtoken with NO status. Classified by the task
-      // runner's rule that is "transient", so the worker booted, wrote no
+      // isTransientAuthFailure rather than !isPermanentTaskFailure: a key that
+      // never reaches GitHub -- the wrong key TYPE, measured below, or one too
+      // mangled to sign with -- makes @octokit/auth-app throw from jsonwebtoken
+      // with NO status, because the JWT is signed locally. Classified by the
+      // task runner's rule that is "transient", so the worker booted, wrote no
       // lastFatalError, showed healthy in the admin panel, and failed every
       // task and sync afterwards -- strictly worse than the crash-loop the
       // non-fatal path was added to avoid, because a crash-loop is visible.

@@ -45,9 +45,10 @@ export const shouldRetrySecondaryRateLimit = (retryAfter: number, retryCount: nu
  * App. `pnpm lint:bundle` guards the *client* boundary only and would not
  * catch that, so the structural typing is the guard.
  *
- * The deployment entrypoint that does use an App constructs the strategy and
- * passes it through here — see `packages/canopycms-cdk/worker/index.ts`,
- * which already supplies `refreshAuthCache` the same way.
+ * A deployment that does use an App constructs the strategy and passes it
+ * through here. That is the seam `packages/canopycms-cdk/worker/index.ts`
+ * already uses for `refreshAuthCache`; its App wiring lands in the PR after
+ * this one, and `docs/adopter-migration.md` carries the shape meanwhile.
  */
 export interface OctokitAuthStrategyOptions {
   /**

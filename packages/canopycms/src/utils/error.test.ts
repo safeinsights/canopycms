@@ -201,11 +201,14 @@ describe('error utilities', () => {
     // admin panel. Each case below asserts what SURVIVES as well as what is
     // gone -- an absence check alone passes vacuously on an empty result.
     it('redacts a PKCS#1 private-key block, keeping the surrounding message', () => {
+      // The body is deliberately not key-shaped base64 -- the rule keys on the
+      // header, and a realistic-looking body in a committed file is the kind of
+      // thing a secret scanner flags for the rest of the repo's life.
       const msg = [
         'failed to sign JWT with key',
         '-----BEGIN RSA PRIVATE KEY-----',
-        'MIIEowIBAAKCAQEAy8Dbv8prpJ/0kKhlGeJYozo2t60EG8L0561g13R29LvMR5hy',
-        'vGZlGJpmn65+A4xHXInJYiPuKzrKUnApeLZ+vw1HocOAZtWK0z3r26uA8kQYOKX9',
+        'NOT-A-REAL-KEY-body-line-one',
+        'NOT-A-REAL-KEY-body-line-two',
         '-----END RSA PRIVATE KEY-----',
         'for app 12345',
       ].join('\n')
@@ -215,20 +218,20 @@ describe('error utilities', () => {
       expect(redacted).toContain('failed to sign JWT with key')
       expect(redacted).toContain('for app 12345')
       expect(redacted).toContain('<private-key>')
-      expect(redacted).not.toContain('MIIEowIBAAKCAQEA')
+      expect(redacted).not.toContain('NOT-A-REAL-KEY-body')
       expect(redacted).not.toContain('BEGIN RSA PRIVATE KEY')
     })
 
     it('redacts a PKCS#8 block too, and one truncated mid-key', () => {
       const labelled = redactCredentials(
-        'key: -----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0B\n-----END PRIVATE KEY-----',
+        'key: -----BEGIN PRIVATE KEY-----\nNOT-A-REAL-KEY-body\n-----END PRIVATE KEY-----',
       )
       expect(labelled).toBe('key: <private-key>')
 
       // No END footer: a message cut off mid-key must not pass the body
       // through just because the terminator never arrived.
       const truncated = redactCredentials(
-        'key: -----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEAy8Dbv8prpJ',
+        'key: -----BEGIN RSA PRIVATE KEY-----\nNOT-A-REAL-KEY-body-cut-off',
       )
       expect(truncated).toBe('key: <private-key>')
     })
@@ -253,7 +256,7 @@ describe('error utilities', () => {
       // The footer match stops at its own closing dashes rather than running
       // to end of line, so a one-line message does not lose its context.
       const redacted = redactCredentials(
-        'sign failed: -----BEGIN PRIVATE KEY-----MIIEvQIB-----END PRIVATE KEY----- for app 12345',
+        'sign failed: -----BEGIN PRIVATE KEY-----NOT-A-REAL-KEY-----END PRIVATE KEY----- for app 12345',
       )
       expect(redacted).toBe('sign failed: <private-key> for app 12345')
     })
@@ -283,11 +286,11 @@ describe('error utilities', () => {
       // Both new rules had to be written against CodeQL js/polynomial-redos,
       // and the JWT rule failed that on its first spelling: with `\b` instead
       // of a `(?<![\w-])` lookbehind, `-` being a non-word character inside
-      // the run class made every `-eyJ` a fresh start position. Measured
-      // 190ms at 20KB, 831ms at 40KB, 12.7s at 160KB -- quadratic. This input
-      // is the 160KB one; the bound is deliberately loose (a slow CI box must
-      // not flake it) because two orders of magnitude separate the two
-      // spellings.
+      // the run class made every `-eyJ` a fresh start position: roughly 200ms
+      // at 20KB, 900ms at 40KB and 13-16s at 160KB, quadrupling per doubling.
+      // This input is the 160KB one. The bound is deliberately loose -- a slow
+      // CI box must not flake it -- because four orders of magnitude separate
+      // the two spellings here, not a few percent.
       const adversarial = '-eyJ'.repeat(40_000)
       const startedAt = Date.now()
       expect(redactCredentials(adversarial)).toBe(adversarial)

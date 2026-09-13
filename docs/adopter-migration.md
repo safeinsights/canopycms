@@ -131,11 +131,14 @@ does not give you that.
 re-exports one field into the worker's environment before starting it — a shell `jq` step in
 user-data, or a wrapper entrypoint around `canopy-worker`. If that wrapper also validated the
 field exists, the package now does it with a better message.
+
 ### The worker can authenticate to GitHub as an App (the token still works, unchanged)
 
 **What changed.** `CmsWorkerConfig` gained an optional `githubAppAuth`. Supply it _instead of_
 `githubToken` to have the worker act as a GitHub App installation rather than as a personal
-access token. Exactly one of the two; neither is the only error.
+access token. Exactly one of the two: setting both is an error, and so is setting neither.
+(Both is rejected rather than resolved by precedence, because it would otherwise be undefined
+which identity a push or a pull request acts as.)
 
 **Nothing about the token path changed.** `githubToken` is not deprecated, warns about nothing,
 and stays the documented default. A GitHub App has to be registered and installed by an
@@ -143,8 +146,9 @@ organisation admin, which many adopters are not — so this is an option, not a 
 The token path also keeps working with `@octokit/auth-app` absent from your install entirely:
 `canopycms` does not depend on it and never imports it.
 
-**To adopt** — only if you want App auth. This release wires the _package_ side; the CDK props
-that stamp the credentials onto the worker instance land in the next entry, so for now this is
+**To adopt** — only if you want App auth. This release wires the _package_ side only:
+`canopycms-cdk`'s own worker entrypoint does not construct an App strategy yet, and the CDK
+props that stamp the credentials onto the instance land in a later entry. So for now this is
 for adopters driving `CmsWorker` from their own entrypoint:
 
 ```ts
@@ -182,15 +186,21 @@ failure** — worth stating plainly, because the opposite is easy to assume. Git
 keys as PKCS#1 (`-----BEGIN RSA PRIVATE KEY-----`), and whether that is accepted depends on
 which build of `universal-github-app-jwt` your bundler resolves, never on the key:
 
-| Resolution                                                                                       | PKCS#1                               |
-| ------------------------------------------------------------------------------------------------ | ------------------------------------ |
-| `@octokit/auth-app@6` → `universal-github-app-jwt@1` via `main` (e.g. `esbuild --platform=node`) | **works** (signs via `jsonwebtoken`) |
-| the same package via `module` / `browser` (Vite, webpack, esbuild `--platform=browser`)          | throws "only PKCS#8 is supported"    |
-| `@octokit/auth-app@7` → `universal-github-app-jwt@2` under the `node` export condition           | works (it converts internally)       |
-| the same, under any other condition                                                              | throws                               |
+| Resolution                                                                                           | PKCS#1                               |
+| ---------------------------------------------------------------------------------------------------- | ------------------------------------ |
+| `@octokit/auth-app@6` → `universal-github-app-jwt@1` via `main` (e.g. `esbuild --platform=node`)     | **works** (signs via `jsonwebtoken`) |
+| the same package via `module` / `browser` (Vite, webpack, esbuild `--platform=browser`)              | throws "only PKCS#8 is supported"    |
+| `@octokit/auth-app@7` → `universal-github-app-jwt@2` under the `node` condition of its `imports` map | works (it converts internally)       |
+| the same, under any other condition                                                                  | throws                               |
 
 So a bundler flag or a dependency bump can turn a working key into a boot failure without the
 key changing. Converting up front removes the coupling.
+
+**One caveat on the `authStrategy: () => appAuth` closure.** Octokit calls the strategy with
+its own `request`, and its REST calls mint through that — not through any `request` you passed
+to `createAppAuth`. The shared token cache still works (that lives on the instance), but if you
+configured `createAppAuth({ request })` to reach a GitHub Enterprise host, the git half honours
+it and the REST half does not; set Octokit's own `baseUrl` too in that case.
 
 **Now deletable.** If you hand-rolled App auth around `CmsWorker`, the pieces this replaces are:
 your own PEM conversion; any code that mints a token at boot and holds it (installation tokens
