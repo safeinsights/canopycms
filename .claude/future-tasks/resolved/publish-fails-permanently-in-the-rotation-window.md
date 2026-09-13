@@ -31,7 +31,7 @@ is strictly better — which is why it is P2 and not higher.
 ## Why it was not fixed in #334
 
 A wrapper around `processTaskQueue` cannot see it: `processTasks` catches each task's error
-internally and does not rethrow (`task-runner.ts:218-257`), so the outer caller observes
+internally and does not rethrow (`task-runner.ts:218-260`), so the outer caller observes
 nothing. The fix therefore has to reach into that catch, which means:
 
 - a new member on `TaskRunnerContext` (`worker-context.ts`) — and that file's INVARIANT is
