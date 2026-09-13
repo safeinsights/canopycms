@@ -1118,8 +1118,8 @@ function imageFunctionArchitectures(template: Template): (string[] | undefined)[
  * image has no build, so nothing to give a platform.
  *
  * Returns the platform of every Docker image asset, read from the asset
- * manifest -- where CDK records the `--platform` that `cdk deploy` builds
- * with, and which the CloudFormation template never contains -- beside the
+ * manifest -- where CDK records the platform `cdk deploy` builds the image
+ * for, and which the CloudFormation template never contains -- beside the
  * `Architectures` of every image-backed function in the template.
  */
 function synthWithImageAsset(

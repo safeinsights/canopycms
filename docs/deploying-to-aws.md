@@ -8,7 +8,8 @@ This guide walks through deploying CanopyCMS on AWS using Lambda + EFS + EC2 Wor
 > for the full account of what broke and the fixes. Load-bearing gotchas that
 > guide is the source of truth for: reference secrets by their **full** ARN
 > (below); the CMS image's **build platform must match the Lambda
-> architecture** (`CanopyCmsService` now derives it, arm64 by default — see
+> architecture** (for a `fromImageAsset` image CDK now derives it from
+> `CanopyCmsService`'s architecture, arm64 by default — see
 > [Where the image is built](#where-the-image-is-built));
 > **`clerkMiddleware` needs an explicit `jwtKey`** (the env var alone is never
 > read → the no-internet Lambda hangs on sign-in) and the shipped template
@@ -404,22 +405,30 @@ does not decide what ends up in the image:
   default). It always passes the function a resolved architecture, and CDK
   derives a `fromImageAsset` image's build platform from it. Leave `platform`
   off `fromImageAsset`: an explicit one overrides the derived value, and an
-  image built for the other architecture deploys clean, then fails at invoke
-  with an exec format error. A prebuilt `fromEcr` image has no build for CDK to
+  image built for the other architecture deploys clean, then
+  [fails at invoke with `Runtime.InvalidEntrypoint`][lambda-arch-mismatch]
+  (its binaries are for the wrong architecture, which
+  [`execve` rejects][execve-enoexec]). A prebuilt `fromEcr` image has no build for CDK to
   steer, so build it with the matching `--platform` yourself.
-- **Everything native comes from inside the build.** The Node binary is the
-  `node:22-slim` base image's, pulled for the target platform, and git and
-  sharp (with libvips) are installed by `Dockerfile.cms`'s own steps.
-  `.dockerignore` keeps the host's `node_modules` out of the build context.
+- **Everything native comes from inside the build.** The Node binary comes
+  from the `node:22-slim` base image, pulled for the target platform; git from
+  an `apt-get` step; sharp and its libvips from the package install. All of
+  those run inside the build, and `.dockerignore` keeps the host's
+  `node_modules` out of the build context.
 
 What the host does decide is whether that build runs natively, and so how fast:
 
-| `cdk deploy` runs on         | Building the default `linux/arm64` image                                                                                                                                                               |
-| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Apple Silicon Mac            | Native, fast                                                                                                                                                                                           |
-| GitHub `ubuntu-24.04-arm`    | Native. The generated workflow's runner; a standard GitHub-hosted runner in private repositories since 2026-01-29, with 2 vCPUs there                                                                  |
-| GitHub `ubuntu-latest` (x86) | Needs QEMU emulation (`docker/setup-qemu-action`). Emulated `next build` is slow, and emulated arm64 builds have failure reports on 24.04 runners ([actions/runner-images#11561][runner-images-11561]) |
+| `cdk deploy` runs on         | Building the default `linux/arm64` image                                                                                                                                                                                                                                                                                                                                              |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Apple Silicon Mac            | Native, fast                                                                                                                                                                                                                                                                                                                                                                          |
+| GitHub `ubuntu-24.04-arm`    | Native. The generated workflow's runner: a standard GitHub-hosted runner in private repositories [since 2026-01-29][gh-arm64-private], with 2 vCPUs there. The workflow's own dependency install runs on arm64 Linux too, so native dependencies install their linux-arm64 builds                                                                                                     |
+| GitHub `ubuntu-latest` (x86) | Emulated: the build runs under QEMU, which [Docker's GitHub Actions guide][docker-gha-multi-platform] adds with `docker/setup-qemu-action`. [Docker's docs][docker-multi-platform] warn emulation can be much slower for compute-heavy work such as compilation, and emulated arm64 builds have failure reports on 24.04 runners ([actions/runner-images#11561][runner-images-11561]) |
 
+[lambda-arch-mismatch]: https://jasoncameron.dev/posts/aws-lambda-handler-gotchas
+[execve-enoexec]: https://man7.org/linux/man-pages/man2/execve.2.html#ERRORS
+[gh-arm64-private]: https://github.blog/changelog/2026-01-29-arm64-standard-runners-are-now-available-in-private-repositories/
+[docker-gha-multi-platform]: https://docs.docker.com/build/ci/github-actions/multi-platform/
+[docker-multi-platform]: https://docs.docker.com/build/building/multi-platform/
 [runner-images-11561]: https://github.com/actions/runner-images/issues/11561
 
 The asset's hash covers its build inputs — the directory contents, `file`,

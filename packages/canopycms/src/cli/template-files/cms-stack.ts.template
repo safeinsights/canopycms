@@ -92,7 +92,7 @@ export class CmsStack extends Stack {
       // the Docker build platform from it, so do not add `platform` to
       // fromImageAsset above: an explicit one overrides this, and an image
       // built for the other architecture deploys clean, then fails at invoke
-      // with an exec-format error. arm64 matches the EC2 worker and is
+      // with Runtime.InvalidEntrypoint. arm64 matches the EC2 worker and is
       // CanopyCmsService's default. The generated workflow runs on an arm64
       // runner to match; see "Where the image is built" in
       // docs/deploying-to-aws.md before changing either.

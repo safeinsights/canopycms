@@ -242,7 +242,7 @@ export interface CanopyCmsServiceProps {
    * architecture to the function, and CDK derives the Docker build platform
    * from it. So omit `platform` on `fromImageAsset`. An explicit `platform`
    * overrides the derived one, and an image built for the other architecture
-   * deploys clean, then fails at invoke with an exec format error. A prebuilt
+   * deploys clean, then fails at invoke with `Runtime.InvalidEntrypoint`. A prebuilt
    * image (`DockerImageCode.fromEcr`) has no build for CDK to steer, so it
    * must already be built for this architecture.
    */
