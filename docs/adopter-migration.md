@@ -263,6 +263,54 @@ a prop.
 See [deploying-to-aws.md](deploying-to-aws.md#authenticating-as-a-github-app) for the full
 walkthrough.
 
+### `canopycms init-github-app` registers that App for you
+
+**What changed.** A new CLI command, `canopycms init-github-app <create|verify>`. `create`
+registers the App from a manifest — so GitHub shows you the exact permission set before you
+click Create — captures its private key over a loopback redirect, and hands the key to a
+destination you name. `verify` reads an existing installation back and changes nothing.
+
+**Nothing is required of you.** The App entries above still work exactly as documented, by
+hand. This is a faster and less error-prone way to do the same setup.
+
+**What it is actually for.** The two entries above tell you to install the App with
+`Contents: read & write` and `Pull requests: read & write`, and until now that was prose
+nothing verified. That set is now `CANOPY_APP_PERMISSIONS` in
+`packages/canopycms/src/cli/init-github-app.ts`, each entry carrying the call site that
+forces it, held in step with the code by a test that drives the worker's dispatch table and
+fails when a GitHub call is added that the set does not cover. An App one permission short
+does not fail loudly — `convert-to-draft`'s GraphQL failure carries no HTTP status, so the
+worker classifies a permission denial as transient and retries the branch into `sync-failed`.
+`verify` finds that at setup time instead.
+
+**Register one App per site, not one shared across repositories.** A GitHub App's private key
+is App-level, and scoping an installation to one repository is a choice made at mint time
+rather than a boundary GitHub enforces against the key-holder: anyone with the key can list
+the App's installations and mint a token for any of them. Each site's worker reads the key at
+runtime, so one shared App means a compromise of one site's secret store grants write access
+to every other site's repository.
+
+**The key's destination is yours to choose.** Everything after `--` is run with the PEM on its
+standard input — so it never touches disk and never appears in a process listing — and that
+command's own output is shown to you, which is how you learn the ARN of a secret you just
+created. `--key-out <path>` writes a `0600` file instead. The command knows nothing about AWS
+or any other secret store.
+
+```bash
+canopycms init-github-app create -- \
+  aws secretsmanager create-secret --name canopycms/github-app-key --secret-string file:///dev/stdin
+```
+
+**Two things it will not do**, both deliberate: it will not edit an existing JSON secret
+document (a read-modify-write against a shared credential can silently drop its other
+fields — create the secret yourself and point `GITHUB_APP_PRIVATE_KEY_SECRET_JSON_FIELD` at
+the field), and it will not run without an interactive terminal, because it waits twice for a
+human and hanging in CI would leave a live App whose only key dies with the job.
+
+**Now deletable.** Any runbook step that said "download the .pem from the App's settings page
+and upload it to the secret store" — that is the hop this removes, and the one where a private
+key most often ends up in a downloads folder or a clipboard.
+
 ### A rotated secret reaches the running worker, without an instance replacement
 
 **What changed.** The EC2 worker read both of its Secrets Manager secrets once, at boot,
