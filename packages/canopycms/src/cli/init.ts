@@ -391,11 +391,17 @@ export async function initDeployAws(options: InitDeployOptions): Promise<void> {
   const tsconfigResult = await excludeFromTsconfig(projectDir, 'infrastructure')
   if (tsconfigResult === 'added') {
     p.log.success('updated: tsconfig.json (infrastructure/ excluded from type-checking)')
-  } else if (tsconfigResult === 'missing' || tsconfigResult === 'unreadable') {
+  } else if (tsconfigResult !== 'already-excluded') {
+    const reason = {
+      missing: 'No tsconfig.json found',
+      unreadable: 'tsconfig.json is not plain JSON, so it was left alone',
+      'inherits-exclude':
+        'tsconfig.json inherits its "exclude" list through "extends", so it was left alone ' +
+        '(an "exclude" in the file replaces the base config\'s list rather than adding to it)',
+    }[tsconfigResult]
     p.log.warn(
-      `${tsconfigResult === 'missing' ? 'No tsconfig.json found' : 'tsconfig.json is not plain JSON, so it was left alone'}. ` +
-        'Add "infrastructure" to its "exclude" list, or `next build` type-checks the CDK app ' +
-        'and fails unless aws-cdk-lib is installed in the app.',
+      `${reason}. Add "infrastructure" to its "exclude" list, or \`next build\` type-checks the ` +
+        'CDK app and fails unless aws-cdk-lib is installed in the app.',
     )
   }
 
@@ -489,7 +495,12 @@ export async function initDeployAws(options: InitDeployOptions): Promise<void> {
 }
 
 /** What `excludeFromTsconfig` did. */
-type TsconfigExcludeResult = 'added' | 'already-excluded' | 'missing' | 'unreadable'
+type TsconfigExcludeResult =
+  | 'added'
+  | 'already-excluded'
+  | 'missing'
+  | 'unreadable'
+  | 'inherits-exclude'
 
 /**
  * Add `dir` to the project's tsconfig.json `exclude`, keeping every other key.
@@ -526,12 +537,19 @@ async function excludeFromTsconfig(
   const isStringArray = (value: unknown): value is string[] =>
     Array.isArray(value) && value.every((item) => typeof item === 'string')
   if (exclude !== undefined && !isStringArray(exclude)) return 'unreadable'
+  // With `extends`, an absent `exclude` means the base config's list, and an `exclude` written here
+  // would replace that list, not add to it. Writing one would silently drop the base's entries.
+  if (exclude === undefined && 'extends' in parsed) return 'inherits-exclude'
 
   const current = exclude ?? ['node_modules']
   // `infrastructure`, `./infrastructure/`, `infrastructure/**` and `infrastructure/**/*` all
   // exclude the same tree.
-  const coversDir = (pattern: string) =>
-    pattern.replace(/^\.\//, '').replace(/\/(\*\*(\/\*)?)?$/, '') === dir
+  const coversDir = (pattern: string) => {
+    let root = pattern.startsWith('./') ? pattern.slice(2) : pattern
+    const suffix = ['/**/*', '/**', '/'].find((ending) => root.endsWith(ending))
+    if (suffix) root = root.slice(0, -suffix.length)
+    return root === dir
+  }
   if (current.some(coversDir)) return 'already-excluded'
 
   await fs.writeFile(

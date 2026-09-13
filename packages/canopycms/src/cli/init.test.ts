@@ -659,6 +659,31 @@ describe('canopycms init-deploy aws', () => {
       ).toBe(true)
     })
 
+    it('leaves a tsconfig that inherits its exclude through extends untouched, and asks for the edit', async () => {
+      // An exclude written into this file would replace the base config's list, dropping its entries.
+      const text = JSON.stringify({ extends: './tsconfig.base.json', include: ['**/*.ts'] })
+      await fs.writeFile(tsconfigPath(), text, 'utf-8')
+
+      await runInitDeploy()
+
+      expect(await fs.readFile(tsconfigPath(), 'utf-8')).toBe(text)
+      expect(
+        warnings().some((m) => m.includes('"extends"') && m.includes('"infrastructure"')),
+      ).toBe(true)
+    })
+
+    it('adds to an exclude list that an extending tsconfig writes itself', async () => {
+      const withExtends = { extends: './tsconfig.base.json', exclude: ['node_modules', 'dist'] }
+      await fs.writeFile(tsconfigPath(), JSON.stringify(withExtends), 'utf-8')
+
+      await runInitDeploy()
+
+      expect(await readTsconfig()).toEqual({
+        ...withExtends,
+        exclude: ['node_modules', 'dist', 'infrastructure'],
+      })
+    })
+
     it('asks for the edit when there is no tsconfig.json', async () => {
       await runInitDeploy()
 
