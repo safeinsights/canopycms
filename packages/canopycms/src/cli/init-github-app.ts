@@ -84,7 +84,7 @@
  * THE KEY'S DESTINATION IS NOT THIS TOOL'S BUSINESS
  *
  * `create` takes either a command to pipe the PEM into (`-- <cmd>`) or a file to
- * write (`--key-out`), and asks for another of either if the first fails. It
+ * write (`--key-out`), and asks for a file path if that first one fails. It
  * knows nothing about AWS, or any other secret store: an adopter may not deploy
  * to AWS at all, and a setup tool that hardcodes one cloud is a setup tool for
  * one adopter. `docs/deploying-to-aws.md` carries the worked invocation.
@@ -99,6 +99,7 @@ import type { AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { createInterface } from 'node:readline'
+import { Readable } from 'node:stream'
 import { getErrorMessage, isNodeError, redactCredentials } from '../utils/error'
 import { normalizeGitHubAppPrivateKey } from '../worker/github-auth'
 
@@ -542,15 +543,96 @@ export function readbackVerdict(
 
 export type HandOffResult = { stored: boolean; detail: string }
 
-/** Injectable so `handOffKey` is testable without spawning anything real. */
+/**
+ * Injectable so `handOffKey` is testable without spawning anything real.
+ *
+ * Everywhere but Windows the child must carry the bridge's status channel at
+ * `stdio[3]`, as `spawnKeyDestination` does: `handOffKey` reads `cat`'s exit
+ * status from it, and without a `0` there nothing is reported as stored.
+ */
 export type SpawnFn = (command: string, args: string[]) => ChildProcess
+
+/** Whether a destination command is fed through `KEY_INPUT_BRIDGE`: everywhere but Windows. */
+const BRIDGE_KEY_INPUT = process.platform !== 'win32'
+
+/**
+ * The script `/bin/sh` runs to give a destination command the key on a REAL pipe.
+ *
+ * WHY A BRIDGE AT ALL. Node's `stdio: 'pipe'` is not a pipe on Unix: libuv
+ * gives the child one end of a SOCKET pair. MEASURED on macOS through the
+ * previous direct spawn: `sh -c '[ -S /dev/stdin ] && echo SOCKET; [ -p
+ * /dev/stdin ] && echo PIPE'` printed SOCKET, and `cp /dev/stdin <out>` printed
+ * "/dev/stdin is a socket (not copied)", exited 0, and was reported stored with
+ * no file written. On Linux, opening `/dev/stdin` on a socket fails with ENXIO —
+ * reasoned, not run — which breaks `--secret-string file:///dev/stdin`. `cat`
+ * reads a socket like anything else, and what it writes into is a real pipe.
+ *
+ * NO SHELL PARSES THE OPERATOR'S ARGV. `sh -c SCRIPT sh <argv…>` makes argv the
+ * positional parameters, and `"$@"` hands them on quoted: no word splitting, no
+ * globbing. The script itself is this constant. The key travels only on stdin, so
+ * nothing `sh`, `env` or `cat` prints about a failure can contain it. It is
+ * `exec env -- "$@"` rather than a bare `"$@"` so the first word is always a
+ * program looked up on PATH, as the direct spawn did. MEASURED in macOS
+ * `/bin/sh` (bash 3.2) and `/bin/dash`: with a bare `exec "$@"`, bash took a
+ * first word of `-c` as `exec`'s own option, ran nothing and exited 0; without
+ * `exec`, a first word of `eval` would run the rest as shell code. Through
+ * `env --`, both shells report `-c`, `eval` and `set` as "No such file or
+ * directory", exit 127. `--` goes to `env` because dash's `exec` rejects it
+ * ("exec: --: not found").
+ *
+ * WHY `cat`'S STATUS COMES BACK ON fd 3. A pipeline's exit status is its LAST
+ * command's, so `cat | cmd` alone reports only `cmd` — and hides `cat` dying of
+ * SIGPIPE because `cmd` closed its input before the whole key was written. The
+ * direct spawn could see that case only as a write error on the child's stdin;
+ * through the bridge, `sh` itself holds that socket open until it exits, so
+ * `cat` is the witness left. `set -o pipefail` would expose it but is not something every
+ * `/bin/sh` has: macOS `/bin/dash` rejects it ("set: Illegal option -o
+ * pipefail"), and dash is `/bin/sh` on Debian and Ubuntu. So the left side
+ * writes `cat`'s own status to fd 3, a channel back to Node, and the verdict in
+ * `handOffKey` requires it to read `0`. A status that never arrives is not a
+ * `0`. `3>&-` closes fd 3 in the destination — MEASURED closed there in both
+ * shells — so nothing it leaves running can hold that channel open, or write a
+ * status into it.
+ */
+const KEY_INPUT_BRIDGE = '{ cat; echo "$?" >&3; } | exec env -- "$@" 3>&-'
+
+function spawnKeyDestination(command: string, args: string[]): ChildProcess {
+  // Windows has no /bin/sh to bridge through, so the command is spawned directly there.
+  if (!BRIDGE_KEY_INPUT) return spawn(command, args, { stdio: ['pipe', 'inherit', 'inherit'] })
+  return spawn('/bin/sh', ['-c', KEY_INPUT_BRIDGE, 'sh', command, ...args], {
+    stdio: ['pipe', 'inherit', 'inherit', 'pipe'],
+  })
+}
+
+/**
+ * The detail for a destination command that exited non-zero. Through the bridge,
+ * `env` reports a program it cannot find as 127 and one it cannot execute as 126,
+ * where the direct spawn raised ENOENT or EACCES. A command may also exit with
+ * either code on its own account, so these say how the code is reported rather
+ * than asserting which happened.
+ */
+function destinationExitDetail(command: string, code: number | null): string {
+  if (BRIDGE_KEY_INPUT && code === 127) {
+    return (
+      `\`${command}\` exited 127, which is how a command that could not be found is ` +
+      'reported — check the name, and that it is on PATH'
+    )
+  }
+  if (BRIDGE_KEY_INPUT && code === 126) {
+    return (
+      `\`${command}\` exited 126, which is how a command that could not be executed is ` +
+      'reported — check that it is an executable program'
+    )
+  }
+  return `\`${command}\` exited ${code ?? 'by signal'}`
+}
 
 /**
  * Send the captured private key to the destination the operator named.
  *
- * For a command: `shell: false`, so the operator's argv is passed through
- * verbatim and there is no shell to inject into. The PEM goes over **stdin**,
- * never argv — an argument is visible in `ps` and lands in shell history. The
+ * For a command: no shell parses the operator's argv (see `KEY_INPUT_BRIDGE`
+ * for how `sh` is used without doing so). The PEM goes over **stdin**, never
+ * argv — an argument is visible in `ps` and lands in shell history. The
  * child's stdout and stderr are INHERITED rather than captured, and that is
  * load-bearing rather than lazy: `aws secretsmanager create-secret` prints the
  * ARN, and CDK's `Secret.fromSecretCompleteArn` needs the full ARN including its
@@ -558,38 +640,34 @@ export type SpawnFn = (command: string, args: string[]) => ChildProcess
  * holding a stored secret with no way to learn the one string that wires it up.
  *
  * The `'error'` listener on `child.stdin` is not optional. A child that exits or
- * closes stdin early makes the write fail with EPIPE, and an unhandled error on
- * a stream takes the process down — carrying with it the only copy of a private
- * key for an App that already exists.
+ * closes stdin early can make the write fail with EPIPE, and an unhandled error
+ * on a stream takes the process down — carrying with it the only copy of a
+ * private key for an App that already exists.
  *
- * WHAT `stored: true` DOES AND DOES NOT MEAN. It means the command exited zero
- * and nothing went wrong writing to it. It does NOT mean the command read the
- * key, and it cannot: **the write lands in the kernel's pipe buffer before the
- * child gets as far as closing its end, and a completed write reports nothing
- * about whether anyone read it.** MEASURED against real children —
- * `sh -c 'exec 0<&-; exit 0'` (closes its input and exits) and
- * `sh -c 'head -c 5 >/dev/null; exit 0'` (reads five bytes) both report stored,
- * with no EPIPE in either case.
+ * WHAT `stored: true` DOES AND DOES NOT MEAN. Everywhere but Windows it means
+ * three things: the command exited 0, the `cat` feeding it exited 0, and nothing
+ * went wrong writing to it. `cat` exiting 0 means every byte of the key went into
+ * the pipe. It still does NOT prove the command READ them, and cannot: a pipe
+ * write lands in the kernel's buffer, and a key this size fits in one write, so a
+ * command that exits without reading races `cat`'s write and can lose or win.
+ * MEASURED on macOS with a real 1.7KB key, 100 runs each through this function,
+ * with the same result before the bridge and after it: `true`, `head -c 10`,
+ * `sh -c 'exec 0<&-; exit 0'` and `sh -c 'head -c 5 >/dev/null; exit 0'` were
+ * each reported stored 100 times of 100. What IS caught, whatever the timing,
+ * is a command that leaves more unread than a pipe buffer holds: ~100KB into
+ * `true` was reported not stored 20 times of 20, by `cat` exiting 141 — the
+ * same case the direct spawn caught as a write EPIPE.
  *
- * The reason is TIMING, not size, and the difference matters because the size
- * explanation is the tempting one and it is wrong. EPIPE is raised when the read
- * end is ALREADY closed at the moment of writing, whatever the size. Measured
- * against `sh -c 'exec 0<&-; sleep 0.4'`: writing 1.7KB immediately → no error;
- * writing the same 1.7KB 200ms later → EPIPE; writing **8 bytes** 200ms later →
- * EPIPE. So a small payload does not avoid EPIPE — it merely never blocks, which
- * is what lets the write win the race.
- *
- * So the child's EXIT CODE is the contract, and the operator is responsible for
- * naming a command that fails loudly. That is stated here rather than papered
- * over, because the tempting fix — waiting for the stream to flush — measures
- * the kernel buffer rather than the child, and would look like a check while
- * being one.
+ * So the command's EXIT CODE is still the contract, and the operator is still
+ * responsible for naming a command that fails loudly. That is stated here rather
+ * than papered over, because the tempting fix — waiting for the stream to flush
+ * — measures the kernel buffer rather than the command, and would look like a
+ * check while being one.
  */
 export async function handOffKey(
   pem: string,
   destination: KeyDestination,
-  spawnFn: SpawnFn = (command, args) =>
-    spawn(command, args, { stdio: ['pipe', 'inherit', 'inherit'] }),
+  spawnFn: SpawnFn = spawnKeyDestination,
 ): Promise<HandOffResult> {
   if (destination.kind === 'file') {
     try {
@@ -611,6 +689,11 @@ export async function handOffKey(
     }
   }
 
+  // Refused before anything runs: an empty argv would reach the bridge as a bare
+  // `env --`, which prints the environment and exits 0.
+  if (destination.argv.length === 0) {
+    return { stored: false, detail: 'no command was given to send the key to' }
+  }
   const [command, ...args] = destination.argv
   return new Promise<HandOffResult>((resolve) => {
     let child: ChildProcess
@@ -636,6 +719,25 @@ export async function handOffKey(
     // means the child cannot have received the whole PEM, whatever it claims.
     let writeError: Error | undefined
 
+    // `cat`'s exit status as the bridge reports it on fd 3 (see
+    // `KEY_INPUT_BRIDGE`). Recorded, like `writeError`, for the verdict on
+    // 'close' — by which time this channel has closed too, because a child's
+    // 'close' waits for every stdio stream after stdin. Left empty if the
+    // channel is missing, which the verdict counts as no `0`.
+    let catStatus = ''
+    if (BRIDGE_KEY_INPUT) {
+      const channel = child.stdio?.[3]
+      if (channel instanceof Readable) {
+        channel.setEncoding('utf8')
+        channel.on('data', (chunk: string) => {
+          catStatus += chunk
+        })
+        // Not optional, for the same reason as the listener on stdin below. An
+        // error cannot fake a status: at worst it leaves this short of a `0`.
+        channel.on('error', () => {})
+      }
+    }
+
     child.on('error', (err) => {
       // A spawn failure, where no 'close' need follow — so this one settles.
       settle({ stored: false, detail: `could not run \`${command}\`: ${getErrorMessage(err)}` })
@@ -656,11 +758,25 @@ export async function handOffKey(
           })
           return
         }
-        if (code === 0) {
-          settle({ stored: true, detail: `\`${command}\` accepted the key and exited 0` })
+        if (code !== 0) {
+          settle({ stored: false, detail: destinationExitDetail(command, code) })
           return
         }
-        settle({ stored: false, detail: `\`${command}\` exited ${code ?? 'by signal'}` })
+        const status = catStatus.trim()
+        if (BRIDGE_KEY_INPUT && status !== '0') {
+          settle({
+            stored: false,
+            detail:
+              status === ''
+                ? `\`${command}\` exited 0, but the pipe feeding it the key reported no status, ` +
+                  'so nothing shows the key reached it'
+                : `\`${command}\` exited 0, but the key did not reach it in full: the \`cat\` ` +
+                  `writing it into its input exited ${status}` +
+                  (status === '141' ? ' (SIGPIPE — its input was closed first)' : ''),
+          })
+          return
+        }
+        settle({ stored: true, detail: `\`${command}\` accepted the key and exited 0` })
       })
     })
 
@@ -974,8 +1090,9 @@ export function resetStdinStateForTesting(): void {
 }
 
 /**
- * What to do with one answer to the retry prompt: send the key to a
- * destination, ask again, or stop asking.
+ * What to do with one answer to the retry prompt: write the key to a file, ask
+ * again, or stop asking. There is deliberately no command here — see
+ * `parseKeyRetryAnswer`.
  *
  * `reprompt` carries WHY, so `handOffWithRetry` can tell the operator what was
  * wrong with what they typed instead of silently asking again.
@@ -983,14 +1100,25 @@ export function resetStdinStateForTesting(): void {
 export type KeyRetryChoice =
   | { kind: 'give-up' }
   | { kind: 'reprompt'; reason: string }
-  | KeyDestination
+  | { kind: 'file'; filePath: string }
 
 /**
- * Route one line of operator input at the retry prompt. Exported and pure so
- * every rule below is a table test rather than something only reachable by
- * driving a live prompt end to end.
+ * Route one line of operator input at the retry prompt, which accepts a FILE
+ * PATH and nothing else. Exported and pure so every rule below is a table test
+ * rather than something only reachable by driving a live prompt end to end.
  *
- * ORDER MATTERS, and two of these rules exist because of a measured failure:
+ * WHY NO COMMANDS. The first destination can be a command because the
+ * operator's own shell parsed `-- <command…>` into argv. A typed line here has
+ * no such parser, and three consecutive review rounds each found splitting it on
+ * whitespace sending the key somewhere unintended: a one-word answer written as
+ * a file in the working directory; a `|` inside the argv becoming a file name;
+ * then `>`, `;`, `&&` and quotes each becoming literal argv words, so
+ * `tee key.pem > /dev/null` wrote 0644 copies of the key into the repository
+ * root and reported it stored. Each fix closed one spelling. Accepting a path
+ * only closes the class: an operator who wants a command writes the file, runs
+ * the command against it, and deletes the file.
+ *
+ * The rules, in order:
  *
  * - `null` (stdin has already ended — see `stdinEnded` above) gives up: there
  *   is nobody left who could answer.
@@ -1006,32 +1134,22 @@ export type KeyRetryChoice =
  *   something the operator has to type.
  * - The words "give up", case-insensitively and with whitespace normalised, is
  *   the one deliberate way to give up once stdin is live.
- * - A leading `|` is unambiguous operator intent to run a command, even for a
- *   single word: `| pbcopy` cannot be mistaken for a path.
- * - A single token containing `/` or `\` is a path — `./key.pem`,
- *   `dir\key.pem`.
- * - A single token with NO path separator — `pbcopy`, `wl-copy`, any script on
- *   PATH — used to be routed to `{ kind: 'file' }` by a "one word is a path"
- *   rule. That let `writeFile('pbcopy', pem, { flag: 'wx' })` succeed in
+ * - Any whitespace inside the answer, or a leading `|`, is re-prompted with
+ *   "commands are not accepted here" and the write-run-delete route. Every
+ *   command-shaped answer above was spelled with whitespace, and nothing about
+ *   a typed line tells a command apart from a path that contains spaces — so
+ *   the cost, stated in the reason, is that such a path cannot be entered here.
+ * - A leading `~` is re-prompted: nothing here expands it, so `~/key.pem`
+ *   would name a directory literally called `~` under the working directory.
+ * - A single token with NO `/` or `\` — `pbcopy`, `wl-copy`, any script on
+ *   PATH — is re-prompted, suggesting `./<token>`. A "one word is a path" rule
+ *   once let `writeFile('pbcopy', pem, { flag: 'wx' })` succeed in
  *   `process.cwd()` — normally the git repository root — leaving a
  *   `contents: write` private key sitting untracked on disk, while the
- *   operator read "written to pbcopy (mode 0600)" and believed it had been
- *   piped into the command they meant. This is re-prompted instead, naming the
- *   ambiguity and both escape hatches (a leading `./` for a file, a leading
- *   `|` for a command).
- * - Two or more whitespace-separated tokens is a command. Split on whitespace
- *   rather than through a shell: there is no shell here, so nothing to inject
- *   into.
- * - A `|` ANYWHERE ELSE in the resulting argv — not just as the leading
- *   marker — is re-prompted rather than built into a command. Only a LEADING
- *   `|` is special-cased above; a `|` later in the answer is otherwise just
- *   another word to `split(/\s+/)`, because there is no shell here to give it
- *   meaning. An answer written from habit as a pipeline (`tee key.txt |
- *   pbcopy`) would otherwise run `tee` with `key.txt`, `|` and `pbcopy` as
- *   three ordinary file names — writing 0644 copies of the private key into
- *   `process.cwd()` (normally the repo root) while also echoing the PEM to
- *   the terminal, and reporting it as stored. There being no shell means a
- *   `|` can never mean "pipe" here, so this is refused rather than guessed at.
+ *   operator read "written to pbcopy (mode 0600)" and believed it had gone
+ *   into the command they meant.
+ * - Anything else is a path, which `handOffKey` creates with mode 0600 and
+ *   refuses to write if something already exists there.
  */
 export function parseKeyRetryAnswer(answer: string | null): KeyRetryChoice {
   if (answer === null) return { kind: 'give-up' }
@@ -1043,48 +1161,33 @@ export function parseKeyRetryAnswer(answer: string | null): KeyRetryChoice {
     return { kind: 'give-up' }
   }
 
-  if (trimmed.startsWith('|')) {
-    const words = trimmed.slice(1).trim().split(/\s+/).filter(Boolean)
-    if (words.length === 0) {
-      return { kind: 'reprompt', reason: 'nothing followed the `|`' }
-    }
-    return embeddedPipeReprompt(words) ?? { kind: 'command', argv: words }
-  }
-
-  const words = trimmed.split(/\s+/).filter(Boolean)
-  if (words.length === 1) {
-    const token = words[0]
-    if (token.includes('/') || token.includes('\\')) {
-      return { kind: 'file', filePath: token }
-    }
+  if (/\s/.test(trimmed) || trimmed.startsWith('|')) {
     return {
       kind: 'reprompt',
       reason:
-        `"${token}" could be a file or a command. Enter ./${token} to write a file here, ` +
-        `or | ${token} to pipe the key into it.`,
+        'commands are not accepted at this prompt — only a file path. To send the key to a ' +
+        'command, write it to a file here, run your own command against that file, then ' +
+        'delete the file. (A path containing spaces is not supported here either.)',
     }
   }
 
-  return embeddedPipeReprompt(words) ?? { kind: 'command', argv: words }
-}
-
-/**
- * `null` when no argv word contains a `|`; a `reprompt` naming why otherwise.
- *
- * Checked on the argv that would otherwise become a command — after the
- * leading-`|` marker (if any) has already been stripped — so this only ever
- * sees a `|` that landed INSIDE a word, which is never the marker.
- */
-function embeddedPipeReprompt(words: string[]): KeyRetryChoice | null {
-  if (!words.some((word) => word.includes('|'))) return null
-  return {
-    kind: 'reprompt',
-    reason:
-      'there is no shell here, so `|` only works as the first character, to mark a single ' +
-      'command — a pipeline like `a | b` is not supported and would run `a`, `|` and `b` as ' +
-      'three separate file names. Run the pipeline yourself and enter the one command that ' +
-      'should receive the key, or a path to write it to a file instead.',
+  if (trimmed.startsWith('~')) {
+    return {
+      kind: 'reprompt',
+      reason: '`~` is not expanded here. Enter an absolute path, or one starting with ./',
+    }
   }
+
+  if (!trimmed.includes('/') && !trimmed.includes('\\')) {
+    return {
+      kind: 'reprompt',
+      reason:
+        `"${trimmed}" is not a path, and commands are not accepted here. Enter ./${trimmed} ` +
+        'to write the key to a file of that name in the current directory.',
+    }
+  }
+
+  return { kind: 'file', filePath: trimmed }
 }
 
 /**
@@ -1097,12 +1200,13 @@ function embeddedPipeReprompt(words: string[]): KeyRetryChoice | null {
  * and fail here. Exiting at that point destroys the only copy of a private key
  * for an App that already exists, over a typo.
  *
- * So a failure asks for somewhere else instead, while the key is still in
- * memory. `create` already requires a TTY, so there is someone there to answer.
- * Only a closed stdin (nobody left to answer) or the operator typing "give up"
- * ends the loop without a destination — a blank line re-prompts instead, since
- * that is exactly what a stray Enter pressed before this prompt existed leaves
- * buffered. See `parseKeyRetryAnswer` for the exact routing rules.
+ * So a failure asks for a file path instead, while the key is still in memory —
+ * a path only, never a command, for the reasons on `parseKeyRetryAnswer`.
+ * `create` already requires a TTY, so there is someone there to answer. Only a
+ * closed stdin (nobody left to answer) or the operator typing "give up" ends the
+ * loop without a destination — a blank line re-prompts instead, since that is
+ * exactly what a stray Enter pressed before this prompt existed leaves buffered.
+ * See `parseKeyRetryAnswer` for the exact rules.
  */
 export async function handOffWithRetry(pem: string, destination: KeyDestination): Promise<boolean> {
   let attempt = destination
@@ -1121,10 +1225,9 @@ export async function handOffWithRetry(pem: string, destination: KeyDestination)
 
     for (;;) {
       const answer = await askLine(
-        '\n  Enter a path to write it to (mode 0600, e.g. `./canopycms-app-key.pem`), or a\n' +
-          '  command to pipe it into — `| command` for a single word, or a command with its\n' +
-          '  arguments (e.g. `aws secretsmanager create-secret --name canopycms/github-app-key\n' +
-          '  --secret-string file:///dev/stdin`). Type "give up" to discard the key.',
+        '\n  Enter a path to write it to, e.g. `./canopycms-app-key.pem`. The file is created\n' +
+          '  with mode 0600, and refused if something already exists there. Type "give up" to\n' +
+          '  discard the key.',
       )
       const choice = parseKeyRetryAnswer(answer)
       if (choice.kind === 'reprompt') {
