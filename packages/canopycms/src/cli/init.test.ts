@@ -490,6 +490,12 @@ describe('canopycms init-deploy aws', () => {
     const dockerfile = await fs.readFile(path.join(tmpDir, 'Dockerfile.cms'), 'utf-8')
     const [builder, runner] = dockerfile.split(/^FROM .* AS runner$/m)
     expect(runner, 'expected a runner stage').toBeDefined()
+    // The split consumes the runner's own FROM line, so check its base separately:
+    // `FROM builder AS runner` would inherit the builder's ENV (CANOPY_BUILD_MODE=true)
+    // and make the deployed CMS read /app as the synthetic build user.
+    const runnerBase = /^FROM (\S+) AS runner$/m.exec(dockerfile)?.[1]
+    expect(runnerBase, 'expected a runner stage FROM line').toBeDefined()
+    expect(runnerBase).not.toBe('builder')
     // A build reads the working tree (readsFromCheckout in build-mode.ts), so
     // the builder needs neither git nor a synthesized repository. The runner
     // still installs git: the deployed CMS does real branch operations.

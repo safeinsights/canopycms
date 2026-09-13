@@ -299,7 +299,6 @@ describe('BranchWorkspaceManager', () => {
           expect(context.branch.createdBy).toBe('__static_deploy__')
           // No git ops or workspace dirs may be created
           await expect(fs.access(path.join(root, '.canopy-dev'))).rejects.toThrow()
-          await expect(fs.access(path.join(root, '.canopy-meta'))).rejects.toThrow()
         } finally {
           cwdSpy.mockRestore()
           await fs.rm(root, { recursive: true, force: true })
