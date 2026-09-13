@@ -95,8 +95,12 @@ export function gitHubAppAuthFrom(resolveAppAuth: () => InstallationTokenMinter)
  *
  * Deferred, the first touch of either member happens inside `start()`'s try —
  * `ensureGitHubAuth()` builds the Octokit client (which calls `authStrategy`),
- * and `preflightGitHubAppAuth()` mints — so the throw is recorded in
- * `worker-status.json` with its message intact.
+ * and `preflightGitHubAppAuth()` mints immediately after — so the throw is
+ * recorded in `worker-status.json` with its message intact. In practice a bad
+ * key or a bad app id surfaces from the FIRST of those, `ensureGitHubAuth()`,
+ * so it arrives unwrapped rather than under `preflightGitHubAppAuth()`'s
+ * "Check the app id, the installation id…" wording. Both are recorded; only the
+ * phrasing differs, and the normalizer's own message already names the key.
  *
  * Memoized, because the single-instance contract above is exactly what a plain
  * lazy getter would break: `createAppAuth` per call is `authStrategy:

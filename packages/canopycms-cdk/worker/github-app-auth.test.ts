@@ -232,14 +232,10 @@ describe('buildGitHubAppAuth: the real strategy, built once and not before it is
     expect(octokitAuth.authStrategy({})).toBe(octokitAuth.authStrategy({ request: {} }))
   })
 
-  it('accepts the escaped, base64-wrapped key shape end to end', async () => {
-    // The shape a multi-line secret arrives in after a single-line config
-    // field. The normalizer is checked against the real signer at the top of
-    // this file; this checks buildGitHubAppAuth actually applies it.
-    const mangled = Buffer.from(pkcs1.trimEnd().replace(/\n/g, '\\n'), 'utf8').toString('base64')
-    const auth = buildGitHubAppAuth({ ...credentials, privateKey: mangled })
-    // Reaching createAppAuth without throwing is the assertion: an unnormalized
-    // value of this shape is rejected as an unparseable key.
-    expect(() => auth.octokitAuth.authStrategy({})).not.toThrow()
-  })
+  // No test here that a mangled key is "accepted end to end" by checking
+  // `authStrategy` does not throw. Measured: `createAppAuth` does not inspect
+  // the private key at construction at all, so that assertion passes with the
+  // normalizer removed entirely -- it pins nothing. What buildGitHubAppAuth
+  // hands to createAppAuth is checked directly, by reading it, in
+  // github-app-auth-wiring.test.ts.
 })

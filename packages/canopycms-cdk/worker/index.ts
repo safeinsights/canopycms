@@ -103,9 +103,10 @@ async function main() {
           installationId: githubAppInstallationId,
           // An App private key is the credential most likely to live inside a
           // JSON document rather than alone in a secret -- which is why the
-          // JSON-field option exists at all. Same `|| undefined` as the two
-          // call sites above, and for the same reason: a blank var means "not
-          // configured", not "read the field named ''".
+          // JSON-field option exists at all. Same `|| undefined` as the other
+          // two `getSecret` call sites in this file (the GitHub token above and
+          // the Clerk key below), and for the same reason: a blank var means
+          // "not configured", not "read the field named ''".
           privateKey: await getSecret(githubAppPrivateKeySecretArn, {
             jsonField: process.env.CANOPYCMS_GITHUB_APP_PRIVATE_KEY_SECRET_JSON_FIELD || undefined,
             jsonFieldEnvVar: 'CANOPYCMS_GITHUB_APP_PRIVATE_KEY_SECRET_JSON_FIELD',

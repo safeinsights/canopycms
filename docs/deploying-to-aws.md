@@ -499,7 +499,10 @@ Five things worth knowing before you choose:
 - **`GITHUB_APP_INSTALLATION_ID` is not the App ID.** It identifies the App's
   installation on your repository; an App installed on two organisations has one
   App ID and two installation IDs. It is the trailing number in the URL of the
-  App's install page under your organisation's settings.
+  App's install page under your organisation's settings
+  (`.../settings/installations/<installation_id>`), and `GET /app/installations`
+  authenticated as the App returns it if you would rather read it from the API
+  than off a URL.
 
 ### JSON secret documents
 

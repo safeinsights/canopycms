@@ -399,9 +399,20 @@ const GITHUB_TOKEN_PROP_NAMES = ['githubTokenSecretArn', 'githubTokenSecretJsonF
  *
  * Without this, that lands on `assertEnvSafe`'s generic rule and reports "must
  * not contain a newline" about an ARN, which explains the mechanism and not the
- * mistake. Checked on all three App props because the same misunderstanding
- * puts the key in any of them, and each would otherwise produce a differently
- * confusing message.
+ * mistake. Checked on each of `GITHUB_APP_PROP_NAMES` because the same
+ * misunderstanding puts the key in any of them, and each would otherwise
+ * produce a differently confusing message.
+ * `githubAppPrivateKeySecretJsonField` is deliberately not checked: a JSON key
+ * NAME is not somewhere anyone mistakes a PEM for, and it keeps this aligned
+ * with the one list that defines what "the App props" are.
+ *
+ * **Reached only by a hand-written stack.** The generated
+ * `infrastructure/lib/cms-stack.ts` resolves the ARN with
+ * `Secret.fromSecretCompleteArn` BEFORE it constructs `CanopyCmsService`, so a
+ * scaffolded adopter gets CDK's own complaint ("does not appear to be complete;
+ * missing 6-character suffix") first. That asymmetry is the same one
+ * `assertSecretPropPair` documents for the token ARN, and is why this guard is
+ * worth having rather than redundant: the hand-written path has nothing else.
  *
  * A one-line key (a base64-wrapped PEM, say) is NOT caught here, and cannot be:
  * it is indistinguishable from a malformed ARN at synth. It fails at boot in
@@ -472,13 +483,16 @@ function assertNumericId(propName: string, value: string | undefined): void {
 /**
  * Guards the GitHub credential props at synth: exactly one shape, fully given.
  *
- * Both rules restate `resolveWorkerGitHubAuth`
- * (packages/canopycms/src/worker/github-auth.ts), which enforces them on the
- * worker at boot. Restating them is the point rather than duplication for its
- * own sake: a worker that throws at boot is restarted by systemd every 5
- * seconds indefinitely, and `cdk deploy` reports success -- so a rule that only
- * exists at boot is a rule the adopter discovers from CloudWatch. The core
- * check stays because core is reachable without this construct.
+ * Only the SECOND rule restates `resolveWorkerGitHubAuth`
+ * (packages/canopycms/src/worker/github-auth.ts:136-147), which refuses both
+ * credentials and refuses neither. The first has no counterpart there and could
+ * not: core takes one already-built `githubAppAuth` object, so a partial set of
+ * three props is not representable by the time it sees anything. Restating the
+ * second rather than leaving it to core is the point: a worker that throws at
+ * boot is restarted by systemd every 5 seconds indefinitely while `cdk deploy`
+ * reports success, so a rule that only exists at boot is a rule the adopter
+ * discovers from CloudWatch. The core check stays because core is reachable
+ * without this construct.
  *
  * 1. **All three App props or none.** Two of the three is not a partial
  *    configuration that could still work: `createAppAuth` needs the App ID, the
@@ -682,8 +696,9 @@ export interface CanopyCmsServiceProps {
    * `assertEnvSafe` refuses one, and a PEM is inherently multi-line. A
    * plaintext key could not be delivered to the worker intact by this path at
    * all. Passing the PEM itself here is caught by name at synth (see
-   * `assertNotInlinePrivateKey`) rather than surfacing as a puzzling "an ARN
-   * must not contain a newline".
+   * `assertNotInlinePrivateKey`, and the note there about the generated stack
+   * reaching CDK's own ARN complaint first) rather than surfacing as a puzzling
+   * "an ARN must not contain a newline".
    *
    * The ARN is unioned into the worker's IAM policy alongside the other secret
    * ARN props; you do not need to repeat it in `secretsArns`.
