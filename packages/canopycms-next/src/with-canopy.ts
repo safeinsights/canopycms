@@ -432,10 +432,10 @@ function sharpTracingConfig(
  *   - Your own includes are kept.
  *   - A standalone build warns if the directory cannot be found, or if the Next version cannot be
  *     read.
- * - On Next 16 and later, or when the Next version cannot be read, sets `turbopack: {}` when your
- *   config has neither `turbopack` nor `webpack`. Next 16 builds and runs `next dev` with Turbopack
- *   by default, and exits when the config has a `webpack` function (the React aliases above add
- *   one) but no `turbopack` config.
+ * - On Next 16 and later, sets `turbopack: {}` when your config has neither `turbopack` nor
+ *   `webpack`. Next 16 builds and runs `next dev` with Turbopack by default, and exits when the
+ *   config has a `webpack` function (the React aliases above add one) but no `turbopack` config.
+ *   A `turbopack` you already set, `turbopack: {}` included, is kept as it is.
  *
  * **When you need this:**
  * - Always recommended — it replaces manual `transpilePackages` configuration
@@ -523,18 +523,25 @@ export function withCanopy(
   // `TURBOPACK=auto` (`next/dist/lib/bundler.js`), and then exits with "This build is using
   // Turbopack, with a `webpack` config and no `turbopack` config" whenever the exported config's
   // `webpack` is truthy and its `turbopack` is not (`validateTurboNextConfig` in
-  // `next/dist/lib/turbopack-warning.js`, 16.1.7). The `webpack` function above is withCanopy's,
-  // and its aliases matter only to the `file:` symlink installs the NOTE above already sends to
-  // `--webpack`. So withCanopy answers for it with an empty, truthy `turbopack` object. It does so
-  // only when the adopter wrote no `webpack` of their own, for which Next's guard is the right one,
-  // and never over a `turbopack` they set. Next 15 only warns here, so the default starts at 16;
-  // an unreadable version is treated as current, as the sharp tracing below does.
+  // `next/dist/lib/turbopack-warning.js`, 16.1.7).
+  //
+  // The `webpack` function above is withCanopy's own, and Turbopack never runs a `webpack`
+  // function, so its React aliases never applied under Turbopack. That is why the NOTE above sends
+  // `file:` symlink installs to `next dev --webpack`, and why answering the guard with an empty
+  // `turbopack` object is safe for this function. The rules:
+  // - Only when withCanopy added that function and the adopter wrote no `webpack` of their own.
+  //   For theirs, Next's guard is the right one.
+  // - Never over a `turbopack` the adopter set, so a config that already has `turbopack: {}` keeps
+  //   its own value.
+  // - Only on a detected Next 16 or later. Next 15 only warns here, and Next 13 and 14 report an
+  //   unknown top-level `turbopack` as an invalid option, so an unreadable version gets no key.
   const nextMajor = installedNextMajor(process.cwd())
   const answerTurbopackGuard =
     webpack !== undefined &&
     !isSet(existingWebpack) &&
     !isSet(nextConfig.turbopack) &&
-    (nextMajor === null || nextMajor >= 16)
+    nextMajor !== null &&
+    nextMajor >= 16
 
   // Dual-build support: a static build gets STATIC_PAGE_EXTENSIONS (e.g. `page.static.tsx`)
   // instead of CMS_PAGE_EXTENSIONS, so CMS-only files (`route.server.ts`, `page.server.tsx`)
