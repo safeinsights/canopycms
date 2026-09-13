@@ -1,9 +1,32 @@
 # [P2] `init-deploy aws` scaffold: two gaps a first real image build hits
 
+**RESOLVED 2026-09-12** by PR 5 of [cms-image-build-epic.md](../cms-image-build-epic.md). That PR's
+image smoke test ([deploy-image-build-smoke-test.md](deploy-image-build-smoke-test.md)) now builds
+this scaffold in CI.
+
+- **Gap 1.** `init-deploy aws` adds `"infrastructure"` to a plain-JSON `tsconfig.json`'s
+  `exclude` (`excludeFromTsconfig` in `cli/init.ts`). A `tsconfig.json` with comments, one that
+  inherits `exclude` through `extends` with no list of its own, or none at all, gets a warning
+  asking for the edit instead. The generated `.dockerignore` also excludes
+  `infrastructure`. Reproduced in Docker with both fixes disabled: the image's `next build` failed
+  type-checking `./infrastructure/bin/app.ts` with `Cannot find module 'aws-cdk-lib'`.
+- **Gap 2.** The pnpm COPY line is `COPY package.json pnpm-lock.yaml pnpm-workspace.yam[l] ./`
+  (`cli/project-detect.ts`), and the glob keeps the file optional. Reproduced in Docker, which this
+  file had recorded as not run: without the COPY, the image's `pnpm install --frozen-lockfile`
+  failed with `ERR_PNPM_IGNORED_BUILDS` for es5-ext and sharp.
+- **A third gap, found by the smoke test.** `withCanopy` adds a `webpack` function whenever it can
+  resolve React, and Next 16 exits a `next build` or `next dev` that defaulted to Turbopack when
+  the config has a `webpack` and no `turbopack`. On a detected Next 16 or later, `withCanopy` now
+  sets `turbopack: {}` when the adopter's config has neither (`with-canopy.ts`).
+
+One correction to gap 2 below: create-next-app 16.1.7 writes `ignoredBuiltDependencies` for sharp
+and unrs-resolver, and pnpm 11 does not read it. The smoke fixture's host install also failed on
+sharp@0.34.5 until those decisions went into `allowBuilds`.
+
 **Priority:** P2 — both fail loudly on an adopter's first build and have a known workaround; PR 5
 of the CMS image epic will hit both
 **Found:** 2026-09-12, by the local Docker verification for
-[cms-image-build-epic.md](cms-image-build-epic.md) PR 1. The run used a fresh Next 16.1.7 app
+[cms-image-build-epic.md](../cms-image-build-epic.md) PR 1. The run used a fresh Next 16.1.7 app
 (pnpm 11.21.0, from `create-next-app`), `canopycms init` + `canopycms init-deploy aws` from
 `pnpm pack` tarballs, then `next build` and `docker build -f Dockerfile.cms`. Neither gap is
 caused by PR 1.

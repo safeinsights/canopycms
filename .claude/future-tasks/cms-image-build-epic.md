@@ -385,6 +385,51 @@ Implements `deploy-image-build-smoke-test.md`. Its chip is spawned only after PR
   this PR.
 - **Backlog.** Resolve the task and move its index rows. The Yarn decision stays in its own task.
 
+**As built.**
+- **Fixture.** A hand-written Next 16.1.7 app in create-next-app's shape, using its `tsconfig.json`
+  verbatim, rather than `create-next-app` itself. It adds a root layout that reads content, a
+  force-dynamic `[slug]` route, a prerendered `sitemap.ts` as the build-time read,
+  `media: { adapter: 'local' }` and `defaultBaseBranch: 'release-base'`. The container runs in dev
+  mode, with a git checkout on `release-base` copied into `/app` before it starts. The page has one
+  title in the working tree, which `next build` reads, and another in its `release-base` commit,
+  which requests read, so a check can tell which copy served a response.
+- **Matrix and filter.** pnpm and npm on `ubuntu-latest`, plus pnpm on `ubuntu-24.04-arm`. No
+  Next 15 leg: see [webpack-standalone-sharp-bundled.md](webpack-standalone-sharp-bundled.md). The
+  path filter is wider than planned above: every source and packaging input of the three packages,
+  `tsconfig.base.json`, the lockfile, the root `package.json`, `.nvmrc`, the script and `ci.yml`.
+- **The adopter's not-found 500s did not reproduce.** The adopter's image answered 404s and
+  `/favicon.ico` with 500s ("Why 404s fail", above). In the fixture, `/no-such-page` is a 404 whose
+  root layout read the branch clone at request time, `/no/such/route` is a 404 served from the
+  not-found page `next build` prerendered, whose layout read the working tree, and `/favicon.ico`
+  is a 404. All three stayed non-5xx even with PR 3's include disabled, and the container logs
+  zero `DYNAMIC_SERVER_USAGE`. Nothing was filed.
+- **The libvips check follows the alias's own sharp.** Next's own sharp 0.34.5 brings libvips
+  1.2.4, which its tracer copies unaided, so "some `libvips-cpp` under `/app`" passes with the
+  defect present.
+- **A third scaffold defect.** Next 16 exits a `next build` or `next dev` that defaulted to
+  Turbopack when the config has `webpack` and no `turbopack`, and `withCanopy` adds `webpack`
+  whenever it can resolve React. Fixed in `with-canopy.ts` for a detected Next 16 or later.
+- **Red before green, on local arm64.**
+  - (a) The pre-PR-1 builder snapshot plus the pre-PR-1 `readsFromCheckout`: the build fails
+    prerendering `/sitemap.xml` with `base branch 'release-base' does not exist locally`.
+  - (b) PR 3's include disabled: 5 of 14 checks fail, and the container log has 4
+    `ERR_DLOPEN_FAILED`.
+  - Each of the Turbopack fix, the tsconfig exclusion with its `.dockerignore` line, and the pnpm
+    COPY, reverted alone, also fails the image build.
+  - All five red runs used the script as it stood before the review rounds (before `7240ab1a`).
+- **Review fixes.** Once the container exists, its log is written to `<work-dir>/container.log` on
+  every exit path, and CI uploads it when a leg fails. `--work-dir` is checked through its nearest
+  existing ancestor's real path before it is created, and `--keep` also keeps the scaffold.
+  `init-deploy aws` leaves a tsconfig that inherits `exclude` through `extends` alone, with a
+  warning. Left open: [cms-image-pr5-review-followups.md](cms-image-pr5-review-followups.md).
+- **CI.** The first run (on `b4d7eb1e`) failed on all three legs, each with 13 of 14 checks green:
+  the `/no-such-page` check required the root layout's `<header>` markup, which a force-dynamic
+  route calling `notFound()` does not send. `8581b501` matched the layout's text instead. Every leg
+  of the six runs that followed, through `de626711`, passed all 14 checks, in 1m43s to 2m43s.
+- **pnpm version.** The fixture pins `packageManager`. Without it, corepack in `node:22-slim`
+  takes the latest pnpm (12.4.1 on 2026-09-12), which still installed the pnpm 11 lockfile without
+  re-resolving it.
+
 ### PR 6: adopter-answer docs (`docs/cms-image-adopter-answers`)
 
 - **Runtime publishable key as a supported shape.** `deploying-to-aws.md:119`: `<ClerkProvider
@@ -466,7 +511,9 @@ when they open their PR, when they hit a decision that needs a call, and when th
 - [sharp-tracing-lockfile-root-edge-cases.md](sharp-tracing-lockfile-root-edge-cases.md) (P3) — two low-severity tracing-root lookup edge cases.
 - [build-canopy-scripts-outside-next-build.md](build-canopy-scripts-outside-next-build.md) (P2) — `createBuildCanopy` / `generate-ai-content` CLI still read a branch clone for server deployments unless `CANOPY_BUILD_MODE=true`; **awaiting a maintainer decision**.
 - [dev-content-watcher-relative-sourceroot.md](dev-content-watcher-relative-sourceroot.md) (P2) — dev content watcher silently off for a relative `sourceRoot`.
-- [init-deploy-aws-first-build-gaps.md](init-deploy-aws-first-build-gaps.md) (P2) — scaffold gaps the image smoke test hits (PR 5 addresses them).
+- [init-deploy-aws-first-build-gaps.md](resolved/init-deploy-aws-first-build-gaps.md) (P2) — scaffold gaps the image smoke test hits. Resolved by PR 5.
+- [yarn-support-decision.md](yarn-support-decision.md) (P3) — keep or drop Yarn in `init-deploy aws`, split from the smoke-test task.
+- [webpack-standalone-sharp-bundled.md](webpack-standalone-sharp-bundled.md) (P2) — a webpack-built CMS image bundles sharp into a server chunk, so image transforms fail; found by PR 5's Next 15.5.21 probe, with Next 16 `--webpack` not yet verified.
 - [editor-operatingmode-option-unused.md](editor-operatingmode-option-unused.md) (P3) — unused editor `operatingMode` option.
 
 ## Verification

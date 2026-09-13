@@ -189,7 +189,7 @@ npx canopycms init-deploy aws
 This creates:
 
 - `Dockerfile.cms` — Lambda Web Adapter image
-- `.dockerignore` — keeps `.env*` out of the build context
+- `.dockerignore` — keeps `.env*` and `infrastructure/` out of the build context
 - `.github/workflows/deploy-cms.yml` — CI/CD workflow
 - `cdk.json` — CDK app configuration; `cdk deploy` resolves the app through this
 - `infrastructure/bin/app.ts` — CDK app entry point
@@ -197,11 +197,18 @@ This creates:
 
 The install and build commands in `Dockerfile.cms` and the workflow are written
 for the package manager the command detects (npm, pnpm, or Yarn — from your
-`packageManager` field, else your lockfile). The deploy trigger branch comes
-from `origin/HEAD`, and the worker's repo from your `origin` remote.
+`packageManager` field, else your lockfile). For pnpm the image's install also
+gets `pnpm-workspace.yaml`, where pnpm 11 keeps its `allowBuilds` decisions. The
+deploy trigger branch comes from `origin/HEAD`, and the worker's repo from your
+`origin` remote.
 
 `init-deploy aws` never overwrites a file you already have — re-run it with
-`--force` to replace them.
+`--force` to replace them. The one existing file it edits is `tsconfig.json`: it
+adds `infrastructure` to `exclude`, because the CDK app imports `aws-cdk-lib`
+and your app's own `next build` would otherwise type-check it. A `tsconfig.json`
+with comments, or one that inherits `exclude` through `extends` with no list of
+its own, is left alone, and the command asks you to make that edit. It asks the
+same when there is no `tsconfig.json`.
 
 ## Step 3: Test Locally in Dev Mode
 

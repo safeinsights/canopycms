@@ -9,11 +9,12 @@ WORKDIR /app
 {{DOCKER_COPY}}
 # If your app uses `file:` dependencies (e.g. vendored tarballs under vendor/),
 # COPY that directory here, before the install step -- otherwise it fails.
+# The same applies to a patches/ directory named by pnpm's patchedDependencies.
 #
-# This assumes a single-package repository. In a workspace monorepo
-# (pnpm-workspace.yaml, npm/yarn `workspaces`) the manifest and lockfile above
-# are not enough on their own -- copy the workspace manifests and install with
-# the workspace filtered to this app.
+# This assumes a single-package repository. In a workspace monorepo (a
+# pnpm-workspace.yaml that lists `packages`, or npm/yarn `workspaces`) the
+# files above are not enough on their own -- copy the workspace manifests and
+# install with the workspace filtered to this app.
 {{DOCKER_INSTALL}}
 COPY . .
 # Guard against adopter apps with no public/ directory: Next's standalone

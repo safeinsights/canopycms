@@ -29,9 +29,13 @@ which added `packages/canopycms-next/src/sharp-tracing.ts`.
 
 1. **Is vercel/next.js#97973 closed, and in which release?** Note that release here either way.
 2. **Does Next now trace the library without the include?** Build a standalone image with
-   `sharpTracingConfig` in `with-canopy.ts` returning `{}`. Use the image smoke test fixture if it
-   exists ([deploy-image-build-smoke-test.md](deploy-image-build-smoke-test.md)), or any Turbopack
-   standalone app that installs the packed packages. Then check two things:
+   `sharpTracingConfig` in `with-canopy.ts` returning `{}`. The image smoke test does this: pack
+   canopycms-next with that change, put the other two packages' tarballs in the same directory,
+   and run `scripts/smoke/standalone-image.mjs --tarballs <dir>`
+   ([deploy-image-build-smoke-test.md](resolved/deploy-image-build-smoke-test.md)). While the
+   include is still needed, 5 of its 14 checks fail: the original-PNG and WebP requests, the
+   libvips check, the alias load and the `ERR_DLOPEN_FAILED` count. The "externalized" check still
+   passes. Or check by hand:
    - the builder's `.next/server/app/_not-found/page.js.nft.json` lists `libvips-cpp`;
    - inside the image, `require()` of every `/app/.next/node_modules/sharp-*` directory can build a
      PNG.

@@ -161,11 +161,69 @@ describe('withCanopy', () => {
     })
   })
 
-  describe('turbopack limitation', () => {
+  describe('turbopack', () => {
     it('does not set turbopack aliases (absolute paths unsupported)', () => {
-      const result = withCanopy({}) as any
-      expect(result.turbopack).toBeUndefined()
+      const result = withCanopy({})
+      expect(result.turbopack?.resolveAlias).toBeUndefined()
       expect(result.experimental?.turbo).toBeUndefined()
+    })
+
+    // Next 16 exits a `next build` or `next dev` that defaulted to Turbopack when the config has
+    // a `webpack` key and no `turbopack` key -- and the alias function above is such a key.
+    it.each([16, 17])(
+      'sets an empty turbopack config on Next %i, answering for its own webpack function',
+      (major) => {
+        tracing.nextMajor = major
+        const result = withCanopy({})
+        expect(result.webpack).toBeTypeOf('function')
+        expect(result.turbopack).toEqual({})
+      },
+    )
+
+    it('does the same for a static export build', () => {
+      expect(withCanopy({ output: 'export' }, { staticBuild: true }).turbopack).toEqual({})
+    })
+
+    // Next 15 only warns; Next 13 and 14 report an unknown top-level `turbopack` as invalid.
+    it.each([13, 14, 15])('leaves turbopack unset on Next %i', (major) => {
+      tracing.nextMajor = major
+      expect(withCanopy({})).not.toHaveProperty('turbopack')
+    })
+
+    it('leaves turbopack unset when the Next version cannot be read', () => {
+      tracing.nextMajor = null
+      expect(withCanopy({})).not.toHaveProperty('turbopack')
+    })
+
+    // An adopter who already worked around the guard with `turbopack: {}` keeps their own value.
+    it.each([{}, { resolveAlias: { foo: './bar' } }])(
+      "keeps the adopter's own turbopack config (%o)",
+      (turbopack) => {
+        expect(withCanopy({ turbopack }).turbopack).toBe(turbopack)
+      },
+    )
+
+    it("does not mutate the adopter's config object", () => {
+      const nextConfig: NextConfig = { reactStrictMode: true }
+      const result = withCanopy(nextConfig)
+      expect(result.turbopack).toEqual({})
+      expect(nextConfig).toEqual({ reactStrictMode: true })
+    })
+
+    it("treats turbopack: null as unset, as Next's guard does", () => {
+      expect(withCanopy(asNextConfig({ turbopack: null })).turbopack).toEqual({})
+    })
+
+    it("leaves Next's guard in place for the adopter's own webpack config", () => {
+      const result = withCanopy({ webpack: (config) => config })
+      expect(result).not.toHaveProperty('turbopack')
+    })
+
+    it('adds nothing when there is no webpack function to answer for', () => {
+      unresolvablePackages = ['react', 'react-dom']
+      const result = withCanopy({})
+      expect(result.webpack).toBeUndefined()
+      expect(result).not.toHaveProperty('turbopack')
     })
   })
 

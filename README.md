@@ -130,12 +130,13 @@ export default withCanopy({
 })
 ```
 
-`withCanopy()` handles four things:
+`withCanopy()` handles five things:
 
 - **Transpilation** — Canopy packages export raw TypeScript; the wrapper auto-detects which Canopy packages are installed and adds only those to `transpilePackages`. You never need to maintain this list manually.
 - **React deduplication** — When developing locally with `file:` references or linked packages (`npm link`, `pnpm link`, etc.), the bundler can follow symlinks and load a second copy of React from the linked package's `node_modules`, causing "Invalid hook call" crashes. The wrapper adds module aliases so React always resolves to your project's copy.
 - **Dual-build page extensions** — By default, adds `server.ts` and `server.tsx` to Next.js `pageExtensions`, enabling the dual-build convention (see below).
 - **Standalone image tracing** — For any build except a static export, adds sharp's libvips shared library to Next's file tracing, so an `output: 'standalone'` server can load sharp. Next can miss that library for sharp 0.35 ([vercel/next.js#97973](https://github.com/vercel/next.js/issues/97973)), and a standalone build that finds nothing to add warns. If you don't use `withCanopy()`, see the manual snippet in [Dual Build Support](docs/deploying-to-aws.md#dual-build-support).
+- **Turbopack guard (Next 16+)** — On Next 16 and later, sets `turbopack: {}` if your config has neither `turbopack` nor your own `webpack` and `withCanopy()` can read your installed Next version, since Next 16 defaults `next build`/`next dev` to Turbopack and exits when it sees the React-aliasing `webpack` function above with no `turbopack` config. Your own `webpack` or `turbopack` config is always left as-is, so a `turbopack: {}` you already added keeps working.
 
 The React aliases are harmless when not strictly needed (e.g., when installing from npm), so `withCanopy()` is the recommended configuration for all adopters.
 
@@ -3302,13 +3303,14 @@ npx canopycms init-deploy aws
 
 Scaffolds a complete, deployable CDK app for the recommended AWS architecture (Lambda, no internet access, + an EC2 worker + EFS, with optional CloudFront/Route53) alongside the Dockerfile and CI workflow:
 
-| File                               | Purpose                                                                                                                                                                     |
-| ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `Dockerfile.cms` / `.dockerignore` | Lambda Web Adapter image; install/build commands match your detected package manager (npm, pnpm, or Yarn — from `packageManager`, else the lockfile)                        |
-| `.github/workflows/deploy-cms.yml` | CI/CD workflow; triggers on your repo's default branch (detected from `origin/HEAD`) and deploys the stack **by name**, so it can't touch unrelated stacks in the same repo |
-| `cdk.json`                         | CDK app entry point                                                                                                                                                         |
-| `infrastructure/bin/app.ts`        | CDK app; reads its configuration from environment variables and refuses to synth if a required one is missing                                                               |
-| `infrastructure/lib/cms-stack.ts`  | the stack itself, yours to edit (memory/concurrency, media support, an existing distribution, etc.)                                                                         |
+| File                               | Purpose                                                                                                                                                                                                                                                                                                                                                            |
+| ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `Dockerfile.cms` / `.dockerignore` | Lambda Web Adapter image; install/build commands match your detected package manager (npm, pnpm, or Yarn — from `packageManager`, else the lockfile); on pnpm, also copies `pnpm-workspace.yaml` if present (pnpm 11 keeps its `allowBuilds` decisions there and fails the install without them); `.dockerignore` keeps `infrastructure/` out of the image context |
+| `.github/workflows/deploy-cms.yml` | CI/CD workflow; triggers on your repo's default branch (detected from `origin/HEAD`) and deploys the stack **by name**, so it can't touch unrelated stacks in the same repo                                                                                                                                                                                        |
+| `cdk.json`                         | CDK app entry point                                                                                                                                                                                                                                                                                                                                                |
+| `infrastructure/bin/app.ts`        | CDK app; reads its configuration from environment variables and refuses to synth if a required one is missing                                                                                                                                                                                                                                                      |
+| `infrastructure/lib/cms-stack.ts`  | the stack itself, yours to edit (memory/concurrency, media support, an existing distribution, etc.)                                                                                                                                                                                                                                                                |
+| `tsconfig.json`                    | adds `infrastructure` to `exclude` so `next build` doesn't type-check the CDK app; warns instead, and leaves the file alone, if it has comments or inherits `exclude` through `extends` with no list of its own; also warns if there is no `tsconfig.json`                                                                                                         |
 
 Install the CDK dependencies it needs — the CLI, and the generated workflow, both warn if any are missing:
 

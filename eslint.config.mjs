@@ -155,7 +155,9 @@ const eslintConfig = [
       globals: {
         AbortController: 'readonly',
         AbortSignal: 'readonly',
+        Blob: 'readonly',
         Buffer: 'readonly',
+        FormData: 'readonly',
         TextDecoder: 'readonly',
         TextEncoder: 'readonly',
         URL: 'readonly',

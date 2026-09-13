@@ -3610,6 +3610,71 @@ The rewrite pattern is the most fragile part and fails silently in both directio
 
 When changing either the rewrite or the guard, verify the guard still fails. Strip a `.js` off one relative specifier in a built `dist/**/*.d.ts` and re-run `pnpm check:esm`: the runtime probe should stay green and the type pass should go red. Deleting a built `.d.ts` outright should also go red. If either stays green, the guard is not testing what it claims -- and confirm the mutation actually landed before trusting the result (see [Diffing Synthesized Output Across a Construct Refactor](#diffing-synthesized-output-across-a-construct-refactor)).
 
+### Standalone CMS Image Smoke Test (`standalone-image` CI job)
+
+`scripts/smoke/standalone-image.mjs` builds the CMS editor image that `canopycms init-deploy aws`
+generates (`Dockerfile.cms.template`), boots it, and sends it real requests. Its header comment
+is authoritative on the why -- read it before changing the script. In short:
+
+- **Scaffolded OUTSIDE this workspace.** A Next 16.1.7 app installs `pnpm pack` tarballs of
+  `canopycms`, `canopycms-next`, and `canopycms-auth-dev` (`npm pack` won't do -- only pnpm
+  applies `publishConfig` and rewrites `workspace:` ranges). In this workspace those packages are
+  workspace links compiled through `transpilePackages`, which is not what an adopter installs.
+  The registry-shaped install externalizes sharp as `.next/node_modules/sharp-<hash>`, the shape
+  an adopter's Next 16 build produces and the one the libvips defect needs.
+- **Runs in dev mode**, with a git checkout of the scaffold's `content/` on a non-`main`
+  `release-base` branch copied in before boot -- see the header comment for why. The page's title
+  in the working tree, which `next build` reads, differs from its title in the `release-base`
+  commit, which requests read, so a check can tell which copy served a response.
+- **Checks (`assertContainer`, 14 in all):**
+  - `whoami` answers 200;
+  - `/hello` renders the `release-base` title (a request-time read of the branch clone), not the
+    working-tree one;
+  - `/sitemap.xml` lists the page (a build-time read of the working tree);
+  - `/no-such-page` is a 404 carrying the `release-base` title (the root layout's request-time
+    read); `/no/such/route` is a 404 carrying the working-tree title (Next serves it from the
+    not-found page `next build` prerendered); `/favicon.ico` is not a 5xx;
+  - an asset round trip: presign -> proxied upload/finalize -> original PNG -> WebP resize;
+  - sharp externalized as a `.next/node_modules/sharp-*` alias; each alias has the libvips-cpp its
+    own sharp declares; each alias loads and encodes;
+  - zero `ERR_DLOPEN_FAILED` in the container logs.
+
+Run it locally (needs Docker running, Node >= 22.2, pnpm, and corepack for `--pm pnpm`):
+
+```bash
+node scripts/smoke/standalone-image.mjs --pm pnpm
+node scripts/smoke/standalone-image.mjs --pm npm
+```
+
+Flags: `--pm pnpm|npm`, `--next <version>` (default 16.1.7), `--pnpm-version` (default 11.27.0,
+written as the scaffold's `packageManager`), `--tarballs <dir>` (reuse pre-packed tarballs instead
+of packing; exactly one per package), `--work-dir <dir>` (must be outside the repo, checked as
+given and through the real path of its nearest existing ancestor before it is created), `--keep`
+(keep the container, the image, and the scaffold they were built from).
+
+**When it fails.** Once the container exists, the script writes its whole log to
+`<work-dir>/container.log` on every exit path, and prints the last 200 lines when a check failed or
+the run stopped before the checks. Without `--work-dir` the work dir is a temp directory, deleted
+only after a fully green run without `--keep`. In CI a failed leg uploads `container.log` as an
+artifact.
+
+**Red-before-green:** `pnpm pack --pack-destination <dir>` from `packages/<name>` against a
+deliberately broken copy of that package, copy the other two tarballs into the same directory,
+then run with `--tarballs <dir>`. Restore the source from a scratch copy afterward -- never
+`git checkout --`.
+
+**Pitfall:** a fixture that bundles sharp instead of externalizing it fails the "externalized"
+check on purpose -- that's the guard working, not a fixture bug.
+
+CI runs it as `standalone-image`, matrixed over pnpm+npm on `ubuntu-latest` and pnpm on
+`ubuntu-24.04-arm` (the Lambda's default architecture). Gated by `dorny/paths-filter` like
+`dual-build` -- the job always reports, only the expensive build+boot steps are skipped -- on
+every source and packaging input of the three packages (each one's `src/**`, `package.json`,
+`tsconfig.json` and `tsconfig.build.json`, plus `packages/canopycms/scripts/**`,
+`scripts/add-js-extensions.mjs` and `tsconfig.base.json`), the lockfile, the root `package.json`
+and `.nvmrc`, and the script and workflow themselves. `ci.yml` has the list and why it is this
+wide.
+
 ### Future-Tasks Backlog Check
 
 `.claude/future-tasks/` is the durable backlog, and AGENTS.md requires every deferred issue to exist as a task file **plus** an `index.md` row. Four failure modes kept slipping through review, so they are now enforced:

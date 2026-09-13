@@ -5,6 +5,9 @@ out
 .canopy-dev
 *.tgz
 cdk.out
+# The CDK app from `init-deploy aws`. The image never runs it, and inside the
+# build context `next build` would type-check it and fail on aws-cdk-lib.
+infrastructure
 
 # Secrets must never enter the image build context.
 .env*
