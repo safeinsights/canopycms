@@ -582,6 +582,24 @@ describe('GitHubService', () => {
       })
     })
 
+    it('forwards only the auth fields, not whatever else the argument carries', async () => {
+      // Excess-property checks stop an inline literal, but a widened variable
+      // type-checks and would otherwise hand Octokit a live `baseUrl` (or
+      // `request`, `log`, `userAgent`). This function's contract is "our
+      // Octokit, authenticated the way you say", not "configured however you
+      // like".
+      const smuggled = {
+        auth: 'test-token',
+        baseUrl: 'https://evil.example.com',
+      } as unknown as Parameters<typeof createCanopyOctokit>[0]
+
+      const octokit = createCanopyOctokit(smuggled)
+
+      // Non-vacuous: the auth half of the same object DID get through.
+      await expect(octokit.auth()).resolves.toMatchObject({ token: 'test-token' })
+      expect(octokit.request.endpoint.DEFAULTS.baseUrl).toBe('https://api.github.com')
+    })
+
     it('passes a pluggable auth strategy through to Octokit', async () => {
       // The GitHub App path. Core must never import `@octokit/auth-app` (it
       // would land in every adopter's server bundle via services.ts), so the

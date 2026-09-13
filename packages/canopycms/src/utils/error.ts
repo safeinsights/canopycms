@@ -120,26 +120,34 @@ export function redactCredentials(message: string): string {
   // outside URL userinfo): GitHub token prefixes and Bearer values.
   result = result.replace(/\b(?:gh[pousr]|github_pat)_[A-Za-z0-9_]{8,}/g, '***')
   result = result.replace(/\b(Bearer\s+)[A-Za-z0-9._~+/=-]{8,}/g, '$1***')
-  // PEM private-key blocks — a GitHub App's key, which reaches error text
-  // whenever the key itself fails to parse or to sign. None of the rules
-  // above matches one: it carries no URL userinfo, no `gh*_` prefix and no
-  // `Bearer`.
+  // PEM private-key blocks — a GitHub App's private key, which a worker error
+  // path can carry because the key is a configured value that appears in
+  // messages about itself. None of the rules above matches one: it has no URL
+  // userinfo, no `gh*_` prefix and no `Bearer`.
   //
   // Linear by construction. The label is `[A-Z]{0,9} ?` (bounded, so its
   // backtracking is a constant factor) rather than an open `[A-Z ]*`, which
   // would rescan a long run of capitals at every start position. The lazy
   // `[\s\S]*?` is stopped by the END footer, or by end-of-string when the
   // message was truncated mid-key — without that second alternative a
-  // half-quoted key would pass through in full.
+  // half-quoted key would pass through in full. The footer match is lazy up to
+  // its closing dashes rather than `[^\n]*` to end of line, so a single-line
+  // message keeps whatever follows the key instead of losing it.
   result = result.replace(
-    /-----BEGIN [A-Z]{0,9} ?PRIVATE KEY-----[\s\S]*?(?:-----END[^\n]*|$)/g,
+    /-----BEGIN [A-Z]{0,9} ?PRIVATE KEY-----[\s\S]*?(?:-----END[^\n]*?-----|$)/g,
     '<private-key>',
   )
-  // Bare JWTs (`eyJ…`): the app JWT `@octokit/auth-app` signs on the way to
-  // an installation token, which GitHub echoes back in the body of the 401 it
-  // rejects it with. Three dot-separated base64url runs; the class excludes
-  // `.`, so each run is unambiguous and the whole is linear.
-  result = result.replace(/\beyJ[\w-]{8,}\.[\w-]{8,}\.[\w-]+/g, '***')
+  // Bare JWTs (`eyJ…`) — three dot-separated base64url runs.
+  //
+  // The leading boundary is `(?<![\w-])`, NOT `\b`. `-` is in the run class but
+  // is not a word character, so under `\b` every `-eyJ` inside one long
+  // `[\w-]` run starts a fresh match attempt that rescans the rest of the run
+  // for a `.` that never comes — quadratic, and measured: `'-eyJ'.repeat(n)`
+  // took 190ms at 20KB, 831ms at 40KB, 12.7s at 160KB. With the lookbehind the
+  // same 160KB input is under a millisecond. The one case it gives up is a JWT
+  // glued directly to a preceding hyphen (`x-eyJ…`); every real prefix —
+  // whitespace, `"`, `=`, `(`, `Bearer ` — still matches.
+  result = result.replace(/(?<![\w-])eyJ[\w-]{8,}\.[\w-]{8,}\.[\w-]+/g, '***')
   return result
 }
 

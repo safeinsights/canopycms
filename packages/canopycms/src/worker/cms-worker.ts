@@ -18,6 +18,7 @@ import { workerLog, workerLogWarn, workerLogError } from './log'
 import type { WorkerContext } from './worker-context'
 import {
   executeTask,
+  isPermanentTaskFailure,
   orphanRecoveryMaxAgeMs,
   processTaskQueue,
   pushBranchToGitHub,
@@ -772,19 +773,39 @@ export class CmsWorker {
    *
    * No-op on the token path: a PAT is a literal, so there is nothing to
    * check that the first real request would not check anyway.
+   *
+   * FATAL ONLY FOR A PERMANENT FAILURE. The check exists to catch a bad
+   * credential, not a bad afternoon at GitHub, and the difference matters
+   * because the two paths must degrade alike: on the token path a GitHub 502
+   * during boot is absorbed (a warm `remote.git` short-circuits
+   * `ensureRemoteGit`, and `Promise.allSettled` swallows the initial
+   * `syncGit`), so the worker starts and its loops retry. Rethrowing every
+   * error class here would make the App path exit instead, and systemd
+   * (Restart=always) would crash-loop it until GitHub recovered — each
+   * iteration telling the operator to go and check their private key.
+   * `isPermanentTaskFailure` is the same 4xx/5xx classifier the task runner
+   * uses, so the two agree about what "the credential is wrong" means.
    */
   private async preflightGitHubAppAuth(): Promise<void> {
     if (!this.config.githubAppAuth) return
     try {
       await this.resolveGitToken()
     } catch (err) {
+      // [REDACT] Both messages below reach worker-status.json and the browser.
+      const detail = redactCredentials(getErrorMessage(err))
+      if (!isPermanentTaskFailure(err)) {
+        workerLogWarn(
+          `Could not verify GitHub App authentication at startup: ${detail}. ` +
+            'Continuing — this looks transient, and the credential is minted again on first use.',
+        )
+        return
+      }
       // Re-thrown with context, unlike buildGitHubUrl() above, which must
       // preserve the error identity for task classification. Nothing
       // classifies a startup failure -- start()'s catch records the message
       // and the process exits -- so here the operator-facing wording wins.
-      // [REDACT] The message reaches worker-status.json and the browser.
       throw new Error(
-        `GitHub App authentication failed: ${redactCredentials(getErrorMessage(err))}. ` +
+        `GitHub App authentication failed: ${detail}. ` +
           'Check the app id, the installation id, and that the private key belongs to that app.',
       )
     }
