@@ -34,6 +34,19 @@ export interface CmsStackProps extends StackProps {
   githubTokenSecretArn: string
   /** FULL Secrets Manager ARN, including the random six-character suffix. */
   clerkSecretKeySecretArn: string
+  /**
+   * Optional. Key to read out of the GitHub token secret when that secret holds
+   * a JSON document rather than the bare token. Unset means the whole value is
+   * the token.
+   */
+  githubTokenSecretJsonField?: string
+  /**
+   * Optional. Key to read out of the Clerk secret when it holds a JSON
+   * document. Note this covers CLERK_SECRET_KEY only -- CLERK_JWT_KEY below and
+   * the publishable key are public material and are passed as plain values, so
+   * a JSON document holding all three still supplies those two separately.
+   */
+  clerkSecretKeySecretJsonField?: string
   /** Clerk's public JWKS PEM, for networkless session verification. */
   clerkJwtKey: string
   /** Clerk publishable key, baked into the client bundle at image-build time. */
@@ -82,10 +95,16 @@ export class CmsStack extends Stack {
         // both locally and on an x86 CI runner.
         platform: Platform.LINUX_ARM64,
         // Next.js inlines NEXT_PUBLIC_* into the CLIENT bundle during
-        // `next build`, so this has to reach the image BUILD. A Lambda
+        // `next build`, so these have to reach the image BUILD. A Lambda
         // environment variable would be far too late.
         buildArgs: {
           NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: props.clerkPublishableKey,
+          // The browser half of the operating mode. The server half is the
+          // Lambda's CANOPY_MODE, set by CanopyCmsService; this one decides
+          // what the editor bundle believes (Clerk auth rather than dev auth,
+          // and the prod feature flags). The image's own `next build` stays in
+          // dev mode either way -- see Dockerfile.cms.
+          NEXT_PUBLIC_CANOPY_MODE: 'prod',
         },
       }),
       architecture: lambda.Architecture.ARM_64,
@@ -108,6 +127,11 @@ export class CmsStack extends Stack {
       secretsArns: [githubToken.secretArn, clerkSecretKey.secretArn],
       githubTokenSecretArn: githubToken.secretArn,
       clerkSecretKeySecretArn: clerkSecretKey.secretArn,
+      // Undefined unless the adopter set one, which is the supported way to
+      // point at a field of a JSON secret. The ':KEY::' ARN suffix is NOT --
+      // GetSecretValue does not parse it, and CanopyCmsService throws on it.
+      githubTokenSecretJsonField: props.githubTokenSecretJsonField,
+      clerkSecretKeySecretJsonField: props.clerkSecretKeySecretJsonField,
 
       // Lambda environment: public config only, never secrets.
       environment: {

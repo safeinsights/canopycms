@@ -1,7 +1,19 @@
 # The worker's JSON-secret-field env vars have no CDK props, so a `CanopyCmsService` adopter cannot set them
 
-**Status: open.** Opened 2026-09-12 alongside PR #320, which shipped the worker half of
-adopter request #46. This is the CDK half ("PR A2" of that plan).
+**Status: RESOLVED 2026-09-12**, branch `feat/cdk-secret-json-field-props`, base
+`int-202609-a`. Opened the same day alongside PR #320, which shipped the worker half of
+adopter request #46; this was the CDK half ("PR A2" of that plan). The shape below is what
+shipped, with three additions worth carrying forward:
+
+- The `:KEY::` suffix guard also covers `secretsArns`, which has no JSON-field prop of its
+  own but whose entries go verbatim into the same IAM policy, so a suffixed ARN there fails
+  identically.
+- An **empty** JSON-field prop throws too. The worker reads a blank env var as "not
+  configured", so stamping it would discard an explicitly set prop in silence, and
+  `assertEnvSafe` does not catch an empty string.
+- `scaffold-synth.test.ts` now sets both optional vars in `SYNTH_ENV` and asserts the stamp
+  reaches the worker `.env`. That closed a real hole: the four scaffold copies could drift
+  and the suite stayed green, because an optional prop that is never passed still synths.
 
 ## Problem
 
@@ -66,5 +78,5 @@ four copies of the wiring in step.
 ## Related
 
 - PR #320 — the worker half, and the `getSecret` matrix these props feed.
-- [adopter-request-log-intake.md](adopter-request-log-intake.md) — where request #46 came
+- [adopter-request-log-intake.md](../adopter-request-log-intake.md) — where request #46 came
   from, and where its disposition gets recorded.

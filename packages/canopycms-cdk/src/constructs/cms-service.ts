@@ -120,6 +120,31 @@ function assertEnvSafe(name: string, value: string): string {
         `<< '${ENV_HEREDOC_DELIMITER}' heredoc, which that value would terminate early.`,
     )
   }
+  // The same systemd `EnvironmentFile=` parser the leading-quote rule above is
+  // about also treats a backslash as an escape: `a\b` arrives as `ab`, and a
+  // value ENDING in a backslash continues onto the next line, swallowing the
+  // .env entry that follows it. That is the quote hazard again in a quieter
+  // form -- it corrupts a neighbouring variable rather than the one it appears
+  // in -- so it is refused here rather than debugged on an instance.
+  if (value.includes('\\')) {
+    throw new Error(
+      `CanopyCmsService: ${name} must not contain a backslash (got ${JSON.stringify(value)}). ` +
+        `It is written into the worker's .env file, which systemd reads as EnvironmentFile -- ` +
+        `there a backslash escapes the next character, and a trailing one continues the value ` +
+        `onto the following line, consuming the next variable entirely.`,
+    )
+  }
+  // Leading/trailing whitespace is stripped by that same parser, so a value
+  // that is only whitespace reaches the worker as an empty string and every
+  // caller downstream treats it as unset -- the silent-discard case, arriving
+  // by a route no charset check upstream can see.
+  if (value !== value.trim()) {
+    throw new Error(
+      `CanopyCmsService: ${name} must not start or end with whitespace ` +
+        `(got ${JSON.stringify(value)}). systemd strips it when reading the worker's .env, so ` +
+        `the value the worker sees would differ from the one configured here.`,
+    )
+  }
   return value
 }
 
@@ -192,6 +217,157 @@ function assertValidGitBranchName(propName: string, value: string): string {
   }
 
   return value
+}
+
+/**
+ * A Secrets Manager ARN carrying the ECS/CloudFormation JSON-field suffix,
+ * i.e. `arn:…:secret:name-AbCdEf:MY_KEY::` rather than `arn:…:secret:name-AbCdEf`.
+ *
+ * Keyed on "a colon anywhere after `:secret:`", because a secret NAME cannot
+ * contain one: Secrets Manager's documented name charset is ASCII letters,
+ * digits and `/_+=.@-`. So everything after `:secret:` in a secret ARN is the
+ * name -- plus the six random characters AWS appends, when the ARN is a
+ * complete one rather than the partial form this guard deliberately accepts --
+ * and a further colon can only begin the `:json-key:version-stage:version-id`
+ * tail.
+ *
+ * An earlier version of this anchored on the six-character suffix itself
+ * (`-[A-Za-z0-9]{6}:`) and therefore missed the suffix form built on a
+ * name-only ARN -- `arn:…:secret:gh:MY_KEY::`, which is the shape ECS's own
+ * documentation shows. That ARN was accepted, stamped, and written into the IAM
+ * policy, producing exactly the AccessDenied restart-loop this guard exists to
+ * prevent.
+ */
+const SECRET_ARN_WITH_FIELD_SUFFIX = /:secret:[^:]*:/
+
+/**
+ * The last two characters of the `…:json-key::` spelling -- the ECS suffix with
+ * `version-stage` and `version-id` left empty, which is how the convention is
+ * almost always written and how AWS's own examples show it.
+ *
+ * Checked in ADDITION to the regex above, for one case the regex cannot see: an
+ * unresolved CDK token, `${Token[TOKEN.42]}:MY_KEY::`, carries no `:secret:` to
+ * anchor on because the ARN has not been rendered yet. No well-formed secret
+ * ARN, token or literal, ends in two colons, so this is safe to refuse.
+ *
+ * KNOWN LIMIT, stated rather than fixed: a token ARN with NON-empty version
+ * parts (`${Token[…]}:MY_KEY:AWSCURRENT:v1`) is caught by neither check and is
+ * stamped verbatim. Recognising it needs `Token.isUnresolved` plus a guess at
+ * where the token ends; the spelling adopters actually copy has the empty
+ * parts, and every LITERAL ARN is caught by the regex whatever its version
+ * parts say.
+ */
+const SECRET_ARN_WITH_EMPTY_VERSION_TAIL = '::'
+
+/**
+ * Guards one (secret ARN, JSON field) prop pair at synth.
+ *
+ * Both checks exist because the failure they replace is SILENT, and both
+ * failures land on the worker at boot -- where systemd's `Restart=always` turns
+ * a misconfiguration into an indefinite 5-second restart loop rather than
+ * anything `cdk deploy` reports.
+ *
+ * 1. A JSON-field prop with no ARN prop. The field env var is stamped, the ARN
+ *    is not, and the credential is then read from nowhere: for Clerk that
+ *    leaves `refreshAuthCache` undefined, which disables auth-cache refresh
+ *    with NO log line at all; for GitHub the worker reports "CANOPYCMS_GITHUB_TOKEN
+ *    or CANOPYCMS_GITHUB_TOKEN_SECRET_ARN is required" while the adopter is
+ *    looking at a stack that plainly configures a GitHub secret.
+ *
+ * 2. An ARN carrying the ECS `:KEY::` suffix. That form is a
+ *    CloudFormation-dynamic-reference and ECS `secrets.valueFrom` convention;
+ *    the `GetSecretValue` API this worker calls does not parse it. Through the
+ *    scaffolded stack the adopter gets CDK's own cryptic complaint
+ *    ("does not appear to be complete; missing 6-character suffix" --
+ *    `Secret.fromSecretCompleteArn` gates on `/-[a-z0-9]{6}$/i`); hand-rolling
+ *    the stack, the string lands verbatim in the worker's IAM `Resource`, where
+ *    it can never match the real secret, and the worker gets AccessDenied.
+ *    Naming the JSON-field prop in the message is the whole point of the check:
+ *    the adopter's intent is supported, just spelled differently here.
+ *
+ * An empty JSON field is rejected for the same reason `settingsBranch: ''` is:
+ * the worker reads a blank env var as "not configured" (`|| undefined` at both
+ * call sites in worker/index.ts), so stamping it would discard an explicitly
+ * set prop without a word.
+ */
+function assertSecretPropPair(
+  arnPropName: string,
+  arn: string | undefined,
+  jsonFieldPropName: string,
+  jsonField: string | undefined,
+): void {
+  if (jsonField !== undefined) {
+    // `.trim()`, not `=== ''`: systemd's EnvironmentFile parser strips leading
+    // and trailing whitespace from a value, so `" "` reaches the worker as `""`
+    // and takes the same silently-ignored path an empty string would. The
+    // untrimmed check let exactly the case it was written for through.
+    if (jsonField.trim() === '') {
+      throw new Error(
+        `CanopyCmsService: ${jsonFieldPropName} must name a key, but it is ` +
+          `${JSON.stringify(jsonField)}. The worker reads a blank value as "no field configured" ` +
+          `and falls back to using the secret's whole value, silently ignoring this prop -- name ` +
+          `the key you want, or omit the prop entirely.`,
+      )
+    }
+    if (!arn) {
+      throw new Error(
+        `CanopyCmsService: ${jsonFieldPropName} is set but ${arnPropName} is not. ` +
+          `The JSON field names a key INSIDE a secret, so it does nothing without the secret's ` +
+          `ARN -- the worker would be told which key to read and never told where to read it ` +
+          `from. Set ${arnPropName}, or drop ${jsonFieldPropName}.`,
+      )
+    }
+  }
+
+  if (arn !== undefined) {
+    assertSecretArnHasNoFieldSuffix(arnPropName, arn, jsonFieldPropName)
+  }
+}
+
+/**
+ * Rejects the ECS `:KEY::` ARN suffix on any prop that carries a secret ARN.
+ *
+ * Separate from `assertSecretPropPair` because `secretsArns` has no JSON-field
+ * prop of its own and still needs the check: its values go verbatim into the
+ * worker's IAM policy, where a suffixed ARN is an unmatchable `Resource` and
+ * produces exactly the AccessDenied restart-loop described above.
+ */
+function assertSecretArnHasNoFieldSuffix(
+  propName: string,
+  arn: unknown,
+  jsonFieldPropName?: string,
+): void {
+  // `unknown`, and narrowed here, because the types are not the whole story:
+  // `secretsArns: [process.env.EXTRA_SECRET_ARN!]` is the idiom a CDK app that
+  // reads its config from the environment reaches for -- the scaffolded
+  // `bin/app.ts` does exactly that everywhere else -- and `!` turns an unset
+  // variable into `undefined` with the compiler none the wiser.
+  //
+  // Throwing is a deliberate change from what that used to do. The entry was
+  // silently dropped by the `typeof arn === 'string'` filter on the IAM union
+  // below, so the worker was told to read a secret it had no grant for and got
+  // AccessDenied at boot -- the failure that filter's own comment is about.
+  if (typeof arn !== 'string' || arn.length === 0) {
+    throw new Error(
+      `CanopyCmsService: ${propName} must be a non-empty secret ARN string, but it is ` +
+        `${JSON.stringify(arn) ?? String(arn)}. An unset environment variable asserted with '!' ` +
+        `arrives here as undefined; it would otherwise be dropped from the worker's IAM policy ` +
+        `in silence, leaving a worker that knows which secret to read and cannot read it.`,
+    )
+  }
+  if (!SECRET_ARN_WITH_FIELD_SUFFIX.test(arn) && !arn.endsWith(SECRET_ARN_WITH_EMPTY_VERSION_TAIL))
+    return
+  const alternative = jsonFieldPropName
+    ? `Pass the plain secret ARN (everything up to and including the six-character suffix) and ` +
+      `name the key with ${jsonFieldPropName} instead.`
+    : `Pass the plain secret ARN, ending at the six-character suffix.`
+  throw new Error(
+    `CanopyCmsService: ${propName} ${JSON.stringify(arn)} carries a ':KEY::' JSON-field suffix. ` +
+      `That is the ECS / CloudFormation dynamic-reference convention; the worker reads secrets ` +
+      `with the GetSecretValue API, which does not parse it -- the suffixed string would be ` +
+      `written into the worker's IAM policy, where it can never match the real secret, and the ` +
+      `worker would fail with AccessDenied at boot. ${alternative}`,
+  )
 }
 
 /**
@@ -278,8 +454,46 @@ export interface CanopyCmsServiceProps {
   /** Secrets Manager ARN for the GitHub bot token */
   githubTokenSecretArn?: string
 
+  /**
+   * The key within a JSON secret document at `githubTokenSecretArn`; omit when
+   * the secret's whole value is the credential.
+   *
+   * Stamped into the worker's `CANOPYCMS_GITHUB_TOKEN_SECRET_JSON_FIELD`, which
+   * `getSecret` (packages/canopycms-cdk/worker/secrets.ts) reads to pull one
+   * field out of the document instead of using the whole string. Omitting it is
+   * the default and the common case — a secret holding a bare `ghp_…` needs
+   * nothing here.
+   *
+   * This is NOT the ECS/CloudFormation `arn:…:secret:name-AbCdEf:KEY::`
+   * convention. The worker calls the `GetSecretValue` API, which does not parse
+   * that suffix; a literal ARN carrying one is refused at synth (see
+   * `assertSecretArnHasNoFieldSuffix` below, and the known limit recorded on
+   * `SECRET_ARN_WITH_EMPTY_VERSION_TAIL` for the one token spelling that gets
+   * through) and the field belongs here instead.
+   */
+  githubTokenSecretJsonField?: string
+
   /** Secrets Manager ARN for the Clerk secret key */
   clerkSecretKeySecretArn?: string
+
+  /**
+   * The key within a JSON secret document at `clerkSecretKeySecretArn`; omit
+   * when the secret's whole value is the credential.
+   *
+   * Stamped into the worker's `CLERK_SECRET_KEY_SECRET_JSON_FIELD`. See
+   * `githubTokenSecretJsonField` above — same mechanism, same non-relationship
+   * to the ECS `:KEY::` ARN suffix.
+   *
+   * Note that this covers `CLERK_SECRET_KEY` only. A Clerk JSON document
+   * typically also holds `CLERK_JWT_KEY` and the publishable key, and NEITHER
+   * can be sourced from Secrets Manager at all: `CLERK_JWT_KEY` reaches the
+   * Lambda as a plain value through `environment`, and the publishable key is a
+   * Docker build arg inlined into the client bundle. Both are public material
+   * (docs/deploying-to-aws.md, "Security Model"), so that is by design rather
+   * than an omission — but it means pointing this prop at your document does
+   * not relieve you of supplying those two separately.
+   */
+  clerkSecretKeySecretJsonField?: string
 
   /**
    * The GitHub repository's default branch name (default: 'main').
@@ -553,6 +767,33 @@ export class CanopyCmsService extends Construct {
       props.settingsBranch !== undefined
         ? assertValidGitBranchName('settingsBranch', props.settingsBranch)
         : undefined
+
+    // ------------------------------------------------------------------
+    // Secret ARNs and their JSON fields
+    // ------------------------------------------------------------------
+    //
+    // Checked here, at the top, so a misconfigured pair fails `cdk synth`
+    // rather than `cdk deploy`-then-restart-loop. See `assertSecretPropPair`
+    // for what each of the two checks costs when it is absent.
+    assertSecretPropPair(
+      'githubTokenSecretArn',
+      props.githubTokenSecretArn,
+      'githubTokenSecretJsonField',
+      props.githubTokenSecretJsonField,
+    )
+    assertSecretPropPair(
+      'clerkSecretKeySecretArn',
+      props.clerkSecretKeySecretArn,
+      'clerkSecretKeySecretJsonField',
+      props.clerkSecretKeySecretJsonField,
+    )
+    // `secretsArns` gets the suffix half of the same guard: it has no
+    // JSON-field prop, but its entries are written verbatim into the worker's
+    // IAM policy below, so a suffixed ARN fails there in precisely the way the
+    // policy's own comment describes.
+    for (const [index, arn] of (props.secretsArns ?? []).entries()) {
+      assertSecretArnHasNoFieldSuffix(`secretsArns[${index}]`, arn)
+    }
 
     // ------------------------------------------------------------------
     // Operating mode
@@ -926,8 +1167,26 @@ export class CanopyCmsService extends Construct {
     if (props.githubTokenSecretArn) {
       envEntries.push(['CANOPYCMS_GITHUB_TOKEN_SECRET_ARN', props.githubTokenSecretArn])
     }
+    // The JSON-field vars need NO IAM change, and that is not an oversight: a
+    // field is a key inside a secret's value, not a separately grantable
+    // resource. `secretsmanager:GetSecretValue` on the secret -- already
+    // granted above from the same ARN prop -- returns the whole document, and
+    // the worker picks the field out of it in `getSecret`. Said explicitly
+    // because the deduped union above exists precisely because someone
+    // previously assumed the two prop families were connected when they were
+    // not, and shipped a worker that knew which secret to read and had no
+    // permission to read it.
+    if (props.githubTokenSecretJsonField) {
+      envEntries.push([
+        'CANOPYCMS_GITHUB_TOKEN_SECRET_JSON_FIELD',
+        props.githubTokenSecretJsonField,
+      ])
+    }
     if (props.clerkSecretKeySecretArn) {
       envEntries.push(['CLERK_SECRET_KEY_SECRET_ARN', props.clerkSecretKeySecretArn])
+    }
+    if (props.clerkSecretKeySecretJsonField) {
+      envEntries.push(['CLERK_SECRET_KEY_SECRET_JSON_FIELD', props.clerkSecretKeySecretJsonField])
     }
     if (settingsBranch !== undefined) {
       // Only when explicitly set - an absent prop must keep today's behavior
