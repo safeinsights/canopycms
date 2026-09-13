@@ -299,7 +299,7 @@ const services = await createCanopyServices({
 
 This function:
 
-1. Detects the effective active branch **and** base branch (dev-mode git HEAD detection for whichever the adopter left unset; see [Branch Identity](#branch-identity-defaultbasebranch-vs-defaultactivebranch)) and bakes both into the config so all downstream code uses consistent values. In dev mode, `refreshActiveBranch()` re-detects them per request — again, only the fields the adopter left unset
+1. Detects the effective active branch **and** base branch (dev-mode git HEAD detection for whichever the adopter left unset, skipped during a build; see [Branch Identity](#branch-identity-defaultbasebranch-vs-defaultactivebranch)) and bakes both into the config so all downstream code uses consistent values. In dev mode, `refreshActiveBranch()` re-detects them per request — again, only the fields the adopter left unset
 2. Validates and flattens the schema
 3. Creates authorization checkers
 4. Initializes the branch registry (prod and dev modes)
@@ -971,7 +971,8 @@ CanopyCMS distinguishes between two branch concepts that serve different purpose
 
 - An explicitly configured value (for either field) is always respected and never overridden by detection
 - Static deployments (`deployedAs: 'static'`) skip detection and per-request refresh entirely — a static export serves from the checkout, so there is no git HEAD to track and no git calls are made
-- Both resolved values are baked into the config at service creation time, and refreshed per-request via `refreshActiveBranch()` (dev mode only, with a 5-second cache); only fields the adopter left unset are refreshed
+- A build (`isBuildMode()`) skips detection the same way, in every mode and deployment type: an unset active branch falls back to `defaultBaseBranch ?? 'main'` and an unset base branch to `'main'`, with no git HEAD detection and no per-request refresh, because a build reads the working tree directly rather than a git-HEAD-selected branch (see [Static Deployment and Build Mode](#static-deployment-and-build-mode))
+- Both resolved values are baked into the config at service creation time, and refreshed per-request via `refreshActiveBranch()` (dev mode only, outside a build, with a 5-second cache); only fields the adopter left unset are refreshed
 - On detached HEAD (or no git repo), detection falls back to `defaultBaseBranch ?? 'main'`
 - The Zod schema intentionally leaves `defaultBaseBranch` undefined when unset (`.optional()` defeats the `.default('main')`) — that is what makes "unset" detectable for dev-mode HEAD detection
 
@@ -1249,7 +1250,7 @@ The `migrate` command (`npx canopycms migrate`) converts an existing plain conte
 The content sync CLI closes the gap between the developer's working tree and the editor's branch clones, but only when the developer remembers to run it. In dev mode there are two distinct content readers that can silently disagree:
 
 - The **editor and dev server** read content from the served branch clone under `.canopy-dev/content-branches/<branch>/`.
-- The **static build** reads the working-tree `content/**` directly.
+- **A build** — `next build`, of either deployment type — reads the working-tree `content/**` directly, never the branch clone (see [Static Deployment and Build Mode](#static-deployment-and-build-mode)).
 
 When a developer edits working-tree content outside the editor, the dev server keeps serving the stale branch clone until a sync runs. A background watcher surfaces this divergence automatically. Its behavior is controlled by a single dev-only config knob, `dev.contentSync`:
 
@@ -2768,6 +2769,10 @@ The synthetic admin user is used in both static deployments and build phases. Th
 **Why is authPlugin optional for static deployments?**
 
 Static sites have no users and no request context. Requiring an auth plugin for a static deployment would force adopters to install and configure an auth package they will never use. Making it optional reduces adopter friction. The framework adapter provides a clear error if `authPlugin` is omitted but `deployedAs` is not `'static'`, preventing silent misconfiguration.
+
+### Why does a build read the working tree instead of a branch clone?
+
+A build ships the checkout it runs in — CI building a commit, or a developer building locally — so that checkout is the only honest source. Resolving a branch clone instead made a local build silently render whatever the clone held (seeded from git-committed state, so an uncommitted edit or rename was invisible to a green build), and made an image build depend on git state it had no reason to have: a builder whose synthesized repo lacked the configured base branch failed outright. `readsFromCheckout(config)` (`isDeployedStatic(config) || isBuildMode()`) makes this unconditional: every build, in every mode and deployment type, reads `process.cwd()` directly and never touches git, a branch workspace, or `.canopy-dev` — exactly as a static export always has. Only request-time reads on a running server deployment resolve a branch workspace.
 
 ### Why React Context for editor state management?
 

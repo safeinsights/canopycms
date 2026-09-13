@@ -46,6 +46,10 @@ runs, CI steps, and adopter scripts.
 - Content reads from `next.config.*` are adopter code: at minimum, document the limitation where
   adopters will see it.
 
+Whichever option lands, fix README.md's AI-Ready Content section too ("Sibling files must exist
+where the exporter reads"): it says the static build reads your repo checkout, which is true for
+`generate-ai-content` only under `deployedAs: 'static'` or `CANOPY_BUILD_MODE=true`.
+
 ## Verify
 
 A script calling `createBuildCanopy(serverConfig)` in a dev-mode git repo with an uncommitted
