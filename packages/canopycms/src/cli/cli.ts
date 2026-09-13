@@ -277,15 +277,30 @@ async function main() {
         ? ({ kind: 'command', argv: passthrough } as const)
         : undefined
 
+    // Both key INPUTS belong to `verify`; `create` produces the key rather than
+    // being given one. Gated on the mode because `create --key-stdin` would
+    // otherwise consume stdin here — blocking until Ctrl-D on a terminal, and
+    // then leaving `create`'s "press Enter once installed" prompt reading an
+    // already-ended stream, so it returns instantly and reads the installation
+    // back before the operator has installed anything.
     let privateKey: string | undefined
     const keyFile = typeof flags['key-file'] === 'string' ? flags['key-file'] : undefined
-    if (keyFile) {
-      const { readFile } = await import('node:fs/promises')
-      privateKey = await readFile(keyFile, 'utf8')
-    } else if (flags['key-stdin'] === true) {
-      const chunks: Buffer[] = []
-      for await (const chunk of process.stdin) chunks.push(Buffer.from(chunk))
-      privateKey = Buffer.concat(chunks).toString('utf8')
+    if (mode === 'verify') {
+      if (keyFile) {
+        const { readFile } = await import('node:fs/promises')
+        privateKey = await readFile(keyFile, 'utf8')
+      } else if (flags['key-stdin'] === true) {
+        const chunks: Buffer[] = []
+        for await (const chunk of process.stdin) chunks.push(Buffer.from(chunk))
+        privateKey = Buffer.concat(chunks).toString('utf8')
+      }
+    } else if (keyFile || flags['key-stdin'] === true) {
+      console.error(
+        '--key-file and --key-stdin are for `verify`, which reads an existing App back.\n' +
+          '  `create` produces a new key; say where it should GO with --key-out <path> or ' +
+          '`-- <command>`.',
+      )
+      process.exit(1)
     }
 
     process.exitCode = await initGitHubApp({

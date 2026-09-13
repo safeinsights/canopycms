@@ -68,67 +68,91 @@ const OPERATION_PERMISSIONS: Readonly<Record<string, keyof typeof CANOPY_APP_PER
   // DELETE /repos/{o}/{r}/git/refs/{ref} is Contents/write — not
   // `administration`, which is the plausible wrong guess.
   'git.deleteRef': 'contents',
-  // markPullRequestReadyForReview / convertPullRequestToDraft. GitHub's
-  // permissions reference enumerates REST endpoints only, so this one is
-  // derived by analogy with the REST PR mutations and is the single entry with
-  // no documentation line behind it.
-  graphql: 'pull_requests',
+  // The GraphQL mutations, keyed BY MUTATION rather than collapsed to
+  // `graphql`. Collapsing them was a hole: every `octokit.graphql(...)` recorded
+  // the same key, so a new mutation needing a different permission entirely —
+  // `addLabelsToLabelable` wants `issues: write` — was already accounted for
+  // and landed green. GitHub's permissions reference enumerates REST endpoints
+  // only, so both of these are derived by analogy with the REST PR mutations
+  // and are the only entries here with no documentation line behind them.
+  'graphql.convertPullRequestToDraft': 'pull_requests',
+  'graphql.markPullRequestReadyForReview': 'pull_requests',
 }
 
-/** Every action the worker can be asked to perform. Kept exhaustive by the type. */
-const ALL_TASK_ACTIONS: readonly TaskAction[] = [
-  'push-branch',
-  'push-and-create-pr',
-  'push-and-update-pr',
-  'push-and-create-or-update-pr',
-  'convert-to-draft',
-  'close-pr',
-  'delete-remote-branch',
-]
+/**
+ * Every action the worker can be asked to perform.
+ *
+ * Keyed rather than listed, because `readonly TaskAction[]` accepts any SUBSET —
+ * so a new union member with a new `case` in `executeTask` would simply never be
+ * driven, and the guard would stay green while not watching it. `satisfies
+ * Record<TaskAction, true>` makes a missing member a compile error, and it is a
+ * test-side construct: no production type has to change for a test's benefit.
+ */
+const ALL_TASK_ACTIONS = Object.keys({
+  'push-branch': true,
+  'push-and-create-pr': true,
+  'push-and-update-pr': true,
+  'push-and-create-or-update-pr': true,
+  'convert-to-draft': true,
+  'close-pr': true,
+  'delete-remote-branch': true,
+} satisfies Record<TaskAction, true>) as TaskAction[]
 
 type Responses = Record<string, unknown>
 
 /**
- * An Octokit whose every namespace and method is a Proxy that records
- * `namespace.method` and answers with canned data.
+ * The mutation or query a GraphQL document's first selection names.
+ *
+ * `mutation($id: ID!) { convertPullRequestToDraft(input: …) { … } }` ->
+ * `convertPullRequestToDraft`. Exported so it can be pinned by its own test: if
+ * it silently returned a constant, every GraphQL call would collapse to one key
+ * again and the guard would stop telling mutations apart, which is the hole this
+ * exists to close.
+ */
+export function graphqlOperationName(document: string): string {
+  // Skip the operation header (`query`/`mutation`, an optional name, and its
+  // variable declarations) and take the first field selected inside the braces.
+  const body = document.slice(document.indexOf('{') + 1)
+  const field = /[A-Za-z_][\w]*/.exec(body)
+  return field ? field[0] : 'unknown'
+}
+
+/**
+ * An Octokit whose every namespace and method is a Proxy that records what was
+ * invoked and answers with canned data.
  *
  * Unknown methods answer rather than throw on purpose: a call added tomorrow
- * must be RECORDED (and then fail the comparison loudly, naming itself) rather
- * than blow up inside the code under test with a stack trace that buries what
- * happened.
+ * must be RECORDED — and then fail the comparison loudly, naming itself —
+ * rather than blow up inside the code under test with a stack trace that buries
+ * what happened. That matters more than it sounds: `createOrUpdatePullRequest`
+ * swallows its GraphQL call in a try/catch, so a throw there would be silent.
  */
 function recordingOctokit(seen: Set<string>, responses: Responses = {}): Octokit {
-  const namespaceProxy = (namespace: string) =>
-    new Proxy(
-      {},
-      {
-        get(_target, method) {
-          if (typeof method !== 'string') return undefined
-          const operation = `${namespace}.${method}`
-          return (..._args: unknown[]) => {
-            seen.add(operation)
-            return Promise.resolve(responses[operation] ?? { data: {} })
-          }
-        },
+  // Recursive, so `octokit.rest.pulls.list(...)` — the spelling Octokit's own
+  // documentation uses, and one this package happens not to use yet — records
+  // as `pulls.list` rather than exploding on an undefined `.list`. A namespace
+  // is therefore BOTH callable and further-traversable.
+  const namespaceProxy = (namespace: string): unknown =>
+    new Proxy(function () {} as object, {
+      get(_target, method) {
+        if (typeof method !== 'string' || method === 'then') return undefined
+        // `rest` is Octokit's own passthrough to the same endpoints, not a
+        // namespace of its own; drop it so both spellings record identically.
+        if (namespace === '' && method === 'rest') return namespaceProxy('')
+        return namespaceProxy(namespace ? `${namespace}.${method}` : method)
       },
-    )
+      apply(_target, _thisArg, args: unknown[]) {
+        if (namespace === 'graphql' || namespace.endsWith('.graphql')) {
+          const document = typeof args[0] === 'string' ? args[0] : ''
+          seen.add(`graphql.${graphqlOperationName(document)}`)
+          return Promise.resolve({})
+        }
+        seen.add(namespace)
+        return Promise.resolve(responses[namespace] ?? { data: {} })
+      },
+    })
 
-  const root = {
-    graphql: (..._args: unknown[]) => {
-      seen.add('graphql')
-      return Promise.resolve({})
-    },
-  }
-
-  return new Proxy(root, {
-    get(target, prop) {
-      // `then` must stay undefined or an `await` on this object would try to
-      // treat it as a thenable and hang.
-      if (typeof prop !== 'string' || prop === 'then') return undefined
-      if (prop === 'graphql') return target.graphql
-      return namespaceProxy(prop)
-    },
-  }) as unknown as Octokit
+  return namespaceProxy('') as Octokit
 }
 
 /** A TaskRunnerContext stubbed down to what `executeTask` actually touches. */
@@ -165,7 +189,10 @@ function task(action: TaskAction): Task {
  * reached entirely and the combined set would not change. Per-driver floors
  * make each contribution provable on its own.
  */
-type Coverage = Record<'tasks' | 'createOrUpdate' | 'service' | 'mergePoll', string[]>
+type Coverage = Record<
+  'tasks' | 'createOrUpdate' | 'service' | 'mergePoll' | 'drivenServiceMethods',
+  string[]
+>
 
 async function observeEverything(): Promise<Coverage> {
   const signal = new AbortController().signal
@@ -226,6 +253,26 @@ async function observeEverything(): Promise<Coverage> {
       },
     },
   })
+  // Driven by name and then CHECKED against the prototype below, because a
+  // hand-written list is the same hole as a hand-written TaskAction list: a new
+  // method simply never gets called and the guard stays green while not
+  // watching it.
+  const drivenServiceMethods = [
+    'createPullRequest',
+    'updatePullRequest',
+    'createOrUpdatePR',
+    'getPullRequest',
+    'convertToDraft',
+    'convertToReady',
+    'closePullRequest',
+    'deleteBranch',
+    // `private` in TypeScript is compile-time only, so this sits on the runtime
+    // prototype like any other method. Driven directly rather than excluded:
+    // its `pulls.get` is already covered through convertToDraft/convertToReady,
+    // but an exception list is exactly how a guard starts skipping things, and
+    // a private method is one `export` away from being a call site nobody drove.
+    'getPullRequestNodeId',
+  ]
   await instance.createPullRequest({ branchName: 'content/a', title: 'T', body: 'B' })
   await instance.updatePullRequest(7, { title: 'T', body: 'B' })
   await instance.createOrUpdatePR({ head: 'content/a', base: 'main', title: 'T', body: 'B' })
@@ -234,6 +281,9 @@ async function observeEverything(): Promise<Coverage> {
   await instance.convertToReady(7)
   await instance.closePullRequest(7)
   await instance.deleteBranch('content/a')
+  await (
+    instance as unknown as { getPullRequestNodeId(n: number): Promise<string> }
+  ).getPullRequestNodeId(7)
 
   // 4. The rebase loop's merge poll — the one Octokit call outside the other
   //    three, and the one a unioned set could not see disappear.
@@ -256,12 +306,14 @@ async function observeEverything(): Promise<Coverage> {
     createOrUpdate: [...createOrUpdate].sort(),
     service: [...service].sort(),
     mergePoll: [...mergePoll].sort(),
+    drivenServiceMethods: drivenServiceMethods.sort(),
   }
 }
 
-/** Everything any driver invoked. */
+/** Every GitHub operation any driver invoked. Not the driver bookkeeping. */
 function allOperations(coverage: Coverage): string[] {
-  return [...new Set(Object.values(coverage).flat())].sort()
+  const { drivenServiceMethods: _methods, ...invoked } = coverage
+  return [...new Set(Object.values(invoked).flat())].sort()
 }
 
 describe('the declared App permissions cover every GitHub call this package makes', () => {
@@ -287,7 +339,7 @@ describe('the declared App permissions cover every GitHub call this package make
     const coverage = await observeEverything()
     expect(coverage.tasks).toEqual([
       'git.deleteRef',
-      'graphql',
+      'graphql.convertPullRequestToDraft',
       'pulls.create',
       'pulls.get',
       'pulls.list',
@@ -296,16 +348,80 @@ describe('the declared App permissions cover every GitHub call this package make
     // The update path: an existing DRAFT PR, so update runs and the
     // mark-ready mutation fires. `pulls.create` is deliberately absent — that
     // is the create path, covered above.
-    expect(coverage.createOrUpdate).toEqual(['graphql', 'pulls.list', 'pulls.update'])
+    expect(coverage.createOrUpdate).toEqual([
+      'graphql.markPullRequestReadyForReview',
+      'pulls.list',
+      'pulls.update',
+    ])
     expect(coverage.service).toEqual([
       'git.deleteRef',
-      'graphql',
+      'graphql.convertPullRequestToDraft',
+      'graphql.markPullRequestReadyForReview',
       'pulls.create',
       'pulls.get',
       'pulls.list',
       'pulls.update',
     ])
     expect(coverage.mergePoll).toEqual(['pulls.get'])
+  })
+
+  it('drives every method GitHubService has, not a list someone maintains', async () => {
+    // A hand-written list of methods is the same hole as a hand-written list of
+    // task actions: a new method is simply never called, and the guard stays
+    // green while not watching it.
+    const coverage = await observeEverything()
+    const onPrototype = Object.getOwnPropertyNames(GitHubService.prototype)
+      .filter((name) => name !== 'constructor')
+      .sort()
+    expect(
+      coverage.drivenServiceMethods,
+      'GitHubService gained or lost a method. Drive the new one in observeEverything() — ' +
+        'leaving it undriven means any GitHub call it makes is invisible to this guard.',
+    ).toEqual(onPrototype)
+  })
+
+  it('records each GraphQL mutation separately, not as one "graphql"', async () => {
+    // Collapsing every mutation to one key was a real hole: a new mutation
+    // needing a different permission entirely (`addLabelsToLabelable` wants
+    // `issues: write`) was already accounted for and would land green.
+    const seen = allOperations(await observeEverything())
+    expect(seen).toContain('graphql.convertPullRequestToDraft')
+    expect(seen).toContain('graphql.markPullRequestReadyForReview')
+    expect(seen).not.toContain('graphql')
+  })
+
+  it('parses the mutation name out of a GraphQL document', async () => {
+    // Pinned separately, because if this quietly returned a constant every
+    // mutation would collapse to one key again and the assertion above would
+    // still pass.
+    expect(
+      graphqlOperationName(
+        'mutation($id: ID!) { convertPullRequestToDraft(input: { pullRequestId: $id }) { x } }',
+      ),
+    ).toBe('convertPullRequestToDraft')
+    expect(
+      graphqlOperationName(`
+        mutation($pullRequestId: ID!) {
+          markPullRequestReadyForReview(input: {pullRequestId: $pullRequestId}) {
+            pullRequest { id }
+          }
+        }
+      `),
+    ).toBe('markPullRequestReadyForReview')
+    expect(graphqlOperationName('{ viewer { login } }')).toBe('viewer')
+    expect(graphqlOperationName('')).toBe('unknown')
+  })
+
+  it('records the octokit.rest.* spelling as the same operation', async () => {
+    // Octokit's own documentation uses `octokit.rest.pulls.list(...)`. This
+    // package does not today, but a call written that way must not be invisible
+    // — nor blow up on an undefined method inside a swallowed try/catch.
+    const seen = new Set<string>()
+    const octokit = recordingOctokit(seen)
+    await (
+      octokit as unknown as { rest: { pulls: { list: () => Promise<unknown> } } }
+    ).rest.pulls.list()
+    expect([...seen]).toEqual(['pulls.list'])
   })
 
   it('accounts for every operation that was actually invoked', async () => {
@@ -370,7 +486,7 @@ describe('the source-level backstop', () => {
 
   const OCTOKIT_CALL =
     // eslint-disable-next-line security/detect-unsafe-regex -- linear, see above
-    /\boctokit(?:\(\))?\s*\.\s*[A-Za-z_$][\w$]*\s*(?:\.\s*[A-Za-z_$][\w$]*\s*)?\(/
+    /\boctokit(?:\(\))?\s*(?:\.\s*[A-Za-z_$][\w$]*\s*){1,3}\(/
 
   function filesWithOctokitCalls(): string[] {
     const root = join(__dirname, '..')

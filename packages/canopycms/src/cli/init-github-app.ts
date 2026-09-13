@@ -91,7 +91,7 @@ import { spawn } from 'node:child_process'
 import type { ChildProcess } from 'node:child_process'
 import { createSign, randomUUID } from 'node:crypto'
 import { createServer } from 'node:http'
-import { writeFile } from 'node:fs/promises'
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import type { AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
@@ -345,7 +345,11 @@ export type GitHubResponse<T> = {
   ok: boolean
   status: number
   body: T | null
-  /** GitHub's own `message`, or the first of the response text. Never a credential. */
+  /**
+   * On a FAILURE: GitHub's own `message`, or a redacted prefix of the response
+   * text. Empty string on success — a success body here is App credentials, and
+   * a prefix of one is not worth handing to a caller that might print it.
+   */
   message: string
 }
 
@@ -374,6 +378,7 @@ export async function githubRequest<T>(
   if (init.body !== undefined) headers['content-type'] = 'application/json'
 
   let response: Response
+  let text: string
   try {
     response = await fetch(`https://api.github.com${apiPath}`, {
       method: init.method ?? 'GET',
@@ -381,20 +386,33 @@ export async function githubRequest<T>(
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       ...(init.body === undefined ? {} : { body: JSON.stringify(init.body) }),
     })
+    // Reading the BODY is inside the try as well, not just the fetch. It is a
+    // second chance to reject — a connection reset after the headers, or the
+    // timeout above firing mid-read — and a rejection escaping here would
+    // propagate out of `create` past the point where the private key is still
+    // held. Every failure this function can have is a returned value.
+    text = await response.text()
   } catch (err) {
     return { ok: false, status: 0, body: null, message: redactCredentials(getErrorMessage(err)) }
   }
 
-  const text = await response.text()
   let body: T | null = null
   try {
     body = text ? (JSON.parse(text) as T) : null
   } catch {
     body = null
   }
+  // Computed only for a FAILURE. On success the body is the App's credentials,
+  // and a 200-character prefix of it is not something to hand a caller that
+  // might print it — `redactCredentials` covers a PEM and a `ghs_` token but
+  // would not save a truncated `client_secret`.
   const asRecord = body as { message?: unknown } | null
-  const message = typeof asRecord?.message === 'string' ? asRecord.message : text.slice(0, 200)
-  return { ok: response.ok, status: response.status, body, message: redactCredentials(message) }
+  const message = response.ok
+    ? ''
+    : redactCredentials(
+        typeof asRecord?.message === 'string' ? asRecord.message : text.slice(0, 200),
+      )
+  return { ok: response.ok, status: response.status, body, message }
 }
 
 /** The parts of GitHub's installation object this tool reads back. */
@@ -653,7 +671,8 @@ export type CallbackServer = {
 }
 
 /**
- * One request, then closed. Bound to loopback only.
+ * One request, then closed — closed by the handler itself, as soon as it has the
+ * code. Bound to loopback only.
  *
  * The standard CLI pattern (`gh auth login` does the same): it exists solely so
  * the private key can arrive over the redirect rather than through a downloads
@@ -692,29 +711,60 @@ export function startCallbackServer(
     `<body style="font:16px system-ui;padding:3rem"><h1>${escapeHtml(title)}</h1>` +
     `<p>${escapeHtml(detail)}</p></body>`
 
+  // Set once the code has been captured, so `stopListening` is reachable from
+  // inside the handler before the caller's `close()` runs.
+  let stopListening = () => {}
+
   const server = createServerFn((req, res) => {
-    const url = new URL(req.url ?? '/', 'http://127.0.0.1')
-    if (url.pathname !== '/callback') {
-      res.writeHead(404).end()
-      return
-    }
-    if (url.searchParams.get('state') !== state) {
+    // EVERY path through this handler is inside the try. A throw in a
+    // 'request' listener is an uncaught exception that kills the process, and
+    // by the time this server matters the process is the only thing holding a
+    // private key for an App that already exists.
+    //
+    // `new URL` is the specific hazard, and it is not hypothetical: Node's HTTP
+    // parser accepts request targets `new URL` rejects, so `GET //[x HTTP/1.1`
+    // arrives as `req.url === '//[x'` and throws ERR_INVALID_URL. Verified
+    // directly — `//` alone throws too.
+    try {
+      const url = new URL(req.url ?? '/', 'http://127.0.0.1')
+      if (url.pathname !== '/callback') {
+        res.writeHead(404).end()
+        return
+      }
+      if (url.searchParams.get('state') !== state) {
+        res
+          .writeHead(400, { 'content-type': 'text/html' })
+          .end(page('Not this flow', 'Ignoring this request; still waiting.'))
+        return
+      }
+      const received = url.searchParams.get('code')
+      if (!received) {
+        res
+          .writeHead(400, { 'content-type': 'text/html' })
+          .end(page('No code', 'Ignoring this request; still waiting.'))
+        return
+      }
       res
-        .writeHead(400, { 'content-type': 'text/html' })
-        .end(page('Not this flow', 'Ignoring this request; still waiting.'))
-      return
+        // `connection: close` so the browser's keep-alive socket does not hold
+        // the listener open after the one request it exists for.
+        .writeHead(200, { 'content-type': 'text/html', connection: 'close' })
+        .end(page('App created', 'The private key was captured. Return to the terminal.'))
+      settle(received)
+      // Closed HERE, not in the caller's `finally`. The caller's window spans
+      // the conversion, a human install step of unbounded length and the
+      // readback, and for all of that the port would keep accepting
+      // connections — loopback is not per-user, so on a shared host another
+      // UID can reach it.
+      stopListening()
+    } catch {
+      // A malformed request is not this flow's business. Answer it and keep
+      // waiting, exactly as a bad `state` is treated.
+      try {
+        res.writeHead(400).end()
+      } catch {
+        // The socket is already gone; nothing to answer.
+      }
     }
-    const received = url.searchParams.get('code')
-    if (!received) {
-      res
-        .writeHead(400, { 'content-type': 'text/html' })
-        .end(page('No code', 'Ignoring this request; still waiting.'))
-      return
-    }
-    res
-      .writeHead(200, { 'content-type': 'text/html' })
-      .end(page('App created', 'The private key was captured. Return to the terminal.'))
-    settle(received)
   })
 
   return new Promise<CallbackServer>((resolve, reject) => {
@@ -737,13 +787,16 @@ export function startCallbackServer(
         timeoutMs,
       )
       timer.unref()
+      // Idempotent: the handler calls it on success and the caller calls it
+      // again from its `finally`, which must be harmless.
+      stopListening = () => {
+        clearTimeout(timer)
+        server.close()
+      }
       resolve({
         port: (server.address() as AddressInfo).port,
         code,
-        close: () => {
-          clearTimeout(timer)
-          server.close()
-        },
+        close: () => stopListening(),
       })
     })
   })
@@ -817,10 +870,98 @@ function pressEnter(prompt: string): Promise<void> {
   })
 }
 
+/** Read one line from the operator. `null` when stdin closed instead. */
+function askLine(prompt: string): Promise<string | null> {
+  const rl = createInterface({ input: process.stdin, terminal: false })
+  return new Promise((resolve) => {
+    console.log(prompt)
+    let answered = false
+    rl.once('line', (line) => {
+      answered = true
+      rl.close()
+      resolve(line.trim())
+    })
+    rl.once('close', () => {
+      if (!answered) resolve(null)
+    })
+  })
+}
+
+/**
+ * Hand the key over, and keep asking while the operator still has a chance.
+ *
+ * The pre-flight can only refuse a MISSING destination — it cannot know whether
+ * a command exists, whether a path is writable, or whether a secret store will
+ * accept the call. Measured: `--key-out` at a directory, `--key-out` under a
+ * parent that does not exist, and a command not on PATH all pass the pre-flight
+ * and fail here. Exiting at that point destroys the only copy of a private key
+ * for an App that already exists, over a typo.
+ *
+ * So a failure asks for somewhere else instead, while the key is still in
+ * memory. `create` already requires a TTY, so there is someone there to answer.
+ * A blank line (or a closed stdin) gives up deliberately and says what that
+ * costs.
+ */
+async function handOffWithRetry(pem: string, destination: KeyDestination): Promise<boolean> {
+  let attempt = destination
+  for (;;) {
+    const result = await handOffKey(pem, attempt)
+    if (result.stored) {
+      console.log(`\n  private key: ${result.detail}`)
+      return true
+    }
+
+    console.error(
+      `\n  THE PRIVATE KEY WAS NOT STORED: ${result.detail}\n\n` +
+        '  The App exists and this process holds the only copy of its key, which is gone when\n' +
+        '  this command exits. You can send it somewhere else right now.',
+    )
+    const answer = await askLine(
+      '\n  Enter a path to write it to (mode 0600), or a command to pipe it into\n' +
+        '  (e.g. `aws secretsmanager create-secret --name canopycms/github-app-key\n' +
+        '  --secret-string file:///dev/stdin`). Leave blank to give up:',
+    )
+    if (!answer) {
+      console.error(
+        '\n  Giving up on storing the key. The App still exists — generate a fresh private key\n' +
+          '  from its "Private keys" section, or delete the App and run `create` again.',
+      )
+      return false
+    }
+    // A bare path is a file; anything with arguments is a command. Split on
+    // whitespace rather than through a shell: there is no shell here, so
+    // nothing to inject into, and an operator who needs shell syntax can run
+    // the command themselves against a file destination.
+    const words = answer.split(/\s+/).filter(Boolean)
+    attempt =
+      words.length === 1 && !words[0].includes('=')
+        ? { kind: 'file', filePath: words[0] }
+        : { kind: 'command', argv: words }
+  }
+}
+
 function describeDestination(destination: KeyDestination): string {
   return destination.kind === 'file'
     ? `the file ${destination.filePath}`
     : `\`${destination.argv.join(' ')}\``
+}
+
+/**
+ * How many accounts this App is installed on, or `null` when it cannot be read.
+ *
+ * The one-App-per-site rule (see the file header) is only worth stating if
+ * something checks it, and `repository_selection: 'selected'` does not: it is
+ * equally true of an installation scoped to this repository and one scoped to
+ * this repository plus nine others. This is the check that actually observes
+ * the invariant, and it costs one call with the JWT already in hand.
+ *
+ * `null` and a number are kept apart: "could not read the installation list" must
+ * never be reported as "checked, there is exactly one".
+ */
+async function installationCount(jwt: string): Promise<number | null> {
+  const listed = await githubRequest<{ id: number }[]>('/app/installations?per_page=100', { jwt })
+  if (!listed.ok || !Array.isArray(listed.body)) return null
+  return listed.body.length
 }
 
 /**
@@ -930,6 +1071,25 @@ async function readBackInstallation(
     }
   }
 
+  // The one-App-per-site invariant, observed rather than asserted. A second
+  // installation means this App's key reaches a second account's repositories,
+  // which is the arrangement the whole design exists to avoid.
+  let extraInstallations = false
+  const installations = await installationCount(jwt)
+  if (installations === null) {
+    console.log('    - could not list this App\'s installations, so "installed once" is unchecked')
+  } else if (installations > 1) {
+    extraInstallations = true
+    console.error(
+      `    ✗ this App is installed ${installations} times, and should be installed ONCE.\n` +
+        '      Its private key is App-level: whoever holds it can mint a token for any of\n' +
+        '      those installations. Register a separate App per site instead, and remove\n' +
+        '      the installations that do not belong to this one.',
+    )
+  } else {
+    console.log('    ✓ installed once, so this key reaches no other account')
+  }
+
   const mint = await proveTokenMint(jwt, installation.id, target.repo)
   if (mint.ok) {
     console.log(`    ✓ installation token ${mint.detail}`)
@@ -944,7 +1104,10 @@ async function readBackInstallation(
     )
   }
 
-  return { ok: findings.length === 0 && mint.ok, installationId: installation.id }
+  return {
+    ok: findings.length === 0 && mint.ok && !extraInstallations,
+    installationId: installation.id,
+  }
 }
 
 export type InitGitHubAppOptions = {
@@ -1068,6 +1231,7 @@ async function createCommand(options: InitGitHubAppOptions): Promise<number> {
   )
 
   const state = randomUUID()
+  let formDir: string | undefined
   let callback: CallbackServer
   try {
     callback = await startCallbackServer(state)
@@ -1089,8 +1253,16 @@ async function createCommand(options: InitGitHubAppOptions): Promise<number> {
     const redirectUrl = `http://127.0.0.1:${callback.port}/callback`
     const manifest = appManifest(target, redirectUrl, name)
     const postUrl = manifestPostUrl(target, state)
-    const formFile = path.join(tmpdir(), `create-${slug}.html`)
-    await writeFile(formFile, creationForm(postUrl, manifest), { mode: 0o600 })
+    // A private directory rather than a predictable name in a shared one. On
+    // Linux `tmpdir()` is `/tmp` for every user and the slug derives from a
+    // public repository name, so `create-<slug>.html` is guessable — and
+    // `writeFile`'s default `w` follows an existing symlink and truncates its
+    // target, while `mode` only applies when it creates the file. The form is
+    // not secret (manifest, state, port), but it is what the operator's browser
+    // is about to POST to GitHub.
+    formDir = await mkdtemp(path.join(tmpdir(), 'canopycms-app-'))
+    const formFile = path.join(formDir, `create-${slug}.html`)
+    await writeFile(formFile, creationForm(postUrl, manifest), { mode: 0o600, flag: 'wx' })
 
     console.log(
       `Registering "${name}" for ${target.owner}/${target.repo}.\n\n` +
@@ -1137,6 +1309,22 @@ async function createCommand(options: InitGitHubAppOptions): Promise<number> {
       `  created App ${created.slug} (id ${created.id}) — private key held in memory, not written to disk`,
     )
 
+    // THE KEY IS HANDED OFF FIRST, before the install prompt and the readback,
+    // and the ordering is the whole point.
+    //
+    // From here until the hand-off returns, this process holds the ONLY copy of
+    // a private key for an App that already exists. Everything between the
+    // conversion and the hand-off is therefore a window in which losing the
+    // process loses the key: the install step waits on a human for an unbounded
+    // time (one Ctrl-C and it is gone), and the readback makes two network
+    // calls that can reject rather than return — a stalled response body or the
+    // request timeout firing mid-read would unwind straight past the hand-off.
+    //
+    // Nothing in the hand-off depends on the readback, so there is no reason to
+    // carry the key across either. Doing it here reduces the window to the
+    // conversion call itself.
+    const stored = await handOffWithRetry(created.pem, destination)
+
     console.log(
       `\n2. Install it on ${target.owner}/${target.repo}:\n\n` +
         `     https://github.com/settings/apps/${created.slug}/installations\n\n` +
@@ -1145,22 +1333,18 @@ async function createCommand(options: InitGitHubAppOptions): Promise<number> {
     )
     await pressEnter('   Press Enter once it is installed.')
 
-    const readback = await readBackInstallation(String(created.id), created.pem, target)
-
-    // The key is handed off whatever the readback said. A readback failure is
-    // usually "you have not finished installing it yet", and discarding the only
-    // copy of the key over that would turn a recoverable step into an
-    // unrecoverable one.
-    const handOff = await handOffKey(created.pem, destination)
-    if (handOff.stored) {
-      console.log(`\n  private key: ${handOff.detail}`)
-    } else {
+    // Wrapped because a rejection here must not be able to change what was
+    // already reported about the key. By this point the key is stored (or
+    // deliberately not), and a readback failure is only ever advisory.
+    let readback: { ok: boolean; installationId: number | null }
+    try {
+      readback = await readBackInstallation(String(created.id), created.pem, target)
+    } catch (err) {
       console.error(
-        `\n  THE PRIVATE KEY WAS NOT STORED: ${handOff.detail}\n\n` +
-          '  The App exists and this process holds the only copy of its key, which will be gone\n' +
-          '  when this command exits. Generate a fresh key from the App\'s "Private keys"\n' +
-          '  section (see the recovery note above), or delete the App and start again.',
+        `\n  the installation could not be read back: ${redactCredentials(getErrorMessage(err))}\n` +
+          '  This says nothing about the App or the key — re-run `canopycms init-github-app verify`.',
       )
+      readback = { ok: false, installationId: null }
     }
 
     console.log(
@@ -1175,9 +1359,14 @@ async function createCommand(options: InitGitHubAppOptions): Promise<number> {
         `  canopycms init-github-app verify --app-id ${created.id} --key-file <path>`,
     )
 
-    return handOff.stored && readback.ok ? 0 : 1
+    return stored && readback.ok ? 0 : 1
   } finally {
     callback.close()
+    if (formDir) {
+      // Best effort: the operator's browser has long finished with it, and a
+      // failure to clean up must not change the command's outcome.
+      await rm(formDir, { recursive: true, force: true }).catch(() => {})
+    }
   }
 }
 
