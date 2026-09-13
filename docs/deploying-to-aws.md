@@ -12,8 +12,8 @@ This guide walks through deploying CanopyCMS on AWS using Lambda + EFS + EC2 Wor
 > `CanopyCmsService`'s architecture, arm64 by default — see
 > [Where the image is built](#where-the-image-is-built));
 > **`clerkMiddleware` needs an explicit `jwtKey`** (the env var alone is never
-> read → the no-internet Lambda hangs on sign-in) and the shipped template
-> asserts a secret key; the raw-CloudFront path needs the managed
+> read → the no-internet Lambda hangs on sign-in) and a secret key, if you keep
+> it — it is optional, see [Dual Build Support](#dual-build-support); the raw-CloudFront path needs the managed
 > `CACHING_DISABLED` policy and an `x-forwarded-host`-only CloudFront Function;
 > and a two-pass deploy for bucket CORS + `CLERK_AUTHORIZED_PARTIES`. The
 > EC2 worker's logs now ship to CloudWatch by default (see
