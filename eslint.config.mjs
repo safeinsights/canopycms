@@ -225,20 +225,20 @@ const eslintConfig = [
   // sharp is loaded lazily, through assets/sharp-loader.ts's `loadSharp()`, and
   // never by a static import.
   //
-  // A static value import makes importing the module graph load libvips:
-  // Turbopack emits a top-level `await` of the external. transform.ts had one,
-  // and it sits under canopycms/server and canopycms/http, so when an adopter's
-  // standalone image lacked the libvips `.so` every route returned 500, 404s
-  // included, and pipeline.ts's deliberate fail-open never got a chance to run.
+  // A static value import makes importing the module graph load libvips. With
+  // sharp external, as in an adopter's Next 16 standalone build, Turbopack wraps
+  // it in an async module that awaits the load when the graph is evaluated.
+  // transform.ts had one, and it sits under canopycms/server and canopycms/http,
+  // so when that image lacked the libvips `.so` every on-demand route returned
+  // 500, 404s included, and pipeline.ts's deliberate fail-open never ran.
   //
-  // The typescript-eslint variant rather than core `no-restricted-imports`,
-  // for `allowTypeImports`: `import type { Sharp } from 'sharp'` is erased at
-  // compile time and stays legal. A dynamic `import('sharp')` is not an import
+  // `allowTypeImports` keeps `import type { Sharp } from 'sharp'` legal: it is
+  // erased at compile time. A dynamic `import('sharp')` is not an import
   // declaration, so this rule does not see it - which is what lets
   // sharp-loader.ts exist, and also means a second loader elsewhere would pass.
   //
-  // canopycms-next is covered too: it sits in the same adopter server graph. It
-  // declares no sharp dependency today, so there the rule stops one being added.
+  // canopycms-next is covered too: it sits in the same adopter server graph and
+  // declares no sharp dependency today, so any static import there would be new.
   //
   // Tests are excluded: their fixtures are built with real sharp, and no test
   // file is ever in an adopter's module graph.
@@ -260,7 +260,7 @@ const eslintConfig = [
               name: 'sharp',
               allowTypeImports: true,
               message:
-                'Load sharp with loadSharp() from assets/sharp-loader.ts, and use `import type` for its types. A static import loads libvips whenever this module graph is imported, so a missing native binary fails every route that imports it instead of only the image operation that needs it.',
+                'Load sharp only through loadSharp() in canopycms/src/assets/sharp-loader.ts, and use `import type` for its types. A static import loads libvips whenever this module graph is imported, so a missing native binary fails every route that imports it instead of only the image operation that needs it.',
             },
           ],
         },

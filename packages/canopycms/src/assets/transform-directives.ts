@@ -4,7 +4,7 @@
  * NO imports (not even other files in this directory) so it can be imported
  * from client bundles (via `assetUrl`/`assetSrcSet` in asset-url.ts, exported
  * off the package's main entry) as well as from the server-only transform
- * engine (transform.ts) and the future prod transform Lambda (PR 7), without
+ * engine (transform.ts) and the prod transform Lambda, without
  * ever pulling in node:crypto, sharp, or any other server-only dependency.
  *
  * `{directives}` is either the literal identity token (`orig`) or a

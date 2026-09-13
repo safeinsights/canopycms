@@ -17,8 +17,9 @@ degrades:
 - Upload finalize fails open: raster uploads are accepted without decode validation
   (`rasterIsDecodable` in `assets/pipeline.ts`).
 
-The signals are one `canopyLogError` line per process from `loadSharp()` and a per-upload
-`console.warn` from finalize. An operator who is not reading logs sees broken transformed
+Every signal is a log line: one `canopyLogError` per process from `loadSharp()`, a generic
+error for each failed transform request (`http/handler.ts`'s top-level catch, or the transform
+Lambda's), and a per-upload `console.warn` from finalize. An operator who is not reading logs sees broken transformed
 images and never learns that uploads are going through unvalidated.
 
 ## Proposal
