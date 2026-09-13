@@ -87,8 +87,11 @@ faked `send`, so what they prove is the logic, not the integration.
       never fires and the retry never happens.
 - [ ] Set a secret to a deliberately wrong value and leave it for an hour.
       CloudTrail should show **at most ~12 `GetSecretValue` calls per hour** for
-      it — not one per loop tick. This is the circuit breaker, and CloudTrail is
-      the only place its real rate is observable.
+      it — not one per loop tick. (Up to ~48 if Secrets Manager is itself
+      failing, since `fetchSecretString` retries a transport failure three
+      times; a clean AccessDenied or a wrong value is one call per re-read.)
+      This is the circuit breaker, and CloudTrail is the only place its real
+      rate is observable.
 - [ ] Confirm the worker did **not** start making `GetSecretValue` calls in the
       steady state: a healthy hour should show **zero**.
 

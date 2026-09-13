@@ -122,14 +122,17 @@ describe('guard: too soon', () => {
     expect(sendMock).toHaveBeenCalledTimes(SIX_HOURS_MS / DEFAULT_MIN_SECRET_READ_INTERVAL_MS)
   })
 
-  it('issues ONE read when two failures land in the same tick', async () => {
+  it('issues ONE read when overlapping calls land before the first resolves', async () => {
     const clock = fakeClock()
     sendMock.mockResolvedValue({ SecretString: 'unchanged' })
     const secret = createReactiveSecret({ arn: ARN, initial: 'unchanged', now: clock.now })
 
-    // The task loop and the sync loop can trip together. `lastReadAt` is
-    // stamped BEFORE the await for this case; stamped after, both callers
-    // would see an unstamped clock and both would read.
+    // `lastReadAt` is stamped BEFORE the await for this case; stamped after,
+    // all three callers see an unstamped clock and all three read.
+    //
+    // No production caller overlaps today -- each secret has one calling loop,
+    // and scheduleLoop awaits each cycle. This pins the property so that
+    // adding a second trigger site does not quietly defeat the floor.
     await Promise.all([secret.refresh(), secret.refresh(), secret.refresh()])
 
     expect(sendMock).toHaveBeenCalledTimes(1)

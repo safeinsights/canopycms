@@ -571,7 +571,9 @@ The worker re-reads at most once every five minutes per secret, and when the
 re-read comes back identical to the value it already holds it does not retry the
 operation, since that retry could not succeed. It keeps checking indefinitely at
 that rate, so a later correction is still picked up — it never gives up and it
-never hammers.
+never hammers. Twelve re-reads an hour per secret is the ceiling, and each is
+normally one `GetSecretValue` call (up to four if the call itself is failing,
+which is the existing boot-time retry).
 
 Two things to know:
 

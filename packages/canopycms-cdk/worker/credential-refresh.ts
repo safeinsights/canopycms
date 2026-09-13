@@ -42,8 +42,15 @@ import { getSecret, type GetSecretOptions } from './secrets'
  * adopter-configurable. `CANOPYCMS_GIT_SYNC_INTERVAL=10000` against a
  * permanently-broken credential would otherwise mean a `GetSecretValue` every
  * ten seconds for the life of the instance. With the floor, the worst case is
- * twelve reads an hour per secret — about four cents a month at $0.05 per
- * 10,000 calls — no matter how the loops are tuned.
+ * twelve `refresh()` attempts an hour per secret, no matter how the loops are
+ * tuned.
+ *
+ * That is twelve `GetSecretValue` calls an hour in the normal case, but up to
+ * FOUR times that if the SDK call is itself failing: one `refresh()` is one
+ * `getSecret`, and `fetchSecretString` retries a TRANSPORT failure up to
+ * `retries` times (default 3, so four calls at 1s/2s/4s — see secrets.ts).
+ * Forty-eight calls an hour is about 18 cents a month at $0.05 per 10,000, and
+ * it needs Secrets Manager itself to be failing continuously for a month.
  *
  * Note what it does NOT throttle: GitHub and Clerk traffic. The loops call
  * those on their own schedule whether or not a refresh happens, and this
@@ -136,9 +143,17 @@ export function createReactiveSecret(options: ReactiveSecretOptions): ReactiveSe
       // `>=`, so a minIntervalMs of 0 (a test, or an adopter opting out)
       // permits every call rather than blocking on an identical timestamp.
       if (lastReadAt !== undefined && at - lastReadAt < minIntervalMs) return undefined
-      // Stamped BEFORE the await, not after. Stamping after would let two
-      // concurrent failures -- the task loop and the sync loop both tripping
-      // in the same tick -- each see an unstamped clock and both issue a read.
+      // Stamped BEFORE the await, not after: stamping after lets two
+      // overlapping calls each see an unstamped clock and both issue a read,
+      // which is the floor not holding.
+      //
+      // No production caller does that TODAY -- each secret has exactly one
+      // calling loop (the GitHub token from the git-sync loop, the Clerk key
+      // from the auth-cache loop) and `scheduleLoop` awaits each cycle before
+      // starting the next. This is defensive against a second trigger site
+      // being added later, which is a live possibility: see
+      // .claude/future-tasks/publish-fails-permanently-in-the-rotation-window.md,
+      // whose fix is exactly that.
       lastReadAt = at
 
       const fetched = await getSecret(arn, secretOptions)

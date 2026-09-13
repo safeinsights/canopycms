@@ -973,8 +973,16 @@ export class CmsWorker {
    * credential — this fetch, `pushBranchToGitHub`, `pushSettingsBranches`,
    * `ensureRemoteGit`'s clone, and every Octokit call — and all five reach it
    * through `ensureGitHubAuth()`, whose resolution reads the credential per
-   * use. Refreshing it here therefore repairs all five at once, with nothing
-   * to invalidate.
+   * use. Refreshing it here therefore repairs all five for their NEXT use,
+   * with nothing to invalidate.
+   *
+   * What it does not repair is an operation already in flight, or one that has
+   * already spent its retry budget. A push task meeting a dead token fails
+   * permanently after ~35-50s, which is inside this loop's 5-minute interval —
+   * so a publish attempted in that window still fails, even once a good token
+   * is available. Not a regression (before this, it failed forever), and filed
+   * rather than fixed here:
+   * .claude/future-tasks/publish-fails-permanently-in-the-rotation-window.md.
    *
    * NOT gated on the error looking auth-shaped, deliberately, and this is the
    * one place that differs from the Clerk half. There is nothing to classify

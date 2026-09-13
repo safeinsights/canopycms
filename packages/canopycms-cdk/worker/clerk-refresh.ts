@@ -41,6 +41,15 @@ import type { ReactiveSecret } from './credential-refresh'
  * check is used by `isPermanentTaskFailure` and `isTransientAuthFailure` in
  * core for the same reason.
  *
+ * `.status` is there to be read, verified against the installed
+ * `@clerk/backend@3.17.1`: every API method resolves through
+ * `withLegacyRequestReturn` (`dist/index.js:6174-6190`), which on a non-2xx
+ * throws `new ClerkAPIResponseError(statusText, { status, ... })` carrying the
+ * HTTP status; the class declares `status: number` as a public field
+ * (`@clerk/shared`'s `dist/errors/clerkApiResponseError.d.ts`). Note its
+ * MESSAGE is `statusText || ''`, so it can be empty — one more reason to
+ * classify on the status rather than by matching text.
+ *
  * 403 as well as 401: Clerk answers a revoked key with 401, but a key belonging
  * to a different instance, or one whose permissions were narrowed, can come
  * back 403 — and both are "this key will not work, try a different one", which
@@ -103,10 +112,13 @@ export function createClerkAuthCacheRefresher(
       // Clerk rejection being handled. Without the inner try, an IAM policy
       // narrowed after boot turns every tick into an AccessDeniedException and
       // the 401 that actually explains the stale cache is never logged at all
-      // -- indefinitely, since the 15-minute auth-cache interval is longer than
-      // the reader's own floor, so the read is re-attempted and re-fails every
-      // tick. `CmsWorker.syncGitWithCredentialRefresh` has the same shape for
-      // the same reason; this is the Clerk half of it.
+      // -- and at the DEFAULT 15-minute auth-cache interval that repeats
+      // indefinitely, since every tick clears the reader's own 5-minute floor
+      // and so re-attempts the read. (Tune `authCacheRefreshInterval` below
+      // five minutes and the floor starts absorbing some ticks; the 401 is
+      // still lost on the ones that do read.)
+      // `CmsWorker.syncGitWithCredentialRefresh` has the same shape for the
+      // same reason; this is the Clerk half of it.
       let rotated: string | undefined
       try {
         rotated = await secret.refresh()

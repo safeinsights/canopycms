@@ -15,8 +15,10 @@ A `push-*` task that meets a revoked PAT fails on a different clock:
 
 1. `git push` rejects with a status-less error (exit 128), so `isPermanentTaskFailure`
    (`task-runner.ts:91-98`) returns false and the task is retried.
-2. Retries run at 5s / 10s / 20s.
-3. After roughly **35–50 seconds** the budget is spent: `failTask`, then
+2. Retries run at 5s / 10s / 20s — `backoffMs = Math.min(5000 * 2 ** (retryCount - 1), 60_000)`
+   at `src/task-queue/task-queue.ts:258`, with `DEFAULT_MAX_RETRIES = 3` at `:24`.
+3. After roughly **35–50 seconds** (35s of backoff, plus up to one 5s task-poll interval
+   before each pickup) the budget is spent: `failTask`, then
    `updateBranchMetadataOnFailure` marks the branch `sync-failed`.
 
 So for about **4.5 of every 5 minutes** after a revocation, a publish fails permanently
