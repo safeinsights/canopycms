@@ -12,9 +12,9 @@ two filings are kept as history:
   to edit both copies by hand.
 - While wiring the GitHub App props (PR B3 of adopter request #45), by diffing the example
   workflow against its template.
-- By the round-1 review of PR #323 (the CMS image architecture fix), which touched only `runs-on`
-  in the example workflow and the `platform`/build-arg lines in the example stack. Not a
-  regression from that PR.
+- By the round-1 review of PR #323 (the CMS image architecture fix), which edited the example's
+  `runs-on`, `platform` and image build args and none of the drift below. Not a regression from
+  that PR.
 
 ## Problem
 
@@ -30,6 +30,9 @@ human reads on GitHub before running the generator, and may copy from instead.
 | `cdk-app.ts.template`        | `infrastructure/bin/app.ts`       | differs only in its three placeholder lines (`{{STACK_NAME}}`, `{{GITHUB_OWNER}}`, `{{GITHUB_REPO}}`) |
 | `cms-stack.ts.template`      | `infrastructure/lib/cms-stack.ts` | comment drift, below                                                                       |
 | `deploy-cms.yml.template`    | `deploy-cms.yml`                  | several changes behind, below                                                              |
+
+The example's `infrastructure/tsconfig.json` also cannot type-check in this repo: it extends
+`../tsconfig.json`, and `examples/aws-deployment/` has no `tsconfig.json`.
 
 ### `deploy-cms.yml` vs `deploy-cms.yml.template`
 
@@ -52,8 +55,8 @@ human reads on GitHub before running the generator, and may copy from instead.
 ### What guards the pair today
 
 `scaffold-synth.test.ts` runs the real CLI, so it exercises the templates only and never reads
-`examples/`. Every cross-copy check is a per-feature textual pin, covering only what its author
-thought of:
+`examples/`. Every cross-copy check is a per-feature pin, covering only what its author thought
+of:
 
 - `asset-support.test.ts`, "cms-stack template: the media block names a real API": every
   `assetSupport.<member>` either copy of the stack references exists on `AssetSupport`, and both
@@ -67,10 +70,11 @@ None of them covers the drift listed above.
 
 ### The instance that makes this P1
 
-One live difference was **fixed in PR #322**, with a test pinning both copies:
-`cms-stack.ts.template` set `NEXT_PUBLIC_CANOPY_MODE: 'prod'` in the image build args and the
-example did not. An adopter who copied the example shipped an editor bundle built with the **dev**
-browser mode, which selects dev auth rather than Clerk. `CanopyCmsService` sets the server half
+One live difference was **fixed in PR #322**, with a test pinning both copies (`cms-deploy.test.ts`,
+"both copies build the image with NEXT_PUBLIC_CANOPY_MODE: 'prod'"): `cms-stack.ts.template` set
+`NEXT_PUBLIC_CANOPY_MODE: 'prod'` in the image build args and the example did not. PR #323 added
+the same line to the example independently, on `int-202609-cms-image`.
+An adopter who copied the example shipped an editor bundle built with the **dev** browser mode, which selects dev auth rather than Clerk. `CanopyCmsService` sets the server half
 (`CANOPY_MODE`) either way, so the deployment came up and the failure was confined to what the
 editor bundle believes — the kind found by a person, late. `scaffold-synth.test.ts` already pinned
 that value on the generated path, so the example was the only way left to get it wrong.

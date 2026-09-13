@@ -128,9 +128,10 @@ let resources: unknown[]
  */
 let renderedTemplates: string
 /**
- * The `platform` of every Docker image asset in the asset manifests the synth wrote. Read in
- * `beforeAll`, not by the test asserting on it, because the GitHub App test re-synths into the
- * same `cdk.out` and relies on every other test reading state captured here.
+ * The `platform` of every Docker image asset in the asset manifests `beforeAll`'s synth wrote.
+ * Captured here rather than read by the test asserting on it, because the GitHub App test
+ * re-synths into the same `cdk.out` and relies on no other test reading that directory after
+ * `beforeAll`.
  */
 let imagePlatforms: (string | undefined)[]
 
@@ -425,9 +426,9 @@ describe('canopycms init-deploy aws produces a synthesizable CDK app', () => {
    * absence of `GITHUB_TOKEN_SECRET_ARN` -- configuring both is refused at
    * synth, so it cannot share `beforeAll`'s environment. It deliberately reuses
    * `cdk.out` (see CDK_OUTDIR's note above, which is a correctness constraint
-   * rather than a preference); every assertion in this file other than this one
-   * reads state captured in `beforeAll`, so overwriting it here is invisible to
-   * them.
+   * rather than a preference); no other test in this file reads `cdk.out` after
+   * `beforeAll` has captured what it needs, so overwriting it here is invisible
+   * to them.
    */
   it(
     'carries the GitHub App inputs through bin/app.ts and cms-stack.ts into the worker .env',
