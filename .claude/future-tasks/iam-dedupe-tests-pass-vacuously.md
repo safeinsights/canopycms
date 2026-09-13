@@ -23,9 +23,19 @@ passing for reasons unrelated to the code it names.
 
 The construct's comment claimed the dedupe was what prevented double-listing; it now says
 plainly that removing it changes no output and breaks no test. The new sibling test added
-for the App private-key ARN was reworded to state what it actually pins — that the ARN is
-granted by ONE statement rather than picking up a second `addToPolicy` call, which
-`secretResources()` reads across all statements and so genuinely can catch.
+for the App private-key ARN ("grants the App private-key ARN exactly once when it is passed
+in secretsArns too") was reworded to say it pins that the ARN is granted by ONE statement
+rather than by a second `addToPolicy` call.
+
+**That rewording was itself wrong, and is corrected (2026-09-13).** The worker-credential
+epic's review swept for this shape and found the sibling test vacuous too, by a second
+mechanism: `PolicyDocument` drops a statement that renders byte-identical to another. With
+`secretsArns: [APP_KEY_ARN]` alone, a stray single-ARN grant rendered exactly like the union
+and was collapsed, so the test stayed green with that bug reintroduced. Re-measured: adding
+that second `addToPolicy` to `cms-service.ts` left it green. The test now adds an unrelated
+ARN to `secretsArns`, so the union lists two ARNs and a stray single-ARN grant renders as a
+distinct statement. The same mutation now turns it red, and it is green again on the real
+code.
 
 ## What is left
 
