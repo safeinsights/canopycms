@@ -64,7 +64,7 @@ beforeEach(() => {
   //
   // All THREE levels, and `error` is not hypothetical: it was missing when the
   // re-read-failure test below was added, and `CI=1 pnpm exec vitest run`
-  // reported `528 passed` with exit 1. Locally, where CI is unset, it passed.
+  // reported every test passed, with exit 1. Locally, where CI is unset, it passed.
   logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
   warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
   errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})

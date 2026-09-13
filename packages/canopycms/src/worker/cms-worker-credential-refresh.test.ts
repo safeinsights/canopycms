@@ -78,9 +78,10 @@ describe('CmsWorker credential refresh on a failing sync', () => {
       githubToken: 'ghp_boot',
       refreshGitHubToken,
       // Fast enough that the test does not wait out the 5-minute default,
-      // slow enough not to spin. The floor that keeps this from hammering
-      // Secrets Manager in production lives in the PROVIDER, not here --
-      // see canopycms-cdk/worker/credential-refresh.ts.
+      // slow enough not to spin. Core's own refresh floor (60s by default,
+      // not overridden here) still holds this to one provider call a minute;
+      // the AWS provider adds a five-minute floor of its own
+      // (canopycms-cdk/worker/credential-refresh.ts).
       gitSyncInterval: 20,
       taskPollInterval: 10_000,
     })
@@ -225,6 +226,10 @@ describe('CmsWorker credential refresh on a failing sync', () => {
     const makeTaskWorker = (
       refreshGitHubToken: () => Promise<string | undefined>,
       taskTimeoutMs = 5_000,
+      // Left `undefined` in every existing call site, so `resolveWorkerGitHubAuth`
+      // applies its own default floor. Only the retry-exhaustion test below
+      // overrides it -- see the comment there for why.
+      refreshGitHubTokenMinIntervalMs?: number,
     ) => {
       const worker = new CmsWorker({
         workspacePath,
@@ -234,6 +239,7 @@ describe('CmsWorker credential refresh on a failing sync', () => {
         refreshGitHubToken,
         taskTimeoutMs,
         maxRetries: MAX_RETRIES,
+        refreshGitHubTokenMinIntervalMs,
       })
       const internals = worker as unknown as TaskInternals
       internals.running = true
@@ -282,8 +288,13 @@ describe('CmsWorker credential refresh on a failing sync', () => {
     it('still exhausts the budget when nothing rotated, re-reading after every attempt', async () => {
       // The control for the test above: it proves this harness really drives a
       // task to exhaustion, so "completed" there is the refresh's doing.
+      //
+      // Floor disabled: this asserts one provider call per attempt, which is
+      // this test's own point (re-reading after every attempt), not the
+      // floor's -- `drain`'s 61s-per-cycle clock bump happens to clear the
+      // default floor too, but pinning that coincidence isn't the goal here.
       const refreshGitHubToken = vi.fn(async () => undefined)
-      const { worker, push } = makeTaskWorker(refreshGitHubToken)
+      const { worker, push } = makeTaskWorker(refreshGitHubToken, undefined, 0)
       const id = await enqueuePush()
 
       expect(await drain(worker, id)).toBe('failed')
@@ -340,6 +351,46 @@ describe('CmsWorker credential refresh on a failing sync', () => {
       expect(consoleSpy).toHaveErrored('did not settle within 100ms')
 
       await new Promise((r) => setTimeout(r, 1_600))
+    })
+
+    it('reaches the provider only once for a burst of failures in the same cycle, under the DEFAULT floor', async () => {
+      // The protection this whole change adds, exercised the way it actually
+      // happens: several publishes queued together, all failing, all in ONE
+      // processTaskQueue() cycle -- up to maxTasksPerCycle (10 by default) run
+      // per cycle, and each failure hits the catch in task-runner.ts that calls
+      // refreshGitHubCredential. Without core's own floor that would be one
+      // provider call per task, every cycle. The clock is left untouched
+      // (no drain, no vi.setSystemTime) and `refreshGitHubTokenMinIntervalMs`
+      // is not set, so this is the DEFAULT floor -- the thing an adopter gets
+      // with no configuration at all.
+      const refreshGitHubToken = vi.fn(async () => undefined)
+      const { worker, push } = makeTaskWorker(refreshGitHubToken)
+      // Status-less, the shape a real `git push` failure takes against a dead
+      // credential -- and every one of these tasks fails with it, since the
+      // stub in makeTaskWorker only fails while `buildGitHubUrl()` still
+      // reports the revoked token, which a provider returning `undefined`
+      // never changes.
+      const BURST = 5
+      const ids = await Promise.all(
+        Array.from({ length: BURST }, (_, i) =>
+          enqueueTask(path.join(workspacePath, '.tasks'), {
+            action: 'push-branch',
+            payload: { branch: `feature-${i}` },
+          }),
+        ),
+      )
+
+      await worker.processTaskQueue()
+
+      expect(push).toHaveBeenCalledTimes(BURST)
+      expect(refreshGitHubToken).toHaveBeenCalledTimes(1)
+
+      // The floor bounds the PROVIDER, not task processing: every task still
+      // got its normal outcome (retried, well under maxRetries).
+      for (const id of ids) {
+        const pending = JSON.parse(await fs.readFile(taskPath('pending', id), 'utf-8'))
+        expect(pending.retryCount).toBe(1)
+      }
     })
   })
 })

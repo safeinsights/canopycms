@@ -244,25 +244,25 @@ without a default refuse to synth when unset, deliberately — every one of them
 has a silent-failure mode that is far more expensive to diagnose after a
 successful deploy.
 
-| Variable                                   | Required | Notes                                                                                                                                                                                |
-| ------------------------------------------ | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `GITHUB_TOKEN_SECRET_ARN`                  | yes\*    | **Full** ARN including the six-character suffix — it goes verbatim into the worker's IAM policy, so a name-based ARN silently never matches and the worker gets AccessDenied at boot |
-| `CLERK_SECRET_KEY_SECRET_ARN`              | yes      | Full ARN, same reason                                                                                                                                                                |
-| `GITHUB_TOKEN_SECRET_JSON_FIELD`           | no       | Set only if that secret holds a JSON document rather than the bare token; names the key to read out of it. See [JSON secret documents](#json-secret-documents)                       |
-| `CLERK_SECRET_KEY_SECRET_JSON_FIELD`       | no       | Same, for the Clerk secret                                                                                                                                                           |
-| `GITHUB_APP_ID`                            | no       | GitHub App authentication instead of a token — see [Authenticating as a GitHub App](#authenticating-as-a-github-app). Set all three App variables or none                            |
-| `GITHUB_APP_INSTALLATION_ID`               | no       | The App's installation on _this_ repository, not the App ID                                                                                                                          |
-| `GITHUB_APP_PRIVATE_KEY_SECRET_ARN`        | no       | Full ARN of the secret holding the App's PEM. ARN-only: the key is multi-line and never reaches the worker as a plain value                                                          |
-| `GITHUB_APP_PRIVATE_KEY_SECRET_JSON_FIELD` | no       | Set only if that secret holds a JSON document rather than the bare PEM                                                                                                               |
+| Variable                                     | Required | Notes                                                                                                                                                                                |
+| -------------------------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `GITHUB_TOKEN_SECRET_ARN`                    | yes\*    | **Full** ARN including the six-character suffix — it goes verbatim into the worker's IAM policy, so a name-based ARN silently never matches and the worker gets AccessDenied at boot |
+| `CLERK_SECRET_KEY_SECRET_ARN`                | yes      | Full ARN, same reason                                                                                                                                                                |
+| `GITHUB_TOKEN_SECRET_JSON_FIELD`             | no       | Set only if that secret holds a JSON document rather than the bare token; names the key to read out of it. See [JSON secret documents](#json-secret-documents)                       |
+| `CLERK_SECRET_KEY_SECRET_JSON_FIELD`         | no       | Same, for the Clerk secret                                                                                                                                                           |
+| `GITHUB_APP_ID`                              | no       | GitHub App authentication instead of a token — see [Authenticating as a GitHub App](#authenticating-as-a-github-app). Set all three App variables or none                            |
+| `GITHUB_APP_INSTALLATION_ID`                 | no       | The App's installation on _this_ repository, not the App ID                                                                                                                          |
+| `GITHUB_APP_PRIVATE_KEY_SECRET_ARN`          | no       | Full ARN of the secret holding the App's PEM. ARN-only: the key is multi-line and never reaches the worker as a plain value                                                          |
+| `GITHUB_APP_PRIVATE_KEY_SECRET_JSON_FIELD`   | no       | Set only if that secret holds a JSON document rather than the bare PEM                                                                                                               |
+| `CLERK_JWT_KEY`                              | yes      | Clerk's public JWKS PEM. Unset, Clerk falls back to a network JWKS fetch and the no-internet Lambda hangs at sign-in                                                                 |
+| `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`          | no       | Deploys fine when empty and ships an editor that cannot sign in                                                                                                                      |
+| `CANOPY_BOOTSTRAP_ADMIN_IDS`                 | no       | Comma-separated Clerk user IDs granted admin on first boot                                                                                                                           |
+| `CANOPYCMS_DEPLOYMENT_NAME`                  | no       | Defaults to `prod`. Two stacks sharing one GitHub repo **must** differ — see [Two deployments, one repository](#two-deployments-one-repository)                                      |
+| `CMS_DOMAIN_NAME` / `CMS_HOSTED_ZONE_DOMAIN` | no       | Set both to add CloudFront + Route53; leave unset to use the Lambda Function URL directly                                                                                            |
 
 \* Required unless you set the `GITHUB_APP_*` variables instead. A personal
 access token is the default; exactly one of the two credentials must be
 configured, and setting both is refused at synth.
-| `CLERK_JWT_KEY` | yes | Clerk's public JWKS PEM. Unset, Clerk falls back to a network JWKS fetch and the no-internet Lambda hangs at sign-in |
-| `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` | no | Deploys fine when empty and ships an editor that cannot sign in |
-| `CANOPY_BOOTSTRAP_ADMIN_IDS` | no | Comma-separated Clerk user IDs granted admin on first boot |
-| `CANOPYCMS_DEPLOYMENT_NAME` | no | Defaults to `prod`. Two stacks sharing one GitHub repo **must** differ — see [Two deployments, one repository](#two-deployments-one-repository) |
-| `CMS_DOMAIN_NAME` / `CMS_HOSTED_ZONE_DOMAIN` | no | Set both to add CloudFront + Route53; leave unset to use the Lambda Function URL directly |
 
 Then edit `infrastructure/lib/cms-stack.ts` for anything beyond that — memory
 and concurrency, `AssetSupport` for media (a commented block in the generated
@@ -357,18 +357,9 @@ deploy at synth — before anything is changed in the account.
 authentication instead, in which case it must be left unset — exactly one of the
 two. See [Authenticating as a GitHub App](#authenticating-as-a-github-app).
 
-The two App ID entries are variables rather than secrets for the same reason the
-`_JSON_FIELD` entries are: they identify something, they are not key material.
-An App ID and an installation ID are visible in the App's own settings URLs. The
-one genuinely sensitive value, the private key, never becomes an Actions secret
-at all — only the ARN of the Secrets Manager secret holding it does.
-
-The two `_JSON_FIELD` entries are variables, not secrets, for the same reason
-`CLERK_JWT_KEY` is: they carry the _name_ of a key, not the key's value. The GitHub one
-takes the `CANOPY_` prefix for the same reason its ARN secret does — GitHub rejects
-**variables** starting with `GITHUB_` as well as secrets — and the workflow maps it onto the
-unprefixed `GITHUB_TOKEN_SECRET_JSON_FIELD` environment variable the CDK app reads, exactly
-as it does for the ARN.
+The App ID and `_JSON_FIELD` entries are variables, not secrets, because they identify or
+name something rather than carry key material; the App private key reaches Actions only as
+the ARN of the secret holding it.
 
 > **Why is `CLERK_JWT_KEY` a variable and not a secret?** Because it is a _public_ key —
 > Clerk's JWKS PEM, retrievable from your instance's public JWKS endpoint, and used only to
@@ -385,7 +376,7 @@ as it does for the ARN.
 > reserves the `GITHUB_` prefix and rejects any Actions secret or variable whose name
 > starts with it, so the obvious name cannot be created. The generated workflow maps this
 > secret onto an unprefixed `GITHUB_TOKEN_SECRET_ARN` environment variable, which is what
-> the CDK app reads — only the _secret_ name needs the prefix. Every `CANOPY_GITHUB_APP_*`
+> the CDK app reads — only the _secret_ name needs the prefix. Every other `CANOPY_GITHUB_*`
 > entry above is spelled that way for the same reason, and mapped the same way.
 
 > **CloudFront requires a us-east-1 certificate.** When `CMS_DOMAIN_NAME` is set,
@@ -447,9 +438,10 @@ The Lambda does NOT need these secrets — only the EC2 worker reads them.
 ### Authenticating as a GitHub App
 
 A personal access token is the default and is fully supported; this section is
-for organisations that require an App. Registering and installing one needs
-organisation-admin rights, which many adopters do not have, so nothing here
-deprecates the token or asks you to migrate.
+for organisations that require an App. Registering an App under an organisation
+takes an owner of that organisation (or a GitHub App manager for all its Apps),
+which many adopters are not, so nothing here deprecates the token or asks you to
+migrate.
 
 What an App buys you, when you can have one: its private key does not expire,
 it acts as itself rather than as the person who created it, and it survives that
@@ -464,7 +456,8 @@ canopycms init-github-app create -- \
 ```
 
 The command writes an HTML form to a temp file and prints the path. Open it in a
-browser **signed in to GitHub as an owner of the account**, review the
+browser **signed in to GitHub as the repository's owner** (for an organisation:
+an owner, or a GitHub App manager for all its Apps), review the
 permissions GitHub shows you, and click Create; then install the App on the
 content repository and press Enter. It prints `GITHUB_APP_ID` and
 `GITHUB_APP_INSTALLATION_ID` — both numeric, both read from the API rather than
@@ -477,6 +470,12 @@ just as well, and `--key-out <path>` writes a `0600` file instead if you have no
 such command. The command's own output is shown to you, which is how you get the
 secret's full ARN — `Secret.fromSecretCompleteArn` needs the ARN including its
 six-character suffix, not the friendly name.
+
+If that command fails, `create` keeps the key in memory and asks for a **file
+path** to write it to (created `0600`, never overwriting); commands are not
+accepted at that prompt. A first word after `--` containing `=` is refused: set
+variables in your shell before `canopycms`, e.g.
+`AWS_PROFILE=prod canopycms init-github-app create -- aws …`.
 
 If you already keep one JSON document per environment, create the secret
 yourself and point `GITHUB_APP_PRIVATE_KEY_SECRET_JSON_FIELD` at the field —
@@ -503,14 +502,15 @@ GitHub call the worker makes, declared as `CANOPY_APP_PERMISSIONS` in
 each entry, and held there by a test that drives the worker's dispatch table and
 fails if a call is added that the set does not cover.
 
-**Register one App per site.** It is tempting to share a single App across every
-repository you run CanopyCMS on, and it would be a mistake. A GitHub App's
-private key is App-level, and scoping an installation to one repository is a
-choice made when a token is minted, not a boundary GitHub enforces against
-whoever holds the key: anyone with the key can list the App's installations and
-mint a token for any of them. Since each site's worker must read the key at
-runtime, one shared App means a compromise of one site's secret store grants
-write access to every other site's repository.
+One known gap, reported in public GitHub issues and not reproduced here: GitHub
+refuses a push that creates or updates a file under `.github/workflows/` without
+the workflows permission (the `workflow` scope, for a classic PAT), and a content
+branch rebased across a base-branch workflow change may count as one.
+
+**Register one App per site.** Anyone holding an App's key can mint a token for
+any of its installations, so one App shared across sites lets a compromise of
+one site's secret store write to every other site's repository — see
+[ARCHITECTURE.md](../ARCHITECTURE.md#why-one-github-app-per-site-not-one-shared-across-an-organisation).
 
 #### Check it before you trust it
 
@@ -548,12 +548,8 @@ variables and secret, all `CANOPY_`-prefixed, which the workflow maps back onto
 the unprefixed names above. See
 [Repository secrets and variables](#repository-secrets-and-variables).
 
-Five things worth knowing before you choose:
+Four things worth knowing before you choose:
 
-- **Exactly one credential.** All three App variables together, and
-  `GITHUB_TOKEN_SECRET_ARN` unset — configuring both is refused at `cdk synth`,
-  because two credentials leave it undefined which identity a push or a pull
-  request acts as. A partial set of the three is refused too.
 - **The private key is ARN-only.** There is no plain-value alternative and there
   cannot be one: the worker's configuration arrives as a `.env` file that systemd
   reads as `EnvironmentFile=`, where a newline starts a new variable, and a PEM
@@ -588,13 +584,10 @@ GITHUB_TOKEN_SECRET_ARN=arn:aws:secretsmanager:us-east-1:123456789012:secret:my-
 GITHUB_TOKEN_SECRET_JSON_FIELD=CANOPYCMS_GITHUB_TOKEN
 ```
 
-Those are the **environment variables the CDK app reads**, which is what you set when you
-deploy from a laptop. Deploying from the generated GitHub Actions workflow, you set the
-matching repository _variables_ instead, and one of the two names differs: the GitHub one is
-stored as `CANOPY_GITHUB_TOKEN_SECRET_JSON_FIELD`, because GitHub refuses to create any
-secret or variable whose name starts with `GITHUB_` — the same reason its ARN is stored as
-`CANOPY_GITHUB_TOKEN_SECRET_ARN`. The workflow maps it back to the unprefixed name above.
-See [Repository secrets and variables](#repository-secrets-and-variables).
+Those are the **environment variables the CDK app reads**, for a deploy from a laptop. From
+the generated GitHub Actions workflow, set the repository variable
+`CANOPY_GITHUB_TOKEN_SECRET_JSON_FIELD` instead
+([why the prefix](#repository-secrets-and-variables)).
 
 The worker then reads that key out of the document. Leave the `_JSON_FIELD`
 variable unset and behaviour is exactly as before — the whole value is the
@@ -627,11 +620,11 @@ its own — **you do not need to redeploy or replace the instance.**
 
 How long it takes, and why:
 
-| Secret                 | Picked up within | Noticed by                                                  |
-| ---------------------- | ---------------- | ----------------------------------------------------------- |
-| GitHub token           | ~5 minutes       | a failed publish, or the git sync, which fetches that often |
-| Clerk secret key       | ~15 minutes      | the auth-cache refresh                                      |
-| GitHub App private key | not re-read      | — see below                                                 |
+| Secret                 | Picked up within       | Noticed by                                                    |
+| ---------------------- | ---------------------- | ------------------------------------------------------------- |
+| GitHub token           | ~5 minutes (up to ~10) | a failed publish, or the git sync, which runs every 5 minutes |
+| Clerk secret key       | ~15 minutes            | the auth-cache refresh                                        |
+| GitHub App private key | not re-read            | — see below                                                   |
 
 The re-read is **reactive**: the worker re-reads a secret only after the
 operation using it has just failed, so a healthy deployment makes no
@@ -639,12 +632,15 @@ operation using it has just failed, so a healthy deployment makes no
 instant — the worker finds out by trying and failing once.
 
 For the GitHub token, **store the new value before you revoke the old one.**
-Then the first publish to meet the revoked token re-reads straight away, and its
-automatic retry a few seconds later normally goes out on the new token, so the
-publish goes through. Revoke first and there can be a gap of up to five minutes
-in which a publish fails and has to be resubmitted: a failure during the gap
-re-reads the old value, and the five-minute floor described below then holds off
-the next re-read.
+Then the first publish to meet the revoked token normally re-reads straight away,
+and its automatic retry goes out on the new token. Normally, not always: the
+worker re-reads at most once every five minutes (and calls its credential
+provider at most once a minute), and any failure — a sync, or an unrelated
+publish — can use that read. If one landed shortly before your revocation, that
+publish can still fail and need resubmitting. The two limits can also stack,
+which is where the table's ~10 minutes comes from. Revoke first and a failure in
+the gap re-reads the old value, so publishes can fail for up to about six
+minutes.
 
 A secret that is simply wrong, rather than rotated, does not turn into a loop.
 The worker re-reads at most once every five minutes per secret, and when the
@@ -657,11 +653,13 @@ which is the existing boot-time retry).
 
 Two things to know:
 
-- **A GitHub App private key is read once, at boot.** Rotating one needs an
-  instance replacement (`cdk deploy`, or terminate the instance and let the ASG
-  replace it). This is rarely a problem in practice: an App private key does not
-  expire, which is much of why an App is worth having. The hourly installation
-  tokens minted from it refresh themselves and need nothing here.
+- **A GitHub App private key is read once, at boot.** To rotate one: generate
+  the new key, store it in Secrets Manager, **replace the instance**
+  (`cdk deploy`, or terminate it and let the ASG replace it), and only then
+  delete the old key on GitHub. Delete first and nothing fails at once — tokens
+  already minted keep working for up to an hour — then every publish fails with
+  a 401 until the instance is replaced, and each branch that failed meanwhile
+  must be resubmitted.
 - **A plain env var is never re-read.** If you set `CANOPYCMS_GITHUB_TOKEN` or
   `CLERK_SECRET_KEY` directly instead of pointing at an ARN, the value is
   whatever the instance booted with. Re-reading an ARN you deliberately

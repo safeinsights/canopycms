@@ -656,10 +656,11 @@ export interface CanopyCmsServiceProps {
    * GitHub App ID, to authenticate the worker as a GitHub App installation
    * instead of as a personal access token.
    *
-   * **The token is the default and stays first-class.** Registering and
-   * installing a GitHub App needs organisation-admin rights that a
-   * single-maintainer site does not have, so this is the "if your organisation
-   * requires it" option, not a direction of travel. Nothing about
+   * **The token is the default and stays first-class.** Registering a GitHub
+   * App under an organisation takes an owner of that organisation (or a GitHub
+   * App manager for all its Apps), which many adopters are not, so this is the
+   * "if your organisation requires it" option, not a direction of travel.
+   * Nothing about
    * `githubTokenSecretArn` is deprecated or warned about.
    *
    * All three App props (`githubAppId`, `githubAppInstallationId`,

@@ -112,8 +112,9 @@ describe('buildGitHubAppAuth: what reaches createAppAuth', () => {
     // `new Octokit({ authStrategy })` does `hook.wrap('request', auth.hook)`
     // immediately after calling the strategy (@octokit/core@5). A provider
     // returning a bare async function typechecks against
-    // InstallationTokenMinter and then throws "Cannot read properties of
-    // undefined (reading 'bind')" from inside start().
+    // InstallationTokenMinter, constructs without complaint, and then throws
+    // "Cannot read properties of undefined (reading 'bind')" at the first REST
+    // request (a PR create or a merge poll), long after boot.
     const strategy = buildGitHubAppAuth(credentials).octokitAuth.authStrategy({})
     expect(strategy).toHaveProperty('hook')
   })

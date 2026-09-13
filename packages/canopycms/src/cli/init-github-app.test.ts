@@ -1,7 +1,7 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { EventEmitter } from 'node:events'
 import { generateKeyPairSync, randomUUID } from 'node:crypto'
-import { mkdtemp, readFile, writeFile, stat } from 'node:fs/promises'
+import { mkdtemp, readdir, readFile, writeFile, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { PassThrough } from 'node:stream'
@@ -21,12 +21,14 @@ import {
   handOffWithRetry,
   manifestPostUrl,
   askLine,
+  initGitHubApp,
   parseKeyRetryAnswer,
   pressEnter,
   readbackVerdict,
   resetStdinStateForTesting,
   startCallbackServer,
   type AppTarget,
+  type KeyRetryChoice,
 } from './init-github-app'
 import { mockConsole, type MockConsole } from '../test-utils'
 
@@ -64,7 +66,9 @@ describe('the App manifest', () => {
     }
     // The ones a PR bot most plausibly acquires by accident: labels and
     // assignees go through the Issues API, and `workflows` is needed to push
-    // anything under .github/workflows. This package does neither.
+    // anything under .github/workflows. This package edits neither, though a
+    // rebased push can still carry a base-branch workflow change (an open P1:
+    // worker-push-refused-when-base-changes-workflows.md).
     expect(permissions.issues).toBeUndefined()
     expect(permissions.workflows).toBeUndefined()
     expect(permissions.administration).toBeUndefined()
@@ -215,6 +219,118 @@ describe('appJwt', () => {
   })
 })
 
+describe('verify normalises the key the same way the worker does', () => {
+  // THE DEFECT: `readBackInstallation` signed with the RAW string `cli.ts`
+  // read from `--key-file`/`--key-stdin`, while the worker normalises its own
+  // key first (`normalizeGitHubAppPrivateKey`, `worker/github-auth.ts`) --
+  // trimming it, unescaping a literal `\n`, and unwrapping a base64-wrapped
+  // PEM. `docs/deploying-to-aws.md` documents the worker accepting all of
+  // those shapes and tells operators to pipe that exact secret into
+  // `verify --key-stdin`, so `verify` used to exit 1 with "could not sign a
+  // JWT" on a key the worker boots on fine. MEASURED (reviewer, round 1): raw
+  // OK; `\n`-escaped THROWS; base64-wrapped THROWS; leading whitespace
+  // THROWS -- all OK after normalisation.
+  let consoleSpy: MockConsole
+
+  beforeEach(() => {
+    consoleSpy = mockConsole()
+  })
+
+  afterEach(() => {
+    consoleSpy.restore()
+    vi.unstubAllGlobals()
+  })
+
+  /**
+   * Stubs the four api.github.com calls `readBackInstallation` makes, all
+   * succeeding, for one installation holding exactly the permissions this
+   * package needs -- so a passing run is unambiguous: exit code 0 with no
+   * "could not sign a JWT" / "could not be normalised" line, and that line
+   * is the whole thing this test exists to catch a regression in.
+   */
+  function stubGitHubApi(installationId = 555) {
+    const response = (body: unknown, status = 200) => ({
+      ok: status >= 200 && status < 300,
+      status,
+      text: async () => (body === undefined ? '' : JSON.stringify(body)),
+    })
+    const fetchMock = vi.fn(async (input: string | URL, init?: { method?: string }) => {
+      const url = input.toString()
+      const method = (init?.method ?? 'GET').toUpperCase()
+      if (method === 'GET' && url.endsWith('/repos/an-org/a-content-site/installation')) {
+        return response({
+          id: installationId,
+          permissions: { contents: 'write', pull_requests: 'write', metadata: 'read' },
+          repository_selection: 'selected',
+          suspended_at: null,
+          app_slug: 'a-content-site-canopycms',
+        })
+      }
+      if (method === 'GET' && url.includes('/app/installations?')) {
+        return response([{ id: installationId }])
+      }
+      if (method === 'POST' && url.endsWith(`/app/installations/${installationId}/access_tokens`)) {
+        return response({ token: 'ghs_faketoken' })
+      }
+      if (method === 'DELETE' && url.endsWith('/installation/token')) {
+        return response(undefined, 204)
+      }
+      throw new Error(`unstubbed request: ${method} ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+  }
+
+  async function verifyWith(privateKey: string): Promise<number> {
+    return initGitHubApp({
+      mode: 'verify',
+      projectDir: '/tmp',
+      owner: 'an-org',
+      repo: 'a-content-site',
+      appId: '123456',
+      privateKey,
+    })
+  }
+
+  it('accepts the raw PEM, as before', async () => {
+    stubGitHubApi()
+    expect(await verifyWith(testKey())).toBe(0)
+  })
+
+  it('accepts a key whose newlines are literal `\\n` escapes', async () => {
+    stubGitHubApi()
+    const escaped = testKey().trimEnd().replace(/\n/g, '\\n')
+    expect(escaped).not.toContain('\n')
+    expect(await verifyWith(escaped)).toBe(0)
+  })
+
+  it('accepts a base64-wrapped PEM', async () => {
+    stubGitHubApi()
+    const wrapped = Buffer.from(testKey(), 'utf8').toString('base64')
+    expect(wrapped).not.toContain('BEGIN')
+    expect(await verifyWith(wrapped)).toBe(0)
+  })
+
+  it('accepts a key with surrounding whitespace', async () => {
+    stubGitHubApi()
+    expect(await verifyWith(`\n  ${testKey().trim()}\n  `)).toBe(0)
+  })
+
+  it('still reports the "could not sign a JWT" failure for a key that is not a PEM at all', async () => {
+    // The other guidance must survive: a key that parses (once normalised)
+    // takes the path above, but garbage that never becomes a PEM must still
+    // fail with the ORIGINAL "could not sign a JWT" message pointing at the
+    // client-secret mixup -- not the new "could not be normalised" one, since
+    // that one is unreachable for the same input (normalisation itself throws
+    // first). This pins that `normalizeGitHubAppPrivateKey`'s own error is
+    // the one surfaced, distinctly worded from the JWT-signing failure below.
+    stubGitHubApi()
+    const exitCode = await verifyWith('not a pem at all')
+    expect(exitCode).toBe(1)
+    expect(consoleSpy).toHaveErrored('could not be normalised')
+    expect(consoleSpy.all().error.join('\n')).not.toContain('could not sign a JWT')
+  })
+})
+
 describe('readbackVerdict', () => {
   const healthy = {
     id: 42,
@@ -315,11 +431,16 @@ describe('readbackVerdict', () => {
 describe('handOffKey', () => {
   const PEM = '-----BEGIN RSA PRIVATE KEY-----\nnot-a-real-key\n-----END RSA PRIVATE KEY-----\n'
 
-  /** A fake child whose stdin and exit behaviour each test chooses. */
+  /**
+   * A fake child whose stdin, exit behaviour and bridge status each test
+   * chooses. `catStatus` is what the `sh` bridge reports on fd 3 as `cat`'s exit
+   * status (see `KEY_INPUT_BRIDGE`): a real `0` unless a test says otherwise.
+   */
   function fakeChild(options: {
     exitCode?: number | null
     stdin?: PassThrough | null
     emitError?: Error
+    catStatus?: string
   }) {
     const written: string[] = []
     const child = new EventEmitter() as ChildProcess
@@ -336,6 +457,10 @@ describe('handOffKey', () => {
     // Writable but not structurally that intersection, so the assignment is
     // narrowed once here rather than at every use.
     child.stdin = stdin as ChildProcess['stdin']
+    const statusChannel = new PassThrough()
+    statusChannel.end(options.catStatus ?? '0\n')
+    // `stdio` is readonly on `ChildProcess`, so it is defined rather than assigned.
+    Object.defineProperty(child, 'stdio', { value: [child.stdin, null, null, statusChannel] })
     queueMicrotask(() => {
       if (options.emitError) {
         child.emit('error', options.emitError)
@@ -421,19 +546,34 @@ describe('handOffKey', () => {
     // The documented limit, pinned as BEHAVIOUR rather than as a comment, so a
     // future change that starts reporting this as a failure is a deliberate one.
     //
-    // MEASURED against real children: `sh -c 'exec 0<&-; exit 0'` and
-    // `sh -c 'head -c 5 >/dev/null; exit 0'` both report stored, because a
-    // ~1.7KB PEM fits entirely in a 64KB pipe buffer — the write completes into
-    // the kernel whether or not the child ever reads it, so no EPIPE is raised
-    // and nothing locally distinguishes them from a command that stored the key.
-    // The tempting fix (wait for the stream to flush) measures the buffer, not
-    // the child, and would look like a check while being one.
+    // MEASURED against real children through `handOffKey` on macOS, before the
+    // `sh` bridge and after it alike: `true`, `sh -c 'exec 0<&-; exit 0'` and
+    // `sh -c 'head -c 5 >/dev/null; exit 0'` were each reported stored 100
+    // times of 100. A ~1.7KB PEM fits in one write into the pipe buffer, so
+    // `cat` exits 0 whether or not the command ever reads it, and nothing
+    // locally distinguishes them from a command that stored the key. The
+    // tempting fix (wait for the stream to flush) measures the buffer, not the
+    // child, and would look like a check while being one.
     const stdin = new PassThrough()
     stdin.resume() // accepts and discards, exactly as the kernel buffer does
     const { child } = fakeChild({ stdin, exitCode: 0 })
     const result = await handOffKey(PEM, { kind: 'command', argv: ['store'] }, () => child)
     expect(result.stored).toBe(true)
   })
+
+  it.skipIf(process.platform === 'win32')(
+    'does not let a zero exit stand when the bridge never reports `cat`’s status',
+    async () => {
+      // Stored needs a `0` from `cat`, not merely the absence of a failure. A
+      // status that never arrives — a bridge that died before reporting, or a
+      // channel that was never there — is no evidence the key reached the
+      // command, so it must count against it rather than be skipped.
+      const { child } = fakeChild({ exitCode: 0, catStatus: '' })
+      const result = await handOffKey(PEM, { kind: 'command', argv: ['store'] }, () => child)
+      expect(result.stored).toBe(false)
+      expect(result.detail).toContain('reported no status')
+    },
+  )
 
   it('reports a child that could not be spawned at all', async () => {
     const { child } = fakeChild({ emitError: new Error('spawn ENOENT') })
@@ -469,7 +609,88 @@ describe('handOffKey', () => {
     expect(result.detail).toContain('already exists')
     expect(await readFile(target, 'utf8')).toBe('an existing key')
   })
+
+  it('refuses a first command word containing `=`, before spawning anything', async () => {
+    // Through the sh bridge (`exec env -- "$@"`) a leading word containing `=` is
+    // an environment assignment, not a command. With nothing after it, `env`
+    // printed the environment and exited 0, so the key was reported stored and
+    // discarded. A direct spawn of such a word always failed with ENOENT.
+    for (const argv of [
+      ['FOO=bar'],
+      ['AWS_PROFILE=prod aws secretsmanager create-secret --secret-string file:///dev/stdin'],
+    ]) {
+      const result = await handOffKey(PEM, { kind: 'command', argv })
+      expect(result.stored).toBe(false)
+      expect(result.detail).toContain('is not a command')
+    }
+  })
 })
+
+describe.skipIf(process.platform === 'win32')(
+  'handOffKey through a real destination command',
+  () => {
+    // Real children rather than fakes: the defect was in what a real child finds
+    // on its stdin, which no fake can show. Not on Windows, which has no bridge.
+    const PEM = '-----BEGIN RSA PRIVATE KEY-----\nnot-a-real-key\n-----END RSA PRIVATE KEY-----\n'
+
+    it('gives the command a real pipe on its stdin, not a socket', async () => {
+      // THE DEFECT: Node's `stdio: 'pipe'` hands a child one end of a SOCKET pair
+      // on Unix, so `[ -p /dev/stdin ]` — true only on a real pipe — exited 1
+      // before the bridge. `cat >/dev/null` reads the key too, so the verdict
+      // rests on the pipe test alone and not on a command that exits without
+      // reading racing `cat` (see `handOffKey`).
+      const result = await handOffKey(PEM, {
+        kind: 'command',
+        argv: ['sh', '-c', '[ -p /dev/stdin ] && cat >/dev/null'],
+      })
+      expect(result).toEqual({ stored: true, detail: '`sh` accepted the key and exited 0' })
+    })
+
+    it('lets `cp /dev/stdin <file>` copy the key, which a socket on stdin defeated', async () => {
+      // MEASURED before the bridge, on macOS: `cp` printed "/dev/stdin is a
+      // socket (not copied)", exited 0, and was reported stored with no file
+      // written — so it is the file's CONTENT that has to be asserted, not the
+      // verdict. On Linux, opening /dev/stdin on a socket fails with ENXIO.
+      const dir = await mkdtemp(join(tmpdir(), 'canopy-bridge-cp-'))
+      const target = join(dir, 'out')
+      const result = await handOffKey(PEM, { kind: 'command', argv: ['cp', '/dev/stdin', target] })
+      expect(result.stored).toBe(true)
+      expect(await readFile(target, 'utf8')).toBe(PEM)
+    })
+
+    it('reports a command that is not on PATH by its exit 127, with a clear detail', async () => {
+      // Through the bridge a missing command is `env` exiting 127 rather than a
+      // spawn ENOENT, so the detail has to say what 127 means. `env`'s own "No
+      // such file or directory" line goes to the inherited stderr, as it does
+      // for the operator.
+      const result = await handOffKey(PEM, {
+        kind: 'command',
+        argv: ['canopycms-test-no-such-command'],
+      })
+      expect(result).toEqual({
+        stored: false,
+        detail:
+          '`canopycms-test-no-such-command` exited 127, which is how a command that could not be ' +
+          'found is reported — check the name, and that it is on PATH',
+      })
+    })
+
+    it('does not report stored when the command exits 0 leaving more unread than a pipe holds', async () => {
+      // `true` exits 0 having read nothing. With a real ~1.7KB key that is a race
+      // `cat` wins — its one write lands in the pipe buffer before `true` closes
+      // the read end — MEASURED as stored 100 times of 100 on macOS, so that case
+      // cannot be pinned deterministically. Input larger than a pipe buffer
+      // (64KB on Linux and on macOS) can: `cat` cannot write it all into a pipe
+      // nobody reads, so it dies of SIGPIPE however the timing falls. MEASURED on
+      // macOS at this size: the verdict came from `cat`'s status (141), not from
+      // a write error on this side, 20 times of 20 — which is what makes this
+      // the test of the fd-3 check rather than of `writeError`.
+      const input = `${PEM}${'x'.repeat(100_000)}\n`
+      const result = await handOffKey(input, { kind: 'command', argv: ['true'] })
+      expect(result.stored).toBe(false)
+    })
+  },
+)
 
 describe('prompting after stdin has ended', () => {
   // REGRESSION, and the worst outcome this command had. `process.stdin` ends
@@ -524,26 +745,82 @@ describe('prompting after stdin has ended', () => {
     stream.write('  /tmp/somewhere.pem  \n')
     expect(await answer).toBe('/tmp/somewhere.pem')
   })
+
+  it('marks stdin ended when EOF lands on a line that WAS answered, instead of hanging the next prompt', async () => {
+    // THE SECOND DEFECT, subtler than the first: `stdinEnded` used to be set
+    // ONLY in the `!answered` branch of `'close'`. Node's readline flushes a
+    // pending partial line as a final `'line'` event BEFORE `'close'` when the
+    // input ends, so "text then EOF" -- `printf 'abc'` with no trailing
+    // newline, or a TTY operator typing text and pressing Ctrl-D twice --
+    // answers this prompt normally (`answered` is true) while the stream ALSO
+    // finishes in that same moment, and that used to go unrecorded.
+    //
+    // MEASURED with a scratch driver before the fix: `printf 'abc' | node
+    // --import tsx <driver>` printed `first = "abc" stdinEnded = false`, then
+    // printed the second prompt and never printed anything after it -- node
+    // exiting 0 with the second `askLine` never settling. After the fix, the
+    // same input prints `first = "abc" stdinEnded = true` and the second
+    // prompt short-circuits to `null` immediately.
+    const stream = new PassThrough()
+    Object.defineProperty(process, 'stdin', { value: stream, configurable: true })
+    const firstPromise = askLine('first')
+    stream.write('abc')
+    stream.end() // EOF with NO trailing newline -- the exact shape that hid the bug.
+    expect(await firstPromise).toBe('abc')
+
+    // Bounded wait: a regression here HANGS (a readline interface created on
+    // an already-ended stream never emits `'line'` or `'close'`), so this must
+    // fail the test rather than let the whole suite time out.
+    const TIMED_OUT = Symbol('timed out')
+    const second = await Promise.race([
+      askLine('second'),
+      new Promise((resolve) => setTimeout(() => resolve(TIMED_OUT), 200)),
+    ])
+    expect(second).not.toBe(TIMED_OUT)
+    expect(second).toBeNull()
+  })
 })
 
 describe('parseKeyRetryAnswer', () => {
-  // Table test: every rule, in the order the function applies them.
-  it.each<[string | null, string]>([
-    [null, 'give-up'],
-    ['', 'reprompt'],
-    ['   ', 'reprompt'],
-    ['give up', 'give-up'],
-    ['GIVE   up', 'give-up'],
-    ['  give up  ', 'give-up'],
-    ['|', 'reprompt'],
-    ['| pbcopy', 'command'],
-    ['pbcopy', 'reprompt'],
-    ['wl-copy', 'reprompt'],
-    ['./key.pem', 'file'],
-    ['dir\\key.pem', 'file'],
-    ['aws secretsmanager create-secret --secret-string file:///dev/stdin', 'command'],
-  ])('routes %j to %s', (answer, expectedKind) => {
-    expect(parseKeyRetryAnswer(answer).kind).toBe(expectedKind)
+  const COMMANDS_REFUSED = 'commands are not accepted at this prompt'
+
+  // Table test: every rule, in the order the function applies them. The third
+  // column is the path for `file` and a fragment of the reason for `reprompt`,
+  // so a row re-prompted for the WRONG reason fails as well.
+  it.each<[string | null, KeyRetryChoice['kind'], string]>([
+    [null, 'give-up', ''],
+    ['', 'reprompt', 'nothing was entered'],
+    ['   ', 'reprompt', 'nothing was entered'],
+    ['give up', 'give-up', ''],
+    ['GIVE up', 'give-up', ''],
+    ['  GIVE   up  ', 'give-up', ''],
+    // Every shape the removed command parser turned into literal argv words.
+    // `tee key.pem > /dev/null` wrote 0644 copies of the key into the working
+    // directory and reported it stored.
+    ['tee key.pem > /dev/null', 'reprompt', COMMANDS_REFUSED],
+    ['tee semi.pem; chmod 600 semi.pem', 'reprompt', COMMANDS_REFUSED],
+    ['tee a && echo ok', 'reprompt', COMMANDS_REFUSED],
+    ['"my key.pem"', 'reprompt', COMMANDS_REFUSED],
+    ['./my\tkey.pem', 'reprompt', COMMANDS_REFUSED],
+    ['| pbcopy', 'reprompt', COMMANDS_REFUSED],
+    ['|pbcopy', 'reprompt', COMMANDS_REFUSED],
+    ['|', 'reprompt', COMMANDS_REFUSED],
+    [
+      'aws secretsmanager create-secret --secret-string file:///dev/stdin',
+      'reprompt',
+      COMMANDS_REFUSED,
+    ],
+    ['~/k.pem', 'reprompt', '`~` is not expanded'],
+    ['pbcopy', 'reprompt', 'Enter ./pbcopy'],
+    ['./k.pem', 'file', './k.pem'],
+    ['/abs/k.pem', 'file', '/abs/k.pem'],
+    ['dir\\k.pem', 'file', 'dir\\k.pem'],
+  ])('routes %j to %s', (answer, expectedKind, expectedDetail) => {
+    const choice = parseKeyRetryAnswer(answer)
+    const detail =
+      choice.kind === 'file' ? choice.filePath : choice.kind === 'reprompt' ? choice.reason : ''
+    expect(choice.kind).toBe(expectedKind)
+    expect(detail).toContain(expectedDetail)
   })
 
   it('never gives up on a blank line, even though that used to be the rule', () => {
@@ -568,15 +845,6 @@ describe('parseKeyRetryAnswer', () => {
     expect(parseKeyRetryAnswer('  Give Up  ')).toEqual({ kind: 'give-up' })
   })
 
-  it('routes a leading `|` to a command, even for a single word', () => {
-    expect(parseKeyRetryAnswer('| pbcopy')).toEqual({ kind: 'command', argv: ['pbcopy'] })
-  })
-
-  it('reprompts when nothing follows a lone `|`', () => {
-    const result = parseKeyRetryAnswer('|')
-    expect(result.kind).toBe('reprompt')
-  })
-
   it('reprompts a one-word answer with no path separator, and writes nothing', () => {
     // THE DEFECT: a bare word used to be routed to `{ kind: 'file' }`, which
     // wrote the PEM to that name in process.cwd() — normally the repo root.
@@ -584,8 +852,27 @@ describe('parseKeyRetryAnswer', () => {
     expect(result).toEqual({
       kind: 'reprompt',
       reason:
-        '"pbcopy" could be a file or a command. Enter ./pbcopy to write a file here, ' +
-        'or | pbcopy to pipe the key into it.',
+        '"pbcopy" is not a path, and commands are not accepted here. Enter ./pbcopy to write ' +
+        'the key to a file of that name in the current directory.',
+    })
+  })
+
+  it('refuses a command-shaped answer by naming the write-run-delete route', () => {
+    // The reason is the operator's only instruction for what to do instead, so
+    // it is pinned whole rather than by fragment.
+    expect(parseKeyRetryAnswer('tee key.pem > /dev/null')).toEqual({
+      kind: 'reprompt',
+      reason:
+        'commands are not accepted at this prompt — only a file path. To send the key to a ' +
+        'command, write it to a file here, run your own command against that file, then ' +
+        'delete the file. (A path containing spaces is not supported here either.)',
+    })
+  })
+
+  it('refuses a leading `~`, which nothing here expands', () => {
+    expect(parseKeyRetryAnswer('~/k.pem')).toEqual({
+      kind: 'reprompt',
+      reason: '`~` is not expanded here. Enter an absolute path, or one starting with ./',
     })
   })
 
@@ -594,15 +881,6 @@ describe('parseKeyRetryAnswer', () => {
     expect(parseKeyRetryAnswer('dir\\key.pem')).toEqual({
       kind: 'file',
       filePath: 'dir\\key.pem',
-    })
-  })
-
-  it('routes two or more tokens to a command, split on whitespace with no shell', () => {
-    expect(
-      parseKeyRetryAnswer('aws secretsmanager create-secret --secret-string file:///dev/stdin'),
-    ).toEqual({
-      kind: 'command',
-      argv: ['aws', 'secretsmanager', 'create-secret', '--secret-string', 'file:///dev/stdin'],
     })
   })
 })
@@ -629,6 +907,15 @@ describe('handOffWithRetry', () => {
     const stream = new PassThrough()
     Object.defineProperty(process, 'stdin', { value: stream, configurable: true })
     return stream
+  }
+
+  /** Resolves once `console.error` has printed `fragment`; throws after ~2s rather than hanging. */
+  async function waitForError(fragment: string): Promise<void> {
+    for (let i = 0; i < 400; i++) {
+      if (consoleSpy.all().error.some((message) => message.includes(fragment))) return
+      await new Promise((resolve) => setTimeout(resolve, 5))
+    }
+    throw new Error(`console.error never printed "${fragment}"`)
   }
 
   it('recovers from a stray blank Enter instead of giving up, and stores the key', async () => {
@@ -676,6 +963,40 @@ describe('handOffWithRetry', () => {
     expect(stored).toBe(true)
     await expect(readFile(join(dir, 'pbcopy'), 'utf8')).rejects.toThrow()
     expect(await readFile(goodPath, 'utf8')).toBe(PEM)
+  })
+
+  it('refuses a shell-shaped answer, writes nothing for it, then stores the key at a path', async () => {
+    // THE ROUND-3 DEFECT: the prompt split a typed command on whitespace with no
+    // shell, so `>` was an ordinary argv word and `tee key.pem > /dev/null` ran
+    // `tee` with three file names — writing 0644 copies of the key to `key.pem`
+    // and to a file literally named `>` in process.cwd(), normally the
+    // repository root, and reporting it stored. The cwd here is a throwaway
+    // directory so a regression leaves its evidence in it, and the WHOLE
+    // listing is checked rather than the names `tee` happened to use.
+    const cwd = await mkdtemp(join(tmpdir(), 'canopy-retry-shell-'))
+    process.chdir(cwd)
+    const elsewhere = await mkdtemp(join(tmpdir(), 'canopy-retry-target-'))
+    const badDestination = {
+      kind: 'file' as const,
+      filePath: join(elsewhere, 'missing', 'key.pem'),
+    }
+    const goodPath = join(elsewhere, 'key.pem')
+
+    const stdin = liveStdin()
+    const resultPromise = handOffWithRetry(PEM, badDestination)
+    await new Promise((resolve) => setImmediate(resolve))
+    stdin.write('tee key.pem > /dev/null\n')
+    // Waits for the refusal itself rather than a fixed number of turns: a
+    // regression runs `tee` instead, reports stored, and never prints it.
+    await waitForError('commands are not accepted at this prompt')
+    expect(await readdir(cwd)).toEqual([])
+    stdin.write(`${goodPath}\n`)
+
+    expect(await resultPromise).toBe(true)
+    expect(await readdir(cwd)).toEqual([])
+    expect(await readFile(goodPath, 'utf8')).toBe(PEM)
+    // 0o777 masks off the file-type bits; only the permission bits remain.
+    expect((await stat(goodPath)).mode & 0o777).toBe(0o600)
   })
 
   it('still gives up when the operator types "give up"', async () => {

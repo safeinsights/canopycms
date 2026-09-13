@@ -31,8 +31,8 @@ import type { ReactiveSecret } from './credential-refresh'
  * organisation, then does a membership fetch per user — so retrying it on any
  * failure would double that entire workload on every transient 5xx or network
  * blip. The GitHub side has no comparable workload behind its retry (the
- * "retry" there is just the next scheduled sync), which is why it re-reads
- * unconditionally and this does not.
+ * "retry" there is the task's next attempt or the next scheduled sync), which
+ * is why it re-reads unconditionally and this does not.
  *
  * Read STRUCTURALLY off `.status` rather than by `instanceof
  * ClerkAPIResponseError`: `@clerk/backend` is a peer dependency here, so an

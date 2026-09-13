@@ -53,8 +53,9 @@ export const shouldRetrySecondaryRateLimit = (retryAfter: number, retryCount: nu
  */
 export interface OctokitAuthStrategyOptions {
   /**
-   * Octokit calls this with its own `{ request, log, octokit, octokitOptions }`
-   * merged over `auth` below, and expects an object carrying a `.hook`.
+   * Octokit calls this with `{ request, log, octokit, octokitOptions }`, with
+   * the fields of `auth` below merged over them, and expects an object
+   * carrying a `.hook`.
    * `createAppAuth(…)`'s return value satisfies that; so does a closure
    * returning an already-constructed one, which is how a single auth instance
    * (and therefore a single installation-token cache) can be shared with a

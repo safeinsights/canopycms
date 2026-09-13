@@ -45,3 +45,43 @@ The comment stripper (`withoutComments`) also starts a block comment inside a st
 `'content/*'`, and treats `//` inside a URL string as a line comment, so it can swallow code. The
 behavioural half of that test still covers the three files that call GitHub today; the backstop
 exists to catch a fourth.
+
+## Round 3 LOWs (review at 7b2beff7, 2026-09-13)
+
+Round 3's two MEDIUMs are being fixed on `fix/worker-credential-epic-review-final`, as the
+maintainer decided. The retry prompt now accepts a file path only, and a destination command
+reads the key from a real pipe bridged through `sh`, not a socket. These four LOWs are filed.
+
+### 5. Text then Ctrl-D twice at the retry prompt skips the install wait
+
+Since round 2's fix, a line ended by EOF marks stdin as ended. That is correct, but if the line
+was a good path, the key is stored and `pressEnter('Press Enter once it is installed.')` then
+returns at once. The readback runs before anyone could install the App and exits 1 with "No
+installation … (HTTP 404)". The reviewer confirmed this on a pty. Item 3's proposed remedy,
+re-asking after an empty readback, cannot help, because stdin has ended. Say so in the output
+instead: "stdin closed — install the App, then run `verify`".
+
+### 6. Origin detection misreads a `host:port` remote and accepts look-alike hosts
+
+`detectGitHubRepo` (`packages/canopycms/src/cli/project-detect.ts`, shared with `init-deploy`)
+mis-parses two remotes the reviewer ran:
+
+- `ssh://git@ssh.github.com:443/acme/site.git` (GitHub's documented SSH-over-443 form) and
+  `https://github.com:443/acme/site.git` both parse as owner `443`, repo `acme/site`.
+- `https://notgithub.com/acme/site.git` parses as github.com `acme/site`.
+
+### 7. `create` accepts an empty name and an `owner/repo` value for `--repo`
+
+- **Empty name.** A bare `--name` followed by another flag parses as `""`, so the slug is empty,
+  `checkNameAvailable` requests `/apps/`, and the manifest goes out nameless. A whitespace-only or
+  emoji-only name also produces an empty slug.
+- **`owner/repo` in `--repo`.** `--repo acme/site` builds the manifest URL
+  `https://github.com/acme/acme/site`, and the readback path can never match. The App gets
+  created, and every readback fails.
+
+### 8. A rate-limited account-type lookup blocks `create` with no override
+
+The unauthenticated `GET /users/{owner}` is limited to 60 requests an hour per IP. A 403 makes
+`detectAccountType` return `null` and discard GitHub's message, and `create` exits with "Check
+the name and your network". There is no flag to state user or organisation, although
+`resolveTarget` already exempts `verify` from this lookup for exactly that reason.

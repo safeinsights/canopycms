@@ -38,27 +38,30 @@ import { getSecret, type GetSecretOptions } from './secrets'
  * For the GitHub token it is ACTIVE, and it is what bounds the cost. That token
  * has two triggers in core, a failed task and a failed git sync (see
  * `CmsWorker.refreshGitHubCredential`), and a task retries on a 5s/10s/20s
- * backoff — so a queue of publishes failing on a dead token would otherwise
- * read every few seconds. The floor makes that one read per interval, shared by
- * both triggers. The price of sharing it: a rotation is picked up at the first
- * failure after it that the floor permits, which is immediately unless some
- * failure in the last interval has already used the read, and then at most one
- * interval later. A publish that exhausts its retries inside that wait still
- * fails.
+ * backoff — so a queue of failing publishes would reach this provider at core's
+ * own floor, once a minute by default (`refreshGitHubTokenMinIntervalMs`). This
+ * floor makes that one read per five minutes, shared by both triggers. The price
+ * of sharing it: a rotation is picked up at the first failure after it that the
+ * floor permits, which is immediately unless some failure in the last interval
+ * has already used the read, and then normally at most one interval later
+ * (core's floor can push that to about two — see
+ * .claude/future-tasks/core-floor-shifts-provider-floor-phase.md). A publish
+ * that exhausts its retries inside that wait still fails.
  *
  * It is also a BACKSTOP against loop tuning, because both loop intervals are
  * adopter-configurable. `CANOPYCMS_GIT_SYNC_INTERVAL=10000` against a
  * permanently-broken credential would otherwise mean a `GetSecretValue` every
- * ten seconds for the life of the instance. With the floor, the worst case is
+ * minute (core's floor) for the life of the instance. With this floor, the worst case is
  * twelve `refresh()` attempts an hour per secret, no matter how the loops are
  * tuned or how many tasks fail.
  *
  * That is twelve `GetSecretValue` calls an hour in the normal case, but up to
- * FOUR times that if the SDK call is itself failing: one `refresh()` is one
- * `getSecret`, and `fetchSecretString` retries a TRANSPORT failure up to
+ * FOUR times that if the call itself is failing: one `refresh()` is one
+ * `getSecret`, and `fetchSecretString` retries any failed `send` up to
  * `retries` times (default 3, so four calls at 1s/2s/4s — see secrets.ts).
- * Forty-eight calls an hour is about 18 cents a month at $0.05 per 10,000, and
- * it needs Secrets Manager itself to be failing continuously for a month.
+ * Forty-eight calls an hour is about 17 cents a month at $0.05 per 10,000
+ * (AWS Secrets Manager API pricing, as of 2026), and it needs every read to
+ * fail for a month — an outage, or an IAM policy narrowed after boot.
  *
  * Note what it does NOT throttle: GitHub and Clerk traffic. The loops call
  * those on their own schedule whether or not a refresh happens, and this
@@ -156,9 +159,13 @@ export function createReactiveSecret(options: ReactiveSecretOptions): ReactiveSe
       if (!arn) return undefined
 
       const at = now()
-      // `>=`, so a minIntervalMs of 0 (a test, or an adopter opting out)
-      // permits every call rather than blocking on an identical timestamp.
-      if (lastReadAt !== undefined && at - lastReadAt < minIntervalMs) return undefined
+      // `<`, not `<=`, so a minIntervalMs of 0 (a test, or an adopter opting
+      // out) permits every call rather than blocking on an identical timestamp.
+      // `at >= lastReadAt`: a clock that stepped BACKWARDS counts as the floor
+      // having expired, rather than holding it shut for however far it stepped.
+      if (lastReadAt !== undefined && at >= lastReadAt && at - lastReadAt < minIntervalMs) {
+        return undefined
+      }
       // Stamped BEFORE the await, not after: stamping after lets two
       // overlapping calls each see an unstamped clock and both issue a read,
       // which is the floor not holding.

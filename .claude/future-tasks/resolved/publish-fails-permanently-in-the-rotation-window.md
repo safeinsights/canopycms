@@ -14,7 +14,7 @@ is the only site that calls `refreshCredential()`. It runs on the git-sync loop,
 A `push-*` task that meets a revoked PAT fails on a different clock:
 
 1. `git push` rejects with a status-less error (exit 128), so `isPermanentTaskFailure`
-   (`task-runner.ts:91-98`) returns false and the task is retried.
+   (`task-runner.ts:92-99`) returns false and the task is retried.
 2. Retries run at 5s / 10s / 20s — `backoffMs = Math.min(5000 * 2 ** (retryCount - 1), 60_000)`
    at `src/task-queue/task-queue.ts:258`, with `DEFAULT_MAX_RETRIES = 3` at `:24`.
 3. After roughly **35–50 seconds** (35s of backoff, plus up to one 5s task-poll interval
@@ -31,7 +31,7 @@ is strictly better — which is why it is P2 and not higher.
 ## Why it was not fixed in #334
 
 A wrapper around `processTaskQueue` cannot see it: `processTasks` catches each task's error
-internally and does not rethrow (`task-runner.ts:217-245`), so the outer caller observes
+internally and does not rethrow (`task-runner.ts:218-260`), so the outer caller observes
 nothing. The fix therefore has to reach into that catch, which means:
 
 - a new member on `TaskRunnerContext` (`worker-context.ts`) — and that file's INVARIANT is
@@ -80,7 +80,9 @@ awaits it and a read that never settled would stop every publish queued behind i
 provider's `new SecretsManagerClient(...)` (probed with only a region added) resolves
 `@smithy/node-http-handler@4.5.0` with an empty handler config in `legacy` defaults mode, and
 that handler arms no connection, request or socket timer when none is configured. So
-`refreshGitHubCredential` races the read against `taskTimeoutMs`.
+`refreshGitHubCredential` races the read against `taskTimeoutMs`. (Later commits gave that client
+transport timeouts and a 20s per-attempt deadline, but one read can still take 87s, over the 60s
+default `taskTimeoutMs`, so the race stays.)
 
 **The test that matters**, per "What to do" above, is "saves a publish whose token rotated, which
 would otherwise exhaust its retries" in `cms-worker-credential-refresh.test.ts`. It drives a
@@ -98,12 +100,16 @@ Break-and-rerun, each restored by `cp` and checked with `cmp`:
 
 ## What this does not close
 
-The provider's 5-minute floor is shared by both triggers. A rotation is picked up at the first
-failure after it that the floor permits: immediately, unless some failure in the last five
-minutes has already used the read.
+The provider's 5-minute floor is shared by both triggers, and so is core's own 60s floor
+(`refreshGitHubTokenMinIntervalMs`, added later). A rotation is picked up at the first failure
+after it that the floors permit: immediately, unless some failure in the last five minutes has
+already used the read. The two floors can also stack and push pickup further out — see
+[core-floor-shifts-provider-floor-phase.md](../core-floor-shifts-provider-floor-phase.md).
 
-- **Store, then revoke** (a planned rotation): closed. The first failure after revocation reads
-  the new value, and the task's own retry uses it.
+- **Store, then revoke** (a planned rotation): normally closed. The first failure after
+  revocation reads the new value, and the task's own retry uses it — unless an unrelated failure
+  already used the read in the preceding floor window (the last bullet below), in which case the
+  first failure after revocation can still be floor-blocked and that publish can still fail.
 - **Revoke, then store**, or an expired token replaced late: failures before the new value is
   stored read the old one and stamp the floor, so a publish that exhausts its retries inside the
   next five minutes still fails.

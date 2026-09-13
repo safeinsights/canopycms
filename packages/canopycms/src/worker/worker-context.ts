@@ -23,7 +23,7 @@ import type { WorkerStatusReport } from '../types'
  *
  * Everything below the divider is resolved by CALLING back onto the live
  * `CmsWorker` instance, never snapshotted into the context object. That is
- * load-bearing, not stylistic. The worker's 14 test files drive it by
+ * load-bearing, not stylistic. The worker's ten `cms-worker*.test.ts` files drive it by
  * reaching through the instance:
  *
  * - `cms-worker.test.ts` and `cms-worker-sync-reconcile.test.ts` REPLACE
