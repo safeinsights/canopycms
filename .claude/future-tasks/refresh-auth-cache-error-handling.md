@@ -21,7 +21,9 @@ Two deviations from the surrounding file, both one-line fixes:
    helper is already imported at `cms-worker.ts:20` and used at eight other sites in this
    same file (`:380`, `:389`, `:473`, `:619`, `:675`, `:707`, `:868`, `:1047`), so this is
    not a module that never adopted the convention. It is no longer a one-off, though: the
-   worker loop's catch at `:510` hand-rolls the same expression.
+   worker loop's catch at `:510` hand-rolls a similar `instanceof Error` check inline
+   (`err instanceof Error ? err.message : err`) — not the same expression, since its
+   fallback is the raw `err`, not the string `'Unknown error'`.
 2. **It does not pass the message through `redactCredentials()`**, unlike `:380`, `:707`,
    `:868` and `:1047`, which wrap `getErrorMessage(err)` in it.
 
