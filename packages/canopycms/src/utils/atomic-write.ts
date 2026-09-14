@@ -1,8 +1,6 @@
 /**
- * Atomic file write utility.
- *
- * Writes to a temp file first, then renames over the target.
- * Prevents partial/interleaved writes that corrupt files on NFS/EFS.
+ * Atomic file write: temp file first, then rename over the target, so the file is never
+ * partially written. Prevents the interleaved writes that corrupt files on NFS/EFS.
  */
 
 import fs from 'node:fs/promises'

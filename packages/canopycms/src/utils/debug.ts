@@ -36,15 +36,11 @@ export class DebugLogger {
   }
 
   /**
-   * The ISO-8601 timestamp leads the line BARE - not wrapped in brackets as it
-   * once was. `CANOPYCMS_DEBUG=true` can be set on the EC2 worker, whose stdout
-   * appends to /var/log/canopy-worker/worker.log; the CloudWatch agent's
-   * `multi_line_start_pattern` matches the timestamp at the START of a line
-   * (see worker/log.ts's INVARIANT and cms-service.ts's agent config), so a
-   * leading `[` meant every debug line was silently folded into the previous
-   * event instead of starting its own. The bracketed `[prefix:category]` and
-   * `[level]` fields still follow, so the human-readable shape is unchanged
-   * apart from those two characters.
+   * The ISO-8601 timestamp leads the line BARE, never bracketed. `CANOPYCMS_DEBUG=true` can
+   * be set on the EC2 worker, whose stdout appends to /var/log/canopy-worker/worker.log, and
+   * the CloudWatch agent's `multi_line_start_pattern` matches a timestamp at the START of a
+   * line (see worker/log.ts's INVARIANT and cms-service.ts's agent config): any leading
+   * character folds the line into the previous event instead of starting its own.
    */
   private formatMessage(level: LogLevel, category: string, message: string): string {
     const timestamp = new Date().toISOString()
@@ -115,9 +111,7 @@ export function createDebugLogger(options?: DebugOptions): DebugLogger {
   return new DebugLogger(options)
 }
 
-/**
- * Default logger for test infrastructure (E2E tests)
- */
+/** Default logger for E2E test infrastructure. */
 export const testLogger = createDebugLogger({
   enabled: process.env.E2E_DEBUG === 'true',
   prefix: 'E2E',

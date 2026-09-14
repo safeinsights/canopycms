@@ -1,8 +1,6 @@
 import type { ContentFormat } from '../config'
 
-/**
- * Get the file extension for a content format
- */
+/** The file extension, dot included, for a content format. */
 export const getFormatExtension = (format: ContentFormat): string => {
   if (format === 'md') return '.md'
   if (format === 'mdx') return '.mdx'
