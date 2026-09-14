@@ -189,11 +189,7 @@ const UNDECODABLE_RASTER_ERROR =
  *
  * ANIMATION: sharp defaults to `pages: 1`, i.e. frame 0 only. That is not
  * enough to mirror `applyTransform`, which reads
- * `min(totalPages, MAX_ANIMATED_FRAMES)` frames - a GIF/WebP whose frame 0 is
- * clean but whose frame 3 is corrupt passed this check and then threw
- * `gifload_buffer: Invalid frame data` at transform time, which is the very
- * "accepted at upload, unrenderable at render" state this function exists to
- * prevent, just moved from single-frame to animated sources. So the page
+ * `min(totalPages, MAX_ANIMATED_FRAMES)` frames. So the page
  * count is probed and passed through, with the SAME cap constant transform.ts
  * uses (both import it from transform-directives.ts) - which also means the
  * two sides ignore the same frames past the cap, so a many-hundred-frame
@@ -220,8 +216,8 @@ const UNDECODABLE_RASTER_ERROR =
  *   platform/architecture, e.g. a cross-arch build) - there is no decoder
  *   available in this environment at all, which is an environment problem,
  *   not a fact about the uploaded file. Log it and let the upload through
- *   unvalidated (the pre-fix behavior) rather than failing every raster
- *   upload because of a deployment issue.
+ *   unvalidated rather than failing every raster upload because of a
+ *   deployment issue.
  * - sharp loads fine but its decoder REJECTS the bytes - that IS a fact
  *   about this specific file, and an actionable one. Return false so the
  *   caller rejects the upload. A throw from the page-count probe counts as

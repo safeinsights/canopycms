@@ -154,7 +154,7 @@ function encode(pipeline: SharpPipeline, format: OutputFormat, quality: number |
 
 /**
  * Re-encode through the source container format - used for identity and for
- * requests that omit `f=`. `quality` (C3) is honoured here exactly like
+ * requests that omit `f=`. `quality` is honoured here exactly like
  * `encode()` does for an explicit `f=`, so a `q=` directive without `f=` is
  * never silently dropped - the cache key (`formatDirectives` in
  * transform-directives.ts) already includes `q=` unconditionally, so the

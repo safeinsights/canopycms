@@ -5,11 +5,7 @@
  * suggested `dompurify` + a lightweight DOM shim (e.g. `linkedom`) in place of the
  * heavier `jsdom`. In practice that pairing is unsafe: DOMPurify's own README warns
  * that immature DOM shims can cause it to fail in ways that produce an XSS hole even
- * when DOMPurify itself behaves correctly, and that is exactly what was reproduced
- * here - `createDOMPurify(linkedomWindow).sanitize(dirtySvg)` returned the INPUT
- * UNCHANGED (a `<script>`, `onload=`, and `<foreignObject>` all survived), because
- * linkedom's window has no `NodeFilter` global and DOMPurify silently no-ops when it
- * doesn't recognize the environment as supported. That is a dangerous failure mode
+ * when DOMPurify itself behaves correctly. That is a dangerous failure mode
  * for a security boundary, so this module uses `sanitize-html` instead: it works
  * directly on the parser tree (htmlparser2, no DOM shim to be incomplete), is
  * actively maintained, and - verified empirically - correctly strips scripts, event
