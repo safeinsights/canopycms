@@ -98,18 +98,17 @@ Markers still LIVE in a per-purpose directory — `{branchRoot}/.canopy-meta` fo
 content-write lock, `{workspaceRoot}/.settings-init` for settings init (rather than
 `path.dirname(settingsRoot)`, which is `{workspaceRoot}`, the very directory
 `ensureLocalSimulatedRemote` puts `.remote-init.lock` in, and which settings init calls
-into while holding its own lock). That placement is now about keeping markers out of each
-other's way on disk and out of the git working tree, not about dodging the registry.
+into while holding its own lock). That placement keeps markers out of each other's way on
+disk and out of the git working tree; registry aliasing does not depend on it.
 
-_This bit us._ Until 2026-08-20 both provisioning-lock variants passed the shared
-content-branches directory as the target, so every branch under one root aliased a single
-registry entry. Acquiring `.branch-b.init.lock` overwrote `.branch-a.init.lock`'s entry,
-so releasing A tore down B's refresh timer, made B's own release fail with `ERELEASED`,
-and leaked B's lock directory on disk until `stale` expired. The orphaned refresh timer
-then `stat`ed a path its owner had already deleted and raised `ECOMPROMISED` — which,
-under proper-lockfile's default `onCompromised` (rethrow from a timer), is an **uncaught
-exception that kills the process**. In the test suite that surfaced as an intermittent
-"Unhandled Error" failing the run while every test passed. Both variants now anchor on the
+**Why the anchor is the marker's own path.** If a provisioning lock passed the shared
+content-branches directory as its target, every branch under one root would alias a single
+registry entry: acquiring `.branch-b.init.lock` overwrites `.branch-a.init.lock`'s entry,
+so releasing A tears down B's refresh timer, B's release fails with `ERELEASED`, and B's
+lock directory leaks until `stale` expires. The orphaned timer then `stat`s a deleted path
+and raises `ECOMPROMISED`, which under proper-lockfile's default `onCompromised` (rethrow
+from a timer) is an **uncaught exception that kills the process** (in tests: an
+intermittent "Unhandled Error" while every test passes). Hence both variants anchor on the
 lock marker's own path (`realpath: false`, since the marker need not exist yet) and pass an
 `onCompromised` that logs instead of crashing. Regression coverage:
 `utils/provisioning-lock.test.ts`.
@@ -189,7 +188,7 @@ over anything the old code wrote; the window closes when the old processes drain
 | Settings files (`{settingsRoot}/permissions.json`, `groups.json`)                 | ✔ path key          | ✔ advisory | ✔                                                                                      | —                                             | Authorization data, but git-committed on the settings branch: a merge can rewrite `version`, so OCC is defense only — the lockfile is the guarantee; commit+push stays outside the lock (authorization/settings-file-store.ts)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | Collection meta (`content/**/.collection.json`)                                   | ✔ surrogate key     | —          | ✔ `.canopy-meta/schema`                                                                | `schema` bump after mutation                  | Adopter-visible git-committed file: deliberately NO OCC fields (rebases rewrite them; crash-leftover OCC temp files would enter `git add .` at publish). One coarse per-branch surrogate lock spans each full read-modify-write, incl. multi-file mutations; CLI migrate takes the same lock, but only inside branch clones (schema/schema-store.ts)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 | Workspace provisioning                                                            | —                   | —          | ✔ provisioning-lock                                                                    | —                                             | Separate processes provisioning the same clone (e.g. Lambda containers on one EFS root); build-time content reads never provision                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
-| Settings workspace init (`{settingsRoot}`, clone + orphan checkout)               | ✔ single module key | —          | ✔ provisioning-lock at `{workspaceRoot}/.settings-init`                                | — (`skipIndexMarker`)                         | Two Lambda containers cold-starting together would otherwise both clone into one directory, and a loser arriving mid-clone could `rm -rf` a half-written `.git`. The loser now WAITS and finds the workspace done. Orthogonal to the lock: the lock-free rename guard that refuses `checkout --orphan` + `rm -rf .` on a populated workspace whose settings-branch name changed — see the History section (settings-workspace.ts)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| Settings workspace init (`{settingsRoot}`, clone + orphan checkout)               | ✔ single module key | —          | ✔ provisioning-lock at `{workspaceRoot}/.settings-init`                                | — (`skipIndexMarker`)                         | Two Lambda containers cold-starting together would otherwise both clone into one directory, and a loser arriving mid-clone could `rm -rf` a half-written `.git`. The loser WAITS and finds the workspace done. Orthogonal to the lock: the lock-free rename guard that refuses `checkout --orphan` + `rm -rf .` on a populated workspace whose settings-branch name changed — see "Settings workspace init and background" below (settings-workspace.ts)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 | Branch purge (admin `POST /admin/branch-dirs/:dirName/purge`)                     | —                   | —          | ✔ provisioning-lock (zero-retry `tryAcquireProvisioningLock`) + ✔ branch.json lockfile | `branch-registry` invalidated after rename    | Double hold, both taken before the rename: the provisioning lock rejects (409, no retry) a genuinely in-flight provisioner; the branch.json lockfile — the SAME lock every metadata `save()` takes — closes the window where a concurrent repair-metadata `save()` resurrects branch.json mid-purge. Rename-only (`.trash-{dirName}-{STAMP}`), never deletes — see the trash-dir row below (api/admin-branch-health.ts, branch-health.ts)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 | Branch repair-metadata (admin `POST /admin/branch-dirs/:dirName/repair-metadata`) | —                   | —          | ✔ branch.json lockfile (archive-rename only)                                           | registry bumped by the subsequent `save()`    | `withOccFileLock` is NOT reentrant and `save()` takes it internally, so the lock is acquired only to rename the corrupt `branch.json` → `branch.json.corrupt-{STAMP}`, then released (exiting the callback) BEFORE `save()` runs and recreates defaults through its normal lock+OCC stack — calling `save()` while still holding would deadlock (api/admin-branch-health.ts)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 | Trashed branch dirs (`.trash-{dirName}-{STAMP}`)                                  | —                   | —          | —                                                                                      | —                                             | Reversible holding area for purge, not itself lock/OCC/marker-protected. Retention age comes ONLY from the STAMP embedded in the directory name, never mtime (`fs.rename` preserves the source dir's original mtime, so an mtime-based check would delete a months-stale orphan's trash on the first pass). Only the worker's `cleanupTrashedBranchDirs()` deletes, once per `syncGit()` cycle, sweeping stamps older than 30 days; purge itself never deletes (worker/git-sync.ts)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
@@ -284,8 +283,8 @@ waiting on a save:
   message says the branch is busy (syncing, or another save in flight) and to retry,
   rather than blaming another editor. The message names both causes because the lock has
   both: it is per-branch-root, so this is the **writer-vs-writer** budget as well as the
-  rebase one, and every write to a branch now serializes behind it where in-process
-  serialization used to be per-entry.
+  rebase one, and every write to a branch serializes behind it, not only writes to the
+  same entry.
 - **Reads never take it.** An EFS round-trip on every read is not an acceptable price,
   and a read racing a rebase gets an older or newer file, never a destroyed one.
 
@@ -379,11 +378,9 @@ the caller's own request, prove the ID identifies exactly one file.
 ## Tag legend
 
 Source comments carry grep tags so every participant in a cross-file rule can be
-found with one search. A tag is only useful if it resolves to a definition — the
-`[HIGH-n]`/`[MEDIUM-n]` tags that used to appear in `worker/` and
-`api/admin-branch-health.ts` were review-pass IDs whose findings list was never
-committed, so they trained readers that tags mean nothing. They were removed or
-renamed on 2026-08-23. **If you add a tag, define it here.**
+found with one search. A tag is only useful if it resolves to a definition, so every
+tag must be defined in this table; undefined severity tags such as `[HIGH-n]` are not
+used. **If you add a tag, define it here.**
 
 | Tag         | Meaning                                                                                                                                                                                                                                                                                                                                                                       | Defined in                                       |
 | ----------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------ |
@@ -468,34 +465,15 @@ All in use today; copy them rather than inventing new ones:
 - **Regression honesty:** when fixing a race, check the new test reproduces the
   corruption against the pre-fix code (stash the fix, run, restore).
 
-## History
+## Settings workspace init and background
 
-August 2026 (baseline review, [SYNC-C1]): content files gained cross-process write
-exclusion against the worker's rebase loop (`utils/content-write-lock.ts`) — see
-"Content writes vs. the rebase loop" above. Before it, content entries were the one
-mutable resource class relying on the in-process mutex alone.
-
-Designed across PR #94 (ContentId index marker) and the July 2026 EFS cross-process
-concurrency epic (PRs #111–#116: shared primitives, branch-registry GIT-M1,
-branch-schema-cache GIT-M2, comment-store GIT-M3, branch-metadata GIT-M4, content-store
-lock keys). Background analysis: `.claude/future-tasks/resolved/index-staleness-multiprocess.md`
-and `.claude/future-tasks/resolved/efs-cross-process-concurrency.md`.
-
-Extended July 2026 (post-epic follow-ups): the settings files adopted the full
-mutable-JSON stack (`authorization/settings-file-store.ts`, unifying the old
-app-level `contentVersion` scheme into the OCC `version`), and `.collection.json`
-mutations were serialized behind the coarse `.canopy-meta/schema` surrogate lock —
-see `.claude/future-tasks/resolved/settings-file-occ-cross-host.md` and
-`.claude/future-tasks/resolved/schema-store-rmw-protection.md`.
-
-Also in July 2026: `deploymentName` (which namespaces the settings orphan branch,
-`canopycms-settings-{deploymentName}`) became resolvable from an environment variable
-in addition to config, via `operating-mode/deployment-name.ts`'s `resolveDeploymentName`.
-This introduced a new boot-time invariant worth naming here even though it added no new
-locking primitive: `SettingsWorkspaceManager.ensureGitWorkspace` (settings-workspace.ts)
-now checks, via `GitManager.repoExistsAt()`, whether a settings workspace already
-exists on disk and — if so — whether its checked-out branch matches the newly-resolved
-name; a mismatch throws instead of letting `GitManager.initializeWorkspace` proceed to
+`deploymentName` (namespacing the settings orphan branch
+`canopycms-settings-{deploymentName}`) resolves from config or an environment variable
+via `operating-mode/deployment-name.ts`'s `resolveDeploymentName`, which makes a
+boot-time invariant with no locking primitive of its own: `SettingsWorkspaceManager.ensureGitWorkspace`
+(settings-workspace.ts) checks, via `GitManager.repoExistsAt()`, whether a settings
+workspace exists on disk and whether its checked-out branch matches the resolved name;
+a mismatch throws instead of letting `GitManager.initializeWorkspace` run
 `checkout --orphan` + `rm -rf .` on a populated workspace (orphan branches share no
 history, so that sequence is not recoverable).
 
@@ -510,30 +488,22 @@ holder may have created the workspace, or moved it onto _its_ settings branch, a
 looked — and acting on that stale sample is exactly the destructive path.
 
 > ⚠️ Do not "simplify" this by running the identity check only once, under the lock, or
-> by gating it on any "did I acquire it" flag. Both readings have been proposed before;
-> see
+> by gating it on any "did I acquire it" flag.
 > [`.claude/future-tasks/resolved/settings-workspace-init-lock-uncatalogued.md`](../.claude/future-tasks/resolved/settings-workspace-init-lock-uncatalogued.md)
-> for the history of that trap.
+> explains why both readings fail.
 
-**August 2026 (baseline review, B2): the settings-workspace init lock became a real
-lock.** It used to be a bespoke pair — an in-memory promise plus a file-based
-`O_CREAT|O_EXCL` marker with a fixed 30s mtime staleness window — and the file-based half
-synchronized nothing: its return value was read _only_ to decide whether to release in
-the `finally`, so a process that lost the race proceeded into
-`GitManager.initializeWorkspace` anyway, concurrently with the holder. Since
-`initializeWorkspace` is only _sequentially_ idempotent, two concurrent cold starts on an
-empty settings root both cloned into the same directory ("could not create work tree dir
-… File exists"), and a loser that arrived mid-clone could classify the half-written
-`.git` as corrupt and `rm -rf` it out from under the in-flight clone. The bespoke lock had
-two further defects: two waiters could both judge it stale and both `unlink` it (no
-inode/content identity check, so the second deletes a _fresh_ lock), and it was never
-refreshed, so an init slower than 30s — an ordinary EFS clone — had its lock stolen.
-
-It is now layer 3, `acquireProvisioningLock`, exactly as `branch-workspace.ts` uses for
-content clones: server-enforced acquisition, heartbeat-refreshed while the holder lives
-(so a slow clone is not mistaken for a crash), and patient jittered retries so the loser
-**waits** and then finds the workspace already initialized. That waiting is the design
-change — the old comment defended the loser proceeding; it no longer does.
+**The settings-workspace init lock is layer 3, `acquireProvisioningLock`**, exactly as
+`branch-workspace.ts` uses for content clones: server-enforced acquisition,
+heartbeat-refreshed while the holder lives (so a slow clone is not mistaken for a
+crash), and patient jittered retries so the loser **waits** and then finds the
+workspace already initialized. The loser must wait rather than proceed, because
+`initializeWorkspace` is only _sequentially_ idempotent — two concurrent cold starts on
+an empty settings root both clone into the same directory ("could not create work tree
+dir … File exists"), and a loser arriving mid-clone can classify the half-written
+`.git` as corrupt and `rm -rf` it under the in-flight clone. Staleness needs an
+inode/content identity check (otherwise two waiters both judge a lock stale and the
+second `unlink`s a fresh one) and a heartbeat (an ordinary EFS clone outlasts a fixed
+window such as 30s).
 
 Its anchor path is deliberately its own dot-directory,
 `{workspaceRoot}/.settings-init` (`settingsInitLockTarget()`), for two reasons. It cannot
@@ -541,7 +511,17 @@ live inside the settings root, because `acquireProvisioningLock` mkdir's the dir
 marker goes in and `git clone` refuses a destination with content in it. Keeping it in a
 dedicated dot-directory also keeps it clear of `.remote-init.lock`, which
 `ensureLocalSimulatedRemote` creates in `path.dirname(settingsRoot)` (= `{workspaceRoot}`)
-and which settings init calls into while holding this lock. Since 2026-08-20 that nesting
-is no longer a registry hazard — locks anchor on their own marker paths, so the two can
-never share a key — but keeping the markers in separate directories keeps the nesting
-obvious rather than incidental.
+and which settings init calls into while holding this lock. That nesting is not a
+registry hazard, because locks anchor on their own marker paths and never share a key;
+the separate directories keep the nesting obvious rather than incidental.
+
+**Background analysis.** The ContentId index marker and the EFS cross-process
+primitives (shared primitives, branch-registry GIT-M1, branch-schema-cache GIT-M2,
+comment-store GIT-M3, branch-metadata GIT-M4, content-store lock keys) are analysed in
+`.claude/future-tasks/resolved/index-staleness-multiprocess.md` and
+`.claude/future-tasks/resolved/efs-cross-process-concurrency.md`. The settings files use
+the full mutable-JSON stack (`authorization/settings-file-store.ts`, whose OCC `version`
+replaces an app-level `contentVersion`) and `.collection.json` mutations serialize
+behind the coarse `.canopy-meta/schema` surrogate lock, analysed in
+`.claude/future-tasks/resolved/settings-file-occ-cross-host.md` and
+`.claude/future-tasks/resolved/schema-store-rmw-protection.md`.

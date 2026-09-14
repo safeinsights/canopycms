@@ -12,7 +12,7 @@
       "words": 86
     },
     ".claude/agents/debug.md": {
-      "historyMarkers": 1,
+      "historyMarkers": 0,
       "maxSectionWords": 76,
       "words": 239
     },
@@ -37,7 +37,7 @@
       "words": 336
     },
     ".claude/agents/review.md": {
-      "historyMarkers": 1,
+      "historyMarkers": 0,
       "maxSectionWords": 309,
       "words": 602
     },
@@ -87,7 +87,7 @@
       "words": 13294
     },
     "docs/concurrency.md": {
-      "historyMarkers": 8,
+      "historyMarkers": 0,
       "maxSectionWords": 1256,
       "words": 5554
     },
@@ -97,47 +97,47 @@
       "words": 8980
     },
     "packages/canopycms/src/AGENTS.md": {
-      "historyMarkers": 1,
+      "historyMarkers": 0,
       "maxSectionWords": 832,
       "words": 913
     },
     "packages/canopycms/src/ai/AGENTS.md": {
-      "historyMarkers": 1,
+      "historyMarkers": 0,
       "maxSectionWords": 235,
       "words": 286
     },
     "packages/canopycms/src/api/AGENTS.md": {
-      "historyMarkers": 1,
+      "historyMarkers": 0,
       "maxSectionWords": 63,
       "words": 200
     },
     "packages/canopycms/src/assets/AGENTS.md": {
-      "historyMarkers": 2,
+      "historyMarkers": 0,
       "maxSectionWords": 134,
       "words": 188
     },
     "packages/canopycms/src/authorization/AGENTS.md": {
-      "historyMarkers": 1,
+      "historyMarkers": 0,
       "maxSectionWords": 57,
       "words": 129
     },
     "packages/canopycms/src/build/AGENTS.md": {
-      "historyMarkers": 1,
+      "historyMarkers": 0,
       "maxSectionWords": 263,
       "words": 318
     },
     "packages/canopycms/src/cli/AGENTS.md": {
-      "historyMarkers": 1,
+      "historyMarkers": 0,
       "maxSectionWords": 153,
       "words": 278
     },
     "packages/canopycms/src/editor/AGENTS.md": {
-      "historyMarkers": 1,
+      "historyMarkers": 0,
       "maxSectionWords": 90,
       "words": 501
     },
     "packages/canopycms/src/editor/hooks/README.md": {
-      "historyMarkers": 3,
+      "historyMarkers": 0,
       "maxSectionWords": 372,
       "words": 375
     },
@@ -147,7 +147,7 @@
       "words": 151
     },
     "packages/canopycms/src/static/AGENTS.md": {
-      "historyMarkers": 2,
+      "historyMarkers": 0,
       "maxSectionWords": 444,
       "words": 936
     },
@@ -162,7 +162,7 @@
       "words": 583
     },
     "packages/canopycms/src/validation/AGENTS.md": {
-      "historyMarkers": 1,
+      "historyMarkers": 0,
       "maxSectionWords": 380,
       "words": 435
     },

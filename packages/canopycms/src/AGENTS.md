@@ -5,9 +5,8 @@ the `content-*`/`branch-*`/`url-*` name clusters have 3-6x more inbound traffic 
 outside than between themselves, so boxing them into directories would add a hop to
 ~50 call sites while encapsulating nothing.
 
-Split out of the root [AGENTS.md](../../../AGENTS.md) on 2026-08-23, where this had grown to
-914 words inside a single bullet. The **code comment at the point of the rule is
-authoritative**; this file is the map to where those rules live.
+The **code comment at the point of the rule is authoritative**; this file is the map to
+where those rules live.
 
 ## Overview
 

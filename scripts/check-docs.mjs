@@ -246,7 +246,7 @@ function extractText(content) {
  * never becomes an example of what it flags.
  */
 const HISTORY_MARKER_RE =
-  /used to|previously|until 20\d\d|as of 20\d\d|\d{4}-\d\d-\d\d|PR #\d+|review (?:round|pass)|found by (?:a |the )?review|finding|\[(?:HIGH|MEDIUM|LOW)-\d+\]/i
+  /used to|previously|until 20\d\d|as of 20\d\d|\d{4}-\d\d-\d\d|PR #\d+|review (?:round|pass)|found by (?:a |the )?review|review findings?|findings? (?:from|of) (?:a |the )?review|\[(?:HIGH|MEDIUM|LOW)-\d+\]/i
 
 /** Word-budget metrics for one in-scope file: total words, H2 section sizes, and history-marker lines. */
 function computeMetrics(relPath) {
