@@ -441,7 +441,7 @@ In dev, the editor and dev server read a branch clone under `.canopy-dev/content
 
 `dev.contentSync` (`DevContentSyncMode`, dev-mode only, ignored when `mode !== 'dev'`) chooses what happens: `'warn'` (the default) watches `content/**` and logs a warning naming the diverged files at startup and on change; `'off'` installs no watcher. Choose `'off'` for unit-test configs, or when you only ever edit through the editor. The warning tells you to run `npx canopycms sync push`.
 
-**There is intentionally no auto-push mode.** Auto-overwriting the branch clone from the working tree would clobber uncommitted editor "Save" state in the clone, with no Canopy-level recovery path. Reconcile explicitly with `canopycms sync push`, which handles conflicts interactively.
+**There is intentionally no auto-push mode**, because it would clobber unsubmitted editor saves ([ARCHITECTURE.md](ARCHITECTURE.md#operating-modes)); reconcile with `canopycms sync push`.
 
 All the logic is in the core watcher `src/dev-content-watcher.ts` (`startDevContentWatcher()`); adapters call it once at dev startup (see `packages/canopycms-next/src/context-wrapper.ts`). It no-ops outside dev mode, under `'off'`, and when the working-tree content directory is absent. Each check re-resolves the active branch, so it follows git HEAD switches, and it dedupes across HMR reloads so a dev restart does not double-warn.
 

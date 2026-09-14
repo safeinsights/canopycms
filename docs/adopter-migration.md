@@ -1813,3 +1813,19 @@ a real site:
 - **Content IDs are 12-character Base58** and exclude the ambiguous characters `0 O I l`. A
   hand-rolled ID containing one of those is silently ignored — the entry never loads and nothing
   warns. Use `generateId()` from `canopycms/server`; never hand-roll an ID.
+
+#### The registry is keyed by entry-type name (0.0.42)
+
+**What changed.** `createEntrySchemaRegistry` keys are the entry-type names that `.collection.json` files name in `entry.schema`, and `EntryTypesFromRegistry` derives the typed entry-type map from them. Schema-variable keys (`{ postSchema }`) still work but derive nothing; [README's registry convention](../README.md#convention-why-key-the-registry-by-entry-type-name) says when to keep them.
+
+**To adopt.**
+
+1. Rename the keys in `schemas.ts`: `{ postSchema, authorSchema }` becomes `{ post: postSchema, author: authorSchema }`.
+2. Rename every `entry.schema` string in `content/**/.collection.json` to match (`"schema": "postSchema"` becomes `"schema": "post"`), then confirm nothing is left with `grep -r 'Schema"' content/`.
+3. Add `export type EntryTypes = EntryTypesFromRegistry<typeof entrySchemaRegistry>` and derive the per-schema aliases from it (`type PostContent = EntryTypes['post']`).
+4. Pass `EntryTypes` as the second generic wherever you call `buildContentTree`, so `meta.indexEntry.data` narrows on `meta.entryType`.
+5. Run `pnpm typecheck`. A `.collection.json` still naming an old key fails at startup with `Schema reference "postSchema" ... not found in registry. Available schemas: ...`.
+
+Content files, frontmatter and `.canopy-meta/` caches are untouched; in dev, editing a `.collection.json` invalidates the schema cache.
+
+**Now deletable.** A hand-written interface of `TypeFromEntrySchema<typeof xSchema>` members that existed only to type `buildContentTree`'s second generic.

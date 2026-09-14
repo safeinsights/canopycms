@@ -42,6 +42,7 @@ This whole directory is browser-reachable via `canopycms/client`, so:
   `pnpm lint:bundle` (dependency-cruiser) fails the build on it, so this is a check
   rather than a convention.
 - Import path helpers from the dependency-free `paths/branch-name.ts`, never from the `paths` barrel or `paths/branch.ts`; both pull `node:fs` into the browser bundle.
+- `components/EntryCreateModal.tsx` carries the comment at that import.
 
 ## Styling
 

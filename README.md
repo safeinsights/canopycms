@@ -194,11 +194,16 @@ import { clerkMiddleware, createRouteMatcher } from '@clerk/nextjs/server'
 
 const isProtectedRoute = createRouteMatcher(['/edit(.*)', '/api/canopycms(.*)'])
 
-export default clerkMiddleware(async (auth, req) => {
-  if (isProtectedRoute(req)) {
-    await auth.protect()
-  }
-})
+export default clerkMiddleware(
+  async (auth, req) => {
+    if (isProtectedRoute(req)) {
+      await auth.protect()
+    }
+  },
+  // Local PEM verification. Without it @clerk/nextjs fetches JWKS over the network,
+  // and the no-internet CMS Lambda hangs on sign-in.
+  { jwtKey: process.env.CLERK_JWT_KEY },
+)
 
 export const config = {
   matcher: ['/edit(.*)', '/api/canopycms(.*)'],
@@ -448,7 +453,7 @@ In `dev` mode your content lives in two places: your repo's working tree, and th
 
 **Automatic divergence detection.** `dev.contentSync` controls reporting (dev mode only, ignored when `mode !== 'dev'`): `'warn'`, the default, logs a warning at startup and on `content/**` changes naming the files that diverge from the branch clone; `'off'` installs no watcher.
 
-> **Why there is no `'auto'` mode:** auto-pushing the working tree into the branch clone could silently clobber uncommitted editor "Save" state, with no Canopy-level recovery path for the editor. Reconcile explicitly with `canopycms sync push`, which is interactive and conflict-aware.
+> **There is no `'auto'` mode**, because it could clobber unsubmitted editor saves; reconcile with `canopycms sync push`, and see [ARCHITECTURE.md](ARCHITECTURE.md#operating-modes) for why.
 
 ```bash
 npx canopycms sync push                            # working tree -> branch workspace

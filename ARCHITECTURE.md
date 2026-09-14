@@ -100,7 +100,7 @@ The index is not thread-safe and each process holds its own copy, with no shared
 - **Rebuilds swap, never clear**, so a concurrent reader never observes a half-built index.
 - **Suspicious-lookup backstop**: an ID miss, or an index hit pointing at a file that is gone, forces one immediate rebuild (throttled to once per few seconds) before the lookup fails.
 - **Write existence guard**: a write targeting an existing ID consults the real directory listing before recreating a missing expected file, and raises a conflict rather than resurrecting an entry another process just renamed. This prevents duplicate-ID files independently of the marker.
-- **Duplicate-ID quarantine**: a duplicate embedded ID (rename-crash debris, or a merge landing two files on one ID) must not fail the build. The scan keeps one deterministic winner (string-MIN of the relative paths, so every host agrees regardless of `readdir()` order), drops the loser from the index, and reports the pair through `branch-health` for the `repair-content-duplicates` admin action. The dropped file stays on disk **and stays addressable by collection+slug**, since slugs resolve by directory scan and know nothing about the quarantine — so `ContentStore.write()` refuses a save whose content ID is on two files (a 409 naming both files and the repair action) rather than mutating an ambiguous target, while `delete()`/`renameEntry()` stay allowed because each touches only the file the caller addressed. **An index is a hint about where an ID lives, never authority to delete.**
+- **Duplicate-ID quarantine**: a duplicate embedded ID never fails the build; the scan keeps one deterministic winner, reports the pair for the `repair-content-duplicates` admin action, and a write to an ID on two files is refused with a 409. An index is a hint about where an ID lives, never authority to delete; the rule is in [docs/concurrency.md](docs/concurrency.md).
 
 Residual staleness is bounded rather than open-ended: the probe throttle plus, across hosts on EFS/NFS, attribute caching that can delay marker visibility for roughly 3-60 seconds on default mounts. Per-request store lifetimes and the suspicious-lookup backstop bound it further — acceptable for human-paced editing.
 
@@ -687,7 +687,7 @@ The schema has a first-class `image` field whose value is `{ src, alt, width, he
 
 One **MediaLibrary** component serves both a manage drawer and a picker modal, as a cursor-paginated grid over the meta prefix. Thumbnail URLs come from a configured public base URL, since the editor may be served from a different origin than the site, and the MDX body editor wires the same dialog into its image plugin so images in prose flow through the same store and transform layer as structured image fields.
 
-**Guards mirror the server exactly**: uploading and listing are open to any authenticated user, deleting requires admin. There is no per-asset ACL — assets are branch-agnostic and content-addressed, so the branch and path permission layers do not apply to them.
+**Guards mirror the server exactly**: uploading and listing are open to any authenticated user; deleting is allowed to an admin, or to the asset's recorded uploader, and an asset with no recorded uploader is admin-only. There is no per-asset ACL — assets are branch-agnostic and content-addressed, so the branch and path permission layers do not apply to them.
 
 ### Pluggable Store and Delivery Infrastructure
 
