@@ -1,36 +1,22 @@
-/**
- * Path validation utilities.
- *
- * Security-focused validation for content paths and slugs.
- */
+/** Security-focused validation for content paths, IDs, branch names and slugs. */
 
 import { normalizeFilesystemPath, hasTraversalSequence } from './normalize'
 import type { LogicalPath, PhysicalPath, ContentId, BranchName, Slug } from './types'
 
-/**
- * Base58 alphabet used for content IDs (excludes ambiguous: 0, O, I, l)
- */
+/** Base58 alphabet for content IDs: excludes the ambiguous 0, O, I and l. */
 const BASE58_PATTERN = '[123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz]'
 
-/**
- * Pattern matching exactly a 12-character content ID
- */
 const CONTENT_ID_PATTERN = new RegExp(`^${BASE58_PATTERN}{12}$`)
 
 /**
- * Pattern matching a physical path segment with embedded ID.
- * Matches patterns like:
- * - `post.my-slug.abc123def456.json` (entry)
- * - `posts.abc123def456` (collection directory)
+ * A physical path segment carries an embedded ID: `posts.abc123def456` for a
+ * collection directory, `post.my-slug.abc123def456.json` for an entry file.
  */
 const PHYSICAL_SEGMENT_PATTERN = new RegExp(`\\.${BASE58_PATTERN}{12}(?:\\.[a-z]+)?$`)
 
 /**
- * Validate a content path for security.
- *
- * @param path - The path to validate
- * @param rootPath - The root directory (for traversal check)
- * @returns Validation result
+ * Reject a content path that traverses, or that escapes `rootPath`.
+ * @internal Exported for tests.
  */
 export function validateContentPath(
   path: string,
@@ -38,15 +24,13 @@ export function validateContentPath(
 ): { valid: boolean; error?: string } {
   const normalized = normalizeFilesystemPath(path)
 
-  // Check for traversal sequences
   if (hasTraversalSequence(normalized)) {
     return { valid: false, error: 'Path contains traversal sequence' }
   }
 
-  // Check path doesn't escape root
   const normalizedRoot = normalizeFilesystemPath(rootPath)
   if (!normalized.startsWith(normalizedRoot) && normalized !== normalizedRoot) {
-    // Allow paths that are relative within the root
+    // Not already rooted: re-check as a path relative to the root.
     const normalizedPath = `${normalizedRoot}/${normalized}`
     if (hasTraversalSequence(normalizedPath)) {
       return { valid: false, error: 'Path escapes root directory' }
@@ -57,32 +41,26 @@ export function validateContentPath(
 }
 
 /**
- * Validate a collection path.
- *
- * @param collectionPath - The collection path to validate
- * @returns true if valid, false otherwise
+ * A collection path must be non-empty, traversal-free, and `[A-Za-z0-9_/-]+`.
+ * @internal Exported for tests.
  */
 export function isValidCollectionPath(collectionPath: string): boolean {
   if (!collectionPath || collectionPath.length === 0) {
     return false
   }
 
-  // Normalize and check for traversal
   const normalized = normalizeFilesystemPath(collectionPath)
   if (hasTraversalSequence(normalized)) {
     return false
   }
 
-  // Collection paths should only contain alphanumeric, hyphens, underscores, and forward slashes
   const validPattern = /^[a-zA-Z0-9_/-]+$/
   return validPattern.test(normalized)
 }
 
 /**
- * Sanitize a string for use in paths by removing dangerous characters.
- *
- * @param input - The string to sanitize
- * @returns Sanitized string safe for path use
+ * Strip the characters that make a string unsafe as a path component.
+ * @internal Exported for tests.
  */
 export function sanitizeForPath(input: string): string {
   return input
@@ -93,81 +71,47 @@ export function sanitizeForPath(input: string): string {
 }
 
 /**
- * Check if a path segment contains an embedded content ID.
- *
- * Physical paths have segments with embedded 12-char IDs:
- * - `post.my-slug.abc123def456.json` (entry file)
- * - `posts.abc123def456` (collection directory)
- *
- * @param segment - A single path segment (no slashes)
- * @returns true if segment contains embedded ID pattern
+ * Whether a single path segment (no slashes) carries an embedded content ID.
+ * @internal Exported for tests.
  */
 export function hasEmbeddedContentId(segment: string): boolean {
   return PHYSICAL_SEGMENT_PATTERN.test(segment)
 }
 
 /**
- * Check if a path appears to be a physical path (contains embedded content IDs).
- *
- * Physical paths have the format:
- * - `content/posts.abc123/post.hello.def456.json`
- *
- * Logical paths do not have embedded IDs:
- * - `content/posts/hello` or `posts/hello`
- *
- * @param path - The path to check
- * @returns true if any segment contains an embedded content ID
+ * Whether any segment carries an embedded content ID:
+ * `content/posts.abc123/post.hello.def456.json` does, `content/posts/hello`
+ * does not.
+ * @internal Exported for tests.
  */
 export function looksLikePhysicalPath(path: string): boolean {
   const segments = path.split('/')
   return segments.some(hasEmbeddedContentId)
 }
 
-/**
- * Check if a path appears to be a logical path (no embedded content IDs).
- *
- * @param path - The path to check
- * @returns true if no segments contain embedded content IDs
- */
+/** @internal Exported for tests. */
 export function looksLikeLogicalPath(path: string): boolean {
   return !looksLikePhysicalPath(path)
 }
 
 /**
- * Validate and cast a string to LogicalPath.
- *
- * Use this at API boundaries to validate incoming path strings
- * and cast them to the branded LogicalPath type.
- *
- * @param path - The path string to validate
- * @returns Object with success flag and either the typed path or an error
- *
- * @example
- * ```ts
- * const result = parseLogicalPath(params.collectionPath)
- * if (!result.ok) {
- *   return { ok: false, status: 400, error: result.error }
- * }
- * const collectionPath: LogicalPath = result.path
- * ```
+ * Validate an incoming path string at an API boundary and cast it to the
+ * branded LogicalPath type.
  */
 export function parseLogicalPath(
   path: string,
 ): { ok: true; path: LogicalPath } | { ok: false; error: string } {
-  // Basic validation
   if (!path || typeof path !== 'string') {
     return { ok: false, error: 'Path is required' }
   }
 
-  // Normalize backslashes to forward slashes (consistent with parsePermissionPath)
+  // One separator in the branded value, as in parsePermissionPath.
   const normalized = path.replace(/\\/g, '/')
 
-  // Security check
   if (hasTraversalSequence(normalized)) {
     return { ok: false, error: 'Path contains traversal sequence' }
   }
 
-  // Check it's not a physical path
   if (looksLikePhysicalPath(normalized)) {
     return {
       ok: false,
@@ -180,31 +124,24 @@ export function parseLogicalPath(
 }
 
 /**
- * Validate and cast a string to PhysicalPath.
- *
- * Use this at API boundaries to validate incoming path strings
- * and cast them to the branded PhysicalPath type.
- *
- * @param path - The path string to validate
- * @returns Object with success flag and either the typed path or an error
+ * Validate an incoming path string at an API boundary and cast it to the
+ * branded PhysicalPath type.
+ * @internal Exported for tests.
  */
 export function parsePhysicalPath(
   path: string,
 ): { ok: true; path: PhysicalPath } | { ok: false; error: string } {
-  // Basic validation
   if (!path || typeof path !== 'string') {
     return { ok: false, error: 'Path is required' }
   }
 
-  // Normalize backslashes to forward slashes (consistent with parseLogicalPath)
+  // One separator in the branded value, as in parseLogicalPath.
   const normalized = path.replace(/\\/g, '/')
 
-  // Security check
   if (hasTraversalSequence(normalized)) {
     return { ok: false, error: 'Path contains traversal sequence' }
   }
 
-  // Check it looks like a physical path
   if (!looksLikePhysicalPath(normalized)) {
     return {
       ok: false,
@@ -216,32 +153,11 @@ export function parsePhysicalPath(
   return { ok: true, path: normalized as PhysicalPath }
 }
 
-/**
- * Check if a string is a valid 12-character content ID.
- *
- * @param id - The string to check
- * @returns true if valid Base58 12-char ID
- */
 export function isValidContentId(id: string): boolean {
   return CONTENT_ID_PATTERN.test(id)
 }
 
-/**
- * Parse and validate a ContentId from a string.
- * Validates Base58 format and 12-character length.
- *
- * @param id - The string to validate
- * @returns Object with success flag and either the typed ID or an error
- *
- * @example
- * ```ts
- * const result = parseContentId(fileId)
- * if (!result.ok) {
- *   throw new Error(result.error)
- * }
- * const contentId: ContentId = result.id
- * ```
- */
+/** Validate a string as a 12-character Base58 ContentId and cast it. */
 export function parseContentId(
   id: string,
 ): { ok: true; id: ContentId } | { ok: false; error: string } {
@@ -259,22 +175,7 @@ export function parseContentId(
   return { ok: true, id: id as ContentId }
 }
 
-/**
- * Parse and validate a BranchName.
- * Checks git branch naming rules.
- *
- * @param name - The branch name to validate
- * @returns Object with success flag and either the typed name or an error
- *
- * @example
- * ```ts
- * const result = parseBranchName(params.branch)
- * if (!result.ok) {
- *   return { ok: false, status: 400, error: result.error }
- * }
- * const branchName: BranchName = result.name
- * ```
- */
+/** Validate a branch name against git's ref rules and cast it to BranchName. */
 export function parseBranchName(
   name: string,
 ): { ok: true; name: BranchName } | { ok: false; error: string } {
@@ -287,7 +188,6 @@ export function parseBranchName(
     return { ok: false, error: 'Branch name too long (max 250 characters)' }
   }
 
-  // Git branch name rules
   if (name.includes('..')) {
     return { ok: false, error: 'Branch name cannot contain ".."' }
   }
@@ -307,7 +207,6 @@ export function parseBranchName(
     return { ok: false, error: 'Branch name cannot start with "-"' }
   }
 
-  // Additional git restrictions
   if (name.startsWith('.') || name.endsWith('.')) {
     return { ok: false, error: 'Branch name cannot start or end with a dot' }
   }
@@ -316,9 +215,8 @@ export function parseBranchName(
     return { ok: false, error: 'Branch name cannot contain "@{"' }
   }
 
-  // Bare reserved refs: "HEAD" and "@" are ambiguous shorthand for the
-  // current ref, not real branch names (still allow names that merely
-  // contain these as a substring, e.g. "release-HEAD" or "HEADer").
+  // Bare "HEAD" and "@" are ambiguous shorthand for the current ref, not real
+  // branch names. Names merely containing them ("release-HEAD") stay legal.
   if (name === 'HEAD' || name === '@') {
     return { ok: false, error: 'Branch name cannot be the reserved ref "HEAD" or "@"' }
   }
@@ -336,22 +234,7 @@ export function parseBranchName(
   return { ok: true, name: name as BranchName }
 }
 
-/**
- * Parse and validate a slug (collection or entry).
- * Validates format and length constraints.
- *
- * @param slug - The slug to validate
- * @returns Object with success flag and either the typed slug or an error
- *
- * @example
- * ```ts
- * const result = parseSlug(params.slug)
- * if (!result.ok) {
- *   return { ok: false, status: 400, error: result.error }
- * }
- * const slug: Slug = result.slug
- * ```
- */
+/** Validate a collection or entry slug and cast it to Slug. */
 export function parseSlug(slug: string): { ok: true; slug: Slug } | { ok: false; error: string } {
   if (!slug) {
     return {
@@ -365,7 +248,6 @@ export function parseSlug(slug: string): { ok: true; slug: Slug } | { ok: false;
     return { ok: false, error: 'Slug too long (max 64 characters)' }
   }
 
-  // Check for path separators and traversal
   if (slug.includes('/') || slug.includes('\\')) {
     return {
       ok: false,

@@ -18,23 +18,22 @@ fetch:
 The corresponding manager hook (`useBranchManager`, `useEntryManager`,
 `useCommentSystem`) consumes its data hook's reactive `data`/`error`/
 `isValidating` and mirrors them onto its own state/busy flags via `useEffect`.
-This is what replaced each hook's own `useEffect([branchName])` fetch — see
-`.claude/future-tasks/resolved/swr.md` for the removed pattern and the
-2026-07-24 decision to adopt SWR.
+No manager hook runs its own `useEffect([branchName])` fetch;
+`.claude/future-tasks/resolved/swr.md` records why SWR owns loading.
 
-### Why this fixes the duplicate-request problem
+### Request deduplication
 
 SWR dedupes concurrent requests to the same cache key within
 `dedupingInterval` (`SWRProvider`, in `../context/SWRProvider.tsx`). That
-collapses:
+collapses two cases that would otherwise both fetch:
 
-- React Strict Mode's mount → cleanup → remount cycle, which used to fire
-  each hook's fetch twice in dev
-- Editor.tsx's `availableSchemas` picker, which used to run its own separate
-  schema fetch on the same branch change `useEntryManager.refreshEntries`
-  already triggers — it now reads `availableSchemas` off `useEntryManager`'s
-  return value instead (the schema fetch and the entries fetch are the same
-  request; see `useEntriesData.fetchEntriesAndSchema`)
+- React Strict Mode's mount → cleanup → remount cycle, which would otherwise
+  fire each hook's fetch twice in dev
+- Editor.tsx's `availableSchemas` picker, which reads `availableSchemas` off
+  `useEntryManager`'s return value rather than issuing a second schema fetch
+  on the branch change `useEntryManager.refreshEntries` already triggers (the
+  schema and entries fetch are one request; see
+  `useEntriesData.fetchEntriesAndSchema`)
 
 ### Explicit reload vs. automatic load
 

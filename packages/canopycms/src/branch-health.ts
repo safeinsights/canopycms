@@ -10,21 +10,18 @@ import { getErrorMessage, isNodeError, isNotFoundError } from './utils/error'
 import { isRebaseInProgress } from './utils/git'
 
 /**
- * Admin-facing health classification of every directory under a branches
- * root (`baseRoot`), including ones the {@link BranchRegistry} quarantines
- * out of normal listings. Two stuck states have no in-product recovery
- * without this: a branch dir whose `.canopy-meta/branch.json` is corrupt
- * (registry now silently drops it — see branch-registry.ts's
- * `scanBranchDirectories` quarantine), and an orphan dir with no
- * `branch.json` at all (left behind by a partial delete crash — see
- * `api/branch.ts`'s delete handler). Both are invisible to admins in prod,
- * who have no filesystem access.
+ * Admin-facing health classification of every directory under a branches root,
+ * including the ones {@link BranchRegistry} quarantines out of normal listings.
+ * Without it two stuck states have no in-product recovery, and prod admins have
+ * no filesystem access to see them: a branch dir whose `.canopy-meta/branch.json`
+ * is corrupt (the registry drops it silently) and an orphan dir with no
+ * `branch.json` at all (a partial delete crash — see `api/branch.ts`).
  *
- * `scanBranchHealth` mirrors the registry's own directory-listing rules
- * (skip non-directories and dot-prefixed names) so its classification never
- * disagrees with what the registry itself would show as "missing".
+ * `scanBranchHealth` mirrors the registry's own directory-listing rules (skip
+ * non-directories and dot-prefixed names) so the two never disagree about what
+ * counts as missing.
  */
-export type BranchHealthKind = 'healthy' | 'corrupt-metadata' | 'orphan'
+type BranchHealthKind = 'healthy' | 'corrupt-metadata' | 'orphan'
 
 export interface BranchHealthEntry {
   dirName: string
@@ -34,34 +31,29 @@ export interface BranchHealthEntry {
   /** healthy only */
   branch?: BranchMetadata
   /**
-   * healthy only, and only when non-empty: duplicate content IDs found in
-   * this branch's content tree (see content-id-index.ts's "Duplicate-ID
-   * quarantine" section). The branch itself stays fully usable -- content
-   * operations degrade only for the specific quarantined ID(s), which are
-   * excluded from ID-based lookups, and whose entries refuse saves
-   * (`DuplicateContentIdError`, a 409 naming this repair action) rather than
-   * mutate an ambiguous target, until repaired via the
-   * repair-content-duplicates admin action.
+   * healthy only, non-empty only: duplicate content IDs in this branch's
+   * content tree (see content-id-index.ts). The branch stays usable — only the
+   * quarantined IDs degrade, dropping out of ID-based lookups and refusing
+   * saves (`DuplicateContentIdError`, a 409 naming the repair action) rather
+   * than mutating an ambiguous target.
    */
   duplicateContentIds?: DuplicateContentId[]
   /**
-   * healthy only, and only when true: this clone has an interrupted rebase on
-   * disk (`.git/rebase-merge` / `.git/rebase-apply`).
+   * healthy only, true only: this clone has an interrupted rebase on disk
+   * (`.git/rebase-merge` / `.git/rebase-apply`).
    *
-   * Deliberately an advisory flag on `healthy` rather than its own
-   * `BranchHealthKind`, for the same reason `duplicateContentIds` is: the
-   * branch's metadata is intact and the state is USUALLY transient -- the
-   * worker's sync loop aborts an interrupted rebase at the top of its next
-   * per-branch pass. What this flag buys is visibility in the window BEFORE
-   * that pass runs, where the branch otherwise scanned as unqualified
-   * `healthy` while being skipped as dirty every cycle.
+   * Advisory on `healthy` rather than its own `BranchHealthKind`, like
+   * `duplicateContentIds`: the metadata is intact and the state is usually
+   * transient, since the worker's sync loop aborts an interrupted rebase at the
+   * top of its next per-branch pass. The flag buys visibility in the window
+   * before that, where the branch otherwise scans as plain `healthy` while
+   * being skipped as dirty every cycle.
    *
-   * NOT self-recovering in every case, so a persisting value is the real
-   * signal and needs an operator. Two ways it sticks: the abort itself keeps
-   * failing, or the branch's status moved off `editing` after it wedged --
-   * the rebase loop filters by status BEFORE reaching the recovery step, so a
-   * clone that crashed mid-rebase and was then submitted or archived is never
-   * revisited, and this flag is the only thing that surfaces it.
+   * A value that persists is the real signal and needs an operator, because
+   * recovery is not guaranteed: the abort can keep failing, or the status can
+   * move off `editing` after the branch wedged — the rebase loop filters by
+   * status BEFORE the recovery step, so a clone that crashed mid-rebase and was
+   * then submitted or archived is never revisited, and only this flag shows it.
    */
   rebaseInProgress?: boolean
   /** corrupt-metadata only: message describing why the file failed to load. */
@@ -75,34 +67,24 @@ export interface BranchHealthEntry {
   /** orphan only: age of the directory's mtime in ms, clamped to >= 0. */
   ageMs?: number
   /**
-   * [H1] Present iff the dir's provisioning init-lock marker exists on disk,
-   * for orphan and corrupt-metadata entries only. Presence alone means
-   * nothing -- a crashed provisioner's lock lingers forever (proper-lockfile
-   * stale locks are only reaped by a later acquisition attempt, and a health
-   * scan never acquires). Freshness (`ageMs`) is the actual signal admin
-   * actions gate on.
+   * [H1] Present iff the dir's provisioning init-lock marker is on disk, for orphan
+   * and corrupt-metadata entries only. Presence alone means nothing: a crashed
+   * provisioner's lock lingers forever, since proper-lockfile reaps a stale
+   * lock only on a later acquisition and a health scan never acquires.
+   * Freshness (`ageMs`) is what admin actions gate on.
    */
   provisioningLock?: { mtime: string; ageMs: number }
 }
 
 /**
- * The on-disk path of the cross-process provisioning lock marker for a
- * given branch directory, matching `branch-workspace.ts`'s
- * `ensureGitWorkspace()` exactly:
+ * The provisioning lock marker's path for a branch directory, matching what
+ * `branch-workspace.ts`'s `ensureGitWorkspace()` passes exactly.
  *
- * ```ts
- * acquireProvisioningLock(
- *   path.dirname(branchRoot),         // === baseRoot
- *   `.${path.basename(branchRoot)}.init.lock`,
- * )
- * ```
- *
- * `acquireProvisioningLock` passes this name as `lockfilePath`, which
- * overrides proper-lockfile's default `${target}.lock` naming, so the lock
- * marker itself (a directory, mkdir-based) lives at exactly this path -- no
- * extra `.lock` suffix.
+ * `acquireProvisioningLock` passes the name as `lockfilePath`, overriding
+ * proper-lockfile's default `${target}.lock`, so the marker (a mkdir-based
+ * directory) sits at exactly this path — no extra `.lock` suffix.
  */
-export function provisioningLockPath(baseRoot: string, dirName: string): string {
+function provisioningLockPath(baseRoot: string, dirName: string): string {
   return path.join(baseRoot, `.${dirName}.init.lock`)
 }
 
@@ -115,8 +97,8 @@ async function readProvisioningLock(
     const stat = await fs.stat(provisioningLockPath(baseRoot, dirName))
     return { mtime: stat.mtime.toISOString(), ageMs: Math.max(0, Date.now() - stat.mtimeMs) }
   } catch {
-    // Missing, or unreadable for some other reason -- either way, "no signal"
-    // is the safe default rather than failing the whole scan.
+    // Missing or unreadable: "no signal" is the safe default, rather than
+    // failing the whole scan.
     return undefined
   }
 }
@@ -132,13 +114,11 @@ async function readMetaMtime(branchRoot: string): Promise<string | undefined> {
 }
 
 /**
- * Scan a healthy branch's content tree for duplicate-embedded-ID pairs (see
- * content-id-index.ts's "Duplicate-ID quarantine" section). Never throws --
- * one branch's unreadable/unusual content tree must not take down the whole
- * health scan (same rationale as the corrupt-metadata handling below). Costs
- * a full recursive readdir of the content tree, same class of cost as the
- * lazy warm-up every ContentStore already pays on first access -- acceptable
- * for an admin-triggered scan, not a hot path.
+ * Scan a healthy branch's content tree for duplicate embedded IDs (see
+ * content-id-index.ts). Never throws: one branch's unreadable content tree must
+ * not take down the whole health scan. Costs a full recursive readdir — the
+ * same class of cost as a ContentStore's first-access warm-up, fine for an
+ * admin-triggered scan and not for a hot path.
  */
 async function scanDuplicateContentIds(
   branchRoot: string,
@@ -154,13 +134,11 @@ async function scanDuplicateContentIds(
 }
 
 /**
- * Scan every directory under `baseRoot` and classify it as healthy,
- * corrupt-metadata, or orphan. Never throws for a single bad directory --
- * one dir's unreadable/unparseable metadata must not take down the whole
- * scan (same rationale as the registry's own quarantine behavior).
- *
- * Tolerates a missing `baseRoot` (returns `[]`) so the admin endpoint can
- * call this unconditionally without a pre-existence check.
+ * Classify every directory under `baseRoot` as healthy, corrupt-metadata, or
+ * orphan. Never throws for a single bad directory — one dir's unreadable
+ * metadata must not take down the whole scan, as in the registry's quarantine.
+ * A missing `baseRoot` returns `[]`, so the admin endpoint can call this
+ * without a pre-existence check.
  */
 export async function scanBranchHealth(
   baseRoot: string,
@@ -199,19 +177,16 @@ export async function scanBranchHealth(
     }
 
     if (loadErr) {
-      // Both the documented BranchMetadataCorruptError (bad JSON) and any
-      // other loadOnly failure (EACCES, EISDIR from a directory named
-      // branch.json, etc.) land here: all are "needs admin attention",
-      // and none may throw out of the scan.
+      // Every loadOnly failure lands here — BranchMetadataCorruptError for bad
+      // JSON, EACCES/EISDIR and the rest for everything else — since all of
+      // them need admin attention and none may throw out of the scan.
       //
-      // [REDACT] parseError is served to the browser via the admin
-      // branch-health endpoint, so it must never leak the absolute
-      // workspace path. BranchMetadataCorruptError carries `parseCause`
-      // (the raw JSON.parse message, path-free) for exactly this --
-      // `message` embeds branchRoot and is for server logs only. Other node
-      // errors (EISDIR from a directory named branch.json, EACCES, etc.)
-      // embed the path in their `message`, so only their `code` is safe to
-      // surface; non-node errors fall back to getErrorMessage.
+      // [REDACT] parseError reaches the browser through the admin branch-health
+      // endpoint, so it must never carry the absolute workspace path.
+      // BranchMetadataCorruptError's `parseCause` is the path-free JSON.parse
+      // message for exactly this, while its `message` embeds branchRoot and is
+      // for server logs only. Node errors embed the path in `message` too, so
+      // only their `code` is safe to surface.
       const parseError =
         loadErr instanceof BranchMetadataCorruptError
           ? loadErr.parseCause

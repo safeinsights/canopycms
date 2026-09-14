@@ -38,9 +38,8 @@ export function declaresScheme(url: string): boolean {
  * Whether `url`, resolved as a URL reference against a fixed sentinel origin, lands on a
  * DIFFERENT origin than the sentinel WITHOUT itself declaring a scheme.
  *
- * True for a literal protocol-relative reference (`//host`) and for every WHATWG
- * backslash-equivalent spelling that a browser resolves the same way (`/\host`, `\\host`,
- * `\/host`, and combinations with stripped whitespace/control characters) -- these all read as
+ * True for a literal protocol-relative reference (`//host`) and for every backslash-equivalent
+ * spelling a browser resolves the same way (see `declaresScheme`) -- these all read as
  * "site-relative" to a naive string check but actually redefine the authority. False for a
  * normal site-relative path (`/about`, `docs/guide`) and for a scheme-qualified absolute URL
  * (`declaresScheme` already identifies those as intentionally off-site on their own).
@@ -49,6 +48,7 @@ export function declaresScheme(url: string): boolean {
  * (e.g. `utils/url-prefix.ts`'s `isAbsoluteUrl`, for a CDN-hosted `ogImage`) should check that
  * separately and only fall back to this function to catch the spellings that slip past a
  * `startsWith('//')` check.
+ * @internal Exported for tests.
  */
 export function isImplicitlyOffOrigin(url: string): boolean {
   if (declaresScheme(url)) return false
@@ -68,7 +68,7 @@ export function isImplicitlyOffOrigin(url: string): boolean {
  * slash/backslash characters: WHATWG URL also strips tabs, newlines, and carriage returns during
  * parsing (wherever they appear, not just at the edges), so `/\t/evil.com` is exactly as
  * off-origin as `/\evil.com` despite having no leading backslash-or-slash run for a regex to
- * find. Re-parsing gets this right for free instead of re-deriving the quirk a second time.
+ * find.
  *
  * Useful for a caller that wants to keep emitting SOME value for an implicitly-off-origin input
  * rather than rejecting it outright (`sanitizeHref` rejects to a fallback instead; see
@@ -203,12 +203,7 @@ export function isHttpUrlOrSameOriginPath(
  *   likely to be a paste error or an injection attempt than an intentional
  *   protocol-relative link, so we don't let it through as an absolute
  *   off-site URL. This is enforced by checking whether the input DECLARES a
- *   scheme, not by matching a `//` prefix: WHATWG URL treats backslash as
- *   equivalent to slash for special schemes, so `/\evil.com`, `\\evil.com`
- *   and `\/evil.com` are all protocol-relative in effect. An earlier version
- *   of this function checked `startsWith('//')` and let all three through as
- *   `https://evil.com/` -- an open redirect out of the one function whose
- *   job is to prevent exactly that.
+ *   scheme, not by matching a `//` prefix -- see `declaresScheme`.
  * - Fragment-only (`#section`) and query-only (`?q=1`) input resolves
  *   against the sentinel with pathname `/`; we strip that synthetic leading
  *   slash so the result stays a same-page reference (`#section`) instead of
@@ -239,14 +234,9 @@ export function sanitizeHref(url: string, fallback = '#'): string {
     }
 
     // Reject protocol-relative references in EVERY spelling, by testing the
-    // property we actually care about rather than by enumerating syntax.
-    //
-    // A string-prefix check on '//' is not sufficient: WHATWG URL treats a
-    // backslash as equivalent to a forward slash for special schemes, so
-    // '/\evil.com', '\\evil.com' and '\/evil.com' are all protocol-relative
-    // in effect and each resolved to https://evil.com/ while sailing past a
-    // startsWith('//') guard. Tabs and newlines are stripped during parsing
-    // too, so the set of spellings is not one you can enumerate confidently.
+    // property we actually care about rather than by enumerating syntax (see
+    // `declaresScheme`: a startsWith('//') guard misses the backslash
+    // spellings, and stripped tabs/newlines make the set unenumerable).
     //
     // The property that actually distinguishes "the author asked for another
     // origin" from "the parser inferred one" is whether the input DECLARES a

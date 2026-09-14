@@ -54,7 +54,7 @@ export function cropAreaPercentToRect(area: CropAreaPercent): CropRect | null {
 }
 
 /**
- * Inverse of `cropAreaPercentToRect` - used to seed react-easy-crop's
+ * Inverse of `cropAreaPercentToRect` - seeds react-easy-crop's
  * `initialCroppedAreaPercentages` when re-opening the crop step for an
  * already-cropped image, so the user sees their previous selection instead
  * of starting over.

@@ -3,11 +3,10 @@ import { throttling } from '@octokit/plugin-throttling'
 import type { CanopyConfig } from './config'
 import { operatingStrategy } from './operating-mode'
 import { getErrorMessage } from './utils/error'
-// canopyLogWarn, not console.warn: this module runs inside the WORKER process
-// (its Octokit is the worker's own, and the PR create/update path below is a
-// worker task), where every line must carry worker/log.ts's ISO-8601 prefix or
-// CloudWatch folds it into the previous event. Under Lambda/dev the helper is
-// plain console. See utils/logger.ts.
+// canopyLogWarn, not console.warn: the PR create/update path below runs as a
+// worker task, and every worker line must carry worker/log.ts's ISO-8601 prefix
+// or CloudWatch folds it into the previous event. Under Lambda/dev the helper
+// is plain console. See utils/logger.ts.
 import { canopyLogWarn } from './utils/logger'
 
 const ThrottledOctokit = Octokit.plugin(throttling)
@@ -15,8 +14,8 @@ const ThrottledOctokit = Octokit.plugin(throttling)
 /**
  * Retry primary rate limits at most twice and only for short waits; beyond
  * that, task-level retry/backoff (worker) or the caller's error path takes
- * over. The worker's task timeout would abort a longer in-request wait
- * anyway.
+ * over, since the worker's task timeout would abort a longer in-request wait.
+ * @internal Exported for tests.
  */
 export const shouldRetryRateLimit = (retryAfter: number, retryCount: number): boolean =>
   retryCount < 2 && retryAfter <= 60
@@ -25,6 +24,7 @@ export const shouldRetryRateLimit = (retryAfter: number, retryCount: number): bo
  * Secondary (abuse-detection) rate limits are stricter to trip and usually
  * signal we're hammering the API too fast — retry at most once, and only for
  * a short wait.
+ * @internal Exported for tests.
  */
 export const shouldRetrySecondaryRateLimit = (retryAfter: number, retryCount: number): boolean =>
   retryCount < 1 && retryAfter <= 60
@@ -32,34 +32,30 @@ export const shouldRetrySecondaryRateLimit = (retryAfter: number, retryCount: nu
 /**
  * Octokit's pluggable-auth options, typed STRUCTURALLY.
  *
- * `@octokit/core` calls `authStrategy(…)` once in its constructor and wraps
- * the returned object's `.hook` into its request chain, so handing it a
- * strategy is the whole of "authenticate every request some other way".
+ * `@octokit/core` calls `authStrategy(…)` once in its constructor and wraps the
+ * returned object's `.hook` into its request chain, so handing it a strategy is
+ * the whole of "authenticate every request some other way".
  *
- * Declared as a shape rather than imported because this module is reachable
- * from `services.ts` and therefore lands in every adopter's Next.js server
- * bundle: an `import { createAppAuth } from '@octokit/auth-app'` here would
- * put that package (and its `universal-github-app-jwt` dependency) into the
- * bundle of every adopter, including the overwhelming majority who
- * authenticate with a personal access token and will never register a GitHub
- * App. `pnpm lint:bundle` guards the *client* boundary only and would not
- * catch that, so the structural typing is the guard.
+ * The shape is declared, never imported: this module is reachable from
+ * `services.ts` and so lands in every adopter's Next.js server bundle, and
+ * importing `@octokit/auth-app` here would pull that package (plus
+ * `universal-github-app-jwt`) into the bundle of every adopter, including the
+ * majority who authenticate with a personal access token and never register a
+ * GitHub App. `pnpm lint:bundle` guards the *client* boundary only and would
+ * not catch it, so the structural typing IS the guard.
  *
- * A deployment that does use an App constructs the strategy and passes it
- * through here. That is the seam `packages/canopycms-cdk/worker/index.ts`
- * already uses for `refreshAuthCache`, and its App wiring goes through the same
- * one — see `packages/canopycms-cdk/worker/github-app-auth.ts`, with
- * `docs/adopter-migration.md` carrying the shape for a hand-written entrypoint.
+ * A deployment using an App constructs the strategy and passes it through here
+ * — see `packages/canopycms-cdk/worker/github-app-auth.ts` and
+ * `docs/adopter-migration.md` for a hand-written entrypoint.
  */
 export interface OctokitAuthStrategyOptions {
   /**
-   * Octokit calls this with `{ request, log, octokit, octokitOptions }`, with
-   * the fields of `auth` below merged over them, and expects an object
-   * carrying a `.hook`.
-   * `createAppAuth(…)`'s return value satisfies that; so does a closure
-   * returning an already-constructed one, which is how a single auth instance
-   * (and therefore a single installation-token cache) can be shared with a
-   * caller that also needs to mint tokens outside Octokit.
+   * Octokit calls this with `{ request, log, octokit, octokitOptions }`, the
+   * fields of `auth` below merged over them, and expects an object carrying a
+   * `.hook`. `createAppAuth(…)`'s return value satisfies that; so does a
+   * closure returning an already-constructed one, which is how one auth
+   * instance — and so one installation-token cache — is shared with a caller
+   * that also mints tokens outside Octokit.
    */
   authStrategy: (options: Record<string, unknown>) => unknown
   /** Merged into the strategy's options by Octokit. */
@@ -77,12 +73,10 @@ export type CanopyOctokitAuthOptions = { auth: string } | OctokitAuthStrategyOpt
  * errors the plugin never sees, like non-403 network failures).
  */
 export function createCanopyOctokit(options: CanopyOctokitAuthOptions): Octokit {
-  // The two auth fields are picked out EXPLICITLY rather than spread. A spread
-  // would forward anything else the caller's object happened to carry --
-  // `baseUrl`, `request`, `log`, `userAgent` are all live `OctokitOptions`,
-  // and a non-literal argument (a widened variable, not an inline object)
-  // slips past TypeScript's excess-property check. This function's contract is
-  // "our Octokit, authenticated the way you say", not "our Octokit, configured
+  // Pick the two auth fields out EXPLICITLY, never spread: `baseUrl`,
+  // `request`, `log` and `userAgent` are all live `OctokitOptions`, and a
+  // non-literal argument slips past TypeScript's excess-property check. The
+  // contract is "our Octokit, authenticated the way you say", not "configured
   // however you like".
   const auth =
     'authStrategy' in options
@@ -146,15 +140,11 @@ export interface CreateOrUpdatePullRequestParams {
 }
 
 /**
- * Create or update a pull request (idempotent — GIT-H1).
- *
- * If an open PR already exists from head to base, update it and return its
- * number/url instead of erroring. This makes PR submission safely
- * retryable: if a caller crashes after GitHub creates the PR but before it
- * persists the returned PR number, calling this again recovers the
- * existing PR instead of hitting the 422 that a blind create would throw on
- * a duplicate, which previously wedged the branch in 'sync-failed'
- * permanently.
+ * Create or update a pull request, idempotently: an open PR from head to base
+ * is updated and returned rather than erroring. That keeps PR submission
+ * retryable — a caller that crashes after GitHub creates the PR but before it
+ * persists the number recovers the existing PR instead of hitting the 422 a
+ * blind create throws on a duplicate, which wedges the branch in 'sync-failed'.
  *
  * Shared by `GitHubService.createOrUpdatePR` (direct-API callers) and the
  * worker's `push-and-create-or-update-pr` task, so the list->tiebreak->
@@ -164,12 +154,10 @@ export async function createOrUpdatePullRequest(
   params: CreateOrUpdatePullRequestParams,
 ): Promise<{ number: number; url: string; created: boolean }> {
   const { octokit, owner, repo, head, base, title, body, markReadyIfDraft, signal } = params
-  // CONDITIONAL spread: when no signal is passed, request objects below are
-  // byte-identical to the pre-refactor call sites (exact toHaveBeenCalledWith
-  // assertions in github-service.test.ts depend on this).
+  // CONDITIONAL spread: with no signal, the request objects below carry no
+  // `request` key at all (github-service.test.ts asserts on their exact shape).
   const requestOption = signal ? { request: { signal } } : {}
 
-  // Check if an open PR already exists for this head/base
   const existingPRs = await octokit.pulls.list({
     owner,
     repo,
@@ -180,11 +168,9 @@ export async function createOrUpdatePullRequest(
   })
 
   if (existingPRs.data.length > 0) {
-    // GIT-M5: GitHub disallows more than one open PR for a given
-    // head+base pair, so this should always be a single match. Guard
-    // against blindly trusting array order anyway — if more than one is
-    // ever returned, warn and prefer the most recently updated instead of
-    // an arbitrary one.
+    // GitHub disallows more than one open PR for a head+base pair, so this is
+    // normally a single match. Don't trust array order anyway: if more than one
+    // comes back, warn and take the most recently updated.
     let existing = existingPRs.data[0]
     if (existingPRs.data.length > 1) {
       existing = [...existingPRs.data].sort(
@@ -207,19 +193,16 @@ export async function createOrUpdatePullRequest(
     // above is never called with draft: true, so a newly created PR is
     // never draft and needs no conversion.
     if (markReadyIfDraft && existing.draft) {
-      // Use GraphQL API for draft conversion (not available in REST API).
-      // Read the node id straight off the list payload — no extra pulls.get.
+      // GraphQL: draft conversion has no REST equivalent. The node id comes
+      // straight off the list payload — no extra pulls.get.
       //
-      // Best-effort: the push + pulls.update above already succeeded, so the
-      // submit itself is done. A fine-grained token that can update PRs but
-      // lacks this mutation's scope throws a GraphqlResponseError, which
-      // carries no numeric HTTP status (the GraphQL endpoint responds 200
-      // even for a mutation-level failure) — the worker's
-      // isPermanentTaskFailure would classify that as transient and retry
-      // the whole re-push until the retry cap, wedging the branch in
-      // 'sync-failed' even though the PR already exists and is current.
-      // Warn and continue instead of letting this sink an already-succeeded
-      // submit.
+      // Best-effort, because the push and pulls.update above already succeeded:
+      // a fine-grained token lacking this mutation's scope throws a
+      // GraphqlResponseError with no numeric HTTP status (GraphQL answers 200
+      // even for a mutation-level failure), which the worker's
+      // isPermanentTaskFailure reads as transient and retries the whole re-push
+      // to the cap, wedging the branch in 'sync-failed' even though the PR
+      // exists and is current.
       try {
         await octokit.graphql(
           `
@@ -247,7 +230,6 @@ export async function createOrUpdatePullRequest(
     return { number: existing.number, url: existing.html_url, created: false }
   }
 
-  // Create new PR
   const pr = await octokit.pulls.create({
     owner,
     repo,
@@ -261,9 +243,6 @@ export async function createOrUpdatePullRequest(
   return { number: pr.data.number, url: pr.data.html_url, created: true }
 }
 
-/**
- * Service for interacting with GitHub API (pull requests, branches, etc.)
- */
 export class GitHubService {
   private octokit: Octokit
   private owner: string
@@ -277,9 +256,6 @@ export class GitHubService {
     this.baseBranch = options.baseBranch ?? 'main'
   }
 
-  /**
-   * Create a new pull request
-   */
   async createPullRequest(options: PullRequestOptions): Promise<{ number: number; url: string }> {
     const response = await this.octokit.pulls.create({
       owner: this.owner,
@@ -297,9 +273,6 @@ export class GitHubService {
     }
   }
 
-  /**
-   * Update an existing pull request
-   */
   async updatePullRequest(
     prNumber: number,
     options: Partial<Pick<PullRequestOptions, 'title' | 'body'>>,
@@ -314,12 +287,8 @@ export class GitHubService {
   }
 
   /**
-   * Create or update a pull request (idempotent — GIT-H1).
-   *
-   * Thin delegate to the module-level `createOrUpdatePullRequest` helper
-   * (shared with the worker's `push-and-create-or-update-pr` task) bound to
-   * this instance's octokit/owner/repo. See that function's doc comment for
-   * the idempotency rationale.
+   * Idempotent create-or-update, bound to this instance's octokit/owner/repo.
+   * See {@link createOrUpdatePullRequest}.
    */
   async createOrUpdatePR(options: {
     head: string
@@ -342,9 +311,6 @@ export class GitHubService {
     return { number: result.number, url: result.url }
   }
 
-  /**
-   * Get pull request details
-   */
   async getPullRequest(prNumber: number): Promise<PullRequestDetails> {
     const response = await this.octokit.pulls.get({
       owner: this.owner,
@@ -361,9 +327,6 @@ export class GitHubService {
     }
   }
 
-  /**
-   * Convert a pull request to draft
-   */
   async convertToDraft(prNumber: number): Promise<void> {
     // Use GraphQL API for draft conversion (not available in REST API)
     await this.octokit.graphql(
@@ -382,9 +345,6 @@ export class GitHubService {
     )
   }
 
-  /**
-   * Convert a draft pull request to ready for review
-   */
   async convertToReady(prNumber: number): Promise<void> {
     // Use GraphQL API for draft conversion (not available in REST API)
     await this.octokit.graphql(
@@ -403,9 +363,6 @@ export class GitHubService {
     )
   }
 
-  /**
-   * Close a pull request
-   */
   async closePullRequest(prNumber: number): Promise<void> {
     await this.octokit.pulls.update({
       owner: this.owner,
@@ -415,9 +372,6 @@ export class GitHubService {
     })
   }
 
-  /**
-   * Delete a remote branch
-   */
   async deleteBranch(branchName: string): Promise<void> {
     await this.octokit.git.deleteRef({
       owner: this.owner,
@@ -426,9 +380,6 @@ export class GitHubService {
     })
   }
 
-  /**
-   * Get the GraphQL node ID for a pull request (needed for draft operations)
-   */
   private async getPullRequestNodeId(prNumber: number): Promise<string> {
     const response = await this.octokit.pulls.get({
       owner: this.owner,
@@ -439,18 +390,13 @@ export class GitHubService {
   }
 
   /**
-   * Parse GitHub remote URL to extract owner and repo
-   * Supports both HTTPS and SSH formats:
-   * - https://github.com/owner/repo.git
-   * - https://github.com/owner/repo
-   * - git@github.com:owner/repo.git
-   * - git@github.com:owner/repo
+   * Extract owner and repo from a GitHub remote URL, in either HTTPS
+   * (`https://github.com/owner/repo[.git]`) or SSH
+   * (`git@github.com:owner/repo[.git]`) form.
    */
   static parseRemoteUrl(remoteUrl: string): { owner: string; repo: string } {
-    // Remove .git suffix if present
     const urlWithoutGit = remoteUrl.replace(/\.git$/, '')
 
-    // Try HTTPS format first
     const httpsMatch = urlWithoutGit.match(/https?:\/\/github\.com\/([^/]+)\/([^/]+)/)
     if (httpsMatch) {
       return {
@@ -477,20 +423,18 @@ export class GitHubService {
 }
 
 /**
- * Create a GitHub service instance from config and remote URL
- * Returns null if not applicable (missing token, not GitHub, etc.)
+ * A GitHub service for this config and remote URL, or null when one cannot be
+ * built (mode without PR support, missing token, unparseable remote).
  */
 export const createGitHubService = (
   config: CanopyConfig,
   remoteUrl?: string,
 ): GitHubService | null => {
-  // Only create service for modes that support pull requests
   const mode = config.mode
   if (!operatingStrategy(mode).supportsPullRequests()) {
     return null
   }
 
-  // Get token from environment
   const tokenEnvVar = config.githubTokenEnvVar ?? 'GITHUB_BOT_TOKEN'
   const token = process.env[tokenEnvVar] ?? process.env.CANOPYCMS_GITHUB_TOKEN
 
@@ -499,13 +443,11 @@ export const createGitHubService = (
     return null
   }
 
-  // Need remote URL to determine owner/repo
   if (!remoteUrl) {
     canopyLogWarn('CanopyCMS: GitHub service requires remoteUrl to determine repository')
     return null
   }
 
-  // Parse remote URL
   try {
     const { owner, repo } = GitHubService.parseRemoteUrl(remoteUrl)
     return new GitHubService({

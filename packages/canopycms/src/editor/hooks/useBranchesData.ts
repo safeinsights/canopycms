@@ -47,6 +47,7 @@ export async function fetchBranches(apiClient: Pick<ApiClient, 'branches'>): Pro
  * How often to re-poll while at least one branch is mid-flight, in ms.
  * Only ever active in the transient window below, so this is not a
  * standing background poll.
+ * @internal Exported only for the test that pins it.
  */
 export const IN_FLIGHT_POLL_MS = 15_000
 
@@ -55,12 +56,12 @@ export const IN_FLIGHT_POLL_MS = 15_000
  *
  * `pending-sync` -> `synced` | `sync-failed` happens asynchronously on the
  * EC2 worker when it drains the task queue, with nothing pushed to the
- * browser. Before SWR, the branches list happened to refetch on every
- * branch switch, so these badges (PR #160) converged incidentally as the
- * user moved around. That effect is gone now -- correctly, since the list
- * isn't branch-scoped -- so without this a user who submits a branch would
- * watch "Pending sync" forever until they reloaded the page or performed
- * some unrelated branch mutation.
+ * browser. The branches list is not refetched on a branch switch (it isn't
+ * branch-scoped), so an in-flight badge converges only via this poll --
+ * without it, a user who submits a branch would watch "Pending sync"
+ * forever until they reloaded the page or performed some unrelated branch
+ * mutation.
+ * @internal Exported only for the test that pins it.
  */
 export function hasInFlightBranch(data: BranchesData | undefined): boolean {
   return (data?.branches ?? []).some((b) => b.syncStatus === 'pending-sync')

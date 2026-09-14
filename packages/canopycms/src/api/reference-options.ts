@@ -9,7 +9,6 @@ import { parseLogicalPath } from '../paths'
 import type { LogicalPath } from '../paths/types'
 import { branchNameSchema } from './validators'
 
-/** Response type for reference options */
 export type ReferenceOptionsResponse = ApiResponse<{
   options: Array<{
     id: string
@@ -17,10 +16,6 @@ export type ReferenceOptionsResponse = ApiResponse<{
     collection: string
   }>
 }>
-
-// ============================================================================
-// Zod Schemas for Validation
-// ============================================================================
 
 const getReferenceOptionsParamsSchema = z.object({
   branch: branchNameSchema,
@@ -96,11 +91,9 @@ const getReferenceOptionsHandler = async (
         .filter(Boolean)
     : undefined
 
-  // Build the access checker once (permissions loaded a single time, reused for
-  // every candidate) and pass it into loadReferenceOptions as a filter *before*
-  // loading: a denied path is skipped outright, so it never triggers the
-  // store.read() that loadReferenceOptions would otherwise do just to compute a
-  // label for an option the caller isn't allowed to see.
+  // Build the access checker once and pass it in as a filter *before* loading: a denied path is
+  // skipped outright, so it never triggers the store.read() that would otherwise compute a label
+  // for an option the caller isn't allowed to see.
   const checkAccess = await ctx.services.createContentAccessChecker(
     branchContext,
     branchContext.branchRoot,
@@ -121,10 +114,6 @@ const getReferenceOptionsHandler = async (
     data: { options },
   }
 }
-
-// ============================================================================
-// Route Definitions
-// ============================================================================
 
 /**
  * Get reference options for a field

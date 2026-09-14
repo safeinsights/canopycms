@@ -43,35 +43,30 @@ See [DEVELOPING.md](DEVELOPING.md) for detailed development patterns and practic
 
 ## Code Organization
 
-The core package lives in `packages/canopycms/src/`. **Each module's own `AGENTS.md`
-holds its invariants, and the code comment at the point of a rule is authoritative** —
-this table is only the map.
+The core package lives in `packages/canopycms/src/`. **The code comment at the point of a
+rule is authoritative**; each module's `AGENTS.md` is its cross-file map, and this table
+is the map of maps.
 
-Until 2026-08-23 that detail lived here, in one bullet per directory. Those bullets grew
-to ~4,000 words while the file's line count never moved, because the only cheap edit was
-to append inside an existing bullet. Two consequences worth avoiding a repeat of: the
-section was ~80% of the single file `CLAUDE.md` loads into every agent's context, and
-depth had become inversely proportional to subsystem size — `static/` (841 LOC) had 976
-words, `editor/` (20,855 LOC, 176 files) had eight.
-
-| Module            | What it is                                                                                   | Detail                                                                      |
-| ----------------- | -------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
-| `api/`            | API handlers, incl. `guards.ts`'s declarative guard system                                   | [api/AGENTS.md](packages/canopycms/src/api/AGENTS.md)                       |
-| `assets/`         | Asset store v2, finalize pipeline, on-demand transform engine                                | [assets/AGENTS.md](packages/canopycms/src/assets/AGENTS.md)                 |
-| `authorization/`  | Branch + path access control, groups, protected-base-branch policy                           | [authorization/AGENTS.md](packages/canopycms/src/authorization/AGENTS.md)   |
-| `ai/`             | AI-ready content generation, transforms, route handler                                       | [ai/AGENTS.md](packages/canopycms/src/ai/AGENTS.md)                         |
-| `build/`          | Static build output, and pruning what prior runs produced                                    | [build/AGENTS.md](packages/canopycms/src/build/AGENTS.md)                   |
-| `cli/`            | `init`, `init-deploy`, `init-github-app`, `worker`, `generate-ai-content`, `sync`, `migrate` | [cli/AGENTS.md](packages/canopycms/src/cli/AGENTS.md)                       |
-| `config/`         | Configuration types, schemas, validation                                                     | —                                                                           |
-| `editor/`         | React editor UI: components, hooks, fields, block editor, preview bridge                     | [editor/AGENTS.md](packages/canopycms/src/editor/AGENTS.md)                 |
-| `operating-mode/` | prod/dev strategies; single resolution points for mode + deployment name                     | [operating-mode/AGENTS.md](packages/canopycms/src/operating-mode/AGENTS.md) |
-| `paths/`          | Path utilities with branded types (LogicalPath, PhysicalPath)                                | see below                                                                   |
-| `schema/`         | Schema loading and resolution                                                                | —                                                                           |
-| `static/`         | Static-generation helpers and the four build-time guards                                     | [static/AGENTS.md](packages/canopycms/src/static/AGENTS.md)                 |
-| `utils/`          | Shared utilities, several consolidating a past drift                                         | [utils/AGENTS.md](packages/canopycms/src/utils/AGENTS.md)                   |
-| `validation/`     | Field traversal, reference/entry validation                                                  | [validation/AGENTS.md](packages/canopycms/src/validation/AGENTS.md)         |
-| `worker/`         | CmsWorker daemon, task queue, git sync/rebase loop                                           | [worker/AGENTS.md](packages/canopycms/src/worker/AGENTS.md)                 |
-| flat `src/*.ts`   | content store/listing/tree, git-manager, branch registry, services, url-collision, …         | [src/AGENTS.md](packages/canopycms/src/AGENTS.md)                           |
+| Module            | What it is                                                                                            | Detail                                                                      |
+| ----------------- | ----------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
+| `api/`            | API handlers, incl. `guards.ts`'s declarative guard system                                            | [api/AGENTS.md](packages/canopycms/src/api/AGENTS.md)                       |
+| `assets/`         | Asset store v2, finalize pipeline, on-demand transform engine                                         | [assets/AGENTS.md](packages/canopycms/src/assets/AGENTS.md)                 |
+| `authorization/`  | Branch + path access control, groups, protected-base-branch policy                                    | [authorization/AGENTS.md](packages/canopycms/src/authorization/AGENTS.md)   |
+| `ai/`             | AI-ready content generation, transforms, route handler                                                | [ai/AGENTS.md](packages/canopycms/src/ai/AGENTS.md)                         |
+| `build/`          | Static build output, and pruning what prior runs produced                                             | [build/AGENTS.md](packages/canopycms/src/build/AGENTS.md)                   |
+| `cli/`            | `init`, `init-deploy`, `init-github-app`, `worker`, `generate-ai-content`, `sync`, `migrate`          | [cli/AGENTS.md](packages/canopycms/src/cli/AGENTS.md)                       |
+| `config/`         | Configuration types, schemas, validation                                                              | —                                                                           |
+| `editor/`         | React editor UI: components, hooks, fields, block editor, preview bridge                              | [editor/AGENTS.md](packages/canopycms/src/editor/AGENTS.md)                 |
+| `http/`           | Request handler and router: the composition root behind the catch-all route, mounting `api/routes.ts` | —                                                                           |
+| `operating-mode/` | prod/dev strategies; single resolution points for mode + deployment name                              | [operating-mode/AGENTS.md](packages/canopycms/src/operating-mode/AGENTS.md) |
+| `paths/`          | Path utilities with branded types (LogicalPath, PhysicalPath)                                         | see below                                                                   |
+| `schema/`         | Schema loading and resolution                                                                         | —                                                                           |
+| `static/`         | Static-generation helpers and the four build-time guards                                              | [static/AGENTS.md](packages/canopycms/src/static/AGENTS.md)                 |
+| `task-queue/`     | File-backed task queue plus the CMS queue contract the API enqueues to and the worker consumes        | [task-queue/README.md](packages/canopycms/src/task-queue/README.md)         |
+| `utils/`          | Shared utilities, several consolidating a past drift                                                  | [utils/AGENTS.md](packages/canopycms/src/utils/AGENTS.md)                   |
+| `validation/`     | Field traversal, reference/entry validation                                                           | [validation/AGENTS.md](packages/canopycms/src/validation/AGENTS.md)         |
+| `worker/`         | CmsWorker daemon, task runner, git sync/rebase loop                                                   | [worker/AGENTS.md](packages/canopycms/src/worker/AGENTS.md)                 |
+| flat `src/*.ts`   | content store/listing/tree, git-manager, branch registry, services, url-collision, …                  | [src/AGENTS.md](packages/canopycms/src/AGENTS.md)                           |
 
 `paths/` has no file of its own but does carry one invariant: `branch-name.ts` is the
 dependency-free home of `sanitizeBranchName`, and client-reachable code must import it
@@ -91,10 +86,15 @@ table:
 - [apps/example1/AGENTS.md](apps/example1/AGENTS.md) - Example app integration guidelines
 - [packages/canopycms/src/editor/hooks/README.md](packages/canopycms/src/editor/hooks/README.md) - which editor data hooks are SWR-backed and which are not
 
-**When you learn something durable about a module, write it in that module** — in the code
-comment at the point of the rule first, and in the module's `AGENTS.md` if a future editor
-would not encounter that comment. Do not append it here. This file is loaded into every
-agent's context on every task, which is exactly why it must stay a map.
+## Comment and Doc Style
+
+A comment states the current rule in present tense at the point it applies, plus the one
+non-obvious fact that justifies it. What the code did before, when it changed, who found
+the problem, and which PR or review found it belong in the commit message or
+`.claude/future-tasks/`, never in code or docs. A shared mechanism is explained once, at
+its owner; consumers point at it. A comment that says what the next lines plainly do is
+deleted. Module `AGENTS.md` files hold cross-file maps only. Nothing is appended to this
+file: it is loaded into every agent's context on every task, so it stays a map.
 
 ## Working Agreements
 
@@ -109,7 +109,7 @@ agent's context on every task, which is exactly why it must stay a map.
 
 ## Quality Checks
 
-See [DEVELOPING.md](DEVELOPING.md#quality-checks) for testing and typecheck requirements. `pnpm lint:bundle` (dependency-cruiser) fails when anything reachable from `canopycms/client` reaches a node built-in — see [Client-Bundle Boundary Check](DEVELOPING.md#client-bundle-boundary-check). `pnpm lint:tasks` enforces the backlog rule below — dead links between task files, rows still listed open whose file moved to `resolved/`, and orphans in both directions — see [Future-Tasks Backlog Check](DEVELOPING.md#future-tasks-backlog-check). Claude subagents are available:
+See [DEVELOPING.md](DEVELOPING.md#quality-checks) for testing and typecheck requirements. `pnpm lint:bundle` (dependency-cruiser) fails when anything reachable from `canopycms/client` reaches a node built-in — see [Client-Bundle Boundary Check](DEVELOPING.md#client-bundle-boundary-check). `pnpm lint:tasks` enforces the backlog rule below — dead links between task files, rows still listed open whose file moved to `resolved/`, and orphans in both directions — see [Future-Tasks Backlog Check](DEVELOPING.md#future-tasks-backlog-check). `pnpm lint:comments` ratchets comment volume against `scripts/comment-budget.json` (history markers, run length, comment/code ratio per directory), and `pnpm lint:docs` ratchets doc word counts against `scripts/docs-budgets.json` — see [Comment and Doc Budgets](DEVELOPING.md#comment-and-doc-budgets). Claude subagents are available:
 
 - `.claude/agents/test.md` - Run tests and fix failures
 - `.claude/agents/typecheck.md` - Type checking

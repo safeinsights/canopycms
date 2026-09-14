@@ -83,24 +83,18 @@ export function gitHubAppAuthFrom(resolveAppAuth: () => InstallationTokenMinter)
  * Both `normalizeGitHubAppPrivateKey` and `createAppAuth` throw synchronously on
  * the likeliest operator mistakes — a PEM that is really an unread JSON
  * document, a truncated key, an App *slug* or `Iv1.…` client id where the
- * numeric app id belongs (`createAppAuth` rejects a non-numeric `appId` at
- * construction). Building eagerly in the entrypoint's `main()` would put those
- * throws BEFORE `worker.start()`, where the AWS entrypoint's `main().catch()`
- * only logs and exits: an invisible ~5s systemd crash-loop that `cdk deploy`
- * reports as success, with the admin panel showing the worker absent and no
- * `lastFatalError` to explain it. That is the shipped regression (#198) that
- * `CmsWorker.ensureGitHubAuth()` and `preflightGitHubAppAuth()` exist to
- * prevent, and eager construction here would have walked straight back into it
- * on the one failure mode those two cannot otherwise see.
+ * numeric app id belongs. Building eagerly in the entrypoint's `main()` would
+ * put those throws BEFORE `worker.start()`, where the AWS entrypoint's
+ * `main().catch()` only logs and exits: an invisible ~5s systemd crash-loop that
+ * `cdk deploy` reports as success, with the admin panel showing the worker
+ * absent and no `lastFatalError` to explain it - the one failure mode
+ * `CmsWorker.ensureGitHubAuth()` and `preflightGitHubAppAuth()` cannot otherwise
+ * see.
  *
  * Deferred, the first touch of either member happens inside `start()`'s try —
  * `ensureGitHubAuth()` builds the Octokit client (which calls `authStrategy`),
  * and `preflightGitHubAppAuth()` mints immediately after — so the throw is
- * recorded in `worker-status.json` with its message intact. In practice a bad
- * key or a bad app id surfaces from the FIRST of those, `ensureGitHubAuth()`,
- * so it arrives unwrapped rather than under `preflightGitHubAppAuth()`'s
- * "Check the app id, the installation id…" wording. Both are recorded; only the
- * phrasing differs, and the normalizer's own message already names the key.
+ * recorded in `worker-status.json` with its message intact.
  *
  * Memoized, because the single-instance contract above is exactly what a plain
  * lazy getter would break: `createAppAuth` per call is `authStrategy:

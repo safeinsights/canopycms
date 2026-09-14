@@ -88,10 +88,6 @@ export type BranchDeleteResponse = ApiResponse<{
   cleanupWarning?: string
 }>
 
-// ============================================================================
-// Zod Schemas for Validation
-// ============================================================================
-
 const createBranchBodySchema = z.object({
   branch: branchNameSchema,
   title: z.string().optional(),
@@ -121,39 +117,34 @@ import type { CanopyUser } from '../user'
 import { operatingStrategy } from '../operating-mode'
 
 /**
- * Check if a user can create branches.
  * Returns true if:
  * - User is Admin or Reviewer (privileged)
  * - User has edit access to at least one path via pathPermissions rules
  * - No path permissions are defined (open access)
+ * @internal Exported for tests.
  */
 export const canCreateBranch = (
   user: CanopyUser,
   pathPermissions: PathPermission[],
 ): { allowed: boolean; reason: string } => {
-  // Admins and Reviewers can always create branches
   if (isPrivileged(user.groups)) {
     return { allowed: true, reason: 'privileged_user' }
   }
 
-  // If no path permissions defined, anyone can create branches
   if (pathPermissions.length === 0) {
     return { allowed: true, reason: 'no_restrictions' }
   }
 
-  // Check if user has edit access to at least one path rule
   for (const rule of pathPermissions) {
     const editTarget = rule.edit
     if (!editTarget) continue
 
-    // Check if rule has no user/group constraints (open to all)
     const hasUserConstraint = !!editTarget.allowedUsers?.length
     const hasGroupConstraint = !!editTarget.allowedGroups?.length
     if (!hasUserConstraint && !hasGroupConstraint) {
       return { allowed: true, reason: 'open_path_rule' }
     }
 
-    // Check if user matches the rule
     const matchesUser = hasUserConstraint && editTarget.allowedUsers?.includes(user.userId)
     const matchesGroup =
       hasGroupConstraint && user.groups?.some((gid) => editTarget.allowedGroups?.includes(gid))
@@ -204,6 +195,7 @@ const resolveReadOnlyMirrorPath = (
   )
 }
 
+/** @internal Exported for tests. */
 export const createBranchHandler = async (
   ctx: ApiContext,
   req: ApiRequest,
@@ -442,7 +434,6 @@ export const createBranchHandler = async (
       pathPermissions = await loadPathPermissions(baseBranchContext.branchRoot, operatingMode)
     }
 
-    // Check if user can create branches
     const canCreate = canCreateBranch(req.user, pathPermissions)
     if (!canCreate.allowed) {
       log.debug('api', 'Permission denied', { reason: canCreate.reason })
@@ -469,6 +460,7 @@ export const createBranchHandler = async (
   })
 }
 
+/** @internal Exported for tests. */
 export const listBranchesHandler = async (
   ctx: ApiContext,
   req: ApiRequest,
@@ -554,20 +546,15 @@ export const listBranchesHandler = async (
   }
 }
 
-/**
- * Check if a user can delete a specific branch.
- * Returns true if user is Admin or the branch creator.
- */
+/** @internal Exported for tests. */
 export const canDeleteBranch = (
   user: CanopyUser,
   branchContext: BranchContext,
 ): { allowed: boolean; reason: string } => {
-  // Admins can delete any branch
   if (isAdmin(user.groups)) {
     return { allowed: true, reason: 'admin' }
   }
 
-  // Branch creator can delete their own branch
   if (branchContext.branch.createdBy === user.userId) {
     return { allowed: true, reason: 'creator' }
   }
@@ -575,6 +562,7 @@ export const canDeleteBranch = (
   return { allowed: false, reason: 'not_authorized' }
 }
 
+/** @internal Exported for tests. */
 export const deleteBranchHandler = async (
   ctx: ApiContext,
   req: ApiRequest,
@@ -592,7 +580,6 @@ export const deleteBranchHandler = async (
     }
   }
 
-  // Get branch context
   const branchContext = await ctx.getBranchContext(branchName)
   if (!branchContext) {
     return { ok: false, status: 404, error: 'Branch not found' }
@@ -610,7 +597,6 @@ export const deleteBranchHandler = async (
     return { ok: false, status: 400, error: 'Cannot delete the base branch' }
   }
 
-  // Check permission
   const canDelete = canDeleteBranch(req.user, branchContext)
   if (!canDelete.allowed) {
     return {
@@ -770,20 +756,15 @@ export interface UpdateBranchAccessBody {
   allowedGroups?: string[]
 }
 
-/**
- * Check if a user can modify branch access.
- * Returns true if user is Admin or the branch creator.
- */
+/** @internal Exported for tests. */
 export const canModifyBranchAccess = (
   user: CanopyUser,
   branchContext: BranchContext,
 ): { allowed: boolean; reason: string } => {
-  // Admins can modify any branch
   if (isAdmin(user.groups)) {
     return { allowed: true, reason: 'admin' }
   }
 
-  // Branch creator can modify their own branch
   if (branchContext.branch.createdBy === user.userId) {
     return { allowed: true, reason: 'creator' }
   }
@@ -791,6 +772,7 @@ export const canModifyBranchAccess = (
   return { allowed: false, reason: 'not_authorized' }
 }
 
+/** @internal Exported for tests. */
 export const updateBranchAccessHandler = async (
   ctx: ApiContext,
   req: ApiRequest,
@@ -799,7 +781,6 @@ export const updateBranchAccessHandler = async (
 ): Promise<BranchResponse> => {
   const branchName = params.branch
 
-  // Get branch context
   const branchContext = await ctx.getBranchContext(branchName)
   if (!branchContext) {
     return { ok: false, status: 404, error: 'Branch not found' }
@@ -823,7 +804,6 @@ export const updateBranchAccessHandler = async (
     }
   }
 
-  // Check permission
   const canModify = canModifyBranchAccess(req.user, branchContext)
   if (!canModify.allowed) {
     return {
@@ -860,13 +840,8 @@ export const updateBranchAccessHandler = async (
   return { ok: true, status: 200, data: { branch: updated.branch } }
 }
 
-// ============================================================================
-// Route Definitions with defineEndpoint
-// ============================================================================
-
 /**
  * List all branches visible to current user
- * GET /branches
  */
 const listBranches = defineEndpoint({
   namespace: 'branches',
@@ -879,10 +854,6 @@ const listBranches = defineEndpoint({
   handler: listBranchesHandler,
 })
 
-/**
- * Create a new branch
- * POST /branches
- */
 const createBranch = defineEndpoint({
   namespace: 'branches',
   name: 'create',
@@ -905,10 +876,6 @@ const createBranch = defineEndpoint({
   handler: createBranchHandler,
 })
 
-/**
- * Delete a branch
- * DELETE /:branch
- */
 const deleteBranch = defineEndpoint({
   namespace: 'branches',
   name: 'delete',
@@ -922,9 +889,6 @@ const deleteBranch = defineEndpoint({
 })
 
 /**
- * Update branch access control
- * PATCH /:branch/access
- *
  * No 'writableBranch' guard: this rewrites branch.json's ACL, not branch
  * content, so a submitted branch's ACL stays editable during review. The base
  * branch is a different matter and IS refused -- the handler rejects protected
@@ -955,9 +919,6 @@ const updateBranchAccess = defineEndpoint({
   handler: updateBranchAccessHandler,
 })
 
-/**
- * Exported routes for router registration
- */
 export const BRANCH_ROUTES = {
   list: listBranches,
   create: createBranch,

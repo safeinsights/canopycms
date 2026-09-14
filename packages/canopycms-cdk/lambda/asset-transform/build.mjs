@@ -2,61 +2,31 @@
 /**
  * Builds the transform Lambda's deployable code asset WITHOUT Docker.
  *
- * sharp needs a native binary for the Lambda's target platform
- * (linux/arm64). Docker-based bundling (the usual `aws-cdk-lib/aws-lambda-nodejs`
- * approach) is unavailable in this environment, so instead:
+ * sharp needs a native binary for the Lambda's target platform (linux/arm64),
+ * and Docker-based bundling (the usual `aws-cdk-lib/aws-lambda-nodejs`
+ * approach) is unavailable in this environment. Instead esbuild bundles
+ * handler.ts into a single CJS file and a platform-targeted `npm install sharp`
+ * runs alongside it - see those two steps below for what makes that equivalent.
  *
- *   1. esbuild bundles handler.ts (+ its canopycms/aws-sdk imports) into a
- *      single CJS file, with `sharp`/`@img/*` (native bindings) and
- *      `@aws-sdk/*` (already present in the nodejs22.x Lambda managed
- *      runtime) left external.
- *   2. `npm install sharp@<range> --os=linux --cpu=arm64 --libc=glibc` runs
- *      directly in the output directory. sharp >=0.33 ships its native
- *      binary as a platform-specific optional dependency
- *      (`@img/sharp-linux-arm64` + `@img/sharp-libvips-linux-arm64`) -
- *      npm's `--os`/`--cpu`/`--libc` overrides select which optional
- *      platform package to fetch, independent of the host OS actually
- *      running the install (verified: this pulls the linux/arm64 binary
- *      cleanly from a macOS dev machine). This is the mechanism that makes
- *      Docker unnecessary here.
- *
- * The `<range>` is read from packages/canopycms's own `dependencies.sharp`,
- * so the Lambda's bundled binary stays in lockstep with the sharp version
- * the transform engine (packages/canopycms/src/assets/transform.ts) is
- * written against - never hardcode a version here.
+ * The sharp `<range>` is read from packages/canopycms's own
+ * `dependencies.sharp`, so the Lambda's bundled binary stays in lockstep with
+ * the version the transform engine (packages/canopycms/src/assets/transform.ts)
+ * is written against - never hardcode a version here.
  *
  * Run via `pnpm --filter canopycms-cdk run build:lambda`. Output lands in
- * `dist/` alongside this script (gitignored); `AssetSupport` points
- * `lambda.Code.fromAsset()` at it (see ../../src/constructs/asset-support.ts).
+ * `dist/` alongside this script (gitignored), where `AssetSupport` points
+ * `lambda.Code.fromAsset()` (see ../../src/constructs/asset-support.ts).
  *
- * `--skip-native` builds step 1 and SKIPS step 2, producing a directory that
- * is deliberately NOT deployable. It exists for the CDK test suite: those
- * tests synth real constructs, and `lambda.Code.fromAsset()` only requires
- * the asset DIRECTORY to exist - it never executes the handler, so the
- * linux/arm64 sharp binary inside it is irrelevant to every assertion they
- * make. Step 2 is a genuine platform-targeted `npm install` (network, tens of
- * seconds); paying it just to let `synth` hash a directory is what kept the
- * 82-test CDK suite out of CI. Skipping it makes the suite cheap enough to
- * gate every PR, which is the whole point.
+ * `--skip-native` runs the esbuild step and SKIPS the sharp install, producing a
+ * directory that is deliberately NOT deployable. It exists for the CDK test
+ * suite, which synths real constructs but never executes the handler -
+ * `lambda.Code.fromAsset()` only requires the asset DIRECTORY to exist. The
+ * install is a genuine platform-targeted network fetch, and paying it just to
+ * let `synth` hash a directory is what priced this suite out of CI.
  *
  * LOAD-BEARING, do not quietly drop: a successful FULL build writes a
  * `.deployable` marker into `dist/` as its very last act, and `AssetSupport`
- * REFUSES to synth without one. The marker is deliberately positive
- * ("this bundle was verified") rather than negative ("this one is bad"),
- * because a negative marker fails open on every path nobody thought about.
- * Concretely, this build can leave a partial, sharp-less `dist/` behind
- * without ever reaching the `--skip-native` branch: if the `npm install`
- * below throws (registry unreachable, offline, proxy, an npm too old for
- * `--os`/`--cpu`/`--libc`) or the `platformPkgDir` check fails, `main()`'s
- * catch sets a non-zero exit code but does NOT remove the handler.js and
- * package.json already written. A "no `.skip-native` file" test would wave
- * that bundle straight through to a deploy; requiring `.deployable` blocks
- * it, because the marker can only exist if the native install actually
- * verified.
- *
- * `--skip-native` additionally writes a `.skip-native` marker. Nothing
- * consumes it - it is there so a human running `ls` can see at a glance why
- * a bundle is being rejected.
+ * REFUSES to synth without one. See that write for why the marker is positive.
  */
 
 import { execFileSync } from 'node:child_process'
@@ -94,6 +64,9 @@ async function main() {
   rmSync(distDir, { recursive: true, force: true })
   mkdirSync(distDir, { recursive: true })
 
+  // `sharp`/`@img/*` are native bindings the step below installs for
+  // linux/arm64, and `@aws-sdk/*` is already present in the Lambda managed
+  // runtime - so both stay EXTERNAL rather than being bundled.
   log('Bundling handler.ts with esbuild (sharp, @img/*, @aws-sdk/* external)')
   await build({
     entryPoints: [path.join(__dirname, 'handler.ts')],
@@ -137,6 +110,12 @@ async function main() {
     return
   }
 
+  // THE REASON DOCKER IS UNNECESSARY HERE. sharp >=0.33 ships its native binary
+  // as a platform-specific optional dependency (`@img/sharp-linux-arm64` +
+  // `@img/sharp-libvips-linux-arm64`), and npm's `--os`/`--cpu`/`--libc`
+  // overrides select which optional platform package to fetch independently of
+  // the host OS running the install - so a macOS dev machine pulls the
+  // linux/arm64 binary cleanly.
   const npmArgs = [
     'install',
     `sharp@${sharpRange}`,
@@ -158,12 +137,15 @@ async function main() {
   }
 
   // LAST act of a successful full build, and only reachable once the
-  // platform-binary check above has passed - that ordering is the whole
-  // point. AssetSupport requires this file, so anything that leaves a
-  // half-built dist/ behind (a thrown npm install, a failed platform check,
-  // some future hand-rolled path) is blocked by default rather than
-  // permitted by default. Records what was verified, not just that
-  // something was.
+  // platform-binary check above has passed - that ordering is the whole point,
+  // and it is why the marker is POSITIVE ("this bundle was verified") rather
+  // than negative ("this one is bad"). A negative marker fails open: a thrown
+  // `npm install` or a failed `platformPkgDir` check leaves `main()`'s catch
+  // setting a non-zero exit code WITHOUT removing the handler.js and
+  // package.json already written, so a sharp-less dist/ exists that never
+  // reached the `--skip-native` branch and carries no `.skip-native` file
+  // either. Requiring `.deployable` blocks that bundle by default. Records what
+  // was verified, not just that something was.
   writeFileSync(
     path.join(distDir, DEPLOYABLE_MARKER),
     JSON.stringify({ sharpRange, platformPkgDir, builtBy: 'build:lambda' }, null, 2) + '\n',

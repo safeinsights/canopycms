@@ -1,20 +1,10 @@
 /**
  * Git operations for branch workspaces.
  *
- * This file is effectively TWO modules sharing a class name, split cleanly by
- * line number:
- *
- *   Everything from `cloneRepo` down to `initializeWorkspace` is `static` —
- *     workspace PROVISIONING (also ensureLocalSimulatedRemote, bareRemoteHasBranch,
- *     deleteBareRemoteHead, findGitRoot, resolveRemoteUrl). These share no instance
- *     state; the class is acting as a namespace.
- *   Everything from `status()` onward is an INSTANCE method — per-repo operations
- *     on one already-provisioned workspace (checkoutBranch, pullBase,
- *     rebaseOntoBase, add/commit/push, ...), needing
- *     `repoPath`/`baseBranch`/`remote`.
- *
- * `status()` is the dividing line. If you are here to change provisioning, nothing
- * after it concerns you, and vice versa.
+ * `status()` divides two halves that share only a class name: above it,
+ * `static` workspace PROVISIONING holding no instance state; below it, INSTANCE
+ * methods on one already-provisioned workspace, needing
+ * `repoPath`/`baseBranch`/`remote`.
  *
  * Every git invocation is argv-based with `--end-of-options`, and `gitChildEnv`
  * forces `LC_ALL=C`/`LANG=C` so git's own message text stays English — several
@@ -45,47 +35,33 @@ import { acquireProvisioningLock } from './utils/provisioning-lock'
 const log = createDebugLogger({ prefix: 'GitManager' })
 
 /**
- * Child environment for spawned git processes. simple-git's .env() REPLACES
- * the child env entirely (deploy-proven 2026-07-24: every Lambda git spawn
- * failed with "dubious ownership" on the uid-1000-owned EFS clones because
- * the child env lost the runtime's git variables). Spreading ALL of
- * process.env trips simple-git's unsafe-variable blocklist on hosts where
- * GIT_EDITOR/GIT_SSH_COMMAND etc. are set - so pass through a deterministic
- * ALLOWLIST of process basics + author/tracing families.
+ * Child environment for spawned git processes: a deterministic ALLOWLIST of
+ * process basics plus the author/tracing families. simple-git's `.env()`
+ * REPLACES the child env entirely, and a spawn that loses the runtime's git
+ * variables fails with "dubious ownership" against uid-mismatched EFS clones;
+ * spreading all of process.env instead trips simple-git's unsafe-variable
+ * blocklist on hosts that set GIT_EDITOR/GIT_SSH_COMMAND.
  *
- * GIT_CONFIG_* is deliberately NOT passed through: simple-git hard-blocks
- * env-based git config (allowUnsafeConfigEnvCount) since it can inject
- * arbitrary settings. Host-level config like the safe.directory workaround
- * for uid-mismatched EFS clones belongs in the image's SYSTEM gitconfig -
- * see Dockerfile.cms.template's `git config --system` line.
+ * GIT_CONFIG_* stays out: simple-git hard-blocks env-based git config
+ * (allowUnsafeConfigEnvCount) since it can inject arbitrary settings. Host
+ * config such as the safe.directory workaround for uid-mismatched EFS clones
+ * belongs in the image's SYSTEM gitconfig — Dockerfile.cms.template's
+ * `git config --system` line.
  */
 const GIT_ENV_PASSTHROUGH =
   /^(PATH|HOME|USER|LANG|LC_[A-Z]+|TZ|TMPDIR|GIT_(AUTHOR|COMMITTER)_(NAME|EMAIL|DATE)|GIT_TERMINAL_PROMPT|GIT_TRACE[0-9A-Z_]*)$/
 /**
- * Every caller of gitChildEnv gets forced to the "C" locale, regardless of
- * what LANG/LC_ALL happen to be passed through above from process.env (or
- * absent from it). Push-rejection classification
- * (`utils/git.ts`'s `isNonFastForwardRejection`) matches git's literal
- * English rejection strings (`[rejected]`, `non-fast-forward`, the "Updates
- * were rejected because" hint) -- all gettext-translated. The worker's
- * systemd unit sets no LANG/LC_ALL today, so English output is currently
- * incidental, not guaranteed: a base-image change, a container runtime
- * default, or a developer's shell profile could silently make git emit a
- * translated message and turn the classifier into a permanent no-op. LC_ALL
- * wins over LANG (and every other LC_* category) in gettext's resolution
- * order, so forcing both here pins output to English no matter which one a
- * host happens to set — applied AFTER the passthrough loop so it always
- * wins over whatever LANG/LC_* value process.env carried through, and
- * BEFORE `overrides` so an explicit override (none today) could still win.
+ * Forces the "C" locale on every `gitChildEnv` caller. Push-rejection
+ * classification (`utils/git.ts`'s `isNonFastForwardRejection`) matches git's
+ * literal English rejection strings (`[rejected]`, `non-fast-forward`, the
+ * "Updates were rejected because" hint), all of them gettext-translated: a host
+ * that sets a LANG/LC_* of its own would silently turn that classifier into a
+ * permanent no-op. LC_ALL outranks LANG and every other LC_* category in
+ * gettext's resolution order, so both are pinned. Applied AFTER the passthrough
+ * loop so it beats any LANG/LC_* carried through from process.env, and BEFORE
+ * `overrides` so an explicit override still wins.
  */
 const FORCE_C_LOCALE = { LC_ALL: 'C', LANG: 'C' }
-/**
- * Exported for GitManager's own use (see `this.git.env(...)` above),
- * the worker's push-rejection-classified GitHub calls
- * (`pushBranchToGitHub` in worker/task-runner.ts, `syncGit`'s
- * fetch/`pushSettingsBranches` instance in worker/git-sync.ts),
- * and tests.
- */
 export function gitChildEnv(overrides: Record<string, string>): Record<string, string> {
   const env: Record<string, string> = {}
   for (const [key, value] of Object.entries(process.env)) {
@@ -98,23 +74,20 @@ export function gitChildEnv(overrides: Record<string, string>): Record<string, s
  * Child env for git commands that talk to a NETWORK remote (the worker's
  * GitHub fetch/push).
  *
- * Deliberately NOT `gitChildEnv`. That allowlist exists for LOCAL operations
- * and drops `HTTPS_PROXY`/`HTTP_PROXY`/`NO_PROXY`/`GIT_SSL_*`/
- * `GIT_SSH_COMMAND` on purpose (see GIT_ENV_PASSTHROUGH). Applying it to the
- * GitHub calls would newly break every adopter who reaches GitHub through a
- * corporate proxy or a custom CA bundle — trading real connectivity for
- * message stability, which is a bad deal.
+ * Deliberately NOT `gitChildEnv`: that allowlist is for LOCAL operations and
+ * drops `HTTPS_PROXY`/`HTTP_PROXY`/`NO_PROXY`/`GIT_SSL_*`/`GIT_SSH_COMMAND`,
+ * which on the GitHub calls would break every adopter who reaches GitHub
+ * through a corporate proxy or a custom CA bundle.
  *
  * So this inherits the ambient environment and forces only the locale, which
  * is all the push-rejection classifier (isNonFastForwardRejection in
- * utils/git.ts) actually needs: git's `[rejected] … (non-fast-forward)` text
- * is gettext-translated, and a non-English host would silently turn that
- * classifier into a no-op, reverting collisions to a 3-retry transient burn.
+ * utils/git.ts) needs: git's `[rejected] … (non-fast-forward)` text is
+ * gettext-translated, and a non-English host would silently turn that
+ * classifier into a no-op.
  *
- * `GIT_SSH_COMMAND` is deliberately NOT passed through even though it is a
- * "network" variable: simple-git hard-blocks it (`allowUnsafeSshCommand`),
- * and it is irrelevant here anyway — `buildGitHubUrl()` produces an `https://`
- * URL, so the worker never reaches GitHub over SSH.
+ * `GIT_SSH_COMMAND` stays out even though it is a "network" variable:
+ * simple-git hard-blocks it (`allowUnsafeSshCommand`), and `buildGitHubUrl()`
+ * produces an `https://` URL, so the worker never reaches GitHub over SSH.
  */
 const GIT_NETWORK_ENV_PASSTHROUGH =
   /^((HTTPS?|ALL)_PROXY|(https?|all)_proxy|NO_PROXY|no_proxy|GIT_SSL_(CAINFO|CAPATH|NO_VERIFY|VERSION)|CURL_CA_BUNDLE|SSL_CERT_(FILE|DIR)|REQUESTS_CA_BUNDLE|NODE_EXTRA_CA_CERTS)$/
@@ -129,7 +102,6 @@ export function gitNetworkChildEnv(): Record<string, string> {
 }
 
 // In-memory lock to prevent concurrent remote.git initialization
-// Maps remotePath -> Promise<void> to serialize access
 const remoteInitLocks = new Map<string, Promise<void>>()
 
 /**
@@ -137,31 +109,18 @@ const remoteInitLocks = new Map<string, Promise<void>>()
  * (`+refs/heads/*:${GITHUB_TRACKING_REF_PREFIX}*`), instead of writing
  * directly into `refs/heads/*`.
  *
- * `remote.git`'s `refs/heads/*` is NOT a throwaway mirror: it's the
- * deployment's local origin. `GitManager.push()` writes editor work into it
- * (`target:target`), branch-workspace clones are cloned FROM it, and the CMS
- * worker itself pushes it on to GitHub (`pushBranchToGitHub` in
- * worker/task-runner.ts, `pushSettingsBranches` in worker/git-sync.ts). A fetch that force-writes
- * GitHub's refs straight into `refs/heads/*` (the old
- * `+refs/heads/*:refs/heads/*` refspec) can therefore destroy work that
- * reached `remote.git` but not GitHub yet: with `--prune`, a branch pushed
- * into `remote.git` and not yet on GitHub gets deleted outright; without
- * needing `--prune`, a branch where `remote.git` is ahead of GitHub gets
- * force-rewound to GitHub's older tip, and the worker's next push then
- * no-ops ("Everything up-to-date") -- the editor's commit silently never
- * reaches GitHub even though the branch reports `synced`.
- *
- * Fetching into this remote-tracking namespace instead makes `--prune`/`+`
- * safe again -- they now only ever affect GitHub's-view-of-the-world refs,
- * never the local heads other code depends on. `reconcileTrackedBranches()`
- * (worker/git-sync.ts) is what subsequently, and non-destructively, brings
- * `refs/heads/*` toward what's tracked here.
- *
- * Lives here (not the worker, where this constant originated) so
- * `GitManager.bareRemoteHasBranch` -- which must recognize this namespace
- * too, since it's what a branch pushed by another CanopyCMS deployment (or
- * pushed directly to GitHub) shows up in before/without ever gaining a local
- * head -- doesn't need a worker/ -> git-manager.ts back-reference.
+ * `remote.git`'s `refs/heads/*` is NOT a throwaway mirror: it is the
+ * deployment's local origin. `GitManager.push()` writes editor work into it,
+ * branch-workspace clones are cloned FROM it, and the worker pushes it on to
+ * GitHub. A fetch that force-writes GitHub's refs straight into `refs/heads/*`
+ * therefore destroys work that reached `remote.git` but not GitHub yet: with
+ * `--prune` a not-yet-pushed branch is deleted outright, and a branch where
+ * `remote.git` is ahead is force-rewound to GitHub's older tip, so the worker's
+ * next push no-ops and the editor's commit never arrives while the branch still
+ * reports `synced`. Confining `+`/`--prune` to this namespace keeps them off
+ * those local heads; `reconcileTrackedBranches()` (worker/git-sync.ts) is what
+ * subsequently, and non-destructively, brings `refs/heads/*` toward what is
+ * tracked here.
  */
 export const GITHUB_TRACKING_REF_PREFIX = 'refs/remotes/github/'
 
@@ -174,26 +133,21 @@ export const GITHUB_TRACKING_REF_PREFIX = 'refs/remotes/github/'
 export async function ensureGitExcludePattern(repoPath: string, pattern: string): Promise<void> {
   const excludePath = path.join(repoPath, '.git', 'info', 'exclude')
 
-  // Ensure .git/info directory exists
   await fs.mkdir(path.dirname(excludePath), { recursive: true })
 
-  // Read existing exclude file (create if doesn't exist)
   let content = ''
   try {
     content = await fs.readFile(excludePath, 'utf-8')
   } catch (err: unknown) {
     if (!isNotFoundError(err)) throw err
-    // File doesn't exist, will create it
   }
 
-  // Check if pattern already exists (avoid duplicates)
   const lines = content.split('\n')
   if (lines.some((line) => line.trim() === pattern)) {
     log.debug('git', 'Pattern already in .git/info/exclude', { pattern })
     return
   }
 
-  // Add pattern (with newline if file is not empty and doesn't end with one)
   const needsLeadingNewline = content.length > 0 && !content.endsWith('\n')
   const newContent = content + (needsLeadingNewline ? '\n' : '') + pattern + '\n'
 
@@ -216,6 +170,7 @@ export interface GitManagerOptions {
 
 export type GitStatus = Pick<StatusResult, 'files' | 'ahead' | 'behind' | 'current' | 'tracking'>
 
+/** @internal Exported for tests. */
 export class GitConflictError extends Error {
   constructor(public readonly conflictedFiles: string[]) {
     super(`Git conflict in ${conflictedFiles.length} file(s): ${conflictedFiles.join(', ')}`)
@@ -226,12 +181,10 @@ export class GitConflictError extends Error {
 /**
  * The branch has no ref on the remote yet, so there is nothing to pull.
  *
- * Distinguishing this from a real pull failure matters: it is the ONLY benign
- * outcome of `pullCurrentBranch`, and callers that want to shrug it off (a
- * settings branch's first-ever commit, see services.ts `commitToSettingsBranch`)
- * must not shrug off merge failures with it. Everything else — a merge that
- * cannot proceed, a corrupt workspace, an unreachable remote — is a genuine
- * error the caller has to surface.
+ * The ONLY benign outcome of `pullCurrentBranch`: callers that shrug it off (a
+ * settings branch's first-ever commit — services.ts `commitToSettingsBranch`)
+ * must not shrug off anything else with it. A merge that cannot proceed, a
+ * corrupt workspace and an unreachable remote are genuine errors to surface.
  */
 export class GitRemoteRefMissingError extends Error {
   constructor(
@@ -283,11 +236,9 @@ export interface InitializeWorkspaceOptions {
   /** Git author email for internal commits (e.g., orphan branch init). */
   gitBotAuthorEmail: string
   /**
-   * Pattern to add to `.git/info/exclude` so runtime metadata
-   * (e.g., `.canopy-meta/`) never enters the workspace's git history.
-   * Only applied to content branches; settings workspaces don't need it
-   * (their payloads live at the workspace root and are committed by
-   * explicit path).
+   * Pattern added to `.git/info/exclude` so runtime metadata (e.g.
+   * `.canopy-meta/`) never enters the workspace's git history. Content branches
+   * only; settings workspaces commit by explicit path and don't need it.
    */
   gitExcludePattern?: string
 }
@@ -305,31 +256,18 @@ export class GitManager {
     this.remote = options.remote ?? 'origin'
     this.skipIndexMarker = options.skipIndexMarker ?? false
     this.git = simpleGit({ baseDir: this.repoPath, ...gitOptions })
-    // `this.git` is for LOCAL working-tree ops in the intended prod topology,
-    // where `origin` resolves to a local path (an auto-detected/initialized
-    // `remote.git`) - its env is the allowlist from gitChildEnv, which
-    // intentionally drops HTTPS_PROXY/GIT_SSL_*/GIT_SSH_COMMAND/etc. Most of
-    // the worker's OWN GitHub network I/O still avoids gitChildEnv for the
-    // same reason (fresh full-env simpleGit() instances so proxy/TLS vars
-    // survive) -- EXCEPT CmsWorker.pushBranchToGitHub and syncGit()'s fetch/
-    // pushSettingsBranches instance, which now opt into gitChildEnv
-    // specifically so its forced C-locale (see FORCE_C_LOCALE below) keeps
-    // push-rejection classification (isNonFastForwardRejection) reliable --
-    // a deliberate, narrow trade-off of incidental proxy/TLS passthrough on
-    // just those two network call sites for classification correctness.
+    // `this.git` is for LOCAL working-tree ops: in the intended prod topology
+    // `origin` resolves to a local path (an auto-detected/initialized
+    // `remote.git`), so its env is gitChildEnv's allowlist, which drops
+    // HTTPS_PROXY/GIT_SSL_*/GIT_SSH_COMMAND — network git I/O uses
+    // gitNetworkChildEnv instead. Under the `allowNetworkRemoteInProd` escape
+    // hatch `this.remote` CAN be a network URL, and these calls do hit it with
+    // that restricted env: a known limitation of the escape hatch, tracked in
+    // .claude/future-tasks/network-escape-hatch-git-env.md.
     //
-    // Under the `allowNetworkRemoteInProd` escape hatch, `this.remote` CAN be
-    // a network URL, and this.git.fetch(this.remote, ...)/this.git.raw(['push',
-    // ...]) do hit it - those calls still run with the restricted allowlist
-    // env above, so they will drop HTTPS_PROXY/GIT_SSL_*/GIT_SSH_COMMAND. This
-    // is a known limitation of that escape hatch (tracked in
-    // .claude/future-tasks/network-escape-hatch-git-env.md), not a bug: full
-    // proxy/TLS-env support for `this.remote` ops when the escape hatch is on
-    // is still open work.
-    //
-    // Prevent git from traversing above repoPath to find a parent .git directory.
-    // If the workspace's .git is corrupt/missing, git should fail rather than
-    // silently operating on the host repo above.
+    // GIT_CEILING_DIRECTORIES stops git traversing above repoPath to a parent
+    // .git: a corrupt or missing workspace .git must fail, never silently
+    // operate on the host repo above.
     this.git.env(gitChildEnv({ GIT_CEILING_DIRECTORIES: path.dirname(this.repoPath) }))
   }
 
@@ -349,17 +287,11 @@ export class GitManager {
   }
 
   /**
-   * Initializes a local bare git repository to simulate a remote for dev mode.
-   *
-   * This is idempotent - if the remote already exists, it will not be recreated.
-   *
-   * The remote is seeded with the current state of the baseBranch (e.g., 'main').
-   * When the remote already exists but is missing the requested baseBranch
-   * (dev-mode branch auto-detect makes this routine: any git branch created
-   * after the remote was first seeded), that branch is pushed from the source
-   * repo on demand. Branches that already exist in the remote are never
-   * updated here — the CMS pushes editor state into this remote, and a
-   * refresh from the source repo would clobber it.
+   * Initializes a local bare git repository to simulate a remote for dev mode,
+   * seeded with the current state of baseBranch. Idempotent: an existing remote
+   * is never recreated, and a branch already in it is never refreshed from the
+   * source repo — the CMS pushes editor state into this remote, so a refresh
+   * would clobber it. A baseBranch the remote lacks is pushed on demand.
    *
    * @throws Error if not a git repo, no commits, or baseBranch doesn't exist
    */
@@ -369,10 +301,10 @@ export class GitManager {
     baseBranch: string
     subdirectory?: string
   }): Promise<void> {
-    // Serialize access per remote path to prevent race conditions
-    // when multiple requests try to initialize the same remote simultaneously.
-    // After waiting, still proceed: the finished initialization may have seeded
-    // a different baseBranch than the one this caller needs.
+    // Serialize per remote path so concurrent requests cannot both initialize
+    // the same remote. After waiting, still proceed: the finished
+    // initialization may have seeded a different baseBranch than this caller
+    // needs.
     const existingLock = remoteInitLocks.get(options.remotePath)
     if (existingLock) {
       log.debug('git', 'Waiting for existing remote initialization', {
@@ -381,12 +313,11 @@ export class GitManager {
       await existingLock
     }
 
-    // Create new lock promise
     const lockPromise = log.timed('git', 'ensureLocalSimulatedRemote', async () => {
-      // The in-memory lock above only serializes within one process; take a
-      // cross-process lock too so two processes provisioning against the same
-      // workspace root can't both create the bare remote and race ("cannot
-      // mkdir remote.git: File exists"). Released in the finally below.
+      // The in-memory lock above only serializes within one process; a
+      // cross-process lock keeps two processes provisioning the same workspace
+      // root from both creating the bare remote ("cannot mkdir remote.git:
+      // File exists"). Released in the finally below.
       let releaseLock: (() => Promise<void>) | undefined
       try {
         log.debug('git', 'Initializing local simulated remote', {
@@ -424,13 +355,11 @@ export class GitManager {
           const result = await sourceGit.raw(['rev-parse', '--show-toplevel'])
           gitRoot = result.trim()
         } catch {
-          // If we can't find git root, fall back to sourcePath
           gitRoot = options.sourcePath
         }
 
         const sourceGit = simpleGit({ baseDir: gitRoot })
 
-        // Verify it's a git repo
         try {
           await sourceGit.status()
         } catch {
@@ -440,7 +369,6 @@ export class GitManager {
           )
         }
 
-        // Verify it has commits
         let hasCommits = false
         try {
           const log = await sourceGit.log(['-1'])
@@ -457,7 +385,6 @@ export class GitManager {
           )
         }
 
-        // Verify baseBranch exists
         const branches = await sourceGit.branchLocal()
         if (!branches.all.includes(options.baseBranch)) {
           throw new Error(
@@ -467,9 +394,8 @@ export class GitManager {
         }
 
         if (remoteExists) {
-          // Refresh path: the remote predates this base branch (e.g. it was seeded
-          // months ago and the developer has since created/switched branches).
-          // Push just the missing branch; existing branches are never touched.
+          // Refresh path: the remote predates this base branch. Push just the
+          // missing branch; existing branches are never touched.
           log.debug('git', 'Existing remote is missing base branch — pushing it from source', {
             remotePath: options.remotePath,
             baseBranch: options.baseBranch,
@@ -507,10 +433,8 @@ export class GitManager {
       }
     })
 
-    // Store the lock promise
     remoteInitLocks.set(options.remotePath, lockPromise)
 
-    // Wait for initialization to complete
     await lockPromise
   }
 
@@ -519,39 +443,28 @@ export class GitManager {
    * EITHER the local-heads namespace (`refs/heads/<branch>`) or the GitHub
    * tracking namespace (`GITHUB_TRACKING_REF_PREFIX<branch>`).
    *
-   * Originally checked `refs/heads/*` only, for dev-mode's
-   * `ensureLocalSimulatedRemote` (a simulated remote never gets a tracking
-   * namespace, so that caller only ever needed the local-heads check).
-   * Generalized/promoted to public for api/branch.ts's create-time collision
-   * guard, which also needs the tracking namespace: `syncGit()` fetches
-   * GitHub into `GITHUB_TRACKING_REF_PREFIX*` rather than `refs/heads/*`
-   * directly (see that constant's doc comment above), and
-   * `reconcileTrackedBranches()` (worker/git-sync.ts) only
-   * non-destructively brings `refs/heads/*` toward what's tracked there — so
-   * a branch that another CanopyCMS deployment sharing this repo (or a
-   * direct push to GitHub) just created can sit in the tracking namespace
-   * for a while before, or without ever, gaining a local head here. Checking
-   * `refs/heads/*` alone would miss exactly the two-deployments-one-repo
-   * collision that guard exists to catch.
+   * Both namespaces matter to api/branch.ts's create-time collision guard: a
+   * branch another CanopyCMS deployment sharing this repo (or a direct push to
+   * GitHub) just created sits in the tracking namespace before, or without
+   * ever, gaining a local head here (see GITHUB_TRACKING_REF_PREFIX above), so
+   * checking `refs/heads/*` alone would miss exactly the
+   * two-deployments-one-repo collision that guard exists to catch.
    *
    * Runs git with an explicit `--git-dir` instead of a cwd inside the repo:
    * environments with `safe.bareRepository=explicit` (sandboxed/CI git setups)
    * refuse cwd-based discovery of bare repos but expressly allow `--git-dir`.
-   * A single `for-each-ref` call checks both candidate refs at once (no
-   * exception-based control flow — `for-each-ref` exits 0 whether or not
-   * either ref exists, same reason the old implementation used `branch
-   * --list` instead of `rev-parse --verify --quiet`: simple-git only fails a
-   * task on stderr output, and `--quiet` suppresses exactly that).
-   * `--end-of-options` guards the ref-name positionals the same way
-   * `push` below does, since `branch` here can be a sanitized but otherwise
-   * caller-influenced string.
+   * A single `for-each-ref` call checks both candidate refs at once, without
+   * exception-based control flow — it exits 0 whether or not either ref
+   * exists, whereas `rev-parse --verify --quiet` suppresses the stderr output
+   * that is the only thing simple-git fails a task on. `--end-of-options`
+   * guards the ref-name positionals the same way `push` below does, since
+   * `branch` here is sanitized but otherwise caller-influenced.
    *
    * A failure here therefore means the remote itself is unreadable and is
    * surfaced, NOT treated as "branch absent" — that would route
    * `ensureLocalSimulatedRemote` to the push path against a repo it couldn't
    * even read, and would silently skip api/branch.ts's collision check
-   * instead of letting that caller distinguish "unreadable" from "absent"
-   * and decide what to do.
+   * instead of letting that caller distinguish "unreadable" from "absent".
    */
   static async bareRemoteHasBranch(
     remotePath: string,
@@ -573,14 +486,12 @@ export class GitManager {
       throw new Error(`Cannot inspect remote mirror at ${remotePath}: ${getErrorMessage(err)}`)
     }
     // Compare full refnames rather than trusting the pattern to have matched
-    // exactly. `for-each-ref <pattern>` matches "completely, or from the
-    // beginning up to a slash" -- so `refs/heads/feature` also matches
+    // exactly: `for-each-ref <pattern>` matches "completely, or from the
+    // beginning up to a slash", so `refs/heads/feature` also matches
     // `refs/heads/feature/foo`. Since syncGit mirrors EVERY GitHub branch into
     // the tracking namespace, a repo containing `feature/*`, `release/*`,
-    // `dependabot/*` etc. would otherwise make this report a collision for a
-    // branch named literally `feature`, blocking a legitimate name. The
-    // superseded `branch --list` implementation matched exactly, so this is a
-    // property that has to be restored explicitly, not assumed.
+    // `dependabot/*` would otherwise report a collision for a branch named
+    // literally `feature`, blocking a legitimate name.
     const refs = output
       .split('\n')
       .map((line) => line.trim())
@@ -606,36 +517,30 @@ export class GitManager {
    * Delete `refs/heads/<branch>` from a bare local mirror, if present. A
    * no-op (not an error) when the ref doesn't exist.
    *
-   * This is the "explicit path" for removing a deleted branch's local head
-   * that the sync loop deliberately is not (see GITHUB_TRACKING_REF_PREFIX's
-   * doc comment: reconcileTrackedBranches never deletes a head). Called by
-   * api/branch.ts's deleteBranchHandler: without it, a deleted branch's head
-   * lives in `remote.git` forever, and the ordinary create -> publish ->
-   * squash-merge -> delete -> reuse-the-name cycle then has the REUSED
-   * branch's first publish rejected non-fast-forward against the stale head
-   * (`GitManager.push()` pushes `branch:branch`, and a squash-merged old tip
-   * is not an ancestor of the new branch) -- a permanent, misleading 409.
-   * Worse, a retried submit skips the local push (clean tree) and enqueues
-   * the worker push of the STALE head, resurrecting the deleted branch's
-   * content on GitHub as an apparent success.
+   * The explicit path for removing a deleted branch's local head, which the
+   * sync loop deliberately is not (reconcileTrackedBranches never deletes a
+   * head — see GITHUB_TRACKING_REF_PREFIX). Called by api/branch.ts's
+   * deleteBranchHandler: a head left in `remote.git` forever makes the
+   * create -> publish -> squash-merge -> delete -> reuse-the-name cycle reject
+   * the reused branch's first publish non-fast-forward against the stale head
+   * (`GitManager.push()` pushes `branch:branch`, and a squash-merged old tip is
+   * not an ancestor of the new branch), and a retried submit then skips the
+   * local push on a clean tree and enqueues the worker push of the STALE head,
+   * resurrecting the deleted branch's content on GitHub as an apparent success.
    *
-   * Deliberately leaves the tracking ref (`GITHUB_TRACKING_REF_PREFIX<branch>`)
-   * alone: that namespace mirrors GitHub's view, and if the branch still
-   * exists on GitHub, the create-time collision check SHOULD keep reporting
-   * it until the remote side is actually gone.
+   * Leaves the tracking ref (`GITHUB_TRACKING_REF_PREFIX<branch>`) alone: that
+   * namespace mirrors GitHub's view, so while the branch still exists there the
+   * create-time collision check SHOULD keep reporting it.
    *
-   * Same `--git-dir` invocation style as bareRemoteHasBranch above (works
-   * under `safe.bareRepository=explicit`). The existence pre-check makes
-   * "absent" deterministic instead of parsing update-ref's locale-dependent
-   * failure text, and its captured SHA is passed to `update-ref -d` as the
-   * expected old value -- same pattern as reconcileTrackedBranches'
-   * guarded updates (worker/git-sync.ts): a concurrent Lambda push
-   * re-creating/moving this branch between the read and the delete makes
-   * update-ref throw (surfaced as the caller's best-effort warning) instead
-   * of silently deleting a commit that was just pushed. No
-   * `--end-of-options` on update-ref (older gits don't accept it there);
-   * the ref argument always begins with the literal `refs/heads/` prefix,
-   * so it can never parse as an option.
+   * Same `--git-dir` invocation style as bareRemoteHasBranch above (works under
+   * `safe.bareRepository=explicit`). The existence pre-check makes "absent"
+   * deterministic instead of parsing update-ref's locale-dependent failure
+   * text, and its captured SHA is passed to `update-ref -d` as the expected old
+   * value, so a concurrent push re-creating or moving this branch between the
+   * read and the delete makes update-ref throw instead of silently deleting a
+   * just-pushed commit. No `--end-of-options` on update-ref (older gits reject
+   * it there); the ref argument always begins with the literal `refs/heads/`
+   * prefix, so it can never parse as an option.
    */
   static async deleteBareRemoteHead(remotePath: string, branch: string): Promise<void> {
     const ref = `refs/heads/${branch}`
@@ -723,7 +628,6 @@ export class GitManager {
   }
 
   /**
-   * Find the git root directory
    * @returns Path to git root, or cwd if not in a git repo
    */
   static async findGitRoot(): Promise<string> {
@@ -739,8 +643,6 @@ export class GitManager {
   }
 
   /**
-   * Validate that a git repository exists at the given path
-   * @param repoPath - Path to check for .git directory
    * @throws Error if git repo doesn't exist
    */
   static async validateGitRepoExists(repoPath: string): Promise<void> {
@@ -759,22 +661,14 @@ export class GitManager {
 
   /**
    * Guards prod mode against pointing git operations at a NETWORK remote
-   * (http(s)://, ssh://, git://, or scp-like `user@host:path`).
+   * (http(s)://, ssh://, git://, or scp-like `user@host:path`): the prod CMS
+   * Lambda has no internet access and would hang until timeout trying to
+   * clone/fetch/push one. Fires only for `mode === 'prod'`, and only for the
+   * three resolvable sources (explicit param, config, env var) — `file://`
+   * URLs, plain filesystem paths and `resolveRemoteUrl`'s auto-detect step
+   * (local by construction) are always allowed.
    *
-   * In the intended prod architecture the CMS Lambda has no internet access:
-   * all git network I/O happens on the EC2 worker against the EFS-local bare
-   * repo `{workspace}/remote.git`, which the Lambda reaches via auto-detect
-   * (see `resolveRemoteUrl`'s auto-detect step, which always yields a local
-   * path by construction — never checked here). A network URL supplied via
-   * any of the three resolvable sources (explicit param, config, env var) is
-   * almost always a misconfiguration: the internet-less Lambda would try to
-   * clone/fetch/push it directly and hang until timeout.
-   *
-   * Dev mode is never restricted here — this only fires for `mode === 'prod'`.
-   * `file://` URLs and plain filesystem paths are LOCAL and always allowed.
-   *
-   * @param source - Human-readable description of where `url` came from, used
-   *   only in the thrown error message (e.g. "config.defaultRemoteUrl").
+   * @param source - Where `url` came from, for the thrown error message only.
    */
   private static assertRemoteUrlAllowedInMode(
     mode: OperatingMode,
@@ -805,17 +699,12 @@ export class GitManager {
    * 3. Environment variable (mode-specific)
    * 4. Auto-initialized local remote (for dev mode)
    *
-   * Uses strategy flags to determine behavior, GitManager executes the logic.
+   * In prod mode a resolved network URL from any of the first three sources is
+   * rejected unless `options.allowNetworkRemoteInProd` is set — see
+   * `assertRemoteUrlAllowedInMode`.
    *
-   * In prod mode, a resolved network URL from any of the first three sources
-   * is rejected unless `options.allowNetworkRemoteInProd` is set — see
-   * `assertRemoteUrlAllowedInMode`. Auto-detect/auto-init (source 4) are never
-   * checked: they always yield a local filesystem path by construction.
-   *
-   * @param options.sourceRoot - Optional source directory for monorepos. When provided,
-   *   this directory (relative to git root) is used as the source for the simulated remote.
-   *   Defaults to process.cwd().
-   *
+   * @param options.sourceRoot - Source directory for monorepos, relative to the
+   *   git root; the source for the simulated remote. Defaults to process.cwd().
    * @returns Remote URL or undefined if no remote is needed
    */
   static async resolveRemoteUrl(options: ResolveRemoteUrlOptions): Promise<string | undefined> {
@@ -825,7 +714,6 @@ export class GitManager {
     const strategy = operatingStrategy(options.mode)
     const config = strategy.getRemoteUrlConfig()
 
-    // Centralized priority chain (no duplication across strategies)
     if (options.remoteUrl) {
       this.assertRemoteUrlAllowedInMode(
         options.mode,
@@ -855,8 +743,8 @@ export class GitManager {
       return envUrl
     }
 
-    // Auto-detect: check if a pre-existing remote.git exists at the expected path
-    // (e.g., created by EC2 worker on EFS in prod mode)
+    // Auto-detect a pre-existing remote.git at the expected path (in prod,
+    // created by the EC2 worker on EFS)
     if (config.autoDetectRemotePath) {
       try {
         const stat = await fs.stat(config.autoDetectRemotePath)
@@ -871,7 +759,6 @@ export class GitManager {
       }
     }
 
-    // Mode-specific behavior: auto-init local remote
     if (config.shouldAutoInitLocal) {
       const gitRoot = await this.findGitRoot()
       const sourceRoot = options.sourceRoot
@@ -896,14 +783,12 @@ export class GitManager {
    *
    * Uses `rev-parse --git-dir` with `GIT_CEILING_DIRECTORIES` pinned to the
    * parent directory so a corrupt/missing `.git` can't make git silently
-   * traverse upward and report a false positive from an ancestor repo (the
-   * same protection `initializeWorkspace` relies on below).
+   * traverse upward and report a false positive from an ancestor repo.
    *
    * Shared by `initializeWorkspace` (clone-vs-reuse decision) and
    * `SettingsWorkspaceManager`'s rename guard (settings-workspace.ts), which
    * must know whether a settings workspace ALREADY exists before touching it —
-   * touching an existing orphan settings branch under a different name wipes
-   * permissions.json/groups.json (see that guard's doc comment).
+   * re-initializing one under a different name wipes permissions.json/groups.json.
    */
   static async repoExistsAt(workspacePath: string): Promise<boolean> {
     try {
@@ -920,12 +805,7 @@ export class GitManager {
    * Ensures a git workspace is initialized and ready for use.
    * Handles cloning, remote configuration, and branch checkout/creation.
    *
-   * This centralizes the common initialization sequence used by both BranchWorkspaceManager
-   * and SettingsWorkspaceManager.
-   *
    * Note: Does NOT configure git author - that should be done before commits, not during init.
-   *
-   * @returns Configured GitManager instance for the workspace
    */
   static async initializeWorkspace(options: InitializeWorkspaceOptions): Promise<GitManager> {
     // Resolve the fork point through the shared resolver (dev mode detects the
@@ -939,7 +819,6 @@ export class GitManager {
     })
     const remoteName = options.remoteName ?? 'origin'
 
-    // 1. Check if git already initialized (with traversal protection)
     const repoExists = await GitManager.repoExistsAt(options.workspacePath)
     if (!repoExists) {
       // Not a valid git repo — clean up corrupt .git if present so clone can proceed
@@ -957,10 +836,8 @@ export class GitManager {
       }
     }
 
-    // 2. Clone if needed
     let justCloned = false
     if (!repoExists) {
-      // Resolve remote URL only when we need to clone
       const remoteUrl = await GitManager.resolveRemoteUrl({
         mode: options.mode,
         remoteUrl: options.remoteUrl,
@@ -970,14 +847,12 @@ export class GitManager {
         allowNetworkRemoteInProd: options.allowNetworkRemoteInProd,
       })
 
-      // Require remoteUrl for cloning
       if (!remoteUrl) {
         throw new Error(
           'CanopyCMS: defaultRemoteUrl (or CANOPYCMS_REMOTE_URL) is required to initialize workspace',
         )
       }
 
-      // Clone repository (automatically configures 'origin' remote)
       try {
         await GitManager.cloneRepo(remoteUrl, options.workspacePath, baseBranch)
       } catch (err) {
@@ -990,10 +865,10 @@ export class GitManager {
       }
       justCloned = true
 
-      // Mark as managed immediately after clone so ensureRemote guard works.
-      // Also set a fallback author identity — GIT_CEILING_DIRECTORIES blocks
-      // global gitconfig, and internal commits (e.g., orphan branch init) need one.
-      // The real bot author is set later via ensureAuthor() before user-facing commits.
+      // Mark as managed immediately after clone so ensureRemote's guard works,
+      // and set a fallback author identity: GIT_CEILING_DIRECTORIES blocks
+      // global gitconfig, and internal commits (e.g. orphan branch init) need
+      // one. ensureAuthor() sets the real bot author before user-facing commits.
       const freshGit = simpleGit({ baseDir: options.workspacePath })
       freshGit.env(gitChildEnv({ GIT_CEILING_DIRECTORIES: path.dirname(options.workspacePath) }))
       await freshGit.addConfig('canopycms.managed', 'true')
@@ -1001,8 +876,8 @@ export class GitManager {
       await freshGit.addConfig('user.email', options.gitBotAuthorEmail)
     }
 
-    // 3. Create GitManager instance. Settings (orphan) workspaces never host
-    // ContentStores, so they skip the on-disk content-index generation marker.
+    // Settings (orphan) workspaces never host ContentStores, so they skip the
+    // on-disk content-index generation marker.
     const git = new GitManager({
       repoPath: options.workspacePath,
       baseBranch,
@@ -1010,10 +885,9 @@ export class GitManager {
       skipIndexMarker: options.branchType === 'orphan',
     })
 
-    // 4. Ensure managed marker and fallback identity.
-    // Must happen before ensureRemote (which checks the marker) and before
-    // createOrphanSettingsBranch (which commits and needs an author).
-    // Idempotent — may already be set from the clone step above.
+    // The managed marker and fallback identity must be set before ensureRemote
+    // (which checks the marker) and before createOrphanSettingsBranch (which
+    // commits and needs an author). Idempotent — the clone above may have set them.
     await git.git.addConfig('canopycms.managed', 'true')
     await git.git.addConfig('user.name', options.gitBotAuthorName)
     await git.git.addConfig('user.email', options.gitBotAuthorEmail)
@@ -1021,8 +895,7 @@ export class GitManager {
       workspacePath: options.workspacePath,
     })
 
-    // 5. Configure git remote only if we didn't just clone
-    // (clone already sets up the 'origin' remote)
+    // Configure the remote only if we didn't just clone (clone sets up 'origin')
     if (!justCloned) {
       const remoteUrl = await GitManager.resolveRemoteUrl({
         mode: options.mode,
@@ -1037,22 +910,20 @@ export class GitManager {
       }
     }
 
-    // 6. Checkout or create branch based on type
     if (options.branchType === 'orphan') {
       await git.createOrphanSettingsBranch(options.branchName, {})
       // Settings mutations hold an OCC lockfile (<file>.lock, see
       // authorization/settings-file-store.ts) inside this git-committed
-      // workspace. Commits here use scoped `git add <file>` today, but a
-      // crash-orphaned lock dir must never be committable by a future broad
-      // stage either. Runs on every init, so existing clones pick it up.
+      // workspace. Commits here stage explicit paths, but a crash-orphaned lock
+      // dir must never be committable by a future broad stage either. Runs on
+      // every init, so existing clones pick it up.
       await git.ensureGitExclude('*.lock')
     } else {
       await git.checkoutBranch(options.branchName)
-      // Exclude runtime metadata (.canopy-meta/) from git tracking on content
-      // branches. Settings workspaces don't need it: their payloads live at
-      // the workspace root (permissions.json/groups.json) and commits there
-      // add explicit file paths only, so nothing under .canopy-meta/ is ever
-      // staged — and they skip the index marker entirely (skipIndexMarker).
+      // Excludes runtime metadata (.canopy-meta/) from git tracking on content
+      // branches. Settings workspaces don't need it: they stage explicit file
+      // paths at the workspace root and skip the index marker entirely
+      // (skipIndexMarker), so nothing under .canopy-meta/ is ever staged.
       if (options.gitExcludePattern) {
         await git.ensureGitExclude(options.gitExcludePattern)
       }
@@ -1074,20 +945,16 @@ export class GitManager {
 
   /**
    * Mark ContentStore ID indexes AND the resolved-schema cache rooted at (or
-   * under) this repo as stale. Called after operations that mutate the
-   * working tree (checkout/merge/rebase) so ID→path lookups don't keep
-   * resolving to pre-mutation paths, and so a rebase/checkout that pulled in
-   * upstream `.collection.json` changes doesn't leave the schema cache
-   * pinned to the pre-mutation schema. Invoked in `finally` blocks because
-   * even failed merges/rebases may have touched the tree before aborting;
-   * over-invalidating is safe.
+   * under) this repo as stale, so ID→path lookups and `.collection.json`
+   * schemas don't stay pinned to the pre-mutation tree. Called in `finally`
+   * blocks around every working-tree mutation (checkout/merge/rebase) because
+   * even a failed merge may have touched the tree; over-invalidating is safe.
    *
-   * Covers both scopes: in-process stores/caches via their registries, and
-   * consumers in OTHER processes sharing the filesystem (worker vs Lambda on
-   * EFS) via the on-disk generation markers — unless this manager targets a
-   * settings workspace (skipIndexMarker), where only the free in-process
-   * content-index invalidation runs and NEITHER marker is bumped (settings
-   * workspaces have no schema cache of their own either).
+   * Covers in-process stores/caches via their registries and other processes
+   * sharing the filesystem (worker vs Lambda on EFS) via the on-disk generation
+   * markers — except on a settings workspace (skipIndexMarker), where only the
+   * free in-process content-index invalidation runs and NEITHER marker is
+   * bumped (such workspaces have no schema cache of their own either).
    */
   private async invalidateContentIndexes(): Promise<void> {
     if (this.skipIndexMarker) {
@@ -1110,12 +977,10 @@ export class GitManager {
     if (branches.all.includes(branch)) {
       // No `--`/`--end-of-options` separator here: a bare `--` switches
       // `git checkout` into pathspec-restore mode instead of switching
-      // branches (breaking this call), and `--end-of-options` is not
-      // honored by `git checkout` on git versions still in the field
-      // (e.g. Apple's bundled git 2.39.5 treats it as a literal, unmatched
-      // pathspec rather than an options terminator). Safety instead relies
-      // on parseBranchName() rejecting a leading hyphen before `branch`
-      // ever reaches here.
+      // branches, and `--end-of-options` is not honored by `git checkout` on
+      // git versions still in the field (Apple's bundled 2.39.5 treats it as a
+      // literal, unmatched pathspec). Safety instead relies on
+      // parseBranchName() rejecting a leading hyphen before `branch` gets here.
       await this.git.checkout(branch)
       return
     }
@@ -1130,8 +995,7 @@ export class GitManager {
       // `-b`/`-B` consume the very next token as their literal branch-name
       // value (not subject to option re-scanning), and git independently
       // rejects a leading-hyphen value there ("... is not a valid branch
-      // name") — verified on both a modern git and Apple's bundled git
-      // 2.39.5. So `branch` needs no separator here either.
+      // name"). So `branch` needs no separator here either.
       await this.git.checkoutBranch(branch, remoteRef)
       return
     } catch {
@@ -1154,11 +1018,11 @@ export class GitManager {
 
   private async pullBaseInner(): Promise<void> {
     await this.git.fetch(this.remote, this.baseBranch)
-    // Merge the just-fetched tip (pinned to a SHA), not <remote>/<base>:
-    // workspaces are cloned --single-branch, so the remote-tracking ref for
-    // any branch other than the cloned one never exists (same fix as the
-    // worker's rebase loop — see worker/rebase.ts), and FETCH_HEAD itself is a
-    // shared mutable file repointed by any other fetch in this clone.
+    // Merge the just-fetched tip pinned to a SHA, not <remote>/<base>:
+    // workspaces are cloned --single-branch, so the remote-tracking ref for any
+    // branch other than the cloned one never exists (same constraint as the
+    // worker's rebase loop, worker/rebase.ts), and FETCH_HEAD is a shared
+    // mutable file any other fetch in this clone can repoint.
     const fetchedTip = (await this.git.revparse(['FETCH_HEAD'])).trim()
     try {
       await this.git.merge([fetchedTip])
@@ -1197,25 +1061,21 @@ export class GitManager {
       // callers can tell it apart from a genuine pull failure instead of
       // catch-all-ing both (see services.ts commitToSettingsBranch).
       //
-      // CLASSIFIED, not assumed. Wrapping every fetch failure in this type
-      // handed callers the one error that means "nothing to pull" for an
-      // unreachable remote, an auth denial or a corrupt object store too --
-      // and commitToSettingsBranch logs that as "normal for the first
-      // settings commit" and carries on. A type whose docstring promises a
-      // narrow condition must only be constructed for that condition.
+      // CLASSIFIED, not assumed: a type whose docstring promises a narrow
+      // condition must only be constructed for that condition. Wrapping every
+      // fetch failure would hand commitToSettingsBranch an unreachable remote,
+      // an auth denial or a corrupt object store as "nothing to pull", which it
+      // logs as normal for a first settings commit and carries on past.
       if (!isMissingRemoteRefFailure(getErrorMessage(err))) throw err
       throw new GitRemoteRefMissingError(currentBranch, this.remote, err)
     }
-    // Merge the just-fetched tip (pinned to a SHA), not <remote>/<current>:
-    // this is the pullBaseInner constraint again, and it bites HARDER here.
-    // Workspaces are cloned --single-branch, and a settings workspace is
-    // cloned at the BASE branch and then checked out onto its orphan settings
-    // branch — so `<remote>/<current>` is a ref that can never exist, and
-    // merging it failed on every single call (making the settings pull a
-    // permanent no-op). FETCH_HEAD is pinned immediately after the fetch that
-    // populated it because it is a shared mutable file any other fetch in this
-    // clone can repoint. Third occurrence of this bug shape in this file — see
-    // pullBaseInner, rebaseOntoBaseInner, and the worker's rebase loop.
+    // Merge the just-fetched tip pinned to a SHA, not <remote>/<current> — the
+    // pullBaseInner constraint, harder here: a settings workspace is cloned
+    // --single-branch at the BASE branch and then checked out onto its orphan
+    // settings branch, so `<remote>/<current>` is a ref that can never exist
+    // and merging it makes the settings pull a permanent no-op. Pin FETCH_HEAD
+    // immediately after the fetch that populated it; any other fetch in this
+    // clone can repoint that shared file.
     const fetchedTip = (await this.git.revparse(['FETCH_HEAD'])).trim()
     try {
       await this.git.merge([fetchedTip])
@@ -1270,13 +1130,12 @@ export class GitManager {
 
   async push(branch?: string): Promise<void> {
     const target = branch ?? (await this.git.revparse(['--abbrev-ref', 'HEAD']))
-    // Use explicit refspec (local:remote) so push works for new branches
-    // that don't yet exist in the remote (e.g., orphan settings branches).
-    // Built via raw() (rather than the push() wrapper) so --end-of-options
-    // can be placed immediately before the positional remote/refspec
-    // arguments, guarding against a refspec starting with '-' being parsed
-    // as a git option (e.g. --receive-pack=...). Real flags must precede
-    // --end-of-options, since everything after it is treated as positional.
+    // Explicit refspec (local:remote) so push works for branches not yet in the
+    // remote (e.g. orphan settings branches). Built via raw() rather than the
+    // push() wrapper so `--end-of-options` sits immediately before the
+    // positional remote/refspec, guarding against a refspec starting with '-'
+    // being parsed as a git option (e.g. --receive-pack=...). Real flags must
+    // precede it, since everything after it is treated as positional.
     await this.git.raw([
       'push',
       '--set-upstream',
@@ -1287,33 +1146,26 @@ export class GitManager {
   }
 
   /**
-   * Check whether the local branch has commits the remote mirror doesn't
-   * have -- i.e. whether push() would actually move the remote ref forward.
+   * Whether the local branch has commits the remote mirror doesn't -- i.e.
+   * whether push() would move the remote ref forward.
    *
-   * Exists so callers (submitBranch) can gate pushing on "is there anything
-   * new to send" rather than on "is the working tree dirty": committing
-   * cleans the tree, so a dirty-tree gate around commit+push skips the push
-   * entirely on a retry after a failed push, even though the just-created
-   * commit never reached the remote (see services.ts submitBranch).
+   * Callers (services.ts submitBranch) gate pushing on this rather than on "is
+   * the working tree dirty": committing cleans the tree, so a dirty-tree gate
+   * around commit+push skips the push entirely when retried after a failed
+   * push, even though the commit never reached the remote.
    *
-   * Workspaces are cloned `--single-branch`, so the remote-tracking ref for
-   * any branch other than the one cloned never exists locally -- same
-   * constraint pullBaseInner works around. This fetches the specific branch
-   * directly (bypassing the configured single-branch refspec, exactly like
-   * pullBaseInner) and pins the result to FETCH_HEAD's SHA immediately after
-   * the fetch that populated it, rather than trusting `<remote>/<branch>`:
-   * FETCH_HEAD is a shared mutable file that any other fetch in this clone
-   * can repoint before it's read.
+   * Fetches the specific branch directly and pins FETCH_HEAD's SHA immediately
+   * after, rather than trusting `<remote>/<branch>` -- the pullBaseInner
+   * constraint: single-branch clones have no remote-tracking ref for any other
+   * branch, and FETCH_HEAD is shared mutable state.
    *
-   * A branch that has never been pushed has no ref on the remote at all --
-   * `git fetch` then fails ("couldn't find remote ref"), which this treats
-   * as "ahead" (needs pushing) rather than an error.
+   * A branch never pushed has no ref on the remote, so `git fetch` fails
+   * ("couldn't find remote ref"); that counts as "ahead", not an error.
    */
   async hasUnpushedCommits(branch?: string): Promise<boolean> {
-    // `--end-of-options` before every caller-influenced ref name, the same
-    // guard (and for the same reason) as push() above: names are sanitized
-    // upstream, but this file's stated rule is that the positional is guarded
-    // where it is passed, not where it was validated.
+    // `--end-of-options` before every caller-influenced ref name, as in push()
+    // above: names are sanitized upstream, but this file's rule is that a
+    // positional is guarded where it is passed, not where it was validated.
     const target = branch ?? (await this.git.revparse(['--abbrev-ref', '--end-of-options', 'HEAD']))
     const localSha = (await this.git.revparse(['--end-of-options', target])).trim()
     let fetchedTip: string
@@ -1325,9 +1177,8 @@ export class GitManager {
       return true
     }
     if (fetchedTip === localSha) return false
-    // Commits reachable from the local tip but not from the remote's tip --
-    // robust to both the ordinary "local is ahead" case and a diverged
-    // mirror, unlike a bare SHA-inequality check.
+    // Commits reachable from the local tip but not the remote's -- unlike a
+    // bare SHA-inequality check, this holds for a diverged mirror too.
     const aheadCount = (
       await this.git.raw(['rev-list', '--count', `${fetchedTip}..${localSha}`])
     ).trim()
@@ -1347,7 +1198,6 @@ export class GitManager {
       )
     }
 
-    // Set author identity
     const currentName = config.all['user.name']
     const currentEmail = config.all['user.email']
     if (currentName !== author.name) {
@@ -1384,25 +1234,16 @@ export class GitManager {
     }
   }
 
-  /**
-   * Check if working directory has uncommitted changes
-   */
   async hasUncommittedChanges(): Promise<boolean> {
     const status = await this.status()
     return status.files.length > 0
   }
 
-  /**
-   * Get list of uncommitted file paths
-   */
   async getUncommittedFiles(): Promise<string[]> {
     const status = await this.status()
     return status.files.map((f) => f.path)
   }
 
-  /**
-   * Get remote URL for current repo
-   */
   async getRemoteUrl(): Promise<string | undefined> {
     const remotes = await this.git.getRemotes(true)
     const remote = remotes.find((r) => r.name === this.remote)
@@ -1410,29 +1251,18 @@ export class GitManager {
   }
 
   /**
-   * Add a pattern to .git/info/exclude to prevent it from being committed/pushed.
-   * This is used to exclude .canopy-meta/ from content branch workspaces.
-   *
-   * .git/info/exclude is a per-repository gitignore that never gets committed.
-   * Perfect for runtime metadata that should never leave the workspace.
-   *
-   * This is idempotent - if the pattern already exists, it won't be added again.
+   * Excludes `pattern` (e.g. `.canopy-meta/`) from this workspace's git, so it
+   * can never be committed or pushed. See {@link ensureGitExcludePattern}.
    */
   async ensureGitExclude(pattern: string): Promise<void> {
     await ensureGitExcludePattern(this.repoPath, pattern)
   }
 
   /**
-   * Create an orphan branch for settings (permissions/groups).
-   *
-   * Orphan branches have no shared history with other branches - they start fresh.
-   * This is perfect for deployment-specific settings that shouldn't pollute content history.
-   *
-   * The branch contains only settings files committed by explicit path
-   * (e.g. permissions.json, groups.json at the workspace root).
-   *
-   * @param branchName - Name of the orphan branch (e.g., 'canopycms-settings-prod')
-   * @param initialFiles - Files to commit to the new branch (e.g., { 'permissions.json': '{}', 'groups.json': '{}' })
+   * Create an orphan branch (no shared history) for settings, so
+   * deployment-specific settings never pollute content history. It holds only
+   * settings files committed by explicit path (permissions.json, groups.json at
+   * the workspace root).
    */
   async createOrphanSettingsBranch(
     branchName: string,
@@ -1452,19 +1282,16 @@ export class GitManager {
   ): Promise<void> {
     log.debug('git', 'Creating orphan settings branch', { branchName })
 
-    // Check if branch already exists
     const branches = await this.git.branch()
     if (branches.all.includes(branchName)) {
       log.debug('git', 'Orphan branch already exists', { branchName })
       // No separator here — see checkoutBranch() above for why plain
-      // `git checkout <branch>` can't safely take one. branchName is always
-      // an internal/config-derived settings-branch name, never user input
-      // (see createOrphanSettingsBranch's callers).
+      // `git checkout <branch>` can't safely take one. branchName is always an
+      // internal/config-derived settings-branch name, never user input.
       await this.git.checkout(branchName)
       return
     }
 
-    // Create orphan branch (--orphan creates a branch with no parent/history).
     // branchName is consumed as --orphan's literal argument value (like -b/-B
     // above), so it can't be reinterpreted as a flag; git's own ref-name
     // validation additionally rejects a leading-hyphen value here.
@@ -1477,7 +1304,6 @@ export class GitManager {
       // Ignore errors (might fail if index is already empty)
     }
 
-    // Write initial files
     for (const [filePath, content] of Object.entries(initialFiles)) {
       const absolutePath = path.join(this.repoPath, filePath)
       await fs.mkdir(path.dirname(absolutePath), { recursive: true })
@@ -1485,7 +1311,6 @@ export class GitManager {
       await this.git.add(filePath)
     }
 
-    // Commit initial files
     await this.git.commit('Initialize settings branch', ['--allow-empty'])
 
     log.debug('git', 'Orphan settings branch created', { branchName })

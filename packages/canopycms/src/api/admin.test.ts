@@ -6,7 +6,7 @@ import { ADMIN_ROUTES } from './admin'
 import type { ApiContext, ApiRequest } from './types'
 import type { CanopyConfig } from '../config'
 import { createMockApiContext, createMockUser } from '../test-utils'
-import { enqueueTask, dequeueTask, failTask } from '../worker/task-queue'
+import { enqueueTask, dequeueTask, failTask } from '../task-queue/cms-task-queue'
 
 // Extract composed (guard + handler) functions for testing, matching
 // branch-merge.test.ts's pattern.

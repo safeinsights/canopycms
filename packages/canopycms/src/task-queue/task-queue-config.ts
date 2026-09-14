@@ -2,12 +2,7 @@ import path from 'node:path'
 import type { CanopyConfig } from '../config'
 import { DEFAULT_PROD_WORKSPACE } from '../config'
 
-/**
- * Get the task queue directory for async worker operations.
- *
- * In prod mode: {CANOPYCMS_WORKSPACE_ROOT}/.tasks
- * In dev mode: {cwd}/.canopy-dev/.tasks
- */
+/** The task queue directory for async worker operations. */
 export function getTaskQueueDir(config: Pick<CanopyConfig, 'mode'>): string {
   switch (config.mode) {
     case 'prod': {

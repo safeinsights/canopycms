@@ -8,28 +8,28 @@ import { PassThrough } from 'node:stream'
 import type { ChildProcess } from 'node:child_process'
 import type { createServer } from 'node:http'
 import {
-  APP_NAME_MAX_LENGTH,
-  APP_SUMMARY_MAX_LENGTH,
-  CANOPY_APP_PERMISSIONS,
-  appDescription,
   appJwt,
   appManifest,
-  appName,
-  appSlug,
   creationForm,
   handOffKey,
   handOffWithRetry,
   manifestPostUrl,
-  askLine,
   initGitHubApp,
   parseKeyRetryAnswer,
-  pressEnter,
-  readbackVerdict,
-  resetStdinStateForTesting,
   startCallbackServer,
   type AppTarget,
   type KeyRetryChoice,
 } from './init-github-app'
+import {
+  APP_NAME_MAX_LENGTH,
+  APP_SUMMARY_MAX_LENGTH,
+  CANOPY_APP_PERMISSIONS,
+  appDescription,
+  appName,
+  appSlug,
+  readbackVerdict,
+} from './github-app-manifest'
+import { askLine, pressEnter, resetStdinStateForTesting } from './prompt'
 import { mockConsole, type MockConsole } from '../test-utils'
 
 const TARGET: AppTarget = { owner: 'an-org', repo: 'a-content-site', isOrganization: true }

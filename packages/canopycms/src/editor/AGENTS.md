@@ -3,11 +3,6 @@
 The largest subsystem in the package: **176 files** (109 excluding tests and stories),
 ~20,900 LOC, roughly 29% of `packages/canopycms/src`.
 
-Created 2026-08-23. Until then this directory's entire entry in the root `AGENTS.md` was
-five words — "React editor components and hooks" — while `static/` (841 LOC) had 976.
-Documentation depth had become inversely proportional to subsystem size, because the root
-file recorded where bugs had hurt rather than where code lives.
-
 As everywhere else in this package, **the code comment at the point of a rule is
 authoritative**. This file is the map.
 
@@ -41,10 +36,8 @@ This whole directory is browser-reachable via `canopycms/client`, so:
 - **Nothing here may reach a `node:` built-in**, directly or transitively.
   `pnpm lint:bundle` (dependency-cruiser) fails the build on it, so this is a check
   rather than a convention.
-- The classic trap is importing a path helper from the `paths` barrel or
-  `paths/branch.ts` instead of the dependency-free `paths/branch-name.ts`; both of the
-  former pull `node:fs` into the browser bundle. `components/EntryCreateModal.tsx`
-  carries a comment at the import explaining exactly this.
+- Import path helpers from the dependency-free `paths/branch-name.ts`, never from the `paths` barrel or `paths/branch.ts`; both pull `node:fs` into the browser bundle.
+- `components/EntryCreateModal.tsx` carries the comment at that import.
 
 ## Styling
 
@@ -71,10 +64,6 @@ adding a hook so you match the right half.
 
 ## Known state, recorded so it is not rediscovered
 
-- `PermissionManager.tsx` and `GroupManager.tsx` are **re-export shims** whose own
-  comments say they exist "for backward compatibility", pointing at
-  `permission-manager/` and `group-manager/`. `CLAUDE.md` says this is new code needing
-  no legacy compat, and all their importers are internal — see
-  [editor-compat-shims.md](../../../../.claude/future-tasks/editor-compat-shims.md).
+- `PermissionManager.tsx` and `GroupManager.tsx` are re-export shims over `permission-manager/` and `group-manager/`; removing them is tracked in [editor-compat-shims.md](../../../../.claude/future-tasks/editor-compat-shims.md).
 - `permission-manager/` has 11 source files and **no tests in the directory**; it is
   covered only indirectly through `PermissionManager.test.tsx`.

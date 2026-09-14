@@ -1,17 +1,14 @@
 /**
  * Validates that every reference field's `entryTypes` names an entry type that
- * actually exists in the resolved schema.
+ * actually exists in the resolved schema — without this, a typo like
+ * `entryTypes: ['parter']` is accepted silently and surfaces later as a
+ * reference picker returning zero results, with nothing pointing at the cause.
  *
- * Without this, a typo (`entryTypes: ['parter']` for `'partner'`) is accepted
- * silently and surfaces much later as a reference picker that returns zero
- * results, with nothing pointing at the cause.
- *
- * This runs after schema resolution rather than at config-validation time on
- * purpose: entry types are declared per-collection in `.collection.json` files
- * on disk, so the set of valid names only exists once a branch's schema has
- * been resolved. `config/validation.ts`'s `ensureReferenceFieldsHaveScope` runs
- * at entry-schema *registration* (entry-schema-registry.ts), before any branch
- * schema exists, and so cannot perform this check.
+ * Runs after schema resolution, not at config-validation time: entry types are
+ * declared per-collection in `.collection.json` files on disk, so the valid-name
+ * set only exists once a branch's schema is resolved. `config/validation.ts`'s
+ * `ensureReferenceFieldsHaveScope` runs at entry-schema registration
+ * (entry-schema-registry.ts), before any branch schema exists, so it can't.
  */
 
 import type { CollectionConfig, EntryTypeConfig, RootCollectionConfig } from '../config'
@@ -72,13 +69,11 @@ const forEachEntryType = (
 }
 
 /**
- * Collect every entry type name defined anywhere in the schema.
- *
- * Entry types are scoped per collection, and the same name may legitimately
- * appear in several collections, so this is a flat set of names: a reference
- * field's `entryTypes` is matched against entries across all collections
- * (see reference-resolver.ts, which filters resolved entries by entry type name
- * without regard to which collection defined it).
+ * Collect every entry type name defined anywhere in the schema, as a flat set:
+ * a reference field's `entryTypes` matches entries across ALL collections, since
+ * the same type name may legitimately appear in more than one (see
+ * reference-resolver.ts, which filters by type name regardless of collection).
+ * @internal Exported for tests.
  */
 export const collectEntryTypeNames = (schema: RootCollectionConfig): Set<string> => {
   const names = new Set<string>()

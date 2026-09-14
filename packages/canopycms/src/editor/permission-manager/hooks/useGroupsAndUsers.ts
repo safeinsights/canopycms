@@ -1,7 +1,3 @@
-/**
- * Hook for managing groups and user search state
- */
-
 import { useState, useEffect, useMemo, useCallback } from 'react'
 import type { UserSearchResult, PermissionGroupOption, GroupSelectItem } from '../types'
 
@@ -12,7 +8,6 @@ export interface UseGroupsAndUsersOptions {
 }
 
 export interface UseGroupsAndUsersResult {
-  // Groups
   groups: PermissionGroupOption[]
   groupSelectData: GroupSelectItem[]
   filteredGroups: GroupSelectItem[]
@@ -24,7 +19,6 @@ export interface UseGroupsAndUsersResult {
   setShowGroupSearch: (show: boolean) => void
   clearGroupLoadError: () => void
 
-  // Users
   userSearchResults: UserSearchResult[]
   isSearchingUsers: boolean
   userSearchQuery: string
@@ -39,21 +33,18 @@ export function useGroupsAndUsers({
   onSearchUsers,
   canEdit,
 }: UseGroupsAndUsersOptions): UseGroupsAndUsersResult {
-  // Groups state
   const [groups, setGroups] = useState<PermissionGroupOption[]>([])
   const [isLoadingGroups, setIsLoadingGroups] = useState(false)
   const [groupLoadError, setGroupLoadError] = useState<string | null>(null)
   const [groupSearchQuery, setGroupSearchQuery] = useState('')
   const [showGroupSearch, setShowGroupSearch] = useState(false)
 
-  // User search state
   const [userSearchResults, setUserSearchResults] = useState<UserSearchResult[]>([])
   const [isSearchingUsers, setIsSearchingUsers] = useState(false)
   const [userSearchQuery, setUserSearchQuery] = useState('')
   const [showUserSearch, setShowUserSearch] = useState(false)
   const [userSearchError, setUserSearchError] = useState<string | null>(null)
 
-  // Load groups on mount
   useEffect(() => {
     if (onListGroups && canEdit) {
       setIsLoadingGroups(true)
@@ -70,7 +61,6 @@ export function useGroupsAndUsers({
     }
   }, [onListGroups, canEdit])
 
-  // Transform groups to select data format
   const groupSelectData = useMemo(
     () =>
       groups.map((g) => ({
@@ -81,7 +71,6 @@ export function useGroupsAndUsers({
     [groups],
   )
 
-  // Filter groups based on search query
   const filteredGroups = useMemo(() => {
     const query = groupSearchQuery.toLowerCase().trim()
     if (!query) return groupSelectData
@@ -130,7 +119,6 @@ export function useGroupsAndUsers({
   }, [])
 
   return {
-    // Groups
     groups,
     groupSelectData,
     filteredGroups,
@@ -142,7 +130,6 @@ export function useGroupsAndUsers({
     setShowGroupSearch,
     clearGroupLoadError,
 
-    // Users
     userSearchResults,
     isSearchingUsers,
     userSearchQuery,

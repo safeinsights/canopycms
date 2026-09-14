@@ -6,7 +6,6 @@ import { useApiClient } from '../context'
 
 export interface UseGroupManagerOptions {
   /**
-   * Whether the group manager is currently open.
    * Groups are loaded when this becomes true.
    */
   isOpen: boolean
@@ -24,26 +23,6 @@ export interface UseGroupManagerReturn {
 
 /**
  * Custom hook for managing internal groups (CRUD operations).
- *
- * Handles:
- * - Loading groups from API
- * - Saving groups to API
- * - Searching for users to add to groups
- * - Searching for external groups
- *
- * @example
- * ```tsx
- * const { groupsData, groupsLoading, handleSaveGroups, handleSearchUsers } = useGroupManager({
- *   isOpen: groupManagerOpen
- * })
- *
- * // Groups are automatically loaded when isOpen becomes true
- * // Save groups
- * await handleSaveGroups(updatedGroups)
- *
- * // Search users
- * const users = await handleSearchUsers('john', 10)
- * ```
  */
 export function useGroupManager(options: UseGroupManagerOptions): UseGroupManagerReturn {
   const apiClient = useApiClient()
@@ -131,7 +110,6 @@ export function useGroupManager(options: UseGroupManagerOptions): UseGroupManage
     }
   }, [])
 
-  // Load groups when group manager opens
   useEffect(() => {
     if (options.isOpen) {
       loadGroups()

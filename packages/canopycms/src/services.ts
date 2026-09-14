@@ -1,22 +1,17 @@
 /**
- * `CanopyServices` — the long-lived, per-deployment service container.
+ * `CanopyServices` — the long-lived, per-deployment service container, built
+ * once by `createCanopyServices` and threaded through `ApiContext.services` to
+ * every API handler. Holds config, the schema registry and cache, the ACL
+ * checkers, the git-manager factory, the branch registry, the GitHub service,
+ * and four branch-workflow operations. Not `context.ts`, which is the
+ * per-REQUEST facade built on top of this.
  *
- * Built once by `createCanopyServices` and threaded through `ApiContext.services`
- * to every API handler. Holds config, the schema registry and cache, the ACL
- * checkers, the git-manager factory, the branch registry, the GitHub service, and
- * four branch-workflow operations (`commitFiles`, `submitBranch`,
- * `commitToSettingsBranch`, `getSettingsBranchRoot`).
+ * SCOPE WARNING: a service locator every api module reaches, so adding a field
+ * is free and therefore constant, and no handler's signature reveals what it
+ * touches. Give a new capability its own narrow interface instead.
  *
- * SCOPE WARNING: this is a service locator with 15 members, reached by every one of
- * the 26 api modules, so adding a field is free and therefore constant — and no handler's
- * signature reveals what it actually touches. Prefer giving a new capability its
- * own narrow interface over a 23rd field here.
- *
- * Not to be confused with `context.ts`, which is the per-REQUEST facade built on
- * top of this.
- *
- * `createTestCanopyServices` is test-only despite living in a production module;
- * it reaches the published surface through a wildcard re-export.
+ * `createTestCanopyServices` is test-only despite living in a production
+ * module; it reaches the published surface through a wildcard re-export.
  *
  * Module map: ./AGENTS.md.
  */
@@ -39,19 +34,16 @@ import { getDefaultBranchBase, sanitizeBranchName } from './paths'
 import { createGitHubService, type GitHubService } from './github-service'
 import { operatingStrategy } from './operating-mode'
 import { BranchSchemaCache } from './branch-schema-cache'
-import { enqueueTask } from './worker/task-queue'
-import { getTaskQueueDir } from './worker/task-queue-config'
+import { enqueueTask } from './task-queue/cms-task-queue'
+import { getTaskQueueDir } from './task-queue/task-queue-config'
 import { detectHeadBranch } from './utils/git'
 import { readsFromCheckout } from './build-mode'
 
 /**
- * Create a per-instance active branch detector with its own 5-second TTL cache.
- *
- * Detection priority:
- * - If explicitly configured, use that value (both modes).
- * - Static deployments and builds read the checkout: defaultBaseBranch ?? 'main', no git.
- * - In dev mode, auto-detect from the current git HEAD branch.
- * - In prod mode, fall back to defaultBaseBranch ?? 'main'.
+ * A per-instance active-branch detector with its own 5s TTL cache, in priority
+ * order: an explicitly configured value; `defaultBaseBranch ?? 'main'` with no
+ * git for static deployments and builds; git HEAD in dev; and
+ * `defaultBaseBranch ?? 'main'` in prod.
  */
 function createActiveBranchDetector() {
   let cache: { value: string; expiresAt: number } | null = null
@@ -65,10 +57,9 @@ function createActiveBranchDetector() {
       if (cache && now < cache.expiresAt) {
         return cache.value
       }
-      // Always use cwd for branch detection — git walks up to find .git.
-      // sourceRoot is about content location, not the repo root.
-      // On detached HEAD or no git repo, detectHeadBranch returns the
-      // base-branch fallback instead of throwing.
+      // Detect from cwd, never sourceRoot: git walks up to find .git, and
+      // sourceRoot locates content, not the repo root. On a detached HEAD or
+      // outside a repo, detectHeadBranch falls back instead of throwing.
       const branch = await detectHeadBranch(process.cwd(), config.defaultBaseBranch ?? 'main')
       cache = { value: branch, expiresAt: now + 5000 }
       return branch
@@ -78,8 +69,8 @@ function createActiveBranchDetector() {
 }
 
 /**
- * Parse bootstrap admin IDs from environment variable.
- * These users are always treated as Admins regardless of group membership.
+ * Bootstrap admin IDs from the environment. These users are treated as Admins
+ * whatever their group membership.
  */
 export const getBootstrapAdminIds = (): Set<string> => {
   const envVar = process.env.CANOPY_BOOTSTRAP_ADMIN_IDS
@@ -110,9 +101,9 @@ export interface CanopyServices {
   ) => ReturnType<ReturnType<typeof createCheckBranchAccess>>
   checkContentAccess: ReturnType<typeof createCheckContentAccess>
   /**
-   * Build a batch content-access checker that loads permissions once and returns
-   * a synchronous per-path checker. Use this when checking many paths in a single
-   * request (e.g. listing entries) to avoid re-loading permissions per path.
+   * A batch content-access checker: loads permissions once, returns a
+   * synchronous per-path check. Use it whenever one request checks many paths,
+   * so permissions are not re-loaded per path.
    */
   createContentAccessChecker: (
     context: BranchContext,
@@ -152,38 +143,25 @@ export interface CanopyServices {
   getSettingsBranchRoot: () => Promise<string>
 }
 
-/**
- * Options for createCanopyServices and createTestCanopyServices.
- */
 export interface CreateCanopyServicesOptions {
-  /**
-   * Entry schema registry for resolving .collection.json references.
-   * Maps entry schema names to field definitions.
-   */
+  /** Entry schema names → field definitions, for resolving .collection.json references. */
   entrySchemaRegistry?: EntrySchemaRegistry
   /**
-   * Test-only: Custom branch schema cache.
-   * When provided, bypasses the default BranchSchemaCache creation.
+   * Test-only: bypasses the default BranchSchemaCache creation.
    * @internal
    */
   branchSchemaCache?: BranchSchemaCache
   /**
-   * Test-only: Override for getSettingsBranchRoot.
-   * When provided, bypasses the real git workspace setup for settings.
+   * Test-only: bypasses the real git workspace setup for settings.
    * @internal
    */
   getSettingsBranchRoot?: () => Promise<string>
 }
 
 /**
- * Create reusable helpers from a validated CanopyConfig.
- * Intended to be called once at startup and injected where needed
- * (e.g., request handlers, loaders).
- *
- * Schema is now loaded per-branch via BranchSchemaCache, not at startup.
- *
- * @param config - Validated Canopy configuration
- * @param options - Optional settings including entry schema registry
+ * Build the reusable helpers from a validated CanopyConfig — once at startup,
+ * then injected into request handlers and loaders. Schema is not loaded here;
+ * BranchSchemaCache loads it per branch.
  */
 export const createCanopyServices = async (
   config: CanopyConfig,
@@ -192,19 +170,13 @@ export const createCanopyServices = async (
   return _createCanopyServicesInternal(config, options)
 }
 
-/**
- * Create services for testing.
- * Schema is loaded per-branch via BranchSchemaCache.
- *
- * @param config - Validated Canopy configuration
- * @param options - Optional settings including entry schema registry
- */
+/** {@link createCanopyServices} for tests, with branch identity pinned. */
 export const createTestCanopyServices = async (
   config: CanopyConfig,
   options: CreateCanopyServicesOptions = {},
 ): Promise<CanopyServices> => {
-  // In tests, pin both branch identity fields to avoid auto-detecting from
-  // git HEAD (which varies depending on the developer's working branch).
+  // Pin both branch identity fields rather than auto-detect from git HEAD,
+  // which varies with the developer's working branch.
   const testConfig = {
     ...config,
     defaultBaseBranch: config.defaultBaseBranch ?? 'main',
@@ -213,31 +185,26 @@ export const createTestCanopyServices = async (
   return _createCanopyServicesInternal(testConfig, options)
 }
 
-/**
- * Internal implementation shared by both production and test functions.
- * Not exported - use createCanopyServices() or createTestCanopyServices().
- */
+/** Shared implementation; call createCanopyServices or createTestCanopyServices. */
 async function _createCanopyServicesInternal(
   config: CanopyConfig,
   options: CreateCanopyServicesOptions,
 ): Promise<CanopyServices> {
-  // Validate mode-specific requirements (e.g., prod requires git bot credentials for GitHub)
+  // Mode-specific requirements, e.g. prod's git bot credentials for GitHub.
   const strategy = operatingStrategy(config.mode)
   strategy.validateConfig(config)
 
-  // Resolve branch identity once (see ARCHITECTURE.md "Branch Identity"):
-  // - active branch: which workspace to serve from (dev: git HEAD, prod: base)
-  // - base branch: fork point for new editing branches (dev: git HEAD when
-  //   unset, otherwise the configured value; prod: configured value or 'main')
-  // Bake both into config so all downstream code reads one consistent value.
-  // The detector has its own per-instance 5s TTL cache for git HEAD checks.
+  // Resolve branch identity once and bake both into config, so downstream code
+  // reads one consistent value (see ARCHITECTURE.md "Branch Identity"): the
+  // active branch is the workspace to serve from, the base branch the fork
+  // point for new editing branches.
   const detectActiveBranch = createActiveBranchDetector()
   const explicitActiveBranch = config.defaultActiveBranch
   const explicitBaseBranch = config.defaultBaseBranch
   const defaultActiveBranch = await detectActiveBranch(config)
-  // When unset, the base branch follows the same dev-mode HEAD detection
-  // (matching resolveBaseBranch in utils/git.ts, the canonical definition used
-  // by workspace provisioning). Reuses the detector's 5s TTL cache.
+  // Unset, the base branch follows the same dev-mode HEAD detection, matching
+  // resolveBaseBranch in utils/git.ts — the canonical definition workspace
+  // provisioning uses.
   const defaultBaseBranch =
     explicitBaseBranch ??
     (config.mode === 'dev' && !readsFromCheckout(config)
@@ -245,10 +212,8 @@ async function _createCanopyServicesInternal(
       : 'main')
   config = { ...config, defaultActiveBranch, defaultBaseBranch }
 
-  // Load bootstrap admin IDs from environment
   const bootstrapAdminIds = getBootstrapAdminIds()
 
-  // Create per-branch schema cache (or use provided one for testing)
   const branchSchemaCache = options.branchSchemaCache ?? new BranchSchemaCache(config.mode)
 
   const checkBranchAccess = createCheckBranchAccess(config.defaultBranchAccess ?? 'deny', config)
@@ -261,8 +226,6 @@ async function _createCanopyServicesInternal(
       const settingsRoot = strategy.getSettingsRoot()
       const branchName = strategy.getSettingsBranchName(config)
 
-      // Use SettingsWorkspaceManager to ensure git workspace for settings
-      // This is Lambda-safe because the lock is in-memory per process
       const manager = new SettingsWorkspaceManager(config)
       await manager.ensureGitWorkspace({
         settingsRoot,
@@ -342,14 +305,12 @@ async function _createCanopyServicesInternal(
     })
     await git.checkoutBranch(options.context.branch.name)
     const status = await git.status()
-    // Commit and push are gated on two DIFFERENT questions. Committing
-    // cleans the working tree, so gating the push on "tree is dirty" (as a
-    // single combined check) makes a retry after a failed push a silent
-    // no-op: the earlier commit already cleaned the tree, so the retry sees
-    // nothing to commit, skips the whole block, and reports success even
-    // though the commit never reached the remote. Push instead whenever
-    // there's something new to send -- we just committed, or the local
-    // branch already had unpushed commits from an earlier failed attempt.
+    // Commit and push answer two DIFFERENT questions. Committing cleans the
+    // working tree, so one combined "tree is dirty" gate makes a retry after a
+    // failed push a silent no-op: nothing left to commit, the block is skipped,
+    // and success is reported though the commit never reached the remote. Push
+    // whenever there is something new to send — we just committed, or the local
+    // branch already had unpushed commits from an earlier attempt.
     let committed = false
     if (status.files.length > 0) {
       await git.add('.')
@@ -361,7 +322,6 @@ async function _createCanopyServicesInternal(
     }
   }
 
-  // Create GitHub service if applicable (only for modes that support pull requests)
   // Must be initialized before closures that reference it (commitToSettingsBranch)
   let githubService: GitHubService | undefined
   if (operatingStrategy(config.mode).supportsPullRequests()) {
@@ -393,7 +353,6 @@ async function _createCanopyServicesInternal(
   }> => {
     const mode = config.mode
 
-    // Check if this mode supports git operations
     if (!operatingStrategy(mode).shouldCommit()) {
       return { committed: false, pushed: false }
     }
@@ -403,9 +362,9 @@ async function _createCanopyServicesInternal(
     const git = createGitManagerFor(options.branchRoot, { skipIndexMarker: true })
 
     try {
-      // Pull latest changes from remote settings branch (not base branch!)
-      // Settings branches are orphan branches and should never merge from main
-      // Note: BranchWorkspaceManager already ensured we're on the settings branch
+      // Pull the remote SETTINGS branch, never the base branch: settings
+      // branches are orphans and must never merge from main.
+      // BranchWorkspaceManager has already put us on the settings branch.
       try {
         await git.pullCurrentBranch()
       } catch (err) {
@@ -413,11 +372,6 @@ async function _createCanopyServicesInternal(
         // pushed, so the remote has no ref to pull. Anything else — a
         // GitConflictError, a merge that cannot proceed, a broken workspace —
         // must surface (the outer catch turns it into an error result).
-        // A blanket catch here previously logged every failure as "normal for
-        // first commit", which is how pullCurrentBranch could stay broken on
-        // every call without anyone noticing: the settings branch then silently
-        // never converged with the remote, and each save reported
-        // `committed: true, pushed: false` from the push below, forever.
         if (!(err instanceof GitRemoteRefMissingError)) throw err
         console.info(
           'CanopyCMS: settings branch has no remote ref yet, nothing to pull ' +
@@ -425,7 +379,6 @@ async function _createCanopyServicesInternal(
         )
       }
 
-      // Commit
       await git.ensureAuthor({
         name: config.gitBotAuthorName,
         email: config.gitBotAuthorEmail,
@@ -446,16 +399,11 @@ async function _createCanopyServicesInternal(
 
       // Create or update PR — dual-path like content branches (api/github-sync.ts)
       if (options.createPR !== false) {
-        // Both permissions and groups are read live from the settings
-        // workspace (getSettingsBranchRoot) — never from this PR's base
-        // branch — so the change already took effect the moment it was
-        // committed and pushed above, before this PR even exists. Merging
-        // does not (re-)activate anything; it only records the change on
-        // `base` for review/audit history. Previously worded as "will be
-        // persisted when this PR is merged", which implied merging was what
-        // made the change durable/live — false for both settings files, and
-        // for groups specifically the read side didn't even look at this
-        // branch until that bug was fixed (see resolve-canopy-user.ts).
+        // Permissions and groups are read live from the settings workspace
+        // (getSettingsBranchRoot), never from this PR's base branch, so the
+        // change took effect when it was committed and pushed above, before
+        // this PR existed. Merging re-activates nothing; it only records the
+        // change on `base` for review and audit history.
         const settingsPRBody =
           'Automated PR for permission and group changes. These changes already took ' +
           'effect in the CMS when they were saved — merging this PR does not change ' +
@@ -464,10 +412,9 @@ async function _createCanopyServicesInternal(
         if (githubService) {
           let prUrl: string | undefined
           try {
-            // Settings-branch PRs deliberately never pass markReadyIfDraft:
-            // unlike content submits, a settings sync has no explicit "submit
-            // for review" step, so an existing draft PR here should stay
-            // draft until an admin is ready — don't "helpfully" enable this.
+            // Settings-branch PRs never pass markReadyIfDraft: a settings sync
+            // has no explicit "submit for review" step the way a content submit
+            // does, so an existing draft PR stays draft until an admin says so.
             const result = await githubService.createOrUpdatePR({
               head: settingsBranch,
               base: config.defaultBaseBranch ?? 'main',
@@ -514,8 +461,6 @@ async function _createCanopyServicesInternal(
   const operatingMode = config.mode
   const modeStrategy = operatingStrategy(operatingMode)
 
-  // Create branch registry only in branching modes
-  // Settings are now in separate directory, no filtering needed
   const registry = modeStrategy.supportsBranching()
     ? new BranchRegistry(getDefaultBranchBase(operatingMode))
     : undefined
@@ -539,15 +484,14 @@ async function _createCanopyServicesInternal(
       if (services.config.mode !== 'dev') return
       // Static deployments and builds serve from the checkout — no git HEAD to track
       if (readsFromCheckout(services.config)) return
-      // Explicitly configured values are respected — never overridden by
-      // git HEAD detection. Only re-detect what the adopter left unset.
+      // An explicitly configured value is never overridden by HEAD detection;
+      // only what the adopter left unset is re-detected.
       if (explicitActiveBranch && explicitBaseBranch) return
-      // Re-detect from git HEAD (5s TTL cache prevents excessive shell-outs).
-      // Silently switch — the public dev site should reflect the current branch
-      // just like code hot-reloads. The editor is pinned to its own branch via
-      // URL params, so this only affects non-editor content serving. The base
-      // branch (fork point) follows HEAD too when unset, so workspaces
-      // provisioned mid-session fork from the developer's current branch.
+      // The switch is silent, so the dev site tracks the current branch the way
+      // code hot-reloads; the editor is pinned to its own branch via URL params,
+      // so only non-editor content serving is affected. The base branch follows
+      // HEAD too when unset, so a workspace provisioned mid-session forks from
+      // the developer's current branch.
       const fresh = await detectActiveBranch({
         ...services.config,
         defaultActiveBranch: undefined,
@@ -563,11 +507,11 @@ async function _createCanopyServicesInternal(
         changed = true
       }
       if (changed) {
-        // Note: closures in this function (getSettingsBranchRoot, checkContentAccess,
-        // createGitManagerFor, etc.) capture the original `config` local variable.
-        // Only the branch identity fields change here — git operations on existing
-        // branches use the fork point recorded in branch metadata, and consumers
-        // that need the fresh values must read services.config.
+        // The closures above (getSettingsBranchRoot, checkContentAccess,
+        // createGitManagerFor, …) captured the original `config` local. Only
+        // branch identity changes here: git operations on existing branches use
+        // the fork point in branch metadata, and anything needing the fresh
+        // values must read services.config.
         services.config = next
       }
     },

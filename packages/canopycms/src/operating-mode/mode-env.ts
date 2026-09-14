@@ -1,73 +1,53 @@
 /**
- * Single resolution point for the operating `mode`.
+ * Single resolution point for the operating `mode`: the environment value for
+ * the current runtime wins (see `readModeEnv`), else `config.mode`.
  *
- * `mode` is required in `canopycms.config.ts` (SEC-C1) and that file lives in
- * the adopter's repo — the SAME file is loaded by `next dev` locally, by
- * `next build` inside the image builder, and by the deployed Lambda. Those
- * three want different answers, so a literal in the config file cannot be
- * right for all of them:
+ * One `canopycms.config.ts` (where `mode` is required, SEC-C1) is loaded by
+ * `next dev`, by `next build` in the image builder and by the deployed Lambda,
+ * and those three need different answers, so only a RUN-time value works:
+ *   - `next dev` and `next build` are both `dev`. Build-time reads come from
+ *     the working tree in either mode (`readsFromCheckout` in build-mode.ts),
+ *     while prod would hold the image builder to checks it has no reason to
+ *     meet: `gitBotAuthorName`/`gitBotAuthorEmail` (the prod strategy's
+ *     `validateConfig`) and a credential-verifying auth plugin
+ *     (`assertAuthPluginAllowedForMode`). See Dockerfile.cms.template.
+ *   - The Lambda is `prod`: dev resolves the workspace to `<cwd>/.canopy-dev`,
+ *     and Lambda's filesystem is read-only outside /tmp, so the first write
+ *     fails with EROFS.
  *
- *   - `next dev` must be `dev` (workspace at `<cwd>/.canopy-dev`).
- *   - `next build` should stay `dev` too. Build-time reads come from the
- *     working tree in either mode (`readsFromCheckout` in `build-mode.ts`), so
- *     nothing in a build needs prod, while prod mode would hold the image
- *     builder to checks it has no reason to meet: `gitBotAuthorName`/
- *     `gitBotAuthorEmail` (the prod strategy's `validateConfig`, run by
- *     `createCanopyServices`) and an auth plugin that verifies credentials
- *     (`assertAuthPluginAllowedForMode`). See the note in
- *     `cli/template-files/Dockerfile.cms.template`.
- *   - The deployed Lambda must be `prod`: dev mode resolves the workspace to
- *     `<cwd>/.canopy-dev`, and Lambda's filesystem is read-only outside /tmp,
- *     so the first write fails with EROFS.
+ * Two variable names, on purpose. Server code reads `CANOPY_MODE`, stamped on
+ * the Lambda by `CanopyCmsService` and deliberately NOT set during
+ * `next build`. Browser code has no runtime environment — the editor page
+ * imports the config directly (`config.client()`), so its `mode` is whatever
+ * was inlined at build time, and Next inlines only `NEXT_PUBLIC_*`. Both names
+ * MUST appear as literal `process.env.X` member expressions here or the
+ * bundler cannot substitute them.
  *
- * Only a value resolved at RUN time can satisfy all three, which is why this
- * is an environment override rather than a flag baked into the generated
- * config file. `CANOPY_MODE` is the name the deployment templates already
- * referred to; before this module existed nothing read it.
- *
- * Precedence (highest wins):
- *   1. the environment value for the current runtime (see `readModeEnv`)
- *   2. `config.mode` (the literal in `canopycms.config.ts`)
- *
- * ## Two variable names, on purpose
- *
- * Server code reads `CANOPY_MODE`, which the CDK construct stamps onto the
- * Lambda (`CanopyCmsService` sets `CANOPY_MODE=prod`). It is deliberately NOT
- * set during `next build` (see above).
- *
- * Browser code cannot read a runtime environment at all — the editor page
- * imports `canopycms.config.ts` directly (`config.client()`), so the browser's
- * copy of `mode` is whatever was inlined when the bundle was built. Next.js
- * only inlines `NEXT_PUBLIC_*`, so the browser reads
- * `NEXT_PUBLIC_CANOPY_MODE`, which the generated CDK stack passes as a Docker
- * build arg. Both names must be spelled as literal `process.env.X` member
- * expressions here or the bundler cannot substitute them.
- *
- * An unrecognized value throws rather than falling back. Falling back would
+ * An unrecognized value throws rather than falling back: falling back would
  * turn a typo (`CANOPY_MODE=production`) into a silent dev-mode deployment
- * running header-trusting dev auth semantics — the exact failure SEC-C1 made
- * `mode` required to prevent.
+ * running header-trusting dev auth semantics.
  */
 
 import { canopyLogWarn } from '../utils/logger'
 import type { OperatingMode } from './types'
 
-export const SERVER_MODE_ENV_VAR = 'CANOPY_MODE'
-export const BROWSER_MODE_ENV_VAR = 'NEXT_PUBLIC_CANOPY_MODE'
+const SERVER_MODE_ENV_VAR = 'CANOPY_MODE'
+const BROWSER_MODE_ENV_VAR = 'NEXT_PUBLIC_CANOPY_MODE'
 
 let warned = false
 
-/** Reset the once-per-process warning latch. Test-only. */
+/**
+ * Reset the once-per-process warning latch. Test-only.
+ * @internal Exported for tests.
+ */
 export function resetModeWarning(): void {
   warned = false
 }
 
 /**
- * The environment value for the current runtime, or undefined when unset.
- *
  * Guarded with `typeof process` because a non-Next bundler may leave no
- * `process` shim in the browser at all; the member expressions themselves stay
- * literal so Next's DefinePlugin substitution still applies.
+ * `process` shim in the browser; the member expressions stay literal so Next's
+ * DefinePlugin substitution still applies.
  */
 function readModeEnv(): { name: string; value: string } | undefined {
   if (typeof process === 'undefined' || typeof process.env === 'undefined') return undefined
@@ -79,10 +59,8 @@ function readModeEnv(): { name: string; value: string } | undefined {
 }
 
 /**
- * Resolve the effective operating mode from the environment and the config
- * literal. Called from `validateCanopyConfig`, the one point every documented
- * config-authoring path (`defineCanopyConfig`, `composeCanopyConfig`) funnels
- * through.
+ * Called from `validateCanopyConfig`, the one point every config-authoring path
+ * (`defineCanopyConfig`, `composeCanopyConfig`) funnels through.
  */
 export function resolveOperatingMode(configMode: OperatingMode): OperatingMode {
   const env = readModeEnv()
@@ -97,9 +75,9 @@ export function resolveOperatingMode(configMode: OperatingMode): OperatingMode {
   }
 
   if (env.value !== configMode && !warned) {
-    // canopyLogWarn, not console.warn: shared modules can run inside the
-    // worker daemon, where an unprefixed line is folded into the previous
-    // CloudWatch event (see utils/logger.ts).
+    // canopyLogWarn, not console.warn: shared modules can run inside the worker
+    // daemon, where an unprefixed line is folded into the previous CloudWatch
+    // event (utils/logger.ts).
     canopyLogWarn(
       `CanopyCMS: ${env.name}="${env.value}" overrides config.mode="${configMode}". ` +
         `The environment wins by design — it is the per-deployment value, while ` +

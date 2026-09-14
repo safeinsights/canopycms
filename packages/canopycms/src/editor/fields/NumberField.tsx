@@ -24,25 +24,16 @@ const toNumericValue = (raw: string | number): number | undefined => {
 /**
  * Editor for `type: 'number'` fields.
  *
- * `undefined` means "not filled in" and is distinct from `0`: an empty
- * input must not silently become `0` (that would make a required numeric
- * field with value `0` look correct while an actually-empty field also
- * looks fine), and `0` must not be mistaken for "absent". Mantine's
- * `NumberInput` reports an empty input as `''`; we translate that to
- * `undefined` so `validation/entry-validator.ts`'s required check (which
- * treats only `undefined`/`null` as empty for numbers) agrees with what the
- * form displays.
+ * `undefined` (not `0`) means "not filled in": Mantine's `NumberInput` reports
+ * an empty input as `''`, which this field translates to `undefined` so
+ * `validation/entry-validator.ts`'s required check agrees with the form.
  *
- * IN-PROGRESS TEXT IS MIRRORED BACK, NOT THE PARSED NUMBER, and that is
- * load-bearing rather than stylistic. Mantine reports an entry as a STRING
- * exactly when the text and its numeric value disagree (`'-0'`, `'0.'`,
- * `'-0.0'`, leading zeros) and as a number otherwise. Handing the PARSED
- * number back as the controlled value re-renders the input from
- * `String(number)` — and `String(-0)` is `'0'`, so typing `-0.5` lost its
- * minus after the second keystroke and the `.5` appended to a POSITIVE
- * zero: the user typed `-0.5` and `0.5` was stored, silently. Keeping the
- * text Mantine itself reported keeps the sign on screen until the entry is
- * a complete number. See NumberField.test.tsx's keystroke matrix.
+ * The in-progress TEXT is mirrored back, not the parsed number. Mantine
+ * reports the entry as a string exactly when text and numeric value disagree
+ * (`'-0'`, `'0.'`, leading zeros); re-rendering from `String(parsedNumber)`
+ * instead loses that distinction — `String(-0)` is `'0'`, so typing `-0.5`
+ * would silently store `0.5` after the second keystroke. See
+ * NumberField.test.tsx's keystroke matrix.
  */
 export const NumberField: React.FC<NumberFieldProps> = ({
   id,
@@ -55,9 +46,8 @@ export const NumberField: React.FC<NumberFieldProps> = ({
   const inputId = id ?? generatedId
   const [inputValue, setInputValue] = useState<string | number>(value ?? '')
 
-  // Show the in-progress text only while it still means what the parent
-  // holds. Once the parent's value diverges (entry loaded, draft discarded,
-  // "Reload File"), that value wins and the stale text is dropped.
+  // Shows the in-progress text only while it still matches the parent's
+  // value; once the parent's value diverges (load, discard, reload), that value wins.
   const displayValue = toNumericValue(inputValue) === value ? inputValue : (value ?? '')
 
   return (
@@ -74,5 +64,3 @@ export const NumberField: React.FC<NumberFieldProps> = ({
     />
   )
 }
-
-export default NumberField

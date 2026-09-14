@@ -24,7 +24,7 @@
     "./auth/cache": "./src/auth/cache.ts",
     "./http": "./src/http/index.ts",
     "./task-queue": "./src/task-queue/index.ts",
-    "./worker/task-queue": "./src/worker/task-queue.ts",
+    "./worker/task-queue": "./src/task-queue/cms-task-queue.ts",
     "./worker/cms-worker": "./src/worker/cms-worker.ts",
     "./ai": "./src/ai/index.ts",
     "./build": "./src/build/index.ts",
@@ -72,9 +72,9 @@
         "require": "./dist/task-queue/index.js"
       },
       "./worker/task-queue": {
-        "types": "./dist/worker/task-queue.d.ts",
-        "import": "./dist/worker/task-queue.js",
-        "require": "./dist/worker/task-queue.js"
+        "types": "./dist/task-queue/cms-task-queue.d.ts",
+        "import": "./dist/task-queue/cms-task-queue.js",
+        "require": "./dist/task-queue/cms-task-queue.js"
       },
       "./worker/cms-worker": {
         "types": "./dist/worker/cms-worker.d.ts",

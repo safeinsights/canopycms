@@ -11,7 +11,6 @@ import type { PermissionPath } from '../authorization/types'
 import type { EntryLinkUrlResolver } from '../entry-link-resolver'
 import type { CropRect } from '../assets/transform-directives'
 
-// Field types
 export const primitiveFieldTypes = [
   'string',
   'number',
@@ -40,7 +39,6 @@ export type FieldType = (typeof fieldTypes)[number]
 export type ContentFormat = 'md' | 'mdx' | 'json' | 'yaml'
 export type MediaAdapterKind = 'local' | 's3' | 'lfs' | (string & {})
 
-// Permission types
 export type PermissionLevel = 'read' | 'edit' | 'review'
 
 export interface PermissionTarget {
@@ -55,12 +53,10 @@ export interface PathPermission {
   review?: PermissionTarget
 }
 
-// Select/Reference options
 export type SelectOption = string | { label: string; value: string }
 export type ReferenceOption = string | { label: string; value: string }
 
-// Field configuration types
-export interface BaseFieldConfig {
+interface BaseFieldConfig {
   name: string
   label?: string
   description?: string
@@ -77,7 +73,7 @@ export interface BaseFieldConfig {
   isBody?: boolean
 }
 
-export interface PrimitiveFieldConfig extends BaseFieldConfig {
+interface PrimitiveFieldConfig extends BaseFieldConfig {
   type: PrimitiveFieldType
 }
 
@@ -201,7 +197,6 @@ export type FieldConfig =
   | InlineGroupFieldConfig
   | CustomFieldConfig
 
-// Media configuration.
 // Kept in sync with the discriminated `mediaSchema` in config/schemas/media.ts — only
 // implemented adapters get a literal branch here (see BACKLOG.md "Asset adapters").
 export type MediaConfig =
@@ -285,7 +280,6 @@ export type RootCollectionConfig = {
  */
 export type BranchSchema = RootCollectionConfig
 
-// Editor configuration
 export interface CanopyEditorConfig {
   title?: string
   subtitle?: string
@@ -305,7 +299,6 @@ export interface CanopyEditorConfig {
   AccountComponent?: React.ComponentType
 }
 
-// Default value types
 export type DefaultBranchAccess = 'allow' | 'deny'
 export type DefaultPathAccessLevel = 'allow' | 'deny'
 /** Per-permission-level scoping for `defaultPathAccess`. An omitted level resolves to 'deny' (fail-closed). */
@@ -327,7 +320,7 @@ export type GithubTokenEnvVar = string
 export type CanopyOperatingMode = OperatingMode
 export type ContentRoot = string
 export type SourceRoot = string | undefined
-export type DeployedAs = 'static' | 'server'
+type DeployedAs = 'static' | 'server'
 
 /**
  * How the dev server surfaces working-tree content edits that diverge from the branch clone it serves.
@@ -342,7 +335,7 @@ export type DeployedAs = 'static' | 'server'
 export type DevContentSyncMode = 'off' | 'warn'
 
 /** Dev-mode-only behavior. Ignored when `mode !== 'dev'`. */
-export interface DevConfig {
+interface DevConfig {
   contentSync?: DevContentSyncMode
 }
 
@@ -384,7 +377,7 @@ export interface CanopyConfig {
   defaultBranchAccess?: DefaultBranchAccess
   defaultPathAccess?: DefaultPathAccess
   defaultBaseBranch?: DefaultBaseBranch
-  /** Which workspace to serve content from by default. Auto-detected from git HEAD in dev mode. */
+  /** Which workspace to serve content from by default — see {@link CanopyConfigInput.defaultActiveBranch}. */
   defaultActiveBranch?: string
   defaultRemoteName?: DefaultRemoteName
   defaultRemoteUrl?: DefaultRemoteUrl
@@ -392,45 +385,24 @@ export interface CanopyConfig {
   gitBotAuthorEmail: GitBotAuthorEmail
   githubTokenEnvVar?: GithubTokenEnvVar
   mode: CanopyOperatingMode
-  /** How this build is deployed. 'static' = no request context, no auth. Default: 'server'. */
+  /** How this build is deployed — see {@link CanopyConfigInput.deployedAs}. */
   deployedAs: DeployedAs
-  /**
-   * Escape hatch: allow git operations in prod mode to target a NETWORK remote
-   * (http(s)://, ssh://, git://, or scp-like `user@host:path`) instead of the
-   * EFS-local `remote.git` the standard AWS Lambda+worker topology expects.
-   * Default false/unset. The standard topology's Lambda has no internet access
-   * and would hang trying to reach a network remote directly — only set this
-   * for prod hosts that DO have internet (e.g. a single-VM deployment) and
-   * intentionally run git against a network remote.
-   */
+  /** Escape hatch for a prod host with real internet access — see {@link CanopyConfigInput.allowNetworkRemoteInProd}. */
   allowNetworkRemoteInProd?: boolean
   settingsBranch?: string
   autoCreateSettingsPR?: boolean
   deploymentName?: string
   contentRoot: ContentRoot
   sourceRoot?: SourceRoot
-  /**
-   * The deployment prefix the host Next.js app is served under (e.g. `/preview-123`), matching
-   * that app's `next.config` `basePath`. CanopyCMS cannot read `next.config` at runtime, so this
-   * must be stated here explicitly if the app sets one — without it, editor requests, the preview
-   * iframe `src`, and preview↔editor path matching all target the un-prefixed root and 404 or
-   * silently stop syncing. Normalized (leading slash added, trailing slashes stripped) via
-   * `joinUrlPrefix` at every use site; unset/empty means the app is served at its origin's root.
-   *
-   * NOT the same option as `collectStaticParams`'s `basePath` in
-   * `packages/canopycms-next/src/static.ts` — that one means "the route prefix of a nested
-   * catch-all route" (e.g. `/docs` for `app/docs/[[...slug]]`) and *filters* enumerated entries
-   * down to that prefix. Passing this deployment basePath to `collectStaticParams` instead would
-   * silently filter out every entry (zero static params, a build that goes green with no pages).
-   */
+  /** Deployment prefix the host app is served under — see {@link CanopyConfigInput.basePath}. */
   basePath?: string
   editor?: CanopyEditorConfig
   authPlugin?: AuthPlugin
-  /** Custom URL resolver for entry links. Overrides the default URL computation. */
+  /** Custom URL resolver for entry links — see {@link CanopyConfigInput.entryLinkUrl}. */
   entryLinkUrl?: EntryLinkUrlResolver
-  /** Save-time validation hook. 'error' issues reject the save; 'warning' issues are returned with it. */
+  /** Save-time validation hook — see {@link CanopyConfigInput.validateEntry}. */
   validateEntry?: ValidateEntryHook
-  /** Dev-mode-only behavior (content-sync divergence detection). Ignored when mode !== 'dev'. */
+  /** Dev-mode-only behavior — see {@link CanopyConfigInput.dev}. */
   dev?: DevConfig
 }
 
@@ -472,7 +444,20 @@ export interface CanopyConfigInput {
   deploymentName?: string
   contentRoot?: string
   sourceRoot?: string
-  /** See `CanopyConfig.basePath` — the deployment prefix the host Next.js app is served under. */
+  /**
+   * The deployment prefix the host Next.js app is served under (e.g. `/preview-123`), matching
+   * that app's `next.config` `basePath`. CanopyCMS cannot read `next.config` at runtime, so this
+   * must be stated here explicitly if the app sets one — without it, editor requests, the preview
+   * iframe `src`, and preview↔editor path matching all target the un-prefixed root and 404 or
+   * silently stop syncing. Normalized (leading slash added, trailing slashes stripped) via
+   * `joinUrlPrefix` at every use site; unset/empty means the app is served at its origin's root.
+   *
+   * NOT the same option as `collectStaticParams`'s `basePath` in
+   * `packages/canopycms-next/src/static.ts` — that one means "the route prefix of a nested
+   * catch-all route" (e.g. `/docs` for `app/docs/[[...slug]]`) and *filters* enumerated entries
+   * down to that prefix. Passing this deployment basePath to `collectStaticParams` instead would
+   * silently filter out every entry (zero static params, a build that goes green with no pages).
+   */
   basePath?: string
   editor?: CanopyEditorConfig
   authPlugin?: AuthPlugin

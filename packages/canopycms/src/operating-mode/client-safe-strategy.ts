@@ -1,22 +1,14 @@
 /**
- * Client-Safe Operating Mode Strategies
- *
- * Base strategy classes that are safe to import in 'use client' React components.
- * NO Node.js imports (fs, path, process, etc.) - only pure logic and simple data.
- *
- * These classes are extended by client-unsafe strategies to add Node.js functionality.
+ * Base strategy classes, safe in 'use client' React components: pure logic and
+ * simple data, NO Node.js imports. client-unsafe-strategy.ts extends these to
+ * add the Node.js surface.
  */
 
 import type { OperatingMode, ClientSafeStrategy } from './types'
 
-// ============================================================================
-// Production Mode - Client-Safe Strategy
-// ============================================================================
-
 export class ProdClientSafeStrategy implements ClientSafeStrategy {
   readonly mode: OperatingMode = 'prod'
 
-  // UI Feature Flags
   supportsBranching(): boolean {
     return true
   }
@@ -33,7 +25,6 @@ export class ProdClientSafeStrategy implements ClientSafeStrategy {
     return true
   }
 
-  // Simple Data
   getPermissionsFileName(): string {
     return 'permissions.json'
   }
@@ -51,14 +42,9 @@ export class ProdClientSafeStrategy implements ClientSafeStrategy {
   }
 }
 
-// ============================================================================
-// Dev Mode - Client-Safe Strategy
-// ============================================================================
-
 export class DevClientSafeStrategy implements ClientSafeStrategy {
   readonly mode: OperatingMode = 'dev'
 
-  // UI Feature Flags
   supportsBranching(): boolean {
     return true
   }
@@ -75,7 +61,6 @@ export class DevClientSafeStrategy implements ClientSafeStrategy {
     return false // No real GitHub in local dev mode
   }
 
-  // Simple Data
   getPermissionsFileName(): string {
     return 'permissions.json'
   }
@@ -93,20 +78,11 @@ export class DevClientSafeStrategy implements ClientSafeStrategy {
   }
 }
 
-// ============================================================================
-// Factory with Memoization
-// ============================================================================
-
 const clientStrategyCache = new Map<OperatingMode, ClientSafeStrategy>()
 
 /**
- * Get the client-safe strategy for an operating mode.
- *
- * Strategies are memoized - one instance per mode for the entire process lifetime.
- * Safe to call inline: clientOperatingStrategy(mode).supportsBranching()
- *
- * @param mode - The operating mode
- * @returns Client-safe strategy instance
+ * Memoized: one instance per mode for the process lifetime, so this is safe to
+ * call inline — `clientOperatingStrategy(mode).supportsBranching()`.
  */
 export function clientOperatingStrategy(mode: OperatingMode): ClientSafeStrategy {
   const cached = clientStrategyCache.get(mode)
@@ -121,7 +97,7 @@ export function clientOperatingStrategy(mode: OperatingMode): ClientSafeStrategy
       strategy = new DevClientSafeStrategy()
       break
     default: {
-      // Exhaustiveness check - TypeScript will error if a mode is not handled
+      // Exhaustiveness check: adding a mode without a case fails to compile.
       const _exhaustive: never = mode
       throw new Error(`Unknown operating mode: ${_exhaustive}`)
     }
@@ -132,7 +108,8 @@ export function clientOperatingStrategy(mode: OperatingMode): ClientSafeStrategy
 }
 
 /**
- * Clear the client strategy cache (mainly for testing)
+ * Mainly for testing.
+ * @internal Exported for tests.
  */
 export function clearClientStrategyCache(): void {
   clientStrategyCache.clear()

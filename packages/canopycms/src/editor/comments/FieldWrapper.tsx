@@ -55,10 +55,8 @@ export const FieldWrapper: React.FC<FieldWrapperProps> = ({
   const wrapperRef = useRef<HTMLDivElement>(null)
   const [showCarousel, setShowCarousel] = useState(false)
 
-  // Show carousel if threads exist or user explicitly requested it
   const shouldShowCarousel = threads.length > 0 || showCarousel
 
-  // Scroll to field when focused from preview
   useEffect(() => {
     if (autoFocus) {
       wrapperRef.current?.scrollIntoView({
@@ -68,7 +66,6 @@ export const FieldWrapper: React.FC<FieldWrapperProps> = ({
     }
   }, [autoFocus])
 
-  // Wrapper to add field context to comment handler
   const handleAddComment = async (text: string, threadId?: string) => {
     await onAddComment(text, 'field', entryPath, canopyPath, threadId)
   }
@@ -77,7 +74,6 @@ export const FieldWrapper: React.FC<FieldWrapperProps> = ({
     <Box ref={wrapperRef} data-canopy-field={canopyPath} pos="relative" style={{ width: '100%' }}>
       <Box
         style={{
-          // Add subtle highlight when auto-focused
           outline: autoFocus ? '2px solid var(--mantine-color-blue-5)' : undefined,
           outlineOffset: autoFocus ? 2 : undefined,
           borderRadius: 4,
@@ -87,7 +83,6 @@ export const FieldWrapper: React.FC<FieldWrapperProps> = ({
         {children}
       </Box>
 
-      {/* Show "New comment" button when no threads and not showing carousel */}
       {!shouldShowCarousel && (
         <Box
           style={{
@@ -110,7 +105,6 @@ export const FieldWrapper: React.FC<FieldWrapperProps> = ({
         </Box>
       )}
 
-      {/* Render ThreadCarousel when threads exist or user requested it */}
       {shouldShowCarousel && (
         <ThreadCarousel
           threads={threads}

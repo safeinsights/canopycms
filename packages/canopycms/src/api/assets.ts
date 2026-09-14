@@ -46,10 +46,6 @@ export type FinalizeAssetResponse = ApiResponse<{ asset: AssetRecord }>
 /** Response type for deleting an asset */
 export type AssetDeleteResponse = ApiResponse<{ deleted: boolean }>
 
-// ============================================================================
-// Zod Schemas for Validation
-// ============================================================================
-
 const filenameSchema = z.string().min(1).max(255)
 
 const presignAssetBodySchema = z.object({
@@ -75,7 +71,7 @@ const listAssetsParamsSchema = z.object({
   cursor: z.string().optional(),
   limit: z.coerce.number().int().positive().max(100).optional(),
 })
-export type ListAssetsParams = z.infer<typeof listAssetsParamsSchema>
+type ListAssetsParams = z.infer<typeof listAssetsParamsSchema>
 
 /** hash32 is a sha-256 truncated to 32 hex chars (keys.ts's `hashBytes`) - never any other shape. */
 const hash32Schema = z
@@ -83,16 +79,12 @@ const hash32Schema = z
   .regex(/^[a-f0-9]{32}$/, 'key must be a 32-character lowercase hex string')
 
 const deleteAssetParamsSchema = z.object({ key: hash32Schema })
-export type DeleteAssetParams = z.infer<typeof deleteAssetParamsSchema>
-
-// ============================================================================
-// Handlers
-// ============================================================================
+type DeleteAssetParams = z.infer<typeof deleteAssetParamsSchema>
 
 /**
  * Presign a direct (or proxied) upload target. Any authenticated user - there
  * is no finer "editor" role, and upload needs to work for every non-admin
- * user too (see guard semantics in .claude/future-tasks/assets-media-system.md).
+ * user too (see guard semantics in .claude/future-tasks/resolved/assets-media-system.md).
  */
 const presignAssetHandler = async (
   ctx: ApiContext,
@@ -148,13 +140,11 @@ const finalizeAssetHandler = async (
 }
 
 /**
- * Proxied upload for stores that don't support direct-to-storage presigning
- * (LocalAssetStore in dev). Reads a multipart/form-data body (a `file` part,
- * plus an optional `filename` field overriding `file.name`) rather than JSON -
- * this route sets `bodyFormat: 'multipart'` below so the core handler skips
- * its default `req.json()` parsing, since the body stream can only be read
- * once (see http/handler.ts). Any authenticated user (same rationale as
- * presign/finalize).
+ * Proxied upload for stores that don't support direct-to-storage presigning (LocalAssetStore in
+ * dev). Reads multipart/form-data (a `file` part, optional `filename` override) instead of JSON;
+ * this route sets `bodyFormat: 'multipart'` so the core handler skips its default `req.json()`
+ * parse, since the body stream can only be read once (see http/handler.ts). Any authenticated
+ * user (same rationale as presign/finalize).
  */
 const uploadProxiedHandler = async (
   ctx: ApiContext,
@@ -178,15 +168,11 @@ const uploadProxiedHandler = async (
     }
   }
 
-  // Early size guard from the Content-Length header, BEFORE the multipart
-  // body is ever read - `formData()`/`filePart.arrayBuffer()` below fully
-  // buffer the upload into memory, so without this an over-cap request still
-  // pays the full read cost before the (correct, but too-late) post-read
-  // check further down rejects it. `beginUpload()` is the store-agnostic way
-  // to learn "the store's max" (mirrors presignAssetHandler's own use of it)
-  // - filename/contentType are placeholders here since only `.maxBytes` is
-  // read; the real `beginUpload()` call below (with the actual filename)
-  // still runs after the body is read to build the real staging target.
+  // Early size guard from Content-Length, before the multipart body is read - `formData()`/
+  // `arrayBuffer()` below fully buffer the upload into memory, so without this an over-cap
+  // request still pays the full read cost before the post-read check further down rejects it.
+  // `beginUpload()` is the store-agnostic way to learn the store's max; filename/contentType here
+  // are placeholders since only `.maxBytes` is read.
   const contentLengthHeader = req.rawRequest.header('content-length')
   if (contentLengthHeader !== null) {
     const contentLength = Number(contentLengthHeader)
@@ -253,7 +239,7 @@ const uploadProxiedHandler = async (
 
 /**
  * List assets - any authenticated user can list assets (key enumeration is
- * accepted: unlisted != private, see assets-media-system.md).
+ * accepted: unlisted != private, see .claude/future-tasks/resolved/assets-media-system.md).
  */
 const listAssetsHandler = async (
   ctx: ApiContext,
@@ -270,31 +256,26 @@ const listAssetsHandler = async (
 }
 
 /**
- * Delete asset - an Admin may delete any asset; anyone else may delete only an
- * asset whose recorded `uploadedBy` is them. `key` is the asset's hash32 and is
- * validated (32 lowercase hex chars) by `deleteAssetParamsSchema` before this
- * handler ever runs. Deletes the meta sidecar only - blobs are immortal until
- * a future GC worker task (see assets-media-system.md).
+ * Delete asset - an Admin may delete any asset; anyone else may delete only an asset whose
+ * recorded `uploadedBy` is them. `key` (hash32) is pre-validated by `deleteAssetParamsSchema`.
+ * Deletes the meta sidecar only - blobs are immortal until a future GC worker task (see
+ * .claude/future-tasks/resolved/assets-media-system.md).
  *
- * The ownership check lives here rather than in a declarative guard because it
- * needs the asset itself: guards run before the handler and cannot read meta.
+ * The ownership check lives here, not in a declarative guard, because it needs the asset's meta,
+ * which guards can't read. Two fail-closed choices:
+ * - Meta with no `uploadedBy` (the field is optional) is admin-only — defaulting to "anyone may
+ *   delete" would open every legacy asset to everyone.
+ * - A missing asset returns the same 403 as an unowned one for non-admins, so the endpoint isn't
+ *   an existence oracle over a content-addressed keyspace.
  *
- * Two deliberate choices, both fail-closed:
- * - Meta with no `uploadedBy` (the field is optional) is admin-only. Falling
- *   back to "anyone may delete" would open every legacy asset to everyone.
- * - A missing asset returns the same 403 as an unowned one for non-admins, so
- *   the endpoint isn't an existence oracle over a content-addressed keyspace.
+ * `uploadedBy` records the FIRST uploader only: finalizeAsset dedups on content hash, so a second
+ * person uploading an identical file gains no delete rights over it — benign (a 403 where they
+ * expected success, never the reverse; see
+ * .claude/future-tasks/asset-listing-cross-branch-exposure.md).
  *
- * Note `uploadedBy` records the FIRST uploader only: finalizeAsset dedups on
- * the content hash and returns the existing meta, so a second person uploading
- * an identical file gains no delete rights over it. Benign (a 403 where they
- * expected success, never the reverse) - see
- * .claude/future-tasks/asset-listing-cross-branch-exposure.md.
- *
- * COUPLED to the blob-GC follow-up in asset-review-followups.md: this
- * permission is safe because delete is a de-list, not a destroy - nothing that
- * another branch references breaks. If GC ever makes delete destroy the
- * underlying blob, revisit this (it would then need a reference check).
+ * Coupled to the blob-GC follow-up in asset-review-followups.md: this permission is safe because
+ * delete is a de-list, not a destroy — nothing another branch references breaks. If GC ever makes
+ * delete destroy the blob, this needs a reference check too.
  */
 const deleteAssetHandler = async (
   ctx: ApiContext,
@@ -318,16 +299,13 @@ const deleteAssetHandler = async (
 const TRANSFORM_CACHE_CONTROL = 'public, max-age=31536000, immutable'
 
 /**
- * Lazy dev-mode emulation of the prod transform Lambda (which reuses
- * `parseTransformPath`/`formatDirectives`/`applyTransform` unchanged): parse
- * the request, load the original, transform it, write the result back under
- * its CANONICAL key (so a non-canonically-ordered directive string still
- * dedupes with any equivalent request), then serve the bytes just computed
- * (no re-read from the store).
+ * Lazy dev-mode emulation of the prod transform Lambda (reuses `parseTransformPath`/
+ * `formatDirectives`/`applyTransform` unchanged): parse, load the original, transform, write the
+ * result back under its CANONICAL key (so a non-canonically-ordered directive string still
+ * dedupes with any equivalent request), then serve the bytes just computed.
  *
- * `key` here is the full store key already confirmed to start with the
- * `assets/t/` prefix and to have missed the cache-hit `readPublicObject`
- * check in `rawAssetHandler`.
+ * `key` here already starts with `assets/t/` and already missed `rawAssetHandler`'s cache-hit
+ * `readPublicObject` check.
  */
 async function serveLazyTransform(
   assetStore: AssetStore,
@@ -347,12 +325,10 @@ async function serveLazyTransform(
     return { ok: false, status: 400, error: 'Not a raster asset - svg/pdf are served statically' }
   }
 
-  // The slug is decorative in the URL but load-bearing in the stored key, so
-  // it must equal the asset's real slug: `[a-z0-9-]+` is all the parser can
-  // enforce, and every other string that passes it aliases the same image into
-  // a new cache key and a new stored object. Canopy's own URLs always carry
-  // `meta.slug` (assets/asset-url.ts). Mirrors the prod transform Lambda's
-  // handler.ts check - the two paths must agree, or dev accepts URLs prod 404s.
+  // The slug is decorative in the URL but load-bearing in the stored key, so it must equal the
+  // asset's real slug — the parser only enforces `[a-z0-9-]+`, and any other string that passes
+  // it aliases the same image into a new cache key. Mirrors the prod transform Lambda's check
+  // (assets/asset-url.ts); the two paths must agree, or dev accepts URLs prod 404s.
   if (parsed.slug !== meta.slug) {
     return { ok: false, status: 404, error: 'Not found' }
   }
@@ -376,11 +352,9 @@ async function serveLazyTransform(
     parsed.directives,
   )
   if (!transformed.ok) {
-    // Pass the real status through rather than flattening every rejection to
-    // 502 - `applyTransform` already distinguishes client-input errors (400
-    // unsupported format, 413 oversized output) from a genuine decode
-    // failure (422), none of which are "this server failed" (502). Mirrors
-    // the prod transform Lambda's own handler.ts, which makes the same fix.
+    // Pass the real status through instead of flattening every rejection to 502:
+    // `applyTransform` already distinguishes client-input errors (400/413) from a genuine decode
+    // failure (422), none of which are "this server failed." Mirrors the prod transform Lambda.
     return { ok: false, status: transformed.status, error: transformed.error }
   }
 
@@ -401,19 +375,15 @@ async function serveLazyTransform(
 }
 
 /**
- * Serve a public asset object (sanitized svg/pdf finalize wrote, or a
- * previously-computed transform output) for dev-mode `/assets/*` rewrites.
- * Hand-built (not `defineEndpoint`) rather than registered in
- * `ASSET_ROUTES`/the client generator: this route returns raw bytes
- * (`CanopyBinaryResponse`), not a JSON envelope, so a generated client
- * method that calls `response.json()` would be actively wrong. Consumers hit
- * this route directly (an `<img>`/`<a>` src, or a framework rewrite), never
- * through `client.ts`.
+ * Serve a public asset object (sanitized svg/pdf finalize wrote, or a cached transform output)
+ * for dev-mode `/assets/*` rewrites. Hand-built (not `defineEndpoint`), not registered in
+ * `ASSET_ROUTES`/the client generator: this returns raw bytes (`CanopyBinaryResponse`), not a
+ * JSON envelope, so a generated `response.json()` client method would be wrong. Consumers hit
+ * this route directly (`<img>`/`<a>` src, or a framework rewrite), never through `client.ts`.
  *
- * Transform outputs (`assets/t/...`) are cache-checked exactly like any
- * other public object first - only a MISS under the `assets/t/` prefix falls
- * through to `serveLazyTransform`, which computes and caches the bytes. This
- * mirrors the prod design (CloudFront origin-group -> S3 -> Lambda on miss).
+ * Transform outputs (`assets/t/...`) are cache-checked like any other public object first — only
+ * a MISS under `assets/t/` falls through to `serveLazyTransform`. Mirrors prod (CloudFront
+ * origin-group -> S3 -> Lambda on miss).
  */
 const rawAssetHandler = async (
   ctx: ApiContext,
@@ -454,17 +424,10 @@ const rawAssetHandler = async (
   return serveLazyTransform(ctx.assetStore, key)
 }
 
-// ============================================================================
-// Route Definitions with defineEndpoint
-// ============================================================================
-//
 // Deliberately no 'writableBranch' guard on any endpoint below: none take a
 // :branch param -- the asset store is branch-agnostic (a single global store,
 // see assets/factory.ts), so the protected-base-branch predicate doesn't apply.
 
-/**
- * POST /assets/presign
- */
 const presignAsset = defineEndpoint({
   namespace: 'assets',
   name: 'presign',
@@ -480,9 +443,6 @@ const presignAsset = defineEndpoint({
   handler: presignAssetHandler,
 })
 
-/**
- * POST /assets/finalize
- */
 const finalizeAsset = defineEndpoint({
   namespace: 'assets',
   name: 'finalize',
@@ -511,9 +471,6 @@ const uploadProxied = defineEndpoint({
   handler: uploadProxiedHandler,
 })
 
-/**
- * GET /assets
- */
 const listAssets = defineEndpoint({
   namespace: 'assets',
   name: 'list',

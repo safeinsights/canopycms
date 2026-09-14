@@ -1,25 +1,6 @@
-/**
- * Error handling utilities for type-safe error handling.
- *
- * These utilities help convert `catch (err: unknown)` to usable error information
- * without using `any` types.
- */
+/** Reading a `catch (err: unknown)` value as usable error information, without `any`. */
 
-/**
- * Extract a message string from an unknown error value.
- *
- * @param err - The caught error (unknown type)
- * @returns A string message suitable for logging or user display
- *
- * @example
- * ```ts
- * try {
- *   await riskyOperation()
- * } catch (err: unknown) {
- *   canopyLogError('Operation failed:', getErrorMessage(err))
- * }
- * ```
- */
+/** Message string for an unknown thrown value. */
 export function getErrorMessage(err: unknown): string {
   if (err instanceof Error) {
     return err.message
@@ -31,70 +12,51 @@ export function getErrorMessage(err: unknown): string {
 }
 
 /**
- * Redact sensitive material from an error message before sending it to API
- * clients. Log the ORIGINAL message server-side; send the sanitized one.
+ * Redact sensitive material from an error message before it reaches an API client. Log the
+ * ORIGINAL message server-side; send the sanitized one.
  *
- * Git/filesystem errors are unbounded (stderr varies by git version, locale,
- * and hooks can print anything), so enumerating safe messages is not
- * feasible. Instead, redact the known-sensitive SHAPES that can appear in
- * any of them:
- * - credentials embedded in URLs (`https://x-access-token:tok@github.com/…`)
- * - absolute filesystem paths (workspace roots, EFS mounts, home directories)
+ * Git/filesystem error text is unbounded (stderr varies by git version and locale, and hooks
+ * print anything), so this redacts the known-sensitive SHAPES rather than enumerating safe
+ * messages: credentials embedded in URLs (`https://x-access-token:tok@github.com/…`) and
+ * absolute filesystem paths (workspace roots, EFS mounts, home directories). Paths under the
+ * current working directory are shortened to relative form (CMS-internal layout like
+ * `.canopy-dev/remote.git` helps debugging and is not sensitive); absolute paths outside it
+ * become `<path>`.
  *
- * Paths under the current working directory are shortened to relative form
- * (CMS-internal layout like `.canopy-dev/remote.git` is useful for debugging
- * and not sensitive); absolute paths outside it are replaced with `<path>`.
- */
-/**
- * TAG: `[REDACT]`
- *
- * Grep `[REDACT]` to find every site that persists or surfaces raw error text on
- * a path that reaches a browser — worker task errors folded into
- * `worker-status.json`, `branch.json` parse failures served by the admin
- * branch-health endpoint, rebase-failure messages, and their tests.
- *
- * Those sites carried the tag `[HIGH-1]`/`[MEDIUM-2]` until 2026-08-23, IDs from
- * a review pass whose findings list was never committed — 13 occurrences across
- * 6 files resolving to nothing. Renamed rather than deleted because the
- * underlying rule is real and genuinely cross-file: a Node error embeds absolute
- * paths, and a git remote URL can embed a token, so anything on that path is
- * redacted through the function below.
- *
- * The tag is a grep aid, not the rule. The rule is stated at each site.
+ * TAG: `[REDACT]` — grep it for every site that persists or surfaces raw error text on a path
+ * reaching a browser (worker task errors folded into `worker-status.json`, `branch.json` parse
+ * failures served by the admin branch-health endpoint, rebase-failure messages, and their
+ * tests). A Node error embeds absolute paths and a git remote URL can embed a token, so
+ * everything on such a path goes through this function. The tag is a grep aid; the rule itself
+ * is stated at each site.
  */
 export function sanitizeErrorMessage(message: string): string {
   let result = redactCredentials(message)
-  // Paths under the project root become relative (split/join avoids regex
-  // escaping issues with arbitrary cwd values). The bare-cwd replacement is
-  // anchored to a token boundary so sibling directories that merely share
-  // the cwd prefix (e.g. `${cwd}-other/…`) stay absolute and get fully
+  // Paths under the project root become relative (split/join avoids regex-escaping issues with
+  // arbitrary cwd values). The bare-cwd replacement is anchored to a token boundary so a sibling
+  // directory that merely shares the cwd prefix (`${cwd}-other/…`) stays absolute and is fully
   // redacted below instead of leaking a mangled remainder.
   const cwd = process.cwd()
   if (cwd !== '/') {
     result = result.split(`${cwd}/`).join('')
     const cwdPattern = cwd.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-    // cwdPattern is process.cwd() (server-controlled, not attacker/entry-content
-    // data) with regex metacharacters escaped by the literal regex above, so
-    // this cannot be used to inject an attacker-chosen pattern.
+    // cwdPattern is process.cwd() (server-controlled, not attacker or entry-content data) with
+    // regex metacharacters escaped by the literal regex above, so it cannot inject an
+    // attacker-chosen pattern.
     // eslint-disable-next-line security/detect-non-literal-regexp
     result = result.replace(new RegExp(`${cwdPattern}(?=[\\s'"),:;]|$)`, 'g'), '.')
   }
-  // Quoted absolute paths (git quotes most paths in its messages): redact
-  // the whole quoted span, spaces included.
+  // Quoted absolute paths (git quotes most paths): redact the whole quoted span, spaces included.
   result = result.replace(/'\/[^']*'/g, "'<path>'").replace(/"\/[^"]*"/g, '"<path>"')
-  // Remaining absolute POSIX paths (outside cwd, e.g. /mnt/efs/…). The
-  // leading boundary keeps URL slashes (`https://host/…`) untouched. Known
-  // limitation: an UNQUOTED path containing spaces is only redacted up to
-  // the first space — spaces are legal both inside paths and as message
-  // separators, so this is not generally solvable here.
+  // Remaining absolute POSIX paths (outside cwd, e.g. /mnt/efs/…). The leading boundary keeps
+  // URL slashes (`https://host/…`) untouched. Known limitation: an UNQUOTED path containing
+  // spaces is only redacted up to the first space — spaces are legal both inside paths and as
+  // message separators, so that is not generally solvable here.
   //
-  // The repeated group `(?:[^/\s'")]+\/)+` looks nested-quantifier-shaped, but
-  // the inner character class excludes `/`, so each repetition can only end at
-  // a literal `/` boundary in the input: there is exactly one way to decompose
-  // any matched string into repetitions (no same-substring ambiguity), so this
-  // does not backtrack catastrophically. Verified empirically with inputs up
-  // to 400k chars (adversarial runs of non-slash chars, with and without
-  // trailing slashes): scaling stayed linear, not quadratic/exponential.
+  // The repeated group `(?:[^/\s'")]+\/)+` looks nested-quantifier-shaped, but its inner class
+  // excludes `/`, so each repetition can only end at a literal `/`: a matched string has exactly
+  // one decomposition, so it cannot backtrack catastrophically. Measured linear on adversarial
+  // inputs up to 400k chars.
   // eslint-disable-next-line security/detect-unsafe-regex
   result = result.replace(/(^|[\s'"(=:,[])\/(?:[^/\s'")]+\/)+[^/\s'")]*/g, '$1<path>')
   // Windows drive paths
@@ -103,113 +65,64 @@ export function sanitizeErrorMessage(message: string): string {
 }
 
 /**
- * Redact only credential material from a message, leaving filesystem paths
- * intact. For server-side log lines that deliberately keep full path detail
- * (server logs only, useful for debugging) but must never persist a live
- * token — client-facing messages go through sanitizeErrorMessage instead,
- * which calls this and then also redacts paths.
+ * Redact only credential material, leaving filesystem paths intact — for server-side log lines
+ * that deliberately keep full path detail for debugging but must never persist a live token.
+ * Client-facing messages go through `sanitizeErrorMessage` instead, which calls this and then
+ * also redacts paths.
  */
 export function redactCredentials(message: string): string {
   let result = message
-  // Credentials in URLs: scheme://user:token@host or scheme://token@host.
-  // Anchored on the literal `://` (leaving the scheme untouched) — a `\w+`
-  // scheme prefix would backtrack polynomially on long word-character runs
-  // (CodeQL js/polynomial-redos).
+  // Credentials in URLs: scheme://user:token@host or scheme://token@host. Anchored on the
+  // literal `://` (leaving the scheme untouched) — a `\w+` scheme prefix backtracks
+  // polynomially on long word-character runs (CodeQL js/polynomial-redos).
   result = result.replace(/(:\/\/)[^/\s@]+@/g, '$1***@')
-  // Bare token shapes (defense-in-depth for messages that embed a token
-  // outside URL userinfo): GitHub token prefixes and Bearer values.
+  // Bare token shapes, for messages embedding a token outside URL userinfo: GitHub token
+  // prefixes and Bearer values.
   result = result.replace(/\b(?:gh[pousr]|github_pat)_[A-Za-z0-9_]{8,}/g, '***')
   result = result.replace(/\b(Bearer\s+)[A-Za-z0-9._~+/=-]{8,}/g, '$1***')
-  // PEM private-key blocks — a GitHub App's private key. Defense-in-depth,
-  // exactly like the bare-token rules above: no site today puts key material
-  // into an error (checked — `createPrivateKey` failures report
-  // `error:1E08010C:DECODER routines::unsupported` and jsonwebtoken's report
-  // neither `BEGIN` nor the body), and a rule added before the first leak
-  // costs nothing. None of the rules above would match one: a PEM has no URL
-  // userinfo, no `gh*_` prefix and no `Bearer`.
+  // PEM private-key blocks — a GitHub App's private key. Defense-in-depth like the bare-token
+  // rules above: nothing today puts key material into an error, and none of those rules would
+  // match one (a PEM has no URL userinfo, no `gh*_` prefix and no `Bearer`).
   //
-  // Linear by construction. The label is `[A-Z]{0,9} ?` (bounded, so its
-  // backtracking is a constant factor) rather than an open `[A-Z ]*`, which
-  // would rescan a long run of capitals at every start position. The lazy
-  // `[\s\S]*?` is stopped by the END footer, or by end-of-string when the
-  // message was truncated mid-key — without that second alternative a
-  // half-quoted key would pass through in full.
-  //
-  // The footer is spelled out, mirroring the header, rather than "`-----END`
-  // then anything up to the next dashes". Both looser spellings were measured
-  // wrong in opposite directions on a single-line message: `[^\n]*` (greedy to
-  // end of line) swallowed the text after the key, and `[^\n]*?-----` (lazy to
-  // any dashes) stopped on a label-less `-----END-----` and left a SECOND key
-  // after it unredacted. Matching only a real footer means anything else falls
-  // through to `$`, which over-redacts — the safe direction.
+  // Linear by construction. The label is bounded (`[A-Z]{0,9} ?`) rather than an open `[A-Z ]*`,
+  // which would rescan a long run of capitals at every start position, and the lazy `[\s\S]*?`
+  // stops at the END footer or at end-of-string — without that second alternative a key
+  // truncated mid-message passes through in full. The footer is spelled out rather than
+  // "`-----END` then anything up to the next dashes": greedy `[^\n]*` swallows the text after
+  // the key, and lazy `[^\n]*?-----` stops on a label-less `-----END-----` and leaves a SECOND
+  // key unredacted. Anything else falls through to `$`, which over-redacts — the safe direction.
   result = result.replace(
     /-----BEGIN [A-Z]{0,9} ?PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z]{0,9} ?PRIVATE KEY-----|$)/g,
     '<private-key>',
   )
   // Bare JWTs (`eyJ…`) — three dot-separated base64url runs.
   //
-  // The leading boundary is `(?<![\w-])`, NOT `\b`. `-` is in the run class but
-  // is not a word character, so under `\b` every `-eyJ` inside one long
-  // `[\w-]` run starts a fresh match attempt that rescans the rest of the run
-  // for a `.` that never comes — quadratic, and measured on `'-eyJ'.repeat(n)`:
-  // roughly 200ms at 20KB, 900ms at 40KB, 13-16s at 160KB (the absolute
-  // numbers are machine-dependent; the quadrupling per doubling is not). With
-  // the lookbehind the same 160KB input is under a millisecond. It gives up
-  // exactly one case: a JWT
-  // glued directly to a preceding hyphen (`x-eyJ…`); every real prefix —
+  // The leading boundary is `(?<![\w-])`, NOT `\b`: `-` is in the run class but is not a word
+  // character, so under `\b` every `-eyJ` inside one long `[\w-]` run starts a fresh match
+  // attempt that rescans the rest of the run for a `.` that never comes — quadratic, measured in
+  // seconds on a 160KB input where the lookbehind stays under a millisecond. It gives up exactly
+  // one case: a JWT glued directly to a preceding hyphen (`x-eyJ…`); every real prefix —
   // whitespace, `"`, `=`, `(`, `Bearer ` — still matches.
   result = result.replace(/(?<![\w-])eyJ[\w-]{8,}\.[\w-]{8,}\.[\w-]+/g, '***')
   return result
 }
 
-/**
- * Type guard to check if an error is a Node.js system error with a code property.
- *
- * @param err - The caught error (unknown type)
- * @returns True if the error has a `code` property (like ENOENT, EACCES, etc.)
- *
- * @example
- * ```ts
- * try {
- *   await fs.readFile(path)
- * } catch (err: unknown) {
- *   if (isNodeError(err) && err.code === 'ENOENT') {
- *     return null // File not found is expected
- *   }
- *   throw err
- * }
- * ```
- */
+/** True for a Node system error — an `Error` carrying a `code` (ENOENT, EACCES, …). */
 export function isNodeError(err: unknown): err is NodeJS.ErrnoException {
   return err instanceof Error && 'code' in err
 }
 
-/**
- * Check if an error indicates a "file not found" condition.
- *
- * @param err - The caught error (unknown type)
- * @returns True if the error is ENOENT (file/directory not found)
- */
+/** True for ENOENT. */
 export function isNotFoundError(err: unknown): boolean {
   return isNodeError(err) && err.code === 'ENOENT'
 }
 
-/**
- * Check if an error indicates a "permission denied" condition.
- *
- * @param err - The caught error (unknown type)
- * @returns True if the error is EACCES (permission denied)
- */
+/** True for EACCES. */
 export function isPermissionError(err: unknown): boolean {
   return isNodeError(err) && err.code === 'EACCES'
 }
 
-/**
- * Check if an error indicates a "file already exists" condition.
- *
- * @param err - The caught error (unknown type)
- * @returns True if the error is EEXIST (file already exists)
- */
+/** True for EEXIST. */
 export function isFileExistsError(err: unknown): boolean {
   return isNodeError(err) && err.code === 'EEXIST'
 }

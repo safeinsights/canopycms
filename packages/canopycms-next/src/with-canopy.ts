@@ -296,8 +296,6 @@ function unknownNextVersionWarning(projectDir: string): string {
 }
 
 /**
- * Whether the warning has fired in this module instance.
- *
  * A Turbopack build evaluates the config in the main process and again in a worker thread with its
  * own module registry (`next/dist/build/turbopack-build/index.js:26` and `impl.js:209` in 16.1.7).
  * So "once" means once per process or thread, not once per build.
@@ -408,58 +406,32 @@ function sharpTracingConfig(
 }
 
 /**
- * Wrap your Next.js config to set up module transpilation and React
- * resolution for CanopyCMS packages.
+ * Wrap your Next.js config for CanopyCMS: module transpilation and React resolution. Always
+ * recommended — replaces manual `transpilePackages` config and is harmless without aliases.
  *
  * **What it does:**
- * - Auto-detects installed Canopy packages and adds them to `transpilePackages`
- *   (they export raw TypeScript). Only packages found in your node_modules are
- *   added, so you don't need to worry about optional packages you haven't installed.
- * - Adds `server.ts`/`server.tsx` (or, when `staticBuild: true`, `static.ts`/`static.tsx`)
- *   to `pageExtensions` for dual-build support. CMS-only files (e.g., `route.server.ts`)
- *   are included in dev/CMS builds but excluded when `staticBuild: true` is set, in favor
- *   of the static-export-only page variants (e.g. `page.static.tsx`).
- * - Resolves React to a single copy from your project root, preventing
- *   dual-instance crashes when using `file:` symlinks for local development
- * - With `staticBuild: true`, honors `CANOPY_BUILD_ID` as Next's build id (Next's default is
- *   random, which puts two builds of one source tree in different `_next/static/` directories).
- *   Unset, or on a non-static build, Next's default is used unchanged.
- * - Outside a static export, adds sharp's libvips directory to `outputFileTracingIncludes['/**']`,
- *   so a Turbopack `output: 'standalone'` server can load sharp. Next's file tracing can miss that
- *   library for sharp 0.35. This does not fix a webpack build: under pnpm, Next 15.5.21 bundles
- *   sharp into a server chunk that cannot load its native binding.
- *   - The key follows your Next version (under `experimental` on 13 and 14) and any legacy
- *     `experimental` spelling you already use.
- *   - Your own includes are kept.
- *   - A standalone build warns if the directory cannot be found, or if the Next version cannot be
- *     read and the entry went under the top-level key.
- * - On Next 16 and later, sets `turbopack: {}` when your config has neither `turbopack` nor
- *   `webpack` and the installed Next version can be read (an unreadable version gets no key).
- *   Next 16 builds and runs `next dev` with Turbopack by default, and exits when the
- *   config has a `webpack` function (the React aliases above add one) but no `turbopack` config.
- *   A `turbopack` you already set, `turbopack: {}` included, is kept as it is.
- *
- * **When you need this:**
- * - Always recommended — it replaces manual `transpilePackages` configuration
- *   and is harmless when React aliases aren't strictly needed.
- *
- * **When React aliases matter:**
- * - When consuming canopycms packages via `file:` references or `npm link`
- *   during local development. Without the aliases, the bundler follows
- *   symlinks and may resolve a second copy of React from the linked
- *   package's node_modules, causing "Invalid hook call" crashes.
- * - When installing from npm (not symlinked), the aliases are still safe
- *   — they simply resolve to the same React your project already uses.
+ * - Adds installed Canopy packages to `transpilePackages` (they export raw TypeScript), auto-detected
+ *   so an optional package you haven't installed is never added.
+ * - Adds `server.ts`/`server.tsx` (or, with `staticBuild: true`, `static.ts`/`static.tsx`) to
+ *   `pageExtensions`, so CMS-only files build in dev/CMS and static-only variants build instead.
+ * - Resolves React to one copy from your project root, avoiding "Invalid hook call" crashes when
+ *   canopycms packages are linked via `file:`/`npm link` (the bundler would otherwise follow the
+ *   symlink to a second React copy); a no-op otherwise, since it resolves to the React you already use.
+ * - With `staticBuild: true`, honors `CANOPY_BUILD_ID` as a reproducible build id (Next
+ *   defaults to a random one); unset, or off a static build, Next's default stands.
+ * - Outside a static export, adds sharp's libvips directory to `outputFileTracingIncludes['/**']`
+ *   (kept under `experimental` on Next 13/14 or legacy spellings; your own includes stay), so a
+ *   Turbopack `output: 'standalone'` server can load sharp — Next's tracing misses that library
+ *   for sharp 0.35 (doesn't fix webpack builds); warns if the directory or version can't be found.
+ * - On Next 16+, sets `turbopack: {}` when your config has neither `turbopack` nor `webpack` and
+ *   the Next version can be read — Next 16 defaults to Turbopack and exits when a config exports
+ *   `webpack` (the React aliases above add one) with no `turbopack` key; a `turbopack` you set is
+ *   left alone.
  *
  * @example
  * ```ts
- * // next.config.ts
  * import { withCanopy } from 'canopycms-next/config'
- *
- * export default withCanopy({
- *   reactStrictMode: true,
- *   // ...your config
- * })
+ * export default withCanopy({ reactStrictMode: true })
  * ```
  */
 export function withCanopy(
@@ -476,7 +448,6 @@ export function withCanopy(
     }
   })
 
-  // Merge transpilePackages (deduped)
   const existingPackages = nextConfig.transpilePackages ?? []
   const allPackages = [
     ...new Set([
@@ -489,7 +460,6 @@ export function withCanopy(
 
   const reactAlias = resolveReactAliases(resolve)
 
-  // Scope React aliases to only canopycms files using module.rules[].resolve.
   // A global resolve.alias would also override Next.js's own internal React
   // (bundled at next/dist/compiled/react/), breaking its devtools and internals.
   const existingWebpack = nextConfig.webpack
@@ -507,7 +477,6 @@ export function withCanopy(
           },
         })
 
-        // Chain consumer's existing webpack config
         if (typeof existingWebpack === 'function') {
           return existingWebpack(config, ctx)
         }

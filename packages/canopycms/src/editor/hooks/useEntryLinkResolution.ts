@@ -3,8 +3,8 @@
  *
  * Builds a Map<contentId, urlPath> from the loaded editor entries,
  * then provides a function to resolve entry:ID patterns in text.
- * Used to transform body content before it reaches the PreviewFrame,
- * so the preview iframe receives fully-resolved URLs.
+ * Transforms body content before it reaches the PreviewFrame, so the
+ * preview iframe receives fully-resolved URLs.
  */
 
 import { useMemo } from 'react'

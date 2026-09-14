@@ -17,7 +17,7 @@ import { assetMountUrlSchema, uploadTargetUrlSchema } from './url'
 //
 // Bucket-prefix layout (asset-originals/, asset-staging/, asset-meta/, assets/) is
 // intentionally NOT configurable here — those are constants in assets/keys.ts, not
-// per-site config (see .claude/future-tasks/assets-media-system.md).
+// per-site config (see .claude/future-tasks/resolved/assets-media-system.md).
 //
 // Every branch is .strict(). This is load-bearing, not tidiness: CanopyConfigSchema's own
 // .strict() does NOT recurse into nested schemas, so until these branches carried their own,

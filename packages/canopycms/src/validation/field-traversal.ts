@@ -38,7 +38,7 @@ export type FieldVisitor<T> = (context: TraversalContext) => T[]
  * knows about. A container visitor sees the record itself, which is what a check on the data's
  * OWN keys needs (`findUnknownKeys` in entry-validator.ts).
  */
-export interface ContainerContext {
+interface ContainerContext {
   /** The schema fields governing this record. Inline groups are NOT flattened. */
   fields: readonly FieldConfig[]
   /** The data record those fields govern. */
@@ -105,34 +105,14 @@ export function resolveBlockItem(
 /**
  * Recursively traverse fields in data according to schema.
  *
- * This function walks through data following the schema structure, calling
- * the visitor function for each field. It handles:
- * - Simple fields (string, number, boolean, reference, etc.)
- * - Object fields with nested schemas
- * - Block fields (arrays of typed objects with different schemas)
- * - Array fields containing objects with schemas
- *
  * @param fields - The schema fields to traverse
  * @param data - The data object to traverse
  * @param visitor - Function called for each field, returns items to collect
  * @param pathPrefix - Current path prefix for nested fields
  * @param onContainer - Optional, called once per container (this record plus the fields
  *   governing it) before its fields are walked: the top level, each object value, each
- *   object-list item, and each block item's resolved data. Inline groups do NOT fire it — a
- *   group is transparent to the data and shares its parent's record, so its children are already
- *   covered by the parent's container call.
+ *   object-list item, and each block item's resolved data.
  * @returns Array of all items returned by the visitors
- *
- * @example
- * ```ts
- * // Find all reference field values
- * const refs = traverseFields(schema, data, ({ field, value, path }) => {
- *   if (field.type === 'reference') {
- *     return [{ path, ids: Array.isArray(value) ? value : [value] }]
- *   }
- *   return []
- * })
- * ```
  */
 export function traverseFields<T>(
   fields: readonly FieldConfig[],
@@ -185,13 +165,10 @@ function walkFields<T>(
       continue
     }
 
-    // Skip undefined/null values for all other field types
     if (value === undefined || value === null) continue
 
-    // Let visitor handle this field first
     results.push(...visitor({ field, value, path: fieldPath }))
 
-    // Then recurse into nested structures
     if (field.type === 'object') {
       const objectField = field as ObjectFieldConfig
       if (objectField.fields) {
@@ -251,14 +228,6 @@ function walkFields<T>(
   return results
 }
 
-/**
- * Find all fields of a specific type in the data.
- *
- * @param fields - The schema fields
- * @param data - The data to search
- * @param fieldType - The field type to find (e.g., 'reference', 'string')
- * @returns Array of { field, value, path } for matching fields
- */
 export function findFieldsByType(
   fields: readonly FieldConfig[],
   data: Record<string, unknown>,

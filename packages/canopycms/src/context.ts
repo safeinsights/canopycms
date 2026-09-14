@@ -7,13 +7,13 @@
  * layer where authorization is applied, so a read that bypasses it bypasses
  * path ACLs.
  *
- * PHASE-AWARE: at build time (`isBuildMode`) or for a static deployment
- * (`isDeployedStatic`) it authorizes as `STATIC_DEPLOY_USER` instead of a real
- * user (WHO), and it reads the working tree at `process.cwd()` instead of a
- * branch workspace (WHERE: `readsFromCheckout`, applied inside
+ * PHASE-AWARE: at build time (`isBuildMode`) or on a static deployment
+ * (`isDeployedStatic`) it authorizes as `STATIC_DEPLOY_USER` rather than a real
+ * user (WHO) and reads the working tree at `process.cwd()` rather than a branch
+ * workspace (WHERE: `readsFromCheckout`, applied inside
  * `loadOrCreateBranchContext`), so a `branch` passed to a read selects nothing.
- * Only request-time reads on a server deployment resolve a branch workspace --
- * in dev mode, the clone under `.canopy-dev/content-branches/`.
+ * Only request-time reads on a server deployment resolve a branch workspace —
+ * in dev, the clone under `.canopy-dev/content-branches/`.
  *
  * The Next.js adapter wraps this in React `cache()` for per-request memoization
  * (`canopycms-next/src/context-wrapper.ts`).
@@ -51,11 +51,11 @@ function isLookupFailure(err: ContentStoreError): boolean {
 }
 
 /**
- * True when a ContentStoreError should render as "not found" to page-level callers of
- * readByUrlPath rather than escape as a thrown error. FORBIDDEN is included so a
- * denied/anonymous read produces the adopter's ordinary `if (!result) return notFound()`
- * (404) instead of an unhandled 500 from the server component. The strict `read()` API is
- * unaffected and still throws.
+ * True when a ContentStoreError should render as "not found" to page-level
+ * callers of readByUrlPath rather than escape as a thrown error. FORBIDDEN is
+ * included so a denied or anonymous read reaches the adopter's ordinary
+ * `if (!result) return notFound()` (404) instead of an unhandled 500 from the
+ * server component. The strict `read()` API still throws.
  */
 function isPageSwallowable(err: ContentStoreError): boolean {
   return isLookupFailure(err) || err.code === 'FORBIDDEN'
@@ -64,67 +64,67 @@ function isPageSwallowable(err: ContentStoreError): boolean {
 export interface CanopyContextOptions {
   services: CanopyServices
   /**
-   * Extract the current user from framework-specific context.
-   * Should call authResultToCanopyUser() to apply bootstrap admin groups.
-   *
-   * Framework adapters provide this (e.g., from Next.js headers, Express req, etc.)
+   * Extract the current user from framework-specific context — supplied by the
+   * framework adapter, and must call authResultToCanopyUser() so bootstrap
+   * admin groups are applied.
    */
   extractUser: () => Promise<CanopyUser>
 }
 
 /**
- * Build-time context.
+ * Build-time context, from getCanopyForBuild(): reads the filesystem directly
+ * as a synthetic admin (STATIC_DEPLOY_USER), bypassing all branch and path
+ * ACLs. Use it for static generation — generateStaticParams, sitemap,
+ * build-time page rendering — and never to serve content at request time on a
+ * production `server` deployment; request-time, ACL-enforced access is
+ * getCanopy() (CanopyContext). Framework adapters throw on the read helpers
+ * there, though `services` stays a raw, unguarded escape hatch.
  *
- * Obtained via getCanopyForBuild(); reads the filesystem directly as a synthetic admin
- * (STATIC_DEPLOY_USER) and bypasses all branch/path ACLs. Safe for static generation
- * (generateStaticParams, sitemap, build-time page rendering); it must NOT be used to serve
- * content at request time on a production `server` deployment. (Framework adapters throw on the
- * read helpers there; `services` remains a raw, unguarded escape hatch.) For request-scoped,
- * ACL-enforced access use getCanopy() (CanopyContext) instead.
- *
- * Includes read/readByUrlPath so build-time code can resolve a single entry by path/URL without
- * scanning the whole collection.
+ * It carries read/readByUrlPath so build-time code can resolve a single entry
+ * by path or URL without scanning the whole collection.
  */
 export interface CanopyBuildContext {
   /**
-   * Build a content tree from the schema and filesystem entries.
+   * Build a content tree from the schema and filesystem entries. Supply
+   * TEntryTypes (entry type name → data shape, typically via
+   * `TypeFromEntrySchema<typeof yourSchema>`) for narrowed access to
+   * `meta.indexEntry.data` inside `extract`.
    *
-   * Supply TEntryTypes (a map of entry type name → data shape, typically
-   * derived via `TypeFromEntrySchema<typeof yourSchema>`) to get narrowed
-   * access to `meta.indexEntry.data` inside the `extract` callback.
-   *
-   * Path ACLs: on the request-scoped context (`getCanopy()`), entries the current user
-   * cannot `read` are omitted — from the emitted nodes AND from the `meta.indexEntry`
-   * handed to `extract`. Collections whose children are all filtered out are pruned.
-   * On the build context, and on static deployments, nothing is filtered (synthetic admin).
+   * Path ACLs: on the request-scoped context (`getCanopy()`), entries the user
+   * cannot `read` are omitted from the emitted nodes AND from the
+   * `meta.indexEntry` handed to `extract`, and a collection whose children are
+   * all filtered out is pruned. On the build context and on static deployments
+   * nothing is filtered — the synthetic admin sees everything.
    */
   buildContentTree: <T = unknown, TEntryTypes = DefaultEntryTypes>(
     options?: BuildContentTreeOptions<T, TEntryTypes>,
   ) => Promise<ContentTreeNode<T>[]>
 
   /**
-   * List all content entries as a flat array.
+   * Every content entry as a flat array.
    *
-   * Path ACLs: on the request-scoped context (`getCanopy()`), entries the current user
-   * cannot `read` are omitted before `extract` runs. On the build context, and on static
-   * deployments, nothing is filtered (synthetic admin).
+   * Path ACLs: on the request-scoped context (`getCanopy()`), entries the user
+   * cannot `read` are omitted before `extract` runs; on the build context and
+   * static deployments nothing is filtered.
    *
-   * Branch: unlike `read`/`readByUrlPath`, this takes no `branch` option — it always lists
-   * `defaultActiveBranch ?? defaultBaseBranch ?? 'main'`. In `dev` that tracks the git HEAD
-   * via `refreshActiveBranch()`; in `prod` that refresh is a no-op, so this always reads the
-   * base branch. See `.claude/future-tasks/context-listing-branch-pinning.md`.
+   * Branch: unlike `read`/`readByUrlPath` this takes no `branch` option, always
+   * listing `defaultActiveBranch ?? defaultBaseBranch ?? 'main'`. In `dev` that
+   * tracks git HEAD via `refreshActiveBranch()`; in `prod` the refresh is a
+   * no-op, so it always reads the base branch. See
+   * `.claude/future-tasks/context-listing-branch-pinning.md`.
    */
   listEntries: <T = Record<string, unknown>>(
     options?: ListEntriesOptions<T>,
   ) => Promise<ListEntriesItem<T>[]>
 
   /**
-   * Content reader (auth context applied automatically — admin at build time).
+   * Content reader, with the auth context applied automatically (admin at build
+   * time).
    *
-   * `meta.physicalPath` is the absolute filesystem path to the resolved entry file.
-   * It is **server-only** — do not serialize it to the client or embed it in public
-   * output, as it reveals the deployment's filesystem layout (home dir / EFS mount /
-   * branch name). Intended for build-time reads of colocated artifacts, e.g.
+   * `meta.physicalPath` is the resolved entry file's absolute path, and is
+   * **server-only**: never serialize it to the client or embed it in public
+   * output, since it reveals the deployment's filesystem layout (home dir, EFS
+   * mount, branch name). It is for build-time reads of colocated artifacts, e.g.
    * `fs.readFile(path.join(path.dirname(result.meta.physicalPath), 'profile.json'))`.
    */
   read: <T = unknown>(input: {
@@ -139,56 +139,33 @@ export interface CanopyBuildContext {
   }>
 
   /**
-   * Read content by URL path, resolving the collection/entry split automatically.
+   * Read content by URL path, resolving the collection/entry split itself: a
+   * direct entry match first (last segment = slug, rest = collection path),
+   * then the index entry (full path = collection, slug = 'index'). Both need a
+   * real collection for the collection part; root '/' is the content root's
+   * index entry.
    *
-   * Tries direct entry match first (last segment = slug, rest = collection path),
-   * then falls back to index entry (full path = collection, slug = 'index'). Both attempts
-   * require the collection part to be a real collection — see below.
-   * Root path '/' resolves to the content root's index entry.
+   * Resolves ONLY what `listEntries` publishes — `readByUrlPath(item.urlPath)`
+   * reaches the entry and no other spelling does; a collection literally named
+   * `index` still resolves, via the index fallback. `read({ entryPath })` is
+   * deliberately NOT narrowed this way: a schema path is a different question
+   * from a published URL, and reaches a singleton whose slug nobody knows.
    *
-   * Resolves ONLY what `listEntries` publishes — `readByUrlPath(item.urlPath)` reaches the entry,
-   * and no other spelling does. Three shapes that used to resolve are therefore null now:
-   * `/x/index` (the literal spelling of an index entry's collapsed URL, in any case),
-   * `/<collection>/<entryTypeName>` and `/<collection>/<entryTypeName>/<slug>` (an entry-type
-   * path is not a collection, so it is not part of any published URL), and an entry whose
-   * on-disk type token its collection does not declare (`listEntries` skips those too). A
-   * collection literally named `index` is unaffected — the index fallback resolves it.
+   * Null when nothing matches — a collection URL with no index entry (use
+   * buildContentTree), a non-entry path like `/favicon.ico` the slug validator
+   * rejects, or a path the user may not read, so a FORBIDDEN denial renders as
+   * a 404 via `notFound()` rather than a 500. Strict `read()` still throws.
    *
-   * `read({ entryPath: 'content/home' })` is deliberately NOT narrowed: addressing an entry
-   * structurally, by its schema path, is a different question from addressing it by its
-   * published URL, and it is the only way to reach a singleton without knowing its slug.
-   *
-   * Returns null if no content matches the path — including collection URLs that have no
-   * index entry (use buildContentTree for those) and non-entry/invalid paths such as
-   * `/favicon.ico` or Next internals (the slug validator rejects them, treated as a miss).
-   * Also returns null for paths the current user is not permitted to read (a FORBIDDEN
-   * denial renders as a 404 via `notFound()` instead of a 500); the strict `read()` API
-   * still throws on permission errors.
-   *
-   * The result's `meta.physicalPath` is the absolute filesystem path to the resolved
-   * entry file. It is **server-only** — do not serialize it to the client or embed it
-   * in public output, as it reveals the deployment's filesystem layout (home dir / EFS
-   * mount / branch name). Intended for build-time reads of colocated artifacts.
-   *
-   * `meta.entryType` and `meta.entryId` are also resolved for free (path resolution
-   * already derives them) — useful for entry-type-based dispatch in a single
-   * catch-all route without a separate `listEntries` lookup or filename parse. See
-   * `ContentReadMeta` (content-reader.ts) before branching on `entryType` for a legacy
-   * file: `entryId === undefined` signals that `entryType` is a fallback, not a read.
+   * `meta.physicalPath` is **server-only**, for the reason given on `read`.
+   * `meta.entryType`/`entryId` come free with path resolution, so one catch-all
+   * route can dispatch on entry type with no extra lookup; check
+   * `ContentReadMeta` first — `entryId === undefined` marks `entryType` a
+   * fallback, not a read.
    *
    * @example
    * ```ts
-   * // URL /docs/guides/getting-started → reads content/docs/guides + slug "getting-started"
-   * // URL /docs/guides → reads content/docs/guides + slug "index"
-   * // URL / → reads content root + slug "index"
-   * const result = await canopy.readByUrlPath<DocContent>('/docs/guides/getting-started')
-   * if (result) {
-   *   const { data, path } = result
-   *   switch (result.meta.entryType) {
-   *     case 'home': return <HomePage data={data} />
-   *     default: return <DocView data={data} />
-   *   }
-   * }
+   * const result = await canopy.readByUrlPath<DocContent>('/docs/guides/intro')
+   * if (result?.meta.entryType === 'home') return <HomePage data={result.data} />
    * ```
    */
   readByUrlPath: <T = unknown>(
@@ -210,38 +187,26 @@ export interface CanopyContext extends CanopyBuildContext {
 }
 
 /**
- * Create a Canopy context that manages auth + content reading.
- * Framework-agnostic - the adapter provides the extractUser function.
+ * Create a Canopy context managing auth + content reading. Framework-agnostic:
+ * the adapter supplies extractUser.
  *
- * User extractor should apply bootstrap admin groups (via authResultToCanopyUser).
- *
- * NOTE: This function is synchronous because in practice, services are always
- * provided pre-created (async) by the framework adapter. The fallback path
- * that creates services from config cannot work correctly since createCanopyServices
- * is now async. Always pass services, not config.
+ * Synchronous, and takes pre-created `services` rather than config — building
+ * services is async, so there is no working fallback path from config here.
  */
 export function createCanopyContext(options: CanopyContextOptions) {
   const services = options.services
 
-  /**
-   * Get the current user.
-   * Returns STATIC_DEPLOY_USER for static deployments or during build, otherwise delegates to adapter.
-   */
+  /** STATIC_DEPLOY_USER on a static deployment or during build, else the adapter's user. */
   const getUser = async (): Promise<CanopyUser> => {
-    // Static deployment or build phase: no request context, use synthetic admin user
+    // No request context in either phase, so use the synthetic admin.
     if (isDeployedStatic(services.config) || isBuildMode()) {
       return STATIC_DEPLOY_USER
     }
 
-    // Runtime: delegate to adapter-provided user extractor
-    // (adapter should use authResultToCanopyUser to apply bootstrap admins)
     return await options.extractUser()
   }
 
-  /**
-   * Get the context for the current request.
-   * Call this in server components/routes to get auth-aware reader.
-   */
+  /** The auth-aware context for this request; call it in server components and routes. */
   const getContext = async (): Promise<CanopyContext> => {
     // Dev mode follows the developer's git HEAD (no-op in prod/static or when
     // defaultActiveBranch is explicit). Same contract as the HTTP API handler —
@@ -249,14 +214,14 @@ export function createCanopyContext(options: CanopyContextOptions) {
     await services.refreshActiveBranch()
     const user = await getUser()
 
-    // Create base content reader
     const baseReader = createContentReader({ services })
 
-    // Wrap reader to inject user automatically, validating strings → branded types at this
-    // boundary. `extra` carries options that are NOT part of the public `read` surface -- today
-    // just readByUrlPath's URL-addressability gate. Kept as a separate inner function rather than
-    // an optional second parameter on the `CanopyContext['read']`-typed closure so the two call
-    // sites stay visible and nobody widens the public API by accident.
+    // Injects the user and validates strings → branded types at this boundary.
+    // `extra` carries options that are NOT part of the public `read` surface —
+    // today just readByUrlPath's URL-addressability gate. A separate inner
+    // function rather than an optional second parameter on the
+    // `CanopyContext['read']`-typed closure, so the two call sites stay visible
+    // and nobody widens the public API by accident.
     const readWithOptions = async <T = unknown>(
       input: {
         entryPath: string
@@ -299,9 +264,9 @@ export function createCanopyContext(options: CanopyContextOptions) {
       const { branch, resolveReferences } = options ?? {}
 
       for (const candidate of candidates) {
-        // Skip candidates whose slug isn't a valid slug (e.g. URL paths like /favicon.ico or
-        // Next internals that the [...slug] route catches). These can never match an entry, so
-        // treat them as a miss rather than letting read() throw an "Invalid slug" error.
+        // Skip a candidate whose slug isn't valid (/favicon.ico, Next internals
+        // the [...slug] route catches). None can match an entry, so treat it as
+        // a miss rather than let read() throw "Invalid slug".
         if (!parseSlug(candidate.slug).ok) continue
         try {
           return await readWithOptions<T>(
@@ -311,17 +276,17 @@ export function createCanopyContext(options: CanopyContextOptions) {
               branch,
               resolveReferences,
             },
-            // This is a read BY PUBLISHED URL, so it must accept only what listEntries publishes.
-            // See ReadContentInput.urlAddressableOnly for the two rules and why they live in the
-            // reader (which holds the branch-correct schema) rather than in the candidate builder
-            // (which is pure and schema-free by design).
+            // A read BY PUBLISHED URL accepts only what listEntries publishes.
+            // See ReadContentInput.urlAddressableOnly for the two rules, and
+            // why they live in the reader (which holds the branch-correct
+            // schema) rather than the candidate builder (pure and schema-free).
             { urlAddressableOnly: true },
           )
         } catch (err) {
-          // Swallow "not found" errors from trying candidate paths, and FORBIDDEN (a denied
-          // or anonymous read renders as a 404 via the adopter's `if (!result) return
-          // notFound()` rather than an unhandled 500). Re-throw real errors (validation,
-          // corruption, non-ContentStoreError).
+          // Swallow a candidate path's "not found", and FORBIDDEN so a denied
+          // or anonymous read renders as the adopter's 404 rather than an
+          // unhandled 500. Real errors (validation, corruption, anything not a
+          // ContentStoreError) rethrow.
           if (err instanceof ContentStoreError && isPageSwallowable(err)) {
             if (err.code === 'FORBIDDEN') {
               log.debug('readByUrlPath', 'Read denied, treating as not-found: ' + err.message, {
@@ -369,41 +334,34 @@ export function createCanopyContext(options: CanopyContextOptions) {
     }
 
     /**
-     * Path-ACL predicate for the batch reads (listEntries / buildContentTree). Memoized
-     * per getContext call, like the schema context above.
+     * Path-ACL predicate for the batch reads (listEntries / buildContentTree),
+     * memoized per getContext call like the schema context above. Without it an
+     * unfiltered listing on this request-scoped, ACL-enforcing context would
+     * disclose full entry `data` for paths the user cannot `read()` directly.
      *
-     * These two are the only content reads on this context that did NOT enforce path
-     * permissions: `read`/`readByUrlPath` go through the content reader, which checks per
-     * entry, while the listing primitives took no user at all. Since `CanopyContext` is the
-     * request-scoped, ACL-enforcing context that page code is told to use, an unfiltered
-     * listing there disclosed full entry `data` for paths the user cannot `read()` directly.
+     * `services.createContentAccessChecker` is the shared batch primitive
+     * (api/entries.ts uses it too): it resolves the request-constant work —
+     * branch access, the settings/permissions root, the rule set — once, and
+     * returns a synchronous per-path check, so the per-entry cost is an admin
+     * short-circuit or one minimatch per configured rule, with no extra I/O.
      *
-     * `services.createContentAccessChecker` is the existing batch primitive (api/entries.ts
-     * uses the same one): it resolves the request-constant work — branch access, the
-     * settings/permissions root, and the rule set — exactly once, and returns a synchronous
-     * per-path check. So the per-entry cost here is an admin short-circuit or a minimatch
-     * per configured rule, with no additional I/O.
+     * The empty object (no predicate → unfiltered) at build time, on static
+     * deployments, and for the synthetic admin is load-bearing, not an
+     * optimization. That user has unconditional access anyway (path checks
+     * bypass entirely for an Admins-group user — authorization/path.ts), but
+     * BUILDING the checker costs a getSettingsBranchRoot() call, which in modes
+     * with a separate settings branch provisions that branch's git workspace: an
+     * EFS round trip in prod. `createBuildCanopy` (build-canopy.ts) runs outside
+     * a request or Next.js build phase, so neither other guard fires for it, and
+     * without this one every such script pays for a settings-workspace clone it
+     * never needed — and hard-fails where that workspace cannot be provisioned.
      *
-     * Returns an empty object (no predicate → unfiltered, today's behavior) at build time,
-     * on static deployments, and for the synthetic admin user. All three short-circuits are
-     * load-bearing, not just an optimization: `createContentAccessChecker` grants that user
-     * unconditional access (path checks bypass entirely for an Admins-group user, see
-     * authorization/path.ts), so the predicate would always be a no-op — but building it
-     * still costs a getSettingsBranchRoot() call, which in modes with a separate settings
-     * branch (prod and dev) means provisioning/cloning that branch's git workspace. That is
-     * an EFS round trip in prod, and it is exactly the unwanted cost for `createBuildCanopy`
-     * (see build-canopy.ts): a standalone script's whole point is running outside a request
-     * or Next.js build phase, so neither of the other two guards fires for it, and without
-     * this one every such script paid for a settings-workspace clone it never needed and,
-     * in an environment where that workspace cannot be provisioned, would hard-fail on.
+     * Compared by reference to the STATIC_DEPLOY_USER singleton, not by group
+     * membership, so it stays scoped to the synthetic build identity: a real
+     * authenticated admin at request time still goes through the real check.
      *
-     * Compared by reference to the exported STATIC_DEPLOY_USER singleton (not by group
-     * membership) so this stays scoped to the synthetic build/admin identity specifically —
-     * a real authenticated admin hitting `getCanopy()` at request time still goes through
-     * the real check, same as any other user.
-     *
-     * Deliberately NOT wrapped in a try/catch: createContentAccessChecker is fail-loud by
-     * contract, and swallowing here would silently serve an unfiltered listing.
+     * Deliberately NOT wrapped in try/catch — createContentAccessChecker is
+     * fail-loud by contract, and swallowing would serve an unfiltered listing.
      */
     let visibilityPromise: Promise<ContentVisibilityOptions> | null = null
     const resolveVisibilityImpl = async (): Promise<ContentVisibilityOptions> => {

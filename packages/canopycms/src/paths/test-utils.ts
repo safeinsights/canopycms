@@ -1,12 +1,6 @@
 /**
- * Test utilities for path types.
- *
- * These are unsafe casts with NO validation. Import only from test files.
- * For production code, use the parse* or create* functions instead.
- *
- * @example
- * // In test files only:
- * import { unsafeAsLogicalPath, unsafeAsSlug } from '../paths/test-utils'
+ * Unsafe casts to the branded path types, with NO validation. Import only from
+ * test files; production code uses the parse* or create* functions instead.
  */
 
 import type { BranchName, ContentId, LogicalPath, PhysicalPath, Slug } from './types'

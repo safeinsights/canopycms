@@ -1,7 +1,13 @@
 import fs from 'node:fs/promises'
 import { simpleGit } from 'simple-git'
-import { completeTask, dequeueTask, failTask, recoverOrphanedTasks, retryTask } from './task-queue'
-import type { Task } from './task-queue'
+import {
+  completeTask,
+  dequeueTask,
+  failTask,
+  recoverOrphanedTasks,
+  retryTask,
+} from '../task-queue/cms-task-queue'
+import type { Task } from '../task-queue/cms-task-queue'
 import { createOrUpdatePullRequest } from '../github-service'
 import { BranchMetadataFileManager, getBranchMetadataFileManager } from '../branch-metadata'
 import { sanitizeBranchName } from '../paths/branch-name'
@@ -9,25 +15,23 @@ import { gitNetworkChildEnv } from '../git-manager'
 import { getErrorMessage, redactCredentials } from '../utils/error'
 import { isNonFastForwardRejection, isStaleLeaseRejection } from '../utils/git'
 import { clearHistoryRewrittenMarker, readPublishedSha } from './history-rewrite'
-import { writeWorkerStatus } from './worker-status'
+import { writeWorkerStatus } from '../task-queue/worker-status'
 import { workerLog, workerLogError } from './log'
 import type { WorkerContext } from './worker-context'
 
 /**
- * The task-queue cluster: everything reachable from `CmsWorker.processTaskQueue()`,
- * the loop that drains tasks Lambda enqueued because it has no internet.
+ * The task-queue cluster: everything reachable from
+ * `CmsWorker.processTaskQueue()`, the loop that drains tasks Lambda enqueued
+ * because it has no internet. It owns the GitHub-facing side of the worker --
+ * pushing branches, creating and updating PRs, recording the outcome on branch
+ * metadata -- plus the permanent-vs-transient classification that decides
+ * whether a failed task is retried or fails fast.
  *
- * One of the four disjoint call trees that used to share cms-worker.ts. It owns
- * the GitHub-facing side of the worker -- pushing branches, creating and
- * updating PRs, and recording the outcome on branch metadata -- plus the
- * permanent-vs-transient failure classification that decides whether a failed
- * task is retried or fails fast.
- *
- * Shares nothing with the git-sync cluster but the four resolved paths, the
- * Octokit client and the history-rewrite marker (history-rewrite.ts). Note the
+ * It shares nothing with the git-sync cluster but the four resolved paths, the
+ * Octokit client and the history-rewrite marker (history-rewrite.ts), and the
  * two loops run CONCURRENTLY: `scheduleLoop` drives this on `taskPollInterval`
- * (default 5s) and syncGit on `gitSyncInterval` (default 5min), so anything
- * here that reads branch metadata written by the rebase loop must re-read it
+ * (default 5s) and syncGit on `gitSyncInterval` (default 5min). So anything
+ * here that reads branch metadata written by the rebase loop MUST re-read it
  * rather than trust a snapshot.
  */
 export type TaskRunnerContext = Pick<
@@ -47,12 +51,9 @@ export type TaskRunnerContext = Pick<
   | 'buildGitHubUrl'
   | 'refreshGitHubCredential'
   | 'branchWorkspacePath'
-  // Both are implemented in THIS module, and are still reached through the
-  // context rather than called directly. cms-worker.test.ts replaces each on
-  // the CmsWorker instance -- `executeTask` to drive the retry/timeout paths
-  // without real work, `pushBranchToGitHub` to exercise the PR actions with no
-  // git remote -- so a direct module-level call silently bypasses the stub.
-  // See WorkerContext's doc comment.
+  // Both are implemented in THIS module and are still reached through the
+  // context: cms-worker.test.ts replaces each on the CmsWorker instance, so a
+  // direct module-level call silently bypasses the stub. See WorkerContext.
   | 'executeTask'
   | 'pushBranchToGitHub'
   | 'isRunning'
@@ -70,24 +71,22 @@ export class PermanentTaskError extends Error {}
  * Classify a task failure as permanent (fail fast) or transient (retry).
  *
  * Transient — worth retrying with backoff:
- * - network errors / anything without an HTTP status (git failures included:
- *   most push/fetch failures are connectivity or contention and the retry
- *   budget bounds the pathological cases)
- * - HTTP 408 (request timeout) and 429 (rate limited)
- * - HTTP 403 that carries a rate-limit signal (see `isRateLimitSignal403`):
- *   GitHub returns 403, not 429, for both primary and secondary/abuse rate
- *   limits. The throttling plugin (see github-service.ts createCanopyOctokit)
- *   proactively retries short waits, but this carve-out remains the safety
- *   net for waits the plugin gives up on (`shouldRetryRateLimit`/
- *   `shouldRetrySecondaryRateLimit`) and for errors it never sees — without
- *   it a rate-limited push-and-create-or-update-pr task would fail
- *   permanently and wedge the branch (`sync-failed`, no retry).
- * - HTTP 5xx (server-side, usually recovers)
+ * - network errors / anything without an HTTP status, git failures included:
+ *   most push/fetch failures are connectivity or contention, and the retry
+ *   budget bounds the pathological cases;
+ * - HTTP 408 and 429;
+ * - HTTP 403 carrying a rate-limit signal (`isRateLimitSignal403`): GitHub
+ *   returns 403, not 429, for both primary and secondary rate limits. The
+ *   throttling plugin (github-service.ts's createCanopyOctokit) retries short
+ *   waits, and this carve-out is the safety net for waits it gives up on and
+ *   errors it never sees — without it a rate-limited
+ *   push-and-create-or-update-pr task fails permanently and wedges the branch;
+ * - HTTP 5xx.
  *
  * Permanent — retrying the identical request cannot succeed:
- * - PermanentTaskError (malformed payload, unknown action)
- * - other HTTP 4xx (e.g. 401/404/422): the request itself is bad
- * - plain HTTP 403 with no rate-limit signal: a real permission denial
+ * - PermanentTaskError (malformed payload, unknown action);
+ * - other HTTP 4xx (401/404/422): the request itself is bad;
+ * - plain HTTP 403 with no rate-limit signal: a real permission denial.
  */
 export function isPermanentTaskFailure(err: unknown): boolean {
   if (err instanceof PermanentTaskError) return true
@@ -118,11 +117,10 @@ function getResponseHeaders(err: unknown): Record<string, unknown> | null {
 }
 
 /**
- * Detect whether a 403 is a GitHub rate-limit response rather than a plain
- * permission denial. GitHub signals rate limiting on 403s three ways: the
- * primary limit zeroes out `x-ratelimit-remaining`, secondary/abuse limits
- * often include a `retry-after` header, and both cases produce a message
- * containing "rate limit" (e.g. "You have exceeded a secondary rate limit").
+ * Whether a 403 is a GitHub rate-limit response rather than a plain permission
+ * denial. GitHub signals rate limiting on 403s three ways: the primary limit
+ * zeroes `x-ratelimit-remaining`, secondary limits often carry `retry-after`,
+ * and both produce a message containing "rate limit".
  */
 function isRateLimitSignal403(err: unknown): boolean {
   const headers = getResponseHeaders(err)
@@ -156,50 +154,36 @@ function optionalString(payload: Record<string, unknown>, key: string, fallback:
 }
 
 /**
- * Staleness threshold for recoverOrphanedTasks, derived from the
- * configured task timeout rather than fixed: the safety argument for
- * running recovery on every poll cycle is "no legitimately in-flight task
- * can be this old, because executeTaskWithTimeout bounds every attempt by
- * taskTimeoutMs" -- which is only true if this threshold scales with
- * taskTimeoutMs. 2x leaves the same comfortable margin the defaults have
- * (60s timeout vs 5min threshold); the 5-minute floor preserves the
- * long-standing default for a replacement instance's boot window.
+ * Staleness threshold for recoverOrphanedTasks, derived from the configured
+ * task timeout rather than fixed. The safety argument for running recovery on
+ * every poll cycle is "no legitimately in-flight task can be this old, because
+ * executeTaskWithTimeout bounds every attempt by taskTimeoutMs" -- true only
+ * while this threshold scales with taskTimeoutMs. The 5-minute floor covers a
+ * replacement instance's boot window.
  */
 export function orphanRecoveryMaxAgeMs(ctx: Pick<TaskRunnerContext, 'taskTimeoutMs'>): number {
   return Math.max(5 * 60_000, ctx.taskTimeoutMs * 2)
 }
 
 /**
- * Process queued tasks from Lambda.
- * Polls .tasks/pending/ directory and executes each task.
- * Processes up to maxTasksPerCycle tasks per invocation.
- * Retries transient failures with exponential backoff.
+ * Process queued tasks from Lambda, up to maxTasksPerCycle per invocation.
  */
 export async function processTaskQueue(ctx: TaskRunnerContext): Promise<void> {
   if (!ctx.isRunning()) return
 
   // Recover tasks orphaned in processing/ on EVERY cycle, not only at boot
-  // (start()'s call above). Before this fix, recoverOrphanedTasks() ran
-  // exactly once, at start() - fine when an instance was replaced rarely
-  // (a spot interruption), but CanopyCmsService's worker ASG now rolls on
-  // every `cdk deploy` (see its UpdatePolicy), making replacement routine.
-  // A replacement instance's user-data (yum install git/unzip/nodejs/
-  // efs-utils, mount EFS) takes roughly 2-4 minutes, well under
-  // recoverOrphanedTasks()'s 5-minute default staleness threshold - so
-  // THAT ONE boot-time call would see the just-orphaned file as "too
-  // fresh" and skip it, and nothing rescanned afterward: the task (and its
-  // branch's syncStatus) would be wedged forever. Re-checking every poll
-  // means the file's age eventually crosses the threshold and it gets
-  // recovered without operator intervention.
+  // (start()'s call). Instance replacement is routine -- CanopyCmsService's
+  // worker ASG rolls on every `cdk deploy` -- and a replacement's user-data
+  // takes roughly 2-4 minutes, well under the staleness threshold, so a
+  // boot-only call sees the just-orphaned file as "too fresh", skips it, and
+  // nothing rescans: the task and its branch's syncStatus wedge forever.
   //
-  // Safe to run this often: executeTaskWithTimeout() guarantees every task
-  // THIS process dequeues is completed, failed, or retried (all three
-  // remove the processing/ file) within taskTimeoutMs - and the staleness
-  // threshold is derived from taskTimeoutMs (orphanRecoveryMaxAgeMs below)
-  // precisely so that guarantee holds for ANY configured timeout, not just
-  // the 60s default: a fixed 5-minute threshold would have this call steal
-  // the worker's own still-in-flight task back to pending whenever an
-  // adopter configured taskTimeoutMs above ~5 minutes.
+  // Safe to run this often because executeTaskWithTimeout() guarantees every
+  // task THIS process dequeues is completed, failed or retried (all three
+  // remove the processing/ file) within taskTimeoutMs -- which is why the
+  // threshold is derived from taskTimeoutMs (orphanRecoveryMaxAgeMs) rather
+  // than fixed. A fixed 5 minutes would steal the worker's own in-flight task
+  // back to pending whenever an adopter configured a longer timeout.
   const recovered = await recoverOrphanedTasks(ctx.taskDir, orphanRecoveryMaxAgeMs(ctx), ctx.log)
   if (recovered > 0) {
     workerLog(`Recovered ${recovered} orphaned task(s)`)
@@ -219,15 +203,14 @@ export async function processTaskQueue(ctx: TaskRunnerContext): Promise<void> {
       const message = getErrorMessage(err)
       workerLogError(`Task ${task.id} (${task.action}) failed:`, message)
 
-      // [REDACT] task.error is persisted (pending/failed task JSON) and
-      // served to the browser by the admin panel's Tasks tab -- a push
-      // failure's message can embed the bot token via buildGitHubUrl().
-      // Console output above stays raw (journald/CloudWatch is trusted).
+      // [REDACT] task.error is persisted (pending/failed task JSON) and served
+      // to the browser by the admin panel's Tasks tab -- a push failure's
+      // message can embed the bot token via buildGitHubUrl(). Console output
+      // above stays raw (journald/CloudWatch is trusted).
       const persistedMessage = redactCredentials(message)
 
-      // DEP-L1: only transient failures (network, 429/5xx, timeouts) are
-      // worth retrying; permanent ones (malformed payload, other 4xx) would
-      // just burn the retry budget on an identical doomed request.
+      // DEP-L1: only transient failures are worth retrying; a permanent one
+      // would burn the retry budget on an identical doomed request.
       const permanent = isPermanentTaskFailure(err)
       const retryCount = task.retryCount ?? 0
       const maxRetries = task.maxRetries ?? ctx.maxRetries
@@ -244,16 +227,13 @@ export async function processTaskQueue(ctx: TaskRunnerContext): Promise<void> {
         )
       }
 
-      // The credential may have rotated. Without this, a push meeting a revoked
-      // token spent its whole retry budget (5s/10s/20s backoff) waiting on the
-      // git-sync loop's refresh, up to 5 minutes away, and failed permanently
-      // while the working token sat in the secret store. With it, the retry
-      // resolves buildGitHubUrl() afresh and picks the new token up — unless
-      // another failure used the re-read within the floor (60s in core, five
-      // minutes for the AWS provider), in which case a publish that exhausts
-      // its retries first still fails.
+      // The credential may have rotated, and the next retry resolves
+      // buildGitHubUrl() afresh to pick a new token up. Without this a push
+      // meeting a revoked token spends its whole retry budget (5s/10s/20s
+      // backoff) waiting on the git-sync loop's refresh up to 5 minutes away,
+      // and fails permanently while the working token sits in the secret store.
       //
-      // Ungated, and after the outcome is recorded rather than before: the task
+      // Ungated, and AFTER the outcome is recorded rather than before: the task
       // is safely in pending/ or failed/ while a network read runs, and that
       // read is bounded and never throws. See CmsWorker.refreshGitHubCredential.
       await ctx.refreshGitHubCredential()
@@ -261,10 +241,10 @@ export async function processTaskQueue(ctx: TaskRunnerContext): Promise<void> {
     processed++
   }
 
-  // PR-W1: only stamp/write when work actually happened this poll --
-  // otherwise every idle 5s poll would hit worker-status.json, an EFS
-  // write treadmill for no signal (liveness is already covered by the
-  // lock heartbeat; see api/admin.ts's classifyWorkerLiveness).
+  // Only stamp/write when work actually happened this poll: otherwise every
+  // idle 5s poll would hit worker-status.json, an EFS write treadmill for no
+  // signal, since liveness is already covered by the lock heartbeat (see
+  // api/admin.ts's classifyWorkerLiveness).
   if (processed > 0) {
     const report = ctx.ensureStatusReport()
     report.lastTaskCycleAt = new Date().toISOString()
@@ -276,21 +256,19 @@ export async function processTaskQueue(ctx: TaskRunnerContext): Promise<void> {
 
 /**
  * Execute a task bounded by taskTimeoutMs (DEP-H1). Two layers:
- * - An AbortSignal cancels Octokit HTTP calls promptly.
- * - A Promise.race rejects when the timeout fires, so work that cannot
- *   observe the signal (git subprocesses via simple-git) still fails the
- *   attempt and the worker moves on instead of stalling forever.
- * That second layer also stops a hung `ctx.buildGitHubUrl()` in
- * pushBranchToGitHub from stalling the worker: resolving the tokenized URL is
- * async and does not observe the signal, so the attempt fails at taskTimeoutMs —
- * but the resolution is not cancelled, and if it later settles the abandoned
- * push continues. (On the App path the mint is separately bounded by
- * gitTokenMintTimeoutMs. git-sync.ts's two resolutions run on the sync loop,
- * not through here, and are not bounded by taskTimeoutMs.)
- * pushBranchToGitHub additionally kills stalled git processes via
- * simple-git's block timeout, so a hung push doesn't leak a process.
+ * - an AbortSignal cancels Octokit HTTP calls promptly;
+ * - a Promise.race rejects when the timeout fires, so work that cannot observe
+ *   the signal (git subprocesses via simple-git, and a hung
+ *   `ctx.buildGitHubUrl()` in pushBranchToGitHub) still fails the attempt and
+ *   the worker moves on instead of stalling forever.
+ *
+ * A raced-out resolution is not CANCELLED: if it later settles, the abandoned
+ * push continues. On the App path the mint is separately bounded by
+ * gitTokenMintTimeoutMs, and git-sync.ts's two resolutions run on the sync loop
+ * and are not bounded by taskTimeoutMs at all. pushBranchToGitHub additionally
+ * kills stalled git processes via simple-git's block timeout.
  */
-export async function executeTaskWithTimeout(
+async function executeTaskWithTimeout(
   ctx: TaskRunnerContext,
   task: Task,
 ): Promise<Record<string, unknown>> {
@@ -358,22 +336,19 @@ export async function executeTask(
       return { prNumber }
     }
     case 'push-and-create-or-update-pr': {
-      // GIT-H1: idempotent create-or-update. Used for both content-branch
-      // submits and settings-branch syncs so a retry after a crash (task
-      // completed on GitHub but branch metadata never recorded the PR
-      // number) recovers the existing PR instead of hitting the 422 that
-      // a blind `pulls.create` would throw on a duplicate head+base.
-      // Delegates to the shared helper (also used by GitHubService's
-      // direct-API path) so the list->tiebreak->update/create logic and
-      // the draft->ready conversion live in one place.
+      // GIT-H1: idempotent create-or-update, so a retry after a crash (the task
+      // completed on GitHub but branch metadata never recorded the PR number)
+      // recovers the existing PR instead of hitting the 422 a blind
+      // `pulls.create` throws on a duplicate head+base. Delegates to the shared
+      // helper GitHubService's direct-API path also uses, so the
+      // list->tiebreak->update/create logic and the draft->ready conversion
+      // live in one place.
       const branch = requireString(payload, 'branch')
       const base = optionalString(payload, 'baseBranch', ctx.baseBranch)
       // Defense-in-depth: refuse head===base even if the 'submittableBranch'
-      // API guard and the syncSubmitPr backstop were both somehow bypassed
-      // (e.g. a task queued before this check shipped). PermanentTaskError
-      // (not a plain Error) so this fails immediately instead of burning
-      // the retry budget on an identical doomed request -- retrying can
-      // never make the branch not be the base branch.
+      // API guard and the syncSubmitPr backstop were both bypassed.
+      // PermanentTaskError, not a plain Error, so it fails immediately --
+      // retrying can never make the branch not be the base branch.
       if (sanitizeBranchName(branch) === ctx.sanitizedBaseBranch) {
         throw new PermanentTaskError(
           `Refusing to push-and-create-or-update-pr for "${branch}": it is the base branch -- submitting the base branch is never valid`,
@@ -448,7 +423,6 @@ export async function executeTask(
 
 /**
  * Update branch metadata after successful task completion.
- * Writes PR URL/number and sets syncStatus to 'synced'.
  */
 export async function updateBranchMetadata(
   ctx: TaskRunnerContext,
@@ -470,21 +444,19 @@ export async function updateBranchMetadata(
     const updates: Record<string, unknown> = {
       name: branch,
       syncStatus: 'synced',
-      // save()'s merge only overwrites keys present in this update (see
-      // BranchMetadataFileManager.save()'s spread order) -- a prior
-      // syncFailureReason from an earlier failed attempt would otherwise
-      // survive forever past this successful sync. Explicitly clear it,
-      // same pattern as rebaseFailure's PR-W2 M2 clearing elsewhere.
+      // save()'s merge only overwrites keys present in this update, so a prior
+      // syncFailureReason would survive this successful sync forever unless
+      // cleared explicitly (same pattern as rebaseFailure elsewhere).
       syncFailureReason: undefined,
     }
     if (result.prUrl) updates.pullRequestUrl = result.prUrl
     if (result.prNumber) {
       updates.pullRequestNumber = result.prNumber
-      // As soon as the PR exists the field should read 'open' -- without
-      // this it would stay absent until the next poll cycle observes it.
-      // Exception: the git-sync loop may have archived this branch (PR
-      // merged/closed) while this task was in flight; a late task
-      // completion must not downgrade that terminal state back to 'open'.
+      // As soon as the PR exists the field reads 'open', rather than staying
+      // absent until the next poll cycle observes it. Exception: the git-sync
+      // loop may have archived this branch (PR merged/closed) while the task
+      // was in flight, and a late completion must not downgrade that terminal
+      // state back to 'open'.
       const current = await BranchMetadataFileManager.loadOnly(branchPath)
       const terminal =
         current?.branch.status === 'archived' ||
@@ -504,12 +476,11 @@ export async function updateBranchMetadata(
 }
 
 /**
- * Update branch metadata after permanent task failure.
- * Sets syncStatus to 'sync-failed' and records `error` (already redacted
- * by the caller, processTaskQueue -- see [REDACT] there) as
- * syncFailureReason, so the editor can show WHY, not just that it failed.
+ * Update branch metadata after permanent task failure. `error` is already
+ * redacted by the caller (see [REDACT] in processTaskQueue) and is recorded as
+ * syncFailureReason so the editor can show WHY, not just that it failed.
  */
-export async function updateBranchMetadataOnFailure(
+async function updateBranchMetadataOnFailure(
   ctx: TaskRunnerContext,
   task: Task,
   error: string,
@@ -539,37 +510,34 @@ export async function updateBranchMetadataOnFailure(
 export async function pushBranchToGitHub(ctx: TaskRunnerContext, branch: string): Promise<void> {
   const git = simpleGit({
     baseDir: ctx.remoteGitPath,
-    // DEP-H1: kill the git process if it produces no output for
-    // taskTimeoutMs (network stall, credential prompt) instead of letting
-    // it hang past the task timeout.
+    // DEP-H1: kill the git process if it produces no output for taskTimeoutMs
+    // (network stall, credential prompt) instead of letting it hang past the
+    // task timeout.
     timeout: { block: ctx.taskTimeoutMs },
   })
-  // Force stable (English) git output so isNonFastForwardRejection below
-  // can reliably match it -- git's rejection text is gettext-translated, so
-  // a non-English host would silently turn that classifier into a no-op.
-  // gitNetworkChildEnv (NOT gitChildEnv) because this call talks to GitHub:
-  // it keeps ambient HTTPS_PROXY/GIT_SSL_*/GIT_SSH_COMMAND, which
-  // gitChildEnv's local-ops allowlist deliberately drops.
+  // Force stable (English) git output so isNonFastForwardRejection below can
+  // match it -- git's rejection text is gettext-translated, so a non-English
+  // host would silently turn that classifier into a no-op. gitNetworkChildEnv
+  // (NOT gitChildEnv) because this call talks to GitHub: it keeps ambient
+  // HTTPS_PROXY/GIT_SSL_*/GIT_SSH_COMMAND, which gitChildEnv's local-ops
+  // allowlist deliberately drops.
   git.env(gitNetworkChildEnv())
 
-  // Resolve the tokenized URL ONCE, here, before anything below runs. All
-  // three pushes in this function use this const; none of them calls
-  // ctx.buildGitHubUrl() again. That is a correctness requirement, not tidiness
-  // -- resolution is async, and doing it per-push breaks two things:
+  // Resolve the tokenized URL ONCE, here: all three pushes below use this
+  // const and none calls ctx.buildGitHubUrl() again. A correctness
+  // requirement, not tidiness, since resolution is async:
   //
-  // - The retry push below sits INSIDE the stale-lease catch. A resolution
-  //   that threw there would replace the push error being classified, so
-  //   neither isStaleLeaseRejection nor isNonFastForwardRejection would ever
-  //   run and a genuinely diverged branch would be retried instead of raising
-  //   PermanentTaskError -- re-introducing exactly the retry-budget burn that
-  //   carve-out exists to prevent.
+  // - the retry push sits INSIDE the stale-lease catch, and a resolution that
+  //   threw there would replace the push error being classified, so neither
+  //   isStaleLeaseRejection nor isNonFastForwardRejection would run and a
+  //   genuinely diverged branch would be retried instead of raising
+  //   PermanentTaskError;
   // - readPublishedSha below captures remote.git's tip BEFORE the push, and
-  //   that value decides whether the [SYNC-H1] marker gets cleared at the end.
-  //   An awaited resolution between the read and the push widens the window in
-  //   which remote.git's tip can move underneath that decision.
+  //   that value decides whether the [SYNC-H1] marker is cleared at the end.
+  //   An awaited resolution in between widens the window in which the tip can
+  //   move underneath that decision.
   //
-  // It also means all three pushes provably carry the same credential, rather
-  // than one per push with an expiry boundary somewhere in between.
+  // It also means all three pushes provably carry the same credential.
   const githubUrl = await ctx.buildGitHubUrl()
 
   // [SYNC-H1] If the rebase loop rewrote this branch's already-published
@@ -600,23 +568,20 @@ export async function pushBranchToGitHub(ctx: TaskRunnerContext, branch: string)
     const message = getErrorMessage(err)
 
     // A refused lease means GitHub is not at the commit we rewrote, so the
-    // marker is stale -- which is routine, not exceptional: tasks are
-    // re-run after a crash (recoverOrphanedTasks), and the marker survives
-    // any failure to clear it. Two benign shapes reach here, and both are
-    // ordinary fast-forwards that a lease has no business blocking:
-    // GitHub already holds the rewritten history from an earlier attempt,
-    // or the branch has since moved past it.
+    // marker is stale -- routine, not exceptional: tasks are re-run after a
+    // crash (recoverOrphanedTasks) and the marker survives any failure to
+    // clear it. The two benign shapes that reach here (GitHub already holds
+    // the rewritten history, or the branch moved past it) are ordinary
+    // fast-forwards a lease has no business blocking.
     //
-    // Retry PLAIN, and let git adjudicate. A non-forced push succeeds if
-    // and only if it fast-forwards, so it can never destroy anything --
-    // there is no ancestry check to get wrong here, and no extra network
-    // round trip to read GitHub's tip. Only if THAT is also rejected has
-    // the branch genuinely diverged.
+    // So retry PLAIN and let git adjudicate: a non-forced push succeeds if and
+    // only if it fast-forwards, so it can never destroy anything, with no
+    // ancestry check to get wrong and no extra round trip to read GitHub's
+    // tip. Only if THAT is also rejected has the branch genuinely diverged.
     //
-    // (Verified: git evaluates the lease only when it actually has an
-    // update to apply. An up-to-date ref with a stale lease prints
-    // "Everything up-to-date" and exits 0, so the already-landed case is
-    // usually absorbed above and never even reaches this branch.)
+    // (git evaluates the lease only when it actually has an update to apply,
+    // so an up-to-date ref with a stale lease prints "Everything up-to-date",
+    // exits 0, and is absorbed above without reaching here.)
     if (marker && isStaleLeaseRejection(message)) {
       try {
         await git.push(githubUrl, branch)
@@ -640,11 +605,11 @@ export async function pushBranchToGitHub(ctx: TaskRunnerContext, branch: string)
     }
 
     // An ordinary non-fast-forward rejection: GitHub has commits this
-    // deployment never published. Retrying the identical push can never
-    // succeed (DEP-L1's git-failure-is-transient carve-out does NOT apply
-    // here), so fail fast instead of burning the task's retry budget.
-    // Deliberately does NOT advise renaming the branch: a branch reaching
-    // this point usually has an open PR, and renaming would orphan it.
+    // deployment never published, so retrying the identical push can never
+    // succeed (DEP-L1's git-failure-is-transient carve-out does NOT apply) and
+    // it fails fast instead of burning the retry budget. Deliberately does NOT
+    // advise renaming the branch: one reaching this point usually has an open
+    // PR, which renaming would orphan.
     if (isNonFastForwardRejection(message)) {
       throw new PermanentTaskError(
         `Push rejected for branch "${branch}": GitHub's tip is not what this deployment last ` +

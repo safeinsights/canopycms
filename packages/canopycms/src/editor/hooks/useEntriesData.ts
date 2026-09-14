@@ -12,9 +12,7 @@
  * EditorCollection objects requires the hydrated flatSchema either way (see
  * `fetchEntriesAndSchema`). This is also the single source of truth for
  * `availableSchemas` (the entry-type schema names, keyed off the same
- * schema response) -- Editor.tsx used to fetch schema a second time on its
- * own just to compute this list; it now reads it off useEntryManager's
- * return value instead, eliminating that duplicate request.
+ * schema response).
  */
 
 import { notifications } from '@mantine/notifications'
@@ -49,6 +47,7 @@ export interface FetchEntriesParams {
  * repeat across pages if content changes between requests.
  *
  * Exported for direct unit testing.
+ * @internal Exported for tests.
  */
 export async function listAllEntries(
   apiClient: { entries: Pick<ApiClient['entries'], 'list'> },

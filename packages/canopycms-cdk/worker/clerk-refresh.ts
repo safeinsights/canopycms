@@ -3,13 +3,12 @@
  * re-read of the secret key when Clerk rejects the one in hand.
  *
  * **Why the retry is HERE and not in core.** `CmsWorker.refreshAuthCache()`
- * catches and logs everything its callback throws (`cms-worker.ts`, the catch
- * at the end of that method). A retry placed inside core would therefore sit
- * downstream of a `catch` that has already swallowed the failure, and would
- * never see the 401 it is supposed to react to. The callback is the last point
- * where the error is still visible, so the retry lives in the callback. Do not
- * "tidy" this into core without first making `refreshAuthCache()` propagate —
- * see `.claude/future-tasks/refresh-auth-cache-error-handling.md`.
+ * catches and logs everything its callback throws, so a retry inside core would
+ * sit downstream of a `catch` that has already swallowed the failure and would
+ * never see the 401 it is meant to react to. The callback is the last point
+ * where the error is still visible. Do not "tidy" this into core without first
+ * making `refreshAuthCache()` propagate — see
+ * `.claude/future-tasks/refresh-auth-cache-error-handling.md`.
  *
  * Split out of `index.ts` so it can be imported by a test at all: `index.ts`
  * ends in `main().catch(...)`, so importing it RUNS the worker. Same split, and
@@ -30,29 +29,24 @@ import type { ReactiveSecret } from './credential-refresh'
  * is deliberate.** `refreshClerkCache` paginates every user, then every
  * organisation, then does a membership fetch per user — so retrying it on any
  * failure would double that entire workload on every transient 5xx or network
- * blip. The GitHub side has no comparable workload behind its retry (the
- * "retry" there is the task's next attempt or the next scheduled sync), which
- * is why it re-reads unconditionally and this does not.
+ * blip. The GitHub side has no comparable workload behind its retry (there the
+ * "retry" is the task's next attempt or the next scheduled sync), which is why
+ * it re-reads unconditionally and this does not.
  *
- * Read STRUCTURALLY off `.status` rather than by `instanceof
- * ClerkAPIResponseError`: `@clerk/backend` is a peer dependency here, so an
- * adopter can resolve a different copy of it than the one this package's tests
- * see, and an `instanceof` across two copies is silently false. The same shape
- * check is used by `isPermanentTaskFailure` and `isTransientAuthFailure` in
- * core for the same reason.
- *
- * `.status` is there to be read, verified against the installed
- * `@clerk/backend@3.17.1`: every API method resolves through
- * `withLegacyRequestReturn` (`dist/index.js:6174-6190`), which on a non-2xx
- * throws `new ClerkAPIResponseError(statusText, { status, ... })` carrying the
- * HTTP status; the class declares `status: number` as a public field
- * (`@clerk/shared`'s `dist/errors/clerkApiResponseError.d.ts`). Note its
- * MESSAGE is `statusText || ''`, so it can be empty — one more reason to
- * classify on the status rather than by matching text.
+ * Read STRUCTURALLY off `.status`, not by `instanceof ClerkAPIResponseError`:
+ * `@clerk/backend` is a peer dependency here, so an adopter can resolve a
+ * different copy than this package's tests see, and an `instanceof` across two
+ * copies is silently false. `isPermanentTaskFailure` and
+ * `isTransientAuthFailure` in core use the same shape check for the same reason.
+ * `.status` is there to be read (verified against `@clerk/backend@3.17.1`: every
+ * API method resolves through `withLegacyRequestReturn`, which throws
+ * `ClerkAPIResponseError(statusText, { status, ... })` on a non-2xx, and the
+ * class declares `status: number` publicly). Its MESSAGE is `statusText || ''`
+ * and so can be empty - one more reason not to match on text.
  *
  * 403 as well as 401: Clerk answers a revoked key with 401, but a key belonging
  * to a different instance, or one whose permissions were narrowed, can come
- * back 403 — and both are "this key will not work, try a different one", which
+ * back 403 — and both mean "this key will not work, try a different one", which
  * is exactly the condition a rotation fixes.
  */
 function isClerkAuthRejection(err: unknown): boolean {
@@ -108,17 +102,14 @@ export function createClerkAuthCacheRefresher(
     } catch (err) {
       if (!isClerkAuthRejection(err)) throw err
 
-      // The re-read is best-effort, and its own failure must never REPLACE the
+      // The re-read is best-effort, and its own failure must NEVER replace the
       // Clerk rejection being handled. Without the inner try, an IAM policy
       // narrowed after boot turns every tick into an AccessDeniedException and
-      // the 401 that actually explains the stale cache is never logged at all
-      // -- and at the DEFAULT 15-minute auth-cache interval that repeats
-      // indefinitely, since every tick clears the reader's own 5-minute floor
-      // and so re-attempts the read. (Tune `authCacheRefreshInterval` below
-      // five minutes and the floor starts absorbing some ticks; the 401 is
-      // still lost on the ones that do read.)
-      // `CmsWorker.syncGitWithCredentialRefresh` has the same shape for the
-      // same reason; this is the Clerk half of it.
+      // the 401 that actually explains the stale cache is never logged - at the
+      // default 15-minute auth-cache interval, indefinitely, since every tick
+      // clears the reader's own 5-minute floor and re-attempts the read.
+      // `CmsWorker.syncGitWithCredentialRefresh` is the same shape for the same
+      // reason; this is the Clerk half of it.
       let rotated: string | undefined
       try {
         rotated = await secret.refresh()

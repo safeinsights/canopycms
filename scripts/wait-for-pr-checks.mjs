@@ -1,37 +1,12 @@
 #!/usr/bin/env node
 
 /**
- * Waits for a pull request's CI checks to reach a definite state, then says
- * what that state is -- always, including when it gives up.
+ * Waits for a pull request's CI checks to reach a definite state and always
+ * prints a VERDICT line, including on timeout -- so it is never mistaken for
+ * a `while gh pr checks | grep -c pending` loop still waiting. See
+ * DEVELOPING.md ("Waiting on PR Checks") for background.
  *
  * Usage: node scripts/wait-for-pr-checks.mjs [<pr-number>] [options]
- *
- * See DEVELOPING.md ("Waiting on PR Checks") for the narrative version. The
- * short story: the obvious `while gh pr checks | grep -c pending` loop has six
- * failure modes that all look identical from the outside -- like waiting -- and
- * every one of them was hit in a single working day:
- *
- *   1. Silence on timeout. A loop that runs out of iterations and exits 0 with
- *      no output is indistinguishable from a loop still waiting. Everything
- *      below exists to serve one rule: this script NEVER exits without printing
- *      a verdict line.
- *   2. Conflicts are invisible. When a PR is CONFLICTING/DIRTY, CI may never
- *      run at all, so there is nothing to poll and the loop spins to timeout.
- *      This is checked FIRST, before check state, and reported immediately.
- *   3. "No checks yet" and "no checks ever" look the same. Immediately after a
- *      push no checks have registered; on a branch no workflow triggers for,
- *      none ever will. A bounded grace period separates them (--grace).
- *   4. A `gh` failure reads as pending. `2>/dev/null` plus an empty-output
- *      guard turns an expired token or a rate limit into "still waiting",
- *      forever. gh's stderr is classified here: permanent errors stop
- *      immediately, unclassified ones get a bounded retry, and exhausting that
- *      budget is its own verdict.
- *   5. Green can be stale. Re-running a check replays it against the base it
- *      originally ran against, so a PR whose base has since moved can report
- *      green from a run that never saw the current base. A pass verdict is
- *      annotated when the base has advanced.
- *   6. Tab-delimited output is not a data format. `gh pr checks --json` is, and
- *      it carries a `bucket` field that pre-classifies each check.
  *
  * Exit codes are the verdict, for scripting:
  *   0 PASSED       every check concluded, none failed
@@ -62,10 +37,6 @@ const DEFAULTS = {
   graceSeconds: 120,
   maxConsecutiveErrors: 3,
 }
-
-// ---------------------------------------------------------------------------
-// Arguments
-// ---------------------------------------------------------------------------
 
 function parseArgs(argv) {
   const opts = {
@@ -144,16 +115,12 @@ Usage: node scripts/wait-for-pr-checks.mjs [<pr-number>] [options]
 
 Exit codes: 0 PASSED  1 FAILED  2 BLOCKED  3 NO_CHECKS  4 TIMED_OUT  5 ERROR`
 
-// ---------------------------------------------------------------------------
-// Output
-// ---------------------------------------------------------------------------
-
 const stamp = () => new Date().toISOString().replace(/\.\d{3}Z$/, 'Z')
 const say = (message) => process.stdout.write(`[${stamp()}] ${message}\n`)
 
 /**
- * The terminal report. Every exit path in this script funnels through here --
- * that is the whole point of the file, so there is deliberately no other
+ * The terminal report. Every exit path in this script funnels through here,
+ * so it can never exit silently -- there is deliberately no other
  * `process.exit` anywhere below.
  */
 function verdict(name, summary, details = []) {
@@ -162,16 +129,12 @@ function verdict(name, summary, details = []) {
   process.exit(VERDICTS[name])
 }
 
-// ---------------------------------------------------------------------------
-// gh plumbing
-// ---------------------------------------------------------------------------
-
 /**
  * Errors gh will keep producing no matter how many times we ask. Retrying these
  * only delays the report, so they short-circuit the retry budget. Anything not
  * matched here is treated as possibly-transient and retried, so a novel network
- * blip still gets a second chance -- failure mode 4 is about never CONFUSING an
- * error with pending, not about never retrying.
+ * blip still gets a second chance -- a gh failure must be reported, not read as
+ * still-pending, but that does not mean giving up on retrying it.
  */
 const PERMANENT_ERROR_PATTERNS = [
   /could not resolve to a (pullrequest|repository)/i,
@@ -253,8 +216,10 @@ function fetchPr(opts) {
 
 /**
  * gh reports "no checks reported" as a nonzero exit with that phrase on stderr,
- * which is the same shape as a real failure. Separating the two here is what
- * keeps failure modes 3 and 4 apart.
+ * the same shape as a real failure; separating the two here keeps "no checks
+ * yet" from being misread as a gh error. Requests JSON output specifically for
+ * its `bucket` field, which pre-classifies each check instead of requiring
+ * this script to parse gh's human-readable table.
  */
 function fetchChecks(opts) {
   const args = ['pr', 'checks', ...prArg(opts), ...repoFlag(opts)]
@@ -283,10 +248,6 @@ function fetchChecks(opts) {
 
   return { ok: true, checks: parsed.value }
 }
-
-// ---------------------------------------------------------------------------
-// Check interpretation
-// ---------------------------------------------------------------------------
 
 // gh's own bucketing: pass | fail | pending | skipping | cancel.
 const BUCKET_ORDER = ['fail', 'cancel', 'pending', 'pass', 'skipping']
@@ -321,9 +282,9 @@ function completionMs(check) {
 }
 
 /**
- * One line per state change, not per poll (failure mode: a Monitor command that
- * floods). The signature includes merge state because a PR going CONFLICTING
- * mid-run is exactly the transition worth printing.
+ * One line per state change, not per poll, so a long-running watch does not
+ * flood the log. The signature includes merge state because a PR going
+ * CONFLICTING mid-run is exactly the transition worth printing.
  */
 function signatureOf(pr, checks) {
   const perCheck = checks
@@ -342,29 +303,18 @@ function describe(pr, checks) {
   return `${checkText} | mergeable=${pr.mergeable} mergeState=${pr.mergeStateStatus} prState=${pr.state}`
 }
 
-// ---------------------------------------------------------------------------
-// Staleness (failure mode 5)
-// ---------------------------------------------------------------------------
-
 /**
- * `gh pr checks --json` exposes no head SHA -- verified against gh 2.97; its
- * only fields are bucket, completedAt, description, event, link, name,
- * startedAt, state, workflow. So "did these checks see the current base?" has
- * to be answered from the commit graph instead.
+ * `gh pr checks --json` exposes no head SHA, so "did these checks see the
+ * current base?" has to be answered from the commit graph instead:
+ * `compare/head...base`'s `ahead_by` counts base commits the PR head has
+ * never contained, and any run producing the current green result necessarily
+ * predates them, because a `pull_request` workflow does not re-trigger when
+ * the base moves.
  *
- * In GitHub's compare API, `compare/A...B` reports `ahead_by` as the number of
- * commits B has that A does not. Asking it for head...base therefore yields the
- * count of base commits the PR head has never contained. Any run that produced
- * the current green result necessarily predates them, because a `pull_request`
- * workflow is not re-triggered when the base moves.
- *
- * The base tip is resolved from `git/ref/heads/{baseRefName}` rather than taken
- * from `gh pr view --json baseRefOid`, and that distinction is the whole check.
- * `baseRefOid` is a SNAPSHOT of where the base pointed when the PR was last
- * synced, not where it points now -- measured 2026-08-22, a PR whose base had
- * just advanced still reported the pre-advance SHA, and comparing against it
- * returned ahead_by 0 for every PR tried, silently reporting every stale green
- * as fresh. Using it here would make this function a no-op that always passes.
+ * The base tip comes from `git/ref/heads/{baseRefName}`, not from
+ * `gh pr view --json baseRefOid` -- that field is a SNAPSHOT of where the base
+ * pointed at the PR's last sync, not its current tip, so comparing against it
+ * would make this function a no-op that always reports a stale green as fresh.
  *
  * Returns null when the question cannot be answered -- a staleness check that
  * fails must not turn a real pass into an error.
@@ -435,10 +385,6 @@ function repoSlugFromUrl(url) {
   return match ? match[1] : null
 }
 
-// ---------------------------------------------------------------------------
-// Main loop
-// ---------------------------------------------------------------------------
-
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 
 async function main() {
@@ -471,7 +417,7 @@ async function main() {
   for (;;) {
     const pr = fetchPr(opts)
     if (!pr.ok) {
-      // Failure mode 4: this is reported, never mistaken for "still pending".
+      // A permanent gh error is reported here, never mistaken for "still pending".
       if (pr.permanent) {
         verdict('ERROR', 'gh could not read the PR', [
           pr.stderr,
@@ -518,7 +464,7 @@ async function main() {
     if (decision) verdict(decision.name, decision.summary, decision.details)
 
     if (Date.now() >= deadline) {
-      // Failure mode 1: the give-up path is the loudest one in the file.
+      // Giving up is exactly as loud as every other verdict -- never a silent exit.
       verdict('TIMED_OUT', `no definite result after ${opts.timeout}m`, [
         `Current state: ${lastState}`,
         `PR: ${pr.pr.url}`,
@@ -532,8 +478,8 @@ async function main() {
 
 /**
  * Returns a verdict when the situation is decided, or null to keep waiting.
- * Order matters: conflicts before check state, because a conflicted PR has
- * nothing to wait for (failure mode 2).
+ * Order matters: conflicts are checked before check state, because CI may
+ * never run at all on a conflicted PR, so there is nothing to wait for.
  */
 function evaluate(opts, pr, checks, { graceDeadline }) {
   const conflicted = pr.mergeable === 'CONFLICTING' || pr.mergeStateStatus === 'DIRTY'
@@ -556,6 +502,8 @@ function evaluate(opts, pr, checks, { graceDeadline }) {
 
   const { counts, unknown } = summarize(checks)
 
+  // "No checks yet" (just pushed) and "no checks ever" (nothing triggers on
+  // this branch) look identical; the grace period is what tells them apart.
   if (checks.length === 0) {
     if (!prSettled && Date.now() < graceDeadline) return null
     return {

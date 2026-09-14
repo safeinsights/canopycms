@@ -11,10 +11,10 @@ export interface DateTimeFieldProps {
 }
 
 /**
- * Convert a stored value (ISO 8601 UTC, e.g. "2024-03-15T14:30:00.000Z")
- * into the "local wall-clock" string a `datetime-local` input expects
- * (`YYYY-MM-DDTHH:mm:ss`, no timezone). Returns '' for '' or an unparsable
- * value.
+ * Converts a stored value (ISO 8601 UTC, e.g. `YYYY-MM-DDTHH:mm:ss.sssZ`)
+ * into the local wall-clock string a `datetime-local` input expects
+ * (`YYYY-MM-DDTHH:mm:ss`, no timezone). Returns '' for '' or an unparsable value.
+ * @internal Exported for tests.
  */
 export function isoToDatetimeLocalValue(iso: string): string {
   if (!iso) return ''
@@ -24,16 +24,15 @@ export function isoToDatetimeLocalValue(iso: string): string {
   const base =
     `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}` +
     `T${pad(date.getHours())}:${pad(date.getMinutes())}`
-  // Match the platform's own canonical `datetime-local` serialization: the
-  // seconds component is included only when non-zero (a real browser's
-  // input.value getter does the same), so the value we set and what the
-  // control reports back agree exactly.
+  // Seconds are included only when non-zero, matching a real browser's own
+  // `datetime-local` serialization, so the value we set agrees with what the control reports back.
   return date.getSeconds() === 0 ? base : `${base}:${pad(date.getSeconds())}`
 }
 
 /**
  * Convert a `datetime-local` input's local wall-clock string back into the
  * ISO 8601 UTC storage format. Returns '' for '' or an unparsable value.
+ * @internal Exported for tests.
  */
 export function datetimeLocalValueToIso(local: string): string {
   if (!local) return ''
@@ -45,25 +44,18 @@ export function datetimeLocalValueToIso(local: string): string {
 /**
  * Editor for `type: 'datetime'` fields.
  *
- * Storage format: ISO 8601 UTC string (e.g. "2024-03-15T14:30:00.000Z") —
- * what `Date.prototype.toISOString()` produces and what
- * `validation/entry-validator.ts`'s datetime check (`Date.parse`) accepts.
- * Empty string means "not set" (matches entry-validator's empty-string
- * check for required fields).
+ * Storage format: ISO 8601 UTC string (e.g. `YYYY-MM-DDTHH:mm:ss.sssZ`) — what
+ * `Date.prototype.toISOString()` produces and `validation/entry-validator.ts`'s
+ * datetime check (`Date.parse`) accepts. Empty string means "not set".
  *
- * `@mantine/dates` is not a dependency of this package, so per house rules
- * we don't add one just for this field: a native `<input
- * type="datetime-local">` wrapped in Mantine's `Input`/`Input.Wrapper`
- * gives a real date+time picker with zero new dependencies.
+ * Uses a native `datetime-local` input in Mantine's `Input.Wrapper` rather than
+ * `@mantine/dates` (not a dependency here) — a real picker with zero new deps.
  *
- * `datetime-local` has no timezone concept — it shows/accepts local
- * "wall-clock" time. We convert UTC ISO -> local for display and local ->
- * UTC ISO on change, so loading a value and saving it unedited round-trips
- * to the exact same stored string instead of drifting by the browser's UTC
- * offset. `step={1}` keeps seconds in that round trip; sub-second
- * precision in the source data is not preserved (`datetime-local` has no
- * milliseconds field), so a stored value with non-zero milliseconds will
- * have them zeroed out once resaved.
+ * `datetime-local` has no timezone: converts UTC ISO -> local for display and
+ * back on change, so an unedited load-then-save round-trips exactly instead of
+ * drifting by the browser's offset. `step={1}` preserves seconds in that
+ * round-trip; sub-second precision is not preserved (no milliseconds field),
+ * so a value with non-zero milliseconds is zeroed out once resaved.
  */
 export const DateTimeField: React.FC<DateTimeFieldProps> = ({
   id,
@@ -90,5 +82,3 @@ export const DateTimeField: React.FC<DateTimeFieldProps> = ({
     </Input.Wrapper>
   )
 }
-
-export default DateTimeField

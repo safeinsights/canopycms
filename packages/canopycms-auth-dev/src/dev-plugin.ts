@@ -10,7 +10,6 @@ export type { DevUser, DevGroup, DevAuthConfig }
 export { DEFAULT_USERS, DEFAULT_GROUPS, DEV_ADMIN_USER_ID }
 
 /**
- * Dev authentication plugin implementation for CanopyCMS.
  * Supports both cookie-based (UI) and header-based (tests) authentication.
  */
 export class DevAuthPlugin implements AuthPlugin {
@@ -42,35 +41,28 @@ export class DevAuthPlugin implements AuthPlugin {
   }
 
   async authenticate(context: unknown): Promise<AuthenticationResult> {
-    // 1. Extract headers using extractHeaders() helper
     const headers = extractHeaders(context)
     if (!headers) {
       return { success: false, error: 'Invalid context' }
     }
 
-    // 2. Check X-Test-User header (for test-app compatibility) FIRST
     let userId = headers.get('X-Test-User')
 
-    // 3. If no test header, check x-dev-user-id header OR canopy-dev-user cookie
     if (!userId) {
       userId = headers.get('x-dev-user-id') ?? getDevUserCookieFromHeaders(headers)
     }
 
-    // 4. Fall back to default user
     if (!userId) {
       userId = this.defaultUserId
     }
 
-    // 5. Map test user keys to dev user IDs for test compatibility
     const userIdMapped = this.mapTestUserKey(userId)
 
-    // 6. Find user in config
     const user = this.users.find((u) => u.userId === userIdMapped)
     if (!user) {
       return { success: false, error: `Dev user not found: ${userId}` }
     }
 
-    // 7. Return AuthenticationResult with externalGroups
     return {
       success: true,
       user: {
@@ -165,7 +157,6 @@ export class DevAuthPlugin implements AuthPlugin {
 }
 
 /**
- * Factory function for creating dev auth plugin.
  * By default, auto-sets CANOPY_BOOTSTRAP_ADMIN_IDS to the admin dev user
  * if the env var is not already set. Disable with { autoBootstrapAdmin: false }.
  */

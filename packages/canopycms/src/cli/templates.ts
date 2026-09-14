@@ -118,7 +118,7 @@ export async function nextConfig(options: { staticBuild: boolean }): Promise<str
  * also deploy any unrelated stacks an adopter keeps in the same repo). Those
  * two must agree, so they read the same constant.
  */
-export const SCAFFOLD_STACK_NAME = 'CanopyCms'
+const SCAFFOLD_STACK_NAME = 'CanopyCms'
 
 export async function dockerfileCms(options: {
   copy: string

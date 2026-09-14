@@ -18,6 +18,7 @@ import type { AssetMeta, AssetStore } from './types'
  */
 const STAGING_UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 
+/** @internal Exported for tests. */
 export function isValidStagingKey(key: string): boolean {
   const prefix = `${ASSET_PREFIXES.staging}/`
   return key.startsWith(prefix) && STAGING_UUID_PATTERN.test(key.slice(prefix.length))
@@ -35,6 +36,7 @@ export type FinalizeAssetResult = { ok: true; meta: AssetMeta } | FinalizeReject
  * point for an asset's existence, so a crash between `putOriginal` and here
  * leaves only orphaned (harmless, content-addressed) blobs, never a meta
  * record pointing at a missing blob.
+ * @internal Exported for tests.
  */
 export async function finalizeAsset(
   store: AssetStore,
@@ -65,7 +67,7 @@ export async function finalizeAsset(
 }
 
 /**
- * Finalize a previously-staged upload: read the staged bytes, run
+ * Finalize a staged upload: read the staged bytes, run
  * `finalizeAsset`, and best-effort delete the staging object regardless of
  * outcome (success OR pipeline rejection - a rejected upload's staged bytes
  * are just as much litter as an accepted one's).

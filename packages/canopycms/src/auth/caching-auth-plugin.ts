@@ -5,11 +5,7 @@ import { createDebugLogger } from '../utils/debug'
 
 const log = createDebugLogger({ prefix: 'CachingAuthPlugin' })
 
-/**
- * Generic cache provider interface for auth metadata.
- * Any auth system can implement its own cache backend
- * (file-based, Redis, in-memory, etc.)
- */
+/** Auth-metadata cache backend: file-based, Redis, in-memory, whatever. */
 export interface AuthCacheProvider {
   getUser(userId: CanopyUserId): Promise<UserSearchResult | null>
   getGroup(groupId: CanopyGroupId): Promise<GroupMetadata | null>
@@ -18,27 +14,20 @@ export interface AuthCacheProvider {
   getUserExternalGroups(userId: CanopyUserId): Promise<CanopyGroupId[]>
 }
 
-/**
- * Token verifier function type.
- * Given a request context, extracts and verifies the auth token,
- * returning the user ID on success.
- */
+/** Extracts and verifies the request's auth token, yielding its user ID. */
 export type TokenVerifier = (context: unknown) => Promise<{ userId: CanopyUserId } | null>
 
 /**
- * Auth plugin that wraps a token verifier with cached metadata lookups.
+ * Wraps a token verifier with cached metadata lookups, for environments where
+ * the auth provider's API is unreachable (a Lambda with no internet): JWT
+ * verification happens locally, and user/group metadata comes from a cache
+ * populated externally by the EC2 worker. In dev an optional `lazyRefresher`
+ * populates that cache on first request instead of `worker run-once`.
  *
- * Used in environments where the auth provider API is not reachable
- * (e.g., Lambda with no internet). JWT verification is done locally,
- * and user/group metadata comes from a cache populated externally
- * (e.g., by an EC2 worker).
- *
- * In dev mode, an optional `lazyRefresher` can be provided to auto-populate
- * the cache on first request, eliminating the need to run `worker run-once` manually.
- *
- * This wrapper only forwards the inner plugin's `verifiesCredentials` affirmation via the
- * `options` constructor param — it cannot launder an insecure plugin, because
- * createNextCanopyContext asserts the INNER plugin (before wrapping) in context-wrapper.ts.
+ * The wrapper only FORWARDS the inner plugin's `verifiesCredentials`
+ * affirmation, via the `options` param. It cannot launder an insecure plugin,
+ * because createNextCanopyContext asserts the INNER plugin before wrapping
+ * (context-wrapper.ts).
  */
 export class CachingAuthPlugin implements AuthPlugin {
   private refreshPromise: Promise<void> | null = null
@@ -55,7 +44,7 @@ export class CachingAuthPlugin implements AuthPlugin {
 
   private async ensureCachePopulated(): Promise<void> {
     if (!this.lazyRefresher) return
-    // Use a shared promise so concurrent callers coalesce into a single refresh
+    // A shared promise, so concurrent callers coalesce into one refresh.
     this.refreshPromise ??= this.lazyRefresher()
       .then(() => log.debug('auth', 'Lazy cache refresh completed'))
       .catch((err) => {
@@ -88,7 +77,8 @@ export class CachingAuthPlugin implements AuthPlugin {
         },
       }
     } catch {
-      // Cache error — still return authenticated with minimal info
+      // A cache failure must not reject an already-verified token: degrade to
+      // the bare identity, with no external groups.
       log.debug('auth', 'Cache lookup failed, returning minimal user', {
         userId: identity.userId,
       })

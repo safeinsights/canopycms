@@ -1,38 +1,23 @@
 /**
- * Client-Unsafe Operating Mode Strategies
- *
- * Full strategy implementations that extend client-safe base classes.
- * INCLUDES Node.js imports (fs, path, process) - can only be imported server-side.
- *
- * These classes inherit all client-safe methods and add client-unsafe functionality.
+ * Full strategies: the client-safe base classes plus the methods that need
+ * Node.js (fs, path, process). Server-side imports only.
  */
 
 import path from 'node:path'
 import { ProdClientSafeStrategy, DevClientSafeStrategy } from './client-safe-strategy'
 import { resolveDeploymentName } from './deployment-name'
-import type { OperatingMode, ClientUnsafeStrategy } from './types'
+import type { OperatingMode, ClientUnsafeStrategy, RemoteUrlConfig } from './types'
 import type { CanopyConfig } from '../config'
 import { DEFAULT_PROD_WORKSPACE } from '../config'
 
-// ============================================================================
-// Production Mode - Full Strategy
-// ============================================================================
-
 class ProdStrategy extends ProdClientSafeStrategy implements ClientUnsafeStrategy {
-  // All client-safe methods inherited automatically from ProdClientSafeStrategy:
-  // - mode, supportsBranching(), supportsStatusBadge(), supportsComments()
-  // - supportsPullRequests(), getPermissionsFileName(), getGroupsFileName()
-  // - shouldCommit(), shouldPush()
-
-  // Add client-unsafe methods (use Node.js APIs)
-
   getWorkspaceRoot(_sourceRoot?: string): string {
     return path.resolve(process.env.CANOPYCMS_WORKSPACE_ROOT ?? DEFAULT_PROD_WORKSPACE)
   }
 
   getContentRoot(contentRoot: string, sourceRoot?: string): string {
-    // In prod, content is at workspace root (not project root)
-    // This is called with sourceRoot = workspace path
+    // In prod the caller passes sourceRoot = the workspace path, because
+    // content sits at the workspace root rather than a project root.
     return path.resolve(sourceRoot ?? process.cwd(), contentRoot)
   }
 
@@ -56,7 +41,7 @@ class ProdStrategy extends ProdClientSafeStrategy implements ClientUnsafeStrateg
     return path.join(root, this.getGroupsFileName())
   }
 
-  getRemoteUrlConfig(): import('./types').RemoteUrlConfig {
+  getRemoteUrlConfig(): RemoteUrlConfig {
     return {
       shouldAutoInitLocal: false,
       defaultRemotePath: '',
@@ -97,13 +82,7 @@ class ProdStrategy extends ProdClientSafeStrategy implements ClientUnsafeStrateg
   }
 }
 
-// ============================================================================
-// Dev Mode - Full Strategy
-// ============================================================================
-
 class DevStrategy extends DevClientSafeStrategy implements ClientUnsafeStrategy {
-  // Inherits client-safe methods from DevClientSafeStrategy
-
   getWorkspaceRoot(sourceRoot?: string): string {
     return path.resolve(sourceRoot ?? process.cwd(), '.canopy-dev')
   }
@@ -132,7 +111,7 @@ class DevStrategy extends DevClientSafeStrategy implements ClientUnsafeStrategy 
     return path.join(root, this.getGroupsFileName())
   }
 
-  getRemoteUrlConfig(): import('./types').RemoteUrlConfig {
+  getRemoteUrlConfig(): RemoteUrlConfig {
     return {
       shouldAutoInitLocal: true,
       defaultRemotePath: '.canopy-dev/remote.git',
@@ -170,22 +149,11 @@ class DevStrategy extends DevClientSafeStrategy implements ClientUnsafeStrategy 
   }
 }
 
-// ============================================================================
-// Factory with Memoization
-// ============================================================================
-
 const strategyCache = new Map<OperatingMode, ClientUnsafeStrategy>()
 
 /**
- * Get the full strategy (client-unsafe) for an operating mode.
- *
- * Strategies are memoized - one instance per mode for the entire process lifetime.
- * Safe to call inline: operatingStrategy(mode).getBaseRoot()
- *
- * Includes all client-safe methods (inherited) plus client-unsafe methods (Node.js APIs).
- *
- * @param mode - The operating mode
- * @returns Full strategy instance with client-unsafe methods
+ * Memoized: one instance per mode for the process lifetime, so this is safe to
+ * call inline — `operatingStrategy(mode).getWorkspaceRoot()`.
  */
 export function operatingStrategy(mode: OperatingMode): ClientUnsafeStrategy {
   const cached = strategyCache.get(mode)
@@ -200,7 +168,7 @@ export function operatingStrategy(mode: OperatingMode): ClientUnsafeStrategy {
       strategy = new DevStrategy()
       break
     default: {
-      // Exhaustiveness check - TypeScript will error if a mode is not handled
+      // Exhaustiveness check: adding a mode without a case fails to compile.
       const _exhaustive: never = mode
       throw new Error(`Unknown operating mode: ${_exhaustive}`)
     }
@@ -211,7 +179,8 @@ export function operatingStrategy(mode: OperatingMode): ClientUnsafeStrategy {
 }
 
 /**
- * Clear the strategy cache (mainly for testing)
+ * Mainly for testing.
+ * @internal Exported for tests.
  */
 export function clearStrategyCache(): void {
   strategyCache.clear()

@@ -1,7 +1,3 @@
-/**
- * Hook for managing permission tree state and operations
- */
-
 import { useState, useMemo, useEffect, useCallback } from 'react'
 import type {
   TreeNode,
@@ -22,33 +18,22 @@ export interface UsePermissionTreeOptions {
 }
 
 export interface UsePermissionTreeResult {
-  /** The annotated tree with permissions */
   annotatedTree: TreeNode
-  /** Expanded node paths */
   expandedNodes: Set<string>
-  /** Currently selected node path */
   selectedNode: string | null
   /** Local permission state (may differ from saved) */
   localPermissions: PathPermission[]
-  /** Whether there are unsaved changes */
   isDirty: boolean
-  /** Toggle a node's expanded state */
   toggleNode: (path: string) => void
-  /** Expand all nodes */
   expandAll: () => void
-  /** Collapse all nodes */
   collapseAll: () => void
-  /** Select a node */
   selectNode: (path: string | null) => void
-  /** Update permission for a node */
   updateNodePermission: (
     nodePath: string,
     level: PermissionLevel,
     updates: Partial<PermissionTarget>,
   ) => void
-  /** Reset local permissions to saved state */
   resetPermissions: () => void
-  /** Set dirty state */
   setIsDirty: (dirty: boolean) => void
   /** Set local permissions directly (for after save) */
   setLocalPermissions: React.Dispatch<React.SetStateAction<PathPermission[]>>
@@ -65,19 +50,16 @@ export function usePermissionTree({
   const [localPermissions, setLocalPermissions] = useState<PathPermission[]>(permissions)
   const [isDirty, setIsDirty] = useState(false)
 
-  // Build tree from collections + contentTree
   const tree = useMemo(
     () => buildTree(contentTree, contentRoot, collections),
     [collections, contentTree, contentRoot],
   )
 
-  // Annotate tree with permissions
   const annotatedTree = useMemo(
     () => annotateTreeWithPermissions(tree, localPermissions),
     [tree, localPermissions],
   )
 
-  // Reset local state when permissions change externally
   useEffect(() => {
     setLocalPermissions(permissions)
     setIsDirty(false)
@@ -133,18 +115,15 @@ export function usePermissionTree({
         const existingIndex = newPermissions.findIndex((p) => p.path === permissionPath)
 
         if (existingIndex >= 0) {
-          // Update existing permission for this level
           const existing = newPermissions[existingIndex]
           const updatedLevel: PermissionTarget = {
             ...existing[level],
             ...updates,
           }
 
-          // Clean up empty arrays
           if (updatedLevel.allowedUsers?.length === 0) delete updatedLevel.allowedUsers
           if (updatedLevel.allowedGroups?.length === 0) delete updatedLevel.allowedGroups
 
-          // If level target is empty, remove it
           if (!updatedLevel.allowedUsers && !updatedLevel.allowedGroups) {
             newPermissions[existingIndex] = { ...existing, [level]: undefined }
           } else {
@@ -154,13 +133,11 @@ export function usePermissionTree({
             }
           }
 
-          // If all levels are empty, remove the permission entirely
           const perm = newPermissions[existingIndex]
           if (!perm.read && !perm.edit && !perm.review) {
             newPermissions.splice(existingIndex, 1)
           }
         } else {
-          // Add new permission
           if (updates.allowedUsers?.length || updates.allowedGroups?.length) {
             newPermissions.push({
               path: permissionPath,

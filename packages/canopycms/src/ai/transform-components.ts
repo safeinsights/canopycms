@@ -16,12 +16,12 @@ import type { ComponentProps, ComponentTransforms } from './types'
  * Parse JSX attribute string into a props object.
  *
  * Handles: `key="value"`, `key='value'`, `key={expr}`, and boolean `key` (→ "true").
+ * @internal Exported for tests.
  */
 export function parseComponentProps(attrString: string): ComponentProps {
   const props: ComponentProps = {}
   if (!attrString) return props
 
-  // Match attribute patterns: name="value", name='value', name={expr}, or bare name
   // eslint-disable-next-line security/detect-unsafe-regex
   const attrRegex = /(\w+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|\{([^}]*)\}))?/g
   let match: RegExpExecArray | null
@@ -36,10 +36,6 @@ export function parseComponentProps(attrString: string): ComponentProps {
   return props
 }
 
-/**
- * Mask fenced code blocks so component transforms don't touch them.
- * Returns the masked string and a restore function.
- */
 /** Regex fragment matching JSX attribute content, skipping quoted strings containing '>'. */
 const ATTR_CONTENT = `(?:[^>"']|"[^"]*"|'[^']*')*`
 
@@ -60,12 +56,12 @@ function isFenceCloseLine(line: string, marker: string): boolean {
 
 /**
  * Mask fenced code blocks (` ``` `/`~~~`), capturing each block's raw text (fence lines
- * included) exactly as `maskCodeBlocks` used to via `/^(```|~~~).*\n[\s\S]*?\n\1\s*$/gm`.
+ * included).
  *
- * A hand-rolled line scan, not that regex: it is a polynomial-ReDoS shape (measured ~9s on
- * ~530KB of body text with many unclosed fence openers — an ordinary authoring accident, not a
- * crafted payload) that CodeQL and three review rounds both missed elsewhere in this package
- * (see `ai/to-plain-text.ts`'s identical fix). The lazy `[\s\S]*?` has no bound on how far it
+ * A hand-rolled line scan, not a lazy regex like `/^(```|~~~).*\n[\s\S]*?\n\1\s*$/gm`: that
+ * shape is a polynomial-ReDoS hazard (measured ~9s on ~530KB of body text with many unclosed
+ * fence openers — an ordinary authoring accident, not a crafted payload; see
+ * `ai/to-plain-text.ts`'s identical fix). The lazy `[\s\S]*?` has no bound on how far it
  * must scan looking for a closing `\1` that, for an unclosed fence, never arrives — it exhausts
  * to the end of the string before giving up on that starting line, and `/gm` retries the same
  * exhaustive scan at every subsequent fence-opener line.
@@ -135,10 +131,9 @@ function maskCodeBlocks(body: string): { masked: string; restore: (s: string) =>
   const blocks: string[] = []
   const inlines: string[] = []
 
-  // 1. Mask fenced code blocks
   let masked = maskFencedCodeBlocks(body, blocks)
 
-  // 2. Mask inline code spans (double-backtick first, then single-backtick)
+  // Mask inline code spans (double-backtick first, then single-backtick)
   masked = masked.replace(/``[^`]+``|`[^`]+`/g, (span) => {
     const idx = inlines.length
     inlines.push(span)
@@ -157,17 +152,13 @@ function maskCodeBlocks(body: string): { masked: string; restore: (s: string) =>
 }
 
 /**
- * Apply component transforms to a body string.
- *
  * For each registered component name, finds JSX tags in the body and calls
- * the corresponding transform function. Processes via convergence loop to
- * handle nesting (inner components first, outer on subsequent passes).
+ * the corresponding transform function.
  */
 export function applyComponentTransforms(body: string, transforms: ComponentTransforms): string {
   const names = Object.keys(transforms)
   if (names.length === 0) return body
 
-  // Mask code blocks to protect them from transformation
   const { masked, restore } = maskCodeBlocks(body)
   let result = masked
 
@@ -201,7 +192,6 @@ export function applyComponentTransforms(body: string, transforms: ComponentTran
         const openEnd = openStart + openMatch[0].length
         const attrStr = openMatch[1]?.trim() ?? ''
 
-        // Find matching close tag, accounting for nesting
         const closeTag = `</${name}>`
         const closeIdx = findMatchingClose(result, openEnd, name, closeTag)
         if (closeIdx === -1) break // unmatched — stop processing this component
@@ -243,7 +233,6 @@ function findMatchingClose(
   let depth = 1
   const pos = startFrom
 
-  // Regex to find either an opening or closing tag for this component
   // eslint-disable-next-line security/detect-non-literal-regexp
   const tagRegex = new RegExp(
     `<${escapeRegex(name)}(?:\\s${ATTR_CONTENT})?>|<${escapeRegex(name)}(?:\\s${ATTR_CONTENT})?\\s*/>|${escapeRegex(closeTag)}`,

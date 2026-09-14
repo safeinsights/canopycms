@@ -11,13 +11,11 @@ import {
 import { getErrorMessage, redactCredentials, sanitizeErrorMessage } from 'canopycms/utils/error'
 
 /**
- * Options for creating a Canopy Next.js handler.
  * Same as core CanopyHandlerOptions - re-exported for convenience.
  */
 export type CanopyNextOptions = CanopyHandlerOptions
 
 /**
- * Wrap a standard Request (or NextRequest) to implement the CanopyRequest interface.
  * Only uses standard Request methods, so any Request subclass works.
  */
 export function wrapNextRequest(req: Request): CanopyRequest {
@@ -48,10 +46,6 @@ export function wrapNextRequest(req: Request): CanopyRequest {
   }
 }
 
-/**
- * Map a CanopyBinaryResponse's framework-agnostic header fields onto the
- * real HTTP header names, omitting any that weren't set.
- */
 function toBinaryHeaders(headers: CanopyBinaryResponse['headers']): HeadersInit {
   const result: Record<string, string> = {}
   if (headers.contentType) result['Content-Type'] = headers.contentType
@@ -61,17 +55,12 @@ function toBinaryHeaders(headers: CanopyBinaryResponse['headers']): HeadersInit 
   return result
 }
 
-/**
- * Convert a CanopyResponse (or CanopyBinaryResponse) to a NextResponse.
- */
 function toNextResponse(response: CanopyResponse<unknown> | CanopyBinaryResponse): Response {
   if (isCanopyBinaryResponse(response)) {
-    // A Uint8Array can be backed by an arbitrary ArrayBufferLike (e.g. a
-    // Node Buffer), which doesn't structurally satisfy the DOM lib's
-    // BodyInit/ArrayBufferView (specifically ArrayBuffer-backed). Copying
-    // through the typed-array constructor yields a plain ArrayBuffer-backed
-    // view so this type-checks without an unsafe cast; ReadableStream
-    // bodies pass through unchanged.
+    // A Uint8Array can be backed by an arbitrary ArrayBufferLike (e.g. a Node Buffer), which
+    // doesn't structurally satisfy the DOM lib's BodyInit/ArrayBufferView. Copying through the
+    // typed-array constructor yields a plain ArrayBuffer-backed view that type-checks without an
+    // unsafe cast; ReadableStream bodies pass through unchanged.
     const body = response.body instanceof Uint8Array ? new Uint8Array(response.body) : response.body
     return new NextResponse(body, {
       status: response.status,
@@ -85,7 +74,6 @@ function toNextResponse(response: CanopyResponse<unknown> | CanopyBinaryResponse
 }
 
 /**
- * Extract path segments from Next.js catch-all route params.
  * Handles both Next.js 14 (direct object) and Next.js 15 (Promise) params.
  */
 async function extractPathSegments(ctx?: {
@@ -98,12 +86,6 @@ async function extractPathSegments(ctx?: {
 
 /**
  * Catch-all Next.js handler for a single API route (e.g., /api/canopycms/[...canopycms]).
- *
- * This is a thin adapter that:
- * 1. Converts NextRequest to CanopyRequest
- * 2. Extracts path segments from Next.js params
- * 3. Delegates to the core handler
- * 4. Converts CanopyResponse to NextResponse
  *
  * @example
  * ```ts
@@ -141,17 +123,14 @@ export const createCanopyCatchAllHandler = (options: CanopyNextOptions) => {
       const response = await coreHandler(canopyReq, segments)
       return toNextResponse(response)
     } catch (err) {
-      // Defense-in-depth (API-C1): coreHandler already guards itself with a
-      // top-level try/catch, but this adapter also wraps request conversion
-      // (wrapNextRequest/extractPathSegments/toNextResponse) so a failure there
-      // can never escape as Next's generic unhandled-error 500, which would
-      // break the uniform { ok, status, error } envelope the editor expects.
+      // Defense-in-depth (API-C1): coreHandler already guards itself with a top-level try/catch,
+      // but this adapter also wraps request conversion, so a failure there can never escape as
+      // Next's generic unhandled-error 500, which would break the uniform { ok, status, error }
+      // envelope the editor expects.
       const message = getErrorMessage(err)
-      // Redacted before logging, not just before responding. The HTTP body was
-      // already sanitized, but this line went to the server log verbatim -- and
-      // a git failure message can embed a token-bearing clone URL, which is the
-      // one thing that must not reach a log aggregator. Every failure surface
-      // in the worker already redacts; this was the outlier.
+      // Redacted before logging, not just before responding: the HTTP body is already sanitized,
+      // but this line reaches the server log verbatim, and a git failure message can embed a
+      // token-bearing clone URL — the one thing that must not reach a log aggregator.
       console.error(
         'CanopyCMS: Unhandled error in Next.js catch-all handler:',
         redactCredentials(message),

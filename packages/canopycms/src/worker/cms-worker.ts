@@ -3,8 +3,8 @@ import path from 'node:path'
 import { simpleGit } from 'simple-git'
 import lockfile from 'proper-lockfile'
 import { Octokit } from '@octokit/rest'
-import { recoverOrphanedTasks, cmsTaskQueueLogger } from './task-queue'
-import type { Task } from './task-queue'
+import { recoverOrphanedTasks, cmsTaskQueueLogger } from '../task-queue/cms-task-queue'
+import type { Task } from '../task-queue/cms-task-queue'
 import { createCanopyOctokit } from '../github-service'
 import {
   isTransientAuthFailure,
@@ -18,7 +18,7 @@ import { sanitizeBranchName, RESERVED_SETTINGS_BRANCH_PREFIX } from '../paths/br
 import { resolveDeploymentName } from '../operating-mode/deployment-name'
 import type { WorkerStatusReport } from '../types'
 import { getErrorMessage, isNodeError, redactCredentials } from '../utils/error'
-import { writeWorkerStatus } from './worker-status'
+import { writeWorkerStatus } from '../task-queue/worker-status'
 import { workerLog, workerLogWarn, workerLogError } from './log'
 import type { WorkerContext } from './worker-context'
 import {
@@ -37,22 +37,19 @@ import {
 } from './git-sync'
 
 // Re-exported because this module is the package's advertised worker
-// entrypoint (`canopycms/worker/cms-worker`) and both were exported from here
-// before the task-queue cluster moved to ./task-runner. cms-worker.test.ts
-// imports them from this path.
+// entrypoint (`canopycms/worker/cms-worker`).
 export { PermanentTaskError, isPermanentTaskFailure } from './task-runner'
 
 // Re-exported so the AWS entrypoint (packages/canopycms-cdk/worker/index.ts)
-// can prefix its own startup lines through the same helpers without adding a
-// new package entrypoint - `canopycms/worker/cms-worker` already exists. Every
-// line in worker.log must carry the timestamp prefix or it gets folded into
-// the previous CloudWatch event; see ./log.ts.
+// can prefix its own startup lines through the same helpers without a new
+// package entrypoint. Every line in worker.log must carry the timestamp prefix
+// or it is folded into the previous CloudWatch event; see ./log.ts.
 export { workerLog, workerLogWarn, workerLogError, installWorkerLogger } from './log'
 
-// Re-exported for the same reason: an entrypoint that authenticates as a
-// GitHub App builds the credential itself (core must not import
-// `@octokit/auth-app` — see github-auth.ts) and needs the shape to inject and
-// the key normalizer to apply, without a new package entrypoint.
+// Re-exported for the same reason: an entrypoint that authenticates as a GitHub
+// App builds the credential itself (core must not import `@octokit/auth-app` —
+// see github-auth.ts) and needs the shape to inject and the key normalizer to
+// apply.
 export {
   normalizeGitHubAppPrivateKey,
   DEFAULT_GIT_TOKEN_MINT_TIMEOUT_MS,
@@ -62,17 +59,17 @@ export {
 } from './github-auth'
 
 /**
- * Auth cache refresh function type.
- * Adopters provide their auth-plugin-specific implementation.
- * For Clerk: use refreshClerkCache from canopycms-auth-clerk/cache-writer.
+ * Auth cache refresh function type; adopters supply their auth-plugin-specific
+ * implementation (for Clerk, refreshClerkCache from
+ * canopycms-auth-clerk/cache-writer).
  */
 export type AuthCacheRefresher = () => Promise<void>
 
 /**
  * `githubToken` / `githubAppAuth` / `gitTokenMintTimeoutMs` are declared
- * together in `GitHubAuthConfig` (./github-auth) because they are one
- * decision, resolved in one place. The token remains the documented default;
- * see that interface for the two shapes and why an App is optional.
+ * together in `GitHubAuthConfig` (./github-auth) because they are one decision,
+ * resolved in one place. The token is the documented default; see that
+ * interface for the two shapes and why an App is optional.
  */
 export interface CmsWorkerConfig extends GitHubAuthConfig {
   /** Path to workspace root on EFS (e.g., /mnt/efs/workspace) */
@@ -81,11 +78,7 @@ export interface CmsWorkerConfig extends GitHubAuthConfig {
   githubOwner: string
   /** GitHub repo name (e.g., 'docs-site') */
   githubRepo: string
-  /**
-   * Auth cache refresh callback. Called periodically to update the auth
-   * metadata cache on EFS. Adopters provide their auth-plugin-specific
-   * implementation (e.g., refreshClerkCache from canopycms-auth-clerk).
-   */
+  /** Called periodically to update the auth metadata cache on EFS. */
   refreshAuthCache?: AuthCacheRefresher
   /** Task queue poll interval in ms (default: 5000) */
   taskPollInterval?: number
@@ -96,22 +89,20 @@ export interface CmsWorkerConfig extends GitHubAuthConfig {
   /** Base branch name (default: 'main') */
   baseBranch?: string
   /**
-   * Deployment name, used to compute THIS worker's own settings branch
-   * (`canopycms-settings-{deploymentName}`, default: 'prod' — matches
-   * ProdStrategy's mode default in operating-mode/client-unsafe-strategy.ts,
-   * the only mode the worker runs in). Two deployments can share one GitHub
-   * repo with distinct settings branches; this tells the worker which one it
-   * owns, so it never pushes another deployment's settings branch (see
-   * `pushSettingsBranches`).
+   * Names THIS worker's own settings branch
+   * (`canopycms-settings-{deploymentName}`, default 'prod' — ProdStrategy's
+   * mode default in operating-mode/client-unsafe-strategy.ts, the only mode the
+   * worker runs in). Two deployments can share one GitHub repo with distinct
+   * settings branches; this is what tells the worker which one it owns, so it
+   * never pushes another deployment's (see `pushSettingsBranches`).
    */
   deploymentName?: string
   /**
-   * Explicit settings branch name, taking precedence over `deploymentName`.
-   * Mirrors the strategy's own precedence (`config.settingsBranch` short-circuits
-   * `getSettingsBranchName` before `deploymentName` is consulted, see
-   * operating-mode/client-unsafe-strategy.ts): an adopter who overrides
-   * `settingsBranch` in canopycms.config.ts must set this too, or the worker
-   * would own a branch name the Lambda never writes to.
+   * Explicit settings branch name, taking precedence over `deploymentName` and
+   * mirroring the strategy's own precedence (operating-mode/
+   * client-unsafe-strategy.ts). An adopter who overrides `settingsBranch` in
+   * canopycms.config.ts MUST set this too, or the worker owns a branch name the
+   * Lambda never writes to.
    */
   settingsBranch?: string
   /** Max tasks to process per cycle (default: 10) */
@@ -123,10 +114,9 @@ export interface CmsWorkerConfig extends GitHubAuthConfig {
   /** Content root directory name relative to repo root (default: 'content') */
   contentRoot?: string
   /**
-   * Worker lock staleness TTL in ms (default: 60000, minimum 2000).
-   * The holder refreshes the lock heartbeat at half this interval; a lock
-   * whose heartbeat is older than this is considered abandoned and taken
-   * over by the next worker to start.
+   * Worker lock staleness TTL in ms (default 60000, minimum 2000). The holder
+   * refreshes the heartbeat at half this interval; a lock whose heartbeat is
+   * older than this is abandoned and taken over by the next worker to start.
    */
   lockStaleMs?: number
 }
@@ -136,22 +126,19 @@ const DEFAULT_MAX_RETRIES = 3
 const DEFAULT_LOCK_STALE_MS = 60_000
 
 /**
- * CMS Worker daemon.
- * Handles operations that Lambda (with no internet) cannot perform:
- * - Processing queued tasks (push branches, create PRs)
- * - Syncing bare repo with GitHub
- * - Rebasing active branch workspaces
- * - Refreshing auth metadata cache (via pluggable callback)
+ * CMS Worker daemon: the operations Lambda, which has no internet, cannot
+ * perform -- draining the task queue, syncing the bare repo with GitHub,
+ * rebasing branch workspaces, and refreshing the auth metadata cache through a
+ * pluggable callback.
  *
- * Auth-agnostic: does not depend on any specific auth provider.
- * Cloud-agnostic: uses git/Octokit directly, no AWS SDK dependency.
+ * Auth-agnostic (no specific auth provider) and cloud-agnostic (git/Octokit
+ * directly, no AWS SDK dependency).
  */
 export class CmsWorker {
-  // Built by ensureGitHubAuth(), not the constructor, so that a credential
-  // config error is throwable somewhere start()'s catch can record it. Kept a
-  // FIELD rather than a getter because two test files assign a mock over it
-  // -- cms-worker.test.ts:487 and cms-worker-merge-poll.test.ts:68, the same
-  // two worker-context.ts's INVARIANT names -- and ensureGitHubAuth() will not
+  // Built by ensureGitHubAuth(), not the constructor, so a credential config
+  // error is throwable somewhere start()'s catch can record it. A FIELD rather
+  // than a getter because two test files assign a mock over it (the same
+  // INVARIANT worker-context.ts states), and ensureGitHubAuth() will not
   // overwrite one that is already there.
   private octokit!: Octokit
   private taskDir: string
@@ -160,17 +147,14 @@ export class CmsWorker {
   private baseBranch: string
   // Workspace directories use sanitized names; git refs (fetch/rev-list/merge
   // against origin/<baseBranch>) must keep using the raw `baseBranch` name.
-  // Computed once so both filesystem call sites (refreshBaseBranchWorkspace's
-  // path.join and rebaseActiveBranches' skip comparison) agree, instead of
-  // re-deriving it (and risking drift) at each use.
+  // Computed once so both filesystem call sites agree instead of re-deriving it
+  // and risking drift.
   private sanitizedBaseBranch: SanitizedBranchName
   // This deployment's own settings branch — see CmsWorkerConfig.deploymentName.
-  // `pushSettingsBranches` pushes ONLY this branch, never any other
-  // `canopycms-settings-*` branch it happens to find locally.
-  //
-  // Resolved lazily by ensureSettingsBranch(), NOT in the constructor: see that
-  // method's doc comment. `undefined` here means "not resolved yet", never "no
-  // settings branch".
+  // `pushSettingsBranches` pushes ONLY this branch, never another
+  // `canopycms-settings-*` it happens to find locally. Resolved lazily by
+  // ensureSettingsBranch(), NOT in the constructor (see that method):
+  // `undefined` means "not resolved yet", never "no settings branch".
   private settingsBranchResolved?: string
   private activeTimeouts = new Set<NodeJS.Timeout>()
   private running = false
@@ -183,16 +167,14 @@ export class CmsWorker {
   private releaseLockFn: (() => Promise<void>) | null = null
   private contentRoot: string
   private log = cmsTaskQueueLogger
-  // PR-W1: self-reported liveness/health snapshot, written to
-  // worker-status.json. Normally initialized once at the top of start();
-  // see ensureStatusReport() for the lazy-init fallback.
+  // Self-reported liveness/health snapshot, written to worker-status.json.
+  // Normally initialized at the top of start(); see ensureStatusReport() for
+  // the lazy-init fallback.
   private statusReport?: WorkerStatusReport
-  // Which GitHub credential this worker uses, resolved ONCE so that Octokit
-  // and every git URL provably authenticate as the same identity.
-  //
-  // Resolved lazily by ensureGitHubAuth(), NOT in the constructor: see that
-  // method's doc comment. `undefined` here means "not resolved yet", never
-  // "no credential".
+  // Which GitHub credential this worker uses, resolved ONCE so Octokit and
+  // every git URL provably authenticate as the same identity. Resolved lazily
+  // by ensureGitHubAuth(), NOT in the constructor (see that method):
+  // `undefined` means "not resolved yet", never "no credential".
   private githubAuth?: ResolvedGitHubAuth
 
   constructor(private config: CmsWorkerConfig) {
@@ -210,12 +192,10 @@ export class CmsWorker {
   }
 
   /**
-   * Lazily get (and initialize if necessary) this worker's self-reported
-   * status object (PR-W1). Normally set once, up front, at the top of
-   * start(). The lazy fallback here covers two cases: (1) something in
-   * start() reaching a status-write point before that normal init runs
-   * (defensive -- see start()'s catch), and (2) unit tests that exercise
-   * syncGit()/processTaskQueue() directly without calling start() first.
+   * This worker's self-reported status object, initialized on first use.
+   * Normally set at the top of start(); the lazy fallback covers something in
+   * start() reaching a status-write point before that (see start()'s catch) and
+   * unit tests driving syncGit()/processTaskQueue() without calling start().
    */
   private ensureStatusReport(): WorkerStatusReport {
     if (!this.statusReport) {
@@ -229,28 +209,23 @@ export class CmsWorker {
    * Resolve this deployment's settings branch, throwing if the infra-stamped
    * deployment name is not a valid git ref component.
    *
-   * Routed through the shared resolver, not a local `?? 'prod'`: it is the
+   * Routed through the shared resolver, not a local `?? 'prod'`: that is the
    * single definition of the env > config > mode-default precedence the Lambda
-   * already follows, and the only place the resolved value is validated.
-   * Without it the worker could silently own a different settings branch than
-   * the Lambda writing to the same workspace -- and pushSettingsBranches would
-   * then report the real branch as foreign and never push it.
+   * follows, and the only place the resolved value is validated. Without it the
+   * worker can silently own a different settings branch than the Lambda writing
+   * to the same workspace, and pushSettingsBranches then reports the real branch
+   * as foreign and never pushes it.
    *
-   * DEFERRED out of the constructor deliberately, and this is the whole point
-   * of the method existing. Resolving there made the throw land during `new
-   * CmsWorker(...)` (canopycms-cdk/worker/index.ts constructs before it calls
-   * start()), which is BEFORE the only code that writes `lastFatalError` --
-   * start()'s catch. The result was billed as "a loud startup exit" but was
-   * nothing of the kind: with systemd `Type=simple` + `Restart=always` and no
-   * cfn-signal, an invalid deployment name produced an invisible ~5s
-   * crash-loop that `cdk deploy` reported as success while the admin panel
-   * showed the worker as 'absent' with no fatal error to explain it. Resolving
-   * inside start()'s try block instead means the same throw is recorded to
-   * worker-status.json and surfaces in the admin panel.
+   * DEFERRED out of the constructor deliberately, which is the whole point of
+   * the method existing: canopycms-cdk/worker/index.ts constructs the worker
+   * before calling start(), so a throw during `new CmsWorker(...)` lands BEFORE
+   * the only code that writes `lastFatalError` -- start()'s catch. Under
+   * systemd `Type=simple` + `Restart=always` with no cfn-signal, that is an
+   * invisible ~5s crash-loop that `cdk deploy` reports as success while the
+   * admin panel shows the worker 'absent' with no fatal error to explain it.
    *
-   * Lazy rather than start()-only so the value is still available to unit tests
-   * that drive pushSettingsBranches() directly without calling start() -- the
-   * same reason ensureStatusReport() above is shaped this way. Idempotent: the
+   * Lazy rather than start()-only so unit tests driving pushSettingsBranches()
+   * still see the value, exactly as ensureStatusReport() above. Idempotent: the
    * resolver is pure, so a later call returns the identical string.
    */
   private ensureSettingsBranch(): string {
@@ -266,15 +241,11 @@ export class CmsWorker {
    * Build the {@link WorkerContext} handed to the extracted clusters
    * (task-runner.ts, git-sync.ts, rebase.ts, history-rewrite.ts).
    *
-   * Built FRESH on every call rather than once in the constructor, and the
-   * instance-backed members are functions rather than copied values. Both
-   * choices exist for the same reason: the test suite drives this class by
-   * replacing `octokit` and `buildGitHubUrl` ON THE INSTANCE, by setting
-   * `running` directly, and by subclassing to override the two rebase test
-   * hooks. A context that captured any of those at construction time would hand
-   * the extracted code the pre-test value -- which for `buildGitHubUrl` means a
-   * test's push going to github.com for real instead of its local fixture repo.
-   * See WorkerContext's doc comment for the full list.
+   * Built FRESH on every call, with instance-backed members as functions rather
+   * than copied values. See WorkerContext's INVARIANT: a context that captured
+   * any of them at construction time would hand the extracted code the pre-test
+   * value, which for `buildGitHubUrl` means a test's push going to github.com
+   * for real instead of its local fixture repo.
    */
   private ctx(): WorkerContext {
     return {
@@ -309,32 +280,25 @@ export class CmsWorker {
     workerLog('CMS Worker starting...')
     this.ensureStatusReport()
 
-    // Acquire lock to prevent concurrent workers
     await this.acquireLock()
 
-    // Everything below runs while holding the cross-host worker lock. A
-    // failure here (most notably the empty-remote guard inside
-    // ensureRemoteGit) means the process is about to exit, and systemd
-    // (Restart=always) will retry — but a still-held lock would make every
-    // retry fail with ELOCKED for up to lockStaleMs. Release before
-    // rethrowing so the next start() (this process's retry, or another host)
-    // can acquire immediately. We deliberately do NOT reorder ensureRemoteGit
+    // Everything below runs while holding the cross-host worker lock. A failure
+    // here (most notably the empty-remote guard inside ensureRemoteGit) means
+    // the process is about to exit and systemd (Restart=always) will retry —
+    // but a still-held lock would make every retry fail with ELOCKED for up to
+    // lockStaleMs, so release before rethrowing. Do NOT reorder ensureRemoteGit
     // ahead of acquireLock: two hosts cold-starting at once would then both
-    // race to `git clone --bare` into the same remoteGitPath (the same class
-    // of race that acquireProvisioningLock guards against for workspace
-    // clones elsewhere) — acquiring the lock first is what already
-    // serializes that.
+    // race to `git clone --bare` into the same remoteGitPath, and acquiring the
+    // lock first is what serializes that.
     try {
       // FIRST inside the try, before any I/O: an infra-stamped deployment name
-      // that is not a valid git ref component throws here, where the catch
-      // below records it to worker-status.json. Resolving it in the
-      // constructor (as this used to) put the throw outside every
-      // status-writing path -- see ensureSettingsBranch()'s doc comment.
+      // that is not a valid git ref component throws HERE, where the catch
+      // below records it to worker-status.json. See ensureSettingsBranch().
       this.ensureSettingsBranch()
 
-      // Same reasoning as the line above, and the same shape: a
-      // half-configured credential throws HERE, inside the try, rather than
-      // out of `new CmsWorker(...)` where nothing could record it.
+      // Same shape, same reason: a half-configured credential throws HERE,
+      // inside the try, rather than out of `new CmsWorker(...)` where nothing
+      // could record it.
       this.ensureGitHubAuth()
 
       // BEFORE ensureRemoteGit(): its clone is the first thing to use the
@@ -342,16 +306,12 @@ export class CmsWorker {
       // credential. See preflightGitHubAppAuth().
       await this.preflightGitHubAppAuth()
 
-      // Ensure remote.git exists (init bare repo if first run)
       await this.ensureRemoteGit()
 
-      // Recover any orphaned tasks from a previous crash, immediately rather
-      // than waiting for the first processTaskQueue() poll (taskPollInterval,
-      // default 5s) to run it. Not the only call site any more -
-      // processTaskQueue() below now repeats this on every cycle; see its
-      // doc comment for why a boot-only call is insufficient once the
-      // worker's ASG rolls on every `cdk deploy` (CanopyCmsService's
-      // UpdatePolicy).
+      // Recover orphaned tasks immediately rather than waiting for the first
+      // processTaskQueue() poll. Not the only call site: processTaskQueue()
+      // repeats this every cycle, and its doc comment says why a boot-only call
+      // is insufficient.
       const recovered = await recoverOrphanedTasks(
         this.taskDir,
         orphanRecoveryMaxAgeMs(this.ctx()),
@@ -361,22 +321,21 @@ export class CmsWorker {
         workerLog(`Recovered ${recovered} orphaned task(s)`)
       }
 
-      // Run initial sync + cache refresh immediately
       const initialTasks: Promise<void>[] = [this.syncGit()]
       if (this.config.refreshAuthCache) {
         initialTasks.push(this.refreshAuthCache())
       }
       await Promise.allSettled(initialTasks)
     } catch (err) {
-      // PR-W1: surface a startup failure (e.g. the empty-remote guard's
-      // poisoned remote.git) to the admin panel via worker-status.json,
-      // not only journald/CloudWatch. Best-effort and BEFORE releaseLock():
-      // a status-write failure must never block releasing the lock.
+      // Surface a startup failure (e.g. the empty-remote guard's poisoned
+      // remote.git) to the admin panel via worker-status.json, not only
+      // journald/CloudWatch. Best-effort and BEFORE releaseLock(): a
+      // status-write failure must never block releasing the lock.
       const report = this.ensureStatusReport()
       report.lastFatalError = {
-        // [REDACT] Persisted to worker-status.json and served to the
-        // browser by the admin panel -- must never carry the bot token
-        // that a poisoned/failed git URL (buildGitHubUrl()) can embed.
+        // [REDACT] Persisted to worker-status.json and served to the browser by
+        // the admin panel -- must never carry the bot token a poisoned or
+        // failed git URL (buildGitHubUrl()) can embed.
         message: redactCredentials(getErrorMessage(err)),
         at: new Date().toISOString(),
         phase: 'startup',
@@ -393,16 +352,14 @@ export class CmsWorker {
       throw err
     }
 
-    // Start recurring task loops using setTimeout chaining
-    // (avoids setInterval overlap when tasks take longer than the interval)
     const taskInterval = this.config.taskPollInterval ?? 5_000
     const gitInterval = this.config.gitSyncInterval ?? 5 * 60_000
 
     this.scheduleLoop(() => this.processTaskQueue(), taskInterval)
     // The wrapper, not syncGit() itself: a failed sync is where a rotated or
-    // revoked GitHub credential is noticed. See its doc comment. start()'s own
-    // initial syncGit() above stays unwrapped -- there is no stale credential
-    // to refresh one line after reading it at boot.
+    // revoked GitHub credential is noticed. start()'s own initial syncGit()
+    // above stays unwrapped -- there is no stale credential to refresh one line
+    // after reading it at boot.
     this.scheduleLoop(() => this.syncGitWithCredentialRefresh(), gitInterval)
 
     if (this.config.refreshAuthCache) {
@@ -422,7 +379,6 @@ export class CmsWorker {
       clearTimeout(t)
     }
     this.activeTimeouts.clear()
-    // Wait for all in-flight operations to complete (up to taskTimeoutMs)
     let drainTimer: NodeJS.Timeout | undefined
     await Promise.race([
       Promise.allSettled([...this.activeOperations]),
@@ -439,26 +395,23 @@ export class CmsWorker {
    * Acquire the cross-host worker lock (DEP-C2).
    *
    * The task queue is single-consumer (see task-queue/task-queue.ts): two
-   * concurrent workers would double-process tasks (duplicate pushes, duplicate
-   * PRs). The workspace lives on a shared filesystem (EFS), so mutual
-   * exclusion must be sound ACROSS HOSTS — a PID liveness probe
-   * (`process.kill(pid, 0)`) only means something on the holder's own machine
-   * and must never participate in staleness decisions.
+   * concurrent workers would double-process tasks, duplicating pushes and PRs.
+   * The workspace lives on EFS, so mutual exclusion must be sound ACROSS HOSTS
+   * — a PID liveness probe (`process.kill(pid, 0)`) means something only on the
+   * holder's own machine and must NEVER participate in staleness decisions.
    *
    * proper-lockfile provides a heartbeat lease with no PID involved: the lock
    * is a directory created atomically (mkdir — atomic on NFS/EFS), the holder
-   * refreshes its mtime every lockStaleMs/2, and the lock is considered
-   * abandoned — and taken over — only when that heartbeat is older than
-   * lockStaleMs. Liveness is judged purely by heartbeat freshness.
+   * refreshes its mtime every lockStaleMs/2, and the lock is abandoned, and
+   * taken over, only once that heartbeat is older than lockStaleMs.
    *
    * No acquire retries: a second worker exits immediately, matching daemon
-   * semantics (the supervisor restarts it later). After a crash, the dead
-   * holder's heartbeat expires within lockStaleMs and the next start succeeds.
+   * semantics. After a crash the dead holder's heartbeat expires within
+   * lockStaleMs and the next start succeeds.
    *
-   * Staleness is judged by comparing the lock's mtime against the local
-   * clock, so correct cross-host takeover assumes reasonable clock agreement
-   * between hosts (e.g. NTP); with the default TTL, ordinary clock skew is
-   * negligible, but a host with a badly wrong clock could misjudge liveness.
+   * Staleness compares the lock's mtime against the LOCAL clock, so correct
+   * cross-host takeover assumes reasonable clock agreement (NTP). Ordinary skew
+   * is negligible at the default TTL; a badly wrong clock misjudges liveness.
    */
   private async acquireLock(): Promise<void> {
     await fs.mkdir(this.taskDir, { recursive: true })
@@ -467,9 +420,9 @@ export class CmsWorker {
         lockfilePath: this.lockFilePath,
         stale: this.lockStaleMs,
         onCompromised: (err) => {
-          // Our heartbeat could not be maintained (lock deleted or taken
-          // over). Another worker may now be consuming the queue — stop
-          // processing to preserve the single-consumer invariant.
+          // The heartbeat could not be maintained (lock deleted or taken over),
+          // so another worker may now be consuming the queue: stop processing
+          // to preserve the single-consumer invariant.
           workerLogError('Worker lock compromised, shutting down:', getErrorMessage(err))
           this.releaseLockFn = null // the lock is already lost; nothing to release
           void this.stop()
@@ -497,9 +450,9 @@ export class CmsWorker {
   }
 
   /**
-   * Schedule a function to run repeatedly with setTimeout chaining.
-   * The next invocation starts `interval` ms after the previous one completes,
-   * preventing overlapping executions.
+   * Run `fn` repeatedly, the next invocation starting `interval` ms after the
+   * previous one COMPLETES. setTimeout chaining rather than setInterval, so
+   * executions cannot overlap when one runs longer than the interval.
    */
   private scheduleLoop(fn: () => Promise<void>, interval: number): void {
     const run = () => {
@@ -522,18 +475,16 @@ export class CmsWorker {
   /**
    * Whether the bare repo at `gitDir` has a local `refs/heads/<baseBranch>`.
    *
-   * Uses an explicit `--git-dir` invocation rather than `simpleGit({ baseDir
-   * })` so this also works in sandboxed/CI git environments that set
-   * `safe.bareRepository=explicit` (which refuses cwd-based discovery of
-   * bare repos but expressly allows `--git-dir` — see
-   * GitManager.bareRemoteHasBranch for the same pattern).
+   * Explicit `--git-dir` rather than `simpleGit({ baseDir })`, so this also
+   * works where `safe.bareRepository=explicit` refuses cwd-based discovery of
+   * bare repos but expressly allows `--git-dir` (same pattern as
+   * GitManager.bareRemoteHasBranch).
    *
-   * Deliberately omits `--quiet`: simple-git only treats a task as failed
-   * when the process both exits non-zero AND writes to stderr
-   * (isTaskError), so a quiet, silent-on-failure `--verify` would leave a
-   * missing branch indistinguishable from success. Without `--quiet`,
-   * `rev-parse --verify` writes its "fatal: ..." to stderr on failure, which
-   * is what makes simple-git reject the promise here.
+   * Deliberately omits `--quiet`: simple-git treats a task as failed only when
+   * the process exits non-zero AND writes to stderr, so a silent-on-failure
+   * `--verify` would leave a missing branch indistinguishable from success.
+   * Without `--quiet`, `rev-parse --verify` writes "fatal: ..." to stderr,
+   * which is what makes simple-git reject the promise here.
    */
   private async verifyBaseBranchExists(gitDir: string): Promise<void> {
     await simpleGit().raw([
@@ -551,32 +502,27 @@ export class CmsWorker {
    *
    * `git clone https://x-access-token:<token>@github.com/...` records that URL
    * verbatim as `remote.origin.url`, and for `remote.git` that config lives on
-   * shared EFS. The security model in docs/deploying-to-aws.md -- "If Lambda is
-   * compromised, an attacker can read/write content on EFS but cannot push to
-   * GitHub", "Secrets stay on the worker" -- is false while that string is
-   * there: a compromised Lambda could read the token off EFS and, despite
-   * having no egress of its own, exfiltrate it by writing it into branch
-   * content the worker then pushes to GitHub.
+   * shared EFS. The security model in docs/deploying-to-aws.md -- a compromised
+   * Lambda can read/write EFS content but cannot push to GitHub, secrets stay
+   * on the worker -- is false while that string is there: the Lambda could read
+   * the token off EFS and, with no egress of its own, exfiltrate it by writing
+   * it into branch content the worker then pushes to GitHub.
    *
    * Nothing needs the remote: every push passes the URL explicitly as an
-   * argument (see the `git.push(this.buildGitHubUrl(), ...)` call sites), and
-   * `verifyBaseBranchExists` reads local refs.
+   * argument, and `verifyBaseBranchExists` reads local refs.
    *
    * VERIFIES rather than assuming: it re-reads the config and throws if the URL
-   * survives, because the previous code's `.catch(() => {})` meant a failed
-   * scrub was indistinguishable from a successful one.
+   * survives, so a failed scrub is never indistinguishable from a clean one.
    */
   private async scrubPersistedRemote(gitDir: string): Promise<void> {
     const git = simpleGit({ baseDir: gitDir })
-    // `git config --get` exits 1 with no output when the key is absent.
-    // simple-git does NOT reliably throw on that -- verified against
-    // simple-git 3.36: it resolves with an empty string -- so an empty result
-    // must be read as "absent" too. Treating "" as a surviving URL is what
-    // made the first version of this reject every clean scrub.
+    // `git config --get` exits 1 with no output when the key is absent, and
+    // simple-git resolves with an empty string rather than throwing (verified
+    // against 3.36), so an empty result means "absent" too.
     //
-    // 'unreadable' is deliberately distinct from 'absent'. A read that fails
-    // for any OTHER reason must not be mistaken for "no token here": that
-    // would let the pre-check below short-circuit and skip the scrub entirely,
+    // 'unreadable' is deliberately DISTINCT from 'absent'. A read that fails
+    // for any other reason must not be mistaken for "no token here": that would
+    // let the pre-check below short-circuit and skip the scrub entirely,
     // silently leaving a token-bearing config on shared EFS -- the exact
     // outcome this function exists to prevent. Fail closed and attempt the
     // removal instead.
@@ -586,17 +532,12 @@ export class CmsWorker {
         return url === '' ? null : url
       } catch {
         // ANY throw is 'unreadable', never 'absent'. The genuinely-absent case
-        // does not reach here at all -- simple-git resolves with '' (verified
-        // against 3.36: it only treats a task as failed when stderr is
-        // non-empty, and a missing key writes nothing to stderr). So a throw
+        // does not reach here at all (simple-git resolves with ''), so a throw
         // means something actually went wrong, and mapping that to "no token
-        // here" would be the one fail-OPEN reading available.
-        //
-        // An earlier version tried to classify git's exit-1 "key not found"
-        // from the message text. That was dead code -- simple-git's GitError
-        // message is raw stdout+stderr with no exit-code text -- and its
-        // empty-message fallback mapped a hypothetical throw to 'absent',
-        // which is exactly the direction this must not fail.
+        // here" is the one fail-OPEN reading available. Classifying git's
+        // exit-1 "key not found" from the message text is not an option either:
+        // simple-git's GitError message is raw stdout+stderr with no exit-code
+        // text to match on.
         return 'unreadable'
       }
     }
@@ -613,15 +554,15 @@ export class CmsWorker {
       await git.removeRemote('origin')
     } catch (err: unknown) {
       // Reached only from the 'unreadable' path, where the remote may in fact
-      // not exist. Let the verification below decide rather than failing here:
-      // it is the authoritative check, and it fails closed.
+      // not exist. Let the verification below decide rather than failing here;
+      // it is the authoritative check and it fails closed.
       workerLogWarn(
         `  removeRemote('origin') failed in ${gitDir}: ${getErrorMessage(err)} -- verifying directly`,
       )
     }
 
-    // Fails closed on BOTH a surviving URL and an unverifiable read: if we
-    // cannot prove the token is gone from shared storage, we do not proceed.
+    // Fails closed on BOTH a surviving URL and an unverifiable read: without
+    // proof the token is gone from shared storage, do not proceed.
     const remaining = await readOriginUrl()
     if (remaining !== null) {
       throw new Error(
@@ -636,19 +577,17 @@ export class CmsWorker {
   }
 
   /**
-   * Ensure remote.git bare repo exists.
-   * On first run, clone from GitHub as a bare repo.
+   * Ensure the remote.git bare repo exists, cloning it from GitHub on first
+   * run.
    *
    * Empty-remote guard: simple-git's bare clone of an EMPTY GitHub repo (no
-   * commits, or a base branch that's never been pushed) exits 0 and produces
-   * a refs-less bare repo — HEAD points at an unborn branch. `fs.stat`
-   * cannot distinguish this from a healthy clone, so left unchecked it
-   * silently poisons remote.git: every later branch operation (Lambda-side
-   * clone provisioning, worker pushes) breaks, and the fs.stat short-circuit
-   * means it never heals on its own. We verify the base branch exists right
-   * after cloning and again on the already-exists fast path, since a
-   * previous run could have left a poisoned remote.git behind before this
-   * guard existed.
+   * commits, or a base branch never pushed) exits 0 and produces a refs-less
+   * bare repo whose HEAD points at an unborn branch. `fs.stat` cannot tell that
+   * from a healthy clone, so left unchecked it silently poisons remote.git —
+   * every later branch operation breaks and the fs.stat short-circuit means it
+   * never heals. The base branch is therefore verified right after cloning AND
+   * on the already-exists fast path, since a previous run can have left a
+   * poisoned remote.git behind.
    */
   private async ensureRemoteGit(): Promise<void> {
     let exists: boolean
@@ -660,22 +599,20 @@ export class CmsWorker {
     }
 
     if (exists) {
-      // SELF-HEAL, before anything else touches this repo. The previous
-      // already-exists path fast-returned without ever re-checking the config,
-      // so a token that survived one scrub survived forever -- and a clone
-      // interrupted by SIGKILL/power-off between `git clone` and the scrub left
-      // a repo whose config already held the token, which additionally hit the
-      // "delete remote.git and restart" refusal below and so sat on EFS until
-      // an operator acted.
+      // SELF-HEAL, before anything else touches this repo: re-checked on every
+      // boot, not only at clone time, so a token that survived one scrub does
+      // not survive forever, and a clone interrupted between `git clone` and
+      // the scrub cannot leave a token-bearing config sitting on EFS until an
+      // operator acts.
       await this.scrubPersistedRemote(this.remoteGitPath)
 
       try {
         await this.verifyBaseBranchExists(this.remoteGitPath)
       } catch (err) {
         workerLogError(`remote.git base branch verification failed: ${getErrorMessage(err)}`)
-        // Do NOT auto-delete: an existing remote.git could hold unpushed
-        // canopycms-settings-* branches or other state worth preserving.
-        // Deletion here is the operator's call, not ours.
+        // Do NOT auto-delete: an existing remote.git can hold unpushed
+        // canopycms-settings-* branches or other state worth preserving, so
+        // deletion is the operator's call.
         throw new Error(
           `remote.git at ${this.remoteGitPath} has no branch '${this.baseBranch}' (likely cloned while the GitHub repo was empty). Delete ${this.remoteGitPath} and restart the worker to re-clone.`,
         )
@@ -686,10 +623,10 @@ export class CmsWorker {
     workerLog('Initializing remote.git from GitHub...')
     const git = simpleGit()
 
-    // Clone under a TEMP name and rename into place only once the token has
-    // been scrubbed and the repo verified, so `remote.git` never exists on EFS
-    // in a token-bearing state. A crash mid-clone now leaves only this staging
-    // directory, which the next boot deletes -- rather than a poisoned
+    // Clone under a TEMP name and rename into place only once the token is
+    // scrubbed and the repo verified, so `remote.git` never exists on EFS in a
+    // token-bearing state. A crash mid-clone leaves only this staging
+    // directory, which the next boot deletes, rather than a poisoned
     // `remote.git` that fs.stat cannot distinguish from a healthy one.
     const stagingPath = `${this.remoteGitPath}.cloning`
     await fs.rm(stagingPath, { recursive: true, force: true })
@@ -706,8 +643,8 @@ export class CmsWorker {
     } catch (err) {
       workerLogError(`remote.git clone failed: ${redactCredentials(getErrorMessage(err))}`)
       // Deleting before throwing is what makes this recoverable: the next
-      // start() sees no remote.git and re-clones, instead of being stuck
-      // forever behind a poisoned bare repo that fs.stat alone can't detect.
+      // start() sees no remote.git and re-clones, instead of sticking forever
+      // behind a poisoned bare repo fs.stat alone cannot detect.
       await fs.rm(stagingPath, { recursive: true, force: true })
       throw new Error(
         `remote.git clone of ${this.config.githubOwner}/${this.config.githubRepo} failed or has no branch '${this.baseBranch}' - the GitHub repository may be empty, or the base branch may not exist. Push an initial commit to '${this.baseBranch}' and restart the worker (systemd will retry automatically).`,
@@ -720,24 +657,18 @@ export class CmsWorker {
 
   // --- Task-queue cluster (worker/task-runner.ts) ------------------------
   //
-  // READ THIS BEFORE STUBBING ANY DELEGATOR BELOW. They are not all the same,
-  // and the difference is invisible from here.
+  // READ THIS BEFORE STUBBING ANY DELEGATOR BELOW: they are not all the same,
+  // and the difference is invisible from here. `processTaskQueue` is the public
+  // loop entry `scheduleLoop` drives, so it IS on the production path; the
+  // other three exist ONLY so test files can reach the implementations through
+  // the instance, since the extracted modules call each other at module level.
   //
-  // `processTaskQueue` is the public loop entry `scheduleLoop` drives, so it IS
-  // on the production path. The other three exist ONLY so the existing test
-  // files can reach the implementations through the instance; production never
-  // dispatches through them, because the extracted modules call each other
-  // directly at module level.
-  //
-  // The consequence: replacing one of these on an instance only affects
-  // production behaviour if the context also routes it. Two do --
-  // `executeTask` and `pushBranchToGitHub` are on `WorkerContext` precisely
-  // because cms-worker.test.ts assigns over them and then asserts on the
-  // replacement. `updateBranchMetadata` is NOT: the test calls it directly and
-  // never stubs it, so a stub installed there today would be a silent no-op.
-  // If you need to stub a method that isn't on the context, add it to
-  // WorkerContext and route the internal caller through `ctx` -- do not assume
-  // the delegator's existence means the stub takes effect.
+  // So replacing one of these on an instance affects production behaviour only
+  // if the context also routes it. `executeTask` and `pushBranchToGitHub` are
+  // on `WorkerContext` for exactly that reason; `updateBranchMetadata` is NOT,
+  // so a stub installed there is a silent no-op. To stub a method that is not
+  // on the context, add it to WorkerContext and route the internal caller
+  // through `ctx` -- a delegator's existence does not make a stub take effect.
 
   async processTaskQueue(): Promise<void> {
     return processTaskQueue(this.ctx())
@@ -760,16 +691,11 @@ export class CmsWorker {
    * Octokit client from it.
    *
    * DEFERRED out of the constructor deliberately, exactly as
-   * `ensureSettingsBranch()` is, and for the same reason that method records:
+   * `ensureSettingsBranch()` is and for the reason that method records:
    * `resolveWorkerGitHubAuth` throws for a half-configured credential (both
-   * set, neither set, an unusable mint timeout or refresh interval), and a throw during
-   * `new CmsWorker(...)` lands BEFORE the only code that writes
-   * `lastFatalError` — start()'s catch. The AWS entrypoint constructs the
-   * worker and calls start() separately, and its `main().catch()` only logs
-   * and exits, so a constructor throw is an invisible ~5s systemd crash-loop
-   * that `cdk deploy` reports as success while the admin panel shows the
-   * worker 'absent' with no fatal error to explain it. That is a shipped
-   * regression this codebase has already paid for once (#198).
+   * set, neither set, an unusable mint timeout or refresh interval), and a
+   * throw during `new CmsWorker(...)` lands BEFORE the only code that writes
+   * `lastFatalError` — start()'s catch.
    *
    * Idempotent, and it does NOT replace an `octokit` a test has already
    * assigned onto the instance — see the field's comment.
@@ -785,13 +711,11 @@ export class CmsWorker {
   }
 
   /**
-   * The Octokit client, built on first use.
-   *
-   * Every read goes through here rather than touching the field, because the
-   * field is no longer populated by the constructor: a method reached without
-   * start() would otherwise see `undefined`. `rebaseActiveBranches()` is
-   * exactly that case — apps/test-app's e2e route calls it directly, and its
-   * `pollMergeState` dispatch reads `ctx.octokit()`.
+   * The Octokit client, built on first use. Every read goes through here rather
+   * than touching the field, which the constructor does not populate: a method
+   * reached without start() would otherwise see `undefined`.
+   * `rebaseActiveBranches()` is exactly that case — apps/test-app's e2e route
+   * calls it directly, and its `pollMergeState` dispatch reads `ctx.octokit()`.
    */
   private octokitClient(): Octokit {
     this.ensureGitHubAuth()
@@ -799,21 +723,18 @@ export class CmsWorker {
   }
 
   /**
-   * The single seam through which every git-over-HTTPS credential reaches a
-   * git command. The only other consumer of the credential is Octokit, built
-   * from the same resolution by `ensureGitHubAuth()` above.
+   * The single seam through which every git-over-HTTPS credential reaches a git
+   * command. The only other consumer is Octokit, built from the same resolution
+   * by `ensureGitHubAuth()` above.
    *
-   * Async because the credential need not be a value the worker already
-   * holds: under GitHub App auth `resolveGitToken` mints an installation
-   * token, which lasts about an hour. Nothing may cache what this returns —
-   * a URL built from an installation token goes stale with it. Resolving per
-   * use is cheap: `@octokit/auth-app` answers from its own cache until the
-   * token is near expiry, so the usual cost is a resolved microtask, and the
-   * token path is a bare `async` return.
+   * Async because under GitHub App auth `resolveGitToken` mints an installation
+   * token lasting about an hour. NOTHING may cache what this returns — a URL
+   * built from an installation token goes stale with it — and resolving per use
+   * is cheap, since `@octokit/auth-app` answers from its own cache until the
+   * token is near expiry.
    *
    * A mint failure propagates AS THROWN, carrying the `.status` that
-   * `isPermanentTaskFailure` (task-runner.ts:92) classifies on — see
-   * github-auth.ts.
+   * `isPermanentTaskFailure` classifies on — see github-auth.ts.
    *
    * Do NOT add a parallel token accessor alongside it. Every instance-backed
    * WorkerContext member stays a function precisely so tests can replace it
@@ -828,36 +749,31 @@ export class CmsWorker {
   /**
    * Prove the GitHub App credential works before anything depends on it.
    *
-   * Without this the first failure comes out of `ensureRemoteGit`'s bare
-   * clone below, whose catch reads "the GitHub repository may be empty, or
-   * the base branch may not exist" — which would send an operator holding a
-   * bad private key to go looking for a repository problem that does not
-   * exist. Called from start()'s try, so the failure is also recorded as
-   * `lastFatalError` in worker-status.json and reaches the admin panel.
+   * Without this the first failure comes out of `ensureRemoteGit`'s bare clone
+   * below, whose catch blames the repository ("may be empty, or the base branch
+   * may not exist") and sends an operator holding a bad private key looking for
+   * a problem that does not exist. Called from start()'s try, so the failure is
+   * also recorded as `lastFatalError` and reaches the admin panel. No-op on the
+   * token path: a PAT is a literal, so the first real request checks everything
+   * this could.
    *
-   * No-op on the token path: a PAT is a literal, so there is nothing to
-   * check that the first real request would not check anyway.
-   *
-   * FATAL UNLESS THE FAILURE POSITIVELY LOOKS TRANSIENT. Both halves of that
-   * are load-bearing.
-   *
-   * Not always fatal, because the two credential paths must degrade alike: on
-   * the token path a GitHub 502 during boot is absorbed (a warm `remote.git`
-   * short-circuits `ensureRemoteGit`, and `Promise.allSettled` swallows the
-   * initial `syncGit`), so the worker starts and its loops retry. Rethrowing
-   * every error class would make the App path exit instead, and systemd
-   * (Restart=always) would crash-loop it until GitHub recovered — each
-   * iteration telling the operator to go and check their private key.
+   * FATAL UNLESS THE FAILURE POSITIVELY LOOKS TRANSIENT. Both halves are
+   * load-bearing. Not always fatal, because the two credential paths must
+   * degrade alike: on the token path a GitHub 502 during boot is absorbed (a
+   * warm `remote.git` short-circuits `ensureRemoteGit`, `Promise.allSettled`
+   * swallows the initial `syncGit`) so the worker starts and its loops retry,
+   * while rethrowing every error class would make the App path exit and systemd
+   * crash-loop it until GitHub recovered — each iteration telling the operator
+   * to check their private key.
    *
    * But fail CLOSED, via `isTransientAuthFailure` rather than the inverse of
-   * `isPermanentTaskFailure`. That classifier defaults an error with no HTTP
-   * status to transient, which is right on the task path (bounded by
-   * `maxRetries`) and wrong here (bounded by nothing): a key that never
-   * reaches GitHub at all — the wrong key type, or one too mangled to sign
-   * with — fails locally and status-lessly, so "default to transient" would
-   * boot a worker with a dead credential, record no `lastFatalError`, and show
-   * healthy in the admin panel while every task and every sync failed. See
-   * isTransientAuthFailure in github-auth.ts.
+   * `isPermanentTaskFailure`: that classifier defaults a status-less error to
+   * transient, which is right on the task path (bounded by `maxRetries`) and
+   * wrong here (bounded by nothing). A key that never reaches GitHub at all —
+   * the wrong type, or too mangled to sign with — fails locally and
+   * status-lessly, so defaulting to transient would boot a worker with a dead
+   * credential, record no `lastFatalError`, and show healthy in the admin panel
+   * while every task and every sync failed.
    */
   private async preflightGitHubAppAuth(): Promise<void> {
     if (!this.config.githubAppAuth) return
@@ -873,10 +789,10 @@ export class CmsWorker {
         )
         return
       }
-      // Re-thrown with context, unlike buildGitHubUrl() above, which must
-      // preserve the error identity for task classification. Nothing
-      // classifies a startup failure -- start()'s catch records the message
-      // and the process exits -- so here the operator-facing wording wins.
+      // Re-thrown WITH context, unlike buildGitHubUrl() above, which must
+      // preserve the error identity for task classification. Nothing classifies
+      // a startup failure -- start()'s catch records the message and the
+      // process exits -- so the operator-facing wording wins here.
       throw new Error(
         `GitHub App authentication failed: ${detail}. ` +
           'Check the app id, the installation id, and that the private key belongs to that app.',
@@ -886,20 +802,19 @@ export class CmsWorker {
   }
 
   /**
-   * The workspace directory for a branch named by its GIT REF name -- the
-   * form task payloads carry (`context.branch.name`), not the directory form.
+   * The workspace directory for a branch named by its GIT REF name -- the form
+   * task payloads carry (`context.branch.name`), not the directory form.
    *
    * These differ for any name outside `[A-Za-z0-9._-]`, `/` being the obvious
    * one: workspaces are provisioned under `sanitizeBranchName(...)` (see
    * paths/branch.ts's `resolveBranchPaths`), so `feature/x` lives in
-   * `feature-x`. Joining the raw name instead silently addresses a directory
-   * that does not exist -- which for the metadata writers below meant the
-   * update was quietly dropped, and for the leased push meant the
-   * history-rewrite marker read as absent and the push went out unleased,
-   * wedging exactly the branch this workstream exists to unwedge.
+   * `feature-x`. Joining the RAW name instead silently addresses a directory
+   * that does not exist -- which drops the metadata writers' updates, and makes
+   * the leased push read the history-rewrite marker as absent and go out
+   * unleased, wedging the branch.
    *
-   * `name` inside the metadata itself stays the raw ref name; only the path
-   * is sanitized.
+   * `name` inside the metadata itself stays the raw ref name; only the path is
+   * sanitized.
    */
   private branchWorkspacePath(branchRefName: string): string {
     return path.join(this.contentBranchesPath, sanitizeBranchName(branchRefName))
@@ -911,32 +826,28 @@ export class CmsWorker {
    * `checkout --theirs` resolution loop overwrites them. No-op in production.
    *
    * A test subclass overrides this to land a real `ContentStore` write at
-   * exactly the instant the rebase is mid-flight -- the window the old TOCTOU
-   * comment above the dirty check wrongly called safe -- without any sleeps or
-   * shell rendezvous. See the "Deterministic interleavings" testing pattern in
+   * exactly the instant the rebase is mid-flight, with no sleeps or shell
+   * rendezvous. See the "Deterministic interleavings" pattern in
    * docs/concurrency.md, and `ContentStore.afterPrePassForTesting()` for the
    * same idiom on the write side.
    */
   protected async afterConflictDetectedForTesting(): Promise<void> {}
 
   /**
-   * Test seam, sibling of {@link afterConflictDetectedForTesting}: runs at the
+   * Test seam, sibling of {@link afterConflictDetectedForTesting}: runs the
    * instant a rebase round has succeeded, before the completion path (cache
-   * invalidation, conflict metadata, [SYNC-H1] marker) executes. Exists so a
-   * test can lose the content-write lock at exactly the point where bailing out
-   * would strand a rewritten history.
+   * invalidation, conflict metadata, [SYNC-H1] marker) executes, so a test can
+   * lose the content-write lock at exactly the point where bailing out would
+   * strand a rewritten history.
    */
   protected async afterRebaseCompletedForTesting(): Promise<void> {}
 
   // --- Rebase loop (worker/rebase.ts) ------------------------------------
   //
   // Both are TEST-ONLY entry points -- see the task-queue block above. Nothing
-  // in production dispatches through either; `syncGit` calls `runRebaseCycle`
-  // directly and that calls `pollMergeState` directly. Four test files call
-  // `rebaseActiveBranches` (it is the single entry point the whole rebase suite
-  // drives), and cms-worker-merge-poll.test.ts calls `pollMergeState` with a
-  // mocked `octokit`. Neither is on WorkerContext, so a stub installed on
-  // either is a no-op as far as a production code path is concerned.
+  // in production dispatches through either: `syncGit` calls `runRebaseCycle`
+  // directly and that calls `pollMergeState` directly. Neither is on
+  // WorkerContext, so a stub installed on either is a no-op for production.
   //
   // `rebaseActiveBranches` also has a consumer outside the test files:
   // apps/test-app/app/api/e2e-test/rebase/route.ts drives it from an e2e
@@ -950,14 +861,11 @@ export class CmsWorker {
   //
   // `syncGit` is the public loop entry `scheduleLoop` drives. The three private
   // ones below it are TEST-ONLY entry points -- see the task-queue block above
-  // -- each called directly by one test file (cms-worker-sync-reconcile for the
-  // settings push, cms-worker-base-refresh for the base workspace,
-  // cms-worker.test.ts for the trash sweep). `syncGit` reaches all three as
+  // -- each called directly by one test file. `syncGit` reaches all three as
   // module-level calls, so a stub installed on one of these is a no-op.
   //
   // `reconcileTrackedBranches` deliberately has NO delegator: no test reaches
-  // it through the instance. Comments elsewhere that point at it as living in
-  // this file are stale by definition -- it is in git-sync.ts.
+  // it through the instance.
 
   async syncGit(): Promise<void> {
     return syncGit(this.ctx())
@@ -968,10 +876,10 @@ export class CmsWorker {
    *
    * One of `refreshGitHubCredential`'s two call sites, and the one that works
    * when nobody is publishing: it fetches from GitHub every `gitSyncInterval`
-   * (default 5 minutes) whether or not anyone is editing, so a credential that
-   * has stopped working surfaces here even with no push queued for days.
+   * whether or not anyone is editing, so a credential that has stopped working
+   * surfaces here even with no push queued for days.
    *
-   * The sync failure is what propagates to `scheduleLoop`'s catch.
+   * The SYNC failure is what propagates to `scheduleLoop`'s catch;
    * `refreshGitHubCredential` never throws, so nothing it does can replace it.
    */
   private async syncGitWithCredentialRefresh(): Promise<void> {
@@ -989,42 +897,29 @@ export class CmsWorker {
    * **Two call sites, each covering what the other cannot.** The git-sync loop
    * (`syncGitWithCredentialRefresh`) notices a dead credential when nobody is
    * publishing. `processTaskQueue`'s per-task catch is what saves a publish: a
-   * push task spends its retry budget on a 5s/10s/20s backoff
-   * (task-queue/task-queue.ts), well inside one 5-minute sync interval, so with
-   * the sync loop as the only trigger a publish that met a rotated token failed
-   * permanently while the working one was already in the secret store.
+   * push task spends its retry budget on a 5s/10s/20s backoff, well inside one
+   * 5-minute sync interval, so with the sync loop as the only trigger a publish
+   * meeting a rotated token fails permanently while the working one is already
+   * in the secret store. Every consumer reaches the credential through
+   * `ensureGitHubAuth()`, which reads it per use, so a refresh from either site
+   * repairs all of them for their NEXT use — but not an attempt already failed.
    *
-   * Every consumer reaches the credential through `ensureGitHubAuth()`, which
-   * reads it per use — the sync fetch, `pushBranchToGitHub`,
-   * `pushSettingsBranches`, `ensureRemoteGit`'s clone, and every Octokit call —
-   * so a refresh from either site repairs all of them for their NEXT use, with
-   * nothing to invalidate. It cannot rescue an attempt that has already failed,
-   * so a task `isPermanentTaskFailure` fails fast is not saved; the task after
-   * it is.
+   * NOT gated on the error looking auth-shaped, at either site: a `git
+   * fetch`/`push` rejected for a dead token throws a plain simple-git error
+   * (exit 128, no HTTP `.status`) that `isPermanentTaskFailure` reads as
+   * transient, so a gate keyed on it would never fire. Two floors bound the
+   * cost instead — core's `refreshGitHubTokenMinIntervalMs` (default 60s,
+   * enforced by `refreshCredential` in github-auth.ts) and whatever floor the
+   * provider keeps (the AWS one reads at most once per five minutes) — and both
+   * call sites share both, so a read issued by one throttles the other. On the
+   * GitHub App path the refresh is a no-op.
    *
-   * NOT gated on the error looking auth-shaped, at either site. There is nothing
-   * to classify on: a `git fetch` or `git push` rejected for a dead token throws
-   * a plain simple-git error — exit 128, no HTTP `.status` — which
-   * `isPermanentTaskFailure` reads as transient, so a gate keyed on it would
-   * never fire. Two floors bound the cost instead: core's own
-   * `refreshGitHubTokenMinIntervalMs` (default 60s, enforced by
-   * `refreshCredential` in github-auth.ts), and whatever floor the provider
-   * keeps — the AWS one reads at most once per five minutes and returns
-   * `undefined` for an unchanged value (canopycms-cdk/worker/credential-refresh.ts).
-   * On the GitHub App path the refresh is a no-op. Both call sites share both
-   * floors, so a read issued by one throttles the other.
-   *
-   * **Never throws.** Both callers are already reporting a failure, and that
-   * failure is the one that must reach the log.
-   *
-   * **Bounded by `taskTimeoutMs`**, because the task loop awaits it, and a read
-   * that never settled would stop every publish queued behind it. An adopter's
-   * provider may have no bound at all, and the AWS one, bounded as it is
-   * (canopycms-cdk/worker/secrets.ts), can still take up to 87s for one
-   * `getSecret` — longer than the 60s default here. A read that loses the race
-   * is not cancelled, and
-   * may still land later; `refreshCredential` discards a result older than one
-   * it has already applied, so a late landing cannot put a stale token back.
+   * **Never throws**: both callers are already reporting the failure that must
+   * reach the log. **Bounded by `taskTimeoutMs`**, because the task loop awaits
+   * it and a read that never settled would stop every publish queued behind it
+   * (an adopter's provider may have no bound at all; the AWS one can take 87s
+   * for one `getSecret`). A losing read is not cancelled and may land later, but
+   * `refreshCredential` discards a result older than one already applied.
    */
   private async refreshGitHubCredential(): Promise<void> {
     let timer: NodeJS.Timeout | undefined
@@ -1040,8 +935,8 @@ export class CmsWorker {
       await Promise.race([this.ensureGitHubAuth().refreshCredential(), timedOut])
     } catch (err) {
       // [REDACT] The message can name the secret and, on a malformed-secret
-      // path, quote what was read. Console only, but the rule here is
-      // uniform -- see redactCredentials in utils/error.ts.
+      // path, quote what was read. Console only, but the rule is uniform --
+      // see redactCredentials in utils/error.ts.
       workerLogError(
         'Failed to re-read the GitHub credential after a failure:',
         redactCredentials(getErrorMessage(err)),
