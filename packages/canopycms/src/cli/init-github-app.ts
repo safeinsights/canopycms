@@ -2,10 +2,8 @@
  * `canopycms init-github-app <create|verify>` — registers the GitHub App the CMS
  * worker authenticates as, and reads its grant back.
  *
- * WHY THIS EXISTS: THE PERMISSIONS ARE CODE HERE
- *
- * The worker can authenticate as a GitHub App instead of a personal access token
- * (adopter request #45). What did not ship with it was any machine-checkable
+ * The worker can authenticate as a GitHub App instead of a personal access token.
+ * What did not ship with it was any machine-checkable
  * statement of which permissions that App needs — the answer lived only as prose
  * in `docs/deploying-to-aws.md`, which nothing derives and nothing verifies.
  *
@@ -50,9 +48,7 @@
  * things to rotate. That is affordable only because creating one is cheap, which
  * is most of why this command exists.
  *
- * WHAT THE MANIFEST FLOW BUYS, WHICH IS MORE THAN IT LOOKS
- *
- * `redirect_url` is the point of it. GitHub redirects there with a one-hour code,
+ * `redirect_url` is the point of the manifest flow. GitHub redirects there with a one-hour code,
  * and `POST /app-manifests/{code}/conversions` exchanges that code for the App's
  * id, client id and **the private key itself**. So `create` runs a one-shot
  * loopback server, captures the key in memory, and hands it straight to a
@@ -70,8 +66,7 @@
  *
  * Two reasons. An App JWT requires `Authorization: Bearer <jwt>`, and a client
  * that sends `token <value>` is answered with `401 A JSON web token could not be
- * decoded` — measured in the sibling project, where it presented as "no
- * installation found" and sent the operator to check a page that was correct.
+ * decoded`.
  * And Octokit here would add `octokit.apps.*` call sites to this package, which
  * the guard in `github-app-permission-drift.test.ts` would then have to carve an
  * exception for — an exception being exactly how a guard goes blind.
@@ -80,8 +75,6 @@
  * optional: `.dependency-cruiser.mjs`'s `core-no-github-app-auth` rule scopes to
  * every package's own `src/`, so importing `@octokit/auth-app` here is a lint
  * error, same as anywhere else in this package.
- *
- * THE KEY'S DESTINATION IS NOT THIS TOOL'S BUSINESS
  *
  * `create` takes either a command to pipe the PEM into (`-- <cmd>`) or a file to
  * write (`--key-out`), and asks for a file path if that first one fails. It
@@ -561,9 +554,9 @@ const BRIDGE_KEY_INPUT = process.platform !== 'win32'
 /**
  * The script `/bin/sh` runs to give a destination command the key on a REAL pipe.
  *
- * WHY A BRIDGE AT ALL. Node's `stdio: 'pipe'` is not a pipe on Unix: libuv
- * gives the child one end of a SOCKET pair. MEASURED on macOS through the
- * previous direct spawn: `sh -c '[ -S /dev/stdin ] && echo SOCKET; [ -p
+ * Node's `stdio: 'pipe'` is not a pipe on Unix: libuv
+ * gives the child one end of a SOCKET pair. MEASURED on macOS:
+ * `sh -c '[ -S /dev/stdin ] && echo SOCKET; [ -p
  * /dev/stdin ] && echo PIPE'` printed SOCKET, and `cp /dev/stdin <out>` printed
  * "/dev/stdin is a socket (not copied)", exited 0, and was reported stored with
  * no file written. On Linux, opening `/dev/stdin` on a socket fails with ENXIO —
@@ -575,7 +568,7 @@ const BRIDGE_KEY_INPUT = process.platform !== 'win32'
  * globbing. The script itself is this constant. The key travels only on stdin, so
  * nothing `sh`, `env` or `cat` prints about a failure can contain it. It is
  * `exec env -- "$@"` rather than a bare `"$@"` so the first word is always a
- * program looked up on PATH, as the direct spawn did. MEASURED in macOS
+ * program looked up on PATH. MEASURED in macOS
  * `/bin/sh` (bash 3.2) and `/bin/dash`: with a bare `exec "$@"`, bash took a
  * first word of `-c` as `exec`'s own option, ran nothing and exited 0; without
  * `exec`, a first word of `eval` would run the rest as shell code. Through
@@ -583,7 +576,7 @@ const BRIDGE_KEY_INPUT = process.platform !== 'win32'
  * directory", exit 127. `--` goes to `env` because dash's `exec` rejects it
  * ("exec: --: not found").
  *
- * WHY `cat`'S STATUS COMES BACK ON fd 3. A pipeline's exit status is its LAST
+ * A pipeline's exit status is its LAST
  * command's, so `cat | cmd` alone reports only `cmd` — and hides `cat` dying of
  * SIGPIPE because `cmd` closed its input before the whole key was written. The
  * direct spawn could see that case only as a write error on the child's stdin;
@@ -647,19 +640,18 @@ function destinationExitDetail(command: string, code: number | null): string {
  * on a stream takes the process down — carrying with it the only copy of a
  * private key for an App that already exists.
  *
- * WHAT `stored: true` DOES AND DOES NOT MEAN. Everywhere but Windows it means
+ * Everywhere but Windows, `stored: true` means
  * three things: the command exited 0, the `cat` feeding it exited 0, and nothing
  * went wrong writing to it. `cat` exiting 0 means every byte of the key went into
  * the pipe. It still does NOT prove the command READ them, and cannot: a pipe
  * write lands in the kernel's buffer, and a key this size fits in one write, so a
  * command that exits without reading races `cat`'s write and can lose or win.
- * MEASURED on macOS with a real 1.7KB key, 100 runs each through this function,
- * with the same result before the bridge and after it: `true`, `head -c 10`,
+ * MEASURED on macOS with a real 1.7KB key, 100 runs each through this function:
+ * `true`, `head -c 10`,
  * `sh -c 'exec 0<&-; exit 0'` and `sh -c 'head -c 5 >/dev/null; exit 0'` were
  * each reported stored 100 times of 100. What IS caught, whatever the timing,
  * is a command that leaves more unread than a pipe buffer holds: ~100KB into
- * `true` was reported not stored 20 times of 20, by `cat` exiting 141 — the
- * same case the direct spawn caught as a write EPIPE.
+ * `true` was reported not stored 20 times of 20, by `cat` exiting 141.
  *
  * So the command's EXIT CODE is still the contract, and the operator is still
  * responsible for naming a command that fails loudly. That is stated here rather
@@ -697,11 +689,10 @@ export async function handOffKey(
   if (destination.argv.length === 0) {
     return { stored: false, detail: 'no command was given to send the key to' }
   }
-  // Refused before spawning, for parity with the direct spawn this replaced:
+  // Refused before spawning:
   // `env` reads a leading word containing `=` as a variable assignment, not a
   // command, so `-- FOO=bar` (or a whole command mis-quoted into one word) made
   // it print the environment and exit 0 -- the key reported stored, and gone.
-  // A direct spawn of such a word always failed with ENOENT instead.
   if (destination.argv[0].includes('=')) {
     return {
       stored: false,
@@ -1019,17 +1010,7 @@ export async function checkNameAvailable(slug: string): Promise<boolean | null> 
  * per-prompt interface is a footgun the moment a command has two prompts: the
  * second one waits forever.
  *
- * Measured, on a real pty as well as a pipe: with `--key-out` pointing at a bad
- * path, an operator who answers the retry prompt with Ctrl-D (the other reflex
- * to "leave blank to give up") ended stdin in `askLine`, and the later
- * `pressEnter` never resolved. `createCommand` never returned, so
- * `process.exitCode` was never assigned and node exited **0** — on the one
- * outcome where the App exists and its only key was just discarded — while the
- * `finally` that removes the temp directory never ran and the block printing the
- * App id, the operator's only handle for generating a replacement key, was never
- * reached.
- *
- * A SECOND, subtler way to reach the same hole: EOF landing on a line that DID
+ * A second, subtler way to reach the same hole: EOF landing on a line that DID
  * get answered. Node's readline flushes a pending partial line as a final
  * `'line'` event BEFORE `'close'` when the input ends, so "text then EOF" (a
  * pipe like `printf 'abc'` with no trailing newline, or a TTY operator typing
@@ -1040,9 +1021,6 @@ export async function checkNameAvailable(slug: string): Promise<boolean | null> 
  * on an already-ended stream that never emits, and — with nothing else keeping
  * it alive — the event loop emptied and node exited 0 silently: no "Giving up",
  * no "Stopping here … GITHUB_APP_ID" block, no readback, no `finally`.
- * MEASURED with a scratch driver: `printf 'abc' | node --import tsx <driver>`
- * resolved the first prompt to `"abc"` and left the second prompt printed but
- * never resolved, node exiting 0 with nothing after it.
  *
  * So the flag must be set from whether the STREAM ended, not from whether THIS
  * prompt got an answer — the two are independent. `readableEnded` is checked
@@ -1127,14 +1105,14 @@ export type KeyRetryChoice =
  * PATH and nothing else. Exported and pure so every rule below is a table test
  * rather than something only reachable by driving a live prompt end to end.
  *
- * WHY NO COMMANDS. The first destination can be a command because the
+ * The first destination can be a command because the
  * operator's own shell parsed `-- <command…>` into argv. A typed line here has
  * no such parser, and three consecutive review rounds each found splitting it on
  * whitespace sending the key somewhere unintended: a one-word answer written as
  * a file in the working directory; a `|` inside the argv becoming a file name;
  * then `>`, `;`, `&&` and quotes each becoming literal argv words, so
  * `tee key.pem > /dev/null` wrote 0644 copies of the key into the repository
- * root and reported it stored. Each fix closed one spelling. Accepting a path
+ * root and reported it stored. Accepting a path
  * only closes the class: an operator who wants a command writes the file, runs
  * the command against it, and deletes the file.
  *
@@ -1162,12 +1140,7 @@ export type KeyRetryChoice =
  * - A leading `~` is re-prompted: nothing here expands it, so `~/key.pem`
  *   would name a directory literally called `~` under the working directory.
  * - A single token with NO `/` or `\` — `pbcopy`, `wl-copy`, any script on
- *   PATH — is re-prompted, suggesting `./<token>`. A "one word is a path" rule
- *   once let `writeFile('pbcopy', pem, { flag: 'wx' })` succeed in
- *   `process.cwd()` — normally the git repository root — leaving a
- *   `contents: write` private key sitting untracked on disk, while the
- *   operator read "written to pbcopy (mode 0600)" and believed it had gone
- *   into the command they meant.
+ *   PATH — is re-prompted, suggesting `./<token>`.
  * - Anything else is a path, which `handOffKey` creates with mode 0600 and
  *   refuses to write if something already exists there.
  */
@@ -1402,8 +1375,7 @@ async function readBackInstallation(
       // status 0 with the real cause in `message`, and folding that into the
       // else below produced a confident "not installed on this repository" for
       // a DNS failure, a proxy refusal or a timeout — with the actual error
-      // discarded. Reading the body inside the try made this strictly more
-      // reachable, since a reset mid-body now lands here instead of throwing.
+      // discarded.
       console.error(
         `\nCould not reach api.github.com: ${found.message}\n` +
           '  This says nothing about the App or its installation. Check network access and\n' +
@@ -1445,12 +1417,8 @@ async function readBackInstallation(
   // installation means this App's key reaches a second account's repositories,
   // which is the arrangement the whole design exists to avoid.
   // EXACTLY one is the pass, and everything else fails — including "could not
-  // check". The looser first version printed a ✓ for a count of 0 (a state that
-  // should not occur, but a tick for an unobserved fact is the failure these
-  // comments exist to prevent) and let `null` leave the overall verdict at
-  // "All checks passed", which is a check that did not run reported as one that
-  // did. `repository_selection` is strict about `undefined` for the same
-  // reason, and these two now agree.
+  // check". `repository_selection` is strict about `undefined` for the same
+  // reason, and these two agree.
   let installationsOk = false
   const installations = await installationCount(jwt)
   if (installations === null) {
