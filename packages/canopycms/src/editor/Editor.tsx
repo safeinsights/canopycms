@@ -253,17 +253,11 @@ export const Editor: React.FC<EditorProps> = ({
   // computed server-side by the same getBranchProtection() call the writableBranch
   // guard uses, so the UI can never drift from what the API will accept.
   //
-  // Fail CLOSED (`?? true`) when `currentBranch` is undefined or the wire didn't
-  // carry `writeBlocked` at all (branches-list fetch still in flight/failed, or
-  // editor/server version skew where an older server doesn't emit the flag).
-  // Moving the decision server-side was the right call (the API guard and the UI
-  // now read one source of truth instead of two independent derivations that
-  // could drift), but an `?? false` default silently flipped what "no answer yet"
-  // means: a client that can't hear the server's answer now assumed UNLOCKED
-  // instead of LOCKED. A brief flash of locked (corrected the moment the branch
-  // list loads) is strictly safer than a flash of unlocked that invites a click
-  // the server is going to reject -- and the pane is already showing a loading
-  // state during that same window, so the flash is not even visible in practice.
+  // `?? true`: with no answer from the server (branches fetch in flight or
+  // failed, or an older server without the flag) the editor must stay locked. A
+  // brief flash of locked, corrected when the list loads, is safer than a flash
+  // of unlocked that invites a click the server rejects -- and the pane shows a
+  // loading state during that window anyway.
   const branchContentLocked = currentBranch?.writeBlocked ?? true
 
   // 2. Entry manager (depends on branchNameState, owns selectedPath)
@@ -306,12 +300,10 @@ export const Editor: React.FC<EditorProps> = ({
     setBusy: setEntriesLoading,
   })
 
-  // Keep the entry-type list referentially stable for as long as the create
-  // modal is showing the same collection. Building it inline in the JSX handed
-  // EntryCreateModal a new array on every render of this component, which its
-  // form-seeding effect used to treat as a reason to reset the user's input.
-  // That effect no longer keys on the array, but a stable prop is still the
-  // right thing to pass: it also keeps Mantine's Select `data` identity steady.
+  // Keeps the entry-type list referentially stable while the create modal shows
+  // the same collection: a new array on every render would churn Mantine's
+  // Select `data` identity and give EntryCreateModal's form-seeding effect a
+  // spurious reason to reset the user's input.
   const createModalEntryTypes = useMemo<EntryType[]>(
     () =>
       createModalCollection?.entryTypes?.map((et) => ({
@@ -495,7 +487,7 @@ export const Editor: React.FC<EditorProps> = ({
         // under its own key.
         if (currentBranchRef.current !== requestBranch) return
         setLoadedValues((prev) => ({ ...prev, [contentId]: loaded }))
-        // NOTE: no draft is seeded here. `effectiveValue` is
+        // No draft is seeded here. `effectiveValue` is
         // `drafts[id] ?? loadedValues[id]`, so the form renders from the line
         // above alone; seeding `drafts[id] = loaded` only manufactured a
         // pristine draft for every entry the user merely OPENED, which
@@ -735,18 +727,13 @@ export const Editor: React.FC<EditorProps> = ({
       }
       return undefined
     }
-    // Resolve against `collectionsFromApi`, NOT `activeCollections`. The
-    // latter falls back to the build-time `collections` prop whenever the
-    // fetched list is empty (`activeCollections = collectionsFromApi.length >
-    // 0 ? collectionsFromApi : collections`, above) -- which is exactly the
-    // state mid-branch-switch, before the new branch's entries/collections
-    // fetch has committed. Resolving a WRITE against that fallback meant this
-    // guard could never fire during a switch: it would happily find the OLD
-    // branch's collection in the stale build-time props and send ITS `order`
-    // array as a PATCH to the NEW branch. Reading `collectionsFromApi`
-    // directly makes "not yet loaded for this branch" and "loaded, has no
-    // such collection" the same (correct) not-found outcome, so the guard
-    // below is reachable again.
+    // Resolve against `collectionsFromApi`, NOT `activeCollections`: the latter
+    // falls back to the build-time `collections` prop whenever the fetch is
+    // still empty -- exactly the state mid-branch-switch. A write resolved
+    // against that fallback would silently PATCH the OLD branch's `order` onto
+    // the NEW branch instead of hitting the not-found guard below; reading
+    // `collectionsFromApi` directly makes "not yet loaded" and "loaded, no such
+    // collection" the same not-found outcome.
     const collection = findCollection(collectionsFromApi, collectionPath)
     if (!collection) {
       // A silent no-op on a clicked menu item reads as a broken button --

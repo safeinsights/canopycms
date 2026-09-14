@@ -113,28 +113,21 @@ export const getBranchPermissions = (
   // `getBranchWriteProtection` (protected-branch.ts) and threaded through
   // unchanged.
   //
-  // `?? true` and not a bare `!branch.submitBlocked`: the field is optional on
-  // this type (as `isProtected`/`readOnly` beside it are), so a missing value
-  // must mean BLOCKED, not allowed. Dropping the default would reintroduce, one
-  // layer below, exactly the fail-open shape this change set exists to remove --
-  // `useBranchManager.tsx` already defaults the same flag to `true` when the
-  // wire omits it, and a second, contradictory default here would quietly undo
-  // that for anything constructing a BranchSummary directly.
+  // `?? true`, not a bare `!branch.submitBlocked`: the field is optional (like
+  // `isProtected`/`readOnly` beside it), so a missing value must mean BLOCKED,
+  // not allowed -- matching the `?? true` default `useBranchManager.tsx`
+  // already applies to the same flag. A `?? false` default here would
+  // fail-open for anything constructing a BranchSummary directly.
   const canSubmit = canPerformWorkflowActions && !(branch.submitBlocked ?? true)
 
-  // Withdraw: Can perform workflow actions AND branch is submitted or approved.
-  // Allowed even when the PR was closed without merging -- that's the
-  // deliberate recovery path for a closed-unmerged PR (a later resubmit
-  // opens a fresh PR). The server skips the now-impossible draft conversion
-  // in that case; see api/branch-withdraw.ts. Not additionally gated on
-  // !branch.isProtected: withdraw is the recovery path for a protected branch
-  // wrongly stuck in 'submitted' -- creator/ACL/privileged users can still
-  // reach it (the system-branch grant above already excludes them).
-  //
-  // 'approved' is included because withdraw is that status's ONLY
-  // non-destructive exit (request-changes still requires 'submitted', and the
-  // submit status gate now refuses a non-editing branch). Surfacing it here is
-  // what makes the exit reachable -- the server accepting it is not enough.
+  // Withdraw: can perform workflow actions AND branch is submitted or
+  // approved -- 'approved' is included because withdraw is that status's only
+  // non-destructive exit, and getBranchPermissions must grant canWithdraw for
+  // it to be reachable. Allowed even when the PR was closed without merging:
+  // that's the deliberate recovery path for a closed-unmerged PR (server-side
+  // skip in api/branch-withdraw.ts). Not additionally gated on
+  // !branch.isProtected either: withdraw is also how a creator/ACL/privileged
+  // user recovers a protected branch wrongly stuck in 'submitted'.
   const canWithdraw =
     canPerformWorkflowActions && (branch.status === 'submitted' || branch.status === 'approved')
 
@@ -529,12 +522,10 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
                           label={
                             b.isProtected
                               ? 'The base branch cannot be submitted'
-                              : // A status arm, because canSubmit now folds in
-                                // the server's status rule as well as the
-                                // base-branch one. Without it, an archived (or
-                                // any non-editing) branch showed a disabled
-                                // Submit reading "Only the branch creator can
-                                // submit" -- to the creator.
+                              : // A status arm: canSubmit folds in the server's status rule as
+                                // well as the base-branch one, so an archived (or any
+                                // non-editing) branch reads its own reason instead of the
+                                // generic "Only the branch creator can submit".
                                 b.status !== 'editing'
                                 ? `A branch with status "${b.status}" cannot be submitted`
                                 : 'Only the branch creator can submit'
@@ -576,12 +567,11 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
                         label={
                           b.isProtected
                             ? 'The base branch cannot be deleted'
-                            : // A status arm, mirroring the Submit tooltip below: without
-                              // it, a branch blocked by its own status (open PR, reviewed
-                              // or not) showed "Only Admin or branch creator can delete" --
-                              // to the very admin/creator being blamed for a permission they
-                              // do have. 'approved' is included alongside 'submitted' since
-                              // both mean an open PR is blocking deletion.
+                            : // A status arm, mirroring the Submit tooltip above: without it,
+                              // a branch blocked by its own status reads the generic "Only
+                              // Admin or branch creator can delete" instead of naming the open
+                              // PR. 'approved' is included alongside 'submitted' since both
+                              // mean an open PR is blocking deletion.
                               b.status === 'submitted' || b.status === 'approved'
                               ? `Cannot delete branch with open PR (status "${b.status}")`
                               : 'Only Admin or branch creator can delete'

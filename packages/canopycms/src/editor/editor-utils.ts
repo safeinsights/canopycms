@@ -16,14 +16,15 @@ export interface PreviewContext {
 }
 
 /**
- * The slug portion of a preview URL, or '' for an index entry.
+ * The slug portion of a preview URL, or '' for an index entry -- `resolveUrlPathCandidates`
+ * refuses `/x/index`, so a preview built that way 404s.
  *
- * An index entry's URL is its COLLECTION's path -- the same collapse `computeEntryUrl`,
- * `listEntries` and `defaultBuildPath` apply.
+ * An index entry's URL is its COLLECTION's path, the same collapse `computeEntryUrl`,
+ * `listEntries`, and `defaultBuildPath` apply.
  *
- * Kept separate from `computeEntryUrl` rather than delegating wholesale because this builder must
- * percent-encode each segment and must NOT lowercase (a preview base is adopter-supplied and
- * case-sensitive). Only the index decision is shared -- which is the part that drifted.
+ * Kept separate from `computeEntryUrl`, which shares only the index decision: this builder
+ * must percent-encode each segment and must NOT lowercase, since a preview base is
+ * adopter-supplied and case-sensitive.
  */
 const encodePreviewSlug = (slug?: string): string => (isIndexSlug(slug) ? '' : encodeSlug(slug))
 
@@ -71,11 +72,9 @@ const buildRawPreviewSrc = (
     (entry.collectionPath && previewBaseByCollection?.[entry.collectionPath]) ??
     (entry.collectionName && previewBaseByCollection?.[entry.collectionName])
   if (!base) {
-    // Build URL from collection path + slug. Pass contentRoot through so a
-    // non-default (or multi-segment, e.g. "cms/content") configured root is
-    // stripped too -- normalizeCollectionPath defaults to 'content' when
-    // contentRoot is undefined here, which matches the pre-existing behavior
-    // for adopters who never set it.
+    // Pass contentRoot through so a non-default (or multi-segment, e.g.
+    // "cms/content") configured root is stripped too; normalizeCollectionPath
+    // defaults to 'content' when contentRoot is undefined.
     const collectionPath = entry.collectionPath
       ? normalizeCollectionPath(entry.collectionPath, contentRoot)
       : ''
@@ -94,15 +93,14 @@ const buildRawPreviewSrc = (
  * Builds the preview iframe `src` for an entry, prefixed with the deployment `basePath`
  * (`CanopyClientConfig.basePath`, e.g. `/preview-123`) when configured.
  *
- * This matters twice: the raw `<iframe src>` (`PreviewFrame` in preview-bridge.tsx) 404s without
- * the prefix when the host app is served under a basePath, AND `resolvePreviewPath` there compares
- * the SAME string against `window.location.pathname` -- which browsers report WITH the basePath
- * included -- so an unprefixed `previewSrc` also breaks draft sync / click-to-focus even when the
- * iframe itself happens to resolve. One prefix, applied uniformly here, fixes both.
+ * This matters twice: the raw `<iframe src>` (`PreviewFrame` in preview-bridge.tsx) 404s
+ * without the prefix under a basePath, and `resolvePreviewPath` there compares the same
+ * string against `window.location.pathname` -- which browsers report WITH the basePath --
+ * so an unprefixed `previewSrc` also breaks draft sync / click-to-focus even when the
+ * iframe itself resolves.
  *
- * Applied via `joinUrlPrefix`, so it's a no-op when `basePath` is unset (default), and it passes an
- * already-absolute `previewSrc` (a fully custom, e.g. cross-origin, override) through untouched --
- * matching `joinUrlPrefix`'s own absolute-URL passthrough rule.
+ * Applied via `joinUrlPrefix`: a no-op when `basePath` is unset, and passes an
+ * already-absolute `previewSrc` (a cross-origin override) through untouched.
  */
 export const buildPreviewSrc = (
   entry: {
