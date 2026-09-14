@@ -19,9 +19,7 @@ export interface PreviewContext {
  * The slug portion of a preview URL, or '' for an index entry.
  *
  * An index entry's URL is its COLLECTION's path -- the same collapse `computeEntryUrl`,
- * `listEntries` and `defaultBuildPath` apply. Without it this builder pointed the preview iframe
- * at `/x/index`, which `resolveUrlPathCandidates` deliberately refuses to resolve, so the host
- * app answered the editor's own preview with notFound().
+ * `listEntries` and `defaultBuildPath` apply.
  *
  * Kept separate from `computeEntryUrl` rather than delegating wholesale because this builder must
  * percent-encode each segment and must NOT lowercase (a preview base is adopter-supplied and
@@ -62,12 +60,10 @@ const buildRawPreviewSrc = (
   const isRootEntry = contentRoot && entry.collectionPath === contentRoot
 
   if (isRootEntry) {
-    // Check for custom preview URL in previewBaseByCollection
     const customPreview = previewBaseByCollection?.[`${contentRoot}/${entry.slug}`]
     if (customPreview) {
       return appendBranch(customPreview)
     }
-    // Default root entries to root path
     return appendBranch('/')
   }
 
@@ -207,13 +203,6 @@ export const buildEntriesFromListResponse = ({
   })
 }
 
-/**
- * Builds a map of collection IDs to their labels for breadcrumb display.
- * Recursively walks through nested collections to build a flat map.
- *
- * @param collections - The collection tree structure
- * @returns A Map where keys are collection IDs (paths) and values are labels
- */
 export const buildCollectionLabels = (collections?: EditorCollection[]): Map<string, string> => {
   const map = new Map<string, string>()
   if (!collections) return map
@@ -236,19 +225,6 @@ export const buildCollectionLabels = (collections?: EditorCollection[]): Map<str
  * @param currentEntry - The entry to build breadcrumbs for (or undefined for root)
  * @param collectionLabels - Map of collection IDs to labels
  * @returns Array of breadcrumb segment strings, starting with 'All Files'
- *
- * @example
- * ```ts
- * // Entry in nested collection
- * const entry = { collectionPath: 'content/docs/guides', slug: 'config' }
- * const labels = new Map([
- *   ['content', 'Content'],
- *   ['content/docs', 'Documentation'],
- *   ['content/docs/guides', 'Guides']
- * ])
- * buildBreadcrumbSegments(entry, labels)
- * // Returns: ['All Files', 'Documentation', 'Guides']
- * ```
  */
 export const buildBreadcrumbSegments = (
   currentEntry: EditorEntry | undefined,
@@ -287,24 +263,6 @@ export const buildBreadcrumbSegments = (
  * @param entryPath - The entry path to find (e.g., "blog/my-post")
  * @param treeData - The tree data structure from Mantine Tree
  * @returns Record<string, boolean> - Expanded state object where keys are collection node values
- *
- * @example
- * ```ts
- * const treeData = [
- *   {
- *     value: 'collection:blog',
- *     children: [
- *       { value: 'blog/post-1' },
- *       {
- *         value: 'collection:blog/featured',
- *         children: [{ value: 'blog/featured/my-post' }]
- *       }
- *     ]
- *   }
- * ]
- * calculatePathToEntry('blog/featured/my-post', treeData)
- * // Returns: { 'collection:blog': true, 'collection:blog/featured': true }
- * ```
  */
 export const calculatePathToEntry = (
   entryPath: string | undefined,
@@ -314,30 +272,20 @@ export const calculatePathToEntry = (
 
   const pathToExpand: Record<string, boolean> = {}
 
-  /**
-   * Recursive function to find entry and mark parent collections as expanded.
-   * @param nodes - Current level of tree nodes to search
-   * @param ancestors - Accumulated ancestor node values (collection IDs) from root to current position
-   * @returns true if the target entry was found in this subtree
-   */
   const findAndMarkPath = (nodes: TreeNodeData[], ancestors: string[]): boolean => {
     for (const node of nodes) {
-      // Found the target entry
       if (node.value === entryPath) {
-        // Mark all ancestors as expanded
         for (const ancestor of ancestors) {
           pathToExpand[ancestor] = true
         }
         return true
       }
 
-      // Search children recursively if they exist
       if (node.children && node.children.length > 0) {
         const currentPath = [...ancestors, node.value]
         const found = findAndMarkPath(node.children, currentPath)
 
         if (found) {
-          // Mark this node as expanded since the target was found in its subtree
           pathToExpand[node.value] = true
           return true
         }

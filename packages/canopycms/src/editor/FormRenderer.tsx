@@ -66,7 +66,6 @@ export interface FormRendererProps {
   onChange: (next: FormValue) => void
   customRenderers?: CustomFieldRenderers
   branch?: string // Current branch for loading reference options
-  // Comment integration
   comments?: CommentThread[]
   currentEntryPath?: string
   currentUserId?: string
@@ -81,7 +80,6 @@ export interface FormRendererProps {
     threadId?: string,
   ) => Promise<void>
   onResolveThread?: (threadId: string) => Promise<void>
-  // Reference resolution for live preview
   onResolvedValueChange?: (resolved: FormValue) => void
   onLoadingStateChange?: (loadingState: FormValue) => void
   /** True when this entry's content conflicts with a recent change on the base branch */
@@ -90,7 +88,7 @@ export interface FormRendererProps {
    * Per-field validation errors keyed by canonical canopy path (e.g.
    * `blocks[0].title`). Rendered as a summary alert plus an inline message
    * under each offending field. Produced by the save-path schema validation
-   * in useDraftManager (ED-H1) and by server 422 rejections.
+   * in useDraftManager and by server 422 rejections.
    */
   fieldErrors?: Record<string, string>
 }
@@ -114,7 +112,6 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
   conflictNotice = false,
   fieldErrors,
 }) => {
-  // Use the extracted reference resolution hook for live preview
   useReferenceResolution({
     value,
     fields,
@@ -156,7 +153,6 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
     const fieldId = `field-${fieldKey(path).replace(/[^a-zA-Z0-9_-]/g, '-')}`
     const canopyPath = normalizeCanopyPath(path)
 
-    // Filter comments for this specific field
     const fieldThreads =
       currentEntryPath && onAddComment
         ? comments.filter(
@@ -181,7 +177,6 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
         </div>
       )
 
-      // Wrap custom fields with FieldWrapper if comments enabled
       if (currentEntryPath && currentUserId && onAddComment && onResolveThread) {
         return (
           <FieldWrapper
@@ -206,7 +201,6 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
 
     const label = field.label ?? field.name
 
-    // Helper to wrap field with FieldWrapper if comments enabled
     const wrapWithComments = (renderedField: React.ReactNode) => {
       if (currentEntryPath && currentUserId && onAddComment && onResolveThread) {
         return (
@@ -526,7 +520,6 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
 
   return (
     <Stack gap="md" data-form-renderer>
-      {/* Entry-level comments at top of form */}
       {currentEntryPath && currentUserId && onAddComment && onResolveThread && (
         <EntryComments
           comments={comments}
