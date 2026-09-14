@@ -66,7 +66,6 @@ export function mergeSeoFieldLocation(
 let warnedStaticMode = false
 
 /**
- * Stub auth plugin for static deployments where no real auth is needed.
  * Returns unauthenticated for all requests — API routes will return 401.
  *
  * `verifiesCredentials: true` is set here even though this plugin verifies nothing: it is an
@@ -263,8 +262,6 @@ export interface NextCanopyContextResult {
 }
 
 /**
- * Create Next.js-specific wrapper around core context.
- * Adds React cache() for per-request memoization and API handler.
  * This function is async because it needs to load .collection.json meta files.
  *
  * In prod/dev mode, if the provided authPlugin implements verifyTokenOnly(),
@@ -274,7 +271,6 @@ export interface NextCanopyContextResult {
 export async function createNextCanopyContext(
   options: NextCanopyOptions,
 ): Promise<NextCanopyContextResult> {
-  // Fail fast: authPlugin is required for server deployments
   if (options.config.deployedAs !== 'static' && !options.authPlugin) {
     throw new Error(
       'CanopyCMS: authPlugin is required when deployedAs is "server". ' +
@@ -324,7 +320,6 @@ export async function createNextCanopyContext(
     return options.authPlugin
   })()
 
-  // Create services ONCE at initialization
   const services = await createCanopyServices(options.config, {
     entrySchemaRegistry: options.entrySchemaRegistry,
   })
@@ -371,13 +366,11 @@ export async function createNextCanopyContext(
     })
   }
 
-  // Create core context with pre-created services (framework-agnostic)
   const coreContext = createCanopyContext({
     services,
     extractUser,
   })
 
-  // Wrap with React cache() for per-request caching
   const getCanopy = cache((): Promise<CanopyContext> => {
     return coreContext.getContext()
   })
@@ -467,7 +460,6 @@ export async function createNextCanopyContext(
     return entryToMetadataCore(entryData, { ...callOptions, ...seoLocation })
   }
 
-  // Create API handler using same services
   const handler = createCanopyCatchAllHandler({
     ...options,
     authPlugin,

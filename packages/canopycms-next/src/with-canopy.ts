@@ -296,8 +296,6 @@ function unknownNextVersionWarning(projectDir: string): string {
 }
 
 /**
- * Whether the warning has fired in this module instance.
- *
  * A Turbopack build evaluates the config in the main process and again in a worker thread with its
  * own module registry (`next/dist/build/turbopack-build/index.js:26` and `impl.js:209` in 16.1.7).
  * So "once" means once per process or thread, not once per build.
@@ -476,7 +474,6 @@ export function withCanopy(
     }
   })
 
-  // Merge transpilePackages (deduped)
   const existingPackages = nextConfig.transpilePackages ?? []
   const allPackages = [
     ...new Set([
@@ -489,7 +486,6 @@ export function withCanopy(
 
   const reactAlias = resolveReactAliases(resolve)
 
-  // Scope React aliases to only canopycms files using module.rules[].resolve.
   // A global resolve.alias would also override Next.js's own internal React
   // (bundled at next/dist/compiled/react/), breaking its devtools and internals.
   const existingWebpack = nextConfig.webpack
@@ -507,7 +503,6 @@ export function withCanopy(
           },
         })
 
-        // Chain consumer's existing webpack config
         if (typeof existingWebpack === 'function') {
           return existingWebpack(config, ctx)
         }

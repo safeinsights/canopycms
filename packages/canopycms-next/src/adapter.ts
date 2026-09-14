@@ -11,13 +11,11 @@ import {
 import { getErrorMessage, redactCredentials, sanitizeErrorMessage } from 'canopycms/utils/error'
 
 /**
- * Options for creating a Canopy Next.js handler.
  * Same as core CanopyHandlerOptions - re-exported for convenience.
  */
 export type CanopyNextOptions = CanopyHandlerOptions
 
 /**
- * Wrap a standard Request (or NextRequest) to implement the CanopyRequest interface.
  * Only uses standard Request methods, so any Request subclass works.
  */
 export function wrapNextRequest(req: Request): CanopyRequest {
@@ -48,10 +46,6 @@ export function wrapNextRequest(req: Request): CanopyRequest {
   }
 }
 
-/**
- * Map a CanopyBinaryResponse's framework-agnostic header fields onto the
- * real HTTP header names, omitting any that weren't set.
- */
 function toBinaryHeaders(headers: CanopyBinaryResponse['headers']): HeadersInit {
   const result: Record<string, string> = {}
   if (headers.contentType) result['Content-Type'] = headers.contentType
@@ -61,9 +55,6 @@ function toBinaryHeaders(headers: CanopyBinaryResponse['headers']): HeadersInit 
   return result
 }
 
-/**
- * Convert a CanopyResponse (or CanopyBinaryResponse) to a NextResponse.
- */
 function toNextResponse(response: CanopyResponse<unknown> | CanopyBinaryResponse): Response {
   if (isCanopyBinaryResponse(response)) {
     // A Uint8Array can be backed by an arbitrary ArrayBufferLike (e.g. a
@@ -85,7 +76,6 @@ function toNextResponse(response: CanopyResponse<unknown> | CanopyBinaryResponse
 }
 
 /**
- * Extract path segments from Next.js catch-all route params.
  * Handles both Next.js 14 (direct object) and Next.js 15 (Promise) params.
  */
 async function extractPathSegments(ctx?: {
@@ -98,12 +88,6 @@ async function extractPathSegments(ctx?: {
 
 /**
  * Catch-all Next.js handler for a single API route (e.g., /api/canopycms/[...canopycms]).
- *
- * This is a thin adapter that:
- * 1. Converts NextRequest to CanopyRequest
- * 2. Extracts path segments from Next.js params
- * 3. Delegates to the core handler
- * 4. Converts CanopyResponse to NextResponse
  *
  * @example
  * ```ts

@@ -132,8 +132,6 @@ function messageOf(err: unknown): string {
 }
 
 /**
- * Whether `candidate` is a regular file.
- *
  * Any failed stat answers false instead of throwing: a missing path, a race with a delete, or a
  * permission error. `hasNextConfig` calls this outside any `try`, and it runs inside the adopter's
  * `next.config`.

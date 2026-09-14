@@ -52,8 +52,6 @@ export interface GenerateContentStaticParamsOptions extends CollectStaticPathsOp
 }
 
 /**
- * Shape CanopyCMS content paths into the array Next's `generateStaticParams` expects.
- *
  * This is an **enumeration-only** capability: it reads only the set of routable paths (via the build
  * context's `listEntries`), never entry content, and `generateStaticParams` is build-only — so it
  * cannot serve a user request. It takes a build context directly; prefer the bound
@@ -102,10 +100,6 @@ export async function collectStaticParams(
 
   return entries.map((entry) => ({ [paramName]: entry.segments }))
 }
-
-// ---------------------------------------------------------------------------
-// Sitemap
-// ---------------------------------------------------------------------------
 
 type SitemapItem = MetadataRoute.Sitemap[number]
 
@@ -244,8 +238,6 @@ export interface GenerateContentSitemapOptions {
 }
 
 /**
- * Build Next's `MetadataRoute.Sitemap` from CanopyCMS content.
- *
  * **Every routable entry type is included by default.** There is no list of "sitemap-able" entry
  * types to keep in sync, and that is the whole design: a hand-rolled sitemap that enumerates a
  * remembered list of entry types omits whichever type nobody added, ships green, and takes the
@@ -321,8 +313,6 @@ export async function generateContentSitemap(
 }
 
 /**
- * Resolve the path an entry is advertised at, applying the caller's `pathFor` override.
- *
  * `null`/`undefined` mean "no opinion" and keep the entry's own `urlPath` — see the `pathFor`
  * doc for why that is not "drop it".
  *
@@ -376,8 +366,6 @@ function resolveEntrySitemapPath(
 }
 
 /**
- * Drop duplicate `<loc>` entries, keeping the first occurrence and warning about each collision.
- *
  * A duplicate URL isn't fatal to a crawler, but it usually means two URLs are unintentionally
  * sharing one `<loc>` — an index entry collapsing onto a sibling's path, two `urlPath`s that only
  * differ by case (`urlPath` is lowercased — see `content-listing.ts`), an `extraUrls` path
@@ -411,10 +399,6 @@ function dedupeSitemapItems(items: SitemapItem[]): SitemapItem[] {
   return result
 }
 
-// ---------------------------------------------------------------------------
-// Per-entry metadata
-// ---------------------------------------------------------------------------
-
 export interface EntryToMetadataOptions extends ExtractSeoFieldsOptions {
   /** Route path for this entry — the canonical URL when the entry sets none. */
   path?: string
@@ -434,8 +418,6 @@ export interface EntryToMetadataOptions extends ExtractSeoFieldsOptions {
 }
 
 /**
- * Map an entry's SEO fields onto a Next `Metadata` object.
- *
  * Title and description follow ONE convention everywhere: the entry's meta field, else the
  * fallback you pass, else unset (so the root layout's default applies). An empty CMS field counts
  * as unset — see `extractSeoFields`.
