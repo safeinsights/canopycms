@@ -63,10 +63,6 @@ const DEFAULTS = {
   maxConsecutiveErrors: 3,
 }
 
-// ---------------------------------------------------------------------------
-// Arguments
-// ---------------------------------------------------------------------------
-
 function parseArgs(argv) {
   const opts = {
     pr: null,
@@ -144,10 +140,6 @@ Usage: node scripts/wait-for-pr-checks.mjs [<pr-number>] [options]
 
 Exit codes: 0 PASSED  1 FAILED  2 BLOCKED  3 NO_CHECKS  4 TIMED_OUT  5 ERROR`
 
-// ---------------------------------------------------------------------------
-// Output
-// ---------------------------------------------------------------------------
-
 const stamp = () => new Date().toISOString().replace(/\.\d{3}Z$/, 'Z')
 const say = (message) => process.stdout.write(`[${stamp()}] ${message}\n`)
 
@@ -161,10 +153,6 @@ function verdict(name, summary, details = []) {
   process.stdout.write(`\n[${stamp()}] ${lines.join('\n')}\n`)
   process.exit(VERDICTS[name])
 }
-
-// ---------------------------------------------------------------------------
-// gh plumbing
-// ---------------------------------------------------------------------------
 
 /**
  * Errors gh will keep producing no matter how many times we ask. Retrying these
@@ -284,10 +272,6 @@ function fetchChecks(opts) {
   return { ok: true, checks: parsed.value }
 }
 
-// ---------------------------------------------------------------------------
-// Check interpretation
-// ---------------------------------------------------------------------------
-
 // gh's own bucketing: pass | fail | pending | skipping | cancel.
 const BUCKET_ORDER = ['fail', 'cancel', 'pending', 'pass', 'skipping']
 
@@ -341,10 +325,6 @@ function describe(pr, checks) {
     checks.length === 0 ? 'checks=none-yet' : `checks[${checks.length}] ${parts.join(' ')}`
   return `${checkText} | mergeable=${pr.mergeable} mergeState=${pr.mergeStateStatus} prState=${pr.state}`
 }
-
-// ---------------------------------------------------------------------------
-// Staleness (failure mode 5)
-// ---------------------------------------------------------------------------
 
 /**
  * `gh pr checks --json` exposes no head SHA -- verified against gh 2.97; its
@@ -434,10 +414,6 @@ function repoSlugFromUrl(url) {
   const match = /^https?:\/\/[^/]+\/([^/]+\/[^/]+)\/pull\/\d+/.exec(url)
   return match ? match[1] : null
 }
-
-// ---------------------------------------------------------------------------
-// Main loop
-// ---------------------------------------------------------------------------
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 

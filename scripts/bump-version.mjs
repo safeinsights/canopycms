@@ -161,7 +161,6 @@ if (firstArg === '--min') {
   newVersion = `${major}.${minor}.${patch + 1}`
 }
 
-// Update all packages
 for (const pkg of PACKAGES) {
   const pkgPath = join(ROOT, pkg, 'package.json')
   const pkgJson = JSON.parse(readFileSync(pkgPath, 'utf8'))
@@ -182,7 +181,6 @@ for (const pkg of PACKAGES) {
   writeFileSync(pkgPath, JSON.stringify(pkgJson, null, 2) + '\n')
 }
 
-// Also update root package.json version
 const rootPkgPath = join(ROOT, 'package.json')
 const rootPkg = JSON.parse(readFileSync(rootPkgPath, 'utf8'))
 rootPkg.version = newVersion

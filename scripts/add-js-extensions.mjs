@@ -13,7 +13,6 @@
 // exports quietly degrades to `any`. With skipLibCheck:false they at least see
 // TS2834/TS2835 diagnostics pointing into node_modules; with skipLibCheck:true
 // (what most scaffolds set, Next.js included) there is no signal at all.
-// Verified both ways against a real packed tarball before this was fixed.
 //
 // Appending `.js` is correct for a .d.ts MODULE SPECIFIER: TypeScript resolves a
 // `./x.js` specifier to `./x.d.ts`, which is why declaration files must name the

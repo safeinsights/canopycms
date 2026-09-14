@@ -518,7 +518,6 @@ function toPublishedPackageJson(pkg) {
   return { ...rest, ...(publishConfig ?? {}) }
 }
 
-// ---------------------------------------------------------------------------
 // Static undeclared-dependency scan.
 //
 // The runtime probe and the declaration-resolution pass below both run inside
@@ -665,7 +664,6 @@ function checkDeclaredDependencies() {
   }
 }
 
-// ---------------------------------------------------------------------------
 // Stray test-artifact scan.
 //
 // A dist/ directory should contain only what the package intends to publish.
@@ -1037,7 +1035,6 @@ function reportProbe(results) {
   return failed
 }
 
-// ---------------------------------------------------------------------------
 // Consumer-configuration matrix.
 //
 // The two runtime probes answer "can Node load this", and checkDeclarationResolution()
