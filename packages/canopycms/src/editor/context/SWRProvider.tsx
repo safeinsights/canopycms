@@ -15,9 +15,7 @@
  * - provider: () => new Map() -- gives the editor its own cache instead of
  *   SWR's module-global one, so editor keys ("canopy:entries:main", ...) can
  *   never collide with an SWR cache the host app is running for its own data.
- *   `editor/hooks/__test__/test-utils.tsx` already mandates this for tests,
- *   with a comment about exactly that collision; production had been relying
- *   on the module global. Mounted once (CanopyEditor.tsx), so the cache spans
+ *   Mounted once (CanopyEditor.tsx), so the cache spans
  *   the whole editor session.
  * - dedupingInterval: 2000 -- collapses the duplicate requests React Strict
  *   Mode's mount -> cleanup -> remount cycle produces (each hook's

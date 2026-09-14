@@ -1,8 +1,6 @@
 'use client'
 
 /**
- * RenameEntryModal - Modal for renaming entry slugs.
- *
  * Allows changing the slug (middle segment) of an entry filename.
  * The content ID is preserved, so drafts and references remain intact.
  */
@@ -52,7 +50,6 @@ export function RenameEntryModal({
     }
   }
 
-  // Validate slug format
   const validateSlug = (slug: string): string | null => {
     if (!slug.trim()) {
       return 'Slug cannot be empty'
@@ -60,7 +57,6 @@ export function RenameEntryModal({
     if (slug.includes('/')) {
       return 'Slug cannot contain slashes'
     }
-    // Simple validation - lowercase, alphanumeric + hyphens
     if (!/^[a-z0-9][-a-z0-9]*$/.test(slug)) {
       return 'Slug must start with letter/number and contain only lowercase letters, numbers, and hyphens'
     }

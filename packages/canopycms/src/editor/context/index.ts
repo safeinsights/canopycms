@@ -1,23 +1,3 @@
-/**
- * Editor Context Providers
- *
- * These contexts consolidate editor-wide state and dependencies:
- *
- * - ApiClientContext: Dependency injection for API client (context-based pattern)
- * - EditorStateContext: Loading states, modal states, preview data
- * - SWRProvider: SWR cache config for the fetch-on-load data hooks (see
- *   hooks/useBranchesData.ts, useEntriesData.ts, useCommentsData.ts)
- *
- * Usage:
- * ```tsx
- * <ApiClientProvider>
- *   <EditorStateProvider>
- *     <Editor />
- *   </EditorStateProvider>
- * </ApiClientProvider>
- * ```
- */
-
 export {
   ApiClientProvider,
   useApiClient,

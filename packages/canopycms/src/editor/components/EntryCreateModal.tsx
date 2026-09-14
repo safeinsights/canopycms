@@ -64,11 +64,9 @@ export function EntryCreateModal({
   error = null,
   existingSlugs,
 }: EntryCreateModalProps) {
-  // Helper to get default or first entry type
   const getDefaultEntryTypeName = () => {
     if (selectedEntryTypeName) return selectedEntryTypeName
     if (entryTypes.length === 1) return entryTypes[0].name
-    // Find entry type marked as default
     const defaultType = entryTypes.find((et) => et.default)
     return defaultType?.name || entryTypes[0]?.name || ''
   }
@@ -83,8 +81,7 @@ export function EntryCreateModal({
   // *values* (`[isOpen, selectedEntryTypeName, entryTypes]`), but `entryTypes`
   // is an array that callers build inline - a fresh identity on every parent
   // render - so any re-render while the modal was open re-ran this block and
-  // silently discarded what the user had typed or selected. The entry was then
-  // written to disk under the default slug with no error surfaced.
+  // silently discarded what the user had typed or selected.
   //
   // Seeding is a lifecycle event, not a derivation of the current props, so the
   // narrow dep array is the point. Do not "fix" it by adding the props read

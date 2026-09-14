@@ -1,24 +1,13 @@
 'use client'
 
 /**
- * Editor State Context
- *
  * Consolidates editor-wide state that was previously scattered across
  * the Editor component. This reduces prop drilling and makes state
  * management more explicit.
- *
- * Manages:
- * - Loading states (branches, entries, comments)
- * - Modal/drawer open states
- * - Preview data and loading state
  */
 
 import React, { createContext, useContext, useCallback, useState, useMemo } from 'react'
 import type { FormValue } from '../FormRenderer'
-
-// ============================================================================
-// Types
-// ============================================================================
 
 export interface LoadingState {
   branches: boolean
@@ -61,15 +50,7 @@ export interface EditorStateContextValue {
   actions: EditorStateActions
 }
 
-// ============================================================================
-// Context
-// ============================================================================
-
 const EditorStateContext = createContext<EditorStateContextValue | null>(null)
-
-// ============================================================================
-// Provider
-// ============================================================================
 
 export interface EditorStateProviderProps {
   children: React.ReactNode
@@ -78,14 +59,12 @@ export interface EditorStateProviderProps {
 }
 
 export function EditorStateProvider({ children, initialModals }: EditorStateProviderProps) {
-  // Loading states
   const [loading, setLoadingState] = useState<LoadingState>({
     branches: false,
     entries: false,
     comments: false,
   })
 
-  // Modal states
   const [modals, setModals] = useState<ModalState>({
     navigator: false,
     branchManager: false,
@@ -95,14 +74,11 @@ export function EditorStateProvider({ children, initialModals }: EditorStateProv
     ...initialModals,
   })
 
-  // Preview states
   const [previewData, setPreviewDataState] = useState<FormValue>({})
   const [previewLoading, setPreviewLoadingState] = useState<FormValue>({})
 
-  // Computed busy state
   const busy = loading.branches || loading.entries || loading.comments
 
-  // Actions
   const setLoading = useCallback((key: keyof LoadingState, value: boolean) => {
     setLoadingState((prev) => ({ ...prev, [key]: value }))
   }, [])
@@ -127,7 +103,6 @@ export function EditorStateProvider({ children, initialModals }: EditorStateProv
     setPreviewLoadingState(loading)
   }, [])
 
-  // Memoize context value
   const value = useMemo<EditorStateContextValue>(
     () => ({
       state: {
@@ -165,10 +140,6 @@ export function EditorStateProvider({ children, initialModals }: EditorStateProv
 
   return <EditorStateContext.Provider value={value}>{children}</EditorStateContext.Provider>
 }
-
-// ============================================================================
-// Hooks
-// ============================================================================
 
 /**
  * Access the full editor state context.

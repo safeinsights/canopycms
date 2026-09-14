@@ -20,9 +20,6 @@ import type { LogicalPath } from '../../paths/types'
 import { clientOperatingStrategy } from '../../operating-mode/client'
 import { isAdmin, isReviewer } from '../../authorization/helpers'
 
-/**
- * Props for the EditorHeader component.
- */
 export interface EditorHeaderProps {
   /**
    * Site title displayed in the top-left.
@@ -202,34 +199,6 @@ const getStatusColor = (status: BranchStatus): string => {
 /**
  * Header component for the Editor.
  * Contains site info, file navigation, breadcrumbs, branch selector, comments button, and action buttons.
- *
- * @example
- * ```tsx
- * <EditorHeader
- *   siteTitle="My Site"
- *   siteSubtitle="CMS"
- *   headerTitle="Edit Content"
- *   currentEntry={currentEntry}
- *   branchName="main"
- *   operatingMode="collaboration"
- *   busy={false}
- *   breadcrumbSegments={['Posts', 'My Post']}
- *   editedFiles={[]}
- *   modifiedCount={0}
- *   unresolvedCommentCount={0}
- *   comments={[]}
- *   onNavigatorOpen={() => setNavigatorOpen(true)}
- *   onFileReload={handleReload}
- *   onFileDiscardDraft={handleDiscardFileDraft}
- *   onEntrySelect={setSelectedId}
- *   onBranchReloadData={handleReloadBranchData}
- *   onBranchDiscardDrafts={handleDiscardDrafts}
- *   onBranchManagerOpen={() => setBranchManagerOpen(true)}
- *   onCommentsPanelOpen={() => setCommentsPanelOpen(true)}
- *   onSave={handleSave}
- *   onSubmit={() => handleSubmit(branchName)}
- * />
- * ```
  */
 export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(function EditorHeader(
   {
@@ -567,12 +536,6 @@ export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(functi
               return (
                 <Tooltip
                   label={
-                    // The unknown-status arm mirrors the banner's: with no
-                    // branch data, `statusHasAction` is false (undefined is
-                    // neither 'editing' nor withdrawable) and this label used
-                    // to interpolate it as "This branch is undefined and has
-                    // no submit or withdraw action available".
-                    //
                     // Latent rather than live TODAY, and only by accident:
                     // Editor.tsx passes `branchIsProtected={... ?? true}` since
                     // the fail-closed change, so in that same window the early
