@@ -1072,7 +1072,7 @@ Any input **without a scheme** is treated as a site-relative path, so a string t
 
 ### Error Handling Utilities
 
-The typed error helpers CanopyCMS uses internally are available from `canopycms/utils/error`: `getErrorMessage(err)` extracts a string message from an `unknown` caught value without an `any`, `isNodeError(err)` narrows to `NodeJS.ErrnoException` (giving you `.code`, `.path`), and `isNotFoundError`/`isPermissionError`/`isFileExistsError` classify common **filesystem** failures (`ENOENT`, `EACCES`/`EPERM`, `EEXIST`) — useful when your own code does filesystem work, e.g. reading colocated files via `meta.physicalPath`.
+The typed error helpers CanopyCMS uses internally are available from `canopycms/utils/error`: `getErrorMessage(err)` extracts a string message from an `unknown` caught value without an `any`, `isNodeError(err)` narrows to `NodeJS.ErrnoException` (giving you `.code`, `.path`), and `isNotFoundError`/`isPermissionError`/`isFileExistsError` classify common **filesystem** failures (`ENOENT`, `EACCES`, `EEXIST`) — useful when your own code does filesystem work, e.g. reading colocated files via `meta.physicalPath`.
 
 CMS reads do **not** throw Node filesystem errors, so those helpers will not match them. `read()` throws a `ContentStoreError` whose `code` is one of `'NOT_FOUND' | 'NO_SCHEMA_ITEM' | 'FORBIDDEN' | 'VALIDATION'`:
 

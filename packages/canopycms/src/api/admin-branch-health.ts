@@ -672,7 +672,7 @@ const repairBranchDir = defineEndpoint({
 /**
  * Repair duplicate content IDs in a healthy branch's content tree by
  * archiving the quarantined (losing) file(s) with a dot-prefixed name --
- * see content-id-index.ts's "Duplicate-ID quarantine" section and
+ * see the `ContentIdIndex` class doc and
  * repairContentDuplicatesHandler's doc comment.
  */
 const repairContentDuplicates = defineEndpoint({
