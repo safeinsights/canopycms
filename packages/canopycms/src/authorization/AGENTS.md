@@ -8,7 +8,7 @@ authoritative**; this file is the map to where those rules live.
 
 ## Overview
 
-Unified access control (branch + path permissions, groups, protected-base-branch policy — `protected-branch.ts`'s `getBranchProtection()` is the single source of truth for whether a branch is the base branch, submit-blocked, and/or read-only; its sibling `getBranchWriteProtection()` adds `writeBlocked` and is what authorizes content writes and renders editor locks — `status` is required there so a missing one fails closed, since `branch.json` is parsed with no schema validation)
+Unified access control (branch + path permissions, groups, protected-base-branch policy). `protected-branch.ts` is the single source of truth for base-branch protection: `getBranchProtection()` answers whether a branch is the base branch, submit-blocked, and/or read-only; `getBranchWriteProtection()` adds `writeBlocked`, authorizes content writes and renders editor locks, and its doc comment states the fail-closed rule for a missing `status`.
 
 ## `settings-file-store.ts`
 
