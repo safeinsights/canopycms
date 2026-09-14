@@ -57,12 +57,10 @@ function toBinaryHeaders(headers: CanopyBinaryResponse['headers']): HeadersInit 
 
 function toNextResponse(response: CanopyResponse<unknown> | CanopyBinaryResponse): Response {
   if (isCanopyBinaryResponse(response)) {
-    // A Uint8Array can be backed by an arbitrary ArrayBufferLike (e.g. a
-    // Node Buffer), which doesn't structurally satisfy the DOM lib's
-    // BodyInit/ArrayBufferView (specifically ArrayBuffer-backed). Copying
-    // through the typed-array constructor yields a plain ArrayBuffer-backed
-    // view so this type-checks without an unsafe cast; ReadableStream
-    // bodies pass through unchanged.
+    // A Uint8Array can be backed by an arbitrary ArrayBufferLike (e.g. a Node Buffer), which
+    // doesn't structurally satisfy the DOM lib's BodyInit/ArrayBufferView. Copying through the
+    // typed-array constructor yields a plain ArrayBuffer-backed view that type-checks without an
+    // unsafe cast; ReadableStream bodies pass through unchanged.
     const body = response.body instanceof Uint8Array ? new Uint8Array(response.body) : response.body
     return new NextResponse(body, {
       status: response.status,
@@ -125,17 +123,14 @@ export const createCanopyCatchAllHandler = (options: CanopyNextOptions) => {
       const response = await coreHandler(canopyReq, segments)
       return toNextResponse(response)
     } catch (err) {
-      // Defense-in-depth (API-C1): coreHandler already guards itself with a
-      // top-level try/catch, but this adapter also wraps request conversion
-      // (wrapNextRequest/extractPathSegments/toNextResponse) so a failure there
-      // can never escape as Next's generic unhandled-error 500, which would
-      // break the uniform { ok, status, error } envelope the editor expects.
+      // Defense-in-depth (API-C1): coreHandler already guards itself with a top-level try/catch,
+      // but this adapter also wraps request conversion, so a failure there can never escape as
+      // Next's generic unhandled-error 500, which would break the uniform { ok, status, error }
+      // envelope the editor expects.
       const message = getErrorMessage(err)
-      // Redacted before logging, not just before responding. The HTTP body was
-      // already sanitized, but this line went to the server log verbatim -- and
-      // a git failure message can embed a token-bearing clone URL, which is the
-      // one thing that must not reach a log aggregator. Every failure surface
-      // in the worker already redacts; this was the outlier.
+      // Redacted before logging, not just before responding: the HTTP body is already sanitized,
+      // but this line reaches the server log verbatim, and a git failure message can embed a
+      // token-bearing clone URL — the one thing that must not reach a log aggregator.
       console.error(
         'CanopyCMS: Unhandled error in Next.js catch-all handler:',
         redactCredentials(message),

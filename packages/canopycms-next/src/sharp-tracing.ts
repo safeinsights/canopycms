@@ -1,57 +1,31 @@
 /**
  * Finds sharp's libvips shared library so `withCanopy` can add it to Next.js output file tracing.
  *
- * **The gap.** sharp loads libvips with `dlopen`, through its native binding's rpath. Nothing
- * `require`s the library, so a tracer that follows imports never sees it. Next's JS tracer
- * (`next/dist/compiled/@vercel/nft`) covers that with a sharp-specific handler, but the handler only
- * fires on a path ending in `sharp/lib/index.js`, which is sharp 0.34's entry point. sharp 0.35
- * ships `dist/index.{cjs,mjs}` instead.
+ * **The gap.** sharp loads libvips with `dlopen` through its native binding's rpath, so a tracer
+ * that follows imports never sees it. Next's JS tracer has a sharp-specific handler, but it only
+ * fires on sharp 0.34's entry point `sharp/lib/index.js`; sharp 0.35 ships `dist/index.{cjs,mjs}`
+ * instead, so it's missed — on a Next 16.1.7 Turbopack standalone build this leaves
+ * `lib/libvips-cpp.so.*` untraced, and the built server fails to load sharp with ERR_DLOPEN_FAILED.
+ * A webpack build under pnpm fails differently: Next 15.5.21's webpack bundles sharp's JS into a
+ * server chunk, so the bundled copy cannot reach its native binding regardless of this include.
+ * Where the JS tracer does trace the library itself, this include merges into one Set rather than
+ * duplicating it (upstream: next.js#97973, sharp #4567/#4543 — fixed there, this module goes).
  *
- * Measured on a Next 16.1.7 Turbopack `output: 'standalone'` build (`.claude/future-tasks/`
- * `cms-image-build-epic.md`, "The tracer misses the `.so`"): the route traces list libvips's
- * `package.json` and the binding's rpath symlink, but not `lib/libvips-cpp.so.*`. Every load of
- * sharp in the resulting server then fails with ERR_DLOPEN_FAILED.
+ * **Locating the directory.** Walk up the `node_modules` hierarchy the way a bundler resolves a
+ * bare specifier, never glob one package manager's layout: from the `canopycms` the project
+ * resolves (and any `sharp` it resolves directly), find each `@img/sharp-libvips-*` dependency of
+ * sharp and of each installed native binding — a binding's rpath looks for libvips beside itself,
+ * so that sibling copy is the one it loads. A binding with no libvips dependency carries its own
+ * native library instead (true of sharp 0.35.3's win32 bindings). Each package's real `lib/`
+ * directory becomes one include — never the `.pnpm` symlink beside it, which is the only path a
+ * binding's rpath actually resolves in a pnpm layout (checked with `otool`), and which Next
+ * 16.1.7's Turbopack already traces (the standalone build recreates it). If a future Next stops
+ * tracing that symlink, the library stays present but unreachable — only a smoke test that loads
+ * sharp inside the built image would notice.
  *
- * A webpack build under pnpm has a different problem. On Next 15.5.21, Next's webpack externals
- * resolution bundles sharp's JavaScript into a server chunk, so no sharp 0.35 package is traced and
- * the bundled copy cannot reach its native binding, whether or not this include ships libvips (root
- * cause in `.claude/future-tasks/webpack-standalone-sharp-bundled.md`). An npm install and Next
- * 16's `next build --webpack` have not been checked. Where Next's JS tracer does trace the library
- * itself, the include adds no duplicate: it merges traced and included files into one `Set`
- * (`next/dist/build/collect-build-traces.js:505` in 16.1.7).
- *
- * Upstream: https://github.com/vercel/next.js/issues/97973 (open). On sharp's side, see
- * https://github.com/lovell/sharp/issues/4567 and https://github.com/lovell/sharp/issues/4543.
- * Once a Next release traces the library itself, this module and its call in `withCanopy` should go.
- *
- * **Finding the directory.** Packages are located by walking up the `node_modules` hierarchy, the
- * way a bundler resolves a bare specifier, never by globbing one package manager's layout. The walk:
- * - start from the `canopycms` the project resolves;
- * - find that copy's `sharp`, and also any `sharp` the project resolves directly;
- * - find each `@img/sharp-libvips-*` optional dependency, from sharp and from each installed native
- *   binding (the binding's rpath looks for libvips beside the binding, so that is the copy it loads);
- * - an installed binding that lists no libvips package has to carry its native library itself, so
- *   take the binding instead (sharp 0.35.3's win32-x64 and win32-arm64 bindings list none, and ship
- *   `libvips-42.dll` and `libvips-cpp-8.18.3.dll` in their own `lib/`);
- * - take each package's real `lib/` directory.
- *
- * **Real paths, not symlinks.** The includes name real directories. Under pnpm, the binding's rpath
- * reaches libvips through a sibling symlink whose target is that real directory, and the images
- * this was verified on load the library from there.
- *
- * **What the include does NOT cover.** Under pnpm, the binding reaches the library only through its
- * sibling symlink `.pnpm/@img+sharp-<platform>@<version>/node_modules/@img/sharp-libvips-<platform>`.
- * (Checked with `otool` on sharp 0.35.3's darwin-arm64 binding: none of its other rpath entries
- * resolves in a pnpm layout.) Next 16.1.7's Turbopack traces that symlink already, and the
- * standalone copy recreates it. If a Next upgrade stops tracing it, the library is present but
- * unreachable. Only a smoke test that loads sharp inside the built image would notice.
- *
- * **Cost.** Turbopack matches includes in "contains" mode (`crates/next-api/src/nft_json.rs:312` at
- * v16.1.7), which leaves the pattern unanchored (`turbo-tasks-fs/src/globset.rs:104-114`). Its
- * directory walk is therefore not confined to the directory an include names, and it follows
- * symlinked directories (`read_glob.rs:87-99`). Measured on one Next 16.1.7 app's standalone build,
- * the include added about 5 s of compile time (12.8 s to 17.9 s, mean of three runs; recorded in
- * `.claude/future-tasks/upstream-next-sharp-tracing-recheck.md`).
+ * **Cost.** Turbopack matches includes in unanchored "contains" mode and follows symlinked
+ * directories rather than confining its walk to the include's own directory, adding roughly 5 s of
+ * compile time on one measured build.
  */
 import { readFileSync, realpathSync, statSync } from 'node:fs'
 import path from 'node:path'

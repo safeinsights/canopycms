@@ -110,28 +110,19 @@ type SitemapItem = MetadataRoute.Sitemap[number]
  * `generateContentSitemap` applies `isNoindexEntry` and a default `lastModified` only while
  * walking real entries; this list is appended afterwards and passes through both:
  *
- * - **No `noindex` gate.** Nothing checks the SEO flag for an extra URL, because there is no
- *   entry data to check. If you are using `extraUrls` to re-advertise a real entry under a
- *   different path (the usual reason — an entry whose structural `urlPath` no route serves),
- *   you are responsible for not listing it when that entry is marked `noindex`. Marking the
- *   entry does not remove the extra URL.
+ * - **No `noindex` gate.** There is no entry data to check it against — if you use `extraUrls`
+ *   to re-advertise a real entry under a different path, you are responsible for not listing it
+ *   when that entry is `noindex`; marking the entry does not remove the extra URL.
  * - **No `lastModified` fallback.** The per-entry branch defaults to `entry.updatedAt`; here,
- *   omitting `lastModified` means the URL simply ships without a date.
+ *   omitting `lastModified` means the URL ships with no date at all.
  *
- * Both are easy to get wrong in exactly the same direction, and both used to be unavoidable:
- * `extraUrls` was once the only way to advertise a real entry at a different URL, so every such
- * use re-derived `noindex` and `lastModified` by hand — this repo's own reference app among them,
- * and it got `lastModified` wrong.
- *
- * It is no longer the only way, so it should no longer be that way:
- *
- * 1. **Model the entry so its natural `urlPath` IS the URL you serve.** An `index` entry collapses
- *    onto its collection's path, and a root `index` entry onto `/`. Nothing to keep in sync. This
- *    is what the reference app does now, which is why its sitemap passes neither option.
- * 2. **Failing that, use `pathFor`** (see `GenerateContentSitemapOptions`), which overrides the
- *    URL while keeping the entry inside the walk — so the `noindex` gate, the `lastModified`
- *    default and `priority` all still apply.
- * 3. **Keep `extraUrls` for what its name says:** URLs with no entry behind them at all.
+ * Prefer, in order: (1) model the entry so its natural `urlPath` IS the URL you serve — an
+ * `index` entry collapses onto its collection's path, a root `index` onto `/`, nothing to keep
+ * in sync; (2) failing that, use `pathFor` (see `GenerateContentSitemapOptions`), which overrides
+ * the URL while keeping the entry inside the walk, so the `noindex` gate, `lastModified` default
+ * and `priority` all still apply; (3) reach for `extraUrls` only for URLs with no entry behind
+ * them at all — re-deriving `noindex`/`lastModified` by hand for a REAL entry is easy to get
+ * wrong in both places at once.
  */
 export interface SitemapExtraUrl {
   /** Site-relative path ('/blog') or an absolute URL. Trailing-slash rules apply to the former. */
@@ -182,49 +173,30 @@ export interface GenerateContentSitemapOptions {
   /**
    * Override the URL an entry is advertised at, keeping it INSIDE the entry walk.
    *
-   * Return a path to advertise the entry at instead of its structural `urlPath`; return `null`
-   * (or `undefined`) to leave it alone.
+   * Return a path to advertise the entry at instead of its structural `urlPath`; `null`/`undefined`
+   * means "no opinion", not "drop it" — a callback that returns `null` for entries it doesn't
+   * handle must still advertise them at their own path, or it silently reintroduces the
+   * quietly-short sitemap this module exists to prevent. Dropping stays `exclude`'s job.
    *
-   * **`null` means "no opinion", not "drop it".** So the obvious shape — handle the one entry
-   * type you care about, return `null` for the rest — advertises every other entry at its own
-   * path rather than silently emitting a one-URL sitemap. Dropping an entry stays `exclude`'s
-   * job, and keeping the two separate is the whole reason for this choice: a `pathFor` whose
-   * natural-looking callback silently omitted everything else would re-introduce exactly the
-   * quietly-short sitemap this module exists to prevent.
+   * Because the entry stays in the walk, it keeps the `isNoindexEntry` gate and the `updatedAt`
+   * `lastModified`/`priority` defaults automatically, where `extraUrls` forces you to re-derive all
+   * three by hand and risks getting them wrong independently (see {@link SitemapExtraUrl}). This
+   * changes what is ADVERTISED, not what is BUILT: `generateContentStaticParams` still enumerates
+   * the entry at its structural path, so the URL returned here must be one your app actually
+   * routes, or you have advertised a 404.
    *
-   * This is the principled alternative to reaching for `extraUrls` to reroute a REAL entry.
-   * Because the entry stays in the walk, it keeps the `isNoindexEntry` gate, the `updatedAt`
-   * `lastModified` default and its `priority` automatically — all three of which an `extraUrls`
-   * entry makes you re-derive by hand, and get wrong independently (see {@link SitemapExtraUrl}).
+   * Return a **site-relative path**; it is trimmed. An empty or off-site return (an absolute
+   * `https://…` or a protocol-relative `//host/…`) throws rather than being emitted, whatever the
+   * origin — an empty string would silently claim `/`, and a protocol-relative value lands in the
+   * sitemap as a non-absolute `<loc>`, invalidating the whole file (use `extraUrls` for a URL on
+   * another origin). Reach for this option only when the URL is fixed by something OUTSIDE the
+   * content tree; otherwise model the entry so its natural `urlPath` is already the URL you serve.
    *
-   * **It changes what is ADVERTISED, not what is BUILT.** `generateContentStaticParams` still
-   * enumerates the entry at its structural path, so the URL returned here must be one your app
-   * actually routes — otherwise you have advertised a 404, the same hazard `extraUrls` carries.
-   *
-   * Return a **site-relative path**. The value is trimmed, and an empty or off-site return (an
-   * absolute `https://…` or a protocol-relative `//host/…`) throws rather than being emitted:
-   * the first silently claims `/`, and the second lands in the sitemap as a non-absolute `<loc>`,
-   * which invalidates the whole file. `extraUrls` is where an off-origin URL is legitimate.
-   *
-   * Reach for it only when the URL is fixed by something OUTSIDE the content tree: published URLs
-   * you cannot change, or a route prefix that deliberately differs from the content layout. When
-   * you control the modelling, model the entry so its natural `urlPath` is already the URL you
-   * serve — an `index` entry collapses onto its collection's path, and a root `index` entry onto
-   * `/` — which needs no option at all. That ordering is not advice we only give: it is what the
-   * reference app in this repo does, which is why its sitemap passes neither this nor `extraUrls`.
-   *
-   * Runs AFTER the `noindex` and `exclude` gates (a dropped entry needs no URL). `exclude`,
-   * `lastModified` and `priority` receive the entry as ENUMERATED, so `entry.urlPath` there is
-   * always the structural path and never your override — branch on the entry, not on the URL.
-   *
-   * Two entries rewritten onto one URL are NOT caught by the build's `assertNoDuplicateUrlPaths`
-   * guard, which runs on the raw listing and never sees these rewrites; `dedupeSitemapItems`
-   * warns and keeps the first.
-   *
-   * @example
-   * // Content lives under content/articles/*, but this site has always published /blog/*.
-   * pathFor: (entry) =>
-   *   entry.entryType === 'article' ? entry.urlPath.replace(/^\/articles\//, '/blog/') : null,
+   * Runs AFTER the `noindex`/`exclude` gates. `exclude`, `lastModified` and `priority` see the
+   * entry as ENUMERATED — `entry.urlPath` there is always structural, never your override, so
+   * branch on the entry, not the URL. A collision this creates is NOT caught by the build's
+   * `assertNoDuplicateUrlPaths` guard (which runs before this rewrite); `dedupeSitemapItems` warns
+   * and keeps the first instead.
    */
   pathFor?: (entry: RoutableEntry) => string | null | undefined
   /**
@@ -330,9 +302,8 @@ export async function generateContentSitemap(
  *   reject the whole file for it. Refused whatever the origin — including one matching `siteUrl` —
  *   so the rule is "return a site-relative path" with no host comparison to get subtly wrong.
  *
- * The returned path is TRIMMED. Surrounding whitespace is never intended and survives into the
- * URL otherwise (`' /blog'` → `<siteUrl>/ /blog`) — which this function would previously detect
- * while checking for emptiness and then hand back untrimmed anyway.
+ * The returned path is TRIMMED before use: surrounding whitespace is never intended and would
+ * otherwise survive into the URL (`' /blog'` → `<siteUrl>/ /blog`).
  */
 function resolveEntrySitemapPath(
   entry: RoutableEntry,
