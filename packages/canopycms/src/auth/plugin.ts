@@ -26,27 +26,16 @@ export interface AuthPlugin {
    * are operator mistakes, not user mistakes, and should surface as loud 500s
    * rather than quiet auth denials. Callers invoking authenticate() directly
    * (custom adapters) should be prepared for a rejection on misconfiguration.
-   *
-   * @param context - Framework-specific context (CanopyRequest, headers, etc.)
-   * @returns AuthenticationResult with user identity or error
    */
   authenticate(context: unknown): Promise<AuthenticationResult>
 
   /**
    * Search for users (for permission management UI)
-   * @param query - Search string (email, name, etc.)
-   * @param limit - Max results (default 10)
    */
   searchUsers(query: string, limit?: number): Promise<UserSearchResult[]>
 
-  /**
-   * Get detailed user metadata by ID
-   */
   getUserMetadata(userId: CanopyUserId): Promise<UserSearchResult | null>
 
-  /**
-   * Get group/organization metadata by ID
-   */
   getGroupMetadata(groupId: CanopyGroupId): Promise<GroupMetadata | null>
 
   /**
@@ -57,7 +46,6 @@ export interface AuthPlugin {
   /**
    * Search for external groups/organizations (for group management UI)
    * Optional - only needed if auth provider supports external groups
-   * @param query - Search string (name, ID, etc.)
    */
   searchExternalGroups?(query: string): Promise<Array<{ id: CanopyGroupId; name: string }>>
 
@@ -78,9 +66,6 @@ export interface AuthPlugin {
   ): (() => Promise<{ userCount: number; groupCount: number }>) | undefined
 }
 
-/**
- * Factory function type for creating auth plugins
- */
 export type AuthPluginFactory<TConfig = unknown> = (config: TConfig) => AuthPlugin
 
 /**

@@ -14,18 +14,7 @@ import type { OperatingMode, ClientUnsafeStrategy } from './types'
 import type { CanopyConfig } from '../config'
 import { DEFAULT_PROD_WORKSPACE } from '../config'
 
-// ============================================================================
-// Production Mode - Full Strategy
-// ============================================================================
-
 class ProdStrategy extends ProdClientSafeStrategy implements ClientUnsafeStrategy {
-  // All client-safe methods inherited automatically from ProdClientSafeStrategy:
-  // - mode, supportsBranching(), supportsStatusBadge(), supportsComments()
-  // - supportsPullRequests(), getPermissionsFileName(), getGroupsFileName()
-  // - shouldCommit(), shouldPush()
-
-  // Add client-unsafe methods (use Node.js APIs)
-
   getWorkspaceRoot(_sourceRoot?: string): string {
     return path.resolve(process.env.CANOPYCMS_WORKSPACE_ROOT ?? DEFAULT_PROD_WORKSPACE)
   }
@@ -97,13 +86,7 @@ class ProdStrategy extends ProdClientSafeStrategy implements ClientUnsafeStrateg
   }
 }
 
-// ============================================================================
-// Dev Mode - Full Strategy
-// ============================================================================
-
 class DevStrategy extends DevClientSafeStrategy implements ClientUnsafeStrategy {
-  // Inherits client-safe methods from DevClientSafeStrategy
-
   getWorkspaceRoot(sourceRoot?: string): string {
     return path.resolve(sourceRoot ?? process.cwd(), '.canopy-dev')
   }
@@ -170,10 +153,6 @@ class DevStrategy extends DevClientSafeStrategy implements ClientUnsafeStrategy 
   }
 }
 
-// ============================================================================
-// Factory with Memoization
-// ============================================================================
-
 const strategyCache = new Map<OperatingMode, ClientUnsafeStrategy>()
 
 /**
@@ -181,11 +160,6 @@ const strategyCache = new Map<OperatingMode, ClientUnsafeStrategy>()
  *
  * Strategies are memoized - one instance per mode for the entire process lifetime.
  * Safe to call inline: operatingStrategy(mode).getBaseRoot()
- *
- * Includes all client-safe methods (inherited) plus client-unsafe methods (Node.js APIs).
- *
- * @param mode - The operating mode
- * @returns Full strategy instance with client-unsafe methods
  */
 export function operatingStrategy(mode: OperatingMode): ClientUnsafeStrategy {
   const cached = strategyCache.get(mode)

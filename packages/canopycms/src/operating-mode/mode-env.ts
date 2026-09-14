@@ -22,8 +22,7 @@
  *
  * Only a value resolved at RUN time can satisfy all three, which is why this
  * is an environment override rather than a flag baked into the generated
- * config file. `CANOPY_MODE` is the name the deployment templates already
- * referred to; before this module existed nothing read it.
+ * config file.
  *
  * Precedence (highest wins):
  *   1. the environment value for the current runtime (see `readModeEnv`)

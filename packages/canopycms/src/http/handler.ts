@@ -31,9 +31,6 @@ export interface CanopyHandlerOptions {
   authPlugin: AuthPlugin
 }
 
-/**
- * Build API context from options.
- */
 const buildContext = async (options: CanopyHandlerOptions): Promise<ApiContext> => {
   const services =
     options.services ?? (options.config ? await createCanopyServices(options.config) : undefined)
@@ -52,13 +49,11 @@ const buildContext = async (options: CanopyHandlerOptions): Promise<ApiContext> 
   const getBranchContext =
     options.getBranchContext ??
     (async (branch: string, opts?: { loadSchema?: boolean }): Promise<BranchContext | null> => {
-      // Try to load existing branch
       const existing = await loadBranchContext({
         branchName: branch,
         mode: operatingMode,
       })
       if (existing) {
-        // Optionally load per-branch schema
         if (opts?.loadSchema) {
           const contentRootName = services.config.contentRoot || 'content'
           const cached = await services.branchSchemaCache.getSchema(
@@ -71,7 +66,6 @@ const buildContext = async (options: CanopyHandlerOptions): Promise<ApiContext> 
         return existing
       }
 
-      // In modes that support branching, auto-create system branches if they don't exist.
       // Read from services.config per-request (not a captured variable) so that
       // refreshActiveBranch() updates are reflected immediately.
       const baseBranch = services.config.defaultBaseBranch ?? 'main'
@@ -88,7 +82,6 @@ const buildContext = async (options: CanopyHandlerOptions): Promise<ApiContext> 
           createdBy: 'canopycms-system',
         })
 
-        // Optionally load per-branch schema for auto-created branches
         if (opts?.loadSchema && context) {
           const contentRootName = services.config.contentRoot || 'content'
           const cached = await services.branchSchemaCache.getSchema(
@@ -113,9 +106,6 @@ const buildContext = async (options: CanopyHandlerOptions): Promise<ApiContext> 
   }
 }
 
-/**
- * Parse query parameters from URL.
- */
 const parseQueryParams = (url: string): Record<string, string> => {
   try {
     const urlObj = new URL(url, 'http://localhost')
@@ -145,23 +135,6 @@ export type CanopyRequestHandler = (
  * 2. Extract path segments from the URL
  * 3. Call this handler
  * 4. Convert the CanopyResponse to their framework's response
- *
- * @example
- * ```ts
- * // In a framework adapter
- * const coreHandler = createCanopyRequestHandler({
- *   config: myConfig,
- *   authPlugin: myAuthPlugin,
- * })
- *
- * // Framework-specific handler
- * async function handleRequest(frameworkReq) {
- *   const canopyReq = convertToCanopyRequest(frameworkReq)
- *   const segments = extractPathSegments(frameworkReq)
- *   const response = await coreHandler(canopyReq, segments)
- *   return convertToFrameworkResponse(response)
- * }
- * ```
  */
 export function createCanopyRequestHandler(options: CanopyHandlerOptions): CanopyRequestHandler {
   // Fail closed (SEC-C1): a dev/insecure auth plugin must never serve prod traffic.
@@ -196,19 +169,16 @@ export function createCanopyRequestHandler(options: CanopyHandlerOptions): Canop
     req: CanopyRequest,
     pathSegments: string[],
   ): Promise<CanopyResponse<ApiResponse> | CanopyBinaryResponse> => {
-    // Route matching (fast, do first before async work)
     const match = router.match(req.method, pathSegments)
     if (!match) {
       return jsonResponse({ ok: false, status: 404, error: 'Not found' }, 404)
     }
 
-    // Get cached context
     const apiCtx = await getContext()
 
     // In dev mode, re-check if the developer switched git branches
     await apiCtx.services.refreshActiveBranch()
 
-    // Authenticate and convert to CanopyUser
     const authResult = await options.authPlugin.authenticate(req)
 
     // API routes require authentication. Reject anonymous callers BEFORE any
@@ -323,7 +293,6 @@ export function createCanopyRequestHandler(options: CanopyHandlerOptions): Canop
       }
     }
 
-    // API routes require authentication - reject anonymous users
     if (user.type === 'anonymous') {
       return jsonResponse(
         { ok: false, status: 401, error: authResult.error ?? 'Unauthorized' },
@@ -331,7 +300,6 @@ export function createCanopyRequestHandler(options: CanopyHandlerOptions): Canop
       )
     }
 
-    // Parse query params and merge with route params
     const queryParams = parseQueryParams(req.url)
     const mergedParams = { ...queryParams, ...match.params }
 
@@ -347,20 +315,17 @@ export function createCanopyRequestHandler(options: CanopyHandlerOptions): Canop
       }
     }
 
-    // Build API request
     const branch =
       (mergedParams as Record<string, string>)?.branch ??
       (body as Record<string, unknown> | undefined)?.branch
     const apiReq = { user, body, branch, query: queryParams, rawRequest: req }
 
-    // Validate params and body using the route's validation function (if available)
     if (match.validate) {
       const validationResult = match.validate({ params: mergedParams, body })
       if (!validationResult.ok) {
         return jsonResponse({ ok: false, status: 400, error: validationResult.error }, 400)
       }
 
-      // Call handler with validated params/body based on what's defined
       const handlerArgs: unknown[] = [apiCtx, apiReq]
       if (validationResult.params !== undefined) {
         handlerArgs.push(validationResult.params)
@@ -403,9 +368,6 @@ export function createCanopyRequestHandler(options: CanopyHandlerOptions): Canop
   }
 }
 
-/**
- * Create a handler with pre-built services from config.
- */
 export async function createCanopyRequestHandlerFromConfig(
   options: { config: CanopyConfig } & Omit<CanopyHandlerOptions, 'services' | 'config'>,
 ): Promise<CanopyRequestHandler> {

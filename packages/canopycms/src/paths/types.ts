@@ -52,9 +52,6 @@ export const ROOT_COLLECTION_ID = '__rootcoll__' as ContentId
  */
 export type Slug = string & { readonly __brand: 'Slug' }
 
-/**
- * Path validation result.
- */
 export interface PathValidationResult {
   valid: boolean
   error?: string

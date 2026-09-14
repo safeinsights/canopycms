@@ -3,10 +3,8 @@
  * Minimal surface area - only what CanopyCMS actually needs.
  */
 export interface CanopyRequest {
-  /** HTTP method (GET, POST, PUT, DELETE, etc.) */
   readonly method: string
 
-  /** Full request URL as string */
   readonly url: string
 
   /**
@@ -42,7 +40,6 @@ export interface CanopyRequest {
 
 /**
  * Framework-agnostic HTTP response.
- * Represents the response data to be sent back.
  */
 export interface CanopyResponse<T = unknown> {
   readonly status: number
@@ -68,9 +65,6 @@ export interface CanopyBinaryResponse {
   }
 }
 
-/**
- * Create a JSON response with the given body and status code.
- */
 export function jsonResponse<T>(
   body: T,
   status = 200,

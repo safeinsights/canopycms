@@ -41,7 +41,6 @@ async function resolveActiveCacheDir(cachePath: string): Promise<string> {
   const currentLink = path.join(cachePath, 'current')
   try {
     const target = await fs.readlink(currentLink)
-    // Symlink target may be relative or absolute
     const resolved = path.isAbsolute(target) ? target : path.resolve(cachePath, target)
     // SECURITY: Validate that resolved target stays within the expected cache directory
     const normalizedCache = path.resolve(cachePath)
@@ -117,7 +116,6 @@ export class FileBasedAuthCache implements AuthCacheProvider {
     const orgsPath = path.join(activeDir, 'orgs.json')
     const membershipsPath = path.join(activeDir, 'memberships.json')
 
-    // Check max mtime across all three files for cache freshness
     let maxMtime = 0
     for (const filePath of [usersPath, orgsPath, membershipsPath]) {
       try {
@@ -129,19 +127,16 @@ export class FileBasedAuthCache implements AuthCacheProvider {
     }
 
     if (maxMtime === 0) {
-      // No cache files exist — return empty cache
       if (!this.cache) {
         this.cache = this.emptyCache()
       }
       return this.cache
     }
 
-    // If max mtime hasn't changed and we have a cache, return it
     if (this.cache && maxMtime === this.lastMtime) {
       return this.cache
     }
 
-    // Load fresh data
     this.cache = await this.loadFromDisk(activeDir)
     this.lastMtime = maxMtime
     return this.cache
@@ -215,9 +210,7 @@ export class FileBasedAuthCache implements AuthCacheProvider {
 /**
  * Write auth cache files atomically using a snapshot directory and symlink swap.
  *
- * 1. Writes files to a timestamped snapshot directory: {cachePath}/snapshot-{ts}/
- * 2. Creates a temporary symlink, then atomically renames it to {cachePath}/current
- * 3. Cleans up old snapshot directories (keeps the 2 most recent)
+ * Cleans up old snapshot directories (keeps the 2 most recent).
  *
  * This ensures readers (FileBasedAuthCache) always see a consistent set of files:
  * either the old snapshot or the new one, never a mix.
@@ -232,7 +225,6 @@ export async function writeAuthCacheSnapshot(
   const snapshotDir = path.join(cachePath, `snapshot-${timestamp}`)
   await fs.mkdir(snapshotDir, { recursive: true })
 
-  // Write all files to the snapshot directory
   for (const [fileName, data] of Object.entries(files)) {
     const tmpPath = path.join(snapshotDir, `${fileName}.tmp`)
     const finalPath = path.join(snapshotDir, fileName)
@@ -258,7 +250,6 @@ export async function writeAuthCacheSnapshot(
   await fs.symlink(path.basename(snapshotDir), tmpLink)
   await fs.rename(tmpLink, currentLink)
 
-  // Clean up old snapshots (keep the 2 most recent)
   await cleanupOldSnapshots(cachePath, 2)
 
   return snapshotDir
@@ -277,7 +268,6 @@ async function cleanupOldSnapshots(cachePath: string, keepCount: number): Promis
     .sort()
     .reverse()
 
-  // Skip the most recent `keepCount` snapshots
   for (const snapshot of snapshots.slice(keepCount)) {
     try {
       await fs.rm(path.join(cachePath, snapshot), {

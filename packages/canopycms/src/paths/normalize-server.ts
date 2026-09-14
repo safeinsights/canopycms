@@ -11,13 +11,6 @@ import type { PathValidationResult } from './types'
 /**
  * Validate and normalize a path relative to a root directory.
  * Checks for path traversal attacks.
- *
- * NOTE: This function uses Node.js path module and is server-only.
- * For client code, use the pure functions in normalize.ts.
- *
- * @param root - The root directory
- * @param target - The target path to validate
- * @returns Validation result with normalized relative path if valid
  */
 export function validateAndNormalizePath(root: string, target: string): PathValidationResult {
   const resolvedRoot = resolve(root)

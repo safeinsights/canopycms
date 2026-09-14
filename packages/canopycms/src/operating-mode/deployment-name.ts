@@ -47,11 +47,8 @@ const VALID_DEPLOYMENT_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
  * Exported so `canopycms-cdk`'s suite can assert that its own synth-time copy
  * of this rule (constructs/cms-service.ts) still agrees with this one. The
  * construct deliberately does not import this directly — see
- * `isValidDeploymentName`'s doc comment in cms-service.ts for the real reason
- * (not, as this comment used to say, that the published construct lacks a
- * runtime dependency on `canopycms` — it doesn't: `canopycms` is a
- * non-optional peerDependency there, and the package's own main entry already
- * imports it at runtime). The drift check is therefore test-only — see
+ * `isValidDeploymentName`'s doc comment in cms-service.ts for the real reason.
+ * The drift check is therefore test-only — see
  * `deployment-name-fixtures.ts`.
  */
 export const isValidDeploymentName = (name: string): boolean =>
@@ -71,11 +68,8 @@ export function resolveDeploymentName(
     // canopyLogWarn, not console.warn: cms-worker.ts imports this module and
     // resolves through it inside start(), so this line lands in worker.log,
     // where an unprefixed line is folded into the previous CloudWatch event.
-    // The mismatch this reports is exactly what an operator would be grepping
-    // for. Plain console under Lambda/dev, as everywhere else. See
-    // utils/logger.ts. (Missed by the worker-log sweep, which went by directory
-    // name and by the modules the finding named, rather than by the worker's
-    // real import graph.)
+    // Plain console under Lambda/dev, as everywhere else. See
+    // utils/logger.ts.
     canopyLogWarn(
       `CanopyCMS: CANOPYCMS_DEPLOYMENT_NAME ("${envValue}") differs from config.deploymentName ` +
         `("${configValue}") — using the env var (infra-stamped env wins over shared-repo config ` +

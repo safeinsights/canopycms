@@ -1,7 +1,5 @@
 /**
  * Branch path resolution utilities.
- *
- * Handles resolving branch names to workspace directories.
  */
 
 import fs from 'node:fs/promises'
@@ -64,25 +62,16 @@ export function resolveBranchPath(options: BranchPathOptions): BranchPathResult 
   return { branchRoot, baseRoot: normalizedBase, branchName: safeBranch }
 }
 
-/**
- * Ensure the branch workspace directory exists.
- */
 export async function ensureBranchRoot(options: BranchPathOptions): Promise<BranchPathResult> {
   const result = resolveBranchPath(options)
   await fs.mkdir(result.branchRoot, { recursive: true })
   return result
 }
 
-/**
- * Get the default base directory for branch workspaces.
- */
 export function getDefaultBranchBase(mode: OperatingMode, override?: string): string {
   return resolveContentBranchesRoot(mode, override)
 }
 
-/**
- * Resolve branch paths from a branch context.
- */
 export function resolveBranchPaths(
   branchContext: BranchContext,
   mode: OperatingMode,

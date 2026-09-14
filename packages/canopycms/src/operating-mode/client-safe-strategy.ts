@@ -9,14 +9,9 @@
 
 import type { OperatingMode, ClientSafeStrategy } from './types'
 
-// ============================================================================
-// Production Mode - Client-Safe Strategy
-// ============================================================================
-
 export class ProdClientSafeStrategy implements ClientSafeStrategy {
   readonly mode: OperatingMode = 'prod'
 
-  // UI Feature Flags
   supportsBranching(): boolean {
     return true
   }
@@ -33,7 +28,6 @@ export class ProdClientSafeStrategy implements ClientSafeStrategy {
     return true
   }
 
-  // Simple Data
   getPermissionsFileName(): string {
     return 'permissions.json'
   }
@@ -51,14 +45,9 @@ export class ProdClientSafeStrategy implements ClientSafeStrategy {
   }
 }
 
-// ============================================================================
-// Dev Mode - Client-Safe Strategy
-// ============================================================================
-
 export class DevClientSafeStrategy implements ClientSafeStrategy {
   readonly mode: OperatingMode = 'dev'
 
-  // UI Feature Flags
   supportsBranching(): boolean {
     return true
   }
@@ -75,7 +64,6 @@ export class DevClientSafeStrategy implements ClientSafeStrategy {
     return false // No real GitHub in local dev mode
   }
 
-  // Simple Data
   getPermissionsFileName(): string {
     return 'permissions.json'
   }
@@ -93,10 +81,6 @@ export class DevClientSafeStrategy implements ClientSafeStrategy {
   }
 }
 
-// ============================================================================
-// Factory with Memoization
-// ============================================================================
-
 const clientStrategyCache = new Map<OperatingMode, ClientSafeStrategy>()
 
 /**
@@ -104,9 +88,6 @@ const clientStrategyCache = new Map<OperatingMode, ClientSafeStrategy>()
  *
  * Strategies are memoized - one instance per mode for the entire process lifetime.
  * Safe to call inline: clientOperatingStrategy(mode).supportsBranching()
- *
- * @param mode - The operating mode
- * @returns Client-safe strategy instance
  */
 export function clientOperatingStrategy(mode: OperatingMode): ClientSafeStrategy {
   const cached = clientStrategyCache.get(mode)

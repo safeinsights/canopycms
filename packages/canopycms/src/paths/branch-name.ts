@@ -14,9 +14,6 @@ import type { SanitizedBranchName } from './types'
 
 /**
  * Sanitize a branch name for use in filesystem paths.
- * - Replaces invalid characters with hyphens
- * - Collapses multiple hyphens
- * - Trims leading/trailing dots
  */
 export function sanitizeBranchName(branchName: string): SanitizedBranchName {
   const replaced = branchName.replace(/[^a-zA-Z0-9._-]/g, '-')

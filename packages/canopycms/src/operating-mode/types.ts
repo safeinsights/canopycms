@@ -12,9 +12,6 @@ import type { CanopyConfig } from '../config'
 // Re-export OperatingMode so it's available from this module
 export type OperatingMode = OM
 
-/**
- * Options for resolving git remote URL
- */
 export interface ResolveRemoteUrlOptions {
   mode: OperatingMode
   remoteUrl?: string
@@ -24,15 +21,12 @@ export interface ResolveRemoteUrlOptions {
 }
 
 /**
- * Configuration for remote URL resolution
  * Strategies return this data; GitManager executes the logic
  */
 export interface RemoteUrlConfig {
-  /** Whether to auto-initialize a local remote */
   shouldAutoInitLocal: boolean
   /** Default path for local remote (e.g., '.canopycms/remote.git') */
   defaultRemotePath: string
-  /** Environment variable name for remote URL */
   envVarName: string
   /**
    * Absolute path to check for auto-detection of a pre-existing local remote.
@@ -50,28 +44,16 @@ export interface RemoteUrlConfig {
  * NO Node.js APIs (fs, path, process, etc.) - only pure logic and simple data.
  */
 export interface ClientSafeStrategy {
-  /** The operating mode this strategy represents */
   readonly mode: OperatingMode
-
-  // ========================================================================
-  // UI Feature Flags
-  // ========================================================================
 
   /** Whether this mode supports multiple branch workspaces */
   supportsBranching(): boolean
 
-  /** Whether to show status badge in UI */
   supportsStatusBadge(): boolean
 
-  /** Whether comments/collaboration features are enabled */
   supportsComments(): boolean
 
-  /** Whether pull request features are available */
   supportsPullRequests(): boolean
-
-  // ========================================================================
-  // Simple Data Methods (no I/O)
-  // ========================================================================
 
   /** Get the permissions file name (e.g., 'permissions.json' or 'permissions.local.json') */
   getPermissionsFileName(): string
@@ -93,10 +75,6 @@ export interface ClientSafeStrategy {
  * Extends ClientSafeStrategy, so all client-safe methods are available.
  */
 export interface ClientUnsafeStrategy extends ClientSafeStrategy {
-  // ========================================================================
-  // Path Resolution (needs path, process.cwd, env vars)
-  // ========================================================================
-
   /**
    * Get the root directory for this mode's workspace.
    * All mode-specific subdirectories (content-branches, settings, .cache, etc.) live under this.
@@ -141,29 +119,14 @@ export interface ClientUnsafeStrategy extends ClientSafeStrategy {
    */
   getGitExcludePattern(): string
 
-  // ========================================================================
-  // File Paths (needs path.join)
-  // ========================================================================
-
-  /** Get the full path to the permissions file */
   getPermissionsFilePath(root: string): string
 
-  /** Get the full path to the groups file */
   getGroupsFilePath(root: string): string
 
-  // ========================================================================
-  // Git Operations
-  // ========================================================================
-
-  /** Get configuration for remote URL resolution (GitManager executes the logic) */
   getRemoteUrlConfig(): RemoteUrlConfig
 
   /** Whether this mode requires an existing git repository */
   requiresExistingRepo(): boolean
-
-  // ========================================================================
-  // Settings
-  // ========================================================================
 
   /**
    * Get the branch name to use for settings (permissions/groups).
@@ -182,20 +145,9 @@ export interface ClientUnsafeStrategy extends ClientSafeStrategy {
    */
   getSettingsRoot(sourceRoot?: string): string
 
-  /** Whether settings should be stored in a separate branch */
   usesSeparateSettingsBranch(): boolean
 
-  // ========================================================================
-  // Validation
-  // ========================================================================
-
-  /** Validate configuration for this mode */
   validateConfig(config: Partial<CanopyConfig>): void
 
-  // ========================================================================
-  // GitHub
-  // ========================================================================
-
-  /** Whether PRs should be auto-created for permissions/groups changes */
   shouldCreateSettingsPR(config: { autoCreateSettingsPR?: boolean }): boolean
 }

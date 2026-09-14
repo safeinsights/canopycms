@@ -1,9 +1,6 @@
 /**
  * Path normalization utilities (client-safe).
  *
- * Consolidates the various path normalization patterns used across the codebase
- * into a single, well-tested module.
- *
  * NOTE: These functions are pure and can be used in both client and server code.
  * Server-only functions that depend on Node.js 'path' module are in normalize-server.ts.
  */
@@ -15,8 +12,6 @@ import type { LogicalPath, PhysicalPath } from './types'
  * - Converting backslashes to forward slashes
  * - Removing empty segments
  * - Removing leading/trailing slashes
- *
- * This is the foundational normalization used by most path operations.
  *
  * @example
  * normalizeFilesystemPath('content\\posts\\\\my-post') // 'content/posts/my-post'
