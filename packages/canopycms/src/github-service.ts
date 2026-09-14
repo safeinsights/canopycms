@@ -169,7 +169,6 @@ export async function createOrUpdatePullRequest(
   // assertions in github-service.test.ts depend on this).
   const requestOption = signal ? { request: { signal } } : {}
 
-  // Check if an open PR already exists for this head/base
   const existingPRs = await octokit.pulls.list({
     owner,
     repo,
@@ -247,7 +246,6 @@ export async function createOrUpdatePullRequest(
     return { number: existing.number, url: existing.html_url, created: false }
   }
 
-  // Create new PR
   const pr = await octokit.pulls.create({
     owner,
     repo,
@@ -261,9 +259,6 @@ export async function createOrUpdatePullRequest(
   return { number: pr.data.number, url: pr.data.html_url, created: true }
 }
 
-/**
- * Service for interacting with GitHub API (pull requests, branches, etc.)
- */
 export class GitHubService {
   private octokit: Octokit
   private owner: string
@@ -277,9 +272,6 @@ export class GitHubService {
     this.baseBranch = options.baseBranch ?? 'main'
   }
 
-  /**
-   * Create a new pull request
-   */
   async createPullRequest(options: PullRequestOptions): Promise<{ number: number; url: string }> {
     const response = await this.octokit.pulls.create({
       owner: this.owner,
@@ -297,9 +289,6 @@ export class GitHubService {
     }
   }
 
-  /**
-   * Update an existing pull request
-   */
   async updatePullRequest(
     prNumber: number,
     options: Partial<Pick<PullRequestOptions, 'title' | 'body'>>,
@@ -342,9 +331,6 @@ export class GitHubService {
     return { number: result.number, url: result.url }
   }
 
-  /**
-   * Get pull request details
-   */
   async getPullRequest(prNumber: number): Promise<PullRequestDetails> {
     const response = await this.octokit.pulls.get({
       owner: this.owner,
@@ -361,9 +347,6 @@ export class GitHubService {
     }
   }
 
-  /**
-   * Convert a pull request to draft
-   */
   async convertToDraft(prNumber: number): Promise<void> {
     // Use GraphQL API for draft conversion (not available in REST API)
     await this.octokit.graphql(
@@ -382,9 +365,6 @@ export class GitHubService {
     )
   }
 
-  /**
-   * Convert a draft pull request to ready for review
-   */
   async convertToReady(prNumber: number): Promise<void> {
     // Use GraphQL API for draft conversion (not available in REST API)
     await this.octokit.graphql(
@@ -403,9 +383,6 @@ export class GitHubService {
     )
   }
 
-  /**
-   * Close a pull request
-   */
   async closePullRequest(prNumber: number): Promise<void> {
     await this.octokit.pulls.update({
       owner: this.owner,
@@ -415,9 +392,6 @@ export class GitHubService {
     })
   }
 
-  /**
-   * Delete a remote branch
-   */
   async deleteBranch(branchName: string): Promise<void> {
     await this.octokit.git.deleteRef({
       owner: this.owner,
@@ -426,9 +400,6 @@ export class GitHubService {
     })
   }
 
-  /**
-   * Get the GraphQL node ID for a pull request (needed for draft operations)
-   */
   private async getPullRequestNodeId(prNumber: number): Promise<string> {
     const response = await this.octokit.pulls.get({
       owner: this.owner,
@@ -447,10 +418,8 @@ export class GitHubService {
    * - git@github.com:owner/repo
    */
   static parseRemoteUrl(remoteUrl: string): { owner: string; repo: string } {
-    // Remove .git suffix if present
     const urlWithoutGit = remoteUrl.replace(/\.git$/, '')
 
-    // Try HTTPS format first
     const httpsMatch = urlWithoutGit.match(/https?:\/\/github\.com\/([^/]+)\/([^/]+)/)
     if (httpsMatch) {
       return {
@@ -484,13 +453,11 @@ export const createGitHubService = (
   config: CanopyConfig,
   remoteUrl?: string,
 ): GitHubService | null => {
-  // Only create service for modes that support pull requests
   const mode = config.mode
   if (!operatingStrategy(mode).supportsPullRequests()) {
     return null
   }
 
-  // Get token from environment
   const tokenEnvVar = config.githubTokenEnvVar ?? 'GITHUB_BOT_TOKEN'
   const token = process.env[tokenEnvVar] ?? process.env.CANOPYCMS_GITHUB_TOKEN
 
@@ -499,13 +466,11 @@ export const createGitHubService = (
     return null
   }
 
-  // Need remote URL to determine owner/repo
   if (!remoteUrl) {
     canopyLogWarn('CanopyCMS: GitHub service requires remoteUrl to determine repository')
     return null
   }
 
-  // Parse remote URL
   try {
     const { owner, repo } = GitHubService.parseRemoteUrl(remoteUrl)
     return new GitHubService({

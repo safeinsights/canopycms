@@ -79,13 +79,6 @@ const GIT_ENV_PASSTHROUGH =
  * BEFORE `overrides` so an explicit override (none today) could still win.
  */
 const FORCE_C_LOCALE = { LC_ALL: 'C', LANG: 'C' }
-/**
- * Exported for GitManager's own use (see `this.git.env(...)` above),
- * the worker's push-rejection-classified GitHub calls
- * (`pushBranchToGitHub` in worker/task-runner.ts, `syncGit`'s
- * fetch/`pushSettingsBranches` instance in worker/git-sync.ts),
- * and tests.
- */
 export function gitChildEnv(overrides: Record<string, string>): Record<string, string> {
   const env: Record<string, string> = {}
   for (const [key, value] of Object.entries(process.env)) {
@@ -129,7 +122,6 @@ export function gitNetworkChildEnv(): Record<string, string> {
 }
 
 // In-memory lock to prevent concurrent remote.git initialization
-// Maps remotePath -> Promise<void> to serialize access
 const remoteInitLocks = new Map<string, Promise<void>>()
 
 /**
@@ -156,12 +148,6 @@ const remoteInitLocks = new Map<string, Promise<void>>()
  * never the local heads other code depends on. `reconcileTrackedBranches()`
  * (worker/git-sync.ts) is what subsequently, and non-destructively, brings
  * `refs/heads/*` toward what's tracked here.
- *
- * Lives here (not the worker, where this constant originated) so
- * `GitManager.bareRemoteHasBranch` -- which must recognize this namespace
- * too, since it's what a branch pushed by another CanopyCMS deployment (or
- * pushed directly to GitHub) shows up in before/without ever gaining a local
- * head -- doesn't need a worker/ -> git-manager.ts back-reference.
  */
 export const GITHUB_TRACKING_REF_PREFIX = 'refs/remotes/github/'
 
@@ -174,26 +160,21 @@ export const GITHUB_TRACKING_REF_PREFIX = 'refs/remotes/github/'
 export async function ensureGitExcludePattern(repoPath: string, pattern: string): Promise<void> {
   const excludePath = path.join(repoPath, '.git', 'info', 'exclude')
 
-  // Ensure .git/info directory exists
   await fs.mkdir(path.dirname(excludePath), { recursive: true })
 
-  // Read existing exclude file (create if doesn't exist)
   let content = ''
   try {
     content = await fs.readFile(excludePath, 'utf-8')
   } catch (err: unknown) {
     if (!isNotFoundError(err)) throw err
-    // File doesn't exist, will create it
   }
 
-  // Check if pattern already exists (avoid duplicates)
   const lines = content.split('\n')
   if (lines.some((line) => line.trim() === pattern)) {
     log.debug('git', 'Pattern already in .git/info/exclude', { pattern })
     return
   }
 
-  // Add pattern (with newline if file is not empty and doesn't end with one)
   const needsLeadingNewline = content.length > 0 && !content.endsWith('\n')
   const newContent = content + (needsLeadingNewline ? '\n' : '') + pattern + '\n'
 
@@ -381,7 +362,6 @@ export class GitManager {
       await existingLock
     }
 
-    // Create new lock promise
     const lockPromise = log.timed('git', 'ensureLocalSimulatedRemote', async () => {
       // The in-memory lock above only serializes within one process; take a
       // cross-process lock too so two processes provisioning against the same
@@ -424,13 +404,11 @@ export class GitManager {
           const result = await sourceGit.raw(['rev-parse', '--show-toplevel'])
           gitRoot = result.trim()
         } catch {
-          // If we can't find git root, fall back to sourcePath
           gitRoot = options.sourcePath
         }
 
         const sourceGit = simpleGit({ baseDir: gitRoot })
 
-        // Verify it's a git repo
         try {
           await sourceGit.status()
         } catch {
@@ -440,7 +418,6 @@ export class GitManager {
           )
         }
 
-        // Verify it has commits
         let hasCommits = false
         try {
           const log = await sourceGit.log(['-1'])
@@ -457,7 +434,6 @@ export class GitManager {
           )
         }
 
-        // Verify baseBranch exists
         const branches = await sourceGit.branchLocal()
         if (!branches.all.includes(options.baseBranch)) {
           throw new Error(
@@ -507,10 +483,8 @@ export class GitManager {
       }
     })
 
-    // Store the lock promise
     remoteInitLocks.set(options.remotePath, lockPromise)
 
-    // Wait for initialization to complete
     await lockPromise
   }
 
@@ -519,9 +493,6 @@ export class GitManager {
    * EITHER the local-heads namespace (`refs/heads/<branch>`) or the GitHub
    * tracking namespace (`GITHUB_TRACKING_REF_PREFIX<branch>`).
    *
-   * Originally checked `refs/heads/*` only, for dev-mode's
-   * `ensureLocalSimulatedRemote` (a simulated remote never gets a tracking
-   * namespace, so that caller only ever needed the local-heads check).
    * Generalized/promoted to public for api/branch.ts's create-time collision
    * guard, which also needs the tracking namespace: `syncGit()` fetches
    * GitHub into `GITHUB_TRACKING_REF_PREFIX*` rather than `refs/heads/*`
@@ -723,7 +694,6 @@ export class GitManager {
   }
 
   /**
-   * Find the git root directory
    * @returns Path to git root, or cwd if not in a git repo
    */
   static async findGitRoot(): Promise<string> {
@@ -739,8 +709,6 @@ export class GitManager {
   }
 
   /**
-   * Validate that a git repository exists at the given path
-   * @param repoPath - Path to check for .git directory
    * @throws Error if git repo doesn't exist
    */
   static async validateGitRepoExists(repoPath: string): Promise<void> {
@@ -805,8 +773,6 @@ export class GitManager {
    * 3. Environment variable (mode-specific)
    * 4. Auto-initialized local remote (for dev mode)
    *
-   * Uses strategy flags to determine behavior, GitManager executes the logic.
-   *
    * In prod mode, a resolved network URL from any of the first three sources
    * is rejected unless `options.allowNetworkRemoteInProd` is set — see
    * `assertRemoteUrlAllowedInMode`. Auto-detect/auto-init (source 4) are never
@@ -825,7 +791,6 @@ export class GitManager {
     const strategy = operatingStrategy(options.mode)
     const config = strategy.getRemoteUrlConfig()
 
-    // Centralized priority chain (no duplication across strategies)
     if (options.remoteUrl) {
       this.assertRemoteUrlAllowedInMode(
         options.mode,
@@ -871,7 +836,6 @@ export class GitManager {
       }
     }
 
-    // Mode-specific behavior: auto-init local remote
     if (config.shouldAutoInitLocal) {
       const gitRoot = await this.findGitRoot()
       const sourceRoot = options.sourceRoot
@@ -920,12 +884,7 @@ export class GitManager {
    * Ensures a git workspace is initialized and ready for use.
    * Handles cloning, remote configuration, and branch checkout/creation.
    *
-   * This centralizes the common initialization sequence used by both BranchWorkspaceManager
-   * and SettingsWorkspaceManager.
-   *
    * Note: Does NOT configure git author - that should be done before commits, not during init.
-   *
-   * @returns Configured GitManager instance for the workspace
    */
   static async initializeWorkspace(options: InitializeWorkspaceOptions): Promise<GitManager> {
     // Resolve the fork point through the shared resolver (dev mode detects the
@@ -939,7 +898,6 @@ export class GitManager {
     })
     const remoteName = options.remoteName ?? 'origin'
 
-    // 1. Check if git already initialized (with traversal protection)
     const repoExists = await GitManager.repoExistsAt(options.workspacePath)
     if (!repoExists) {
       // Not a valid git repo — clean up corrupt .git if present so clone can proceed
@@ -957,10 +915,8 @@ export class GitManager {
       }
     }
 
-    // 2. Clone if needed
     let justCloned = false
     if (!repoExists) {
-      // Resolve remote URL only when we need to clone
       const remoteUrl = await GitManager.resolveRemoteUrl({
         mode: options.mode,
         remoteUrl: options.remoteUrl,
@@ -970,14 +926,12 @@ export class GitManager {
         allowNetworkRemoteInProd: options.allowNetworkRemoteInProd,
       })
 
-      // Require remoteUrl for cloning
       if (!remoteUrl) {
         throw new Error(
           'CanopyCMS: defaultRemoteUrl (or CANOPYCMS_REMOTE_URL) is required to initialize workspace',
         )
       }
 
-      // Clone repository (automatically configures 'origin' remote)
       try {
         await GitManager.cloneRepo(remoteUrl, options.workspacePath, baseBranch)
       } catch (err) {
@@ -1037,7 +991,6 @@ export class GitManager {
       }
     }
 
-    // 6. Checkout or create branch based on type
     if (options.branchType === 'orphan') {
       await git.createOrphanSettingsBranch(options.branchName, {})
       // Settings mutations hold an OCC lockfile (<file>.lock, see
@@ -1347,7 +1300,6 @@ export class GitManager {
       )
     }
 
-    // Set author identity
     const currentName = config.all['user.name']
     const currentEmail = config.all['user.email']
     if (currentName !== author.name) {
@@ -1384,25 +1336,16 @@ export class GitManager {
     }
   }
 
-  /**
-   * Check if working directory has uncommitted changes
-   */
   async hasUncommittedChanges(): Promise<boolean> {
     const status = await this.status()
     return status.files.length > 0
   }
 
-  /**
-   * Get list of uncommitted file paths
-   */
   async getUncommittedFiles(): Promise<string[]> {
     const status = await this.status()
     return status.files.map((f) => f.path)
   }
 
-  /**
-   * Get remote URL for current repo
-   */
   async getRemoteUrl(): Promise<string | undefined> {
     const remotes = await this.git.getRemotes(true)
     const remote = remotes.find((r) => r.name === this.remote)
@@ -1430,9 +1373,6 @@ export class GitManager {
    *
    * The branch contains only settings files committed by explicit path
    * (e.g. permissions.json, groups.json at the workspace root).
-   *
-   * @param branchName - Name of the orphan branch (e.g., 'canopycms-settings-prod')
-   * @param initialFiles - Files to commit to the new branch (e.g., { 'permissions.json': '{}', 'groups.json': '{}' })
    */
   async createOrphanSettingsBranch(
     branchName: string,
@@ -1452,7 +1392,6 @@ export class GitManager {
   ): Promise<void> {
     log.debug('git', 'Creating orphan settings branch', { branchName })
 
-    // Check if branch already exists
     const branches = await this.git.branch()
     if (branches.all.includes(branchName)) {
       log.debug('git', 'Orphan branch already exists', { branchName })
@@ -1477,7 +1416,6 @@ export class GitManager {
       // Ignore errors (might fail if index is already empty)
     }
 
-    // Write initial files
     for (const [filePath, content] of Object.entries(initialFiles)) {
       const absolutePath = path.join(this.repoPath, filePath)
       await fs.mkdir(path.dirname(absolutePath), { recursive: true })
@@ -1485,7 +1423,6 @@ export class GitManager {
       await this.git.add(filePath)
     }
 
-    // Commit initial files
     await this.git.commit('Initialize settings branch', ['--allow-empty'])
 
     log.debug('git', 'Orphan settings branch created', { branchName })
