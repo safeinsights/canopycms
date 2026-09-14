@@ -28,22 +28,16 @@ interface LoadedCache {
 }
 
 /**
- * Resolve the active cache directory.
- *
- * Supports two layouts:
- * 1. Snapshot layout (preferred): {cachePath}/current → {cachePath}/snapshot-{ts}/
- *    The `current` symlink points to the active snapshot directory.
- * 2. Flat layout (legacy/simple): files directly in {cachePath}/
- *
- * Returns the directory path where users.json, orgs.json, memberships.json live.
+ * The directory holding users.json, orgs.json and memberships.json: the target
+ * of the `{cachePath}/current` symlink under the preferred snapshot layout, or
+ * `{cachePath}` itself under the flat one.
  */
 async function resolveActiveCacheDir(cachePath: string): Promise<string> {
   const currentLink = path.join(cachePath, 'current')
   try {
     const target = await fs.readlink(currentLink)
-    // Symlink target may be relative or absolute
     const resolved = path.isAbsolute(target) ? target : path.resolve(cachePath, target)
-    // SECURITY: Validate that resolved target stays within the expected cache directory
+    // SECURITY: the symlink target must stay inside the cache directory.
     const normalizedCache = path.resolve(cachePath)
     const normalizedTarget = path.resolve(resolved)
     if (
@@ -64,20 +58,12 @@ async function resolveActiveCacheDir(cachePath: string): Promise<string> {
 }
 
 /**
- * File-based auth cache provider.
- * Reads JSON files from a directory that is populated externally
- * (e.g., by an EC2 worker running refreshClerkCache).
+ * Reads a directory populated externally (the EC2 worker's refreshClerkCache)
+ * and holds the result in memory, re-reading whenever a file's mtime changes.
  *
- * Supports two directory layouts:
- * - Snapshot layout: {cachePath}/current/ symlink → snapshot-{ts}/ directory
- * - Flat layout: files directly in {cachePath}/
- *
- * Expects:
- * - users.json   — { users: UserSearchResult[] }
- * - orgs.json    — { groups: GroupMetadata[] }
- * - memberships.json — { memberships: { [userId]: groupId[] } }
- *
- * Caches in memory and re-reads when file mtime changes.
+ * Expects users.json `{ users }`, orgs.json `{ groups }` and memberships.json
+ * `{ memberships: { [userId]: groupId[] } }`, in whichever directory
+ * `resolveActiveCacheDir` picks.
  */
 export class FileBasedAuthCache implements AuthCacheProvider {
   private cache: LoadedCache | null = null
@@ -117,7 +103,6 @@ export class FileBasedAuthCache implements AuthCacheProvider {
     const orgsPath = path.join(activeDir, 'orgs.json')
     const membershipsPath = path.join(activeDir, 'memberships.json')
 
-    // Check max mtime across all three files for cache freshness
     let maxMtime = 0
     for (const filePath of [usersPath, orgsPath, membershipsPath]) {
       try {
@@ -129,19 +114,16 @@ export class FileBasedAuthCache implements AuthCacheProvider {
     }
 
     if (maxMtime === 0) {
-      // No cache files exist — return empty cache
       if (!this.cache) {
         this.cache = this.emptyCache()
       }
       return this.cache
     }
 
-    // If max mtime hasn't changed and we have a cache, return it
     if (this.cache && maxMtime === this.lastMtime) {
       return this.cache
     }
 
-    // Load fresh data
     this.cache = await this.loadFromDisk(activeDir)
     this.lastMtime = maxMtime
     return this.cache
@@ -213,14 +195,11 @@ export class FileBasedAuthCache implements AuthCacheProvider {
 }
 
 /**
- * Write auth cache files atomically using a snapshot directory and symlink swap.
- *
- * 1. Writes files to a timestamped snapshot directory: {cachePath}/snapshot-{ts}/
- * 2. Creates a temporary symlink, then atomically renames it to {cachePath}/current
- * 3. Cleans up old snapshot directories (keeps the 2 most recent)
- *
- * This ensures readers (FileBasedAuthCache) always see a consistent set of files:
- * either the old snapshot or the new one, never a mix.
+ * Write the cache files into a fresh snapshot directory, then swap the `current`
+ * symlink over to it, so a reader always sees one consistent set of files --
+ * the old snapshot or the new one, never a mix. Individual files go down by
+ * temp-file + rename (utils/atomic-write.ts owns that mechanism). The 2 most
+ * recent snapshot directories are kept.
  */
 export async function writeAuthCacheSnapshot(
   cachePath: string,
@@ -232,7 +211,6 @@ export async function writeAuthCacheSnapshot(
   const snapshotDir = path.join(cachePath, `snapshot-${timestamp}`)
   await fs.mkdir(snapshotDir, { recursive: true })
 
-  // Write all files to the snapshot directory
   for (const [fileName, data] of Object.entries(files)) {
     const tmpPath = path.join(snapshotDir, `${fileName}.tmp`)
     const finalPath = path.join(snapshotDir, fileName)
@@ -240,25 +218,20 @@ export async function writeAuthCacheSnapshot(
     await fs.rename(tmpPath, finalPath)
   }
 
-  // Atomic symlink swap: create temp symlink, rename over current.
-  //
-  // The target MUST be relative (the bare `snapshot-<ts>` basename), because
-  // writer and reader do not always share a mount namespace. In prod the EC2
-  // worker mounts the EFS filesystem root and writes through
-  // CANOPYCMS_WORKSPACE_ROOT=/mnt/efs/workspace (cachePath
-  // /mnt/efs/workspace/.cache), while the CMS Lambda mounts the /workspace
-  // access point at /mnt/efs and reads the SAME directory as /mnt/efs/.cache.
-  // An absolute target recorded by one is a nonexistent path to the other -
-  // `resolveActiveCacheDir`'s escape guard then correctly rejects it and falls
-  // back to the flat layout, where the worker never writes, leaving the Lambda
-  // with a permanently empty cache. A relative target resolves against
-  // whichever cachePath the reader was given, so it is correct from both.
+  // The symlink target MUST be relative (the bare `snapshot-<ts>` basename),
+  // because writer and reader do not share a mount namespace: in prod the EC2
+  // worker writes through /mnt/efs/workspace/.cache while the CMS Lambda mounts
+  // the /workspace access point and reads the SAME directory as /mnt/efs/.cache.
+  // An absolute target recorded by one is a nonexistent path to the other, and
+  // `resolveActiveCacheDir`'s escape guard then falls back to the flat layout,
+  // where the worker never writes — leaving the Lambda a permanently empty
+  // cache. A relative target resolves against whichever cachePath the reader
+  // was given, so it is correct from both.
   const currentLink = path.join(cachePath, 'current')
   const tmpLink = path.join(cachePath, `current-${timestamp}`)
   await fs.symlink(path.basename(snapshotDir), tmpLink)
   await fs.rename(tmpLink, currentLink)
 
-  // Clean up old snapshots (keep the 2 most recent)
   await cleanupOldSnapshots(cachePath, 2)
 
   return snapshotDir
@@ -277,7 +250,6 @@ async function cleanupOldSnapshots(cachePath: string, keepCount: number): Promis
     .sort()
     .reverse()
 
-  // Skip the most recent `keepCount` snapshots
   for (const snapshot of snapshots.slice(keepCount)) {
     try {
       await fs.rm(path.join(cachePath, snapshot), {

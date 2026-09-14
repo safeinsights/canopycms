@@ -6,13 +6,7 @@
 import { createDebugLogger } from '../utils/debug'
 import type { Task, TaskQueueLogger } from '../task-queue'
 
-// ============================================================================
-// CMS-specific types
-// ============================================================================
-
-/**
- * Actions the EC2 worker can execute on behalf of Lambda.
- */
+/** Actions the EC2 worker can execute on behalf of Lambda. */
 export type TaskAction =
   | 'push-and-create-pr'
   | 'push-and-update-pr'
@@ -25,10 +19,6 @@ export type TaskAction =
 /** A task with a CMS-specific action. */
 export type WorkerTask = Task & { action: TaskAction }
 
-// ============================================================================
-// Shared logger instance for CMS task queue operations
-// ============================================================================
-
 const debugLogger = createDebugLogger({ prefix: 'TaskQueue' })
 
 export const cmsTaskQueueLogger: TaskQueueLogger = {
@@ -36,10 +26,6 @@ export const cmsTaskQueueLogger: TaskQueueLogger = {
     debugLogger.debug('task', message, data)
   },
 }
-
-// ============================================================================
-// Re-exports from generic task-queue module
-// ============================================================================
 
 export {
   enqueueTask,

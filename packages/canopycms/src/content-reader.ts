@@ -47,18 +47,16 @@ export interface ReadContentInput {
    *
    * 1. `entryPath` must be a COLLECTION. A published URL is `/<collectionSegments>/<slug>` (or
    *    the collapsed collection path, for an index entry), so its non-slug segments are always
-   *    collection names. An `entryPath` that resolves to an entry-TYPE item instead would be
-   *    delegated by `ContentStore.buildPaths` to the parent collection -- answering at
-   *    `/<collection>/<typeName>` and `/<collection>/<typeName>/<slug>`, neither of which any
-   *    forward surface emits.
+   *    collection names. An `entryPath` resolving to an entry-TYPE item would be delegated by
+   *    `ContentStore.buildPaths` to the parent collection, answering at URLs no forward surface
+   *    emits.
    * 2. The resolved entry's type must be one its collection declares, matching the
    *    `parseTypedFilename(filename, collection.entries)` check `listEntries` applies. A legacy
    *    untyped file has no type token to fail on -- see `declaresEntryType`.
    *
-   * Set by `readByUrlPath` and nothing else. Note what it does NOT do: `read({ entryPath:
-   * 'content/home' })` and direct `ContentStore` use keep the entry-type delegation, which is a
-   * supported API and the only way to address a singleton structurally. Misusing this flag can
-   * only make a read stricter, never looser.
+   * Set by `readByUrlPath` and nothing else: `read({ entryPath: 'content/home' })` and direct
+   * `ContentStore` use keep the entry-type delegation, a supported API and the only way to
+   * address a singleton structurally. Misusing this flag can only make a read stricter.
    */
   urlAddressableOnly?: boolean
 }
@@ -70,35 +68,28 @@ export interface ReadContentInput {
  */
 export interface ContentReadMeta {
   /**
-   * Absolute filesystem path to the resolved entry file. It is **server-only**
-   * -- do not serialize it to the client or embed it in public output, as it
-   * reveals the deployment's filesystem layout (home dir / EFS mount / branch
-   * name).
+   * Absolute filesystem path to the resolved entry file. **Server-only**: do not serialize it
+   * to the client or embed it in public output, as it reveals the deployment's filesystem
+   * layout (home dir / EFS mount / branch name).
    */
   physicalPath: PhysicalPath
   /**
    * The resolved entry type name, read from the entry's own filename
-   * (`{type}.{slug}.{id}.{ext}`) -- immutable once the file is created, and
-   * NOT re-validated against the collection's current `entries` config on
-   * every read. It is therefore usually, but not guaranteed to be, a key in
-   * the collection's `entries` config: it can diverge if an entry type was
-   * renamed or removed from the schema after files using the old name were
-   * created, or if the file was hand-authored with an unrecognized type
-   * token.
+   * (`{type}.{slug}.{id}.{ext}`) -- immutable once the file is created, and NOT re-validated
+   * against the collection's current `entries` config on every read. So it is usually, but not
+   * guaranteed to be, a key in that config: it diverges when an entry type was renamed or
+   * removed from the schema after files using the old name were created, or when the file was
+   * hand-authored with an unrecognized type token.
    *
-   * For a legacy entry file predating embedded-type filenames (`{slug}.{ext}`),
-   * there is no type recorded on disk at all -- `entryType` silently falls
-   * back to the collection's DEFAULT entry type, which may or may not be what
-   * the file actually is. `entryId` being `undefined` (below) is the signal
-   * that this happened: when `entryId` is `undefined`, `entryType` is
-   * inferred rather than read.
+   * A legacy entry file (`{slug}.{ext}`) records no type at all, so this falls back to the
+   * collection's DEFAULT entry type, which may not be what the file is. `entryId` being
+   * `undefined` is the signal that this happened.
    */
   entryType: string
   /**
-   * The entry's 12-char Base58 content ID, when the resolved file carries one.
-   * Undefined only for legacy entry files predating embedded-ID filenames
-   * (`{slug}.{ext}` rather than `{type}.{slug}.{id}.{ext}`) -- see the
-   * `entryType` caveat above for what that implies about it.
+   * The entry's 12-char Base58 content ID, when the resolved file carries one. Undefined only
+   * for legacy entry files predating embedded-ID filenames (`{slug}.{ext}` rather than
+   * `{type}.{slug}.{id}.{ext}`) -- see the `entryType` caveat above for what that implies.
    */
   entryId?: ContentId
 }
@@ -176,7 +167,6 @@ export const createContentReader = (options: ContentReaderOptions): ContentReade
     const context = await resolveBranchContext(branchName)
     const { branchRoot } = resolveBranchPaths(context, operatingMode, basePathOverride)
 
-    // Load per-branch schema dynamically
     const branchSchemaCache = services.branchSchemaCache
     const contentRootName = services.config.contentRoot || 'content'
     const { flatSchema: branchFlatSchema } = await branchSchemaCache.getSchema(
@@ -208,17 +198,16 @@ export const createContentReader = (options: ContentReaderOptions): ContentReade
       .map((segment) => encodeURIComponent(segment))
       .join('/')
 
-  // Build preview paths using simple path construction
   const contentRoot = trimSlashes(services.config.contentRoot ?? 'content')
   // The `val === contentRoot` branch matters as much as the prefix one: a root-level entry's
-  // collectionPath IS the content root, which does not start with `${contentRoot}/`, so without
-  // it the root index reported `path: '/content'` (and a root entry `/content/about`) -- paths
-  // that resolve to nothing. `computeEntryUrl` has always had both branches; this had one.
+  // collectionPath IS the content root, which does not start with `${contentRoot}/`, so
+  // without it the root index reports `path: '/content'` (and a root entry `/content/about`)
+  // -- paths that resolve to nothing.
   //
   // Both branches stay guarded on `contentRoot` so an empty one passes the value through
   // unchanged, exactly as `computeEntryUrl` does. Unreachable today (`contentRootSchema` is
   // `relativePathSchema.default('content')` with `.min(1)`), but a blanket short-circuit would
-  // be the WRONG answer if it ever were reachable -- it would flatten every entry to root.
+  // be the WRONG answer if it ever were reachable: it would flatten every entry to root.
   const stripRoot = (val: string) =>
     contentRoot && val === contentRoot
       ? ''
@@ -231,7 +220,6 @@ export const createContentReader = (options: ContentReaderOptions): ContentReade
     slug?: string
     branch?: string
   }) => {
-    // Construct preview path from collectionPath
     const stripped = stripRoot(opts.collectionPath)
     const base = stripped ? `/${stripped}` : '/'
 
@@ -269,21 +257,18 @@ export const createContentReader = (options: ContentReaderOptions): ContentReade
     // for server-side colocated-artifact reads (e.g. a sibling profile.json). Already
     // computed here for permission checks; just carried through.
     let physicalPath: PhysicalPath
-    // Entry type + content ID are already resolved as part of path resolution
-    // (buildPaths() derives both from the schema item / filename) — surfaced on
-    // read() / readByUrlPath() so callers can route or key by them without a
-    // separate listEntries lookup or filename parse.
+    // Entry type + content ID come out of path resolution (buildPaths() derives both from the
+    // schema item / filename), surfaced on read() / readByUrlPath() so callers can route or
+    // key by them without a separate listEntries lookup or filename parse.
     let entryType: string
     let entryId: ContentId | undefined
     try {
       const resolved = await store.resolveDocumentPath(entryPath, slug ?? '')
       relativePath = resolved.relativePath
       physicalPath = resolved.absolutePath as PhysicalPath
-      // resolveDocumentPath() always sets entryTypeName for a valid schema item
-      // (collection entries fall back to 'entry'; entry-type items delegate to
-      // their parent collection with their own name), so no further fallback
-      // is needed here — id is the one field that can be legitimately absent,
-      // for legacy entry files without an embedded ID (see ContentReadMeta).
+      // resolveDocumentPath() always sets entryTypeName for a valid schema item, so no
+      // further fallback is needed here; `id` is the one field that can be legitimately
+      // absent, for legacy entry files without an embedded ID (see ContentReadMeta).
       entryType = resolved.entryTypeName
       entryId = resolved.id as ContentId | undefined
     } catch (err) {
@@ -365,10 +350,8 @@ export const createContentReader = (options: ContentReaderOptions): ContentReade
     const body = docRecord.body as string | undefined
     const bodyFieldName = (docRecord.bodyFieldName as string | undefined) ?? 'body'
 
-    // Merge body into data first, then resolve entry links across all fields
     let data = (body != null ? { ...rawData, [bodyFieldName]: body } : rawData) as T
 
-    // Resolve entry:ID links in all string values (body + nested markdown fields)
     if (input.resolveEntryLinks ?? true) {
       const idIndex = await store.idIndex()
       data = resolveEntryLinksInData(data, idIndex, contentRoot, services.config.entryLinkUrl) as T
