@@ -6,71 +6,34 @@ import { getErrorMessage, isNodeError } from './utils/error'
 import { createDebugLogger } from './utils/debug'
 
 /**
- * Generalized cross-process generation marker for any on-disk resource that
- * is durably cached under a branch-clone (or similar) root.
+ * Cross-process generation marker for an on-disk resource cached under a
+ * branch-clone root: several warm Lambda containers and the EC2 worker share
+ * those clones on EFS with no shared memory and no cross-host file watching,
+ * so the filesystem coordinates. The marker for `resource` lives at
+ * {root}/.canopy-meta/{resource}.generation — dot-prefixed so content and
+ * index scans skip it, and excluded from git via .git/info/exclude.
  *
- * Some in-process cache is kept per resource per process (an in-memory index,
- * a parsed schema, a registry snapshot). Within one process, mutating code can
- * invalidate that cache directly. Across processes (several warm Lambda
- * containers + the EC2 worker sharing branch clones on EFS) there is no
- * shared memory and no cross-host file watching, so the shared filesystem
- * itself is the coordination medium: every operation that mutates the
- * resource also rewrites a small marker file with a fresh random token, and
- * every consumer cheaply re-reads that marker (throttled) to decide whether
- * its cached snapshot is still current.
+ * - Mutators bump AFTER mutating, with a fresh random token: a counter would
+ *   need read-modify-write and lose concurrent bumps without a lock.
+ * - Regenerators capture the token BEFORE scanning and embed it in the
+ *   snapshot; readers compare that token against the live marker and
+ *   regenerate on mismatch. A regeneration racing an invalidation embeds the
+ *   old token, so it self-describes as stale and heals on the next read.
+ * - Regeneration returns its own scan result and never loops until the tokens
+ *   match, which would livelock under a bump storm.
+ * - `mustSucceed` bumps explicit invalidations, where a swallowed failure
+ *   means indefinite staleness; bulk `finally`-block callers take the default
+ *   log-and-swallow hint bump.
+ * - A marker read error other than ENOENT stays distinct from "never bumped":
+ *   the consumer serves the fresh scan but skips persisting a snapshot whose
+ *   token it cannot attribute to that scan.
  *
- * The marker for a given `resource` lives at {root}/.canopy-meta/{resource}.generation:
- * `.canopy-meta/` is the established per-clone internal dir — dot-prefixed (so
- * content and index scans skip it) and excluded from git via .git/info/exclude.
- *
- * ## Why a random token instead of a monotonic counter
- *
- * Readers only need "did it change since I captured it", so inequality against
- * the captured value suffices. A counter would need read-modify-write, which
- * silently loses concurrent bumps without a lock (two bumpers read 5, both
- * write 6 — a reader that recorded 6 after the first bump never learns of the
- * second mutation). A unique token per bump has no lost-update problem, needs
- * no lock, and avoids NFS mtime-granularity / cross-host clock-skew issues.
- * Each bump is a single atomic temp-file + rename.
- *
- * ## Ordering protocol (correctness)
- *
- * - Bumpers write the marker strictly AFTER their filesystem mutations.
- * - Readers capture the marker token strictly BEFORE scanning/rebuilding the
- *   resource, and record it only after the rebuild completes. A bump landing
- *   mid-rebuild therefore leaves the recorded token older than the file,
- *   forcing another rebuild on the next probe.
- *
- * ## Guarantee delta for DURABLE snapshot consumers (registry / schema-cache)
- *
- * The in-memory ContentIdIndex tolerates window (E) because a stale index is
- * scoped to one process's memory: it self-heals on the next probe or process
- * recycle, and a wrong-file write is independently guarded by ContentStore's
- * existence check. Consumers that persist a durable snapshot ALONGSIDE this
- * marker — a branch registry list, a resolved-schema cache file — do not get
- * that same containment. If such a consumer's regeneration scan is served
- * from stale NFS dentry/attribute caches, window (E) produces a snapshot that
- * embeds a FRESH token over STALE data, and that snapshot is written to disk.
- * Every other host that reads the marker sees the fresh token, concludes the
- * durable snapshot is current, and serves the stale data too — this is now a
- * durable, SHARED staleness visible to all hosts until the next bump, not a
- * transient one-process condition. A random token cannot distinguish "fresh
- * token over fresh data" from "fresh token over stale data" — the token only
- * proves a bump happened, not that the bumping host's own scan observed it.
- *
- * Durable-snapshot consumers must therefore implement mitigations this module
- * cannot provide on their behalf:
- *
- * - Eager regeneration on the mutating host, performed immediately after its
- *   own bump (in the same request/operation). That host's own scan is
- *   necessarily coherent with the mutation it just made (no NFS round trip
- *   was needed to observe its own writes), so regenerating there rather than
- *   waiting for a lazy pull on some other host avoids handing window (E) a
- *   chance to run at all for the common case.
- * - A get-miss / suspicious-lookup backstop: if a consumer looks up something
- *   that "should" exist per the durable snapshot but is missing (or vice
- *   versa), that mismatch is a signal to force a fresh regeneration rather
- *   than trusting the token match, bounding how long a bad snapshot survives.
+ * A consumer that persists its snapshot (branch registry, schema cache) can
+ * durably record a fresh token over data its scan read from a stale NFS cache,
+ * which every other host then trusts. So the mutating host regenerates eagerly
+ * right after its own bump — that scan is coherent with its own mutation — and
+ * the registry adds a suspicious-miss backstop. Staleness windows (A-E) and
+ * the rolling-deploy transient: docs/concurrency.md §4.
  */
 
 const log = createDebugLogger({ prefix: 'ResourceGeneration' })
@@ -84,13 +47,9 @@ export function resourceGenerationPath(root: string, resource: string): string {
 
 export interface BumpResourceGenerationOptions {
   /**
-   * When true, a failed bump rethrows instead of being logged and swallowed.
-   * Use this for callers where a lost bump means indefinitely stale durable
-   * data with no bounding backstop (e.g. a registry's invalidate()) — those
-   * callers must not silently succeed while leaving stale readers unaware.
-   * Default false (hint flavor): log-warn and swallow, since the mutation
-   * itself is already durable and a lost bump only degrades to pre-marker
-   * staleness behavior plus whatever backstop the consumer has.
+   * Rethrow a failed bump instead of logging and swallowing it. Set it where a
+   * lost bump means indefinitely stale durable data with no bounding backstop
+   * (e.g. a registry's invalidate()). Default false.
    */
   mustSucceed?: boolean
 }
@@ -100,7 +59,7 @@ export interface BumpResourceGenerationOptions {
  * processes rebuild. Must be called AFTER the filesystem mutation.
  *
  * Returns the token written, or null if the write failed and `mustSucceed`
- * was not set (logged and swallowed).
+ * was not set.
  */
 export async function bumpResourceGeneration(
   root: string,
@@ -121,22 +80,18 @@ export async function bumpResourceGeneration(
 }
 
 /**
- * Result of reading a generation marker. `ok: false` means the read failed
- * for a reason OTHER than "marker doesn't exist yet" — callers should treat
- * this as "force regenerate" rather than folding it into a token value,
- * because a legitimate snapshot can embed `token: null` (a fresh clone,
- * regenerated before any bump ever occurred) and that must stay
- * distinguishable from "we don't actually know the current token".
+ * Result of reading a generation marker. `ok: false` means the read failed for
+ * a reason OTHER than "marker doesn't exist yet"; callers force-regenerate
+ * rather than folding it into a token value, because a legitimate snapshot can
+ * embed `token: null` (a fresh clone regenerated before any bump) and that must
+ * stay distinguishable from "we don't know the current token".
  */
 export type GenerationReadResult = { ok: true; token: string | null } | { ok: false }
 
 /**
- * Read the current generation token for `resource` under `root`.
- *
- * ENOENT maps to `{ok: true, token: null}` — a valid "never bumped" state,
- * distinct from every real token. Any OTHER read error maps to `{ok: false}`
- * (logged) so callers can force-regenerate instead of trusting a null they
- * cannot actually attribute to "never bumped".
+ * Read the current generation token for `resource` under `root`. ENOENT maps to
+ * `{ok: true, token: null}`, the "never bumped" state; every other read error
+ * maps to `{ok: false}`.
  */
 export async function readResourceGeneration(
   root: string,
@@ -155,11 +110,10 @@ export async function readResourceGeneration(
 }
 
 /**
- * True when a previously-captured snapshot token is still current: the read
- * succeeded AND its token matches the snapshot's. A failed read (`ok: false`)
- * is never current, even if the snapshot's token happens to be null — an
- * unreadable marker means we cannot vouch for freshness either way, and the
- * safe default is to treat it as stale.
+ * True when a snapshot's captured token is still current: the read succeeded
+ * AND its token matches. A failed read (`ok: false`) is never current, even
+ * against a null snapshot token — an unreadable marker vouches for nothing, so
+ * the safe default is stale.
  */
 export function isGenerationCurrent(
   snapshotToken: string | null,

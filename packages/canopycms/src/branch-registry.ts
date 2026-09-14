@@ -2,8 +2,8 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 
 import type { BranchContext } from './types'
-// The leaf, NOT './branch-metadata' — that module imports this one back, and
-// the pair was the package's only runtime import cycle. See branch-metadata-file.ts.
+// The leaf, NOT './branch-metadata': that module imports this one back, so the
+// pair would be a runtime import cycle. See branch-metadata-file.ts.
 import { readBranchMetadataFile } from './branch-metadata-file'
 import { isNotFoundError, getErrorMessage } from './utils/error'
 import { createDebugLogger } from './utils/debug'
@@ -21,10 +21,8 @@ const log = createDebugLogger({ prefix: 'BranchRegistry' })
 
 // Registry files are stored directly in the branches root (not in a subdirectory)
 const REGISTRY_FILE = 'branches.json'
-// Legacy rename-based invalidation scheme's stale marker file. No longer written -
-// invalidate() now bumps the cross-process generation marker instead - but a
-// process upgraded mid-flight may find one left over from before the deploy, so
-// regenerate() opportunistically deletes it. Keep this name only for that cleanup.
+// Retired stale-marker file, never written. Named only so regenerate() can
+// delete one a mid-flight deploy left behind.
 const REGISTRY_STALE_FILE = 'branches.stale.json'
 const REGISTRY_TEMP_FILE = 'branches.tmp.json'
 const REGISTRY_VERSION = 2
@@ -39,47 +37,26 @@ export interface BranchRegistrySnapshot {
   version: number
   branches: BranchContext[]
   /**
-   * The resource-generation.ts marker token this snapshot was built against, or
-   * null if it was built before any bump ever occurred on this root. Compared
-   * against the live marker (via isGenerationCurrent) to decide freshness.
+   * The marker token this snapshot was built against, or null when it was built
+   * before any bump on this root. Compared against the live marker (via
+   * isGenerationCurrent) to decide freshness.
    */
   generation: string | null
 }
 
 /**
- * BranchRegistry is a read-only cache for fast branch listing.
- * Individual branch.json files are the source of truth.
+ * A read-only `branches.json` cache for fast branch listing; the individual
+ * branch.json files are the source of truth.
  *
- * ## Cross-process freshness (resource-generation.ts marker protocol)
- *
- * Several warm Lambda containers plus the EC2 worker can share one branch-clone
- * root over EFS, each with its own in-process cache of `branches.json`. There is
- * no shared memory and no cross-host file watching, so freshness is coordinated
- * via the generic on-disk generation marker in resource-generation.ts: every
- * snapshot embeds the marker token it was built against, and every read
- * cheaply re-checks the live marker before trusting the cached snapshot. See
- * that module's doc comment for the full protocol and residual staleness
- * windows (A/B/C/E).
- *
- * BranchRegistry is exactly the "durable snapshot consumer" case called out
- * there: a regeneration whose scan is served from stale NFS dentry/attribute
- * caches can record a FRESH token over STALE data (window E), and because the
- * result is written to `branches.json`, that staleness becomes durable and
- * shared with every other host that reads the marker - not just one process's
- * memory. Two mitigations close the practical gap:
- *
- * - invalidate() eager-regenerates immediately after its own bump. The
- *   mutating host's own scan is necessarily coherent with the mutation it just
- *   made (no NFS round trip was needed to observe its own write), so this
- *   closes window (E) for the common case without waiting for some other host
- *   to lazily pull the change.
- * - get() implements a suspicious-miss backstop: a branch that "should" exist
- *   but is absent from the cached snapshot forces one fresh regeneration
- *   (throttled), bounding how long a bad snapshot can hide a real branch.
+ * Freshness follows the generation-marker protocol owned by
+ * resource-generation.ts. This is that protocol's durable-snapshot consumer, so
+ * it carries both mitigations: invalidate() eager-regenerates on the mutating
+ * host right after its own bump, and get() has a throttled suspicious-miss
+ * backstop bounding how long a bad snapshot can hide a real branch.
  *
  * Concurrent regeneration within one process is deduped to a single scan
- * (regenInFlight); across processes, regeneration is still safe since all
- * processes produce identical output from the same branch.json files.
+ * (regenInFlight); across processes it needs no coordination, since every
+ * process produces identical output from the same branch.json files.
  */
 export class BranchRegistry {
   private readonly root: string
@@ -116,10 +93,9 @@ export class BranchRegistry {
       throw err
     }
 
-    // Strict version check: a truthy-only check would accept a persisted v1
-    // snapshot (no `generation` field) left on EFS after a rolling deploy,
-    // and `parsed.generation` would then be `undefined` rather than a real
-    // token or explicit `null`, breaking the freshness comparison below.
+    // Strict version check, not truthiness: a snapshot from an older version
+    // left on EFS by a rolling deploy has no `generation` field, and an
+    // `undefined` token breaks the freshness comparison below.
     if (parsed.version !== REGISTRY_VERSION || !Array.isArray(parsed.branches)) {
       return await this.regenerate()
     }
@@ -132,15 +108,12 @@ export class BranchRegistry {
   }
 
   /**
-   * Returns a single branch by name. Uses cache if available.
+   * Returns a single branch by name, from the cached snapshot when it is fresh.
    *
-   * Suspicious-miss backstop: if `name` isn't in the (possibly cached) list,
-   * that's a signal the snapshot may be stale in the specific direction where
-   * a branch that now exists is missing from it - force one fresh
-   * regeneration and re-search before giving up, throttled per instance so a
-   * genuinely-absent branch costs at most one extra scan per throttle window.
-   * This bounds durable window-E staleness for the "branch exists but
-   * snapshot predates it" direction; see the class doc comment.
+   * Suspicious-miss backstop: a `name` missing from the list is the signal that
+   * the snapshot may predate a branch that now exists, so force one fresh
+   * regeneration and re-search before giving up. Throttled per instance, so a
+   * genuinely-absent branch costs at most one extra scan per window.
    */
   async get(name: string): Promise<BranchContext | undefined> {
     const branches = await this.list()
@@ -161,24 +134,20 @@ export class BranchRegistry {
   }
 
   /**
-   * Marks the cache as stale for every process sharing this root by bumping
-   * the cross-process generation marker, then eager-regenerates on this host
-   * (see class doc comment for why). The bump must succeed: a swallowed
-   * failure here would leave the registry stale indefinitely with no
-   * bounding backstop, unlike a failed eager regen below, which only forgoes
-   * closing window (E) early - the bump alone already restored correctness
-   * for every future reader. A failed eager regen therefore must not fail the
-   * caller's save/delete.
+   * Marks the cache stale for every process sharing this root by bumping the
+   * marker, then eager-regenerates on this host. The bump must succeed —
+   * swallowing that failure leaves the registry stale indefinitely with no
+   * backstop. A failed eager regen must NOT fail the caller's save/delete: the
+   * bump alone already restored correctness for every future reader.
    */
   async invalidate(): Promise<void> {
     await bumpResourceGeneration(this.root, RESOURCE, { mustSucceed: true })
 
     try {
-      // A scan already in flight (a concurrent list() on this shared
-      // instance) captured the PRE-bump token and possibly pre-mutation
-      // state; joining it via regenerate()'s dedup would skip the eager
-      // post-bump scan this method exists for. Let it drain — its snapshot
-      // self-describes as stale either way — then run a fresh scan.
+      // A scan already in flight captured the PRE-bump token and possibly
+      // pre-mutation state; joining it via regenerate()'s dedup would skip the
+      // eager post-bump scan this method exists for. Let it drain — its
+      // snapshot self-describes as stale either way — then scan fresh.
       if (this.regenInFlight) await this.regenInFlight.catch(() => {})
       await this.regenerate()
     } catch (err: unknown) {
@@ -191,9 +160,8 @@ export class BranchRegistry {
   /**
    * Scans branch directories and rebuilds the cache, deduping concurrent
    * callers on this instance to a single underlying scan. Never loops waiting
-   * for the snapshot's embedded token to match the marker - under a bump
-   * storm that could livelock; a caller that wants the very latest state
-   * after a concurrent bump should call list() again after this resolves.
+   * for the embedded token to match the marker — that livelocks under a bump
+   * storm; a caller wanting the very latest state calls list() again.
    */
   private async regenerate(): Promise<BranchContext[]> {
     if (this.regenInFlight) return this.regenInFlight
@@ -214,17 +182,14 @@ export class BranchRegistry {
     const read = await readResourceGeneration(this.root, RESOURCE)
     const branches = await this.scanBranchDirectories()
 
-    // Opportunistic cleanup of a stale file left by the old rename-based
-    // invalidation scheme (e.g. a process upgraded mid-flight). Not load-bearing.
+    // Opportunistic cleanup of the retired stale-marker file. Not load-bearing.
     await fs.unlink(this.stalePath).catch(() => {})
 
     if (!read.ok) {
-      // The marker couldn't be read for a reason other than "never bumped" -
-      // we cannot attribute a token to this scan, and stamping the snapshot
-      // with an unattributable token would make it indistinguishable from a
-      // correctly-attributed one to every future reader on any host. Serve
-      // the fresh scan result without persisting it; the next read retries
-      // the marker read and, on success, regenerates and persists normally.
+      // The marker read failed for a reason other than "never bumped", so no
+      // token can be attributed to this scan, and a snapshot stamped with an
+      // unattributable one would look correctly attributed to every future
+      // reader on any host. Serve the fresh scan without persisting it.
       return branches
     }
 
@@ -234,8 +199,8 @@ export class BranchRegistry {
       generation: read.token,
     }
 
-    // Write to unique temp file first, then atomic rename.
-    // Use random suffix to avoid conflicts between concurrent regenerations.
+    // Temp file then atomic rename; the random suffix keeps concurrent
+    // regenerations off each other's temp path.
     const uniqueTempPath = `${this.tempPath}.${Date.now()}.${Math.random().toString(36).slice(2)}`
     await fs.mkdir(this.root, { recursive: true })
     await fs.writeFile(uniqueTempPath, JSON.stringify(snapshot, null, 2) + '\n', 'utf8')
@@ -243,7 +208,6 @@ export class BranchRegistry {
     try {
       await fs.rename(uniqueTempPath, this.registryPath)
     } catch (err: unknown) {
-      // Clean up temp file if rename fails
       await fs.unlink(uniqueTempPath).catch(() => {})
       throw err
     }
@@ -270,11 +234,10 @@ export class BranchRegistry {
 
         const branchRoot = path.join(this.root, entry.name)
 
-        // Quarantine, don't propagate: one branch's corrupt/unreadable
-        // branch.json must not take down the whole listing (a rethrow here
-        // would 500 GET /branches for every branch). The broken branch just
-        // drops out of the registry; it stays on disk for the admin
-        // branch-health surface to report and repair.
+        // Quarantine, don't propagate: one branch's corrupt or unreadable
+        // branch.json must not take down the whole listing, which a rethrow
+        // would (500 on GET /branches, for every branch). The broken branch
+        // drops out of the registry and stays on disk for branch-health.
         let meta: Awaited<ReturnType<typeof readBranchMetadataFile>>
         try {
           meta = await readBranchMetadataFile(branchRoot)
@@ -294,7 +257,6 @@ export class BranchRegistry {
         }
       }
     } catch (err: unknown) {
-      // If root doesn't exist yet, return empty list
       if (isNotFoundError(err)) {
         return []
       }

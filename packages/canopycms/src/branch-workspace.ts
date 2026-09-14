@@ -47,7 +47,7 @@ export class BranchWorkspaceManager {
     remoteUrl?: string
   }) {
     return log.timed('workspace', 'ensureGitWorkspace', async () => {
-      // Serialize access per branch workspace to prevent race conditions
+      // One initialization per branch workspace per process.
       const existingLock = workspaceInitLocks.get(options.branchRoot)
       if (existingLock) {
         await existingLock
@@ -55,15 +55,14 @@ export class BranchWorkspaceManager {
       }
 
       const lockPromise = (async () => {
-        // The in-memory lock above only serializes within one process. Separate
-        // processes can provision the same branch workspace at once -- several
-        // Lambda containers sharing one EFS workspace root in prod, or the dev
-        // server beside a content-reading script run outside a build in dev --
-        // and would otherwise both clone into it ("destination path already
-        // exists"), so guard the workspace init with a cross-process lock too.
-        // initializeWorkspace is idempotent, so the waiter simply finds the
-        // workspace already cloned. (A build's content reads never get here:
-        // loadOrCreateBranchContext returns the checkout before provisioning.)
+        // The in-memory lock above only serializes one process, and separate
+        // processes can provision the same workspace at once (several Lambda
+        // containers on one EFS root; the dev server beside a content-reading
+        // script), which without a cross-process lock means both cloning into
+        // it: "destination path already exists". initializeWorkspace is
+        // idempotent, so the waiter finds the workspace already cloned. A
+        // build's content reads never get here — loadOrCreateBranchContext
+        // returns the checkout before provisioning.
         let releaseLock: (() => Promise<void>) | undefined
         try {
           log.debug('workspace', 'Ensuring git workspace', {
@@ -141,7 +140,8 @@ export class BranchWorkspaceManager {
       remoteUrl,
     })
 
-    // save() handles both creation and updates, preserving existing values and invalidating registry
+    // save() covers creation and update, keeping existing values and
+    // invalidating the registry.
     const metadata = getBranchMetadataFileManager(branchRoot, baseRoot)
     const meta = await metadata.save({
       branch: {
@@ -165,12 +165,12 @@ export class BranchWorkspaceManager {
 export { loadBranchContext } from './branch-metadata'
 
 /**
- * Load an existing branch context, or create the workspace if it doesn't exist yet.
+ * Load an existing branch context, provisioning the workspace if there is none.
  *
  * When content is read from the checkout (`readsFromCheckout`: a static
- * deployment, or any build) this skips every git and branch-workspace
- * operation and returns a synthetic context rooted at the current working
- * directory. `branchName` is echoed back on that context but selects nothing.
+ * deployment, or any build) this skips every git and branch-workspace operation
+ * and returns a synthetic context rooted at the current working directory,
+ * where `branchName` is echoed back but selects nothing.
  */
 export async function loadOrCreateBranchContext(options: {
   config: CanopyConfig

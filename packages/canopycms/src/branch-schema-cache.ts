@@ -25,34 +25,25 @@ const MTIME_CHECK_DEBOUNCE_MS = 1000
 /** resource-generation.ts resource key for the schema cache's marker. */
 export const SCHEMA_GENERATION_RESOURCE = 'schema'
 
-/**
- * Schema cache structure stored in {branchRoot}/.canopy-meta/schema-cache.json
- */
 export interface BranchSchemaCacheEntry {
   version: number
   schema: RootCollectionConfig
   flatSchema: FlatSchemaItem[]
   cachedAt: string // ISO timestamp
   /**
-   * The resource-generation.ts marker token this snapshot was resolved
-   * against, or null if it was built before any bump ever occurred on this
-   * root. Compared against the live marker (via isGenerationCurrent) to
-   * decide freshness. See the class doc comment.
+   * The marker token this snapshot was resolved against, or null when it was
+   * built before any bump on this root. Compared against the live marker (via
+   * isGenerationCurrent) to decide freshness.
    */
   generation: string | null
 }
 
 /**
- * In dev mode, check whether any .collection.json file under dir has been
- * modified more recently than cachedAt. Returns true if stale.
+ * True when a .collection.json under `dir` is newer than `cachedAt`.
  *
- * Uses a single recursive readdir to find all .collection.json files,
- * then stats only those files.
- *
- * This is a dev-only convenience for out-of-band hand edits made directly to
- * .collection.json files outside the CMS (which don't go through SchemaOps
- * and therefore never bump the generation marker below). It is not needed for
- * prod correctness: every mutation path that matters in prod bumps the marker.
+ * Dev-only, and dev-only on purpose: it catches hand edits made outside the
+ * CMS, which bypass SchemaOps and so never bump the marker. Every prod mutation
+ * path does bump it, so the marker alone is sufficient there.
  */
 async function isStaleByMtime(dir: string, cachedAt: Date): Promise<boolean> {
   let entries: string[]
@@ -76,47 +67,18 @@ async function isStaleByMtime(dir: string, cachedAt: Date): Promise<boolean> {
 }
 
 /**
- * Manages per-branch schema caching with lazy loading and automatic
- * invalidation.
+ * Per-branch schema cache: a file at {branchRoot}/.canopy-meta/schema-cache.json
+ * with no in-memory layer, so it stays coherent across Lambda invocations.
  *
- * ## Cross-process freshness (resource-generation.ts marker protocol)
- *
- * Several warm Lambda containers plus the EC2 worker can share one
- * branch-clone root over EFS, each with its own copy of
- * `schema-cache.json`. There is no shared memory and no cross-host file
- * watching, so freshness is coordinated via the generic on-disk generation
- * marker in resource-generation.ts: every cached snapshot embeds the marker
- * token it was resolved against, and every read cheaply re-checks the live
- * marker before trusting the cache. See that module's doc comment for the
- * full protocol and residual staleness windows (A/B/C/E).
- *
- * BranchSchemaCache is the "durable snapshot consumer" case called out there:
- * a resolve whose scan is served from stale NFS dentry/attribute caches can
- * record a FRESH token over STALE data (window E), and because the result is
- * written to `schema-cache.json`, that staleness becomes durable and shared
- * with every other host that reads the marker - not just one process's
- * memory. `loadFromCacheOrResolve` mitigates this the same way
- * BranchRegistry does:
- *
- * - invalidate() bumps the marker with `mustSucceed: true`: an explicit
- *   invalidation (e.g. after a schema mutation) must not silently fail and
- *   leave every reader confidently stale with no bounding backstop.
- *   invalidate() itself does NOT eager-regenerate - it isn't given the
- *   entrySchemaRegistry/contentRootName that resolveSchema needs. The
- *   eager re-resolve (window-E mitigation, mirroring BranchRegistry's
- *   eager regen) lives one level up in SchemaOps.invalidateSchemaCache()
- *   (schema/schema-store.ts), which has those arguments and calls
- *   {@link resolveAndPersist} (NOT getSchema()) right after invalidating -
- *   so every SchemaOps mutation re-resolves on the mutating host via a scan
- *   that is GUARANTEED to run, not merely likely to run.
- *   Callers of invalidate() that bypass SchemaOps (api/schema.ts's explicit
- *   invalidate endpoint; the bulk-mutation bump in
- *   invalidateBranchContentCaches) accept the lazy next-read regen.
- *
- * Caching Strategy:
- * - File-based cache at {branchRoot}/.canopy-meta/schema-cache.json (no
- *   in-memory layer - intentional: matches prod behavior and keeps cache
- *   coherent across Lambda invocations)
+ * Freshness follows the generation-marker protocol owned by
+ * resource-generation.ts, and this is one of that protocol's durable-snapshot
+ * consumers. Its eager re-resolve lives one level up, in
+ * `SchemaOps.invalidateSchemaCache()` (schema/schema-store.ts), because that is
+ * where the entrySchemaRegistry/contentRootName arguments {@link invalidate}
+ * lacks are available; it calls {@link resolveAndPersist}, never getSchema().
+ * Callers that bypass SchemaOps (api/schema.ts's invalidate endpoint, and the
+ * bulk git-op bump in invalidateBranchContentCaches) accept the lazy
+ * next-read regen instead.
  */
 export class BranchSchemaCache {
   /** Tracks when we last checked mtimes per contentRoot, to debounce rapid requests */
@@ -131,24 +93,16 @@ export class BranchSchemaCache {
   /**
    * Whether to skip the on-disk cache for this branchRoot.
    *
-   * branchRoot equals the project root (process.cwd()) only in the synthetic
-   * contexts used by static deployments and build phases — real branch roots are
-   * always nested under the workspace (.canopy-dev/content-branches/<name> in dev,
-   * <workspaceRoot>/content-branches/<name> in prod). Never write .canopy-meta/ at
-   * the project root, regardless of which entrypoint produced the cwd branchRoot.
+   * Never write `.canopy-meta/` at the project root, whichever entrypoint
+   * produced the cwd branchRoot. branchRoot equals process.cwd() only in the
+   * synthetic contexts static deployments and build phases use; a real branch
+   * root is always nested under the workspace.
    */
   private skipDiskCache(branchRoot: string): boolean {
     return isBuildMode() || path.resolve(branchRoot) === path.resolve(process.cwd())
   }
 
-  /**
-   * Get schema for a branch (loads from cache or resolves fresh).
-   *
-   * @param branchRoot - Root directory of the branch (e.g., .canopy-dev/content-branches/main)
-   * @param entrySchemaRegistry - Map of schema names to field definitions
-   * @param contentRootName - Name of content directory (e.g., "content") from config
-   * @returns Resolved schema tree and flattened schema
-   */
+  /** Get schema for a branch, from the cache when fresh, else resolved fresh. */
   async getSchema(
     branchRoot: string,
     entrySchemaRegistry: EntrySchemaRegistry,
@@ -158,9 +112,8 @@ export class BranchSchemaCache {
   }
 
   /**
-   * Resolve the schema from disk. Wrapped in a protected method (rather than
-   * calling the imported resolveSchema directly) so tests can subclass and
-   * override with a deferred/blocking implementation to simulate cross-process
+   * Resolve the schema from disk. Protected rather than a direct resolveSchema
+   * call so tests can subclass and block it to simulate cross-process
    * interleavings — mirrors BranchRegistry's scanBranchDirectories() hook.
    */
   protected async resolveFresh(
@@ -170,9 +123,6 @@ export class BranchSchemaCache {
     return resolveSchema(contentRoot, entrySchemaRegistry)
   }
 
-  /**
-   * Load schema from cache or resolve fresh if cache is missing or stale.
-   */
   private async loadFromCacheOrResolve(
     branchRoot: string,
     entrySchemaRegistry: EntrySchemaRegistry,
@@ -180,8 +130,6 @@ export class BranchSchemaCache {
   ): Promise<{ schema: RootCollectionConfig; flatSchema: FlatSchemaItem[] }> {
     const contentRoot = path.join(branchRoot, contentRootName)
 
-    // In static/build mode, branchRoot is process.cwd() (the project root).
-    // Skip disk cache to avoid creating .canopy-meta/ at the project root.
     const skipDiskCache = this.skipDiskCache(branchRoot)
 
     if (!skipDiskCache) {
@@ -197,16 +145,13 @@ export class BranchSchemaCache {
         cacheData = null
       }
 
-      // Strict version check: a truthy-only check would accept a persisted
-      // pre-marker snapshot (no `generation` field) left on EFS after a
-      // rolling deploy, and `cacheData.generation` would then be `undefined`
-      // rather than a real token or explicit `null`, breaking the freshness
-      // comparison below.
+      // Strict version check, not truthiness: a snapshot from an older version
+      // left on EFS by a rolling deploy has no `generation` field, and an
+      // `undefined` token breaks the freshness comparison below.
       if (cacheData && cacheData.version === SCHEMA_CACHE_VERSION) {
         const read = await readResourceGeneration(branchRoot, SCHEMA_GENERATION_RESOURCE)
         if (isGenerationCurrent(cacheData.generation, read)) {
-          // In dev mode, also check file mtimes so direct schema edits (outside the CMS) are picked up.
-          // Debounce: skip the walk if we checked this contentRoot within the last second.
+          // Dev also walks mtimes, debounced, to catch edits made outside the CMS.
           const now = Date.now()
           const lastCheck = this.lastMtimeCheck.get(contentRoot) ?? 0
           if (
@@ -229,8 +174,6 @@ export class BranchSchemaCache {
       }
     }
 
-    // Cache miss, stale, or build mode - resolve fresh (and persist, subject
-    // to the same skip-persist rule) via the shared resolve half.
     return this.resolveFreshAndPersist(branchRoot, entrySchemaRegistry, contentRootName, {
       skipDiskCache,
     })
@@ -251,10 +194,9 @@ export class BranchSchemaCache {
     const { skipDiskCache } = options
     const contentRoot = path.join(branchRoot, contentRootName)
 
-    // Capture the marker strictly BEFORE resolving: a bump landing mid-resolve
-    // then differs from the token recorded below, forcing a re-resolve on the
-    // next read instead of silently persisting a snapshot that embeds a fresh
-    // token over pre-mutation data.
+    // Capture the marker strictly BEFORE resolving, so a bump landing
+    // mid-resolve differs from the token persisted below and forces a
+    // re-resolve on the next read.
     const read: GenerationReadResult | null = skipDiskCache
       ? null
       : await readResourceGeneration(branchRoot, SCHEMA_GENERATION_RESOURCE)
@@ -287,9 +229,8 @@ export class BranchSchemaCache {
       const cacheDir = path.join(branchRoot, '.canopy-meta')
       const cachePath = path.join(cacheDir, 'schema-cache.json')
 
-      // Opportunistic cleanup of the legacy .stale marker file from the old
-      // rename-based invalidation scheme (e.g. a process upgraded mid-flight
-      // may find one left over from before the deploy). Not load-bearing.
+      // Opportunistic cleanup of the retired .stale marker file, which a
+      // mid-flight deploy can leave behind. Not load-bearing.
       await fs.unlink(path.join(cacheDir, 'schema-cache.stale')).catch(() => {})
 
       if (read && read.ok) {
@@ -301,10 +242,8 @@ export class BranchSchemaCache {
           generation: read.token,
         }
 
-        // Atomic write: write to temp file, then rename. Clean up the temp
-        // file on a failed rename (matches every other atomic write in the
-        // codebase, e.g. utils/atomic-write.ts) so a transient rename error
-        // doesn't leak a stray `.tmp` file into `.canopy-meta/` forever.
+        // Temp file then rename, with the temp file unlinked on a failed
+        // rename so a transient error leaves no stray `.tmp` in `.canopy-meta/`.
         await fs.mkdir(cacheDir, { recursive: true })
         const tmpPath = path.join(cacheDir, `schema-cache.tmp.${Date.now()}.${Math.random()}.json`)
         await fs.writeFile(tmpPath, JSON.stringify(newCache, null, 2), 'utf-8')
@@ -315,36 +254,23 @@ export class BranchSchemaCache {
           throw err
         }
       }
-      // else: the marker couldn't be read for a reason other than "never
-      // bumped" - we cannot attribute a token to this resolve, and stamping
-      // the snapshot with an unattributable token would make it
-      // indistinguishable from a correctly-attributed one to every future
-      // reader. Serve the fresh result without persisting it; the next read
-      // retries the marker read and, on success, resolves and persists
-      // normally.
+      // else: the marker read failed for a reason other than "never bumped",
+      // so no token can be attributed to this resolve, and a snapshot stamped
+      // with an unattributable one would look correctly attributed to every
+      // future reader. Serve the fresh result without persisting it.
     }
 
     return { schema: result.schema, flatSchema }
   }
 
   /**
-   * Resolve the schema fresh from disk and persist it, SKIPPING the cache
-   * read entirely -- unlike {@link getSchema}, which can short-circuit
-   * through a cache HIT. That distinction matters for eager re-resolve after
-   * invalidation (see {@link invalidate}'s doc comment and
-   * `SchemaOps.invalidateSchemaCache()` in schema/schema-store.ts, the sole
-   * intended caller): the whole point of an eager re-resolve is to guarantee
-   * ONE scan that is coherent with the mutation this host just made. A plain
-   * `getSchema()` call right after `invalidate()` is NOT that guarantee --
-   * `getSchema()`'s cache-read fast path (`loadFromCacheOrResolve`) can still
-   * return a snapshot written by a DIFFERENT, concurrent host: if that
-   * foreign host's own eager re-resolve raced this one and embedded the
-   * (now-current) marker token over ITS OWN stale-NFS-cache scan (the
-   * window-E case this class's doc comment describes), this host's
-   * `getSchema()` would happily accept that foreign snapshot as "current"
-   * and skip the one scan this call was specifically trying to guarantee.
-   * `resolveAndPersist()` never reads the cache file at all, so it cannot be
-   * short-circuited that way.
+   * Resolve fresh from disk and persist, SKIPPING the cache read entirely.
+   * That is what makes it, and not {@link getSchema}, the right call for the
+   * eager re-resolve in `SchemaOps.invalidateSchemaCache()` (its sole intended
+   * caller): an eager re-resolve exists to guarantee ONE scan coherent with the
+   * mutation this host just made, and getSchema()'s cache-read fast path can
+   * instead return a snapshot a concurrent host wrote — possibly one embedding
+   * the now-current token over ITS own stale-NFS scan — skipping that scan.
    */
   async resolveAndPersist(
     branchRoot: string,
@@ -358,20 +284,12 @@ export class BranchSchemaCache {
   }
 
   /**
-   * Invalidate cache for a branch by bumping the cross-process generation
-   * marker (resource-generation.ts). Every process sharing this branchRoot
-   * will re-resolve at its next read.
+   * Invalidate a branch's cache by bumping the marker; every process sharing
+   * this branchRoot re-resolves at its next read. The bump must succeed —
+   * swallowing that failure leaves the schema cache stale indefinitely, and
+   * unlike BranchRegistry there is no get-miss backstop for a resolved schema.
    *
-   * The bump must succeed: a swallowed failure here would leave the schema
-   * cache stale indefinitely with no bounding backstop (unlike
-   * BranchRegistry, there is no get-miss backstop for a resolved schema).
-   *
-   * No eager regeneration here (unlike BranchRegistry.invalidate()): this
-   * method isn't given the entrySchemaRegistry/contentRootName resolveSchema
-   * needs. See the class doc comment for why the mutating request's own
-   * follow-up schema read closes the same window-E gap instead.
-   *
-   * @param branchRoot - Root directory of the branch
+   * No eager re-resolve here; it lives in SchemaOps (see the class doc).
    */
   async invalidate(branchRoot: string): Promise<void> {
     if (this.skipDiskCache(branchRoot)) return

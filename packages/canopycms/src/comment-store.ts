@@ -10,10 +10,7 @@ import {
   OccWriteConflictError,
 } from './utils/occ-json-write'
 
-/**
- * Error thrown when a concurrent modification is detected.
- * Operations that encounter this error will automatically retry.
- */
+/** A concurrent modification that survived every OCC retry. */
 export class CommentStoreConflictError extends Error {
   constructor() {
     super('Concurrent modification detected')
@@ -55,28 +52,23 @@ export interface CommentsFile {
 }
 
 /**
- * Manages comment storage for a branch workspace.
- * Comments are stored in .canopy-meta/comments.json and are NOT committed to git.
+ * Comment storage for a branch workspace, in .canopy-meta/comments.json and
+ * never committed to git.
  *
- * Mutators are protected by three layers, outermost to innermost:
+ * Mutators run under three layers, outermost to innermost:
  *
- * 1. {@link withLock} - an in-process FIFO mutex keyed by the resolved file
- *    path. Serializes concurrent mutators on the SAME process/host
- *    deterministically, so racing `resolveThread`/`deleteThread`/`addComment`
- *    calls against the same store (or two store instances pointed at the
- *    same branch) never race each other's load-modify-write cycle.
- * 2. {@link withOccFileLock} - a server-enforced, cross-process/cross-host
- *    lock (proper-lockfile, mkdir-based). This is the actual fix for lost
- *    comments across two warm Lambda containers on EFS, where rename-based
- *    OCC verification alone is unreliable (see guarantee doc on
- *    `utils/occ-json-write.ts`).
- * 3. {@link withOccRetry} around {@link writeOccJsonFile} - version/writeId
- *    based optimistic concurrency control. With layers 1-2 in place this is
- *    now a defense-in-depth backstop only (e.g. a stale process from a
- *    rolling deploy writing without the lock), not the primary safety
- *    mechanism.
+ * 1. {@link withLock} — an in-process FIFO mutex keyed by the resolved file
+ *    path, so mutators racing on one host cannot interleave their
+ *    load-modify-write cycles, whether they share a store instance or not.
+ * 2. {@link withOccFileLock} — a server-enforced, cross-process/cross-host lock
+ *    (proper-lockfile, mkdir-based). This is what actually prevents lost
+ *    comments across two warm Lambda containers on EFS, where rename-based OCC
+ *    verification alone is unreliable.
+ * 3. {@link withOccRetry} around {@link writeOccJsonFile} — version/writeId
+ *    optimistic concurrency. With layers 1-2 in place it is defense in depth
+ *    only, for a writer that skips the lock (a stale process mid-deploy).
  *
- * See `utils/occ-json-write.ts` for full guarantee documentation of layers 2-3.
+ * Guarantees for layers 2-3: `utils/occ-json-write.ts`.
  */
 export class CommentStore {
   private readonly filePath: string
@@ -89,20 +81,16 @@ export class CommentStore {
     this.settleMs = options?.settleMs
   }
 
-  /**
-   * Load comments file for read-only access.
-   */
+  /** Read-only load. */
   async load(): Promise<CommentsFile> {
     const { data } = await this.loadWithVersion()
     return data
   }
 
   /**
-   * Load comments file along with the version observed at load time. Used by
-   * mutators, which need the version as a LOCAL value threaded through their
-   * load-modify-write cycle rather than shared mutable instance state (so
-   * concurrent mutate cycles on the same instance never clobber each other's
-   * expected version).
+   * Load, with the version observed at load time. Mutators thread that version
+   * through their load-modify-write cycle as a LOCAL value, never as instance
+   * state, so concurrent cycles cannot clobber each other's expected version.
    */
   private async loadWithVersion(): Promise<{ data: CommentsFile; version: number | null }> {
     try {
@@ -125,15 +113,15 @@ export class CommentStore {
   }
 
   /**
-   * Write comments file via the shared OCC helper.
+   * Write comments.json via the shared OCC helper.
    *
-   * Throws the helper's raw {@link OccWriteConflictError} so the surrounding
-   * {@link withOccRetry} in withMutation() recognizes and retries it;
-   * translation to the public `CommentStoreConflictError` contract happens at
-   * the withMutation() boundary, after retries are exhausted.
+   * Throws the helper's raw {@link OccWriteConflictError}, which is what the
+   * surrounding {@link withOccRetry} in withMutation() recognizes and retries;
+   * translation to the public `CommentStoreConflictError` happens at the
+   * withMutation() boundary, once retries are exhausted.
    *
-   * Note: comment-store historically wrote without a trailing newline;
-   * `writeOccJsonFile`'s default (`trailingNewline: false`) preserves that.
+   * comments.json is written without a trailing newline (`writeOccJsonFile`'s
+   * default), unlike branch.json.
    */
   private async writeData(data: CommentsFile, expectedVersion: number | null): Promise<void> {
     await writeOccJsonFile(
@@ -148,8 +136,8 @@ export class CommentStore {
 
   /**
    * Run a mutate cycle (load -> modify -> write) under the full lock +
-   * OCC-retry stack described in the class doc comment. A conflict that
-   * survives every retry surfaces as the public `CommentStoreConflictError`.
+   * OCC-retry stack (class doc). A conflict surviving every retry surfaces as
+   * `CommentStoreConflictError`.
    */
   private async withMutation<T>(
     operation: (data: CommentsFile, version: number | null) => Promise<T>,
@@ -257,9 +245,7 @@ export class CommentStore {
     })
   }
 
-  /**
-   * Get all threads for a specific field
-   */
+  /** Threads on one field. */
   async getThreadsForField(entryPath: string, canopyPath: string): Promise<CommentThread[]> {
     const data = await this.load()
     return Object.values(data.threads)
@@ -267,9 +253,7 @@ export class CommentStore {
       .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
   }
 
-  /**
-   * Get all threads for a specific entry (not field-specific)
-   */
+  /** Threads on one entry, excluding its field threads. */
   async getThreadsForEntry(entryPath: string): Promise<CommentThread[]> {
     const data = await this.load()
     return Object.values(data.threads)
@@ -277,9 +261,7 @@ export class CommentStore {
       .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
   }
 
-  /**
-   * Get all branch-level threads
-   */
+  /** Branch-level threads. */
   async getBranchThreads(): Promise<CommentThread[]> {
     const data = await this.load()
     return Object.values(data.threads)

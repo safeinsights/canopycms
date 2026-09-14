@@ -7,25 +7,15 @@ import { invalidateContentIndexesForRoot } from './content-index-registry'
 import { SCHEMA_GENERATION_RESOURCE } from './branch-schema-cache'
 
 /**
- * Cross-process ContentId index generation marker.
+ * The ContentIdIndex instance of the generation-marker protocol owned by
+ * resource-generation.ts; the marker lives at
+ * {root}/.canopy-meta/content-index.generation. In-process invalidation of the
+ * same indexes is content-index-registry.ts's job.
  *
- * This is the ContentIdIndex-specific instance of the generic on-disk
- * generation-marker protocol in resource-generation.ts — see that module's
- * doc comment for the full protocol (random-token rationale, bump/read
- * ordering, and the general residual staleness windows A/B/C/E). This file
- * documents only what is specific to the in-memory ContentIdIndex.
- *
- * The ContentIdIndex is an in-memory map per ContentStore instance. Within one
- * process, content-index-registry.ts invalidates stale indexes directly.
- *
- * The marker lives at {root}/.canopy-meta/content-index.generation.
- *
- * - (E) Fresh-token/stale-scan (cross-host only): a rebuild's readdir calls may
- *   be served from stale dentry/attribute caches, recording a NEW token against
- *   PRE-mutation directory listings. Unlike a durable-snapshot consumer (see
- *   resource-generation.ts), this only mis-serves ONE process's in-memory
- *   index for the remainder of its lifetime — it is not written back to disk,
- *   so it cannot become a shared stale state visible to other hosts.
+ * Local to this consumer: the index is per-ContentStore memory, never persisted,
+ * so a scan that records a fresh token over stale NFS-cached readdir results
+ * mis-serves only that one process for the rest of its lifetime — it cannot
+ * become shared stale state the way a durable snapshot can.
  *
  * Wrong-file WRITE corruption (recreating a concurrently renamed entry →
  * duplicate IDs) is prevented independently of this marker by the existence
@@ -43,19 +33,17 @@ export function contentIndexGenerationPath(root: string): string {
 /**
  * Record on disk that indexed files under `root` changed, so ContentStores in
  * OTHER processes rebuild. Must be called AFTER the filesystem mutation.
- * Returns the token written, or null if the write failed (logged and swallowed:
- * the content mutation is already durable; a lost bump degrades to the
- * pre-marker staleness behavior plus the ContentStore backstop).
+ * Returns the token written, or null if the write failed — a hint bump, since
+ * the content mutation is already durable and ContentStore has a backstop.
  */
 export async function bumpContentIndexGeneration(root: string): Promise<string | null> {
   return bumpResourceGeneration(root, RESOURCE)
 }
 
 /**
- * Read the current generation token for `root`. Returns null if the marker
- * does not exist yet (a valid state distinct from every token). Read errors
- * other than ENOENT are logged and treated as null — the caller then rebuilds,
- * which is the safe direction.
+ * Read the current generation token for `root`. Null means the marker does not
+ * exist yet; a read error collapses to null too, so the caller rebuilds, which
+ * is the safe direction.
  */
 export async function readContentIndexGeneration(root: string): Promise<string | null> {
   const result = await readResourceGeneration(root, RESOURCE)
@@ -63,25 +51,16 @@ export async function readContentIndexGeneration(root: string): Promise<string |
 }
 
 /**
- * The designated entry point for a FUTURE content-only bulk mutation site —
- * one that mutates indexed files under a branch-clone root broadly (not
- * through a single known write/delete/rename call) but never touches schema.
- * Bumps the on-disk content-index marker (cross-process), then invalidates
- * in-process registered stores.
+ * The entry point for a bulk mutation site that touches indexed files under a
+ * branch-clone root broadly but never touches schema. No production caller yet:
+ * `ContentStore`'s write/delete/renameEntry bump the marker directly via
+ * `recordOwnMutation()`, and every bulk site (git checkout/merge/rebase, sync,
+ * CLI sync, migrate) can touch `.collection.json` as a side effect, so those
+ * take `invalidateBranchContentCaches()` below.
  *
- * Currently unused in production: `ContentStore`'s own write()/delete()/
- * renameEntry() bump the marker directly via their `recordOwnMutation()` ->
- * `bumpContentIndexGeneration()` call, not through this wrapper, and every
- * existing bulk-mutation call site (git checkout/merge/rebase, sync, CLI
- * sync, migrate) can touch `.collection.json` as a side effect, so those all
- * use the combined `invalidateBranchContentCaches()` below instead. Kept as
- * the documented, ready-to-use entry point for a future call site that is
- * genuinely content-only.
- *
- * Bump-before-invalidate: the in-process invalidation triggers a rebuild on
- * next access, and that rebuild captures the marker token before scanning —
- * writing the marker first lets the rebuild pick up the new token in the same
- * pass instead of a redundant second rebuild.
+ * Bump BEFORE invalidating: the rebuild the invalidation triggers captures the
+ * marker token before scanning, so the new token lands in that same pass
+ * instead of costing a second rebuild.
  */
 export async function invalidateContentIndexesDurable(root: string): Promise<void> {
   await bumpContentIndexGeneration(root)
@@ -89,21 +68,16 @@ export async function invalidateContentIndexesDurable(root: string): Promise<voi
 }
 
 /**
- * The entry point for operations that mutate a branch-clone root's working
- * tree BROADLY rather than through a single known write/delete/rename call:
- * git working-tree ops (checkout/merge/rebase/abort), content sync, CLI sync,
- * and migrate. Such operations can touch `.collection.json` files as a side
- * effect (a rebase can pull in upstream schema changes; a sync can overwrite
- * the whole content directory), so both durable, cross-process caches rooted
- * at `root` need to be told: the ContentId index (content-index-registry.ts)
- * AND the resolved-schema cache (branch-schema-cache.ts).
+ * The entry point for operations that mutate a branch-clone root's working tree
+ * broadly: git working-tree ops (checkout/merge/rebase/abort), content sync,
+ * CLI sync, migrate. Those can touch `.collection.json` as a side effect (a
+ * rebase pulls in upstream schema changes; a sync overwrites the whole content
+ * directory), so BOTH caches rooted at `root` are bumped — the ContentId index
+ * and the resolved-schema cache.
  *
- * Both marker bumps are "hint" flavor (bumpResourceGeneration's default,
- * `mustSucceed` not set): callers of this function are typically `finally`
- * blocks in bulk operations (e.g. a git rebase cleanup) that must not start
- * throwing because a marker write failed - log-and-swallow is the existing
- * semantics at those call sites, and a lost bump only degrades to pre-marker
- * staleness behavior plus whatever backstop the consumer implements.
+ * Both bumps are hint flavor (no `mustSucceed`): these callers are typically
+ * `finally` blocks in bulk operations, which must not start throwing because a
+ * marker write failed.
  */
 export async function invalidateBranchContentCaches(root: string): Promise<void> {
   await bumpContentIndexGeneration(root)
