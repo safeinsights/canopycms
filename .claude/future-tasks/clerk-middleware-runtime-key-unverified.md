@@ -2,7 +2,7 @@
 
 **Status:** Open. **Priority: P2.** Found 2026-09-08 while investigating adopter request #40
 (dual-build `<ClerkProvider>` placement). **Shape settled 2026-09-12** by
-[cms-image-build-epic.md](cms-image-build-epic.md) PR 6; what stays open is a live proof.
+[cms-image-build-epic.md](resolved/cms-image-build-epic.md) PR 6; what stays open is a live proof.
 
 ## The settled shape
 

@@ -4,7 +4,7 @@
 **Found:** 2026-08-15, PR #235 human-review fix session (fix/human-review-235), while proving a
 build-guard fix with real `next build` runs against `apps/example1`
 
-**RESOLVED 2026-09-12** by [cms-image-build-epic.md](../cms-image-build-epic.md) PR 1
+**RESOLVED 2026-09-12** by [cms-image-build-epic.md](cms-image-build-epic.md) PR 1
 (`fix/build-reads-working-tree`, base `int-202609-cms-image`), in the direction question 2 below
 asks about. Every build-time read now comes from the working tree, in every mode and deployment
 type, exactly as the static path does: `readsFromCheckout` in `packages/canopycms/src/build-mode.ts`,

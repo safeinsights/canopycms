@@ -1,7 +1,7 @@
 # [P3] `useBranchManager`'s `operatingMode` option is unused, and two JSDoc examples use a mode that doesn't exist
 
 Filed 2026-09-12 while tracing what the browser does with its operating mode, for PR 6 of
-[cms-image-build-epic.md](cms-image-build-epic.md). Not fixed there: it's editor code, and that PR
+[cms-image-build-epic.md](resolved/cms-image-build-epic.md). Not fixed there: it's editor code, and that PR
 is docs.
 
 ## What

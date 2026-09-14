@@ -1,7 +1,7 @@
 # [P2] Content-reading entry points outside `next build` still read a branch clone
 
 **Priority:** P2 — silent stale reads for whoever hits it; an explicit env var works around it today
-**Found:** 2026-09-12, left open by [cms-image-build-epic.md](cms-image-build-epic.md) PR 1
+**Found:** 2026-09-12, left open by [cms-image-build-epic.md](resolved/cms-image-build-epic.md) PR 1
 (`fix/build-reads-working-tree`), which made every build-time read come from the working tree.
 
 ## Problem

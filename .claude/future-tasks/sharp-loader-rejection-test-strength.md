@@ -3,7 +3,7 @@
 **Priority:** P3. A test-strength gap, not a defect: the guarded code is correct today, and the
 suite still goes red without it, just not through this test.
 **Found:** 2026-09-13, by the claims pass over the integration PR (#331) of
-[cms-image-build-epic.md](cms-image-build-epic.md), which removed the guarded line and re-ran the
+[cms-image-build-epic.md](resolved/cms-image-build-epic.md), which removed the guarded line and re-ran the
 test.
 
 ## What the test is for

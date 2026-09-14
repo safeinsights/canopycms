@@ -2,7 +2,7 @@
 
 ## Priority: P3
 
-Filed 2026-09-12 by PR 2 (`fix/sharp-lazy-load`) of [cms-image-build-epic.md](cms-image-build-epic.md),
+Filed 2026-09-12 by PR 2 (`fix/sharp-lazy-load`) of [cms-image-build-epic.md](resolved/cms-image-build-epic.md),
 which deferred it by decision: for now the loud signal is a one-time error log.
 
 ## State

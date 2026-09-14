@@ -3,7 +3,7 @@
 From the human review of [PR #229](https://github.com/safeinsights/canopycms/pull/229#pullrequestreview-4938780868)
 (`integration-202608-a` → `main`, **approved** with two fix-first findings), 2026-08-14.
 
-§1 (below) was updated by [cms-image-build-epic.md](cms-image-build-epic.md) PR 6: the PR-UI
+§1 (below) was updated by [cms-image-build-epic.md](resolved/cms-image-build-epic.md) PR 6: the PR-UI
 claim is corrected, and an adopter case plus a build-time divergence are recorded. Its runtime
 mismatch check is still open.
 

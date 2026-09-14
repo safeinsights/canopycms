@@ -4,7 +4,7 @@ Filed 2026-08-12, from `fix/deploy-template-cdk-app` (the CDK-app scaffolding
 fix). Not a regression that branch introduced — it made an existing blind spot
 larger and worth naming.
 
-**RESOLVED 2026-09-12** by PR 5 of [cms-image-build-epic.md](../cms-image-build-epic.md), branch
+**RESOLVED 2026-09-12** by PR 5 of [cms-image-build-epic.md](cms-image-build-epic.md), branch
 `ci/standalone-image-smoke`. The `standalone-image` job in `.github/workflows/ci.yml` runs
 `scripts/smoke/standalone-image.mjs` for pnpm and npm on `ubuntu-latest` and for pnpm on
 `ubuntu-24.04-arm`, path-gated like `dual-build`. The script scaffolds a Next 16.1.7 app outside

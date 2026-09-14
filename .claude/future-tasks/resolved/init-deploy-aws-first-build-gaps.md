@@ -1,6 +1,6 @@
 # [P2] `init-deploy aws` scaffold: two gaps a first real image build hits
 
-**RESOLVED 2026-09-12** by PR 5 of [cms-image-build-epic.md](../cms-image-build-epic.md). That PR's
+**RESOLVED 2026-09-12** by PR 5 of [cms-image-build-epic.md](cms-image-build-epic.md). That PR's
 image smoke test ([deploy-image-build-smoke-test.md](deploy-image-build-smoke-test.md)) now builds
 this scaffold in CI.
 
@@ -26,7 +26,7 @@ sharp@0.34.5 until those decisions went into `allowBuilds`.
 **Priority:** P2 — both fail loudly on an adopter's first build and have a known workaround; PR 5
 of the CMS image epic will hit both
 **Found:** 2026-09-12, by the local Docker verification for
-[cms-image-build-epic.md](../cms-image-build-epic.md) PR 1. The run used a fresh Next 16.1.7 app
+[cms-image-build-epic.md](cms-image-build-epic.md) PR 1. The run used a fresh Next 16.1.7 app
 (pnpm 11.21.0, from `create-next-app`), `canopycms init` + `canopycms init-deploy aws` from
 `pnpm pack` tarballs, then `next build` and `docker build -f Dockerfile.cms`. Neither gap is
 caused by PR 1.

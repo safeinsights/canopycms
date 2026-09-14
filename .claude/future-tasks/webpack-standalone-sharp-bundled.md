@@ -5,7 +5,7 @@ webpack build of the CMS image; other Next 15 versions, npm, and Next 16 with
 `next build --webpack` are not yet verified. Routes keep serving, and only image work fails. The
 first adopter builds with Next 16's default Turbopack and is not affected.
 **Found:** 2026-09-12, by a Next 15.5.21 probe of the `standalone-image` smoke test, while PR 5 of
-[cms-image-build-epic.md](cms-image-build-epic.md) weighed adding a webpack leg.
+[cms-image-build-epic.md](resolved/cms-image-build-epic.md) weighed adding a webpack leg.
 
 ## What was observed
 

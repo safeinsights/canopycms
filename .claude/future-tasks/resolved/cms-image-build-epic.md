@@ -1,7 +1,9 @@
 # CMS editor image: base branch, sharp tracing, image architecture
 
-**Status:** All six PRs and the follow-up #332 merged; integration PR into `int-202609-a` open at
-https://github.com/safeinsights/canopycms/pull/331
+**Status:** Resolved 2026-09-14. All PRs merged; integration PR
+https://github.com/safeinsights/canopycms/pull/331 merged into `int-202609-a` (`c25035d2`); base
+merge #341; post-merge claim fixes #342 (`92961874`); published in `0.0.67-int.90` (all five
+packages).
 **Created:** 2026-09-12
 **Integration branch:** `int-202609-cms-image` (base `int-202609-a`)
 
@@ -14,6 +16,26 @@ https://github.com/safeinsights/canopycms/pull/331
 | 5   | `ci/standalone-image-smoke`          | Merged (04f11dd5)             | https://github.com/safeinsights/canopycms/pull/328   |
 | 6   | `docs/cms-image-adopter-answers`     | Merged (69e30fa8)             | https://github.com/safeinsights/canopycms/pull/325   |
 | 7 (follow-up) | `fix/scaffold-cdk-typecheck` | Merged (d63d4367)             | https://github.com/safeinsights/canopycms/pull/332   |
+
+### After the integration PR
+
+Additional PRs landed while closing out the epic, beyond the seven numbered above:
+
+| PR                                                       | Branch                          | Base                  | Status              |
+| --------------------------------------------------------- | -------------------------------- | ---------------------- | -------------------- |
+| [#335](https://github.com/safeinsights/canopycms/pull/335) | `docs/cms-image-claim-check`     | `int-202609-cms-image` | Merged (`6777c8e9`) — claims pass over the epic doc |
+| [#336](https://github.com/safeinsights/canopycms/pull/336) | `docs/cms-image-claim-recheck`   | `int-202609-cms-image` | Merged (`af979ee1`) — mechanical re-check of #335's claims pass |
+| [#341](https://github.com/safeinsights/canopycms/pull/341) | `chore/merge-int-202609-a`       | `int-202609-cms-image` | Merged (`540ad4ed`) — brought `int-202609-a`'s latest commits into the integration branch before opening #331 |
+| [#331](https://github.com/safeinsights/canopycms/pull/331) | `int-202609-cms-image`           | `int-202609-a`         | Merged (`c25035d2`) — the integration PR itself (see Status above) |
+| [#342](https://github.com/safeinsights/canopycms/pull/342) | `docs/cms-image-postmerge-claims` | `int-202609-a`        | Merged (`92961874`) — post-merge claims pass over #331, directly on `int-202609-a` |
+
+## Outcome
+
+Published in `0.0.67-int.90` (all five packages). The end-to-end check against the first
+adopter's editor image on `0.0.67-int.90` passed: the image builds both with and without the old
+git-snapshot step, sharp 0.35's libvips is traced and loads through Turbopack's external alias,
+and `ERR_DLOPEN_FAILED` appears zero times. The remaining 500s were adopter-side, not CanopyCMS's:
+a dev auth plugin running in prod mode, and a request-scoped read on a static not-found route.
 
 ## Context
 
@@ -338,7 +360,7 @@ rebases onto the integration branch and verifies the "both" image before merging
   where Next reads them. `undefined` and `null` count as unset, as in Next's `assignDefaults`
   (`assignDefaultsAndValidate` in 16.1.7).
 - **Deferred.** Two LOW root-lookup edge cases:
-  [sharp-tracing-lockfile-root-edge-cases.md](sharp-tracing-lockfile-root-edge-cases.md).
+  [sharp-tracing-lockfile-root-edge-cases.md](../sharp-tracing-lockfile-root-edge-cases.md).
 
 ### PR 4: always pass the resolved architecture, arm64 by default (`fix/cms-service-architecture`)
 
@@ -397,7 +419,7 @@ Implements `deploy-image-build-smoke-test.md`. Its chip is spawned only after PR
   title in the working tree, which `next build` reads, and another in its `release-base` commit,
   which requests read, so a check can tell which copy served a response.
 - **Matrix and filter.** pnpm and npm on `ubuntu-latest`, plus pnpm on `ubuntu-24.04-arm`. No
-  Next 15 leg: see [webpack-standalone-sharp-bundled.md](webpack-standalone-sharp-bundled.md). The
+  Next 15 leg: see [webpack-standalone-sharp-bundled.md](../webpack-standalone-sharp-bundled.md). The
   path filter is wider than planned above: every source and packaging input of the three packages,
   `tsconfig.base.json`, the lockfile, the root `package.json`, `.nvmrc`, the script and `ci.yml`.
 - **The adopter's not-found 500s did not reproduce.** The adopter's image answered 404s and
@@ -424,7 +446,7 @@ Implements `deploy-image-build-smoke-test.md`. Its chip is spawned only after PR
   every exit path, and CI uploads it when a leg fails. `--work-dir` is checked through its nearest
   existing ancestor's real path before it is created, and `--keep` also keeps the scaffold.
   `init-deploy aws` leaves a tsconfig that inherits `exclude` through `extends` alone, with a
-  warning. Left open: [cms-image-pr5-review-followups.md](cms-image-pr5-review-followups.md).
+  warning. Left open: [cms-image-pr5-review-followups.md](../cms-image-pr5-review-followups.md).
 - **CI.** The first run (on `b4d7eb1e`) failed on all three legs, each with 13 of 14 checks green:
   the `/no-such-page` check required the root layout's `<header>` markup, which a force-dynamic
   route calling `notFound()` does not send. `8581b501` matched the layout's text instead. Every leg
@@ -509,19 +531,19 @@ when they open their PR, when they hit a decision that needs a call, and when th
 
 ## Follow-up tasks filed during the epic
 
-- [examples-aws-deployment-drift.md](resolved/examples-aws-deployment-drift.md) (P3) — `examples/aws-deployment` drifted from the `init-deploy` templates. Filed twice more on `int-202609-a`, and merged into [example-aws-deployment-drift-from-template.md](example-aws-deployment-drift-from-template.md) (P1) during the base merge (#341).
-- [admin-status-image-processing-availability.md](admin-status-image-processing-availability.md) (P3) — surface sharp availability in admin status.
-- [upstream-next-sharp-tracing-recheck.md](upstream-next-sharp-tracing-recheck.md) (P3) — re-check vercel/next.js#97973 on each Next upgrade; remove the include once upstream traces libvips.
-- [sharp-tracing-lockfile-root-edge-cases.md](sharp-tracing-lockfile-root-edge-cases.md) (P3) — two low-severity tracing-root lookup edge cases.
-- [build-canopy-scripts-outside-next-build.md](build-canopy-scripts-outside-next-build.md) (P2) — `createBuildCanopy` / `generate-ai-content` CLI still read a branch clone for server deployments unless `CANOPY_BUILD_MODE=true`; **awaiting a maintainer decision**.
-- [dev-content-watcher-relative-sourceroot.md](dev-content-watcher-relative-sourceroot.md) (P2) — dev content watcher silently off for a relative `sourceRoot`.
-- [init-deploy-aws-first-build-gaps.md](resolved/init-deploy-aws-first-build-gaps.md) (P2) — scaffold gaps the image smoke test hits. Resolved by PR 5.
-- [yarn-support-decision.md](yarn-support-decision.md) (P3) — keep or drop Yarn in `init-deploy aws`, split from the smoke-test task.
-- [webpack-standalone-sharp-bundled.md](webpack-standalone-sharp-bundled.md) (P2) — a webpack-built CMS image bundles sharp into a server chunk, so image transforms fail; found by PR 5's Next 15.5.21 probe, with Next 16 `--webpack` not yet verified.
-- [cms-image-pr5-review-followups.md](cms-image-pr5-review-followups.md) (P3) — four LOW findings from PR 5's review rounds: `init-deploy aws` re-serializing an adopter's whole `tsconfig.json`, nothing type-checking the scaffolded CDK app, a plugin wrapped around `withCanopy` losing Next 16's Turbopack error, and an unreadable Next version (e.g. Yarn PnP) getting no `turbopack` key. The second and third were resolved 2026-09-13 by PR #332 (`fix/scaffold-cdk-typecheck`). A fifth, from the integration PR's first review round: the smoke test's sitemap check cannot tell a build-time read from a request-time one.
-- [editor-operatingmode-option-unused.md](editor-operatingmode-option-unused.md) (P3) — unused editor `operatingMode` option.
-- [scaffold-cdk-typecheck-published-shape.md](scaffold-cdk-typecheck-published-shape.md) (P3) — from PR #332's review rounds: CI runs the CDK app's `tsc --noEmit -p infrastructure` only against workspace `src/`, never the published `.d.ts`; a project `typeRoots` without `node_modules/@types` (TS2688) or a narrower `rootDir` (TS6059) fails the check.
-- [sharp-loader-rejection-test-strength.md](sharp-loader-rejection-test-strength.md) (P3) — from the integration PR's claims pass: the un-awaited-load test in `transform.sharp-unavailable.test.ts` still passes with `loading.catch` removed from `sharp-loader.ts`; only vitest's run-level error fails the run.
+- [examples-aws-deployment-drift.md](examples-aws-deployment-drift.md) (P3) — `examples/aws-deployment` drifted from the `init-deploy` templates. Filed twice more on `int-202609-a`, and merged into [example-aws-deployment-drift-from-template.md](../example-aws-deployment-drift-from-template.md) (P1) during the base merge (#341).
+- [admin-status-image-processing-availability.md](../admin-status-image-processing-availability.md) (P3) — surface sharp availability in admin status.
+- [upstream-next-sharp-tracing-recheck.md](../upstream-next-sharp-tracing-recheck.md) (P3) — re-check vercel/next.js#97973 on each Next upgrade; remove the include once upstream traces libvips.
+- [sharp-tracing-lockfile-root-edge-cases.md](../sharp-tracing-lockfile-root-edge-cases.md) (P3) — two low-severity tracing-root lookup edge cases.
+- [build-canopy-scripts-outside-next-build.md](../build-canopy-scripts-outside-next-build.md) (P2) — `createBuildCanopy` / `generate-ai-content` CLI still read a branch clone for server deployments unless `CANOPY_BUILD_MODE=true`; **awaiting a maintainer decision**.
+- [dev-content-watcher-relative-sourceroot.md](../dev-content-watcher-relative-sourceroot.md) (P2) — dev content watcher silently off for a relative `sourceRoot`.
+- [init-deploy-aws-first-build-gaps.md](init-deploy-aws-first-build-gaps.md) (P2) — scaffold gaps the image smoke test hits. Resolved by PR 5.
+- [yarn-support-decision.md](../yarn-support-decision.md) (P3) — keep or drop Yarn in `init-deploy aws`, split from the smoke-test task.
+- [webpack-standalone-sharp-bundled.md](../webpack-standalone-sharp-bundled.md) (P2) — a webpack-built CMS image bundles sharp into a server chunk, so image transforms fail; found by PR 5's Next 15.5.21 probe, with Next 16 `--webpack` not yet verified.
+- [cms-image-pr5-review-followups.md](../cms-image-pr5-review-followups.md) (P3) — four LOW findings from PR 5's review rounds: `init-deploy aws` re-serializing an adopter's whole `tsconfig.json`, nothing type-checking the scaffolded CDK app, a plugin wrapped around `withCanopy` losing Next 16's Turbopack error, and an unreadable Next version (e.g. Yarn PnP) getting no `turbopack` key. The second and third were resolved 2026-09-13 by PR #332 (`fix/scaffold-cdk-typecheck`). A fifth, from the integration PR's first review round: the smoke test's sitemap check cannot tell a build-time read from a request-time one.
+- [editor-operatingmode-option-unused.md](../editor-operatingmode-option-unused.md) (P3) — unused editor `operatingMode` option.
+- [scaffold-cdk-typecheck-published-shape.md](../scaffold-cdk-typecheck-published-shape.md) (P3) — from PR #332's review rounds: CI runs the CDK app's `tsc --noEmit -p infrastructure` only against workspace `src/`, never the published `.d.ts`; a project `typeRoots` without `node_modules/@types` (TS2688) or a narrower `rootDir` (TS6059) fails the check.
+- [sharp-loader-rejection-test-strength.md](../sharp-loader-rejection-test-strength.md) (P3) — from the integration PR's claims pass: the un-awaited-load test in `transform.sharp-unavailable.test.ts` still passes with `loading.catch` removed from `sharp-loader.ts`; only vitest's run-level error fails the run.
 
 ## Verification
 
