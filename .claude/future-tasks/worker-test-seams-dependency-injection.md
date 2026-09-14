@@ -1,7 +1,7 @@
 # [P2] Worker tests reach through instances; inject collaborators instead
 
 **Status:** Open. Deferred by decision on 2026-09-13 from the baseline-quality epic
-([baseline-quality-202609.md](baseline-quality-202609.md)), whose encapsulation PR tags
+([baseline-quality-202609.md](resolved/baseline-quality-202609.md)), whose encapsulation PR tags
 remaining test seams `@internal` but does not redesign them.
 
 ## Evidence (measured 2026-09-13 in `packages/canopycms/src`)

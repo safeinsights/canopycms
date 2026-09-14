@@ -67,9 +67,21 @@ Three suspicions, each tested:
 
 `node scripts/check-docs.mjs --report` (words outside code spans and fences), `c25035d2` → after:
 
-| doc             | words            | markers |
-| --------------- | ---------------- | ------- |
-| ARCHITECTURE.md | 42,331 → pending | 16 → 0  |
+| doc                                   | words            | markers  |
+| ------------------------------------- | ---------------- | -------- |
+| ARCHITECTURE.md                       | 42,331 → 23,242  | 16 → 0   |
+| DEVELOPING.md                         | 18,524 → 12,607  | 20 → 0   |
+| README.md                             | 18,294 → 14,556  | 6 → 0    |
+| CODEBASE_GUIDE.md                     | 19,421 → 3,994   | 16 → 0   |
+| AGENTS.md                             | 1,256 → 1,245    | 1 → 0    |
+| docs/adopter-migration.md (unchecked) | 18,068 → 13,033  | 36 → 13  |
+| docs/deploying-to-aws.md              | 8,702 → 8,718    | 2 → 0    |
+| docs/concurrency.md                   | 5,554 → 5,352    | 7 → 0    |
+| module AGENTS.md and READMEs (15)     | 6,772 → 5,442    | 19 → 0   |
+| .claude/agents (11)                   | 3,883 → 3,716    | 4 → 0    |
+| **total (34 budgeted docs)**          | 142,805 → 91,905 | 127 → 13 |
+
+Doc budgets sit at actual + 3%, except README, CODEBASE_GUIDE's largest section and `docs/adopter-migration.md`, which keep their earlier ceilings because those docs grew.
 
 ## The six PRs
 
@@ -97,3 +109,4 @@ Three suspicions, each tested:
 - [branch-lockdown-vs-acl-precedence.md](../../.claude/future-tasks/branch-lockdown-vs-acl-precedence.md): comment and code disagree on lockdown vs explicit ACL; an authorization decision.
 - [check-docs-heading-anchors.md](../../.claude/future-tasks/check-docs-heading-anchors.md): link `#anchors` are not resolved.
 - [readme-ispermissionerror-claims-eperm.md](../../.claude/future-tasks/readme-ispermissionerror-claims-eperm.md): README claims `EPERM` coverage the code lacks.
+- [doc-residue-202609.md](../../.claude/future-tasks/doc-residue-202609.md): history phrasing the marker regex cannot see in `docs/concurrency.md`, two missing root `AGENTS.md` rows, one stale `task-queue/README.md` line.

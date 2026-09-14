@@ -1,12 +1,16 @@
 # [P3] Comment-budget guard: scope gaps and counting-rule edges
 
 **Status:** Open. Filed 2026-09-13 from the manager's review of the guard PR in
-[baseline-quality-202609.md](baseline-quality-202609.md); none of these changes what the
+[baseline-quality-202609.md](resolved/baseline-quality-202609.md); none of these changes what the
 ratchet measures today, so they wait for a maintenance pass.
 
 ## Scope gaps in `scripts/check-comment-budget.mjs`
 
 - `apps/` is outside the comment budget entirely.
+- Root-level config sources are outside it too, and already carry what the style rule forbids:
+  `lint-staged.config.mjs` lines 2-4 are a dated history comment ("missing here until
+  2026-08-22"), and `vitest.shared.ts` lines 23-30 narrate a past CI incident. Found by the
+  `docs-developing` run in the bookkeeping PR.
 - `PACKAGE_ROOTS` is hardcoded, so a new `packages/<x>/src` is silently unbudgeted. Contrast
   the "add it" guard, which fails loudly for a new directory inside a known package. Derive
   the roots from `packages/*/package.json` lint globs, or fail when a package directory has

@@ -1,9 +1,11 @@
 # Baseline quality: comment volume, encapsulation, doc volume
 
-**Status:** Active. Integration branch `int-202609-baseline-quality` (base `int-202609-a`);
-every PR below targets it, and Phase E opens the one epic PR from it.
-**Created:** 2026-09-13, from an approved plan. A manager session runs the work as chips and
-reads their reports; machine gates are the gates, nobody human-reviews the inner PRs.
+**Status:** RESOLVED 2026-09-14. All six inner PRs merged into `int-202609-baseline-quality`:
+#344 (G), #347 (A1), #345 (A3), #346 (A2), #348 (D), #349 (B); bookkeeping PR #350 (E1). After
+the Fable full-diff review, the manager opens the final PR from `int-202609-baseline-quality`
+into `int-202609-a`. Review record: `docs/reviews/2026-09-baseline-quality.md`.
+**Created:** 2026-09-13, from an approved plan. A manager session ran the work as chips and
+read their reports; machine gates were the gates, nobody human-reviewed the inner PRs.
 
 ## Why
 
@@ -42,10 +44,28 @@ Measured 2026-09-13 at `c25035d2`, the tip of `int-202609-a`. Non-test TypeScrip
 | 3 | A2 | Comment compression, Sonnet tier: `authorization/`, `schema/`, `config/`, `static/`, `build/`, `validation/`, `task-queue/`, `api/`, `cli/`, `assets/`, `ai/`, `editor/` | merged (#346) |
 | 4 | A3 | Comment compression, other packages: `canopycms-cdk` (Opus), `canopycms-next`, both auth packages, root `scripts/`              | merged (#345) |
 | 5 | D | Docs consolidation: ARCHITECTURE to 25k words, DEVELOPING to 18k, README to 20k, CODEBASE_GUIDE to 10k as a map; `docs/adopter-migration.md` audited | merged (#348) |
-| 6 | B | Encapsulation: `api/routes.ts` aggregator, queue contract moved to `task-queue/`, `cli/init-github-app.ts` split, dependency-cruiser boundary rules, knip as `pnpm lint:exports` | PR #349, in review |
-| 7   | E    | Manager bookkeeping: ratchet both budget files, `docs/reviews/2026-09-baseline-quality.md`, Fable review of the whole diff, the epic PR | planned     |
+| 6 | B | Encapsulation: `api/routes.ts` aggregator, queue contract moved to `task-queue/`, `cli/init-github-app.ts` split, dependency-cruiser boundary rules, knip as `pnpm lint:exports` | merged (#349) |
+| 7 | E1 | Bookkeeping: review record, the last doc history markers and the `finding` regex, doc-budget margin pass, one `docs-architecture` and one `docs-developing` run, this file to `resolved/`; then the manager's Fable review of the whole diff and the epic PR | PR #350 |
 
 Sequence: G, then A1/A2/A3 and D in parallel (disjoint files), then B, then E.
+
+## Final numbers
+
+Guard counters (`check-comment-budget.mjs --report`, `check-docs.mjs --report`), `c25035d2` →
+the integration tip; full tables in the review record.
+
+- Comment lines, whole guarded scope: 28,295 → 20,992 (ratio 0.557 → 0.412; code 50,795 →
+  50,890). canopycms 0.523 → 0.375, canopycms-cdk 1.546 → 1.279, canopycms-next 0.927 → 0.801.
+- History markers in source comments 145 → 0. Longest run 91 → 43; the 43 is a leave-alone range
+  in `utils/`, every other directory is at most 31.
+- Directories still above 1.0: `static` 1.091, `utils` 1.012 (leave-alone files at 1.80), and the
+  cdk directories (see [cdk-comment-second-pass.md](../cdk-comment-second-pass.md)).
+- knip: 182 unused exports + 90 unused types → 0 / 0.
+- Docs (words outside code spans and fences): the four root docs 98,570 → 54,399; all 34
+  budgeted docs 142,805 → 91,905; doc history-marker lines 127 → 13, all in
+  `docs/adopter-migration.md`, a dated changelog the marker check skips. Budgets sit at actual
+  + 3%, except three that keep their earlier ceiling because the doc grew (README,
+  CODEBASE_GUIDE's largest section, `docs/adopter-migration.md`).
 
 ## Rules that outlive the epic
 
@@ -79,12 +99,12 @@ Sequence: G, then A1/A2/A3 and D in parallel (disjoint files), then B, then E.
 
 ## Deferred from this epic
 
-- [worker-test-seams-dependency-injection.md](worker-test-seams-dependency-injection.md)
-
-## Follow-ups
-
-- Chip A3 left `canopycms-cdk` at comment ratio 1.28, not the plan's 1.0. The reviewer's
-  estimate: about 380 more comment lines can go with no rule lost (the
-  `worker/credential-refresh.ts` header, `lambda-execution-role.ts` 46-76,
-  `asset-support.ts` 24-90, the `cms-service.ts` prop docs), landing near 1.1; reaching 1.0
-  would cost the per-IAM-statement reasons. The ratchet PR decides whether to take that pass.
+- [cdk-comment-second-pass.md](../cdk-comment-second-pass.md): about 380 more cdk comment lines
+  can go with no rule lost, landing near 1.1.
+- [worker-test-seams-dependency-injection.md](../worker-test-seams-dependency-injection.md)
+- [knip-scope-gaps.md](../knip-scope-gaps.md)
+- [knip-no-importer-deletion-candidates.md](../knip-no-importer-deletion-candidates.md)
+- [comment-guard-scope-gaps.md](../comment-guard-scope-gaps.md)
+- [branch-lockdown-vs-acl-precedence.md](../branch-lockdown-vs-acl-precedence.md)
+- [check-docs-heading-anchors.md](../check-docs-heading-anchors.md)
+- [readme-ispermissionerror-claims-eperm.md](../readme-ispermissionerror-claims-eperm.md)
