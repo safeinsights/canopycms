@@ -15,19 +15,12 @@ import { operatingStrategy } from '../../operating-mode'
 import { mutateSettingsJsonFile } from '../settings-file-store'
 import type { OccWriteResult } from '../../utils/occ-json-write'
 
-/**
- * Get the appropriate permissions file path based on mode
- */
 function getPermissionsFilePath(repoRoot: string, mode: OperatingMode): string {
   return operatingStrategy(mode).getPermissionsFilePath(repoRoot)
 }
 
 /**
- * Load full permissions file (for version checking)
  * Returns null if file doesn't exist.
- *
- * @param repoRoot - Repository root directory
- * @param mode - Operating mode (determines file path)
  */
 export async function loadPermissionsFile(
   repoRoot: string,
@@ -41,12 +34,10 @@ export async function loadPermissionsFile(
     const validated = PermissionsFileSchema.parse(parsed)
     return validated
   } catch (error) {
-    // File doesn't exist
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
       return null
     }
 
-    // Parse/validation error - this is more serious
     console.error('CanopyCMS: Failed to parse permissions file', error)
     throw new Error(
       `Invalid permissions file: ${error instanceof Error ? error.message : 'unknown error'}`,
@@ -57,9 +48,6 @@ export async function loadPermissionsFile(
 /**
  * Load path permissions from .canopycms/permissions.json (or .local.json in dev mode)
  * Returns empty array if file doesn't exist (no restrictions).
- *
- * @param repoRoot - Repository root directory
- * @param mode - Operating mode (determines file path)
  */
 export async function loadPathPermissions(
   repoRoot: string,
@@ -76,8 +64,7 @@ export async function loadPathPermissions(
  * current parsed file (`null` if it doesn't exist yet) and the version to
  * write under; it returns the next raw payload, or `null` for a deliberate
  * no-op. The returned payload is validated against
- * {@link PermissionsFileSchema} before being written, preserving the
- * previous validate-before-write behavior of the old `savePathPermissions`.
+ * {@link PermissionsFileSchema} before being written.
  */
 export async function mutatePermissionsFile(
   repoRoot: string,

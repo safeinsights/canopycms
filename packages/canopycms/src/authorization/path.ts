@@ -1,9 +1,3 @@
-/**
- * Path-level authorization
- *
- * Handles checking if a user can access a specific path based on permission rules.
- */
-
 import path from 'node:path'
 
 import { minimatch } from 'minimatch'
@@ -19,24 +13,15 @@ import type { CanopyUser } from '../user'
 import type { PathPermissionResult } from './types'
 import type { PhysicalPath } from '../paths/types'
 
-/**
- * Normalize a path for consistent matching
- */
 function normalize(p: PhysicalPath): PhysicalPath {
   const normalized = (p as string).split(path.sep).join('/')
   return normalized.replace(/^\.?\/*/, '') as PhysicalPath
 }
 
-/**
- * Check if a path matches a permission rule
- */
 function matchesRule(rule: PathPermission, relativePath: PhysicalPath): boolean {
   return minimatch(relativePath as string, rule.path, { dot: true })
 }
 
-/**
- * Check if user matches a permission target
- */
 function isAllowedByTarget(target: PermissionTarget, user: CanopyUser): boolean {
   const hasUserConstraint = !!target.allowedUsers?.length
   const hasGroupConstraint = !!target.allowedGroups?.length
@@ -55,8 +40,8 @@ function isAllowedByTarget(target: PermissionTarget, user: CanopyUser): boolean 
 
 /**
  * Resolve a `defaultPathAccess` config value to an 'allow'/'deny' verdict for one
- * permission level. String form applies the same value to every level (unchanged
- * behavior). Object form looks up the level; an absent level resolves to 'deny'
+ * permission level. String form applies the same value to every level. Object
+ * form looks up the level; an absent level resolves to 'deny'
  * (fail-closed), so scoping e.g. `{ read: 'allow' }` doesn't accidentally open
  * edit/review.
  */
@@ -97,7 +82,6 @@ export function checkPathAccess({
       continue
     }
 
-    // Get the permission target for this level
     const target = rule[level]
     if (!target) {
       // No permissions defined for this level on this rule, continue to next rule
@@ -118,9 +102,6 @@ export function checkPathAccess({
   }
 }
 
-/**
- * Factory to bind rules and defaultAccess once.
- */
 export function createCheckPathAccess(rules: PathPermission[], defaultAccess: DefaultPathAccess) {
   return (input: {
     relativePath: PhysicalPath

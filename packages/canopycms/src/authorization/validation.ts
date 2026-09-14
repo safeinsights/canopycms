@@ -1,10 +1,3 @@
-/**
- * Authorization validation utilities.
- *
- * SECURITY CRITICAL: These functions validate permission paths
- * to prevent path traversal attacks.
- */
-
 import { hasTraversalSequence } from '../paths/normalize'
 import type { PermissionPath } from './types'
 
@@ -12,18 +5,6 @@ import type { PermissionPath } from './types'
  * Parse and validate a PermissionPath.
  *
  * SECURITY: Prevents path traversal attacks in permission rules.
- *
- * @param path - The permission path to validate
- * @returns Object with success flag and either the typed path or an error
- *
- * @example
- * ```ts
- * const result = parsePermissionPath(rule.path)
- * if (!result.ok) {
- *   throw new Error(`Invalid permission path: ${result.error}`)
- * }
- * const permissionPath: PermissionPath = result.path
- * ```
  */
 export function parsePermissionPath(
   path: string,
@@ -43,7 +24,6 @@ export function parsePermissionPath(
   // Normalize separators to prevent bypass via backslashes
   const normalized = path.replace(/\\/g, '/')
 
-  // Additional security checks
   if (normalized.startsWith('/') || normalized.endsWith('/')) {
     return {
       ok: false,

@@ -14,23 +14,15 @@
  * (see branch-metadata.ts):
  *
  * 1. {@link withLock} - an in-process FIFO mutex keyed by the resolved file
- *    path. Deterministic same-process serialization.
+ *    path.
  * 2. {@link withOccFileLock} - a server-enforced, cross-process/cross-host
  *    lock (proper-lockfile, mkdir-based), immune to NFS client dentry/
- *    attribute caching. This is the actual fix for a lost permission/group
- *    edit across two warm Lambda containers on EFS.
+ *    attribute caching.
  * 3. {@link withOccRetry} around {@link writeOccJsonFile} - version/writeId
  *    based optimistic concurrency control, reloading the file fresh on
  *    EVERY retry attempt. With layers 1-2 in place this is defense-in-depth
  *    (e.g. a stale process from a rolling deploy writing without the lock),
  *    not the primary safety mechanism.
- *
- * `writeOccJsonFile`'s managed `version`/`writeId` pair is now THE single
- * counter for these files: the old hand-rolled `version: 1` format literal
- * and the separate `contentVersion` field are gone. A pre-existing file on
- * disk that still says `"version": 1` simply reads as OCC version 1 and
- * continues incrementing from there; a leftover `contentVersion` key is
- * silently stripped by the (non-strict, extra-keys-stripped) zod parse.
  *
  * Three caveats specific to these files, on top of the generic guarantee
  * documented on `utils/occ-json-write.ts`:

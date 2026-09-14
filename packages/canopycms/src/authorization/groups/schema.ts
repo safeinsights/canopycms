@@ -1,7 +1,3 @@
-/**
- * Schema for groups.json file
- */
-
 import { z } from 'zod'
 import type { CanopyUserId, CanopyGroupId } from '../../types'
 
@@ -29,9 +25,6 @@ export const GroupsFileSchema = z.object({
 
 export type GroupsFile = z.infer<typeof GroupsFileSchema>
 
-/**
- * Internal group representation
- */
 export interface InternalGroup {
   id: CanopyGroupId
   name: string

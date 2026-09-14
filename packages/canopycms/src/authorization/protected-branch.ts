@@ -47,19 +47,11 @@ export interface BranchWriteProtection extends BranchProtection {
    * `writeBlocked` does: `status !== 'editing'` is true when `status` is
    * `undefined`).
    *
-   * DELIBERATELY NOT named `submitBlocked` on this type, even though it
-   * replaces the naive re-derivation of the same conjunction client-side.
+   * DELIBERATELY NOT named `submitBlocked` on this type.
    * `BranchProtection.submitBlocked` (the field this interface inherits) means
    * ONLY "this is the base branch" -- `api/guards.ts`'s `submittableBranch`
    * guard reads exactly that, narrow, meaning, and must keep reading it: the
-   * guard's whole point is to refuse the base branch regardless of status. If
-   * this wider, compound answer had reused the same field name on the
-   * subtype, the two meanings would be one property access apart and
-   * indistinguishable at every call site -- a future edit anywhere near the
-   * guard could silently start reading the wide answer where the narrow one
-   * is required (or vice versa) and no type error would catch it, because
-   * both are `boolean`. The verbose name is the guard against that: nobody
-   * writes `submitBlockedIncludingStatus` by accident.
+   * guard's whole point is to refuse the base branch regardless of status.
    *
    * Also worth noting the asymmetry with `writeBlocked` above:
    * `writeBlocked` is built from `readOnly` (protected base branch, PROD
@@ -68,9 +60,7 @@ export interface BranchWriteProtection extends BranchProtection {
    * clause. They are not two spellings of one rule -- in dev, the base branch
    * is writable (`readOnly` is false there, so `writeBlocked` can be false)
    * but still never submittable (`isProtected` is true regardless of mode, so
-   * this stays true). A branch can be `writeBlocked: false,
-   * submitBlockedIncludingStatus: true` in dev's base branch specifically;
-   * collapsing the two fields into one would lose that state.
+   * this stays true).
    */
   submitBlockedIncludingStatus: boolean
 }
@@ -128,11 +118,6 @@ export function getBranchProtection(
  * malformed branch metadata is a real, handled condition here (see the
  * corrupt-metadata quarantine in branch-registry/branch-health). A branch whose
  * review state cannot be determined must not be writable.
- *
- * Requiring the parameter is the point: an optional one would make "caller
- * omitted it" and "the file had no status" indistinguishable, and the safe
- * answer differs between them. Callers that genuinely don't care about status
- * call {@link getBranchProtection} instead and get no `writeBlocked` at all.
  */
 export function getBranchWriteProtection(
   config: Pick<CanopyConfig, 'mode' | 'defaultBaseBranch'>,

@@ -1,7 +1,3 @@
-/**
- * Schema for permissions.json file
- */
-
 import { z } from 'zod'
 import type { CanopyUserId, CanopyGroupId } from '../../types'
 import { parsePermissionPath } from '../validation'
@@ -32,9 +28,6 @@ const permissionPathSchema = z
 
 /**
  * Schema for .canopycms/permissions.json
- *
- * SECURITY: Permission paths are validated to prevent path traversal attacks.
- * Any path containing '..' or other traversal sequences will be rejected.
  */
 export const PermissionsFileSchema = z.object({
   // Managed by writeOccJsonFile (see authorization/settings-file-store.ts) —

@@ -14,15 +14,11 @@ import { RESERVED_GROUPS } from '../helpers'
 import { mutateSettingsJsonFile } from '../settings-file-store'
 import type { OccWriteResult } from '../../utils/occ-json-write'
 
-/**
- * Get the appropriate groups file path based on mode
- */
 function getGroupsFilePath(branchRoot: string, mode: OperatingMode): string {
   return operatingStrategy(mode).getGroupsFilePath(branchRoot)
 }
 
 /**
- * Load full groups file (for version checking)
  * Returns null if file doesn't exist.
  */
 export async function loadGroupsFile(
@@ -37,7 +33,6 @@ export async function loadGroupsFile(
     const validated = GroupsFileSchema.parse(parsed)
     return validated
   } catch (error) {
-    // File doesn't exist
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
       return null
     }
@@ -57,20 +52,16 @@ export function deriveInternalGroups(
   fileGroups: InternalGroup[],
   bootstrapAdminIds: Set<string> = new Set(),
 ): InternalGroup[] {
-  // Find existing Admins and Reviewers groups
   let adminsGroup = fileGroups.find((g) => g.id === RESERVED_GROUPS.ADMINS)
   let reviewersGroup = fileGroups.find((g) => g.id === RESERVED_GROUPS.REVIEWERS)
 
-  // Ensure Admins group exists and includes bootstrap admins
   if (adminsGroup) {
-    // Merge bootstrap admin IDs with existing members
     const allAdmins = new Set([...adminsGroup.members, ...bootstrapAdminIds])
     adminsGroup = {
       ...adminsGroup,
       members: Array.from(allAdmins),
     }
   } else {
-    // Create Admins group with bootstrap admins
     adminsGroup = {
       id: RESERVED_GROUPS.ADMINS,
       name: RESERVED_GROUPS.ADMINS,
@@ -79,7 +70,6 @@ export function deriveInternalGroups(
     }
   }
 
-  // Ensure Reviewers group exists
   if (!reviewersGroup) {
     reviewersGroup = {
       id: RESERVED_GROUPS.REVIEWERS,
@@ -89,7 +79,6 @@ export function deriveInternalGroups(
     }
   }
 
-  // Return all groups: reserved groups first, then other groups
   const otherGroups = fileGroups.filter(
     (g) => g.id !== RESERVED_GROUPS.ADMINS && g.id !== RESERVED_GROUPS.REVIEWERS,
   )
@@ -99,8 +88,6 @@ export function deriveInternalGroups(
 
 /**
  * Load internal groups from .canopycms/groups.json (or .local.json in dev mode)
- * Ensures Admins and Reviewers groups always exist, adding them dynamically if not present.
- * If Admins group exists in file, merges with bootstrap admin IDs.
  */
 export async function loadInternalGroups(
   branchRoot: string,
@@ -117,9 +104,7 @@ export async function loadInternalGroups(
  * `mutate` is called with the current parsed file (`null` if it doesn't
  * exist yet) and the version to write under; it returns the next raw
  * payload, or `null` for a deliberate no-op. The returned payload is
- * validated against {@link GroupsFileSchema} before being written,
- * preserving the previous validate-before-write behavior of the old
- * `saveInternalGroups`.
+ * validated against {@link GroupsFileSchema} before being written.
  */
 export async function mutateGroupsFile(
   branchRoot: string,

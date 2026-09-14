@@ -3,10 +3,6 @@
  *
  * These are unsafe casts with NO validation. Import only from test files.
  * For production code, use parsePermissionPath() instead.
- *
- * @example
- * // In test files only:
- * import { unsafeAsPermissionPath } from '../authorization/test-utils'
  */
 
 import type { PermissionPath, ContentAccessDeps } from './types'

@@ -1,9 +1,3 @@
-/**
- * Branch-level authorization
- *
- * Handles checking if a user can access a branch based on ACLs.
- */
-
 import type { BranchContext } from '../types'
 import type { CanopyConfig, DefaultBranchAccess } from '../config'
 import { isAdmin, isReviewer } from './helpers'
@@ -34,8 +28,7 @@ export interface BranchAccessOptions {
    * and the editor API 401s anonymous callers before authorization runs. What it
    * buys is that a public-read `deployedAs: 'server'` site can run 'deny' with
    * `defaultPathAccess: { read: 'allow' }` and still keep un-ACL'd work branches
-   * private -- previously that required the blunt `defaultBranchAccess: 'allow'`,
-   * which opened every work branch too.
+   * private.
    */
   isProtectedBranch?: boolean
 }
@@ -58,7 +51,6 @@ export function checkBranchAccessWithDefault(
   defaultAccess: DefaultBranchAccess = 'deny',
   options?: BranchAccessOptions,
 ): BranchAccessResult {
-  // Admins and Reviewers have full branch access
   if (isAdmin(user.groups) || isReviewer(user.groups)) {
     return { allowed: true, reason: 'privileged' }
   }
@@ -149,14 +141,6 @@ export interface WorkflowActionOptions {
  * Check if user can perform workflow actions (submit/withdraw) on a branch.
  * Allowed if: user is creator OR user has ACL access OR (system branch AND user has general access).
  *
- * This implements a hybrid permission model:
- * - Branch creators can always submit/withdraw their branches
- * - Users explicitly listed in branch ACLs can also submit/withdraw
- * - For system branches (createdBy: 'canopycms-system'), anyone with general access can submit/withdraw
- * - Admins and Reviewers always have access (via checkBranchAccess)
- * - Unless `options.isProtectedBranch` is set, in which case the system-branch
- *   grant above is disabled (see {@link WorkflowActionOptions})
- *
  * The creator grant is enforced twice over: `checkBranchAccessWithDefault` now
  * admits the creator (so the gate below no longer swallows them under
  * `defaultBranchAccess: 'deny'`), and `userIsCreator` still decides the result.
@@ -167,27 +151,19 @@ export function canPerformWorkflowAction(
   defaultAccess: DefaultBranchAccess = 'deny',
   options?: WorkflowActionOptions,
 ): boolean {
-  // Check if user has general branch access (handles admins, reviewers, creator, ACLs)
   const accessResult = checkBranchAccessWithDefault(context, user, defaultAccess, {
     isProtectedBranch: options?.isProtectedBranch,
   })
 
-  // If user doesn't have basic branch access, deny immediately
   if (!accessResult.allowed) {
     return false
   }
 
-  // Check if user is the branch creator
   const userIsCreator = context.branch.createdBy === user.userId
 
-  // Check if this is a system-created branch (grant disabled on protected branches)
   const isSystemBranch =
     !options?.isProtectedBranch && context.branch.createdBy === 'canopycms-system'
 
-  // Allow if:
-  // 1. User is the creator, OR
-  // 2. User has ACL access (reason: 'privileged' or 'allowed_by_acl'), OR
-  // 3. System branch with general access
   return (
     userIsCreator ||
     accessResult.reason === 'privileged' ||
