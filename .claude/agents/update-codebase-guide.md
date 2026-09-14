@@ -70,15 +70,13 @@ You are a documentation specialist for CanopyCMS. Your job is to keep the codeba
 2. Read relevant source files to understand changes
 
 3. Update CODEBASE_GUIDE.md sections:
-   - Add new endpoints/components to tables
+   - Add new endpoints/components to their lists
    - Update file paths if moved
    - Add new subsystems if created
    - Remove deleted items
 
-4. Keep information dense but scannable:
-   - Use tables for listings
-   - Include file paths
-   - Brief descriptions only
+4. Keep it a map: one line per file (name, one-line purpose, pointer to the module's
+   `AGENTS.md`), 25 words at most; a table only where every cell is a short value
 
 ## Key Directories to Monitor
 
@@ -112,30 +110,25 @@ or any other directory in `packages/canopycms/src`, or any other app in `apps/`
 ## Style
 
 - Keep it reference-style (lookup, not tutorial)
-- Use tables for structured data
+- Lists, one line per item; a table only where every cell is a short value
 - Include exact file paths
 - Group related items together
 
-## Pruning is part of the job, not an afterthought
+## Placement first, then pruning
 
-**Before adding anything, find what it supersedes and delete or merge that.** Then report
-the net line delta of your edit.
+Before adding a fact, ask where it belongs, in this order: the code comment at the point
+of the rule, the owning module's `AGENTS.md`, and only then this file. Then find what the
+addition supersedes and delete or merge it. Report the net **word** delta of your edit,
+per file and per H2 section, naming each section you shrank with its before and after
+word counts (`node scripts/check-docs.mjs --report` prints them).
 
-This is not a style preference. Measured 2026-08-23: between 2026-07-21 and 2026-08-22 the
-four root docs grew by 2,154 lines and **not one of them has ever shrunk**. The root
-AGENTS.md went from 1,298 to 4,895 words while its line count never moved at all, because
-every edit appended inside an existing bullet — the only cheap edit the structure allowed.
-Three of the four doc-maintainer agents, this one included, had no removal instruction of
-any kind, so the workflow that runs them after every task was a ratchet.
-
-Concretely, on every run:
-
-- If a paragraph now describes behavior that changed, rewrite it in place. Do not add a
-  newer paragraph beside it and leave both.
-- If a section has outgrown its file, move it to the module's own `AGENTS.md` and leave a
-  one-line pointer. Detail belongs next to the code it governs.
-- If you cannot find anything to remove, say so explicitly in your report rather than
-  silently only adding.
-- Never restate a rule that a code comment already carries. The code comment is
-  authoritative; duplicating it creates two copies that can disagree with nothing to
-  catch it.
+- Rewrite a paragraph whose behavior changed in place; never leave an older version
+  beside it.
+- No dates, PR numbers, or descriptions of past behavior. Those belong in commit messages
+  and `.claude/future-tasks/`.
+- Never restate a rule that a code comment carries; the comment is authoritative, so
+  point at it.
+- A table whose cells hold prose becomes a list with one line per item, so prettier
+  cannot realign the whole table on one edit.
+- `pnpm lint:docs` enforces the per-file ceilings in `scripts/docs-budgets.json`. Lower a
+  ceiling when you shrink a file; raising one is a reviewed decision, never a side effect.
