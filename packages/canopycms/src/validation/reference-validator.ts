@@ -23,12 +23,11 @@ export interface ValidationResult {
  */
 export class ReferenceValidator {
   /**
-   * @param resolveCollection - Resolves a schema-declared collection name
-   *   (the documented unprefixed form, e.g. 'posts') to its canonical logical
-   *   path (e.g. 'content/posts'), typically `ContentStore.resolveCollectionItem`.
-   *   Keeps the write boundary consistent with reference-option loading: any
-   *   entry the dropdown offers must also pass validation. Without a resolver,
-   *   names are compared as-is against the index's logical collection paths.
+   * @param resolveCollection - Resolves a schema-declared collection name (e.g.
+   *   'posts') to its canonical logical path (e.g. 'content/posts'), typically
+   *   `ContentStore.resolveCollectionItem` — keeps validation consistent with
+   *   reference-option loading, so any entry the dropdown offers also passes.
+   *   Without it, names are compared as-is against the index's logical paths.
    */
   constructor(
     private idIndex: ContentIdIndex,

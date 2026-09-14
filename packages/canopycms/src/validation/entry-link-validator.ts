@@ -1,10 +1,8 @@
 /**
- * EntryLinkValidator validates that entry:ID patterns in body/markdown fields
- * reference existing entries.
- *
- * Returns warnings (not errors) — saves are never blocked by broken entry links.
- * This parallels ReferenceValidator but operates on inline links in text content
- * rather than structured reference fields.
+ * Scans body/markdown/mdx fields for `entry:ID` links and checks that each ID
+ * resolves to an existing entry. Warns rather than blocks — a save is never
+ * rejected over a broken entry link. Parallels `ReferenceValidator`, but for
+ * inline links in text rather than structured reference fields.
  */
 
 import type { ContentIdIndex } from '../content-id-index'

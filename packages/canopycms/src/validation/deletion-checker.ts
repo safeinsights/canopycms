@@ -92,7 +92,7 @@ export class DeletionChecker {
     const found: string[] = []
 
     for (const field of schema) {
-      // Inline groups are transparent — recurse into their children at the same data level
+      // Inline groups are transparent (walkFields, ./field-traversal) — recurse at the same level.
       if (field.type === 'group') {
         found.push(
           ...this.findIdInData(

@@ -1,37 +1,30 @@
 /**
- * The keys a block item carries that are STRUCTURE rather than content.
+ * The keys a block item carries that are STRUCTURE rather than content: the
+ * discriminator naming the block's TEMPLATE — a category label shared by every
+ * block of that kind, not an identifier for this one — present in either on-disk
+ * shape: canonical `{ template: 'hero', value: {...} }` or the defensive inline
+ * `{ _type: 'hero', ...fields }` (see `resolveBlockItem` in `./field-traversal`).
  *
- * A block on disk is `{ template: 'hero', value: { ...fields } }` — the canonical shape the
- * editor writes and `ContentStore` persists — or, defensively, the inline `{ _type: 'hero',
- * ...fields }` shape (see `resolveBlockItem` in `./field-traversal`). Either way the
- * discriminator names the block's TEMPLATE, which is a category label shared by every block of
- * that kind, not an identifier for this particular block.
+ * The list lives here, not in either caller, so the two below can't drift apart:
+ * - `findUnknownKeys` (./entry-validator) must not report the discriminator as a
+ *   stale key — it isn't a schema field, but is supposed to be there.
+ * - `looksLikeSameItem` (../utils/content-serialize) must not accept it as evidence
+ *   two list items are the same item — every `hero` shares `template: hero`, so
+ *   counting it would migrate an editorial comment off a deleted block onto an
+ *   unrelated survivor.
  *
- * That distinction matters to two callers for opposite-looking reasons, which is why the list
- * lives here rather than in either of them:
- *
- * - `findUnknownKeys` (./entry-validator) must not report the discriminator as a stale key: it
- *   is not a schema field, but it is supposed to be there.
- * - `looksLikeSameItem` (../utils/content-serialize) must not accept the discriminator as
- *   evidence that two list items are the same item: two `hero` blocks share `template: hero`,
- *   so counting it migrated an editorial comment off a deleted block onto an unrelated
- *   survivor.
- *
- * Note that two other readers deliberately still spell the keys out themselves, because they
- * READ the discriminator's value positionally rather than testing membership, and they do not
- * agree on precedence: `resolveBlockItem` prefers `template`, while `ai/json-to-markdown.ts`
- * prefers `_type`. Reconciling that is a behaviour question, not a refactor — see
+ * Two other readers still spell the keys out themselves — they read the value
+ * positionally and disagree on precedence (`resolveBlockItem` prefers `template`,
+ * `ai/json-to-markdown.ts` prefers `_type`) — see
  * `.claude/future-tasks/block-discriminator-precedence-disagreement.md`.
  *
- * Dependency-free on purpose: both importers are reachable from contexts that must not pull in
+ * Dependency-free on purpose: both importers reach contexts that must not pull in
  * schema types or node built-ins.
  */
 
 /**
- * The discriminator keys, in the precedence `resolveBlockItem` reads them.
- *
- * Ordered (rather than a bare Set) so a caller that needs the VALUE can iterate it, and so the
- * canonical shape's key stays visibly first.
+ * The discriminator keys, in the precedence `resolveBlockItem` reads them. Ordered (not a
+ * bare Set) so a caller needing the VALUE can iterate, and the canonical key stays first.
  */
 export const BLOCK_DISCRIMINATOR_KEYS = ['template', '_type'] as const
 

@@ -212,7 +212,7 @@ export function validateEntryData(
   const errors: EntryFieldError[] = []
 
   for (const field of fields) {
-    // Inline groups are transparent to the data — children live at this level.
+    // Inline groups are transparent (walkFields, ./field-traversal) — children live at this level.
     if (field.type === 'group') {
       errors.push(...validateEntryData((field as InlineGroupFieldConfig).fields, data, pathPrefix))
       continue
@@ -327,24 +327,21 @@ export function validateEntryFormValue(
 
 /**
  * Find data keys that have no counterpart in the schema, as canonical field paths
- * (`author.nickname`, `blocks[2].headline`).
+ * (`author.nickname`, `blocks[2].headline`). `validateEntryData` iterates the SCHEMA
+ * so it can't report the inverse: rename or reshape a field and the old key persists
+ * on disk forever, since the editor's form state is the whole record verbatim and
+ * every save posts it back — the only symptom is a component quietly receiving
+ * `undefined`.
  *
- * `validateEntryData` iterates the SCHEMA, so it can only ever report fields the schema knows
- * about. Nothing reported the inverse: rename or reshape a field and the old key persists on
- * disk forever, because the editor's form state is the whole record verbatim and every save
- * posts it back. The only symptom is a component quietly receiving `undefined`.
- *
- * Pure — safe in the browser. Reports rather than rejects: a save carrying a stale key still
- * succeeds (and now the write path even preserves the key and its comments), so this feeds the
+ * Pure — safe in the browser. Reports rather than rejects (a stale key doesn't fail
+ * a save, and the write path now preserves it and its comments), so this feeds the
  * non-blocking `validationWarnings` channel, not the 422 path.
  *
- * Two things it deliberately does not report:
- *
- * - **A container with no fields at all.** `api/content.ts` falls back to `[]` for a collection
- *   with no configured entry type; "no schema" is not "every key is unknown".
- * - **Anything inside a `reference` value.** Reads resolve references by default, so a reference
- *   field's value is `{ ...target data, id, slug, collection, urlPath }`. The traversal only
- *   descends into `object` and `block`, so it never looks inside one.
+ * Deliberately not reported: a container with no fields at all (`api/content.ts`
+ * falls back to `[]` for a collection with no configured entry type — "no schema"
+ * isn't "every key is unknown"), and anything inside a `reference` value (a resolved
+ * reference's value is `{ ...target data, id, slug, collection, urlPath }`; the
+ * traversal only descends into `object` and `block`, so it never looks inside one).
  */
 export function findUnknownKeys(fields: EntrySchema, data: Record<string, unknown>): string[] {
   return traverseFields<string>(

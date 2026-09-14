@@ -11,9 +11,9 @@
  * Designed for shared filesystems (EFS/NFS) where one process enqueues
  * and another dequeues. No external dependencies — only Node.js stdlib.
  *
- * IMPORTANT: Single-consumer only. The dequeue operation is not atomic across
- * processes — the worker lock (acquireLock) ensures only one consumer runs at
- * a time. Do not run multiple dequeue consumers concurrently.
+ * IMPORTANT: single-consumer only — dequeue is not atomic across processes;
+ * the worker lock (acquireLock) must serialize consumers, so never run more
+ * than one dequeue consumer concurrently.
  */
 
 import fs from 'node:fs/promises'
@@ -263,28 +263,22 @@ export async function retryTask(
 }
 
 /**
- * Requeue a permanently-failed task for another attempt. Reads
- * failed/{taskId}.json and creates a BRAND NEW pending task with a fresh
- * `id` — the original ID is never reused. This matters because both
- * `dequeueTask` and `recoverOrphanedTasks` dedup against completed/failed by
- * ID: a pending file that reused the original ID would be silently deleted
- * (without running) the moment it was scanned, since its ID already exists
- * in failed/.
+ * Requeue a permanently-failed task: reads failed/{taskId}.json and creates a
+ * brand-new pending task with a fresh `id`, never the original — `dequeueTask`
+ * and `recoverOrphanedTasks` dedup completed/failed by ID, so reusing it would
+ * get the pending copy silently deleted, unrun, the moment it's scanned.
  *
- * The new task carries `payload.requeuedFrom` for provenance, starts at
- * `retryCount: 0`, and gets an honest fresh `createdAt` (it goes to the back
- * of the FIFO queue rather than jumping ahead on the original timestamp).
+ * The new task carries `payload.requeuedFrom`, `retryCount: 0`, and a fresh
+ * `createdAt` (it re-joins the back of the FIFO queue, not the original slot).
  *
- * Write-then-unlink ordering: the new pending file is written FIRST, and the
- * failed original is unlinked only after that succeeds (best-effort — unlink
- * failures are swallowed). A crash between the two steps leaves the failed
- * original in place alongside the new pending task, which is harmless
- * (duplicate history, not a lost task); the reverse order could lose the
- * task entirely if the process died after the unlink but before the write.
+ * Write-then-unlink: the new pending file is written FIRST; the failed
+ * original is unlinked only after (best-effort). A crash between the two
+ * leaves both — harmless duplication — but the reverse order could lose the
+ * task if the process dies after the unlink and before the write.
  *
- * Returns `{ error: 'not-found' }` if there is no such file in failed/, or
- * `{ error: 'unparseable' }` if the file exists but isn't valid task JSON
- * (callers should tell the admin to delete it instead of retrying it).
+ * Returns `{ error: 'not-found' }` if failed/{taskId}.json doesn't exist, or
+ * `{ error: 'unparseable' }` if it isn't valid task JSON (tell the admin to
+ * delete it rather than retry).
  */
 export async function requeueFailedTask(
   taskDir: string,
@@ -406,12 +400,10 @@ export async function cleanupOldTasks(
   const now = Date.now()
   let cleaned = 0
 
-  // `corrupt` included: unparseable task files are quarantined there by
-  // dequeue and orphan recovery and surfaced in admin listing, but the
-  // retention sweep never covered the directory, so it grew forever with
-  // deletion available only as a manual per-file admin action. Same
-  // stamp-based retention as the other two: a quarantined file older than
-  // the window has long since been triaged or forgotten.
+  // `corrupt` files (quarantined by dequeue and orphan recovery, shown in
+  // the admin listing) get the same stamp-based retention as completed and
+  // failed, because a quarantined file older than the window has been
+  // triaged or forgotten.
   for (const subdir of ['completed', 'failed', 'corrupt']) {
     const dir = path.join(taskDir, subdir)
     let files: string[]
