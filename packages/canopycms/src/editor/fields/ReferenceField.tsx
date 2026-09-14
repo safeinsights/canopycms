@@ -54,7 +54,6 @@ export const ReferenceField: React.FC<ReferenceFieldProps> = ({
   const [error, setError] = useState<string | null>(null)
   const [retryCount, setRetryCount] = useState(0)
 
-  // Extract ID from value - handle both string IDs and resolved objects
   const extractId = (val: unknown): string => {
     if (typeof val === 'string') return val
     if (val && typeof val === 'object' && 'id' in val && typeof val.id === 'string') return val.id
@@ -82,8 +81,6 @@ export const ReferenceField: React.FC<ReferenceFieldProps> = ({
     }
   }
 
-  // Load options from API if collections or entryTypes are provided and no static options.
-  //
   // Keyed on the derived `fetchKey` (not the raw `collections`/`entryTypes`
   // arrays): the parent rebuilds those arrays on every render -- including
   // every `refreshEntries()` after a save -- so depending on them directly

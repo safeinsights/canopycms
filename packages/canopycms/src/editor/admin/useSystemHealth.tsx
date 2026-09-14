@@ -1,7 +1,7 @@
 'use client'
 
 /**
- * useSystemHealth - Data + actions for the admin System Health panel (PR-U1).
+ * useSystemHealth - Data + actions for the admin System Health panel.
  *
  * Mirrors useGroupManager's shape: loads on open, exposes typed action
  * helpers that each notify then refresh(). Unlike useGroupManager, this also

@@ -137,10 +137,8 @@ function isAdminTaskStatus(value: string): value is AdminTaskStatus {
   return (TASK_STATUS_VALUES as readonly string[]).includes(value)
 }
 
-// ============================================================================
 // Confirm-modal copy (races/limitations these actions accept -- see
 // api/admin.ts and api/admin-branch-health.ts's handler docstrings)
-// ============================================================================
 
 const RETRY_CONFIRM_TEXT =
   'Retrying may duplicate work if the task also runs another way; task actions are safe to run twice.'
@@ -160,10 +158,6 @@ const REPAIR_CONFIRM_TEXT =
 
 const PURGE_CONFIRM_TEXT =
   'The directory is moved to a hidden trash name and kept for 30 days, then deleted. Any git work inside was never pushed and will be lost when the trash is swept.'
-
-// ============================================================================
-// Main component
-// ============================================================================
 
 export interface SystemHealthPanelProps {
   opened: boolean
@@ -194,10 +188,6 @@ export function SystemHealthPanel({ opened, onClose }: SystemHealthPanelProps) {
     </Modal>
   )
 }
-
-// ============================================================================
-// Overview tab
-// ============================================================================
 
 function OverviewTab({ health }: { health: UseSystemHealthReturn }) {
   const { status, statusLoading, isRecentFatalError, error, refresh } = health
@@ -343,10 +333,6 @@ function OverviewTab({ health }: { health: UseSystemHealthReturn }) {
     </Stack>
   )
 }
-
-// ============================================================================
-// Tasks tab
-// ============================================================================
 
 function TasksTab({ health }: { health: UseSystemHealthReturn }) {
   const { taskStatus, setTaskStatus, tasks, tasksLoading } = health
@@ -509,10 +495,6 @@ function TasksTab({ health }: { health: UseSystemHealthReturn }) {
     </Stack>
   )
 }
-
-// ============================================================================
-// Branches tab
-// ============================================================================
 
 function BranchesTab({ health }: { health: UseSystemHealthReturn }) {
   const { branchHealth, branchHealthLoading } = health

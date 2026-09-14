@@ -1,9 +1,5 @@
 'use client'
 
-/**
- * External groups tab component
- */
-
 import React from 'react'
 import { Alert, Group, Loader, Paper, ScrollArea, Stack, Text, TextInput } from '@mantine/core'
 import { IconAlertCircle, IconBuilding, IconSearch } from '@tabler/icons-react'

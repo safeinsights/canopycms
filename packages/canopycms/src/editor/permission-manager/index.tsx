@@ -1,13 +1,5 @@
 'use client'
 
-/**
- * PermissionManager - Main component for managing path-based permissions.
- *
- * This component provides a tree-based UI for configuring read/edit/review
- * permissions on content paths. Supports both schema-based and collection-based
- * tree building.
- */
-
 import React, { useState, useCallback } from 'react'
 import { Alert, Button, Group, Loader, ScrollArea, Stack, Text } from '@mantine/core'
 import { IconAlertCircle } from '@tabler/icons-react'
@@ -288,7 +280,6 @@ export const PermissionManager: React.FC<PermissionManagerProps> = ({
   )
 }
 
-// Re-export types and components for external use
 export type { PermissionManagerProps, ContentNode, TreeNode } from './types'
 export { usePermissionTree } from './hooks/usePermissionTree'
 export { useGroupsAndUsers } from './hooks/useGroupsAndUsers'

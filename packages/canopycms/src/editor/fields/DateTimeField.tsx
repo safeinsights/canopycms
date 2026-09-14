@@ -51,11 +51,6 @@ export function datetimeLocalValueToIso(local: string): string {
  * Empty string means "not set" (matches entry-validator's empty-string
  * check for required fields).
  *
- * `@mantine/dates` is not a dependency of this package, so per house rules
- * we don't add one just for this field: a native `<input
- * type="datetime-local">` wrapped in Mantine's `Input`/`Input.Wrapper`
- * gives a real date+time picker with zero new dependencies.
- *
  * `datetime-local` has no timezone concept — it shows/accepts local
  * "wall-clock" time. We convert UTC ISO -> local for display and local ->
  * UTC ISO on change, so loading a value and saving it unedited round-trips

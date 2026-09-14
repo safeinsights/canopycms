@@ -54,7 +54,6 @@ const MDXEditorLazy = React.lazy(async () => {
     },
   ] = await Promise.all([import('@mdxeditor/editor'), import('@mdxeditor/editor')])
 
-  /** Toolbar wrapper that provides insertMarkdown to InsertEntryLink */
   const EntryLinkToolbarButton: React.FC = () => {
     const insertMarkdown = usePublisher(insertMarkdown$)
     return <InsertEntryLink onInsert={insertMarkdown} />
@@ -141,7 +140,6 @@ const MDXEditorLazy = React.lazy(async () => {
   return { default: WrappedEditor }
 })
 
-/** Style the editor wrapper with a white background and border so it's visually distinct from the form background. */
 const editorWrapperStyle: React.CSSProperties = {
   background: '#fff',
   border: '1px solid var(--mantine-color-gray-4, #ced4da)',

@@ -1,9 +1,5 @@
 'use client'
 
-/**
- * Internal groups tab component
- */
-
 import React from 'react'
 import { Button, Group, Paper, ScrollArea, Stack, Text } from '@mantine/core'
 import { IconPlus, IconUsers } from '@tabler/icons-react'

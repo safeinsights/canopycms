@@ -48,10 +48,6 @@ import { ConfirmDeleteModal } from '../components/ConfirmDeleteModal'
 import { getErrorMessage } from '../../utils/error'
 import type { SchemaOpResult } from '../hooks/useSchemaManager'
 
-// ============================================================================
-// Types
-// ============================================================================
-
 export interface CollectionFormData {
   name: string
   label: string
@@ -113,10 +109,6 @@ export interface CollectionEditorProps {
   error?: string | null
 }
 
-// ============================================================================
-// Component
-// ============================================================================
-
 export function CollectionEditor({
   isOpen,
   editingCollection,
@@ -132,7 +124,6 @@ export function CollectionEditor({
 }: CollectionEditorProps) {
   const isEditMode = editingCollection !== null
 
-  // Form state
   const [formData, setFormData] = useState<CollectionFormData>({
     name: '',
     label: '',
@@ -142,24 +133,20 @@ export function CollectionEditor({
   // Slug field state (edit mode only)
   const [slug, setSlug] = useState('')
 
-  // Local validation error
   const [validationError, setValidationError] = useState<string | null>(null)
 
-  // Entry type editor state
   const [entryTypeEditorOpen, setEntryTypeEditorOpen] = useState(false)
   const [editingEntryType, setEditingEntryType] = useState<ExistingEntryType | null>(null)
   const [editingEntryTypeIndex, setEditingEntryTypeIndex] = useState<number | null>(null)
   const [entryTypeSaving, setEntryTypeSaving] = useState(false)
   const [entryTypeError, setEntryTypeError] = useState<string | null>(null)
 
-  // Delete entry type confirmation state
   const [deleteEntryTypeModalOpen, setDeleteEntryTypeModalOpen] = useState(false)
   const [deletingEntryType, setDeletingEntryType] = useState<{
     entryType: ExistingEntryType | CreateEntryTypeInput
     index: number
   } | null>(null)
 
-  // Reset form when modal opens or editing item changes
   useEffect(() => {
     if (isOpen) {
       if (editingCollection) {
@@ -185,7 +172,6 @@ export function CollectionEditor({
     }
   }, [isOpen, editingCollection])
 
-  // Update a form field
   const updateField = useCallback(
     <K extends keyof CollectionFormData>(field: K, value: CollectionFormData[K]) => {
       setFormData((prev) => ({ ...prev, [field]: value }))
@@ -194,7 +180,6 @@ export function CollectionEditor({
     [],
   )
 
-  // Validate form
   const validate = useCallback((): boolean => {
     if (!formData.name.trim()) {
       setValidationError('Name is required')
@@ -219,12 +204,10 @@ export function CollectionEditor({
     return true
   }, [formData, isEditMode])
 
-  // Handle save
   const handleSave = useCallback(() => {
     if (!validate()) return
 
     if (isEditMode) {
-      // Only include changed fields for update
       const updates: UpdateCollectionInput = {}
       if (formData.name !== (editingCollection?.name || '')) {
         updates.name = formData.name.trim() || undefined
@@ -232,7 +215,6 @@ export function CollectionEditor({
       if (formData.label !== (editingCollection?.label || '')) {
         updates.label = formData.label || undefined
       }
-      // Include slug if changed
       const pathParts = editingCollection?.logicalPath.split('/') || []
       const lastPart = pathParts[pathParts.length - 1]
       const currentSlug = lastPart?.split('.')[0] || ''
@@ -256,7 +238,6 @@ export function CollectionEditor({
     }
   }, [formData, slug, isEditMode, editingCollection, parentPath, validate, onSave])
 
-  // Entry type management (create mode)
   const handleOpenAddEntryType = useCallback(() => {
     setEditingEntryType(null)
     setEditingEntryTypeIndex(null)
@@ -274,7 +255,6 @@ export function CollectionEditor({
   const handleEntryTypeSave = useCallback(
     async (data: CreateEntryTypeInput | Partial<CreateEntryTypeInput>, isNew: boolean) => {
       if (isEditMode && editingCollection) {
-        // In edit mode, delegate to parent handlers
         setEntryTypeSaving(true)
         setEntryTypeError(null)
         try {
@@ -358,7 +338,6 @@ export function CollectionEditor({
     setDeletingEntryType(null)
   }, [deletingEntryType, isEditMode, editingCollection, onRemoveEntryType])
 
-  // Get entry types to display
   const displayEntryTypes: (ExistingEntryType | CreateEntryTypeInput)[] = isEditMode
     ? editingCollection?.entries || []
     : formData.entries
@@ -396,7 +375,6 @@ export function CollectionEditor({
             required
           />
 
-          {/* Label */}
           <TextInput
             label="Label"
             description="Human-readable display name"
@@ -405,7 +383,6 @@ export function CollectionEditor({
             onChange={(e) => updateField('label', e.target.value)}
           />
 
-          {/* Slug - only shown in edit mode */}
           {isEditMode && (
             <TextInput
               label="Slug"
@@ -425,7 +402,6 @@ export function CollectionEditor({
             </Text>
           )}
 
-          {/* Entry Types Section */}
           <Divider label="Entry Types" labelPosition="left" mt="md" />
 
           {displayEntryTypes.length === 0 ? (
@@ -515,7 +491,6 @@ export function CollectionEditor({
         </Stack>
       </Modal>
 
-      {/* Entry Type Editor Modal */}
       <EntryTypeEditor
         isOpen={entryTypeEditorOpen}
         editingEntryType={editingEntryType}
@@ -532,7 +507,6 @@ export function CollectionEditor({
         error={entryTypeError}
       />
 
-      {/* Delete Entry Type Confirmation Modal */}
       <ConfirmDeleteModal
         isOpen={deleteEntryTypeModalOpen}
         title="Remove Entry Type"

@@ -1,7 +1,3 @@
-/**
- * Hook for managing groups and user search state
- */
-
 import { useState, useEffect, useMemo, useCallback } from 'react'
 import type { UserSearchResult, PermissionGroupOption, GroupSelectItem } from '../types'
 
@@ -53,7 +49,6 @@ export function useGroupsAndUsers({
   const [showUserSearch, setShowUserSearch] = useState(false)
   const [userSearchError, setUserSearchError] = useState<string | null>(null)
 
-  // Load groups on mount
   useEffect(() => {
     if (onListGroups && canEdit) {
       setIsLoadingGroups(true)
@@ -70,7 +65,6 @@ export function useGroupsAndUsers({
     }
   }, [onListGroups, canEdit])
 
-  // Transform groups to select data format
   const groupSelectData = useMemo(
     () =>
       groups.map((g) => ({
@@ -81,7 +75,6 @@ export function useGroupsAndUsers({
     [groups],
   )
 
-  // Filter groups based on search query
   const filteredGroups = useMemo(() => {
     const query = groupSearchQuery.toLowerCase().trim()
     if (!query) return groupSelectData

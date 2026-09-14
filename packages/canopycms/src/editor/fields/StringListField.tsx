@@ -15,9 +15,6 @@ export interface StringListFieldProps {
  *
  * Uses Mantine's TagsInput: type + Enter adds an item, each item renders as a
  * removable pill, and Backspace on an empty input removes the last item.
- * (Before this component existed, string-list fields fell through to the
- * single-value TextField, which coerced the array to a comma-joined string —
- * effectively unsupported.)
  */
 export const StringListField: React.FC<StringListFieldProps> = ({
   id,

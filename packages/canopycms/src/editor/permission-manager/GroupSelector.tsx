@@ -1,9 +1,5 @@
 'use client'
 
-/**
- * Group search and selection component
- */
-
 import React from 'react'
 import { Group, Paper, Stack, Text } from '@mantine/core'
 import type { GroupSelectItem, GroupSource } from './types'

@@ -1,13 +1,8 @@
-/**
- * Utility functions for PermissionManager
- */
-
 import type { TreeNode, ContentNode, PathPermission } from './types'
 import type { EditorCollection } from '../Editor'
 
 /**
  * Search utility: Find a tree node by exact path match (recursive search).
- * Used to locate nodes when updating permissions.
  *
  * @param node - Root node to start searching from
  * @param path - The exact path to search for
@@ -39,9 +34,6 @@ export function convertCollectionsToTreeNodes(
   contentRoot: string,
   parentPath?: string,
 ): TreeNode[] {
-  // Special case: If we're at the top level (no parentPath) and the collections array
-  // contains exactly one item that IS the content root itself, skip creating a duplicate
-  // node for it and just process its children directly.
   if (!parentPath && collections.length === 1 && collections[0].path === contentRoot) {
     const rootCollection = collections[0]
     return rootCollection.children
@@ -63,7 +55,6 @@ export function convertCollectionsToTreeNodes(
       children: [],
     }
 
-    // Recursively process nested collections
     if (collection.children) {
       node.children = convertCollectionsToTreeNodes(collection.children, contentRoot, logicalPath)
     }
@@ -88,12 +79,10 @@ export function mergeContentTree(schemaNode: TreeNode, contentNode: ContentNode)
   contentNode.children?.forEach((child) => {
     const existing = schemaNode.children.find((n) => n.name === child.name)
     if (existing) {
-      // If this is a folder/collection that exists in schema, recursively merge its children
       if (child.type === 'folder' && child.children) {
         mergeContentTree(existing, child)
       }
     } else if (child.type === 'file') {
-      // Add file not in schema (e.g., entry created via filesystem)
       schemaNode.children.push({
         path: child.path,
         name: child.name,
@@ -124,11 +113,9 @@ export function buildTree(
     children: [],
   }
 
-  // Build from collections if provided
   if (collections && collections.length > 0) {
     root.children = convertCollectionsToTreeNodes(collections, contentRoot)
 
-    // Merge contentTree if provided
     if (contentTree) {
       mergeContentTree(root, contentTree)
     }
@@ -154,10 +141,8 @@ export function annotateTreeWithPermissions(
 ): TreeNode {
   const folderPath = node.type === 'folder' ? `${node.path}/**` : node.path
 
-  // Find direct permission
   const directPerm = permissions.find((p) => p.path === folderPath || p.path === node.path)
 
-  // Find inherited permission from parent
   let inheritedPerm: PathPermission | undefined
   const pathParts = node.path.split('/')
   for (let i = pathParts.length - 1; i >= 0; i--) {

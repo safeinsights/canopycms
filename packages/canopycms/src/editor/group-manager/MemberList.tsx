@@ -1,9 +1,5 @@
 'use client'
 
-/**
- * Member list component with user search for adding members
- */
-
 import React from 'react'
 import {
   ActionIcon,

@@ -5,15 +5,10 @@
 export function isTestEnvironment(): boolean {
   if (typeof window === 'undefined') return false
 
-  // Check for common E2E testing indicators
   return (
-    // Playwright sets window.playwright
     'playwright' in window ||
-    // Cypress sets window.Cypress
     'Cypress' in window ||
-    // Check if running in test mode via env variable (set by test runner)
     (window as unknown as Record<string, unknown>).__E2E_TEST__ === true ||
-    // Some test frameworks set navigator.webdriver
     navigator.webdriver === true
   )
 }
@@ -24,15 +19,6 @@ export function isTestEnvironment(): boolean {
  *
  * @param defaultMs - Default duration in milliseconds for production (default: 4000)
  * @returns Duration in milliseconds (15000ms for tests, defaultMs for production)
- *
- * @example
- * ```typescript
- * notifications.show({
- *   message: 'Saved',
- *   color: 'green',
- *   autoClose: getNotificationDuration(4000),  // 4s in production, 15s in tests
- * })
- * ```
  */
 export function getNotificationDuration(defaultMs = 4000): number {
   return isTestEnvironment() ? 15000 : defaultMs
