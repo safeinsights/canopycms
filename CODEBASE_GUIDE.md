@@ -54,7 +54,7 @@ Core modules, each with its own `AGENTS.md` where one exists — the invariants 
 - `packages/canopycms/src/paths/` — path utilities with branded types
 - `packages/canopycms/src/schema/` — schema loading, resolution, and CRUD
 - `packages/canopycms/src/static/` — framework-agnostic static-generation helpers and build guards — [AGENTS.md](packages/canopycms/src/static/AGENTS.md)
-- `packages/canopycms/src/task-queue/` — generic file-based persistent task queue
+- `packages/canopycms/src/task-queue/` — file-based task queue, plus the CMS queue contract
 - `packages/canopycms/src/test-utils/` — shared test utilities, workspace-internal
 - `packages/canopycms/src/utils/` — shared cross-cutting helpers — [AGENTS.md](packages/canopycms/src/utils/AGENTS.md)
 - `packages/canopycms/src/validation/` — field traversal, entry and reference validation — [AGENTS.md](packages/canopycms/src/validation/AGENTS.md)
@@ -126,6 +126,7 @@ Route handlers, one file per endpoint namespace:
 
 Support files:
 
+- `routes.ts` — `buildCanopyRoutes()`, every route table plus `assetRawRoute`; the only `api/` module `http/` value-imports
 - `route-builder.ts` — declarative route builder with Zod validation, guards, and codegen metadata
 - `guards.ts` — the declarative guard system; see [ARCHITECTURE.md](ARCHITECTURE.md#declarative-guard-system)
 - `validators.ts` — Zod schemas for branded types at API boundaries; see [Zod Validators](#zod-validators-for-api-boundaries)
@@ -136,9 +137,11 @@ Support files:
 - `index.ts` — response-type re-exports
 - `client.ts` — generated API client
 
-API handlers reach git through service methods (see [Git
-Operations](#git-operations-service-methods)) and paths through `context.branchRoot` /
-`context.baseRoot`.
+Handlers reach git through [service methods](#git-operations-service-methods) and paths through
+`context.branchRoot` / `context.baseRoot`. Module boundaries, held by dependency-cruiser rules in
+`.dependency-cruiser.mjs` under `pnpm lint:cycles`: `http/` value-imports `api/` only via
+`routes.ts`; `api/` never imports `worker/`; `editor/` imports only `client.ts`, `index.ts`,
+`entries-constants.ts`.
 
 ## Authentication & Permissions
 
@@ -212,7 +215,7 @@ direction, and every invariant.
 - `worker-context.ts` — `WorkerContext`, the only channel between the class and the extracted clusters
 - `task-runner.ts` — the task-queue cluster below `processTaskQueue`, including `PermanentTaskError`
 - `git-sync.ts` — the git-sync cluster below `syncGit`: tracking, settings push, base refresh, trash sweep
-- `rebase.ts` — the rebase loop, `runRebaseCycle` / `rebaseOneBranch`, and `pollMergeState`
+- `rebase.ts` — the rebase loop, `runRebaseCycle`, and `pollMergeState`
 - `history-rewrite.ts` — force-push leasing on a known pre-rebase commit; see [ARCHITECTURE.md](ARCHITECTURE.md#publishing-a-rewritten-history)
 - `github-auth.ts` — which GitHub credential the worker uses, and installation-token minting
 - `log.ts` — `workerLog` / `workerLogWarn` / `workerLogError`, the timestamp-and-level prefixed replacements for `console.*`
@@ -234,9 +237,7 @@ behaviour and conflict tracking are in
 - `worker-status.ts` — `writeWorkerStatus`, the daemon's single-writer liveness snapshot
 - `README.md` — the queue's own directory layout and guarantees
 
-On disk: `.tasks/{pending,processing,completed,failed,corrupt}/`. FIFO by `createdAt`, exponential
-backoff retries, orphan recovery, deduplication against terminal states, 30-day cleanup. See
-[ARCHITECTURE.md](ARCHITECTURE.md#task-queue-async-github-operations).
+See [ARCHITECTURE.md](ARCHITECTURE.md#task-queue-async-github-operations).
 
 ## CLI Module
 
@@ -355,8 +356,6 @@ URLs](ARCHITECTURE.md#stored-vs-rendered-asset-urls). Adopter configuration is i
 [README.md](README.md#media-configuration).
 
 `assetUrl`, `assetSrcSet` and the transform types are re-exported from the package's main entry.
-`sharp` (^0.35.3) is loaded only by `sharp-loader.ts`, on behalf of `transform.ts` and
-`pipeline.ts`.
 
 ## Content Store
 
@@ -406,7 +405,7 @@ data. The full option and type reference, with worked examples, is in
 
 **Location**: `packages/canopycms/src/content-listing.ts`
 
-- `content-listing.ts` — `listEntries()`, `listCollectionEntries()`, `sortByOrder()`, `readEntryData()`
+- `content-listing.ts` — `listEntries()`, `listCollectionEntries()`, `sortByOrder()`
 
 `ListEntriesItem` carries `pathSegments`, `urlPath` (index entries collapsed, round-trip safe),
 `slug`, `entryPath`, `entryId`, `collectionId`, `updatedAt`, `data` and an optional `schema`.
@@ -478,7 +477,7 @@ Top-level components and helpers:
 - `client-reference-resolver.ts` — resolves reference display values through the context API client
 - `relative-time.ts` — `formatRelativeTime`, shared by the branch, comment and thread views
 - `theme.tsx` — Mantine theme helpers
-- `utils/env.ts` — `isTestEnvironment`
+- `utils/env.ts` — `getNotificationDuration`, longer under test
 - `test-setup.ts` / `setup-test-dom.ts` — vitest DOM setup for editor suites
 
 Context providers, in `editor/context/`:
@@ -489,9 +488,8 @@ Context providers, in `editor/context/`:
 - `AssetContext.tsx` — asset base URL for rendered asset URLs
 - `index.ts` — context exports
 
-One client, one base URL: editor code must take the context client via `useOptionalApiClient()`
-rather than calling `createApiClient()` itself, or it silently bypasses the provider's prefixed
-base.
+Editor code takes the API client from `useOptionalApiClient()`, never `createApiClient()`, or it
+silently bypasses the provider's prefixed base.
 
 Manager hooks, in `editor/hooks/` — see
 [hooks/README.md](packages/canopycms/src/editor/hooks/README.md) for which are SWR-backed:
@@ -510,7 +508,7 @@ Manager hooks, in `editor/hooks/` — see
 - `useBranchesData.ts` — SWR hook, key `canopy:branches`, `GET /branches`, not branch-keyed
 - `useEntriesData.ts` — SWR hook, key `canopy:entries:${branch}`, schema plus paginated entries combined
 - `useCommentsData.ts` — SWR hook, key `canopy:comments:${branch}`, `GET /:branch/comments`
-- `index.ts` — hook exports
+- `index.ts` — only the nine hooks `Editor.tsx` and `media/MediaLibraryBody.tsx` import; the rest are deep-imported
 
 Field components, in `editor/fields/`:
 
@@ -704,9 +702,8 @@ prefer the branch's recorded `context.branch.baseBranch` over the config value. 
 - `index.ts` — the barrel, which re-exports `branch.ts` and so is not client-safe
 - `test-utils.ts` — test-only casts `unsafeAsBranchName` and `unsafeAsSlug`, not exported from the barrel
 
-**Client-bundle boundary**: client-reachable code must import `sanitizeBranchName` from
-`paths/branch-name`, never from `paths/branch` or the `paths` barrel, both of which pull `node:fs`
-into the graph. `pnpm lint:bundle` enforces it — see
+**Client-bundle boundary**: import `sanitizeBranchName` from `branch-name.ts`, never the barrel or
+`branch.ts`; `pnpm lint:bundle` enforces it — see
 [DEVELOPING.md](DEVELOPING.md#client-bundle-boundary-check). Which branch names are reserved, and
 why the list is hand-maintained rather than derived, is in
 [ARCHITECTURE.md](ARCHITECTURE.md#reserved-branch-names).
@@ -804,7 +801,7 @@ patterns are in [DEVELOPING.md](DEVELOPING.md#error-handling).
 Read-only content serving; needs neither auth nor the editor API.
 
 - `handler.ts` — `createAIContentHandler()`, the GET handler for AI-ready content
-- `generate.ts` — `generateAIContent()`, plus `runEntryTransform` and the traversal-guarded `ctx.readSibling`
+- `generate.ts` — `generateAIContent()` and the traversal-guarded `ctx.readSibling`
 - `json-to-markdown.ts` — schema-driven entry-to-markdown conversion, Prettier-stable output
 - `transform-components.ts` — `applyComponentTransforms` / `parseComponentProps`, JSX to clean markdown
 - `to-plain-text.ts` — `toPlainText`, markup-free prose for a search index; keeps a paired component's children
@@ -832,7 +829,7 @@ Static generation lives in `packages/canopycms/src/build/` —
 **Location**: `packages/canopycms/src/http/`
 
 - `types.ts` — `CanopyRequest` and `CanopyResponse`
-- `router.ts` — route matching and dispatch, including `compareSpecificity`
+- `router.ts` — route matching and dispatch over `buildCanopyRoutes()`
 - `handler.ts` — the request handler factory; rejects anonymous callers 401 before base-branch provisioning
 - `index.ts` — module exports
 
@@ -883,8 +880,3 @@ workspaces and simulated remote. See [apps/example1/AGENTS.md](apps/example1/AGE
 - `packages/canopycms-cdk/src/scaffold-synth.test.ts` — runs the real scaffold generator, then synthesizes and type-checks its output
 
 Every one of these patterns, and how to run them, is in [DEVELOPING.md](DEVELOPING.md#testing).
-
-## Key Directories to Monitor
-
-When maintaining this guide, re-list any directory whose file set changed: the core modules under
-`packages/canopycms/src/`, the four satellite packages, and the three apps.
