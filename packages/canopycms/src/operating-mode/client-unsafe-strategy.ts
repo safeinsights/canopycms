@@ -1,10 +1,6 @@
 /**
- * Client-Unsafe Operating Mode Strategies
- *
- * Full strategy implementations that extend client-safe base classes.
- * INCLUDES Node.js imports (fs, path, process) - can only be imported server-side.
- *
- * These classes inherit all client-safe methods and add client-unsafe functionality.
+ * Full strategies: the client-safe base classes plus the methods that need
+ * Node.js (fs, path, process). Server-side imports only.
  */
 
 import path from 'node:path'
@@ -20,8 +16,8 @@ class ProdStrategy extends ProdClientSafeStrategy implements ClientUnsafeStrateg
   }
 
   getContentRoot(contentRoot: string, sourceRoot?: string): string {
-    // In prod, content is at workspace root (not project root)
-    // This is called with sourceRoot = workspace path
+    // In prod the caller passes sourceRoot = the workspace path, because
+    // content sits at the workspace root rather than a project root.
     return path.resolve(sourceRoot ?? process.cwd(), contentRoot)
   }
 
@@ -156,10 +152,8 @@ class DevStrategy extends DevClientSafeStrategy implements ClientUnsafeStrategy 
 const strategyCache = new Map<OperatingMode, ClientUnsafeStrategy>()
 
 /**
- * Get the full strategy (client-unsafe) for an operating mode.
- *
- * Strategies are memoized - one instance per mode for the entire process lifetime.
- * Safe to call inline: operatingStrategy(mode).getBaseRoot()
+ * Memoized: one instance per mode for the process lifetime, so this is safe to
+ * call inline — `operatingStrategy(mode).getWorkspaceRoot()`.
  */
 export function operatingStrategy(mode: OperatingMode): ClientUnsafeStrategy {
   const cached = strategyCache.get(mode)
@@ -174,7 +168,7 @@ export function operatingStrategy(mode: OperatingMode): ClientUnsafeStrategy {
       strategy = new DevStrategy()
       break
     default: {
-      // Exhaustiveness check - TypeScript will error if a mode is not handled
+      // Exhaustiveness check: adding a mode without a case fails to compile.
       const _exhaustive: never = mode
       throw new Error(`Unknown operating mode: ${_exhaustive}`)
     }
@@ -184,9 +178,7 @@ export function operatingStrategy(mode: OperatingMode): ClientUnsafeStrategy {
   return strategy
 }
 
-/**
- * Clear the strategy cache (mainly for testing)
- */
+/** Mainly for testing. */
 export function clearStrategyCache(): void {
   strategyCache.clear()
 }

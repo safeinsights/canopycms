@@ -6,15 +6,11 @@ import type { FlatSchemaItem } from '../config'
 import type { LogicalPath } from './types'
 
 /**
- * Resolve a physical collection path to its logical path.
- *
- * Physical paths contain embedded IDs (e.g., "content/authors.q52DCVPuH4ga"),
- * while logical paths are schema-defined (e.g., "content/authors").
- *
- * @returns The matching logical path, or the physical path if no match found
+ * Resolve a physical collection path (segments carry embedded IDs, e.g.
+ * "content/authors.q52DCVPuH4ga") to its schema-defined logical path
+ * ("content/authors"), or back to the physical path when nothing matches.
  *
  * @example
- * // Nested collections
  * resolveLogicalPath("content/docs.ABC/api.DEF", schemaItems)
  * // Returns: "content/docs/api"
  */

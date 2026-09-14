@@ -13,16 +13,12 @@ import { authResultToCanopyUser } from '../user'
 import { isAdmin } from '../authorization'
 import { clientOperatingStrategy, operatingStrategy } from '../operating-mode'
 import { getErrorMessage, redactCredentials, sanitizeErrorMessage } from '../utils/error'
-// canopyLogError, not console.error: http/handler.ts is shared code and not
-// guaranteed to stay out of the worker's runtime import closure (see
-// utils/logger.ts) — new log lines here should go through the indirection.
+// canopyLogError, not console.error: this is shared code and not guaranteed to
+// stay out of the worker's runtime import closure, so new log lines here go
+// through the indirection (utils/logger.ts).
 import { canopyLogError } from '../utils/logger'
 
-/**
- * Options for creating a Canopy request handler.
- * This is framework-agnostic - adapters convert their framework's
- * request/response types to/from CanopyRequest/CanopyResponse.
- */
+/** Framework-agnostic: adapters convert to and from CanopyRequest/Response. */
 export interface CanopyHandlerOptions {
   services?: CanopyServices
   config?: CanopyConfig
@@ -38,12 +34,9 @@ const buildContext = async (options: CanopyHandlerOptions): Promise<ApiContext> 
     throw new Error('CanopyCMS: config or services is required')
   }
   const operatingMode = services.config.mode
-  // Derive from the strategy (which resolves deploymentName via
-  // resolveDeploymentName), not a hardcoded literal — a third, independent
-  // default here that never accounted for deploymentName meant a
-  // deployment-namespaced settings branch (e.g. canopycms-settings-acme)
-  // never matched this check, so `getBranchContext(settingsBranch)` could
-  // never auto-create it.
+  // Derive from the strategy, which resolves deploymentName; a literal here
+  // would not match a deployment-namespaced settings branch (say
+  // canopycms-settings-acme), so getBranchContext could never auto-create it.
   const settingsBranch = operatingStrategy(operatingMode).getSettingsBranchName(services.config)
 
   const getBranchContext =
@@ -66,8 +59,8 @@ const buildContext = async (options: CanopyHandlerOptions): Promise<ApiContext> 
         return existing
       }
 
-      // Read from services.config per-request (not a captured variable) so that
-      // refreshActiveBranch() updates are reflected immediately.
+      // Read from services.config per-request, not a captured variable, so a
+      // refreshActiveBranch() update takes effect immediately.
       const baseBranch = services.config.defaultBaseBranch ?? 'main'
       const activeBranch = services.config.defaultActiveBranch ?? baseBranch
       const shouldAutoCreate =
@@ -116,10 +109,8 @@ const parseQueryParams = (url: string): Record<string, string> => {
 }
 
 /**
- * Core request handler result type.
- * Widened to include `CanopyBinaryResponse` so routes that stream bytes
- * (e.g. asset serving) can flow through this handler untouched alongside
- * ordinary JSON routes - see `isCanopyBinaryResponse` usage below.
+ * Includes `CanopyBinaryResponse` so byte-streaming routes (asset serving) flow
+ * through untouched alongside JSON ones — see `isCanopyBinaryResponse` below.
  */
 export type CanopyRequestHandler = (
   req: CanopyRequest,
@@ -127,14 +118,9 @@ export type CanopyRequestHandler = (
 ) => Promise<CanopyResponse<ApiResponse> | CanopyBinaryResponse>
 
 /**
- * Create a framework-agnostic Canopy request handler.
- *
- * This is the core handler that processes all Canopy API requests.
- * Framework adapters (Next.js, Express, Hono, etc.) should:
- * 1. Convert their framework's request to CanopyRequest
- * 2. Extract path segments from the URL
- * 3. Call this handler
- * 4. Convert the CanopyResponse to their framework's response
+ * The core handler behind every Canopy API request. A framework adapter
+ * (Next.js, Express, Hono) converts its request to a CanopyRequest, extracts
+ * the path segments, calls this, and converts the CanopyResponse back.
  */
 export function createCanopyRequestHandler(options: CanopyHandlerOptions): CanopyRequestHandler {
   // Fail closed (SEC-C1): a dev/insecure auth plugin must never serve prod traffic.
@@ -144,10 +130,9 @@ export function createCanopyRequestHandler(options: CanopyHandlerOptions): Canop
 
   const router = createCanopyRouter()
 
-  // Build context once (memoized) and reuse across requests in the same warm
-  // container/process. On rejection (e.g. transient cold-start / EFS not yet
-  // mounted), the cache is cleared (API-H3) so the NEXT request retries
-  // buildContext() instead of replaying the same rejection forever.
+  // Built once and reused across requests in the same warm container. On
+  // rejection (transient cold start, EFS not yet mounted) the cache is cleared
+  // (API-H3) so the NEXT request retries instead of replaying the rejection.
   let apiCtxPromise: Promise<ApiContext> | null = null
   const getContext = () => {
     if (!apiCtxPromise) {
@@ -159,12 +144,11 @@ export function createCanopyRequestHandler(options: CanopyHandlerOptions): Canop
     return apiCtxPromise
   }
 
-  // Core request-handling logic, wrapped below by a top-level try/catch (API-C1).
-  // getContext()/refreshActiveBranch()/authenticate()/match.handler() are NOT
-  // individually try/catched here, and some handlers deliberately re-throw
-  // unrecognized errors (e.g. api/content.ts, api/entries.ts) — without an outer
-  // boundary, an unhandled throw would escape the framework adapter as a generic
-  // 500 that breaks the uniform { ok, status, error } contract the editor depends on.
+  // Wrapped below by a top-level try/catch (API-C1). Nothing in here is
+  // individually try/catched, and some handlers deliberately re-throw
+  // unrecognized errors, so without that outer boundary an unhandled throw
+  // would escape the adapter as a generic 500 and break the uniform
+  // { ok, status, error } contract the editor depends on.
   const handleRequest = async (
     req: CanopyRequest,
     pathSegments: string[],
@@ -181,9 +165,9 @@ export function createCanopyRequestHandler(options: CanopyHandlerOptions): Canop
 
     const authResult = await options.authPlugin.authenticate(req)
 
-    // API routes require authentication. Reject anonymous callers BEFORE any
-    // workspace provisioning below, so they can neither trigger expensive git
-    // operations nor read provisioning error details.
+    // API routes require authentication. Anonymous callers are rejected BEFORE
+    // any workspace provisioning below, so they can neither trigger expensive
+    // git operations nor read provisioning error details.
     if (!authResult.success || !authResult.user) {
       return jsonResponse(
         { ok: false, status: 401, error: authResult.error ?? 'Unauthorized' },
@@ -191,30 +175,27 @@ export function createCanopyRequestHandler(options: CanopyHandlerOptions): Canop
       )
     }
 
-    // Ensure the base/active branch workspace is provisioned on first
-    // request. Internal groups no longer come from this branch (see
-    // resolveCanopyUser below) — this call is purely so many endpoints that
-    // assume the base/active workspace already exists (registry reads, etc.)
-    // don't return confusing empty results on a cold start, so fail loudly
-    // on a real provisioning error rather than let that surprise a later
-    // handler.
+    // Provision the base/active branch workspace on first request, so the many
+    // endpoints that assume it exists (registry reads and the like) don't return
+    // confusing empty results on a cold start. A real provisioning error fails
+    // loudly here rather than surprising a later handler.
     const baseBranch = apiCtx.services.config.defaultBaseBranch ?? 'main'
     try {
       await apiCtx.getBranchContext(baseBranch)
     } catch (err) {
       const message = getErrorMessage(err)
       if (err instanceof BranchMetadataCorruptError) {
-        // Corrupt BASE branch metadata must not take down every endpoint —
-        // the /admin recovery surface is how it gets fixed. Degrade instead:
-        // keep routing (internal groups come from the settings workspace
-        // below, independent of this branch's health).
+        // Corrupt BASE branch metadata must not take down every endpoint,
+        // since /admin is how it gets fixed. Keep routing instead: internal
+        // groups come from the settings workspace below, independent of this
+        // branch's health.
         console.error(
           `CanopyCMS: Base branch '${baseBranch}' has corrupt metadata; serving without base-branch provisioning until repaired: ${redactCredentials(message)}`,
         )
       } else {
-        // Full path detail to server logs; sanitized detail to the
-        // (authenticated) client. Credentials (git errors can embed them) are
-        // redacted even from server logs.
+        // Full path detail to server logs, sanitized detail to the
+        // (authenticated) client. Credentials, which git errors can embed, are
+        // redacted even from the server logs.
         console.error(
           `CanopyCMS: Failed to provision workspace for base branch '${baseBranch}': ${redactCredentials(message)}`,
         )
@@ -229,14 +210,13 @@ export function createCanopyRequestHandler(options: CanopyHandlerOptions): Canop
       }
     }
 
-    // Resolve the CanopyUser: internal groups are the single source of
-    // truth for group-based privileges and MUST be loaded from the settings
-    // workspace (see authorization/content.ts's createContentAccessChecker,
-    // the pattern this follows) — never from a content branch clone, which
-    // nothing in the product ever writes groups.json into. Fails loudly
-    // (throws, mapped to a 503 below) rather than degrading to an empty
-    // group list: "no groups" reads as "no privileges", so a silent
-    // fallback would be a silent authorization change.
+    // Internal groups are the single source of truth for group-based privilege
+    // and MUST come from the settings workspace (the pattern in
+    // authorization/content.ts's createContentAccessChecker), never from a
+    // content branch clone, which nothing writes groups.json into. A failure
+    // throws, mapped to a 503 below, rather than degrading to an empty group
+    // list: "no groups" reads as "no privileges", so a silent fallback would be
+    // a silent authorization change.
     let user
     try {
       user = await resolveCanopyUser(authResult, {
@@ -250,23 +230,21 @@ export function createCanopyRequestHandler(options: CanopyHandlerOptions): Canop
         `CanopyCMS: Failed to resolve internal groups from the settings workspace: ${redactCredentials(message)}`,
       )
 
-      // Same trade as the base-branch degradation above, for the same
-      // reason: /admin is the recovery surface for exactly this failure
-      // (a renamed settings branch trips assertSettingsWorkspaceIdentity
-      // permanently until a human intervenes), so 503ing it too leaves an
-      // operator with no in-product way to see why anything is down.
+      // Same trade as the base-branch degradation above: /admin is the recovery
+      // surface for exactly this failure (a renamed settings branch trips
+      // assertSettingsWorkspaceIdentity until a human intervenes), so 503ing it
+      // too would leave an operator no in-product way to see what is down.
       //
-      // Safe because it can only REMOVE privilege, never grant it.
-      // `authResultToCanopyUser` merges internal groups ADDITIVELY, and
-      // path rules select on the user matching a target (never on the user
-      // LACKING a group), so dropping them can flip allowed -> denied and
-      // not the reverse. The one privilege that survives is bootstrap
-      // admin, which comes from CANOPY_BOOTSTRAP_ADMIN_IDS in the
-      // environment and does not touch the settings workspace at all.
+      // Safe because it can only REMOVE privilege, never grant it:
+      // `authResultToCanopyUser` merges internal groups ADDITIVELY, and path
+      // rules select on the user MATCHING a target, never on the user LACKING a
+      // group, so dropping them flips allowed -> denied and not the reverse. The
+      // one surviving privilege is bootstrap admin, which comes from
+      // CANOPY_BOOTSTRAP_ADMIN_IDS and never touches the settings workspace.
       //
-      // A non-bootstrap admin still gets the 503, deliberately: the admin
-      // guard would answer them 403, and "settings workspace unavailable"
-      // is the more actionable of the two.
+      // A non-bootstrap admin still gets the 503, deliberately: the admin guard
+      // would answer them 403, and "settings workspace unavailable" is the more
+      // actionable of the two.
       const degradedUser = authResultToCanopyUser(authResult, apiCtx.services.bootstrapAdminIds)
       if (pathSegments[0] === 'admin' && isAdmin(degradedUser.groups)) {
         canopyLogError(
@@ -274,11 +252,11 @@ export function createCanopyRequestHandler(options: CanopyHandlerOptions): Canop
         )
         user = degradedUser
       } else {
-        // Name the settings branch: the failure this most often means is a
-        // changed deploymentName pointing the deployment at a branch that
-        // isn't the one its workspace was cloned for, and the branch name
-        // is the part of that an operator can act on without CloudWatch
-        // (paths are redacted out of client-facing messages).
+        // Name the settings branch: this usually means a changed deploymentName
+        // pointing the deployment at a branch other than the one its workspace
+        // was cloned for, and the branch name is the part of that an operator
+        // can act on without CloudWatch (paths are redacted from client-facing
+        // messages).
         const settingsBranch = operatingStrategy(apiCtx.services.config.mode).getSettingsBranchName(
           apiCtx.services.config,
         )
@@ -303,9 +281,8 @@ export function createCanopyRequestHandler(options: CanopyHandlerOptions): Canop
     const queryParams = parseQueryParams(req.url)
     const mergedParams = { ...queryParams, ...match.params }
 
-    // Parse body for non-GET requests. Multipart routes opt out (bodyFormat)
-    // so their handler can read the (single-use) body stream itself via
-    // req.formData() - calling req.json() first would consume it.
+    // Multipart routes opt out via bodyFormat so their handler can read the
+    // single-use body stream itself: calling req.json() first would consume it.
     let body: unknown
     if (req.method !== 'GET' && match.bodyFormat !== 'multipart') {
       try {
@@ -335,14 +312,14 @@ export function createCanopyRequestHandler(options: CanopyHandlerOptions): Canop
       }
 
       const result = await match.handler(...handlerArgs)
-      // Binary routes (e.g. asset serving) carry their own status/headers and
-      // must reach the adapter untouched - wrapping them in jsonResponse would
-      // JSON-serialize raw bytes and lose contentType/contentDisposition/etc.
+      // Binary routes carry their own status and headers and MUST reach the
+      // adapter untouched: jsonResponse would serialize raw bytes and drop
+      // contentType/contentDisposition.
       if (isCanopyBinaryResponse(result)) return result
       return jsonResponse(result, result.status)
     } else {
-      // Should not happen - all routes should use defineEndpoint now
-      // This is here for safety in case any route doesn't have validation
+      // Every route should use defineEndpoint; this is the safety net for one
+      // that carries no validate function.
       const result = await match.handler(
         apiCtx as unknown,
         apiReq as unknown,

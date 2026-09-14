@@ -1,6 +1,4 @@
-/**
- * Branch path resolution utilities.
- */
+/** Branch path resolution utilities. */
 
 import fs from 'node:fs/promises'
 import path from 'node:path'
@@ -22,10 +20,8 @@ export interface BranchPathResult {
 
 export class BranchPathError extends Error {}
 
-// Moved to ./branch-name (dependency-free) so client-reachable modules can
-// use it without dragging this file's node:fs / operating-mode imports into
-// browser bundles. Imported for local use + re-exported for existing
-// server-side importers.
+// Lives in ./branch-name (dependency-free); re-exported here for server-side
+// importers, who may safely reach this module's node:fs imports.
 import { sanitizeBranchName } from './branch-name'
 export { sanitizeBranchName }
 
@@ -33,10 +29,7 @@ const resolveContentBranchesRoot = (mode: OperatingMode, override?: string): str
   return operatingStrategy(mode).getContentBranchesRoot(override)
 }
 
-/**
- * Resolve branch name to workspace paths.
- * Validates for path traversal attacks.
- */
+/** Resolve a branch name to workspace paths, rejecting path traversal. */
 export function resolveBranchPath(options: BranchPathOptions): BranchPathResult {
   if (options.branchName.includes('..')) {
     throw new BranchPathError('Branch name cannot contain traversal segments')

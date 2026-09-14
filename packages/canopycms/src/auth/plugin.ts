@@ -2,64 +2,51 @@ import type { UserSearchResult, GroupMetadata, AuthenticationResult } from './ty
 import type { CanopyUserId, CanopyGroupId } from '../types'
 import type { OperatingMode } from '../operating-mode/types'
 
-/**
- * Abstract auth provider interface.
- * Implement this to integrate different auth systems (Clerk, Auth0, NextAuth, etc.)
- */
+/** Implement this to integrate an auth system (Clerk, Auth0, NextAuth, ...). */
 export interface AuthPlugin {
   /**
-   * Affirmative allowlist marker: set to true ONLY on plugins that
-   * cryptographically verify credentials (e.g. Clerk JWT verification).
-   * assertAuthPluginAllowedForMode() rejects any plugin without this marker
-   * whenever the operating mode is 'prod' — absence fails closed, so a
-   * third-party plugin that forgets the marker is rejected, not accepted.
+   * Affirmative allowlist marker: true ONLY on plugins that cryptographically
+   * verify credentials. In 'prod', assertAuthPluginAllowedForMode() rejects any
+   * plugin without it, so a plugin that forgets the marker fails closed.
    */
   readonly verifiesCredentials?: boolean
 
   /**
-   * Authenticate user from request context.
-   * Returns user identity (without final groups) - core will apply bootstrap admins.
+   * Authenticate from a request context, returning identity without final
+   * groups; core applies bootstrap admins.
    *
-   * Contract: CREDENTIAL failures (missing/invalid/expired token) resolve to
-   * `{ success: false }` — they map to 401s. CONFIGURATION errors (e.g. a
-   * required secret like CLERK_SECRET_KEY is absent) may THROW instead: they
-   * are operator mistakes, not user mistakes, and should surface as loud 500s
-   * rather than quiet auth denials. Callers invoking authenticate() directly
-   * (custom adapters) should be prepared for a rejection on misconfiguration.
+   * CREDENTIAL failures (missing, invalid or expired token) RESOLVE to
+   * `{ success: false }` and map to a 401. CONFIGURATION errors (an absent
+   * CLERK_SECRET_KEY, say) may THROW instead: they are operator mistakes, and
+   * belong in a loud 500 rather than a quiet auth denial. A custom adapter
+   * calling this directly must be ready for that rejection.
    */
   authenticate(context: unknown): Promise<AuthenticationResult>
 
-  /**
-   * Search for users (for permission management UI)
-   */
+  /** For the permission-management UI. */
   searchUsers(query: string, limit?: number): Promise<UserSearchResult[]>
 
   getUserMetadata(userId: CanopyUserId): Promise<UserSearchResult | null>
 
   getGroupMetadata(groupId: CanopyGroupId): Promise<GroupMetadata | null>
 
-  /**
-   * List all groups (for permission UI dropdowns)
-   */
+  /** For permission UI dropdowns. */
   listGroups(limit?: number): Promise<GroupMetadata[]>
 
-  /**
-   * Search for external groups/organizations (for group management UI)
-   * Optional - only needed if auth provider supports external groups
-   */
+  /** For the group-management UI; only providers with groups need it. */
   searchExternalGroups?(query: string): Promise<Array<{ id: CanopyGroupId; name: string }>>
 
   /**
-   * Optional: lightweight token-only verification (no user metadata lookup, no network).
-   * When present, createNextCanopyContext automatically wraps this plugin with
-   * CachingAuthPlugin in prod/dev modes. The cache is populated by the worker daemon.
+   * Token-only verification: no metadata lookup, no network. When present,
+   * createNextCanopyContext wraps this plugin with CachingAuthPlugin in both
+   * modes, over a cache the worker daemon populates.
    */
   verifyTokenOnly?(context: unknown): Promise<{ userId: CanopyUserId } | null>
 
   /**
-   * Optional: create a function that refreshes the auth cache for this plugin.
-   * Used by the worker daemon and CLI run-once to populate the file-based auth cache.
-   * Returns undefined if this plugin doesn't support cache refresh (e.g., missing credentials).
+   * Builds the refresher the worker daemon and CLI run-once use to populate the
+   * file-based auth cache. Undefined when this plugin cannot refresh (no
+   * credentials, say).
    */
   createCacheRefresher?(
     cachePath: string,
@@ -69,20 +56,16 @@ export interface AuthPlugin {
 export type AuthPluginFactory<TConfig = unknown> = (config: TConfig) => AuthPlugin
 
 /**
- * Fail closed: only allow auth plugins that affirmatively declare real
- * credential verification when the CMS runs in production.
+ * Fail closed in prod: an ALLOWLIST, so a plugin passes only by setting
+ * `verifiesCredentials: true`. DevAuthPlugin, and any plugin that forgets the
+ * marker, trusts request headers without cryptographic verification, so
+ * accepting one in 'prod' would let any caller impersonate any user, admins
+ * included, with a header like `X-Test-User: admin`. Absence of
+ * `verifyTokenOnly` is NOT a substitute for the marker — the dev plugin
+ * implements that too.
  *
- * This is an allowlist, not a denylist: a plugin must set
- * `verifiesCredentials: true` to pass this guard in prod. DevAuthPlugin (and
- * any third-party plugin that forgets to set the marker) trusts request
- * headers/cookies without cryptographic verification, so accepting it with
- * mode 'prod' would let any caller impersonate any user — including admins —
- * by sending a header like `X-Test-User: admin`. Call this wherever an
- * adopter-provided auth plugin meets the operating mode (framework wrappers,
- * request handlers) BEFORE the plugin is wrapped or used.
- *
- * Note: checking for the absence of verifyTokenOnly is NOT a substitute for
- * this marker — the dev plugin implements verifyTokenOnly too.
+ * Call this wherever an adopter-provided plugin meets the operating mode
+ * (framework wrappers, request handlers) BEFORE the plugin is wrapped or used.
  *
  * @throws Error when mode is 'prod' and the plugin does not set `verifiesCredentials: true`
  */

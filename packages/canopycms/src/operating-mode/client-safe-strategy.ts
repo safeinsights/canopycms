@@ -1,10 +1,7 @@
 /**
- * Client-Safe Operating Mode Strategies
- *
- * Base strategy classes that are safe to import in 'use client' React components.
- * NO Node.js imports (fs, path, process, etc.) - only pure logic and simple data.
- *
- * These classes are extended by client-unsafe strategies to add Node.js functionality.
+ * Base strategy classes, safe in 'use client' React components: pure logic and
+ * simple data, NO Node.js imports. client-unsafe-strategy.ts extends these to
+ * add the Node.js surface.
  */
 
 import type { OperatingMode, ClientSafeStrategy } from './types'
@@ -84,10 +81,8 @@ export class DevClientSafeStrategy implements ClientSafeStrategy {
 const clientStrategyCache = new Map<OperatingMode, ClientSafeStrategy>()
 
 /**
- * Get the client-safe strategy for an operating mode.
- *
- * Strategies are memoized - one instance per mode for the entire process lifetime.
- * Safe to call inline: clientOperatingStrategy(mode).supportsBranching()
+ * Memoized: one instance per mode for the process lifetime, so this is safe to
+ * call inline — `clientOperatingStrategy(mode).supportsBranching()`.
  */
 export function clientOperatingStrategy(mode: OperatingMode): ClientSafeStrategy {
   const cached = clientStrategyCache.get(mode)
@@ -102,7 +97,7 @@ export function clientOperatingStrategy(mode: OperatingMode): ClientSafeStrategy
       strategy = new DevClientSafeStrategy()
       break
     default: {
-      // Exhaustiveness check - TypeScript will error if a mode is not handled
+      // Exhaustiveness check: adding a mode without a case fails to compile.
       const _exhaustive: never = mode
       throw new Error(`Unknown operating mode: ${_exhaustive}`)
     }
@@ -112,9 +107,7 @@ export function clientOperatingStrategy(mode: OperatingMode): ClientSafeStrategy
   return strategy
 }
 
-/**
- * Clear the client strategy cache (mainly for testing)
- */
+/** Mainly for testing. */
 export function clearClientStrategyCache(): void {
   clientStrategyCache.clear()
 }

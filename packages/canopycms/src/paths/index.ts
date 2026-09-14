@@ -1,6 +1,4 @@
-/**
- * Path utilities for CanopyCMS
- */
+/** Path utilities for CanopyCMS. */
 
 export type {
   LogicalPath,
@@ -52,8 +50,7 @@ export {
   type BranchPathOptions,
   type BranchPathResult,
 } from './branch'
-// From the dependency-free module (NOT ./branch, which imports node:fs) so
-// client-reachable importers of 'canopycms/src/paths' stay browser-safe.
+// From ./branch-name, not ./branch (which imports node:fs).
 export {
   sanitizeBranchName,
   RESERVED_SETTINGS_BRANCH_PREFIX,

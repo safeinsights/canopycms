@@ -1,22 +1,20 @@
 /**
  * Shared deployment-name test fixture.
  *
- * The rule that decides whether a `deploymentName` is usable exists TWICE, by
- * necessity: once at runtime (`deployment-name.ts`'s `isValidDeploymentName`)
- * and once at synth time (`canopycms-cdk`'s `constructs/cms-service.ts`).
- * The construct deliberately does not import the real thing — see
- * `isValidDeploymentName`'s doc comment in cms-service.ts for why.
+ * The rule deciding whether a `deploymentName` is usable exists TWICE by
+ * necessity: at runtime (`deployment-name.ts`'s `isValidDeploymentName`) and at
+ * synth time (`canopycms-cdk`'s `constructs/cms-service.ts`, which deliberately
+ * does not import the real thing — see its own doc comment for why).
  *
  * The dangerous drift is asymmetric: a rule TIGHTENED at runtime but not at
- * synth produces a stack that synths clean and then crash-loops the Lambda at
- * boot — precisely what the synth guard exists to prevent. So both packages'
- * suites assert against this one list, and `canopycms-cdk`'s suite additionally
- * asserts that the construct's verdict matches this package's predicate for
- * every name here. Add a case here when you change either copy of the rule.
+ * synth synths clean and then crash-loops the Lambda at boot, precisely what the
+ * synth guard exists to prevent. So both packages' suites assert against this
+ * one list, and `canopycms-cdk`'s also asserts that the construct's verdict
+ * matches this package's predicate for every name here. Add a case when you
+ * change either copy of the rule.
  *
- * Deliberately dependency-free (plain arrays, no vitest import) so the CDK
- * suite can import it across the package boundary without dragging anything
- * along.
+ * Dependency-free (plain arrays, no vitest import) so the CDK suite can import
+ * it across the package boundary.
  */
 
 /** Names both copies of the rule must ACCEPT. */
@@ -32,9 +30,9 @@ export const VALID_DEPLOYMENT_NAMES = [
 ] as const
 
 /**
- * Names both copies of the rule must REJECT, each with the reason it exists —
- * every entry is a value git itself would refuse as a ref component, or one
- * that would corrupt the worker's `.env` heredoc.
+ * Names both copies of the rule must REJECT: each is either a value git itself
+ * refuses as a ref component, or one that would corrupt the worker's `.env`
+ * heredoc.
  */
 export const INVALID_DEPLOYMENT_NAMES = [
   ['a slash (would add a ref hierarchy level)', 'team/prod'],

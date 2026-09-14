@@ -1,46 +1,29 @@
-/**
- * Framework-agnostic HTTP request interface.
- * Minimal surface area - only what CanopyCMS actually needs.
- */
+/** Framework-agnostic HTTP request: only what CanopyCMS actually needs. */
 export interface CanopyRequest {
   readonly method: string
 
   readonly url: string
 
-  /**
-   * Get request header value (case-insensitive).
-   * Returns null if header not present.
-   */
+  /** Case-insensitive; null when the header is absent. */
   header(name: string): string | null
 
-  /**
-   * Parse request body as JSON.
-   * Returns undefined for GET requests or empty bodies.
-   */
+  /** Undefined for GET requests and empty bodies. */
   json(): Promise<unknown>
 
   /**
-   * Read the raw request body as bytes, bypassing JSON parsing.
-   * Optional: only wired by adapters that need to support non-JSON bodies
-   * (e.g. proxied binary/multipart uploads). Bare CanopyRequest mocks/test
-   * harnesses that omit this keep compiling.
+   * The raw body bytes, bypassing JSON parsing. Optional, so that adapters
+   * without non-JSON bodies (and bare test mocks) still compile.
    *
-   * Like the underlying platform Request, the body stream can only be
-   * consumed once - callers must not also call `json()`/`formData()` on the
-   * same request.
+   * As with the platform Request, the body stream is consumed ONCE: a caller
+   * using this must not also call `json()` or `formData()`.
    */
   rawBody?(): Promise<Uint8Array>
 
-  /**
-   * Parse the request body as multipart/form-data.
-   * Optional for the same reason as `rawBody` above.
-   */
+  /** Optional, and single-use, for the same reasons as `rawBody`. */
   formData?(): Promise<FormData>
 }
 
-/**
- * Framework-agnostic HTTP response.
- */
+/** Framework-agnostic HTTP response. */
 export interface CanopyResponse<T = unknown> {
   readonly status: number
   readonly body: T
@@ -48,10 +31,9 @@ export interface CanopyResponse<T = unknown> {
 }
 
 /**
- * Framework-agnostic binary HTTP response (e.g. serving image/PDF bytes).
- * Distinct from `CanopyResponse` via the `kind` discriminant so adapters can
- * dispatch on response shape without a cast: `body` is arbitrary bytes
- * (or a stream of them), not a JSON-serializable value.
+ * A binary response (image/PDF bytes). The `kind` discriminant lets adapters
+ * dispatch without a cast: `body` here is arbitrary bytes or a stream of them,
+ * not a JSON-serializable value.
  */
 export interface CanopyBinaryResponse {
   readonly kind: 'binary'
@@ -74,10 +56,9 @@ export function jsonResponse<T>(
 }
 
 /**
- * Type guard distinguishing `CanopyBinaryResponse` from any other route
- * result (`ApiResponse`/`CanopyResponse`, neither of which declare `kind`).
- * Framework adapters and the core handler use this to decide whether to
- * pass a route result through untouched or wrap it via `jsonResponse`.
+ * Distinguishes `CanopyBinaryResponse` from any other route result (neither
+ * `ApiResponse` nor `CanopyResponse` declares `kind`), which is how adapters
+ * and the core handler decide to pass a result through or wrap it in JSON.
  */
 export function isCanopyBinaryResponse(value: unknown): value is CanopyBinaryResponse {
   return (

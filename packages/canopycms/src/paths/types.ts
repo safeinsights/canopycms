@@ -1,55 +1,36 @@
 /**
- * Path type definitions for CanopyCMS
- *
- * These branded types provide compile-time safety to prevent accidentally
- * mixing logical paths (content/posts/my-post) with physical filesystem
- * paths (content/posts/my-post.ABC123.mdx).
+ * Branded path types. The brands exist to stop logical paths
+ * (content/posts/my-post) being passed where physical filesystem paths
+ * (content/posts/my-post.ABC123.mdx) are expected, and vice versa.
  */
 
-/**
- * A logical content path without embedded IDs.
- * Used in APIs, URLs, and user-facing contexts.
- * Example: "content/posts/my-post"
- */
+/** A content path with no embedded IDs, as APIs and URLs carry it. */
 export type LogicalPath = string & { readonly __brand: 'LogicalPath' }
 
-/**
- * A physical filesystem path that may contain embedded IDs.
- * Used for actual file operations.
- * Example: "content/posts/my-post.ABC123.mdx"
- */
+/** A filesystem path, which may carry embedded IDs, as file operations need. */
 export type PhysicalPath = string & { readonly __brand: 'PhysicalPath' }
 
-/**
- * A branch name that has been sanitized for filesystem use.
- */
+/** A branch name already sanitized for filesystem use. */
 export type SanitizedBranchName = string & {
   readonly __brand: 'SanitizedBranchName'
 }
 
-/**
- * A git branch name (before sanitization for filesystem use).
- * Example: "feature/add-dark-mode" or "main"
- */
+/** A git branch name, not yet sanitized: "feature/add-dark-mode", "main". */
 export type BranchName = string & { readonly __brand: 'BranchName' }
 
 /**
- * A 12-character Base58-encoded content ID.
- * Used to uniquely identify entries and collections in filenames.
- * Example: "bChqT78gcaLd"
+ * A 12-character Base58 content ID ("bChqT78gcaLd"), which uniquely identifies
+ * an entry or collection within a filename.
  */
 export type ContentId = string & { readonly __brand: 'ContentId' }
 
 /**
- * Sentinel ContentId for the root content directory (which has no embedded ID in its name).
- * Uses underscores — can never collide with real 12-char Base58 IDs (which exclude `_`).
+ * Sentinel ContentId for the root content directory, whose name carries no
+ * embedded ID. Underscores cannot collide with Base58 IDs, which exclude `_`.
  */
 export const ROOT_COLLECTION_ID = '__rootcoll__' as ContentId
 
-/**
- * A validated, lowercase slug used for collections and entries.
- * Example: "posts", "my-first-post", "getting-started"
- */
+/** A validated, lowercase collection or entry slug: "my-first-post". */
 export type Slug = string & { readonly __brand: 'Slug' }
 
 export interface PathValidationResult {
