@@ -10,7 +10,8 @@
  * Always root-relative, and this is the value that gets STORED in content.
  * Content moves between branches and environments, so a stored src must not
  * name an origin or a deployment prefix - it names only the asset's position
- * in the `/assets` URL space.
+ * in the `/assets` URL space. Prefixing it for display is `assetUrl()`'s
+ * render-time job - see asset-url.ts.
  */
 
 import { ASSET_PREFIXES } from './asset-prefixes'

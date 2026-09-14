@@ -90,7 +90,7 @@ export function slugifyFilename(name: string): { slug: string; ext: string } {
 export function createKeyBuilders(prefixes: AssetPrefixes = ASSET_PREFIXES) {
   return {
     originalKey: (hash32: string, ext: string): string => `${prefixes.originals}/${hash32}.${ext}`,
-    /** Prefix used to look up an original by hash32 alone (extension unknown ahead of time). */
+    /** Prefix for looking up an original by hash32 alone (extension unknown ahead of time). */
     originalPrefix: (hash32: string): string => `${prefixes.originals}/${hash32}.`,
     stagingKey: (uuid: string): string => `${prefixes.staging}/${uuid}`,
     metaKey: (hash32: string): string => `${prefixes.meta}/${hash32}.json`,

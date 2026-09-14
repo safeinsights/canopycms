@@ -35,9 +35,9 @@ export interface S3AssetStoreOptions {
    * returns. Absolute http(s) URL or a site-relative path. See `mediaSchema`'s s3 branch for
    * what this is for; see `isHttpUrlOrSameOriginPath` for what is accepted.
    *
-   * This is NOT the `publicBaseUrl`. Nothing is joined onto this value and it is
-   * never rendered or stored — it is the endpoint the browser posts to, and it is returned to
-   * the client inside the presign response rather than in the client config.
+   * Not a public base URL: nothing is joined onto it and it is never rendered or stored -
+   * it is the endpoint the browser posts to, returned to the client inside the presign
+   * response rather than in the client config.
    */
   uploadUrl?: string
   /** Override the default bucket-prefix layout (rarely needed). */
