@@ -23,7 +23,6 @@ import type { Task, TaskStatus, QueueStats, TaskQueueLogger, CorruptTaskFile } f
 
 const DEFAULT_MAX_RETRIES = 3
 
-// Silent no-op logger
 const nullLogger: TaskQueueLogger = { debug: () => {} }
 
 import { atomicWriteFile } from '../utils/atomic-write'
@@ -32,10 +31,6 @@ import { atomicWriteFile } from '../utils/atomic-write'
 function isNotFoundError(err: unknown): boolean {
   return err instanceof Error && 'code' in err && (err as NodeJS.ErrnoException).code === 'ENOENT'
 }
-
-// ============================================================================
-// Core queue operations
-// ============================================================================
 
 /**
  * Enqueue a task. Writes a JSON file to pending/{id}.json.
@@ -328,10 +323,6 @@ export async function requeueFailedTask(
   return { newTaskId }
 }
 
-// ============================================================================
-// Recovery & maintenance
-// ============================================================================
-
 /**
  * Recover orphaned tasks stuck in processing/.
  * Moves tasks whose file mtime is older than maxAgeMs back to pending/.
@@ -418,12 +409,9 @@ export async function cleanupOldTasks(
   // `corrupt` included: unparseable task files are quarantined there by
   // dequeue and orphan recovery and surfaced in admin listing, but the
   // retention sweep never covered the directory, so it grew forever with
-  // deletion available only as a manual per-file admin action. Any recurring
-  // producer of malformed task JSON -- a partial write surviving a crash, a
-  // bad deploy writing schema-drifted tasks for a week -- accumulated files no
-  // automated path removed. Same stamp-based retention as the other two: a
-  // quarantined file older than the window has long since been triaged or
-  // forgotten.
+  // deletion available only as a manual per-file admin action. Same
+  // stamp-based retention as the other two: a quarantined file older than
+  // the window has long since been triaged or forgotten.
   for (const subdir of ['completed', 'failed', 'corrupt']) {
     const dir = path.join(taskDir, subdir)
     let files: string[]
@@ -452,10 +440,6 @@ export async function cleanupOldTasks(
   }
   return cleaned
 }
-
-// ============================================================================
-// Query operations (for status UIs, monitoring)
-// ============================================================================
 
 /**
  * Get a specific task by ID. Searches all status directories.
@@ -572,10 +556,6 @@ export async function listCorruptTaskFiles(
   entries.sort((a, b) => new Date(b.mtime).getTime() - new Date(a.mtime).getTime())
   return entries.slice(0, limit)
 }
-
-// ============================================================================
-// Internal helpers
-// ============================================================================
 
 /** Read up to `maxBytes` from the start of a file, as utf-8 text. */
 async function readSnippet(filePath: string, maxBytes: number): Promise<string> {

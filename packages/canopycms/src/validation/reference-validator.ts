@@ -20,18 +20,6 @@ export interface ValidationResult {
 
 /**
  * ReferenceValidator validates that referenced content IDs exist and match collection constraints.
- *
- * This class provides validation for:
- * - ID format validation (valid short UUID)
- * - ID existence validation (entry actually exists)
- * - Collection constraint validation (entry is in allowed collections)
- *
- * Usage:
- *   const validator = new ReferenceValidator(idIndex, schema)
- *   const result = await validator.validate(entryData)
- *   if (!result.valid) {
- *     console.error('Validation errors:', result.errors)
- *   }
  */
 export class ReferenceValidator {
   /**
@@ -62,15 +50,8 @@ export class ReferenceValidator {
     })
   }
 
-  /**
-   * Validate all reference fields in the provided data.
-   *
-   * @param data - The entry data to validate
-   * @returns Validation result with any errors found
-   */
   async validate(data: Record<string, unknown>): Promise<ValidationResult> {
     const errors: ValidationError[] = []
-    // Use shared field traversal to find all reference fields
     const refContexts = findFieldsByType(this.schema, data, 'reference')
     const refs = refContexts.map((ctx) => ({
       field: ctx.field as ReferenceFieldConfig,
@@ -88,7 +69,6 @@ export class ReferenceValidator {
         // means "no reference", not a malformed ID.
         if (id == null || id === '') continue
 
-        // Validate ID format
         if (typeof id !== 'string' || !isValidId(id)) {
           errors.push({
             field: field.name,
@@ -99,7 +79,6 @@ export class ReferenceValidator {
           continue
         }
 
-        // Validate ID exists
         const location = this.idIndex.findById(id)
         if (!location) {
           errors.push({
@@ -111,7 +90,6 @@ export class ReferenceValidator {
           continue
         }
 
-        // Validate location is an entry (not a collection)
         if (location.type !== 'entry') {
           errors.push({
             field: field.name,
@@ -122,7 +100,6 @@ export class ReferenceValidator {
           continue
         }
 
-        // Validate collection constraint
         if (field.collections && field.collections.length > 0) {
           const allowed = this.collectionAllowed(location.collection, field.collections)
 
@@ -137,7 +114,6 @@ export class ReferenceValidator {
           }
         }
 
-        // Validate entry type constraint
         if (field.entryTypes && field.entryTypes.length > 0) {
           const entryType = extractEntryTypeFromFilename(path.basename(location.relativePath))
           if (!entryType || !field.entryTypes.includes(entryType)) {

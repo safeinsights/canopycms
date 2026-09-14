@@ -7,16 +7,6 @@
  * of server-only imports (node:fs, ContentStore, ContentIdIndex, ...) — it may
  * only depend on config types and other pure modules.
  *
- * What it checks (pure rules — no filesystem access):
- * - required fields are present and non-empty
- * - values match their field type (string/number/boolean/datetime/select/...)
- * - `list` fields hold arrays; non-list fields hold single values
- * - select values are one of the configured options
- * - reference values are well-formed (id string or resolved `{ id }` object)
- *   and non-empty when required
- * - block items resolve to a known template (via the shared `resolveBlockItem`
- *   from field-traversal, so `{ template, value }`-nested fields are validated)
- *
  * Reference EXISTENCE is intentionally NOT checked here: it requires the
  * content ID index (filesystem) and is enforced server-side only, by running
  * `ReferenceValidator` at the write boundary.
@@ -81,10 +71,7 @@ function isValidImageCropValue(value: unknown): boolean {
 
 /**
  * Validate a structured `image` field value: `{ src, alt, width?, height?, crop? }`
- * (see `ImageFieldValue` in config/types.ts). `src` and `alt` are required
- * whenever a value is present; `alt` may be an empty string only when the
- * field config sets `altOptional: true`. `width`/`height` must be positive
- * integers when present; `crop` must satisfy the same normalized-rect
+ * (see `ImageFieldValue` in config/types.ts). `crop` must satisfy the same normalized-rect
  * constraints as the transform directive parser (assets/transform-directives.ts).
  */
 function validateImageValue(
@@ -243,7 +230,6 @@ export function validateEntryData(
       continue
     }
 
-    // Optional and absent: nothing further to check.
     if (value === undefined || value === null) continue
 
     if (field.type === 'block') {
@@ -297,7 +283,6 @@ export function validateEntryData(
       continue
     }
 
-    // Scalar (and list-of-scalar) fields.
     if ('list' in field && field.list) {
       if (!Array.isArray(value)) {
         errors.push({ fieldPath: path, message: 'Expected a list of values' })

@@ -17,9 +17,6 @@
  *   so counting it migrated an editorial comment off a deleted block onto an unrelated
  *   survivor.
  *
- * A single list keeps those two from drifting apart — a third discriminator added for one of
- * them but not the other would resurrect exactly one of those bugs.
- *
  * Note that two other readers deliberately still spell the keys out themselves, because they
  * READ the discriminator's value positionally rather than testing membership, and they do not
  * agree on precedence: `resolveBlockItem` prefers `template`, while `ai/json-to-markdown.ts`

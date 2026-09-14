@@ -23,12 +23,6 @@ export interface EntryLinkValidationResult {
   warnings: EntryLinkWarning[]
 }
 
-/**
- * Validate entry links in body/markdown/mdx fields of the provided data.
- *
- * Scans all markdown and mdx fields for entry:ID patterns
- * and checks that each referenced ID exists in the content index.
- */
 export function validateEntryLinks(
   data: Record<string, unknown>,
   schema: readonly FieldConfig[],
@@ -42,7 +36,6 @@ export function validateEntryLinks(
     checkText(bodyContent, 'body', 'body', idIndex, warnings)
   }
 
-  // Check markdown/mdx fields in structured data
   const markdownTypes = ['markdown', 'mdx'] as const
   for (const fieldType of markdownTypes) {
     const contexts = findFieldsByType(schema, data, fieldType)

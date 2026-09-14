@@ -24,18 +24,6 @@ export interface DeletionCheckResult {
 
 /**
  * DeletionChecker finds all references to an entry before deletion.
- *
- * This class provides referential integrity checking by:
- * - Scanning all entries for references to a target ID
- * - Identifying which entries and fields reference the target
- * - Preventing deletion of entries that are still referenced
- *
- * Usage:
- *   const checker = new DeletionChecker(store, idIndex, schema)
- *   const result = await checker.canDelete(targetId)
- *   if (!result.canDelete) {
- *     console.log('Cannot delete:', result.referencedBy)
- *   }
  */
 export class DeletionChecker {
   constructor(
@@ -44,12 +32,6 @@ export class DeletionChecker {
     private collections: Map<LogicalPath, { fields: FieldConfig[] }>,
   ) {}
 
-  /**
-   * Check if an entry can be safely deleted.
-   *
-   * @param id - The content ID to check
-   * @returns Result indicating if deletion is safe and what references exist
-   */
   async canDelete(id: string): Promise<DeletionCheckResult> {
     const referencedBy = await this.findReferences(id)
     return {
@@ -58,16 +40,9 @@ export class DeletionChecker {
     }
   }
 
-  /**
-   * Find all entries that reference the target ID.
-   *
-   * @param targetId - The content ID to search for
-   * @returns Array of reference info for each referencing entry
-   */
   async findReferences(targetId: string): Promise<ReferenceInfo[]> {
     const references: ReferenceInfo[] = []
 
-    // Scan all collections for references
     for (const [collectionPath, collectionDef] of this.collections.entries()) {
       const refs = await this.scanCollection(collectionPath, collectionDef.fields, targetId)
       references.push(...refs)
@@ -76,9 +51,6 @@ export class DeletionChecker {
     return references
   }
 
-  /**
-   * Scan a single collection for references to the target ID.
-   */
   private async scanCollection(
     collectionPath: LogicalPath,
     fields: FieldConfig[],
@@ -86,7 +58,6 @@ export class DeletionChecker {
   ): Promise<ReferenceInfo[]> {
     const references: ReferenceInfo[] = []
 
-    // Get all entries in this collection from the ID index
     const entries = this.listEntriesInCollection(collectionPath)
 
     for (const entry of entries) {
@@ -105,7 +76,6 @@ export class DeletionChecker {
           })
         }
       } catch {
-        // Skip entries that can't be read
         continue
       }
     }
@@ -113,10 +83,6 @@ export class DeletionChecker {
     return references
   }
 
-  /**
-   * Find all occurrences of target ID in entry data.
-   * Returns field paths where the ID was found.
-   */
   private findIdInData(
     data: Record<string, unknown>,
     targetId: string,
@@ -145,7 +111,6 @@ export class DeletionChecker {
       if (value === undefined || value === null) continue
 
       if (field.type === 'reference') {
-        // Check if this reference field contains the target ID
         if (Array.isArray(value)) {
           if (value.includes(targetId)) {
             found.push(fieldPath)
@@ -183,8 +148,6 @@ export class DeletionChecker {
           }
         }
       } else if (field.type === 'block') {
-        // Handle block fields — real block items are { template, value }, with
-        // nested field values under `value` (resolved by resolveBlockItem)
         const blockField = field as BlockFieldConfig
         if (Array.isArray(value)) {
           value.forEach((item, index) => {
@@ -209,9 +172,6 @@ export class DeletionChecker {
     return found
   }
 
-  /**
-   * Helper to list all entries in a collection from the ID index.
-   */
   private listEntriesInCollection(collectionPath: LogicalPath): Array<{
     relativePath: PhysicalPath
     collection: LogicalPath
@@ -223,12 +183,10 @@ export class DeletionChecker {
       slug: Slug
     }> = []
 
-    // Get all locations from the index
     const allLocations = this.idIndex.getAllLocations()
 
     for (const location of allLocations) {
       if (location.type === 'entry') {
-        // Check if this entry is in the target collection
         if (
           location.collection === collectionPath ||
           location.collection?.startsWith(collectionPath + '/')
