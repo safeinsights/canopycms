@@ -1,15 +1,10 @@
 #!/usr/bin/env node
 
 /**
- * EC2 Worker entrypoint for AWS deployment.
- *
- * This is the AWS-specific entrypoint that:
- * - Reads secrets from Secrets Manager
- * - Wires up the Clerk-specific auth cache refresher
- * - Starts the auth-agnostic CmsWorker from canopycms core
- *
- * Adopters using a different auth provider would create their own
- * entrypoint that provides a different refreshAuthCache callback.
+ * EC2 Worker entrypoint for AWS deployment: reads secrets from Secrets Manager,
+ * wires the Clerk-specific auth-cache refresher, and starts the auth-agnostic
+ * `CmsWorker` from canopycms core. An adopter on a different auth provider
+ * writes their own entrypoint supplying a different `refreshAuthCache`.
  */
 
 // workerLog/workerLogError, not bare console: every line in
@@ -42,7 +37,6 @@ async function main() {
 
   workerLog('CMS Worker starting...')
 
-  // Required env vars
   const workspacePath = process.env.CANOPYCMS_WORKSPACE_ROOT
   if (!workspacePath) throw new Error('CANOPYCMS_WORKSPACE_ROOT is required')
 
@@ -77,28 +71,25 @@ async function main() {
     : githubTokenFromEnv
   // Wrapped so a rotated token reaches a RUNNING worker. Reactive: core calls
   // `refreshGitHubToken` only when a git sync or a task has just failed, so a
-  // healthy worker makes no Secrets Manager calls after boot at all. Constructed even
-  // when the deployment authenticates as a GitHub App, where it is inert --
-  // `resolveWorkerGitHubAuth` never calls the provider on that path, because
-  // an App mints its own tokens.
+  // healthy worker makes no Secrets Manager calls after boot. Constructed even
+  // under GitHub App auth, where it is inert - `resolveWorkerGitHubAuth` never
+  // calls the provider there, because an App mints its own tokens.
   const githubTokenSecret = createReactiveSecret({
     arn: githubTokenArn,
     initial: githubToken,
     ...githubTokenSecretOptions,
   })
   // GitHub App authentication, if this deployment uses it instead of a token.
+  // Checked all-or-nothing HERE as well as at synth (assertGitHubAuthProps in
+  // src/constructs/cms-service.ts), because the construct is the normal way
+  // these arrive but not the only one: an adopter can set the instance's
+  // environment directly, and half a credential otherwise fails at the first
+  // push, hours after boot.
   //
-  // Read as a group and checked all-or-nothing here as well as at synth
-  // (assertGitHubAuthProps in src/constructs/cms-service.ts): the construct is
-  // the normal way these arrive, but not the only one -- an adopter can set the
-  // instance's environment directly, and half a credential fails at the first
-  // push otherwise, hours after boot.
-  //
-  // Nothing here touches the token path above. Both are passed to CmsWorker
-  // when both are configured, and core's resolveWorkerGitHubAuth refuses that
-  // pair by name -- deliberately, rather than picking a winner here, because a
-  // silent precedence would leave it undefined which identity the worker's
-  // pushes and pull requests act as.
+  // Nothing here touches the token path above. Both are passed to CmsWorker when
+  // both are configured, and core's resolveWorkerGitHubAuth refuses that pair by
+  // name rather than picking a winner here - a silent precedence would leave it
+  // undefined which identity the worker's pushes and pull requests act as.
   const githubAppId = process.env.CANOPYCMS_GITHUB_APP_ID
   const githubAppInstallationId = process.env.CANOPYCMS_GITHUB_APP_INSTALLATION_ID
   const githubAppPrivateKeySecretArn = process.env.CANOPYCMS_GITHUB_APP_PRIVATE_KEY_SECRET_ARN
@@ -122,12 +113,9 @@ async function main() {
       ? buildGitHubAppAuth({
           appId: githubAppId,
           installationId: githubAppInstallationId,
-          // An App private key is the credential most likely to live inside a
-          // JSON document rather than alone in a secret -- which is why the
-          // JSON-field option exists at all. Same `|| undefined` as the other
-          // two `getSecret` call sites in this file (the GitHub token above and
-          // the Clerk key below), and for the same reason: a blank var means
-          // "not configured", not "read the field named ''".
+          // Same `|| undefined` as the other two `getSecret` call sites in this
+          // file, for the same reason: a blank var means "not configured", not
+          // "read the field named ''".
           privateKey: await getSecret(githubAppPrivateKeySecretArn, {
             jsonField: process.env.CANOPYCMS_GITHUB_APP_PRIVATE_KEY_SECRET_JSON_FIELD || undefined,
             jsonFieldEnvVar: 'CANOPYCMS_GITHUB_APP_PRIVATE_KEY_SECRET_JSON_FIELD',
@@ -159,8 +147,8 @@ async function main() {
     ...clerkKeySecretOptions,
   })
 
-  // Build auth cache refresher (Clerk-specific). The re-read on a rejected key
-  // lives inside it rather than in core -- see clerk-refresh.ts for why.
+  // The re-read on a Clerk-rejected key lives inside this callback rather than
+  // in core -- see clerk-refresh.ts for why.
   const refreshAuthCache = createClerkAuthCacheRefresher({
     secret: clerkSecret,
     cachePath: path.join(workspacePath, '.cache'),
@@ -178,12 +166,10 @@ async function main() {
     refreshAuthCache,
     baseBranch: process.env.CANOPYCMS_BASE_BRANCH ?? 'main',
     // deploymentName is deliberately NOT passed: CmsWorker resolves it through
-    // resolveDeploymentName, which reads CANOPYCMS_DEPLOYMENT_NAME itself
-    // (CanopyCmsService stamps that env var from
-    // CanopyCmsServiceProps.deploymentName), applies the same env > config >
-    // 'prod' precedence as the Lambda, and validates the result as a git ref
-    // component. Reading the env var here instead would re-implement the
-    // outer half of that chain and skip the validation.
+    // resolveDeploymentName, which reads CANOPYCMS_DEPLOYMENT_NAME itself,
+    // applies the same env > config > 'prod' precedence as the Lambda, and
+    // validates the result as a git ref component. Reading the env var here
+    // would re-implement the outer half of that chain and skip the validation.
     // Explicit override, matching the strategy's own precedence: an adopter who
     // sets `settingsBranch` in canopycms.config.ts must set this too, or the
     // worker would own a branch name the Lambda never writes to.

@@ -18,7 +18,7 @@ import { simpleGit } from 'simple-git'
 import type { BranchAccessControl, BranchMetadata, BranchStatus } from '../types'
 import { BranchMetadataFileManager, getBranchMetadataFileManager } from '../branch-metadata'
 // Same constants the reader uses, rather than a second copy of the two string
-// literals -- they were declared independently here until 2026-08-23.
+// literals.
 import { BRANCH_META_DIR, BRANCH_META_FILE } from '../branch-metadata-file'
 import { scanBranchHealth, type BranchHealthEntry } from '../branch-health'
 import { ContentIdIndex } from '../content-id-index'
@@ -35,19 +35,11 @@ import { getErrorMessage, isNodeError, isNotFoundError } from '../utils/error'
 import type { ApiContext, ApiRequest, ApiResponse } from './types'
 import { defineEndpoint } from './route-builder'
 
-// ============================================================================
-// Constants
-// ============================================================================
-
 /** [H1] A fresh (< 5 min old) init lock blocks purge -- provisioning may be running. */
 const PROVISIONING_LOCK_FRESH_MS = 5 * 60_000
 
 /** An orphan dir younger than this may still be a clone in progress; corrupt dirs are exempt. */
 const ORPHAN_YOUTH_THRESHOLD_MS = 15 * 60_000
-
-// ============================================================================
-// Response types
-// ============================================================================
 
 export interface BranchHealthData {
   entries: BranchHealthEntry[]
@@ -105,10 +97,6 @@ export interface RepairContentDuplicatesData {
 /** Response type for POST /admin/branch-dirs/:dirName/repair-content-duplicates */
 export type RepairContentDuplicatesResponse = ApiResponse<RepairContentDuplicatesData>
 
-// ============================================================================
-// Zod schemas
-// ============================================================================
-
 // Mirrors deleteTaskHandler's fileName pattern in admin.ts: conservative
 // charset plus explicit traversal/dot-prefix refinements (the regex alone
 // technically excludes '/' already, but the refinements keep intent explicit
@@ -121,10 +109,6 @@ const dirNameSchema = z
 
 const branchDirParamsSchema = z.object({ dirName: dirNameSchema })
 export type BranchDirParams = z.infer<typeof branchDirParamsSchema>
-
-// ============================================================================
-// Shared helpers
-// ============================================================================
 
 /** Compact UTC stamp for trash/archive names: `YYYYMMDDTHHMMSSZ` (no colons -- portability). */
 function formatTrashStamp(date: Date): string {
@@ -157,10 +141,6 @@ class RepairPreconditionError extends Error {
   }
 }
 
-// ============================================================================
-// Handlers
-// ============================================================================
-
 const getBranchHealthHandler = async (
   _gc: Record<string, never>,
   ctx: ApiContext,
@@ -191,7 +171,7 @@ const getBranchHealthHandler = async (
  * sweeps trash older than 30 days, see cleanupTrashedBranchDirs in
  * worker/rebase.ts).
  *
- * Safety rails (see the PR's design review for the finding IDs):
+ * Safety rails:
  * - [always] the base branch directory can never be purged.
  * - Server re-derives live/corrupt/orphan state itself -- never trusts the
  *   client's view of the world.
@@ -225,7 +205,7 @@ const purgeBranchDirHandler = async (
     return { ok: false, status: 400, error: 'Invalid directory name' }
   }
 
-  // [MEDIUM-1 rider] The directory must actually exist -- otherwise
+  // The directory must actually exist -- otherwise
   // withOccFileLock's `mkdir -p` below would CREATE it, and purge would
   // "succeed" with a phantom `.trash-*` entry for a directory that was
   // never there. Must run before anything below treats "no branch.json" as
@@ -339,50 +319,29 @@ const purgeBranchDirHandler = async (
 
 /**
  * Repair a corrupt branch.json by archiving it (forensics preserved as
- * `branch.json.corrupt-{STAMP}`, ignored by future scans since it doesn't
- * match the exact `branch.json` name) and recreating defaults via the
- * normal save() path. Unlike purge, the base branch IS a valid target here
- * -- a corrupt BASE branch.json is exactly the degraded-service scenario
- * this handler exists to fix.
+ * `branch.json.corrupt-{STAMP}`) and recreating defaults via save(). Unlike
+ * purge, the base branch IS a valid target -- a corrupt BASE branch.json is
+ * exactly the degraded-service scenario this handler exists to fix.
  *
- * [M4] Lock sequence: withOccFileLock is NOT reentrant, and save() takes it
- * internally, so the rename must happen and the lock must be RELEASED
- * (exiting the withOccFileLock callback) before save() runs -- calling
- * save() while still holding the lock would deadlock against itself.
+ * Lock sequence: withOccFileLock is NOT reentrant and save() takes its own
+ * hold, so the archive rename must complete and the lock must be RELEASED
+ * before save() runs, or save() would deadlock against itself. The
+ * provisioning lock stays held across the whole archive+save sequence, same
+ * order as purge (provisioning -> branch.json) so the two operations can
+ * never deadlock each other; without that hold, a concurrent purge could
+ * trash the directory mid-sequence and have save() resurrect a
+ * metadata-only ghost of it.
  *
- * The provisioning lock is held across the ENTIRE archive+save
- * sequence (acquired before withOccFileLock, released only after save()
- * completes), same lock order as purge (provisioning -> branch.json) so the
- * two can never deadlock against each other. Without this, a concurrent
- * purge could trash the directory in the window between this handler
- * releasing withOccFileLock (required before save(), per [M4] above) and
- * save() actually running -- save() would then resurrect a metadata-only
- * ghost of a directory purge just moved to trash.
- *
- * ## Reset, not recovered -- and why (August 2026 baseline review)
- *
- * save()'s defaults-merge sees no existing record once branch.json is
- * archived out of the way, so a `submitted` (write-locked) branch comes back
- * `editing` (unlocked), `access` ACLs are dropped to `{}`, and `createdBy`
- * becomes the ADMIN RUNNING THIS REPAIR, not the branch's real creator. This
- * handler deliberately does NOT attempt to recover those three fields from
- * the corrupt file, even though it is sometimes technically "partially
- * parseable" (e.g. valid JSON with a truncated tail, or a stray character
- * breaking otherwise-valid JSON): branch.json is written via
- * `writeOccJsonFile`, which is atomic (temp-file + rename/link, see
- * utils/occ-json-write.ts), so a genuinely corrupt file on disk is not
- * ordinary truncated-write debris -- it got that way some other, less
- * predictable way. `status`/`access` are security-adjacent (branch
- * protection and per-path ACLs); silently reinstating a best-effort guess
- * parsed out of a file that failed strict JSON.parse risks resurrecting
- * WRONG security state with no human review, which is worse than a clean,
- * clearly-reported reset. The archived file (`archivedAs`) is preserved
- * precisely so a human CAN recover the real values with full context (open
- * it, cross-check the GitHub PR, ask the editor) -- that is the safe
- * recovery path, not automation. What was missing before this fix was any
- * signal that a reset happened at all; the `reset` field on the response
- * closes that gap by always reporting the (new, defaulted) values for these
- * three fields, so the admin knows to re-apply the ACL and re-submit.
+ * Reset, not recovered: save()'s defaults-merge sees no existing record once
+ * branch.json is archived, so `status`/`access`/`createdBy` reset to
+ * `editing`/`{}`/the admin running this repair, even when the corrupt file
+ * is partially parseable. `status`/`access` are security-adjacent, and a
+ * genuinely corrupt branch.json (writes are atomic, so it didn't get that
+ * way from an ordinary truncated write) is not safe to best-effort-parse: a
+ * wrong guess with no human review is worse than a clean reset. The archived
+ * file lets a human recover the real values with full context instead. The
+ * response's `reset` field reports that a reset happened, so an admin never
+ * mistakes the new defaults for recovered data.
  */
 const repairBranchDirHandler = async (
   _gc: Record<string, never>,
@@ -397,7 +356,7 @@ const repairBranchDirHandler = async (
     return { ok: false, status: 400, error: 'Invalid directory name' }
   }
 
-  // [MEDIUM-1 rider] Same stat guard as purge: the directory must actually
+  // Same stat guard as purge: the directory must actually
   // exist, otherwise withOccFileLock's `mkdir -p` below would CREATE it.
   const dirExists = await fs
     .stat(dirPath)
@@ -652,13 +611,8 @@ const repairContentDuplicatesHandler = async (
   }
 }
 
-// ============================================================================
-// Route definitions
-// ============================================================================
-
 /**
  * Branch directory health scan (healthy/corrupt-metadata/orphan)
- * GET /admin/branch-health
  */
 const getBranchHealth = defineEndpoint({
   namespace: 'admin',
@@ -674,7 +628,6 @@ const getBranchHealth = defineEndpoint({
 
 /**
  * Purge a corrupt-metadata or orphan branch directory (reversible trash-rename)
- * POST /admin/branch-dirs/:dirName/purge
  */
 const purgeBranchDir = defineEndpoint({
   namespace: 'admin',
@@ -691,7 +644,6 @@ const purgeBranchDir = defineEndpoint({
 
 /**
  * Repair a corrupt branch.json by archiving it and recreating defaults
- * POST /admin/branch-dirs/:dirName/repair-metadata
  */
 const repairBranchDir = defineEndpoint({
   namespace: 'admin',
@@ -722,7 +674,6 @@ const repairBranchDir = defineEndpoint({
  * archiving the quarantined (losing) file(s) with a dot-prefixed name --
  * see content-id-index.ts's "Duplicate-ID quarantine" section and
  * repairContentDuplicatesHandler's doc comment.
- * POST /admin/branch-dirs/:dirName/repair-content-duplicates
  */
 const repairContentDuplicates = defineEndpoint({
   namespace: 'admin',

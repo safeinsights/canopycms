@@ -16,16 +16,15 @@ export interface PreviewContext {
 }
 
 /**
- * The slug portion of a preview URL, or '' for an index entry.
+ * The slug portion of a preview URL, or '' for an index entry -- `resolveUrlPathCandidates`
+ * refuses `/x/index`, so a preview built that way 404s.
  *
- * An index entry's URL is its COLLECTION's path -- the same collapse `computeEntryUrl`,
- * `listEntries` and `defaultBuildPath` apply. Without it this builder pointed the preview iframe
- * at `/x/index`, which `resolveUrlPathCandidates` deliberately refuses to resolve, so the host
- * app answered the editor's own preview with notFound().
+ * An index entry's URL is its COLLECTION's path, the same collapse `computeEntryUrl`,
+ * `listEntries`, and `defaultBuildPath` apply.
  *
- * Kept separate from `computeEntryUrl` rather than delegating wholesale because this builder must
- * percent-encode each segment and must NOT lowercase (a preview base is adopter-supplied and
- * case-sensitive). Only the index decision is shared -- which is the part that drifted.
+ * Kept separate from `computeEntryUrl`, which shares only the index decision: this builder
+ * must percent-encode each segment and must NOT lowercase, since a preview base is
+ * adopter-supplied and case-sensitive.
  */
 const encodePreviewSlug = (slug?: string): string => (isIndexSlug(slug) ? '' : encodeSlug(slug))
 
@@ -62,12 +61,10 @@ const buildRawPreviewSrc = (
   const isRootEntry = contentRoot && entry.collectionPath === contentRoot
 
   if (isRootEntry) {
-    // Check for custom preview URL in previewBaseByCollection
     const customPreview = previewBaseByCollection?.[`${contentRoot}/${entry.slug}`]
     if (customPreview) {
       return appendBranch(customPreview)
     }
-    // Default root entries to root path
     return appendBranch('/')
   }
 
@@ -75,11 +72,9 @@ const buildRawPreviewSrc = (
     (entry.collectionPath && previewBaseByCollection?.[entry.collectionPath]) ??
     (entry.collectionName && previewBaseByCollection?.[entry.collectionName])
   if (!base) {
-    // Build URL from collection path + slug. Pass contentRoot through so a
-    // non-default (or multi-segment, e.g. "cms/content") configured root is
-    // stripped too -- normalizeCollectionPath defaults to 'content' when
-    // contentRoot is undefined here, which matches the pre-existing behavior
-    // for adopters who never set it.
+    // Pass contentRoot through so a non-default (or multi-segment, e.g.
+    // "cms/content") configured root is stripped too; normalizeCollectionPath
+    // defaults to 'content' when contentRoot is undefined.
     const collectionPath = entry.collectionPath
       ? normalizeCollectionPath(entry.collectionPath, contentRoot)
       : ''
@@ -98,15 +93,14 @@ const buildRawPreviewSrc = (
  * Builds the preview iframe `src` for an entry, prefixed with the deployment `basePath`
  * (`CanopyClientConfig.basePath`, e.g. `/preview-123`) when configured.
  *
- * This matters twice: the raw `<iframe src>` (`PreviewFrame` in preview-bridge.tsx) 404s without
- * the prefix when the host app is served under a basePath, AND `resolvePreviewPath` there compares
- * the SAME string against `window.location.pathname` -- which browsers report WITH the basePath
- * included -- so an unprefixed `previewSrc` also breaks draft sync / click-to-focus even when the
- * iframe itself happens to resolve. One prefix, applied uniformly here, fixes both.
+ * This matters twice: the raw `<iframe src>` (`PreviewFrame` in preview-bridge.tsx) 404s
+ * without the prefix under a basePath, and `resolvePreviewPath` there compares the same
+ * string against `window.location.pathname` -- which browsers report WITH the basePath --
+ * so an unprefixed `previewSrc` also breaks draft sync / click-to-focus even when the
+ * iframe itself resolves.
  *
- * Applied via `joinUrlPrefix`, so it's a no-op when `basePath` is unset (default), and it passes an
- * already-absolute `previewSrc` (a fully custom, e.g. cross-origin, override) through untouched --
- * matching `joinUrlPrefix`'s own absolute-URL passthrough rule.
+ * Applied via `joinUrlPrefix`: a no-op when `basePath` is unset, and passes an
+ * already-absolute `previewSrc` (a cross-origin override) through untouched.
  */
 export const buildPreviewSrc = (
   entry: {
@@ -207,13 +201,6 @@ export const buildEntriesFromListResponse = ({
   })
 }
 
-/**
- * Builds a map of collection IDs to their labels for breadcrumb display.
- * Recursively walks through nested collections to build a flat map.
- *
- * @param collections - The collection tree structure
- * @returns A Map where keys are collection IDs (paths) and values are labels
- */
 export const buildCollectionLabels = (collections?: EditorCollection[]): Map<string, string> => {
   const map = new Map<string, string>()
   if (!collections) return map
@@ -236,19 +223,6 @@ export const buildCollectionLabels = (collections?: EditorCollection[]): Map<str
  * @param currentEntry - The entry to build breadcrumbs for (or undefined for root)
  * @param collectionLabels - Map of collection IDs to labels
  * @returns Array of breadcrumb segment strings, starting with 'All Files'
- *
- * @example
- * ```ts
- * // Entry in nested collection
- * const entry = { collectionPath: 'content/docs/guides', slug: 'config' }
- * const labels = new Map([
- *   ['content', 'Content'],
- *   ['content/docs', 'Documentation'],
- *   ['content/docs/guides', 'Guides']
- * ])
- * buildBreadcrumbSegments(entry, labels)
- * // Returns: ['All Files', 'Documentation', 'Guides']
- * ```
  */
 export const buildBreadcrumbSegments = (
   currentEntry: EditorEntry | undefined,
@@ -287,24 +261,6 @@ export const buildBreadcrumbSegments = (
  * @param entryPath - The entry path to find (e.g., "blog/my-post")
  * @param treeData - The tree data structure from Mantine Tree
  * @returns Record<string, boolean> - Expanded state object where keys are collection node values
- *
- * @example
- * ```ts
- * const treeData = [
- *   {
- *     value: 'collection:blog',
- *     children: [
- *       { value: 'blog/post-1' },
- *       {
- *         value: 'collection:blog/featured',
- *         children: [{ value: 'blog/featured/my-post' }]
- *       }
- *     ]
- *   }
- * ]
- * calculatePathToEntry('blog/featured/my-post', treeData)
- * // Returns: { 'collection:blog': true, 'collection:blog/featured': true }
- * ```
  */
 export const calculatePathToEntry = (
   entryPath: string | undefined,
@@ -314,30 +270,20 @@ export const calculatePathToEntry = (
 
   const pathToExpand: Record<string, boolean> = {}
 
-  /**
-   * Recursive function to find entry and mark parent collections as expanded.
-   * @param nodes - Current level of tree nodes to search
-   * @param ancestors - Accumulated ancestor node values (collection IDs) from root to current position
-   * @returns true if the target entry was found in this subtree
-   */
   const findAndMarkPath = (nodes: TreeNodeData[], ancestors: string[]): boolean => {
     for (const node of nodes) {
-      // Found the target entry
       if (node.value === entryPath) {
-        // Mark all ancestors as expanded
         for (const ancestor of ancestors) {
           pathToExpand[ancestor] = true
         }
         return true
       }
 
-      // Search children recursively if they exist
       if (node.children && node.children.length > 0) {
         const currentPath = [...ancestors, node.value]
         const found = findAndMarkPath(node.children, currentPath)
 
         if (found) {
-          // Mark this node as expanded since the target was found in its subtree
           pathToExpand[node.value] = true
           return true
         }

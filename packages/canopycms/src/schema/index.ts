@@ -13,7 +13,6 @@
  * ```
  */
 
-// Types
 export type { EntrySchemaRegistry, SchemaSourceInfo, SchemaResolutionResult } from './types'
 
 // Meta loader (low-level API)

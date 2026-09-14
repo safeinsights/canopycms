@@ -1,38 +1,25 @@
 /**
- * The shared transform engine: applies a parsed `TransformDirectives` to
- * source image bytes with sharp. Server-only - never import this from
- * client/editor code (this is why it lives in its own file, separate from
- * the dependency-free transform-directives.ts). Used by the dev-mode lazy
- * `/assets/t/*` emulation in api/assets.ts and, unchanged, by the prod
- * transform Lambda (packages/canopycms-cdk/lambda/asset-transform).
+ * The shared transform engine: applies a parsed `TransformDirectives` to source image bytes
+ * with sharp. Server-only - never import this from client/editor code (kept in its own file,
+ * separate from the dependency-free transform-directives.ts). Used by the dev-mode lazy
+ * `/assets/t/*` emulation in api/assets.ts and, unchanged, by the prod transform Lambda
+ * (packages/canopycms-cdk/lambda/asset-transform).
  *
- * sharp is imported for its TYPES only and loaded on first use through
- * `loadSharp()` (sharp-loader.ts), so importing this module never loads
- * libvips. That matters because this module sits in the import graph of
- * `canopycms/server` and `canopycms/http`: see sharp-loader.ts for the
- * adopter outage a static import caused, and eslint.config.mjs for the rule
- * that keeps it from coming back.
+ * sharp is imported for its TYPES only and loaded on first use through `loadSharp()`
+ * (sharp-loader.ts), so importing this module never loads libvips - see sharp-loader.ts for
+ * why, and eslint.config.mjs for the rule that keeps a static import from coming back.
  *
- * Pipeline: a cheap metadata-only probe (`limitInputPixels: MAX_INPUT_PIXELS`,
- * decompression-bomb defense #1) learns the real page count, so animated
- * GIF/WebP frames can be capped at `MAX_ANIMATED_FRAMES` (decompression-bomb
- * defense #2) without exceeding it and making sharp throw -> load for real
- * with `{ pages: min(totalPages, MAX_ANIMATED_FRAMES), limitInputPixels }` ->
- * `.rotate()` with no args (bakes EXIF orientation into pixels,
- * dropping the orientation tag) -> optional crop via `.extract()` -> optional
- * `.resize({ width, withoutEnlargement: true })` (never upscales) -> encode.
+ * Pipeline: metadata probe learns the page count (decompression-bomb defenses #1/#2) -> real
+ * load capped at `min(totalPages, MAX_ANIMATED_FRAMES)` -> `.rotate()` (bakes EXIF orientation
+ * into pixels) -> optional crop/resize (never upscales) -> encode.
  *
- * Identity (`orig`) and any request that omits an explicit `f=` format
- * re-encode through the SOURCE format rather than a fixed one: this is what
- * guarantees EXIF/GPS gets stripped even when no other change is requested
- * (sharp strips metadata by default on re-encode - `withMetadata()` is never
- * called here, which would undo that).
+ * Identity (`orig`) and any request that omits an explicit `f=` format re-encode through the
+ * SOURCE format rather than a fixed one: this is what guarantees EXIF/GPS gets stripped even
+ * when no other change is requested (sharp strips metadata by default on re-encode -
+ * `withMetadata()` is never called here, which would undo that).
  *
- * GIF has no EXIF segment (EXIF is a JPEG/TIFF APP1 marker; GIF has no such
- * extension block), so an identity GIF has nothing to strip - it is still
- * re-encoded through sharp's `.gif()` (verified: current sharp bundles cgif
- * and re-encodes multi-frame GIFs through the `{ animated: true }` input
- * path with no extra native dependency) purely for pipeline uniformity, not
+ * GIF has no EXIF segment (EXIF is a JPEG/TIFF APP1 marker), so an identity GIF has nothing to
+ * strip - it is still re-encoded through sharp's `.gif()` purely for pipeline uniformity, not
  * because GIF needs stripping.
  */
 
@@ -154,7 +141,7 @@ function encode(pipeline: SharpPipeline, format: OutputFormat, quality: number |
 
 /**
  * Re-encode through the source container format - used for identity and for
- * requests that omit `f=`. `quality` (C3) is honoured here exactly like
+ * requests that omit `f=`. `quality` is honoured here exactly like
  * `encode()` does for an explicit `f=`, so a `q=` directive without `f=` is
  * never silently dropped - the cache key (`formatDirectives` in
  * transform-directives.ts) already includes `q=` unconditionally, so the

@@ -3,9 +3,6 @@
 /**
  * MDXEditor toolbar button for inserting entry links.
  *
- * Opens a modal with a searchable list of entries. When the user selects
- * an entry, inserts [Entry Title](entry:CONTENT_ID) into the editor.
- *
  * Must be rendered inside an MDXEditor toolbar (uses usePublisher from gurx).
  */
 
@@ -47,7 +44,6 @@ export const InsertEntryLink: React.FC<InsertEntryLinkProps> = ({ onInsert }) =>
     )
   }, [entries, search])
 
-  // Group entries by collection
   const grouped = useMemo(() => {
     const groups = new Map<string, EntryLinkOption[]>()
     for (const entry of filtered) {

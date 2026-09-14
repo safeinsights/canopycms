@@ -11,14 +11,9 @@ interface Props {
   currentUserId: string
 }
 
-/**
- * User switcher modal component that displays all available dev users
- */
 export function UserSwitcherModal({ opened, onClose, currentUserId }: Props) {
   const switchUser = (userId: string) => {
-    // Set cookie for 7 days
     setDevUserCookie(userId)
-    // Reload to apply new user
     window.location.reload()
   }
 

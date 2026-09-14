@@ -65,7 +65,7 @@ export async function finalizeAsset(
 }
 
 /**
- * Finalize a previously-staged upload: read the staged bytes, run
+ * Finalize a staged upload: read the staged bytes, run
  * `finalizeAsset`, and best-effort delete the staging object regardless of
  * outcome (success OR pipeline rejection - a rejected upload's staged bytes
  * are just as much litter as an accepted one's).

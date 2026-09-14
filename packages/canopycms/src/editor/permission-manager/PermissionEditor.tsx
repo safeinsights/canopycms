@@ -1,10 +1,5 @@
 'use client'
 
-/**
- * Permission editor panel for a selected tree node.
- * Handles permission CRUD with tabs for each level.
- */
-
 import React from 'react'
 import { ActionIcon, Badge, Button, Group, Paper, Stack, Tabs, Text, Tooltip } from '@mantine/core'
 import { IconSearch, IconX, IconUserOff } from '@tabler/icons-react'
@@ -28,7 +23,6 @@ export interface PermissionEditorProps {
   groups: GroupSelectItem[]
   /** Whether this node is selected (used for search panel visibility) */
   isSelected: boolean
-  // User search
   userSearchResults: UserSearchResult[]
   isSearchingUsers: boolean
   showUserSearch: boolean
@@ -39,7 +33,6 @@ export interface PermissionEditorProps {
   onToggleUserSearch: (show: boolean) => void
   onAddUser: (path: string, level: PermissionLevel, userId: string) => void
   onRemoveUser: (path: string, level: PermissionLevel, userId: string) => void
-  // Group search
   showGroupSearch: boolean
   groupSearchQuery: string
   filteredGroups: GroupSelectItem[]
@@ -77,7 +70,6 @@ export const PermissionEditor: React.FC<PermissionEditorProps> = ({
   const directPerm = node.directPermission
   const inheritedPerm = node.inheritedPermission
 
-  // Get permission target for a level (from direct or inherited)
   const getTargetForLevel = (
     level: PermissionLevel,
     source: 'direct' | 'inherited',
@@ -94,7 +86,7 @@ export const PermissionEditor: React.FC<PermissionEditorProps> = ({
           {node.type === 'folder' ? '/**' : ''}
         </Text>
 
-        {/* Level tabs - keepMounted={false} ensures only active panel is in DOM */}
+        {/* keepMounted={false} ensures only the active panel is in the DOM */}
         <Tabs
           value={activeLevel}
           onChange={(v) => onSetActiveLevel(v as PermissionLevel)}
@@ -114,7 +106,6 @@ export const PermissionEditor: React.FC<PermissionEditorProps> = ({
 
             return (
               <Tabs.Panel key={level} value={level} pt="sm">
-                {/* Inherited permissions display */}
                 {inheritedTarget && (
                   <div style={{ marginBottom: 'var(--mantine-spacing-sm)' }}>
                     <Text size="xs" fw={500} mb={4} c="dimmed">
@@ -171,7 +162,6 @@ export const PermissionEditor: React.FC<PermissionEditorProps> = ({
                       {LEVEL_CONFIG[level].label} Access
                     </Text>
 
-                    {/* Badges for groups and users */}
                     <Group gap="xs" mb="xs">
                       {(directTarget?.allowedGroups ?? []).map((groupId) => {
                         const groupInfo = groups.find((g) => g.value === groupId)
@@ -247,7 +237,6 @@ export const PermissionEditor: React.FC<PermissionEditorProps> = ({
                         )}
                     </Group>
 
-                    {/* Action buttons */}
                     <Group gap="xs">
                       <Button
                         size="xs"
@@ -267,7 +256,6 @@ export const PermissionEditor: React.FC<PermissionEditorProps> = ({
                         {showUserSearch ? 'Cancel' : 'Add User'}
                       </Button>
 
-                      {/* Anonymous user button - only show if not already added */}
                       {!(directTarget?.allowedUsers ?? []).includes('anonymous') && (
                         <Tooltip label="Allow unauthenticated/public access">
                           <Button
@@ -283,7 +271,6 @@ export const PermissionEditor: React.FC<PermissionEditorProps> = ({
                       )}
                     </Group>
 
-                    {/* Group search panel - only show when this node is selected and on active level */}
                     {showGroupSearch && isSelected && activeLevel === level && (
                       <GroupSelector
                         searchQuery={groupSearchQuery}
@@ -293,7 +280,6 @@ export const PermissionEditor: React.FC<PermissionEditorProps> = ({
                       />
                     )}
 
-                    {/* User search panel - only show when this node is selected and on active level */}
                     {showUserSearch && isSelected && activeLevel === level && (
                       <UserSelector
                         searchQuery={userSearchQuery}

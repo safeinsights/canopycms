@@ -1,53 +1,15 @@
 #!/usr/bin/env node
-// Factual guard for the agent-facing documentation layer.
+// Factual guard for the agent-facing documentation layer: backticked repo
+// paths must exist, relative markdown links must resolve, and our own
+// package import specifiers must resolve against the real `exports` map.
+// Also enforces a per-file word budget and a history-marker cap (see
+// docs-budgets.json and HISTORY_MARKER_RE below). SCOPE is narrower than
+// "every markdown file" -- only where a path functions as an INSTRUCTION;
+// see EXCLUDED below. Dependency-free apart from git itself.
 //
-// This checks two things a reader cannot verify by reading, and that rotted
-// badly enough by 2026-08-23 to be worth a script:
-//
-//   1. Repo paths cited in backticks actually exist. AGENTS.md documented a
-//      `packages/canopycms/src/middleware/` module that never existed;
-//      `.claude/agents/update-codebase-guide.md` listed nine directories to
-//      monitor, of which SIX did not exist, so the agent charged with keeping
-//      CODEBASE_GUIDE.md accurate was blind to most of what it watched;
-//      `init-maintenance.md` pointed at `cli/templates/` (really
-//      `cli/template-files/`); the baseline-review skill sent a reviewer to
-//      `src/asset-store.ts` (really `src/assets/`).
-//   2. Relative markdown links resolve. Splitting the root AGENTS.md into
-//      per-directory files on 2026-08-23 moved prose that had been written
-//      relative to the repo root four levels down, silently breaking every
-//      `[docs/concurrency.md](docs/concurrency.md)` in it. Targets resolve
-//      against the LINKING FILE's own directory, the same rule
-//      check-future-tasks.mjs uses and for the same reason.
-//   3. Import specifiers for OUR packages resolve against the real `exports`
-//      maps. ARCHITECTURE.md advertised a `canopycms/config` entrypoint twice
-//      AND shipped a copy-pasteable fence importing from it; CODEBASE_GUIDE.md
-//      cited `canopycms/schema`; canopycms-auth-clerk's own README told
-//      adopters to import from `canopycms/next`. None of the three exist, so
-//      anyone copying those lines gets a build error.
-//
-// SCOPE is deliberate, and narrower than "every markdown file". A path is only
-// worth checking where it functions as an INSTRUCTION. Excluded:
-//
-//   - `docs/reviews/` -- dated snapshots. A July report citing a file that has
-//     since moved is accurate history, not drift.
-//   - `.claude/future-tasks/` and `BACKLOG.md` -- prose backlogs. They cite
-//     files that do not exist YET (planned tests), and files in sibling repos.
-//     This is the same call scripts/check-future-tasks.mjs already documents
-//     for not checking source citations there. That backlog has its own
-//     checker for the links that ARE navigable.
-//
-// Two more sources of legitimate non-existence are filtered rather than
-// excluded, so the surrounding file still gets checked:
-//
-//   - Gitignored paths. Docs describe generated trees (`worker/dist`,
-//     `.canopy-dev`, `.scaffold-synth`) that are absent from a clean checkout.
-//     Asked of git directly, and asked in both bare and trailing-slash form:
-//     `git check-ignore` does not match a directory-only pattern against a
-//     path that does not currently exist.
-//   - Tutorial placeholders, listed explicitly below with a reason each.
-//
-// Dependency-free apart from git itself, so it runs the same way in CI and
-// pre-commit.
+// Usage: node scripts/check-docs.mjs [file...]
+//        node scripts/check-docs.mjs --write-baseline [--margin=N] [--allow-raise]
+//        node scripts/check-docs.mjs --report | --sections | --list-long-items
 
 import { readdirSync, readFileSync, existsSync, writeFileSync } from 'node:fs'
 import { join, dirname, resolve, relative } from 'node:path'
@@ -57,7 +19,13 @@ import { execFileSync } from 'node:child_process'
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const rel = (p) => relative(repoRoot, p)
 
-/** Markdown that is a dated snapshot or a prose backlog, not an instruction. */
+/**
+ * Markdown that is a dated snapshot or a prose backlog, not an instruction:
+ * docs/reviews/ cites files as they were, which is accurate history rather
+ * than drift, and future-tasks/ and BACKLOG.md cite files that don't exist
+ * yet (planned work) or live in sibling repos -- future-tasks/ has its own
+ * checker (check-future-tasks.mjs) for the links that ARE navigable.
+ */
 const EXCLUDED = [
   'docs/reviews',
   '.claude/future-tasks',
@@ -110,7 +78,11 @@ function loadPackageExports() {
 const packageExports = loadPackageExports()
 const packageNamesByLength = [...packageExports.keys()].sort((a, b) => b.length - a.length)
 
-/** Ask git which of these paths are ignored. Batched -- one subprocess. */
+/**
+ * Ask git which of these paths are ignored, so a doc describing a generated
+ * tree (`worker/dist`, `.canopy-dev`, `.scaffold-synth`) is not flagged just
+ * because a clean checkout doesn't have it yet. Batched -- one subprocess.
+ */
 function gitIgnored(paths) {
   if (paths.length === 0) return new Set()
   // Both forms: a directory-only pattern (`foo/`) does not match a bare `foo`
@@ -475,7 +447,7 @@ function findLongTableCells(records, filePath) {
   return out
 }
 
-// --- CLI flags: --write-baseline, --report and --sections short-circuit the checks ---
+// CLI flags: --write-baseline, --report and --sections short-circuit the checks.
 
 const argv = process.argv.slice(2)
 const flagWriteBaseline = argv.includes('--write-baseline')
@@ -519,7 +491,8 @@ for (const file of markdownFiles) {
   for (const [i, line] of lines.entries()) {
     const lineNo = i + 1
 
-    // --- check 1: backticked repo paths exist ---
+    // Check 1: a backticked repo path must exist, so a stale doc can't point
+    // an agent at a module that no longer does.
     for (const m of line.matchAll(/`([^`\n]+)`/g)) {
       const p = candidateRepoPath(m[1].trim())
       if (!p || PLACEHOLDERS.has(p)) continue
@@ -528,7 +501,8 @@ for (const file of markdownFiles) {
       }
     }
 
-    // --- check 2: relative markdown links resolve against the linking file ---
+    // Check 2: relative markdown links resolve against the LINKING FILE's own
+    // directory, not the repo root, so a doc keeps working after it moves.
     for (const m of line.matchAll(/\[[^\]]*\]\(([^)]+)\)/g)) {
       const target = m[1].trim()
       // Skip absolute URLs, anchors, and mailto -- only in-repo links are ours.
@@ -546,7 +520,8 @@ for (const file of markdownFiles) {
       }
     }
 
-    // --- check 3: our own import specifiers resolve to a real subpath export ---
+    // Check 3: our own import specifiers must resolve to a real subpath
+    // export, so a copy-pasteable example doesn't hand an adopter a build error.
     for (const m of line.matchAll(/from '([^']+)'|require\('([^']+)'\)/g)) {
       const spec = m[1] ?? m[2]
       if (!spec) continue
@@ -578,7 +553,7 @@ for (const c of missingCandidates) {
   })
 }
 
-// --- check 4: every in-scope doc has a budget entry, and every entry names a real file ---
+// Check 4: every in-scope doc has a budget entry, and every entry names a real file.
 const inScopeFiles = findDocsBudgetFiles()
 const budgets = loadBudgets()
 
@@ -598,7 +573,7 @@ for (const f of Object.keys(budgets)) {
   }
 }
 
-// --- checks 5-7: word, section-word and history-marker ceilings ---
+// Checks 5-7: word, section-word and history-marker ceilings.
 for (const f of inScopeFiles) {
   const budget = budgets[f]
   if (!budget) continue // already reported by check 4 above
@@ -643,7 +618,7 @@ for (const f of inScopeFiles) {
   }
 }
 
-// --- check 8: 25-word cap on list items and table cells ---
+// Check 8: 25-word cap on list items and table cells, warn-only while WARN_ONLY_LONG_ITEMS.
 const longItems = []
 for (const f of findWarningScopeFiles()) {
   const records = extractText(readFileSync(join(repoRoot, f), 'utf8'))

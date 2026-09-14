@@ -1,9 +1,3 @@
-/**
- * Branch-level authorization
- *
- * Handles checking if a user can access a branch based on ACLs.
- */
-
 import type { BranchContext } from '../types'
 import type { CanopyConfig, DefaultBranchAccess } from '../config'
 import { isAdmin, isReviewer } from './helpers'
@@ -15,27 +9,23 @@ import type { BranchAccessResult } from './types'
 export interface BranchAccessOptions {
   /**
    * Whether this is the protected base branch -- pass
-   * `getBranchProtection(...).isProtected`. When true, the branch passes this
-   * layer wherever no explicit ACL decided the question, and the PATH layer alone
-   * decides what is readable. Explicit ACL verdicts still win in both directions
-   * (see the comment at the fallback site).
+   * `getBranchProtection(...).isProtected`. When true the branch passes this
+   * layer wherever no explicit ACL decided the question, leaving the PATH layer
+   * to decide what is readable; explicit ACL verdicts still win in both
+   * directions (see the fallback site below).
    *
-   * This grant is load-bearing, not a convenience. The base branch takes no ACL
-   * (`updateBranchAccessHandler` rejects one outright, because an entry there
-   * would feed `allowed_by_acl` and confer Withdraw rights) and its `createdBy`
-   * is `canopycms-system`, so nobody is its creator. Without this, the branch
-   * every user lands on is unreachable under `defaultBranchAccess: 'deny'` with
-   * no way to configure around it -- which is what made 'deny' unusable for any
-   * site with non-admin editors.
-   *
-   * It cannot widen anything dangerous: workflow actions stay blocked because
-   * {@link canPerformWorkflowAction} disables its system-branch grant on the
-   * same flag, prod writes stay blocked by `getBranchWriteProtection().readOnly`,
-   * and the editor API 401s anonymous callers before authorization runs. What it
-   * buys is that a public-read `deployedAs: 'server'` site can run 'deny' with
+   * The grant is load-bearing: the base branch takes no ACL
+   * (`updateBranchAccessHandler` rejects one, since an entry there would feed
+   * `allowed_by_acl` and confer Withdraw rights) and its `createdBy` is
+   * `canopycms-system`, so nobody is its creator -- without this it is
+   * unreachable under `defaultBranchAccess: 'deny'` with no way to configure
+   * around it. It widens nothing dangerous: {@link canPerformWorkflowAction}
+   * disables its system-branch grant on the same flag, prod writes stay blocked
+   * by `getBranchWriteProtection().readOnly`, and the editor API 401s anonymous
+   * callers before authorization runs. What it buys: a public-read
+   * `deployedAs: 'server'` site can run 'deny' with
    * `defaultPathAccess: { read: 'allow' }` and still keep un-ACL'd work branches
-   * private -- previously that required the blunt `defaultBranchAccess: 'allow'`,
-   * which opened every work branch too.
+   * private.
    */
   isProtectedBranch?: boolean
 }
@@ -58,7 +48,6 @@ export function checkBranchAccessWithDefault(
   defaultAccess: DefaultBranchAccess = 'deny',
   options?: BranchAccessOptions,
 ): BranchAccessResult {
-  // Admins and Reviewers have full branch access
   if (isAdmin(user.groups) || isReviewer(user.groups)) {
     return { allowed: true, reason: 'privileged' }
   }
@@ -73,16 +62,13 @@ export function checkBranchAccessWithDefault(
   }
 
   if (!hasUserConstraint && !hasGroupConstraint) {
-    // The branch creator owns their own un-ACL'd branch. This matches the three
-    // places the server already grants on creator-ownership independently of
-    // branch access (listBranchesHandler, canDeleteBranch, canModifyBranchAccess)
-    // -- without it, under 'deny' a creator could delete their branch and rewrite
-    // its ACL but not read a single file on it.
-    //
-    // Deliberately scoped to the no-ACL case: an EXPLICIT allowlist that omits
-    // the creator still denies them, because that is how an admin locks down a
-    // branch someone else created. Granting creator ahead of the ACL would make
-    // that lockdown silently ineffective.
+    // The branch creator owns their own un-ACL'd branch, matching the three
+    // places that already grant on creator-ownership independently of branch
+    // access (listBranchesHandler, canDeleteBranch, canModifyBranchAccess):
+    // without it, under 'deny' a creator could delete their branch and rewrite
+    // its ACL but not read a file on it. Scoped to the no-ACL case on purpose --
+    // an EXPLICIT allowlist omitting the creator still denies them, which is how
+    // an admin locks down a branch someone else created.
     if (context.branch.createdBy === user.userId) {
       return { allowed: true, reason: 'creator' }
     }
@@ -108,11 +94,9 @@ export function checkBranchAccessWithDefault(
 }
 
 /**
- * Create a branch access checker with bound default access.
- *
- * `config` is needed to resolve whether a branch is the protected base branch;
- * it routes through `getBranchProtection`, the single source of truth for that
- * question, rather than repeating the base-branch test here.
+ * Bind a default access level. `config` is needed only to resolve the
+ * protected-base-branch question, which routes through `getBranchProtection`,
+ * its single source of truth, rather than repeating the comparison here.
  */
 export function createCheckBranchAccess(
   defaultAccess: DefaultBranchAccess = 'deny',
@@ -135,31 +119,21 @@ export interface WorkflowActionOptions {
    * -- pass `getBranchProtection(...).isProtected` here so only
    * admins/reviewers/explicit-ACL users retain workflow rights on it.
    *
-   * It is also forwarded to {@link checkBranchAccessWithDefault}, where the same
-   * flag GRANTS access (see {@link BranchAccessOptions.isProtectedBranch}). The
-   * two pull in opposite directions on purpose, and that is exactly the intended
-   * base-branch posture: readable by anyone the path layer permits, submittable
-   * by no one. The access layer says yes, then `isSystemBranch` below is false,
-   * so a non-creator/non-ACL/non-privileged user still gets `false` here.
+   * The same flag GRANTS access in {@link checkBranchAccessWithDefault} (see
+   * {@link BranchAccessOptions.isProtectedBranch}); pulling in opposite
+   * directions is the intended base-branch posture -- readable by anyone the
+   * path layer permits, submittable by no one.
    */
   isProtectedBranch?: boolean
 }
 
 /**
- * Check if user can perform workflow actions (submit/withdraw) on a branch.
- * Allowed if: user is creator OR user has ACL access OR (system branch AND user has general access).
+ * Whether a user may submit/withdraw a branch: creator, OR ACL access, OR a
+ * system branch plus general access.
  *
- * This implements a hybrid permission model:
- * - Branch creators can always submit/withdraw their branches
- * - Users explicitly listed in branch ACLs can also submit/withdraw
- * - For system branches (createdBy: 'canopycms-system'), anyone with general access can submit/withdraw
- * - Admins and Reviewers always have access (via checkBranchAccess)
- * - Unless `options.isProtectedBranch` is set, in which case the system-branch
- *   grant above is disabled (see {@link WorkflowActionOptions})
- *
- * The creator grant is enforced twice over: `checkBranchAccessWithDefault` now
- * admits the creator (so the gate below no longer swallows them under
- * `defaultBranchAccess: 'deny'`), and `userIsCreator` still decides the result.
+ * The creator grant is enforced twice: `checkBranchAccessWithDefault` admits
+ * the creator, so the gate below cannot swallow them under
+ * `defaultBranchAccess: 'deny'`, and `userIsCreator` decides the result.
  */
 export function canPerformWorkflowAction(
   context: BranchContext,
@@ -167,27 +141,19 @@ export function canPerformWorkflowAction(
   defaultAccess: DefaultBranchAccess = 'deny',
   options?: WorkflowActionOptions,
 ): boolean {
-  // Check if user has general branch access (handles admins, reviewers, creator, ACLs)
   const accessResult = checkBranchAccessWithDefault(context, user, defaultAccess, {
     isProtectedBranch: options?.isProtectedBranch,
   })
 
-  // If user doesn't have basic branch access, deny immediately
   if (!accessResult.allowed) {
     return false
   }
 
-  // Check if user is the branch creator
   const userIsCreator = context.branch.createdBy === user.userId
 
-  // Check if this is a system-created branch (grant disabled on protected branches)
   const isSystemBranch =
     !options?.isProtectedBranch && context.branch.createdBy === 'canopycms-system'
 
-  // Allow if:
-  // 1. User is the creator, OR
-  // 2. User has ACL access (reason: 'privileged' or 'allowed_by_acl'), OR
-  // 3. System branch with general access
   return (
     userIsCreator ||
     accessResult.reason === 'privileged' ||

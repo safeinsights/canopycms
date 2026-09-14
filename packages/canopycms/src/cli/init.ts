@@ -107,7 +107,6 @@ export async function init(options: InitOptions): Promise<void> {
 
   p.intro('CanopyCMS init')
 
-  // Prompt for auth provider
   let authProvider: AuthProvider
   if (options.authProvider) {
     authProvider = options.authProvider
@@ -129,7 +128,6 @@ export async function init(options: InitOptions): Promise<void> {
     authProvider = choice
   }
 
-  // Prompt for static build
   let staticBuild: boolean
   if (options.staticBuild !== undefined) {
     staticBuild = options.staticBuild
@@ -151,7 +149,6 @@ export async function init(options: InitOptions): Promise<void> {
   const serverPageExt = staticBuild ? 'page.server.tsx' : 'page.tsx'
   const serverRouteExt = staticBuild ? 'route.server.ts' : 'route.ts'
 
-  // Generate files
   await writeFile(
     path.join(projectDir, 'canopycms.config.ts'),
     await canopyCmsConfig({ mode, staticBuild }),
@@ -184,23 +181,16 @@ export async function init(options: InitOptions): Promise<void> {
       writeOpts,
     )
   }
-  // Next resolves exactly ONE config, in the fixed order next.config.js,
-  // .mjs, .ts -- first match wins. Writing next.config.ts beside an existing
-  // .js/.mjs therefore produces a file Next silently never loads, taking
-  // `withCanopy` with it: no `/assets/:path*` rewrite (media URLs 404), no
-  // `transpilePackages`, and for --dual-build no `pageExtensions` split and no
-  // `output: 'export'`/'standalone' switching -- so `CANOPY_BUILD=static`
-  // quietly produces a normal server build WITH the editor in it. Nothing in
-  // the build output names the cause.
-  //
-  // Mirrors initDeployAws's own probe, which already knows configs come as
-  // .mjs too.
-  //
-  // Exactly Next's own CONFIG_FILES list, in its order (verified in
-  // next@15.5.21's shared/lib/constants). `.cjs` is deliberately NOT here:
-  // Next never loads it, so treating a stray next.config.cjs as the winner
-  // would skip writing next.config.ts AND print a note falsely claiming Next
-  // prefers the .cjs -- leaving the project with no loaded config at all.
+  // Next resolves exactly ONE config, in the fixed order next.config.js, .mjs, .ts —
+  // Next's own CONFIG_FILES list, verified in next@15.5.21's shared/lib/constants.
+  // (`.cjs` is deliberately excluded: Next never loads it, so treating a stray
+  // next.config.cjs as the winner would skip writing next.config.ts while falsely
+  // claiming Next prefers the .cjs, leaving no loaded config at all.) Writing
+  // next.config.ts beside an existing .js/.mjs produces a file Next silently never
+  // loads, taking `withCanopy` with it — no `/assets/:path*` rewrite, no
+  // `transpilePackages`, and for --dual-build no `pageExtensions`/`output` switching
+  // — with nothing in the build output naming the cause. Mirrors initDeployAws's
+  // own probe.
   const existingJsConfig = await firstExistingPath(projectDir, [
     'next.config.js',
     'next.config.mjs',
@@ -226,37 +216,30 @@ export async function init(options: InitOptions): Promise<void> {
     )
   }
 
-  // Next only loads middleware from the PARENT of the app/pages directory
-  // (verified in next@15.5.21: build uses `rootDir = path.join(pagesDir ||
-  // appDir, '..')`, dev uses getPossibleMiddlewareFilenames on the same).
-  // `init` supports multi-segment app dirs -- `--app-dir src/app` is
-  // documented -- so a project-root middleware.ts is never loaded there, with
-  // no warning from Next or from us. The Clerk variant's `auth.protect()` then
-  // silently does nothing: /edit and /api/canopycms/* lose their edge
-  // protection, and an unauthenticated visitor loads the editor shell and sees
-  // failed API calls instead of a sign-in redirect. The API's own Clerk
-  // enforcement still holds, so this is a lost defence-in-depth layer plus
-  // broken sign-in UX, not an authz bypass.
-  //
-  // `path.dirname('app')` is '.', which path.join collapses, so the plain case
-  // is unchanged.
+  // Next only loads middleware from the PARENT of the app/pages directory (verified
+  // in next@15.5.21: build derives rootDir via `path.join(pagesDir || appDir, '..')`,
+  // dev via getPossibleMiddlewareFilenames on the same). A multi-segment `--app-dir
+  // src/app` therefore puts a project-root middleware.ts where Next never loads it —
+  // with no warning from Next or from us. (The plain `appDir='app'` case is
+  // unaffected: `path.dirname('app')` is '.', which path.join collapses.) The Clerk
+  // variant's `auth.protect()` then silently does nothing: /edit and
+  // /api/canopycms/* lose their edge protection. The API's own Clerk enforcement
+  // still holds, so this is lost defense-in-depth plus broken sign-in UX, not an
+  // authz bypass.
   await writeFile(
     path.join(projectDir, path.dirname(appDir), 'middleware.ts'),
     await middleware({ authProvider }),
     writeOpts,
   )
 
-  // Update .gitignore -- creating it when absent.
-  //
-  // The no-file branch previously did nothing, silently. An adopter running
-  // `git init && canopycms init && next dev` then `git add .` commits the
-  // entire `.canopy-dev` workspace: full git working trees with their own
-  // `.git` directories, which git records as GITLINKS. That produces
-  // broken submodule-like entries with no `.gitmodules`, so collaborators
-  // cloning get empty directories where the CMS expects working trees --
-  // and the embedded-repository warning is easy to miss in a large `git add`.
-  // Recovering needs an understanding of gitlinks well beyond this tool's
-  // audience.
+  // Creates .gitignore when absent, and appends .canopy-dev/ to it when present
+  // without that entry. Without this, `git add .` after `canopycms init && next dev`
+  // commits the entire `.canopy-dev` workspace: full git clones with their own `.git`
+  // dirs, which git records as GITLINKS — broken submodule-like entries with no
+  // `.gitmodules`, so collaborators cloning get empty directories where the CMS
+  // expects working trees. The embedded-repository warning is easy to miss in a
+  // large `git add`, and recovering needs git-internals knowledge beyond this
+  // tool's audience.
   const gitignorePath = path.join(projectDir, '.gitignore')
   const CANOPY_GITIGNORE_BLOCK = '# CanopyCMS\n.canopy-dev/\n'
   if (await filePathExists(gitignorePath)) {
@@ -324,9 +307,6 @@ export async function initDeployAws(options: InitDeployOptions): Promise<void> {
 
   p.intro('CanopyCMS init-deploy aws')
 
-  // Detection never fails the command: each of these falls back to the value
-  // the templates hardcoded before detection existed, so an npm project on a
-  // `main`-default repo gets exactly the output it always got.
   const packageManager = await detectPackageManager(projectDir)
   const pm = commandsFor(packageManager)
   const defaultBranch = await detectDefaultBranch(projectDir)
@@ -361,10 +341,8 @@ export async function initDeployAws(options: InitDeployOptions): Promise<void> {
     writeOpts,
   )
 
-  // The CDK app itself. Without these three files the generated workflow's
-  // `cdk deploy` has nothing to deploy against: `cdk deploy` with no --app
-  // requires a cdk.json, and `cdk init` cannot supply one because it refuses
-  // to run in a non-empty directory.
+  // `cdk deploy` needs a cdk.json and `cdk init` refuses a non-empty directory, so
+  // these three files are written here.
   const cdkJsonPath = path.join(projectDir, 'cdk.json')
   const existingCdkJson = (await filePathExists(cdkJsonPath))
     ? await fs.readFile(cdkJsonPath, 'utf-8')
@@ -436,7 +414,6 @@ export async function initDeployAws(options: InitDeployOptions): Promise<void> {
     )
   }
 
-  // Check if next.config already has CANOPY_BUILD support
   const nextConfigPath = path.join(projectDir, 'next.config.ts')
   const nextConfigMjsPath = path.join(projectDir, 'next.config.mjs')
   const configPath = (await filePathExists(nextConfigPath))
@@ -477,8 +454,8 @@ export async function initDeployAws(options: InitDeployOptions): Promise<void> {
 
   const missing = await missingCdkDependencies(projectDir)
   if (missing.length > 0) {
-    // A generic "install the CDK packages" note is what let the previous gap
-    // ship. Name the ones this project is actually missing.
+    // Names the specific missing packages rather than a generic "install the CDK
+    // packages" note, so the adopter knows exactly what to add.
     p.log.warn(
       `Not installed: ${missing.join(', ')}. cdk.json runs ` +
         '`node --import tsx infrastructure/bin/app.ts`, so the deploy fails without them:\n' +
@@ -576,23 +553,16 @@ async function excludeFromTsconfig(
 }
 
 /**
- * Detect the CanopyCMS operating mode by importing the adopter's canopycms.config.ts.
+ * Detects the CanopyCMS operating mode by importing the adopter's canopycms.config.ts.
+ * Returns 'dev' when the file is absent (unconfigured project); throws — never silently
+ * defaults to 'dev' — when it's present but fails to load or has an unexpected shape,
+ * since a broken prod config must not fall through the worker-run-once prod-safety
+ * guard into the dev-only task-skip path. `mode` is schema-required (SEC-C1), so an
+ * omitted value fails Zod validation inside defineCanopyConfig, surfacing here as an
+ * import failure re-thrown loudly rather than treated as absent.
  *
- * Returns 'dev' when the config file is absent (unconfigured project).
- * Throws when the config file is present but cannot be loaded or has an unexpected
- * shape — we refuse to silently default to 'dev' in that case because doing so in
- * a real prod deployment would mask a broken config and cause the worker-run-once
- * prod-safety guard to fall through to the dev-only task-skip path.
- *
- * Since `mode` is now schema-required (no default — SEC-C1), a config file that omits
- * it fails Zod validation inside defineCanopyConfig at import time; that surfaces here
- * as a jiti-import failure, caught and re-thrown loudly below rather than silently
- * treated as absent.
- *
- * Accepts the same shapes as `cli/generate-ai-content.ts`:
- * `export default defineCanopyConfig({...})` → reads `.default.server.mode`
- * `export const config = defineCanopyConfig({...})` → reads `.config.server.mode`
- * Plain object exports (used in tests) are also accepted.
+ * Accepts the same export shapes as `cli/generate-ai-content.ts`: default or named
+ * `config` export of defineCanopyConfig(...), or a plain object (used in tests).
  */
 async function detectMode(projectDir: string): Promise<'prod' | 'dev'> {
   const cfgPath = path.join(projectDir, 'canopycms.config.ts')
@@ -656,7 +626,6 @@ export async function workerRunOnce(options: {
   // Dynamic import to avoid loading worker deps when not needed
   const { getTaskQueueDir } = await import('../worker/task-queue-config')
 
-  // Determine workspace and mode from config by actually importing the config file.
   // A regex-based detector here is unreliable: it cannot see through spread operators,
   // helper functions, or dynamic expressions, and can silently fall through to 'dev'
   // on a real prod config — turning a prod-safety guard into a silent task-loss bug.

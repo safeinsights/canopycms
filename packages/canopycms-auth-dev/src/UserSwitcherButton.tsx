@@ -10,9 +10,6 @@ const noop = () => () => {}
 const getSnapshot = () => getDevUserCookie() ?? DEFAULT_USER_ID
 const getServerSnapshot = () => DEFAULT_USER_ID
 
-/**
- * User switcher button component that shows current user avatar and opens modal
- */
 export function UserSwitcherButton() {
   const [opened, setOpened] = useState(false)
   const currentUserId = useSyncExternalStore(noop, getSnapshot, getServerSnapshot)

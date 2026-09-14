@@ -1,9 +1,5 @@
 'use client'
 
-/**
- * Badge component for displaying permission levels
- */
-
 import React from 'react'
 import { Badge, Tooltip } from '@mantine/core'
 import type { PermissionLevel, PermissionTarget } from './types'
@@ -15,10 +11,6 @@ export interface PermissionLevelBadgeProps {
   inherited?: PermissionTarget
 }
 
-/**
- * Displays a badge for a permission level.
- * Shows filled badge for direct permissions, outlined for inherited.
- */
 export const PermissionLevelBadge: React.FC<PermissionLevelBadgeProps> = ({
   level,
   target,

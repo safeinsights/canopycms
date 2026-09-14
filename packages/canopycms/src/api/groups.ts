@@ -26,10 +26,6 @@ export type UpdateInternalGroupsResponse = ApiResponse<Record<string, never>>
 /** Response type for searching external groups */
 export type ExternalGroupsResponse = ApiResponse<{ groups: ExternalGroup[] }>
 
-// ============================================================================
-// Zod Schemas for Validation
-// ============================================================================
-
 const internalGroupSchema = z.object({
   id: z.string(),
   name: z.string(),
@@ -69,7 +65,6 @@ export const validateAdminGroupUpdate = (
   newGroups: InternalGroup[],
   bootstrapAdminIds: Set<string>,
 ): { valid: boolean; error?: string } => {
-  // Find the Admins group in the new groups
   const adminsGroup = newGroups.find((g) => g.id === RESERVED_GROUPS.ADMINS)
   const adminMembersCount = adminsGroup?.members?.length ?? 0
 
@@ -77,7 +72,6 @@ export const validateAdminGroupUpdate = (
   const internalAdmins = new Set(adminsGroup?.members ?? [])
   let totalAdmins = adminMembersCount
 
-  // Add bootstrap admins that aren't already in the internal group
   for (const bootstrapId of bootstrapAdminIds) {
     if (!internalAdmins.has(bootstrapId)) {
       totalAdmins++
@@ -100,10 +94,8 @@ export const validateAdminGroupUpdate = (
 export const validateReservedGroups = (
   newGroups: InternalGroup[],
 ): { valid: boolean; error?: string } => {
-  // Check if any reserved group IDs have been altered
   for (const group of newGroups) {
     if (isReservedGroup(group.id)) {
-      // Reserved group exists - make sure the name matches the ID
       if (group.name !== group.id) {
         return {
           valid: false,
@@ -181,11 +173,10 @@ const updateInternalGroupsHandler = async (
 
     const { context, mode } = result
 
-    // Load -> compare -> reconcile -> validate -> write all happen atomically
-    // under the cross-host layered lock (see
-    // authorization/settings-file-store.ts), against the mutator's own
-    // freshly-reloaded file — no separate pre-read here, so there's no
-    // TOCTOU window between the version/reconciliation checks and the write.
+    // Load -> compare -> reconcile -> validate -> write all happen atomically under the
+    // cross-host layered lock (see authorization/settings-file-store.ts), against the mutator's
+    // own freshly-reloaded file — no separate pre-read, so no TOCTOU window between the
+    // version/reconciliation checks and the write.
     await mutateGroupsFile(context.branchRoot, mode, (currentFile, version) => {
       if (body.expectedContentVersion !== undefined && body.expectedContentVersion !== version) {
         throw new SettingsVersionConflictError(
@@ -203,18 +194,15 @@ const updateInternalGroupsHandler = async (
 
       // Process groups: generate IDs for new groups, keep IDs for existing groups
       const processedGroups = body.groups.map((group) => {
-        // Existing group with valid ID - keep ID
         if (group.id && group.id.trim() !== '' && existingById.has(group.id)) {
           return group
         }
 
-        // Check if this is a reserved group (by ID or name)
         if (isReservedGroup(group.id) || isReservedGroup(group.name)) {
           // Reserved groups: ID = name (e.g., "Admins", "Reviewers")
           return { ...group, id: group.name as CanopyGroupId }
         }
 
-        // New regular group (empty ID or not in existing set) - generate ID
         return { ...group, id: generateId() as CanopyGroupId }
       })
 
@@ -259,9 +247,8 @@ const updateInternalGroupsHandler = async (
       }
     })
 
-    // Commit and push (mode-aware). A push failure means the change is saved
-    // to the branch working tree but NOT durably persisted (API-H1) - surface
-    // that to the client instead of reporting a bare 200.
+    // A failed push is returned to the client as an error, never a bare 200 (see
+    // CommitSettingsResult in settings-helpers.ts).
     const commitResult = await commitSettings(ctx, {
       context,
       branchRoot: context.branchRoot,
@@ -335,10 +322,6 @@ const searchExternalGroupsHandler = async (
     }
   }
 }
-
-// ============================================================================
-// Route Definitions with defineEndpoint
-// ============================================================================
 
 /**
  * Get internal groups

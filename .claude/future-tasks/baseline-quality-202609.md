@@ -80,3 +80,11 @@ Sequence: G, then A1/A2/A3 and D in parallel (disjoint files), then B, then E.
 ## Deferred from this epic
 
 - [worker-test-seams-dependency-injection.md](worker-test-seams-dependency-injection.md)
+
+## Follow-ups
+
+- Chip A3 left `canopycms-cdk` at comment ratio 1.28, not the plan's 1.0. The reviewer's
+  estimate: about 380 more comment lines can go with no rule lost (the
+  `worker/credential-refresh.ts` header, `lambda-execution-role.ts` 46-76,
+  `asset-support.ts` 24-90, the `cms-service.ts` prop docs), landing near 1.1; reaching 1.0
+  would cost the per-IAM-statement reasons. The ratchet PR decides whether to take that pass.

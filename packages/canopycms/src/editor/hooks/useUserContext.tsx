@@ -14,16 +14,6 @@ export interface UseUserContextReturn {
 /**
  * Hook to fetch current user context from the API.
  * This provides the userId and groups needed for permission checks.
- *
- * @example
- * ```tsx
- * const { userContext, loading, error } = useUserContext()
- *
- * if (loading) return <div>Loading...</div>
- * if (error) return <div>Error: {error}</div>
- *
- * return <BranchManager user={userContext} />
- * ```
  */
 export function useUserContext(): UseUserContextReturn {
   const [userContext, setUserContext] = useState<UserContext | undefined>()

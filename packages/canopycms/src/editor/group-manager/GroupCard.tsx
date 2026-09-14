@@ -1,9 +1,5 @@
 'use client'
 
-/**
- * Card component for displaying a single group with its members
- */
-
 import React from 'react'
 import { ActionIcon, Badge, Group, Paper, Text, Tooltip } from '@mantine/core'
 import { IconEdit, IconTrash } from '@tabler/icons-react'
@@ -17,7 +13,6 @@ export interface GroupCardProps {
   onAddMember: (groupId: CanopyGroupId, userId: CanopyUserId) => void
   onRemoveMember: (groupId: CanopyGroupId, userId: CanopyUserId) => void
   onGetUserMetadata?: (userId: string) => Promise<UserSearchResult | null>
-  // User search state
   showUserSearch: boolean
   searchQuery: string
   searchResults: UserSearchResult[]

@@ -1,9 +1,6 @@
 /**
- * Permissions file loader
- *
- * Handles loading path permissions from the filesystem and mutating
- * permissions.json under the cross-host layered lock in
- * authorization/settings-file-store.ts.
+ * Loads path permissions, and mutates permissions.json under the cross-host
+ * layered lock in authorization/settings-file-store.ts.
  */
 
 import fs from 'node:fs/promises'
@@ -15,20 +12,11 @@ import { operatingStrategy } from '../../operating-mode'
 import { mutateSettingsJsonFile } from '../settings-file-store'
 import type { OccWriteResult } from '../../utils/occ-json-write'
 
-/**
- * Get the appropriate permissions file path based on mode
- */
 function getPermissionsFilePath(repoRoot: string, mode: OperatingMode): string {
   return operatingStrategy(mode).getPermissionsFilePath(repoRoot)
 }
 
-/**
- * Load full permissions file (for version checking)
- * Returns null if file doesn't exist.
- *
- * @param repoRoot - Repository root directory
- * @param mode - Operating mode (determines file path)
- */
+/** Returns null when the file doesn't exist. */
 export async function loadPermissionsFile(
   repoRoot: string,
   mode: OperatingMode,
@@ -41,12 +29,10 @@ export async function loadPermissionsFile(
     const validated = PermissionsFileSchema.parse(parsed)
     return validated
   } catch (error) {
-    // File doesn't exist
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
       return null
     }
 
-    // Parse/validation error - this is more serious
     console.error('CanopyCMS: Failed to parse permissions file', error)
     throw new Error(
       `Invalid permissions file: ${error instanceof Error ? error.message : 'unknown error'}`,
@@ -55,11 +41,8 @@ export async function loadPermissionsFile(
 }
 
 /**
- * Load path permissions from .canopycms/permissions.json (or .local.json in dev mode)
- * Returns empty array if file doesn't exist (no restrictions).
- *
- * @param repoRoot - Repository root directory
- * @param mode - Operating mode (determines file path)
+ * Loads .canopycms/permissions.json (permissions.local.json in dev mode).
+ * Returns an empty array when the file doesn't exist: no restrictions.
  */
 export async function loadPathPermissions(
   repoRoot: string,
@@ -70,14 +53,12 @@ export async function loadPathPermissions(
 }
 
 /**
- * Mutate permissions.json (or .local.json in dev mode) under the full
- * cross-host lock + OCC-retry stack (see
- * authorization/settings-file-store.ts). `mutate` is called with the
- * current parsed file (`null` if it doesn't exist yet) and the version to
- * write under; it returns the next raw payload, or `null` for a deliberate
- * no-op. The returned payload is validated against
- * {@link PermissionsFileSchema} before being written, preserving the
- * previous validate-before-write behavior of the old `savePathPermissions`.
+ * Mutate permissions.json (permissions.local.json in dev mode) under the full
+ * cross-host lock + OCC-retry stack (see authorization/settings-file-store.ts).
+ * `mutate` receives the current parsed file (`null` if absent) and the version
+ * to write under, and returns the next raw payload or `null` for a deliberate
+ * no-op. The payload is validated against {@link PermissionsFileSchema} before
+ * writing.
  */
 export async function mutatePermissionsFile(
   repoRoot: string,
@@ -100,8 +81,8 @@ export async function mutatePermissionsFile(
 }
 
 /**
- * Initialize permissions file if it doesn't exist. A no-op when the file is
- * already present (the mutator returns `null`, so no write happens).
+ * Create the permissions file if it doesn't exist; a no-op when it is already
+ * present (the mutator returns `null`, so no write happens).
  */
 export async function ensurePermissionsFile(
   repoRoot: string,
