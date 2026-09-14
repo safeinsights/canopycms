@@ -36,7 +36,7 @@ Three suspicions, each tested:
 
 ## After: comments
 
-`node scripts/check-comment-budget.mjs --report` on a plain `c25035d2` tree and at the integration tip, the same counter both sides. History markers: the plan's scout counter (case-sensitive, bare `reviewer`/`finding`) counted 151 at `c25035d2`, this guard counter counts 147, after 0. The after `scripts` code includes the two guard scripts this epic added (`check-comment-budget.mjs`, `diff-comments-only.mjs`). Max run 43 (`utils/`) is a leave-alone range.
+`node scripts/check-comment-budget.mjs --report` on a plain `c25035d2` tree and at the integration tip, the same counter both sides. History markers: the plan's scout counter (case-sensitive, bare `reviewer`/`finding`) counted 151 at `c25035d2`, this guard counter counts 147, after 0. The `scripts` code rise (+945) is the two guard scripts this epic added (`check-comment-budget.mjs` 410, `diff-comments-only.mjs` 189) plus the budget extension of `check-docs.mjs` (157 → 503). Max run 43 (`utils/`) is a leave-alone range.
 
 | package              | code            | comment         | ratio         | max run | markers |
 | -------------------- | --------------- | --------------- | ------------- | ------- | ------- |
