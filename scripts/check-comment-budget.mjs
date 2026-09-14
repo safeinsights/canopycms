@@ -64,7 +64,7 @@ const EXCLUDED_FILES = new Set([
 
 /** A comment line that reads as leftover review process rather than a durable rule. */
 const HISTORY_MARKER_RE =
-  /used to|previously|until 20\d\d|as of 20\d\d|\d{4}-\d\d-\d\d|PR #\d+|reviewer|review round|finding|\[(?:HIGH|MEDIUM|LOW)-\d+\]/i
+  /used to|previously|until 20\d\d|as of 20\d\d|\d{4}-\d\d-\d\d|PR #\d+|review (?:round|pass)|found by (?:a |the )?review|finding|\[(?:HIGH|MEDIUM|LOW)-\d+\]/i
 
 /** Lines that read like a comment but are tooling instructions, not documentation. */
 const REFERENCE_DIRECTIVE_RE = /^\/\/\/\s*<reference/
