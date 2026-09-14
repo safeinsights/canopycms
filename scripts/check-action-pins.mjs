@@ -2,7 +2,9 @@
 
 /**
  * Fail when any third-party GitHub Action is referenced by a MUTABLE tag
- * rather than a full 40-character commit SHA.
+ * rather than a full 40-character commit SHA. Enforced as a check rather than
+ * a convention because a manual sweep only covers the tree it ran on: a job
+ * merged in later from a sibling branch arrives unpinned and nothing notices.
  *
  * What a mutable tag costs, specifically: a tag is repointable by whoever owns
  * the action repo, so a maintainer-account compromise (the tj-actions/

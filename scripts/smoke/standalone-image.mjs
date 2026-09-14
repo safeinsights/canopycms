@@ -10,40 +10,15 @@
  * Needs Docker, Node >= 22.2 (`zlib.crc32`), pnpm (to pack) and, for `--pm pnpm`, corepack. CI
  * runs it as the `standalone-image` job in .github/workflows/ci.yml.
  *
- * Why it exists. Until this job, nothing built `Dockerfile.cms.template`: every test of it was a
- * string match on the generated text, or a CDK synth that stops at staging the build context.
- * Two defects shipped through that gap to the first adopter who built the image. Its builder
- * synthesized a `git init -b main` snapshot that no non-`main` `defaultBaseBranch` could build
- * against. Next's file tracing also left sharp's `libvips-cpp.so` out of `.next/standalone`, so
- * every image operation failed to dlopen at run time.
+ * Nothing else in the repo builds `Dockerfile.cms.template` or boots the image it produces --
+ * other tests only string-match the generated text or stop at CDK-synth staging -- so a defect
+ * that only shows up in the real build or at container run time (the sharp/libvips checks and the
+ * not-found-route checks below) is invisible anywhere else.
  *
- * Why the app lives OUTSIDE the workspace and installs `pnpm pack` tarballs. Inside this monorepo
- * the canopycms packages are workspace links compiled through `transpilePackages`, which is not
- * what an adopter installs. An adopter's registry install, built with Next 16's default Turbopack,
- * externalizes sharp as `.next/node_modules/sharp-<hash>`, the shape the libvips defect shows in,
- * and the "externalized" check below fails if a build stops producing it. A webpack build under
- * pnpm bundles sharp instead (seen on Next 15.5.21; see
- * `.claude/future-tasks/webpack-standalone-sharp-bundled.md`). What an in-workspace build does
- * with sharp has not been measured. `pnpm pack` rather than `npm pack` because only pnpm applies
- * `publishConfig` (the dist/ exports map an adopter actually gets) and rewrites `workspace:`
- * ranges.
- *
- * Why the generated Dockerfile gets one edit. The tarballs are `file:vendor/...` dependencies,
- * and the template's own comment tells an adopter with vendored tarballs to COPY that directory
- * before the install step. The script makes exactly that edit, at that comment, and fails if the
- * comment has moved.
- *
- * Why the container runs in dev mode, with a git checkout copied in before it starts. The
- * template's runner leaves CANOPY_MODE unset (the CDK construct sets prod on Lambda), so the
- * config's `mode: 'dev'` applies. Prod mode would need a credential-verifying auth plugin and an
- * EFS-style workspace, neither of which a CI container has, and the scaffold uses the dev auth
- * plugin. Dev mode serves request-time reads from a branch clone under `/app/.canopy-dev`, seeded
- * from the git repository at the server's cwd (`server.js` chdirs to `/app`). The image has no
- * repository (the runner stage copies only `.next/standalone`, `.next/static` and `public/`), so
- * the script commits the scaffold's `content/` on `release-base` and copies that checkout into
- * `/app` before starting. The runner runs as root, so `/app/.canopy-dev` is writable. That makes
- * every request-time read below exercise the non-`main` base branch at run time too, not just at
- * build.
+ * Runs the container in dev mode: the template's runner leaves CANOPY_MODE unset (the CDK
+ * construct sets prod only on Lambda), so the scaffold's `mode: 'dev'` applies and the dev auth
+ * plugin is used. Prod mode would need a credential-verifying auth plugin and an EFS-style
+ * workspace, neither of which a CI container has.
  */
 
 import { spawnSync } from 'node:child_process'
@@ -71,7 +46,7 @@ const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..
 /** What an adopter using the dev auth provider installs (`canopycms init`'s closing note). */
 const PACKAGES = ['canopycms', 'canopycms-next', 'canopycms-auth-dev']
 
-/** Deliberately not `main`: the pre-fix builder could only ever build a `main` base branch. */
+/** Deliberately not `main`, so a build that silently ignores defaultBaseBranch is caught. */
 const BASE_BRANCH = 'release-base'
 
 /**
@@ -187,7 +162,15 @@ function findTarball(dir, pkg) {
   return matches[0]
 }
 
-/** Pack (or copy in) the tarballs; returns the `file:` specifier for each package. */
+/**
+ * Pack (or copy in) the tarballs; returns the `file:` specifier for each package. The app that
+ * installs them lives outside this workspace (enforced in main(), below) because a workspace
+ * `transpilePackages` link is not what an adopter installs -- only a real registry install
+ * reproduces Next 16 Turbopack's `.next/node_modules/sharp-<hash>` externalization, the shape the
+ * libvips checks in assertContainer() assert against. `pnpm pack`, not `npm pack`: only pnpm
+ * applies `publishConfig` (the dist/ exports map an adopter actually gets) and rewrites
+ * `workspace:` ranges.
+ */
 function vendorTarballs(vendorDir, tarballDir) {
   mkdirSync(vendorDir, { recursive: true })
   for (const pkg of PACKAGES) {
@@ -317,10 +300,9 @@ function scaffold(appDir, options) {
     )
   }
   // The root layout reads content, so every page renders through that read, not-found pages
-  // included: at request time on a dynamic page, at build time on a prerendered one. An adopter's
-  // image whose root layout imported `lib/canopy` answered its not-found page and /favicon.ico
-  // with 500s (cms-image-build-epic.md, "Why 404s fail"). The two exact-404 checks below assert
-  // which copy of the content the layout rendered.
+  // included: at request time on a dynamic page, at build time on a prerendered one. A root
+  // layout that reads content must not 500 on a not-found page or /favicon.ico. The two exact-404
+  // checks below assert which copy of the content the layout rendered.
   writeText(
     path.join(appDir, 'app/layout.tsx'),
     [
@@ -365,6 +347,8 @@ function scaffold(appDir, options) {
     env: COREPACK_ENV,
   })
 
+  // A non-main defaultBaseBranch, so the request-time reads asserted in assertContainer() (seeded
+  // by seedCheckout()) exercise real branch resolution instead of the trivial main-only case.
   patchOnce(
     path.join(appDir, 'canopycms.config.ts'),
     "  mode: 'dev',\n",
@@ -381,6 +365,8 @@ function scaffold(appDir, options) {
     '  // Your Next.js config here\n',
     "  output: process.env.CANOPY_BUILD === 'cms' ? 'standalone' : undefined,\n",
   )
+  // Vendored tarballs are `file:vendor/...` dependencies; the template's own comment already
+  // tells an adopter with vendored tarballs to COPY that directory before the install step.
   patchOnce(
     path.join(appDir, 'Dockerfile.cms'),
     '# COPY that directory here, before the install step -- otherwise it fails.\n',
@@ -429,9 +415,10 @@ function scaffold(appDir, options) {
   )
 
   // The app's build-time content read. A prerendered sitemap is one a CMS server build may make
-  // (unlike a prerendered content page, which would serve build-time content past run-time
-  // ACLs), and it is where the pre-fix builder failed: `next build` read content through a git
-  // snapshot with no `release-base` branch. The helper is README.md's "Sitemap and SEO Metadata".
+  // (unlike a prerendered content page, which would serve build-time content past run-time ACLs),
+  // and BASE_BRANCH being non-main exercises Dockerfile.cms.template's own build-time git-init
+  // step against a real branch, not just the trivial main-only case. The helper is README.md's
+  // "Sitemap and SEO Metadata".
   const canopyModule = path.join(appDir, 'app/lib/canopy.ts')
   patchOnce(
     canopyModule,
@@ -466,9 +453,13 @@ function scaffold(appDir, options) {
 }
 
 /**
- * A git checkout of the scaffold's content, for dev mode's run-time reads. BASE_BRANCH commits the
- * page under `branchTitle`, and the working tree is then put back to `workingTreeTitle`. A request
- * that read `/app/content` instead of the branch clone would show the wrong title.
+ * A git checkout of the scaffold's content, copied into the container before it starts (the image
+ * ships no repository -- the runner stage copies only `.next/standalone`, `.next/static` and
+ * `public/` -- and dev mode's request-time reads need one under `/app/.canopy-dev`; the container
+ * runs as root, so that path is writable). BASE_BRANCH commits the page under `branchTitle`, and
+ * the working tree is then put back to `workingTreeTitle`, so a request that reads `/app/content`
+ * instead of the branch clone shows the wrong title -- the assertion in assertContainer() that
+ * catches it.
  */
 function seedCheckout(appDir, seedDir) {
   const contentDir = path.join(seedDir, 'content')
@@ -625,8 +616,8 @@ function describeSharpAliases() {
 }
 
 /**
- * The same one-liner the epic's manual verification ran: require each `.next/node_modules/sharp-*`
- * alias Next emitted, exactly as the server's externalized import resolves it, and encode a PNG.
+ * Requires each `.next/node_modules/sharp-*` alias Next emitted, exactly as the server's
+ * externalized import resolves it, and encodes a PNG.
  */
 const SHARP_ALIAS_LOAD =
   "for (const d of require('fs').readdirSync('/app/.next/node_modules').filter(n=>n.startsWith('sharp-'))) require('/app/.next/node_modules/'+d)({create:{width:4,height:4,channels:3,background:'#f00'}}).png().toBuffer().then(b=>console.log(d,b.length))"
@@ -680,7 +671,7 @@ async function assertContainer(baseUrl, container) {
     }
   })
 
-  // The adopter's image answered not-found responses with 500s. Three shapes:
+  // A not-found response must not 500. Three shapes:
   // - an unknown slug reaching the force-dynamic route's notFound(), whose root layout renders at
   //   request time, from the branch clone;
   // - a path no route matches, which Next serves from the not-found page `next build` prerendered,
