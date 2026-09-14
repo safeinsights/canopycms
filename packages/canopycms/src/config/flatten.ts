@@ -13,9 +13,6 @@ import type {
 import { createLogicalPath } from '../paths/normalize'
 import { ROOT_COLLECTION_ID } from '../paths/types'
 
-/**
- * Normalize a path value by splitting, filtering empty segments, and rejoining.
- */
 export const normalizePathValue = (val: string): string =>
   normalize(val).split('/').filter(Boolean).join('/')
 
@@ -49,7 +46,6 @@ export const flattenSchema = (root: RootCollectionConfig, basePath = ''): FlatSc
     }
     const normalizedFull = normalizePathValue(logicalPath)
 
-    // Add the collection itself
     flat.push({
       type: 'collection',
       logicalPath: createLogicalPath(normalizedFull),
@@ -63,7 +59,6 @@ export const flattenSchema = (root: RootCollectionConfig, basePath = ''): FlatSc
       order: collection.order,
     })
 
-    // Add entry types in this collection
     if (collection.entries) {
       for (const entryType of collection.entries as readonly EntryTypeConfig[]) {
         // Entry type path is collection path + entry type name
@@ -84,7 +79,6 @@ export const flattenSchema = (root: RootCollectionConfig, basePath = ''): FlatSc
       }
     }
 
-    // Recursively process nested collections
     if (collection.collections) {
       for (const child of collection.collections) {
         walkCollection(child, normalizedFull)
@@ -92,7 +86,6 @@ export const flattenSchema = (root: RootCollectionConfig, basePath = ''): FlatSc
     }
   }
 
-  // Add the root collection itself as a normal collection (if we have a base path)
   // This makes content root behave exactly like any other collection, just without a parent
   if (base) {
     flat.push({
@@ -108,11 +101,8 @@ export const flattenSchema = (root: RootCollectionConfig, basePath = ''): FlatSc
     })
   }
 
-  // Add root-level entry types
-  // Now their parentPath will reference the root collection we just added above
   if (root.entries) {
     for (const entryType of root.entries as readonly EntryTypeConfig[]) {
-      // Root entry type path is base + entry type name
       const entryTypePath = base ? join(base, entryType.name) : entryType.name
       flat.push({
         type: 'entry-type',
@@ -130,7 +120,6 @@ export const flattenSchema = (root: RootCollectionConfig, basePath = ''): FlatSc
     }
   }
 
-  // Process root-level collections
   // Pass base as parentPath so they are children of the content root collection
   if (root.collections) {
     for (const collection of root.collections) {

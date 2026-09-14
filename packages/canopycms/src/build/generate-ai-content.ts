@@ -220,10 +220,8 @@ export async function generateAIContentFiles(
   const { config, entrySchemaRegistry, outputDir, aiConfig, _testFlatSchema } = options
   const contentRootName = config.contentRoot || 'content'
 
-  // Resolve branch root
   const branchRoot = await resolveBranchRoot(config)
 
-  // Load schema
   let flatSchema: FlatSchemaItem[]
   if (_testFlatSchema) {
     flatSchema = _testFlatSchema
@@ -239,7 +237,6 @@ export async function generateAIContentFiles(
   const entriesForValidation = await listEntries(branchRoot, flatSchema, contentRootName)
   assertBuildEntriesValid(entriesForValidation, 'AI content generation')
 
-  // Create store and generate
   const store = new ContentStore(branchRoot, flatSchema, { contentRootName })
   const result = await generateAIContent({
     store,
@@ -250,7 +247,6 @@ export async function generateAIContentFiles(
     ...resolveBuildStamp(),
   })
 
-  // Write files to disk
   const absoluteOutputDir = path.resolve(outputDir) + path.sep
 
   /** Resolve an output-relative path, refusing anything that escapes the output directory. */

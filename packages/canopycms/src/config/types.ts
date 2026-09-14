@@ -11,7 +11,6 @@ import type { PermissionPath } from '../authorization/types'
 import type { EntryLinkUrlResolver } from '../entry-link-resolver'
 import type { CropRect } from '../assets/transform-directives'
 
-// Field types
 export const primitiveFieldTypes = [
   'string',
   'number',
@@ -40,7 +39,6 @@ export type FieldType = (typeof fieldTypes)[number]
 export type ContentFormat = 'md' | 'mdx' | 'json' | 'yaml'
 export type MediaAdapterKind = 'local' | 's3' | 'lfs' | (string & {})
 
-// Permission types
 export type PermissionLevel = 'read' | 'edit' | 'review'
 
 export interface PermissionTarget {
@@ -55,11 +53,9 @@ export interface PathPermission {
   review?: PermissionTarget
 }
 
-// Select/Reference options
 export type SelectOption = string | { label: string; value: string }
 export type ReferenceOption = string | { label: string; value: string }
 
-// Field configuration types
 export interface BaseFieldConfig {
   name: string
   label?: string
@@ -201,7 +197,6 @@ export type FieldConfig =
   | InlineGroupFieldConfig
   | CustomFieldConfig
 
-// Media configuration.
 // Kept in sync with the discriminated `mediaSchema` in config/schemas/media.ts — only
 // implemented adapters get a literal branch here (see BACKLOG.md "Asset adapters").
 export type MediaConfig =
@@ -285,7 +280,6 @@ export type RootCollectionConfig = {
  */
 export type BranchSchema = RootCollectionConfig
 
-// Editor configuration
 export interface CanopyEditorConfig {
   title?: string
   subtitle?: string
@@ -305,7 +299,6 @@ export interface CanopyEditorConfig {
   AccountComponent?: React.ComponentType
 }
 
-// Default value types
 export type DefaultBranchAccess = 'allow' | 'deny'
 export type DefaultPathAccessLevel = 'allow' | 'deny'
 /** Per-permission-level scoping for `defaultPathAccess`. An omitted level resolves to 'deny' (fail-closed). */

@@ -10,7 +10,6 @@ import type { ValidateEntryHook } from '../types'
 import { relativePathSchema } from './collection'
 import { mediaSchema } from './media'
 
-// Default value schemas
 export const defaultBranchAccessSchema = z.enum(['allow', 'deny']).default('deny')
 export const defaultPathAccessLevelSchema = z.enum(['allow', 'deny'])
 // Per-level object form: an omitted level stays undefined after parse (no per-field
@@ -55,7 +54,6 @@ export const devConfigSchema = z.object({
   contentSync: devContentSyncSchema.optional(),
 })
 
-// Editor configuration schema
 export const editorConfigSchema = z.object({
   title: z.string().optional(),
   subtitle: z.string().optional(),
@@ -68,7 +66,6 @@ export const editorConfigSchema = z.object({
   AccountComponent: z.custom<React.ComponentType>().optional(),
 })
 
-// Main CanopyConfig schema.
 export const CanopyConfigSchema = z
   .object({
     media: mediaSchema.optional(),
@@ -125,10 +122,6 @@ export const CanopyConfigSchema = z
   .strict()
 
 /**
- * Helper to get schema default values.
- * This centralizes default value extraction from Zod schemas.
- */
-/**
  * Default workspace path for prod mode (used when CANOPYCMS_WORKSPACE_ROOT is not set).
  *
  * WARNING: this fallback assumes a worker-style ROOT mount of EFS at /mnt/efs.
@@ -144,7 +137,7 @@ export const DEFAULT_PROD_WORKSPACE = '/mnt/efs/workspace'
 // operatingModeSchema.parse(undefined) would throw.
 //
 // `deploymentName` is ALSO deliberately omitted here (checked every caller,
-// 2026-07-30: only packages/canopycms/src/services.ts reads from this return
+// only packages/canopycms/src/services.ts reads from this return
 // value, and only `.remoteName`; nothing ever read `.deploymentName`). Unlike
 // the defaults below, deploymentName's real default is mode-dependent — 'prod'
 // for ProdStrategy, 'local' for DevStrategy (see

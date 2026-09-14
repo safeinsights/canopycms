@@ -221,10 +221,6 @@ export async function collectStaticPaths(
   return options.filter ? mapped.filter(options.filter) : mapped
 }
 
-// ---------------------------------------------------------------------------
-// Build-time schema validity guard
-// ---------------------------------------------------------------------------
-
 /**
  * One schema-invalid entry found during a build-time content scan.
  */
@@ -415,10 +411,6 @@ export function assertBuildEntriesValid(items: readonly BuildScanItem[], phaseLa
   )
 }
 
-// ---------------------------------------------------------------------------
-// Build-time duplicate-URL guard
-// ---------------------------------------------------------------------------
-
 /**
  * One URL claimed by more than one entry.
  */
@@ -487,8 +479,7 @@ export function findDuplicateUrlPaths(items: readonly UrlScanItem[]): DuplicateU
  * my build red, that entry isn't even routed?" question — so: a contested `urlPath` is a real
  * collision at RESOLUTION time regardless of routing. `readByUrlPath` picks one of the two
  * whatever any `generateStaticParams` filter says, so the un-routed entry is not innocent; it is
- * shadowing (or being shadowed by) the routed one at the same URL. `rootPath` narrows the scan
- * because it narrows what was loaded at all; `filter` deliberately does not.
+ * shadowing (or being shadowed by) the routed one at the same URL.
  *
  * Related but not redundant: `canopycms-next`'s `dedupeSitemapItems` warns on the same collision
  * at the sitemap. It stays, because it also covers entry-vs-`extraUrls` collisions (adopter-supplied
@@ -517,10 +508,6 @@ export function assertNoDuplicateUrlPaths(items: readonly UrlScanItem[], phaseLa
       'lowercased). Rename or remove one of the colliding entries, then rebuild.',
   )
 }
-
-// ---------------------------------------------------------------------------
-// Build-time slug-routability guard
-// ---------------------------------------------------------------------------
 
 /** An entry whose slug cannot round-trip through `readByUrlPath`. */
 export interface UnroutableSlugEntry {
@@ -554,12 +541,6 @@ type SlugScanItem = Pick<ListEntriesItem, 'entryPath' | 'urlPath' | 'slug'>
  * `content-listing.ts` documents on `urlPath` (`readByUrlPath(item.urlPath)` resolves to the same
  * entry) and is exactly the silent-page-loss failure mode this guard's siblings
  * (`assertBuildEntriesValid`, `assertNoDuplicateUrlPaths`) exist to make loud instead.
- *
- * The write boundary refuses to MINT such a slug: `api/content.ts` and `ContentStore.write()`
- * both run `parseSlug` on a create, and `renameEntry()` runs it on the new slug (the [SLUG]
- * guards). That enforcement is deliberately create-only — an entry that already carries a
- * non-conforming slug stays saveable and renameable, because renaming it is the only way to fix
- * this build failure, and refusing reads or edits would turn a red build into unreachable data.
  *
  * So this guard still fires, and is still needed, for every slug the write boundary never saw:
  * hand-authored files, scripted migrations, content merged in over git, a repo being retrofitted
