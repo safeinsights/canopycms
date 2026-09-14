@@ -1,32 +1,22 @@
 #!/usr/bin/env tsx
 /**
  * `canopy-assets-canary` - the sandbox proving ground for `AssetSupport`
- * (PR 7 of the assets/media epic; design record:
- * .claude/future-tasks/assets-media-system.md). NOT a real deployment
- * target and NOT a separate package - it's a small CDK app living inside
- * `canopycms-cdk` so it can exercise that package's own source directly
- * (`../../src`), the same way a real consumer's CDK app would after
- * `npm install canopycms-cdk`.
+ * (design record: .claude/future-tasks/assets-media-system.md). NOT a real
+ * deployment target and NOT a separate package: a small CDK app living inside
+ * `canopycms-cdk` so it exercises that package's own source directly
+ * (`../../src`), the way a real consumer's CDK app would after installing it.
  *
- * One stack, `canopy-assets-canary`:
- *   - `AssetSupport` in standalone mode (creates its own bucket) with
- *     `editorOrigins: ['http://localhost:3000']` - a dev-mode editor is the
- *     only realistic caller of the canary's presigned-upload CORS.
- *   - No cert/DNS - default `*.cloudfront.net` domain, `PriceClass_100`.
+ * Deploy via the CDK bootstrap exec role, qualifier `canopy` (bootstrap stack
+ * `CDKToolkit-canopy`) - the human SSO role cannot create CloudFront
+ * distributions/OACs directly. Account/region are hardcoded here ON PURPOSE:
+ * this file only ever deploys to the one sandbox canary account, unlike every
+ * other construct in this package.
  *
- * Deploy via the CDK bootstrap exec role, qualifier `canopy` (bootstrap
- * stack `CDKToolkit-canopy` - see the design record's "Sandbox account
- * deploy mechanics" section for why: the human SSO role can't create
- * CloudFront distributions/OACs directly). Account/region are hardcoded
- * here ON PURPOSE - this file only ever deploys to the one sandbox canary
- * account, unlike every other construct in this package.
- *
- * Build the transform Lambda's asset first (`AssetSupport` points
- * `lambda.Code.fromAsset()` at a real directory that must already exist -
- * `cdk synth`/`deploy` will fail with "Cannot find asset" otherwise). Run the
- * build with NO flags: `pnpm test` leaves a fixture-only `--skip-native`
- * bundle behind, and `AssetSupport` refuses to synth one (it requires the
- * `.deployable` marker that only a full build writes).
+ * Build the transform Lambda's asset first - `AssetSupport` points
+ * `lambda.Code.fromAsset()` at a directory that must already exist, and
+ * `cdk synth`/`deploy` fails with "Cannot find asset" otherwise. Run the build
+ * with NO flags: `pnpm test` leaves a fixture-only `--skip-native` bundle
+ * behind, and `AssetSupport` refuses to synth one.
  *
  *   pnpm --filter canopycms-cdk run build:lambda
  *   cd packages/canopycms-cdk/canary
@@ -54,9 +44,7 @@ const stack = new Stack(app, 'canopy-assets-canary', {
 
 const assetSupport = new AssetSupport(stack, 'Assets', {
   editorOrigins: ['http://localhost:3000'],
-  // Ephemeral by design - this stack exists only to be verified and torn
-  // down (see .claude/future-tasks/assets-media-system.md's epic breakdown,
-  // PR 7/8).
+  // Ephemeral by design - this stack exists only to be verified and torn down.
   removalPolicy: RemovalPolicy.DESTROY,
   autoDeleteObjects: true,
 })

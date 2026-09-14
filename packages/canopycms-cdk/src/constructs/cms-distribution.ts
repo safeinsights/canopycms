@@ -25,13 +25,11 @@ import {
  * A plain `{ ...defaults, ...caller }` gets the values right and the ORDER
  * wrong: JavaScript keeps an overridden key at its first-insertion index, so a
  * caller who overrides `/_next/static/*` finds it pinned ahead of every other
- * pattern they passed, regardless of the order they wrote. Since CloudFront
- * matches path patterns in order, that silently makes a more specific pattern
- * listed after it unreachable -- exactly the failure the prop's doc comment
- * warns callers to avoid, introduced by the merge itself.
- *
- * Dropping collided defaults FIRST means the caller's own object contributes
- * its keys in its own order.
+ * pattern they passed. CloudFront matches path patterns in order, so that
+ * silently makes a more specific pattern listed after it unreachable - the
+ * failure the prop's doc comment warns about, introduced by the merge itself.
+ * Dropping collided defaults FIRST lets the caller's own object contribute its
+ * keys in its own order.
  */
 function mergeBehaviors(
   defaults: Record<string, cloudfront.BehaviorOptions>,
@@ -69,50 +67,45 @@ function mergeBehaviors(
 }
 
 /**
- * Guards against the three AssetSupport CloudFront-behavior hazards a manually
- * assembled `additionalBehaviors` can introduce (see
- * `AssetSupport.attachTo()`'s doc comment for the full mechanism):
- *
- * 1. The literal keys `assets`/`assetsTransform` present in `merged` mean
- *    `assetSupport.assetBehaviors()`'s return value was spread directly into
- *    `additionalBehaviors` (a `Record<pathPattern, BehaviorOptions>`) instead
- *    of being attached via `assetSupport.attachTo(distribution)` or this
- *    construct's `assetSupport` prop. This type-checks and deploys clean,
- *    synthesizing two behaviors matching the literal path patterns `assets`
- *    and `assetsTransform`, which nothing ever requests.
- * 2. `/assets/*` listed before `/assets/t/*` means CloudFront's first-match-
- *    wins ordering serves every transform request off the broader, S3-only
- *    `/assets/*` behavior, permanently 403ing any derivative that has not
- *    already been computed (an OAC-signed S3 miss reports 403).
- * 3. Either asset pattern present in `merged` WHILE the `assetSupport` prop is
- *    also passed means both wiring routes are active at once, so each pattern
- *    is attached twice. This is the migration mistake specifically - keeping a
- *    hand-wired block while adopting the prop - and hazard 2 cannot catch it,
- *    because the hand-written order is usually the correct one.
- *
- * `Object.keys` insertion order is spec-guaranteed for string keys like
- * these (none are integer-like array-index strings), so comparing index
- * order here is sound.
- *
- * SCOPE LIMIT: this protects only callers going through
- * `CanopyCmsDistribution`'s own `additionalBehaviors` merge. It cannot help a
- * bespoke `new cloudfront.Distribution(...)` assembled elsewhere -
- * `AssetSupport.attachTo()` is the answer there.
- */
-/**
- * CloudFront treats the leading `/` on a path pattern as optional -- `assets/*`
+ * CloudFront treats the leading `/` on a path pattern as optional - `assets/*`
  * and `/assets/*` match exactly the same requests, and AWS's own console and
- * docs frequently show the slash-less spelling. The checks below therefore
- * compare NORMALIZED keys: without this, writing `{ 'assets/*': ..., 'assets/t/*': ... }`
- * walked past all three hazards and synthesized the broad-pattern-first order
- * this guard exists to refuse -- silently, which is the worst of the failure
- * modes here.
+ * docs frequently show the slash-less spelling. Every check here compares
+ * NORMALIZED keys: without this, `{ 'assets/*': ..., 'assets/t/*': ... }` walks
+ * past all three hazards below and synthesizes the broad-pattern-first order
+ * they exist to refuse - silently, the worst of the failure modes here.
  */
 function normalizePathPattern(pattern: string): string {
   return pattern.startsWith('/') ? pattern.slice(1) : pattern
 }
 
-/** See the three-hazard list documented above `normalizePathPattern`. */
+/**
+ * The three AssetSupport CloudFront-behavior hazards a manually assembled
+ * `additionalBehaviors` can introduce (see `AssetSupport.attachTo()` for the
+ * mechanism):
+ *
+ * 1. The literal keys `assets`/`assetsTransform` in `merged` mean
+ *    `assetBehaviors()`'s return value was spread straight into
+ *    `additionalBehaviors` (a `Record<pathPattern, BehaviorOptions>`) instead of
+ *    attached via `attachTo(distribution)` or the `assetSupport` prop. That
+ *    type-checks and deploys clean, synthesizing two behaviors matching the
+ *    literal patterns `assets` and `assetsTransform`, which nothing requests.
+ * 2. `/assets/*` listed before `/assets/t/*`: CloudFront's first-match-wins
+ *    ordering serves every transform request off the broader, S3-only
+ *    `/assets/*` behavior, permanently 403ing any derivative not already
+ *    computed (an OAC-signed S3 miss reports 403).
+ * 3. Either asset pattern in `merged` WHILE the `assetSupport` prop is also
+ *    passed: both wiring routes are active at once, so each pattern is attached
+ *    twice. Hazard 2 cannot catch it, because the hand-written order is usually
+ *    the correct one.
+ *
+ * `Object.keys` insertion order is spec-guaranteed for string keys like these
+ * (none are integer-like array-index strings), so comparing index order is
+ * sound.
+ *
+ * SCOPE LIMIT: this protects only callers going through this construct's own
+ * `additionalBehaviors` merge, not a bespoke `new cloudfront.Distribution(...)`
+ * assembled elsewhere - `AssetSupport.attachTo()` is the answer there.
+ */
 function assertNoAssetBehaviorOrderingHazards(
   merged: Record<string, cloudfront.BehaviorOptions>,
   attachingAssetSupport: boolean,
@@ -201,31 +194,27 @@ export interface CanopyCmsDistributionProps {
    * timeout, so the two cannot drift.
    *
    * Left unset on the origin, CloudFront applies its service default of **30
-   * seconds** — which silently caps a 60s Lambda at half its budget. Every
-   * request landing in the 30-60s band is answered 504 at the edge while the
-   * invocation continues to completion behind it: server-side success,
-   * viewer-facing failure, and nothing in either log explaining the other
-   * half. First-touch branch provisioning does a full `git clone` onto EFS
-   * inside the request, so this is a real path.
+   * seconds**, silently capping a 60s Lambda at half its budget: every request
+   * in the 30-60s band is answered 504 at the edge while the invocation runs to
+   * completion behind it, with nothing in either log explaining the other half.
+   * First-touch branch provisioning does a full `git clone` onto EFS inside the
+   * request, so this is a real path.
    *
    * Capped at 60s: CloudFront rejects more without a service-quota increase.
    */
   originReadTimeout?: Duration
 
   /**
-   * Extra CloudFront behaviors, merged with this construct's own.
-   *
-   * The reason this exists: `AssetSupport.assetBehaviors()` returns the two
-   * behaviors a media-enabled deployment needs (`/assets/*` and
-   * `/assets/t/*`), and without a way to pass them in there was no route to
-   * attach them to the distribution the scaffold generates — making the
-   * scaffold's own "uncomment to enable media" path a dead end.
+   * Extra CloudFront behaviors, merged with this construct's own. This is how
+   * `AssetSupport.assetBehaviors()`'s two behaviors (`/assets/*` and
+   * `/assets/t/*`) reach the distribution the scaffold generates, when they are
+   * not attached through the `assetSupport` prop.
    *
    * ORDER MATTERS. CloudFront matches path patterns in the order given, so a
    * more specific pattern must be listed before a more general one that also
    * matches: `/assets/t/*` before `/assets/*`, or every transform request is
-   * served by the static S3-only behavior and never fails over to the
-   * transform Lambda.
+   * served by the static S3-only behavior and never fails over to the transform
+   * Lambda.
    *
    * Keys here override this construct's own behaviors on collision, which is
    * deliberate — the caller is more specific than the default — and an
@@ -234,14 +223,8 @@ export interface CanopyCmsDistributionProps {
    * `mergeBehaviors`.)
    *
    * Prefer the `assetSupport` prop over wiring `AssetSupport`'s behaviors in
-   * here by hand — but if you do it by hand anyway, `mergeBehaviors` throws
-   * at synth if it sees any of the three AssetSupport footguns: `/assets/*`
-   * listed before `/assets/t/*`; the literal keys `assets`/`assetsTransform`
-   * (from spreading `assetBehaviors()`'s return value directly into this
-   * object instead of keying it by path pattern); or an asset pattern listed
-   * here at all while the `assetSupport` prop is also passed (see that
-   * prop's own doc comment). See `assertNoAssetBehaviorOrderingHazards`'s
-   * doc comment for the full list.
+   * here by hand. If you do it by hand, `mergeBehaviors` throws at synth on any
+   * of the three hazards listed above `assertNoAssetBehaviorOrderingHazards`.
    */
   additionalBehaviors?: Record<string, cloudfront.BehaviorOptions>
 
@@ -255,20 +238,14 @@ export interface CanopyCmsDistributionProps {
    * If the asset behaviors need per-behavior options - a viewer-request
    * function for tier auth being the motivating case, since without it
    * `/assets/*` is anonymously readable on an authenticated tier - pass
-   * `assetBehaviorOverrides` alongside this prop. That requirement used to mean
-   * dropping this prop and hand-calling `attachTo` after construction, which
-   * sent exactly the adopter who most needs the ordering guarantee back to the
-   * manual path this prop exists to replace.
+   * `assetBehaviorOverrides` alongside this prop rather than dropping it and
+   * hand-calling `attachTo` after construction.
    *
    * Prefer this over passing `assetSupport.assetBehaviors()` through
-   * `additionalBehaviors` by hand - that stays available as an escape hatch
-   * (e.g. for behaviors that are not from `AssetSupport` at all), and this
-   * construct's synth-time guard (`mergeBehaviors`) still checks it for the
-   * three ways that manual wiring is known to go wrong: see
-   * `additionalBehaviors`'s own doc comment.
-   *
-   * No ordering logic lives in this construct beyond calling this method -
-   * ordering is encoded exactly once, in `AssetSupport.attachTo()` itself.
+   * `additionalBehaviors` by hand; that stays available as an escape hatch, and
+   * `mergeBehaviors` still guards it. No ordering logic lives in this construct
+   * beyond calling this method - ordering is encoded exactly once, in
+   * `AssetSupport.attachTo()` itself.
    *
    * @default - no asset behaviors are attached
    */
@@ -286,11 +263,10 @@ export interface CanopyCmsDistributionProps {
    *
    * Useless without `assetSupport`, and silently so - there would be no
    * behaviors to merge it into - so that combination throws from this
-   * construct's CONSTRUCTOR rather than being ignored. (A constructor throw,
-   * not an `addValidation`: nothing later can make the combination valid. An
-   * adopter sharing one props object across tiers, with `assetSupport` present
-   * on only some of them, should make the whole prop conditional rather than
-   * the overrides object.)
+   * construct's CONSTRUCTOR rather than being ignored; nothing later can make
+   * it valid, so an `addValidation` would be too late. An adopter sharing one
+   * props object across tiers, with `assetSupport` present on only some, should
+   * make the whole prop conditional rather than the overrides object.
    *
    * @default - the asset behaviors are attached with no overrides
    */
@@ -341,16 +317,14 @@ export class CanopyCmsDistribution extends Construct {
       })
 
     // CloudFront requires its ACM certificate to live in us-east-1, and this
-    // construct creates one in the STACK's region. Nothing in the construct,
-    // the scaffold, or docs/deploying-to-aws.md said so -- the scaffold merely
-    // asks for an AWS_REGION variable with us-east-1 as an example -- so an
-    // adopter elsewhere got an opaque region error and had to research both
-    // workarounds themselves. Fail with the answer instead.
+    // construct creates one in the STACK's region - so fail here with both
+    // workarounds rather than leave an adopter elsewhere with an opaque region
+    // error at deploy.
     //
     // Only when the region is actually known at synth: a region-agnostic stack
     // resolves to a token, and rejecting that would break `cdk synth` for
-    // everyone (the token is not us-east-1 as a string). Those deploys are
-    // rejected by CloudFront at deploy time as before.
+    // everyone (the token is not us-east-1 as a string). Those deploys stay
+    // CloudFront's to reject at deploy time.
     const stackRegion = Stack.of(this).region
     if (!props.certificate && !Token.isUnresolved(stackRegion) && stackRegion !== 'us-east-1') {
       throw new Error(
@@ -393,19 +367,17 @@ export class CanopyCmsDistribution extends Construct {
       readTimeout,
     })
 
-    // Cache policy for API/editor routes: AWS's managed CACHING_DISABLED
-    // policy. Deploy-proven (deploy-test epic, 2026-07-23): CloudFront
-    // rejects ANY non-none cache-key setting on a caching-disabled policy -
-    // Authorization in a header allowlist (aws/aws-cdk#16977) but also
-    // cookieBehavior/queryStringBehavior `all()` ("The parameter
-    // CookieBehavior is invalid for policy with caching disabled"). With
-    // TTL 0 the cache key is meaningless anyway; the origin still receives
-    // the full viewer request (headers/cookies/query string, minus Host -
-    // forwarding Host would break the OAC-signed Function URL) via the
-    // ALL_VIEWER_EXCEPT_HOST_HEADER origin request policy on the behavior.
+    // API/editor routes take AWS's managed CACHING_DISABLED policy as it is:
+    // CloudFront rejects ANY non-none cache-key setting on a caching-disabled
+    // policy - `Authorization` in a header allowlist, and equally
+    // cookieBehavior/queryStringBehavior `all()` ("The parameter CookieBehavior
+    // is invalid for policy with caching disabled"). With TTL 0 the cache key is
+    // meaningless anyway, and the origin still receives the full viewer request
+    // (headers/cookies/query string, minus Host - forwarding Host would break
+    // the OAC-signed Function URL) via the ALL_VIEWER_EXCEPT_HOST_HEADER origin
+    // request policy on the behavior.
     const noCachePolicy = cloudfront.CachePolicy.CACHING_DISABLED
 
-    // Cache policy for static assets
     const staticCachePolicy = new cloudfront.CachePolicy(this, 'StaticCachePolicy', {
       defaultTtl: Duration.days(365),
       maxTtl: Duration.days(365),
@@ -417,15 +389,15 @@ export class CanopyCmsDistribution extends Construct {
 
     // CloudFront gives the origin the Function URL's own Host (forwarding the
     // viewer Host would break the OAC SigV4 signature), and Lambda Web Adapter
-    // forwards no `x-forwarded-*` headers of its own - so without this
-    // function, Clerk/Next derive sign-in redirect URLs from the IAM-authed
-    // Function URL host instead of the public domain, and the redirect 403s
-    // (direct Function URL hits are rejected). Deploy-proven (deploy-test
-    // epic, 2026-07-23): x-forwarded-proto is on CloudFront Functions'
-    // DISALLOWED header list - setting it fails every request with 502
-    // FunctionValidationError. Only x-forwarded-host is set; proto is
-    // unambiguous anyway (viewer-facing CloudFront is HTTPS-only via
-    // REDIRECT_TO_HTTPS).
+    // forwards no `x-forwarded-*` headers of its own - so without this function,
+    // Clerk/Next derive sign-in redirect URLs from the IAM-authed Function URL
+    // host instead of the public domain, and the redirect 403s (direct Function
+    // URL hits are rejected).
+    //
+    // ONLY x-forwarded-host: x-forwarded-proto is on CloudFront Functions'
+    // DISALLOWED header list and setting it fails every request with 502
+    // FunctionValidationError. Proto is unambiguous anyway - viewer-facing
+    // CloudFront is HTTPS-only via REDIRECT_TO_HTTPS.
     const forwardedHostFunction = new cloudfront.Function(this, 'ForwardedHostFunction', {
       code: cloudfront.FunctionCode.fromInline(
         [

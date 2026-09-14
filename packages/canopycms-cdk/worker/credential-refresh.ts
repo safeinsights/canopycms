@@ -6,13 +6,11 @@
  * which is the whole reason this is not a fourth interval alongside the task,
  * sync and auth-cache loops.
  *
- * The problem it solves: both secrets are read once in `index.ts`'s `main()`,
- * before `new CmsWorker(...)`, and nothing re-read them. A rotated secret
- * therefore never reached a running worker at all — rotation meant waiting for
- * an instance replacement, which happens only on `cdk deploy` or a spot
- * interruption. For the Clerk key the failure was silent on top of that:
- * `CmsWorker.refreshAuthCache()` swallows its errors, so a rotated key produced
- * one log line every fifteen minutes and nothing else.
+ * Both secrets are read once in `index.ts`'s `main()`, before
+ * `new CmsWorker(...)`. Without this, a rotated secret never reaches a running
+ * worker: rotation would mean waiting for an instance replacement, which happens
+ * only on `cdk deploy` or a spot interruption. For the Clerk key it would also
+ * be silent, since `CmsWorker.refreshAuthCache()` swallows its errors.
  *
  * Lives in `canopycms-cdk`, NOT in `canopycms` core, for the same reason
  * `secrets.ts` does: core's `CmsWorker` is documented as "Cloud-agnostic: uses
@@ -38,26 +36,24 @@ import { getSecret, type GetSecretOptions } from './secrets'
  * For the GitHub token it is ACTIVE, and it is what bounds the cost. That token
  * has two triggers in core, a failed task and a failed git sync (see
  * `CmsWorker.refreshGitHubCredential`), and a task retries on a 5s/10s/20s
- * backoff — so a queue of failing publishes would reach this provider at core's
- * own floor, once a minute by default (`refreshGitHubTokenMinIntervalMs`). This
- * floor makes that one read per five minutes, shared by both triggers. The price
- * of sharing it: a rotation is picked up at the first failure after it that the
- * floor permits, which is immediately unless some failure in the last interval
- * has already used the read, and then normally at most one interval later
+ * backoff — so a queue of failing publishes reaches this provider at core's own
+ * floor, once a minute by default. This floor makes that one read per five
+ * minutes, SHARED by both triggers, at the price that a rotation is picked up at
+ * the first failure the floor permits: immediately unless a failure in the last
+ * interval already used the read, and then normally at most one interval later
  * (core's floor can push that to about two — see
  * .claude/future-tasks/core-floor-shifts-provider-floor-phase.md). A publish
  * that exhausts its retries inside that wait still fails.
  *
- * It is also a BACKSTOP against loop tuning, because both loop intervals are
- * adopter-configurable. `CANOPYCMS_GIT_SYNC_INTERVAL=10000` against a
+ * It is also a BACKSTOP against loop tuning, since both loop intervals are
+ * adopter-configurable: `CANOPYCMS_GIT_SYNC_INTERVAL=10000` against a
  * permanently-broken credential would otherwise mean a `GetSecretValue` every
- * minute (core's floor) for the life of the instance. With this floor, the worst case is
- * twelve `refresh()` attempts an hour per secret, no matter how the loops are
- * tuned or how many tasks fail.
+ * minute for the life of the instance. With this floor the worst case is twelve
+ * `refresh()` attempts an hour per secret however the loops are tuned.
  *
- * Note what it does NOT throttle: GitHub and Clerk traffic. The loops call
- * those on their own schedule whether or not a refresh happens, and this
- * module adds no request to either.
+ * It does NOT throttle GitHub or Clerk traffic: the loops call those on their
+ * own schedule whether or not a refresh happens, and this module adds no request
+ * to either.
  */
 export const DEFAULT_MIN_SECRET_READ_INTERVAL_MS = 5 * 60_000
 
@@ -101,25 +97,23 @@ export interface ReactiveSecret {
 /**
  * A credential that can be re-read on demand, with three guards on the re-read.
  *
- * Each closes a different path to an unbounded stream of `GetSecretValue`
- * calls, and all three are needed — a permanently-wrong secret (revoked, or an
- * operator who pasted the publishable key) must cost a bounded handful of calls
- * and then settle, while a real rotation is still picked up promptly.
+ * Each closes a different path to an unbounded stream of `GetSecretValue` calls,
+ * and all three are needed: a permanently-wrong secret (revoked, or an operator
+ * who pasted the publishable key) must cost a bounded handful of calls and then
+ * settle, while a real rotation is still picked up promptly.
  *
  * 1. **Nothing to re-read.** No ARN configured, so the credential came from a
  *    plain env var and no amount of re-reading will change it.
  * 2. **Too soon.** See `DEFAULT_MIN_SECRET_READ_INTERVAL_MS`.
- * 3. **Unchanged.** The re-read matched what we already hold, so nothing
- *    rotated and the caller's retry cannot succeed. Reported as "nothing to
- *    do" rather than as a new value, so the caller skips a guaranteed failure
- *    instead of paying for it. For the Clerk half that second failure is not
- *    cheap: `refreshClerkCache` paginates every user, every organisation, and
- *    a membership fetch per user.
+ * 3. **Unchanged.** The re-read matched what we already hold, so nothing rotated
+ *    and the caller's retry cannot succeed. Reported as "nothing to do" rather
+ *    than as a new value, so the caller skips a guaranteed failure. For the
+ *    Clerk half that second failure is not cheap: `refreshClerkCache` paginates
+ *    every user, every organisation, and a membership fetch per user.
  *
- * `jsonField` and the rest of `GetSecretOptions` are passed straight through,
- * so this handles a plain single-value secret (the default, and what every
- * deployment uses unless it opts in) exactly as it handles one field of a JSON
- * document.
+ * `jsonField` and the rest of `GetSecretOptions` pass straight through, so a
+ * plain single-value secret (the default) is handled exactly as one field of a
+ * JSON document.
  */
 export function createReactiveSecret(options: ReactiveSecretOptions): ReactiveSecret {
   const {
@@ -136,11 +130,11 @@ export function createReactiveSecret(options: ReactiveSecretOptions): ReactiveSe
   // should re-read immediately rather than waiting out an interval measured
   // from an event this object did not observe.
   let lastReadAt: number | undefined
-  // Reads are numbered as they start, and a read's result is dropped if a read
-  // that started LATER has already finished: that one saw the store more
-  // recently, so the older value can only be stale. Without this, a read that
-  // stalled past the floor could land after a newer read had adopted a rotated
-  // value and put the old one back -- and a caller that stops waiting
+  // Reads are numbered as they start, and a result is DROPPED if a read that
+  // started later has already finished: that one saw the store more recently, so
+  // the older value can only be stale. Without this a read that stalled past the
+  // floor could land after a newer read adopted a rotated value and put the old
+  // one back - and a caller that stops waiting
   // (CmsWorker.refreshGitHubCredential) does not cancel the read it abandoned.
   let readsStarted = 0
   let newestReadFinished = 0

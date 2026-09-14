@@ -22,27 +22,24 @@ import { attachLambdaExecutionPolicies } from './lambda-execution-role'
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
 /**
- * The transform Lambda's built code asset. Computed ONCE and shared by the
- * deployability guard and `Code.fromAsset()` below - if the check and the
- * bundle ever read two independently-computed paths, the guard can silently
- * start statting a directory that is never the one being deployed, and
- * nothing about either call site would look wrong.
+ * The transform Lambda's built code asset. ONE constant shared by the
+ * deployability guard and `Code.fromAsset()` below: two independently-computed
+ * paths would let the guard stat a directory that is never the one deployed,
+ * with nothing wrong-looking at either call site.
  *
- * The `'..', '..'` walk is correct from both `<pkg>/src/constructs/` (local
- * source) and `<pkg>/dist/constructs/` (published package) only because those
- * sit at the same depth - see the `__dirname` note above.
+ * The `'..', '..'` walk holds from both `<pkg>/src/constructs/` (local source)
+ * and `<pkg>/dist/constructs/` (published package) only because those sit at
+ * the same depth - see the `__dirname` note above.
  */
 const transformAssetDir = path.join(__dirname, '..', '..', 'lambda', 'asset-transform', 'dist')
 
 /**
  * Written by `build:lambda` as the last act of a successful FULL build, once
- * the linux/arm64 sharp binary is verified present. See that script's header
- * for why the marker is positive rather than negative: a partial build (a
- * thrown `npm install sharp`, a failed platform check) leaves a sharp-less
- * `dist/` on disk WITHOUT reaching the `--skip-native` branch, so a
- * "is it marked bad?" test would wave exactly that bundle through to a
- * deploy. Requiring proof-of-good instead fails closed on every unexpected
- * path, including the producer's and consumer's paths drifting apart.
+ * the linux/arm64 sharp binary is verified present. The marker is positive
+ * ("this bundle was verified") rather than negative, because a partial build
+ * leaves a sharp-less `dist/` on disk WITHOUT reaching the `--skip-native`
+ * branch: a "is it marked bad?" test would wave exactly that bundle through to
+ * a deploy. See that script's header.
  */
 const DEPLOYABLE_MARKER = '.deployable'
 
@@ -82,11 +79,10 @@ const UPLOAD_ALLOWED_METHOD = 'POST'
  * Render a string array as a JavaScript literal for embedding in CloudFront
  * Function source.
  *
- * `JSON.stringify` already escapes quotes and backslashes, so an adopter's
- * origin string cannot terminate the literal and inject code. It does NOT
- * escape U+2028/U+2029, which are legal in JSON but were line terminators in
- * JavaScript before ES2019 - and the CloudFront Functions runtime is not a
- * runtime to find out about on. Escaping them costs one `replace`.
+ * `JSON.stringify` escapes quotes and backslashes, so an adopter's origin
+ * string cannot terminate the literal and inject code. It does NOT escape
+ * U+2028/U+2029, legal in JSON but line terminators in JavaScript before
+ * ES2019, and the CloudFront Functions runtime is not one to find out about on.
  */
 function toFunctionLiteral(values: string[]): string {
   return JSON.stringify(values)
@@ -111,14 +107,12 @@ const TRANSFORM_LAMBDA_TIMEOUT = Duration.seconds(30)
  * CloudFront+S3 misses, each a sharp transform on a 1536MB Lambda plus a
  * permanently stored S3 object.
  *
- * A reservation is the cheap half of bounding that: it is a CAP carved from the
- * account's concurrency pool, not pre-warmed capacity, so it costs nothing when
- * idle (that is `provisionedConcurrentExecutions`, which this is not).
- *
- * 10 mirrors the CMS Lambda's own reservation. Genuine demand is first-render
- * misses only — every already-generated derivative is served by the S3 primary
- * origin without invoking this function at all — so 10 concurrent transforms
- * covers a cold page of images comfortably while capping a flood.
+ * A reservation is a CAP carved from the account's concurrency pool, not
+ * pre-warmed capacity, so it costs nothing when idle (that is
+ * `provisionedConcurrentExecutions`, which this is not). 10 mirrors the CMS
+ * Lambda's own reservation: genuine demand is first-render misses only, since
+ * every already-generated derivative is served by the S3 primary origin without
+ * invoking this function at all.
  */
 const TRANSFORM_LAMBDA_RESERVED_CONCURRENCY = 10
 
@@ -133,26 +127,22 @@ const TRANSFORM_LAMBDA_RESERVED_CONCURRENCY = 10
  * S3 lifecycle is prefix+age based; there is no "expire if not recently read"
  * mode. Expiry is self-healing anyway: the next request for an expired
  * derivative misses S3, fails over to the transform Lambda, regenerates and
- * re-stores it — one invocation, then it is warm in both CloudFront and S3
- * again. 180 days is set so ordinary traffic never notices and only genuinely
- * cold or abusive objects age out.
+ * re-stores it. 180 days is long enough that only genuinely cold or abusive
+ * objects age out.
  */
 const TRANSFORM_OUTPUT_RETENTION = Duration.days(180)
 
 /**
- * `/assets/t/*`-specific cache TTLs. The managed `CachePolicy.CACHING_OPTIMIZED`
- * (used for the plain `/assets/*` static behavior) has a 1-second MIN TTL,
- * which is exactly the bug this policy exists to avoid: the transform
- * Lambda's oversized-output path (handler.ts) returns a `Cache-Control:
- * no-store` 302 redirect specifically so CloudFront never caches it - but a
- * managed policy with ANY nonzero min TTL still caches that response for at
- * least that long regardless of the origin's own `no-store`, so the redirect
- * (to the now-written canonical S3 key) gets cached and re-served, and
- * CloudFront's next hit for that same canonical key 404s/403s off S3 (or
- * hasn't propagated yet), falling back to the Lambda again - a self-sustaining
- * redirect loop. `minTtl: 0` lets an origin's own `Cache-Control` (including
- * `no-store`) be honored immediately; `maxTtl`/`defaultTtl` stay generous so
- * the normal case (an immutable 200 with a real `max-age`) still caches well.
+ * `/assets/t/*`-specific cache TTLs, custom rather than the managed
+ * `CACHING_OPTIMIZED` used for plain `/assets/*`, whose 1-second MIN TTL is the
+ * bug this policy exists to avoid. The transform Lambda's oversized-output path
+ * (handler.ts) returns a `Cache-Control: no-store` 302 to the canonical S3 key;
+ * ANY nonzero min TTL caches that redirect regardless of the origin's
+ * `no-store`, and re-serving it while CloudFront's hit for the canonical key
+ * still 403s/404s off S3 falls back to the Lambda again - a self-sustaining
+ * redirect loop. `minTtl: 0` honors the origin's own `Cache-Control`
+ * immediately; `maxTtl`/`defaultTtl` stay generous so the normal case (an
+ * immutable 200 with a real `max-age`) still caches well.
  */
 const TRANSFORM_CACHE_MIN_TTL = Duration.seconds(0)
 const TRANSFORM_CACHE_DEFAULT_TTL = Duration.days(1)
@@ -162,15 +152,13 @@ const TRANSFORM_CACHE_MAX_TTL = Duration.days(365)
  * Id of the marker construct `attachTo` adds to a distribution to record that
  * the asset behaviors are already on it.
  *
- * The fact being recorded is "THIS distribution already carries these two
- * patterns", so it is stored ON that distribution rather than in a module-level
- * registry. Per-INSTANCE state was the first version and was wrong: two
- * different `AssetSupport` constructs attaching to one distribution slipped
- * through and synthesized ['/assets/t/*','/assets/*','/assets/t/*','/assets/*'],
- * the duplicate-path-pattern deploy failure the guard exists to convert into a
- * synth error. There is no legitimate form of that - both instances attach the
- * same two patterns, so the second is always wrong regardless of which construct
- * owns it - so the check has to be keyed on the distribution, not the attacher.
+ * The fact recorded is "THIS distribution already carries these two patterns",
+ * so the check is keyed on the DISTRIBUTION, not the attacher. Per-instance
+ * state lets two different `AssetSupport` constructs attach to one distribution
+ * and synthesize ['/assets/t/*','/assets/*','/assets/t/*','/assets/*'], the
+ * duplicate-path-pattern deploy failure this guard converts into a synth error.
+ * There is no legitimate form of that: both instances attach the same two
+ * patterns, so the second is always wrong whichever construct owns it.
  *
  * The marker is a bare `Construct`, which emits nothing into the template.
  */
@@ -180,25 +168,22 @@ const ATTACHED_MARKER_ID = 'CanopyAssetBehaviorsAttached'
  * The upload behavior's origin, which records having been bound to a
  * distribution.
  *
- * This exists so the synth-time validation below can tell "`uploadBehavior()`
- * was CALLED" from "its result actually reached a distribution" - two states a
+ * This lets the synth-time validation below tell "`uploadBehavior()` was
+ * CALLED" from "its result actually reached a distribution" - two states a
  * memoized accessor cannot distinguish on its own, and the second is the one
  * that determines whether anything supplies Access-Control-Allow-Origin.
  *
  * CDK calls `bind()` exactly when a `Distribution` takes a behavior: from the
  * constructor for `defaultBehavior` (the topology `uploadBehavior()`
- * recommends), and from `addBehavior` for an additional one. Both shapes, and a
- * distribution in a different stack, are pinned as PASSING cases in
- * asset-support.test.ts - a mechanism that only sees one of them would fail the
- * other two at synth. All three bind eagerly at construction, before any
- * validation runs. A behavior that is built and then dropped never binds.
+ * recommends), and from `addBehavior` for an additional one. Both bind eagerly
+ * at construction, before any validation runs, in a cross-stack distribution
+ * too. A behavior that is built and then dropped never binds.
  *
  * Observing the origin rather than searching the tree for the emitted behavior
- * is what makes the cross-stack case work. Measured: a consuming stack renders
- * the reference as `Fn::ImportValue`, not as the producing stack's resolved ARN,
- * so a tree search would report "not attached" for a perfectly correct
- * cross-stack distribution - a false synth failure, which is worse than the gap
- * it closes.
+ * is what makes the cross-stack case work: a consuming stack renders the
+ * reference as `Fn::ImportValue`, not as the producing stack's resolved ARN, so
+ * a tree search would report "not attached" for a perfectly correct cross-stack
+ * distribution.
  */
 class UploadOrigin extends origins.HttpOrigin {
   public attachedToDistribution = false
@@ -223,15 +208,13 @@ export interface AssetUploadBehaviorOptions {
    * this behavior alone.
    *
    * `['*']` by default, and a wildcard is defensible HERE in a way a
-   * bucket-wide CORS rule is not, because **the edge authorises nothing**:
-   * measured, a presigned POST with a corrupted signature sent through this
-   * exact path returns 403 and nothing lands. Authority is entirely the
-   * presigned policy, which pins the bucket, the exact key, the content type,
-   * a size range and a 15-minute expiry. So the wildcard widens who may READ
-   * the response, not who may write - and the response is an empty 204.
-   *
-   * Narrow it to your editor origin(s) if you would rather; nothing else here
-   * depends on the wildcard.
+   * bucket-wide CORS rule is not, because **the edge authorises nothing**: a
+   * presigned POST with a corrupted signature sent through this exact path
+   * returns 403 and nothing lands. Authority is entirely the presigned policy,
+   * which pins the bucket, the exact key, the content type, a size range and a
+   * 15-minute expiry. So the wildcard widens who may READ the response, not who
+   * may write - and the response is an empty 204. Narrow it to your editor
+   * origin(s) if you would rather; nothing else here depends on it.
    *
    * ORIGINS ARE MATCHED EXACTLY, and `'*'` is honoured only as the sole entry.
    * CloudFront's response headers policy would accept a leftmost-subdomain
@@ -272,12 +255,10 @@ export interface AssetSupportProps {
    * `Access-Control-Allow-Origin` from the edge instead, so no bucket rule is
    * written and no exact origin has to be named anywhere.
    *
-   * Optional since that edge route exists - it was required while the bucket
-   * rule was the only route. Standalone mode still refuses to synth with
-   * NEITHER, because the resulting failure is a genuinely misleading one (see
-   * the error's own text). An empty array counts as absent: CloudFormation
-   * rejects a CORS rule with no origins, so it can only ever have been a
-   * mistake.
+   * Optional, but standalone mode refuses to synth with NEITHER, because the
+   * resulting failure is a genuinely misleading one (see the error's own text).
+   * An empty array counts as absent: CloudFormation rejects a CORS rule with no
+   * origins, so it can only ever have been a mistake.
    *
    * @default - no bucket CORS rule; standalone mode then requires `uploadBehavior`
    */
@@ -286,37 +267,30 @@ export interface AssetSupportProps {
   /**
    * Build a CloudFront behavior that accepts the editor's presigned-POST
    * uploads - the infrastructure half of `media.uploadUrl` (see the README's
-   * "Routing uploads through your own CDN"). Retrieve the result with
-   * `uploadBehavior()`, which also documents the distribution it belongs on.
-   *
-   * OFF unless set, and deliberately so: this is the only thing in this
+   * "Routing uploads through your own CDN"). Retrieve it with
+   * `uploadBehavior()`, which documents the distribution it belongs on. OFF
+   * unless set, and deliberately so: this is the only thing in this
    * construct that puts a write-capable, OAC-UNSIGNED origin in front of the
-   * bucket, and that must never appear in a template by accident. Pass
-   * `uploadBehavior: {}` to take the defaults.
+   * bucket, and that must never reach a template by accident. Pass
+   * `uploadBehavior: {}` for the defaults. BYO-BUCKET CAVEATS:
    *
-   * BYO-BUCKET CAVEATS - three, and the first is about your bucket policy:
-   *
-   * 1. YOUR BUCKET POLICY IS THE ONLY GATE ON THIS ROUTE. The read behaviors
-   *    reach the bucket through an OAC-SIGNED origin, so a permissive policy
-   *    there is still gated by a signature CloudFront adds. This origin cannot
-   *    be signed (CloudFront never hashes the body, so an OAC-signed origin
-   *    rejects every multipart POST), so nothing gates it but the policy. The
-   *    route is contained by rewriting every request to `/`, which leaves an
-   *    anonymous caller only the bucket-level operations at the root - so what
-   *    your policy grants anonymously AT THE BUCKET ROOT is what is reachable.
-   *    A bucket this construct creates refuses all of them (BLOCK_ALL, no
-   *    public policy); an existing bucket is yours to have got right, and "the
-   *    read path already works" is not evidence that it is.
-   * 2. This origin addresses the bucket by `bucketRegionalDomainName`, and for
-   *    a bucket imported with `Bucket.fromBucketName()` that resolves to the
-   *    STACK's region, not the bucket's. The read path tolerates a mismatch
-   *    because CloudFront follows S3's region redirect on an S3-type origin;
-   *    this one is a custom origin and does not, so S3's 301 reaches the
-   *    browser, where a redirected cross-origin POST surfaces as an opaque
-   *    network error. Import a cross-region bucket with
-   *    `Bucket.fromBucketAttributes({ region })` so the domain name is right.
-   * 3. A DOT in the bucket name breaks this origin specifically - refused at
-   *    synth, with the reason, in `buildUploadBehavior`.
+   * 1. YOUR BUCKET POLICY IS THE ONLY GATE ON THIS ROUTE. The read behaviors go
+   *    through an OAC-SIGNED origin, so a permissive policy there is still
+   *    gated by a signature CloudFront adds; this origin cannot be signed
+   *    (CloudFront never hashes the body, so an OAC-signed origin rejects every
+   *    multipart POST). The route is contained by rewriting every request to
+   *    `/`, so what your policy grants anonymously AT THE BUCKET ROOT is what is
+   *    reachable. A bucket this construct creates refuses all of it (BLOCK_ALL,
+   *    no public policy); an existing one is yours, and a read path that already
+   *    works is not evidence that it is right.
+   * 2. This origin addresses the bucket by `bucketRegionalDomainName`, which for
+   *    a bucket imported with `Bucket.fromBucketName()` resolves to the STACK's
+   *    region, not the bucket's. The read path tolerates a mismatch because
+   *    CloudFront follows S3's region redirect on an S3-type origin; this custom
+   *    origin does not, so S3's 301 reaches the browser as an opaque network
+   *    error. Import cross-region with `Bucket.fromBucketAttributes({ region })`.
+   * 3. A DOT in the bucket name breaks this origin; `buildUploadBehavior`
+   *    refuses it at synth, with the reason.
    *
    * @default - no upload behavior is built
    */
@@ -364,12 +338,11 @@ export interface AssetSupportProps {
    * `build:lambda`). Leave this ON for anything that can reach a real
    * deploy.
    *
-   * Set to `false` ONLY in this package's own tests, which deliberately
-   * synth against the cheap `--skip-native` fixture bundle that
-   * `build:test-fixtures` produces - the suite never executes the handler,
-   * so the binary is irrelevant to what it asserts, and requiring a real
-   * build would put a live `npm install sharp` back in front of every test
-   * run (which is what kept these tests out of CI in the first place).
+   * Set to `false` ONLY in this package's own tests, which synth against the
+   * cheap `--skip-native` fixture bundle `build:test-fixtures` produces: the
+   * suite never executes the handler, so the binary is irrelevant to what it
+   * asserts, and requiring a real build would put a live `npm install sharp` in
+   * front of every test run and price the suite out of CI.
    *
    * Adopters never need this: the published package's asset is built by
    * `prepack`'s full `build:lambda`, so the marker is always present.
@@ -410,26 +383,21 @@ export interface AssetSupportProps {
    * Execution role for the transform Lambda (default: CDK creates one).
    *
    * Set this when the role's ARN has to be computable WITHOUT a reference to
-   * this construct - the case that motivated the prop is an asset bucket in a
-   * different AWS account from the compute, where the resource-policy half of
-   * the cross-account grant must be written in the bucket's own stack and needs
-   * the principal as a plain string. Reading `transformFunction.role` across an
+   * this construct - the motivating case is an asset bucket in a different AWS
+   * account from the compute, where the resource-policy half of the
+   * cross-account grant is written in the bucket's own stack and needs the
+   * principal as a plain string. Reading `transformFunction.role` across an
    * account boundary does not give you that: CDK emits `Fn::GetStackOutput`, a
-   * CDK-CLI-only intrinsic resolved at deploy time, so the coupling is
-   * invisible to CloudFormation and unusable by any deploy path that is not
-   * `cdk deploy`. Create a deterministically NAMED role instead and both stacks
-   * can compute `arn:aws:iam::<account>:role/<name>` from literals, with
-   * nothing crossing between them.
-   *
-   * A named IAM role means the consuming stack needs `CAPABILITY_NAMED_IAM`,
-   * and cannot be replaced in place without a rename - that trade is yours to
-   * make here, which is the point of taking a role rather than a name.
+   * CDK-CLI-only intrinsic resolved at deploy time, so the coupling is invisible
+   * to CloudFormation and unusable by any deploy path that is not `cdk deploy`.
+   * A deterministically NAMED role lets both stacks compute
+   * `arn:aws:iam::<account>:role/<name>` from literals instead, with nothing
+   * crossing between them - at the cost of `CAPABILITY_NAMED_IAM` in the
+   * consuming stack and no in-place replacement without a rename.
    *
    * `iam.Role`, not `iam.IRole`, ON PURPOSE - an imported role silently
    * discards the managed policies this construct has to re-attach. See
-   * `attachLambdaExecutionPolicies` (./lambda-execution-role) for what CDK
-   * drops when a role is passed, and why the narrower type is what makes the
-   * compensation reliable.
+   * `attachLambdaExecutionPolicies` (./lambda-execution-role).
    */
   readonly transformRole?: iam.Role
 
@@ -467,15 +435,13 @@ export const ASSETS_TRANSFORM_PATH_PATTERN = `/${PREFIXES.transform}/*`
  * instead. Exported so `cms-distribution.ts`'s synth-time guard can
  * recognize the mistake and name it in its error.
  *
- * `uploadBehavior()` deliberately adds NO key here, considered and rejected
- * when it was added. It returns a bare `BehaviorOptions` rather than a named
- * property of a returned object, so there is no spread to get wrong in the
- * first place - and a speculative `'upload'` entry would actively misfire on
- * an adopter whose distribution has a real upload route, since CloudFront
- * treats a path pattern's leading slash as optional and `upload` is a legal
- * spelling of `/upload` (see `normalizePathPattern` in cms-distribution.ts).
- * Keep this list to property names that actually exist on
- * `AssetCloudFrontBehaviors`.
+ * `uploadBehavior()` deliberately adds NO key here: it returns a bare
+ * `BehaviorOptions` rather than a named property, so there is no spread to get
+ * wrong, and a speculative `'upload'` entry would misfire on an adopter whose
+ * distribution has a real upload route - CloudFront treats a path pattern's
+ * leading slash as optional, so `upload` is a legal spelling of `/upload` (see
+ * `normalizePathPattern` in cms-distribution.ts). Keep this list to property
+ * names that actually exist on `AssetCloudFrontBehaviors`.
  */
 export const ASSET_BEHAVIOR_SPREAD_MISTAKE_KEYS = ['assets', 'assetsTransform'] as const
 
@@ -485,29 +451,21 @@ export const ASSET_BEHAVIOR_SPREAD_MISTAKE_KEYS = ['assets', 'assetsTransform'] 
  * (origin included).
  *
  * Prefer `AssetSupport.attachTo(distribution)` or `CanopyCmsDistribution`'s
- * `assetSupport` prop over consuming this directly - both encode the
- * required attachment order in exactly one place instead of asking every
- * caller to reproduce it correctly. This return value remains useful as an
- * ESCAPE HATCH for a bespoke `new cloudfront.Distribution(...)` assembled
- * entirely inline (its `additionalBehaviors` is fixed at construction, so
- * there is no distribution yet to call `addBehavior` on) - but manual use
- * must still preserve the ordering shown below, and
- * `CanopyCmsDistribution`'s synth-time guard (`mergeBehaviors`) actively
- * rejects three ways this goes wrong: `/assets/*` listed before
- * `/assets/t/*`; the literal keys `assets`/`assetsTransform` (see
- * `ASSET_BEHAVIOR_SPREAD_MISTAKE_KEYS`) from spreading this object directly
- * into a `Record`; or an asset pattern listed here at all while
- * `CanopyCmsDistribution`'s `assetSupport` prop is also passed. See
- * `assertNoAssetBehaviorOrderingHazards`'s doc comment for the full list.
+ * `assetSupport` prop over consuming this directly - both encode the required
+ * attachment order in exactly one place, and the latter's synth-time guard
+ * rejects the three ways manual wiring goes wrong (see
+ * `assertNoAssetBehaviorOrderingHazards`). This value is the ESCAPE HATCH for a
+ * bespoke `new cloudfront.Distribution(...)` assembled entirely inline, whose
+ * `additionalBehaviors` is fixed at construction with no distribution yet to
+ * call `addBehavior` on - there you own the ordering:
  *
  * ```ts
  * const behaviors = assetSupport.assetBehaviors()
  *
- * // Building a new distribution inline. CloudFront matches path patterns in
- * // the order they're listed and stops at the first match, so the more
- * // specific '/assets/t/*' MUST come before '/assets/*' - otherwise the
- * // broader S3-only pattern swallows transform requests first and they
- * // 403 with no Lambda fallback.
+ * // CloudFront matches path patterns in the order listed and stops at the
+ * // first match, so the more specific '/assets/t/*' MUST come before
+ * // '/assets/*' - otherwise the broader S3-only pattern swallows transform
+ * // requests and they 403 with no Lambda fallback.
  * new cloudfront.Distribution(this, 'Dist', {
  *   defaultBehavior: ...,
  *   additionalBehaviors: {
@@ -530,9 +488,8 @@ export interface AssetCloudFrontBehaviors {
    * `/assets/t/*` - transform outputs specifically. Origin group: the same
    * S3 origin as `assets` primary, falling over to the transform Lambda's
    * Function URL on 403 OR 404 (a signed OAC origin reports a miss as 403;
-   * configuring both is defense-in-depth). See the SPIKE RESULT in
-   * `.claude/future-tasks/assets-media-system.md` - this design is
-   * confirmed working with CloudFront caching the failover response.
+   * configuring both is defense-in-depth). CloudFront caches the failover
+   * response.
    */
   readonly assetsTransform: cloudfront.BehaviorOptions
 }
@@ -561,12 +518,12 @@ export interface AssetUploadBehaviorRouteOptions extends AssetUploadBehaviorOpti
 /**
  * The `allowedOrigins` guards, shared by both entry points.
  *
- * These live here rather than inline in `buildUploadBehavior` because
- * `AssetSupport` runs them in its CONSTRUCTOR - eagerly, long before anything
- * builds the behavior - and moving them to the builder would delay the throw
- * to the first `uploadBehavior()` call. `assetUploadBehavior` has no such
- * split and runs them on entry. One implementation, two call sites, so the
- * standalone form cannot quietly accept what the construct refuses.
+ * Separate from `buildUploadBehavior` because `AssetSupport` runs them in its
+ * CONSTRUCTOR - eagerly, long before anything builds the behavior - and moving
+ * them into the builder would delay the throw to the first `uploadBehavior()`
+ * call. `assetUploadBehavior` runs them on entry instead. One implementation,
+ * two call sites, so the standalone form cannot quietly accept what the
+ * construct refuses.
  *
  * `label` is the options path to name in the message, so each caller's error
  * points at the property the caller actually wrote.
@@ -625,40 +582,33 @@ function buildUploadBehavior(
   options: AssetUploadBehaviorRouteOptions,
   label: string,
 ): cloudfront.BehaviorOptions {
-  // A DISTINCT origin for the bucket, with OAC signing OFF - the read
-  // behaviors' origin cannot be reused here no matter what this behavior
-  // sets, because OAC is a property of the ORIGIN, not the behavior. (On the
-  // dedicated distribution `uploadBehavior()` recommends this is the only
-  // origin present; the point is that it cannot be the read one.)
-  // CloudFront signs origin requests but never hashes
-  // the body, so an OAC-signed origin rejects every multipart POST whatever
-  // the viewer sent. Measured, that is `400 InvalidArgument`, the body
-  // naming the mechanism - `x-amz-content-sha256 must be UNSIGNED-PAYLOAD,
-  // ... or a valid sha256 value`. It fails CLOSED, but it is an
-  // argument-validation error, NOT the 403 that the Lambda Function URL
-  // origin produces in the same situation (docs/deploying-to-aws.md's
-  // "CloudFront OAC and request body signing"): there Lambda verifies a
-  // SIGNATURE over that header, here S3 validates its VALUE FORMAT. An
-  // adopter told to expect 403 goes hunting for a permissions problem that
-  // does not exist.
+  // A DISTINCT origin for the bucket, with OAC signing OFF. The read
+  // behaviors' origin cannot be reused here whatever this behavior sets,
+  // because OAC is a property of the ORIGIN, not the behavior. CloudFront
+  // signs origin requests but never hashes the body, so an OAC-signed origin
+  // rejects every multipart POST whatever the viewer sent: S3 answers `400
+  // InvalidArgument` naming `x-amz-content-sha256`. It fails CLOSED, but as an
+  // argument-validation error, NOT the 403 a Lambda Function URL origin gives
+  // in the same situation (docs/deploying-to-aws.md, "CloudFront OAC and
+  // request body signing") - there Lambda verifies a SIGNATURE over that
+  // header, here S3 validates its VALUE FORMAT.
   //
   // `HttpOrigin` rather than `S3BucketOrigin.withBucketDefaults()`, which
-  // would also be unsigned, for two reasons. It is the exact shape this
-  // whole path was measured against end to end on live AWS resources (204,
-  // object landed); and it is the only one of the two that can state the
+  // would also be unsigned: it is the only one of the two that can state the
   // CloudFront->S3 protocol, which for a request carrying a live upload
-  // credential in its body should be pinned rather than inferred.
+  // credential in its body is pinned rather than inferred.
   // `withBucketDefaults()` emits `S3OriginConfig`, which has no
   // `OriginProtocolPolicy` field at all.
-  // A dot in the bucket name breaks this origin specifically. S3's wildcard
+  //
+  // A DOT in the bucket name breaks this origin specifically: S3's wildcard
   // certificate covers one label (`*.s3.<region>.amazonaws.com`), so
   // `my.docs.bucket.s3.<region>.amazonaws.com` fails TLS validation and
   // CloudFront answers 502 on every upload. This is a CUSTOM origin doing
-  // ordinary TLS validation; the read path uses an S3-type origin, which
-  // CloudFront treats differently, so nothing else here would surface it -
-  // and dotted names are most likely in exactly the BYO case ("a site's
-  // existing content bucket") this behavior is written for. Only checkable
-  // when the name is a real literal, which for an imported bucket it is.
+  // ordinary TLS validation; the read path's S3-type origin is treated
+  // differently, so nothing else here would surface it - and dotted names are
+  // likeliest in exactly the BYO case this behavior is written for. Only
+  // checkable when the name is a real literal, which for an imported bucket it
+  // is.
   const bucketName = options.bucket.bucketName
   if (!Token.isUnresolved(bucketName) && bucketName.includes('.')) {
     throw new Error(
@@ -675,65 +625,21 @@ function buildUploadBehavior(
   })
 
   // S3's POST Object is only valid at the bucket ROOT - without this rewrite
-  // the upload gets 405 MethodNotAllowed. It is also what CONTAINS this
-  // behavior: rewriting unconditionally means no request arriving here can
-  // address a key at all, so the `ALLOW_ALL` below buys an anonymous caller
-  // only the bucket-level operations at `/` (list, create, delete bucket).
-  // A bucket this construct creates refuses all of them anonymously
-  // (BLOCK_ALL, no public policy); in BYO-bucket mode that is the caller's
-  // bucket policy to have got right.
-  //
-  // Their bucket policy is a WEAKER backstop here than on the read path, and
-  // the two must not be read as equivalent: the read behaviors go through an
-  // OAC-SIGNED origin, so a too-permissive policy there is still gated by a
-  // signature CloudFront adds. This origin is deliberately unsigned (it has
-  // to be - see the OAC note at the top of this method), so on a BYO bucket
-  // the policy is the ONLY thing standing between an anonymous caller and
-  // whatever that policy allows at `/`. Stated where a BYO adopter reads it,
-  // in `uploadBehavior()`'s caveat block, not only here.
+  // the upload gets 405 MethodNotAllowed. The rewrite is also what CONTAINS
+  // this behavior: unconditional, no request arriving here can address a key
+  // at all, so the `ALLOW_ALL` below buys an anonymous caller only the
+  // bucket-level operations at `/` (list, create, delete bucket). A bucket
+  // this construct creates refuses all of them anonymously (BLOCK_ALL, no
+  // public policy); in BYO-bucket mode that is the caller's bucket policy to
+  // have got right, and it is a WEAKER backstop here than on the read path -
+  // those behaviors go through an OAC-SIGNED origin, so a too-permissive
+  // policy is still gated by a signature CloudFront adds, while this origin is
+  // deliberately unsigned and the policy is the ONLY gate. Stated for a BYO
+  // adopter in `uploadBehavior()`'s caveat block too.
   //
   // The only thing that can WRITE either way is a request carrying a valid
   // presigned policy, and only to the single key that policy names. Do not
   // make the rewrite conditional; that gives key addressability back.
-  //
-  // The same function also drops `Authorization`. A site behind HTTP basic
-  // auth otherwise sends S3 a credential it cannot parse
-  // (`400 InvalidArgument - Unsupported Authorization Type`), and the
-  // presigned POST carries its own authority in the body, so nothing on this
-  // route ever wants the header. It is dropped HERE, in the function, rather
-  // than by naming it in the origin request policy's `allExcept` list below,
-  // and that placement is deliberate: CloudFront rejects `Authorization` in
-  // an origin request policy's header ALLOWLIST outright ("The parameter
-  // Headers contains Authorization that is not allowed"), and whether the
-  // same validation fires on an `allExcept` list is not something synth can
-  // tell you - it would surface as a failed `cdk deploy` on the whole stack.
-  // A viewer-request function has no such ambiguity: `method` is the only
-  // read-only field on the request object, headers are freely mutable, and
-  // `Authorization` is the header CloudFront's own basic-auth function
-  // examples read. Dropping it at the viewer also means it is gone before
-  // any policy runs, so the guarantee does not depend on the policy at all.
-  // The same function ALSO answers the CORS preflight, and that is not
-  // optional decoration - without it this route cannot work at all.
-  //
-  // The editor's upload is NOT a CORS simple request, though it looks like
-  // one: `xhr-upload.ts` sends multipart/form-data with no custom headers,
-  // but it assigns `xhr.upload.onprogress` before `send()`, and registering
-  // ANY listener on the `XMLHttpRequestUpload` object is its own disqualifier
-  // from the simple-request rules, independent of method, headers and content
-  // type. So every browser upload begins with `OPTIONS /`.
-  //
-  // Nothing else on this route would answer it. CloudFront does not
-  // synthesize preflight responses - a response headers policy supplies
-  // values for headers "in responses to CORS preflight requests", i.e. it
-  // decorates a response that something else produced - and `ALLOW_ALL`
-  // forwards the OPTIONS to S3, which with no CORS configuration answers
-  // `403 CORSResponse: CORS is not enabled for this bucket`. A preflight that
-  // is not a 2xx fails the browser's check whatever headers are attached, so
-  // the POST is never sent and the upload dies as an opaque network error.
-  //
-  // Short-circuiting at the viewer also strengthens the containment argument
-  // above rather than weakening it - an OPTIONS that never reaches the origin
-  // can address nothing.
   const allowedOrigins = options.allowedOrigins ?? ['*']
   const rewriteToBucketRoot = new cloudfront.Function(scope, 'AssetUploadRewriteFunction', {
     code: cloudfront.FunctionCode.fromInline(
@@ -741,6 +647,21 @@ function buildUploadBehavior(
         `var ALLOWED_ORIGINS = ${toFunctionLiteral(allowedOrigins)};`,
         'function handler(event) {',
         '  var request = event.request;',
+        // The CORS preflight is answered HERE, and without that this route
+        // cannot work at all. The editor's upload is NOT a CORS simple request
+        // though it looks like one: `xhr-upload.ts` assigns
+        // `xhr.upload.onprogress` before `send()`, and registering ANY listener
+        // on the `XMLHttpRequestUpload` object disqualifies it independently of
+        // method, headers and content type - so every browser upload begins
+        // with `OPTIONS /`. Nothing else would answer it: CloudFront does not
+        // synthesize preflight responses (a response headers policy only
+        // decorates one something else produced), and `ALLOW_ALL` forwards the
+        // OPTIONS to S3, which with no CORS configuration answers `403
+        // CORSResponse: CORS is not enabled for this bucket`. A preflight that
+        // is not 2xx fails the browser's check whatever headers are attached,
+        // so the POST is never sent and the upload dies as an opaque network
+        // error. An OPTIONS short-circuited here never reaches the origin, so
+        // it can address nothing.
         "  if (request.method === 'OPTIONS') {",
         '    var headers = {',
         `      'access-control-allow-methods': { value: '${UPLOAD_ALLOWED_METHOD}' },`,
@@ -761,6 +682,16 @@ function buildUploadBehavior(
         "    return { statusCode: 204, statusDescription: 'No Content', headers: headers };",
         '  }',
         "  request.uri = '/';",
+        // A site behind HTTP basic auth otherwise sends S3 a credential it
+        // cannot parse (`400 InvalidArgument - Unsupported Authorization
+        // Type`), and the presigned POST carries its own authority in the body,
+        // so nothing on this route ever wants the header. Dropped HERE rather
+        // than named in the origin request policy's `allExcept` list below:
+        // CloudFront rejects `Authorization` in a header ALLOWLIST outright,
+        // and whether the same validation fires on an `allExcept` list is not
+        // something synth can tell you - it would surface as a failed `cdk
+        // deploy` on the whole stack. At the viewer the header is also gone
+        // before any policy runs, so the guarantee does not depend on one.
         '  delete request.headers.authorization;',
         '  return request;',
         '}',
@@ -768,23 +699,21 @@ function buildUploadBehavior(
     ),
   })
 
-  // `denyList('host')` emits CloudFormation's `allExcept`. In the HEADERS
-  // dimension only, that is the managed ALL_VIEWER_EXCEPT_HOST_HEADER policy
-  // - the shape this path was measured against. It is NOT that policy
-  // overall, and must not be replaced by it: the managed one is documented as
-  // "Cookies: All, Query strings: All", so adopting it would forward the
-  // editor session cookie to S3, which is one of the two hazards this whole
-  // policy exists to remove. Only the header behavior is shared.
+  // `denyList('host')` emits CloudFormation's `allExcept`, which in the HEADERS
+  // dimension only matches the managed ALL_VIEWER_EXCEPT_HOST_HEADER policy.
+  // Do NOT replace this with that policy: it is documented as "Cookies: All,
+  // Query strings: All", so adopting it would forward the editor session cookie
+  // to S3 - one of the two hazards this policy exists to remove.
   //
   // `Authorization` is handled by the function above, not here.
   //
   // Cookies go through `CookiesConfig`, not the header list (a CloudFront
   // Function does not even see them in `request.headers`), so
-  // `cookieBehavior.none()` is what strips them: an upload route mounted on
-  // a site's own distribution would otherwise hand S3 - and S3's access logs
-  // - the editor session cookie. On the dedicated distribution recommended
-  // in `uploadBehavior()` a cross-origin XHR without `withCredentials` sends
-  // none in the first place; this makes it true either way.
+  // `cookieBehavior.none()` is what strips them: an upload route mounted on a
+  // site's own distribution would otherwise hand S3 - and S3's access logs -
+  // the editor session cookie. On the dedicated distribution `uploadBehavior()`
+  // recommends, a cross-origin XHR without `withCredentials` sends none anyway;
+  // this makes it true either way.
   const originRequestPolicy = new cloudfront.OriginRequestPolicy(
     scope,
     'AssetUploadOriginRequestPolicy',
@@ -797,26 +726,22 @@ function buildUploadBehavior(
   )
 
   // The edge supplies Access-Control-Allow-Origin, scoped to this behavior
-  // only. This is the measurement that unblocked the whole design: a
-  // response-headers policy DOES attach ACAO to a 2xx from an unsigned S3
-  // origin on POST with NO bucket CORS configuration at all (204, `ACAO: *`,
-  // object landed). Acceptance and advertisement are independent in S3 -
-  // bucket CORS governs only whether S3 advertises - which is exactly the
-  // property that lets this construct avoid writing a bucket CORS rule.
+  // only: a response-headers policy DOES attach ACAO to a 2xx from an unsigned
+  // S3 origin on POST with NO bucket CORS configuration at all. Acceptance and
+  // advertisement are independent in S3 - bucket CORS governs only whether S3
+  // advertises - which is what lets this construct write no bucket CORS rule.
   //
   // `originOverride: true` so the header is ours deterministically even on a
   // bucket that does have its own CORS configuration.
   //
   // AllowMethods/AllowHeaders/MaxAge take effect only on a CORS PREFLIGHT,
-  // and this path DOES trigger one - see the CloudFront Function above, which
-  // answers it, and which exists because nothing else would. They are set
-  // here anyway, sharing `UPLOAD_ALLOWED_METHOD` with that function so the
-  // two cannot tell a browser different things, and because a response
-  // headers policy is documented to decorate responses without saying whether
-  // a function-generated one is among them. If it is, `originOverride: true`
-  // means the policy's values REPLACE the function's identical ones; if it is
-  // not, the function's stand alone. Either way the viewer sees exactly one
-  // of each, which is what makes it safe not to know.
+  // which the CloudFront Function above answers. They are set here anyway,
+  // sharing `UPLOAD_ALLOWED_METHOD` with that function so the two cannot tell a
+  // browser different things, and because whether a response headers policy
+  // decorates a function-generated response is undocumented. If it does,
+  // `originOverride: true` means these values REPLACE the function's identical
+  // ones; if it does not, the function's stand alone. Either way the viewer
+  // sees exactly one of each, which is what makes it safe not to know.
   const responseHeadersPolicy = new cloudfront.ResponseHeadersPolicy(
     scope,
     'AssetUploadResponseHeadersPolicy',
@@ -871,80 +796,39 @@ function buildUploadBehavior(
  * // media.uploadUrl = `https://${uploads.distributionDomainName}/`
  * ```
  *
- * WHY THIS EXISTS SEPARATELY FROM `AssetSupport.uploadBehavior()`. The upload
- * route depends on the bucket and nothing else, which is what lets it live on
- * its own one-route distribution (the topology `AssetSupport.uploadBehavior()`
- * documents and recommends). But `AssetSupport`'s CONSTRUCTOR builds the
- * transform Lambda unconditionally, and with it a log group, a Function URL, a
- * role, and `grantRead`/`grantPut` on three prefixes. Reaching the upload
- * behavior through the class therefore costs an instantiation whose only
- * purpose is to be instantiated.
+ * Separate from `AssetSupport.uploadBehavior()` because the upload route needs
+ * the bucket and nothing else, while that construct's CONSTRUCTOR always builds
+ * the transform Lambda, a log group, a Function URL, a role and prefix grants.
+ * Those grants never reach the BUCKET policy: `Grant.addToPrincipalOrResource`
+ * stops after the identity statement for a same-account grantee, and
+ * `addToResourcePolicy` on a bucket CDK does not own is a no-op - an owned
+ * bucket, one imported by name, and one imported by ARN in another account all
+ * emit zero `AWS::S3::BucketPolicy`, so a cross-account adopter writes the
+ * resource half on the bucket's own side. Prefer the method when you already
+ * have an `AssetSupport`; both funnel into the same builder and cannot drift.
  *
- * That footprint is cheaper than it looks, and the reason is worth stating
- * because the opposite is easy to assume: those grants do NOT land in the
- * bucket policy. `Grant.addToPrincipalOrResource` (aws-cdk-lib,
- * `aws-iam/lib/grant.ts`) adds the identity statement first and returns right
- * there when two things hold - the identity statement was actually added, AND
- * the grantee's account is known to match the resource's (`TokenComparison`
- * SAME, or both unresolved). Only when one of those fails does it also write a
- * resource statement. A same-account Lambda with a CDK-managed role satisfies
- * both, so its grants go to that function's OWN execution role and nowhere
- * else. Measured on a synthesized template, an owned bucket plus a
- * same-account `AssetSupport` emits no `AWS::S3::BucketPolicy` at all.
- * Deleting the construct therefore takes the whole footprint with it and
- * leaves nothing behind on a shared bucket's policy.
- *
- * Nor does the cross-account shape invert it, which is the obvious next
- * guess and is also wrong. Measured across all three shapes - an owned
- * bucket, one imported by name, and one imported by ARN with an explicitly
- * DIFFERENT account - every one emits zero `AWS::S3::BucketPolicy`. The
- * second half of `addToPrincipalOrResource` does run for an import, but
- * `addToResourcePolicy` on a bucket CDK does not own is a no-op: it cannot
- * write a policy onto a resource it did not create. So a cross-account
- * adopter gets the identity half here and writes the resource half
- * themselves, on the bucket's own side.
- *
- * `AssetSupport.uploadBehavior()` remains the right call when you already have
- * an `AssetSupport`; both funnel into the same builder, so the two cannot
- * drift.
- *
- * TWO THINGS TO KNOW ABOUT `scope`. It receives the CloudFront Function and
- * the two policies as children under fixed ids, so calling this twice with
- * the SAME scope throws CDK's duplicate-construct-id error rather than
- * returning a second behavior - one call per scope. And because the children
- * hang off `scope`, moving an EXISTING deployment from
- * `AssetSupport.uploadBehavior()` to this function changes their construct
- * path and therefore their logical IDs, which replaces all three CloudFront
- * resources. There is no reason to make that move on a stack that already has
- * an `AssetSupport`; this function is for the stack that would otherwise have
- * to grow one.
- *
- * TWO THINGS THIS DOES NOT DO, both deliberate:
- *
- * - It writes NO bucket CORS rule, and needs none. The edge supplies
- *   `Access-Control-Allow-Origin`; S3's acceptance of a presigned POST and its
- *   ADVERTISEMENT of CORS are independent, and only the second is what a
- *   bucket CORS rule governs. `AssetSupportProps.editorOrigins` is the prop
- *   that writes one, and it belongs to the construct, not to this route.
- * - It registers no synth-time guard for "built but never attached to a
- *   distribution". `AssetSupport` has one, but it fires only in standalone
- *   mode with no `editorOrigins` - where opting into `uploadBehavior` is what
- *   satisfied the "something must supply ACAO" guard, so opting in and
- *   stopping leaves a bucket with neither. A caller here always brings their
- *   own bucket and never passes through that guard, so there is no invariant
- *   to protect: a discarded return value is an obviously unfinished call, not
- *   a silently broken one.
+ * No bucket CORS rule is written and none is needed: the edge supplies
+ * `Access-Control-Allow-Origin`, and S3's ACCEPTANCE of a presigned POST is
+ * independent of its ADVERTISEMENT of CORS, which is all a bucket rule governs
+ * (`AssetSupportProps.editorOrigins` writes one, for the construct). No
+ * "built but never attached" guard either: a caller here brings their own
+ * bucket, so never reaches the construct's "something must supply ACAO" guard.
  */
 export function assetUploadBehavior(
   scope: Construct,
   options: AssetUploadBehaviorRouteOptions,
 ): cloudfront.BehaviorOptions {
   validateUploadBehaviorOptions(options, 'assetUploadBehavior: allowedOrigins')
-  // Snapshotted for the same reason `AssetSupport` snapshots it - the guard
-  // above has just read the array, so holding the caller's reference would let
-  // a later `origins.length = 0` walk past a check that already passed. Here
-  // the window is only as long as this call, but the cost of closing it is a
-  // `slice()`.
+  // `scope` takes the CloudFront Function and the two policies as children
+  // under fixed ids, so this is ONE CALL PER SCOPE - a second throws CDK's
+  // duplicate-construct-id error. Moving an EXISTING deployment between this
+  // function and `AssetSupport.uploadBehavior()` changes their construct path
+  // and so their logical IDs, replacing all three CloudFront resources.
+  //
+  // `allowedOrigins` is snapshotted for the same reason `AssetSupport`
+  // snapshots it: the guard above has just read the array, so holding the
+  // caller's reference would let a later `origins.length = 0` walk past a check
+  // that already passed.
   return buildUploadBehavior(
     scope,
     { ...options, allowedOrigins: options.allowedOrigins?.slice() },
@@ -999,14 +883,12 @@ export class AssetSupport extends Construct {
    * Memoized on the first `uploadBehavior()` call, NOT built in the
    * constructor. Opting in creates three CloudFront resources (function,
    * origin request policy, response headers policy) and response headers
-   * policies have a default account quota of 20 - so an adopter who sets the
+   * policies have a default account quota of 20, so an adopter who sets the
    * prop on a per-environment `AssetSupport` while building the single shared
    * upload distribution the accessor recommends would otherwise mint a set per
-   * environment for one route. Deferring is invisible other than in what gets
-   * emitted, with one exception worth knowing rather than discovering: calling
-   * the accessor AFTER a synth has run modifies the construct tree, and CDK
-   * refuses that with `ConstructTreeModifiedAfterSynth` naming the constructs
-   * added. Loud, not silent.
+   * environment for one route. Deferring is invisible except that calling the
+   * accessor AFTER a synth has run modifies the construct tree, which CDK
+   * refuses with `ConstructTreeModifiedAfterSynth`. Loud, not silent.
    */
   private upload?: cloudfront.BehaviorOptions
 
@@ -1025,14 +907,12 @@ export class AssetSupport extends Construct {
 
     // Fail closed before anything else: refuse to build a stack around a
     // transform Lambda whose code asset was never verified to contain the
-    // linux/arm64 sharp binary. Without this, `pnpm test` (whose
-    // canopycms-cdk suite rebuilds that directory as a --skip-native
-    // fixture) or any partially-failed build leaves a sharp-less bundle on
-    // disk, and a later in-repo `cdk deploy` ships it - producing a Lambda
-    // that throws at cold start on the first image request, a long way from
-    // the cause. Guarding in the construct rather than at one deploy
-    // entrypoint means future entrypoints inherit the protection instead of
-    // having to remember it.
+    // linux/arm64 sharp binary. `pnpm test` (whose canopycms-cdk suite rebuilds
+    // that directory as a --skip-native fixture) and any partially-failed build
+    // leave a sharp-less bundle on disk, and a later in-repo `cdk deploy` ships
+    // it - a Lambda that throws at cold start on the first image request, a
+    // long way from the cause. In the construct rather than at one deploy
+    // entrypoint, so future entrypoints inherit the protection.
     if (
       (props.requireDeployableBundle ?? true) &&
       !existsSync(path.join(transformAssetDir, DEPLOYABLE_MARKER))
@@ -1124,18 +1004,14 @@ export class AssetSupport extends Construct {
       })
     }
 
-    // Dedicated CloudWatch log group for the transform Lambda's stdout/
-    // stderr. Custom name (NOT the CloudFormation-implicit
-    // `/aws/lambda/<function name>`), for two reasons: (1) CDK does not
-    // manage that implicit group at all - infinite retention, and
-    // `cdk destroy` leaves it behind; (2) Lambda auto-creates
-    // `/aws/lambda/<function name>` on first invoke, OUTSIDE CloudFormation -
-    // once that has happened (e.g. this construct was already deployed
-    // before this log group existed), a CDK `LogGroup` construct using that
-    // exact name would fail its `CreateLogGroup` call with "already exists"
-    // and block every future `cdk deploy`. Mirrors `CanopyCmsService`'s
-    // `workerLogGroup`/`cmsLogGroup` (cms-service.ts), which established this
-    // convention.
+    // Dedicated CloudWatch log group for the transform Lambda's stdout/stderr,
+    // custom-named and NOT the CloudFormation-implicit
+    // `/aws/lambda/<function name>`: CDK does not manage that group at all
+    // (infinite retention, and `cdk destroy` leaves it behind), and Lambda
+    // auto-creates it on first invoke OUTSIDE CloudFormation, after which a CDK
+    // `LogGroup` using that exact name fails `CreateLogGroup` with "already
+    // exists" and blocks every future `cdk deploy`. Same convention as
+    // `CanopyCmsService`'s log groups (cms-service.ts).
     this.transformLogGroup = new logs.LogGroup(this, 'TransformFunctionLogs', {
       logGroupName:
         props.transformLogGroupName ?? `/canopycms/${Stack.of(this).stackName}/transform`,
@@ -1144,10 +1020,9 @@ export class AssetSupport extends Construct {
     })
 
     // Re-attach what CDK silently drops for a caller-supplied role. MUST run
-    // for every passed role - see that function's doc comment. This function
-    // is not VPC-attached, so it takes basic execution only; the test suite
-    // pins the absence of the VPC-ENI policy here specifically, so that this
-    // call site and the CMS Lambda's cannot be collapsed into one.
+    // for every passed role - see that function's doc comment. This function is
+    // not VPC-attached, so it takes basic execution only and must NOT be
+    // collapsed into the CMS Lambda's `vpc: true` call site.
     if (props.transformRole) {
       attachLambdaExecutionPolicies(props.transformRole, { vpc: false })
     }
@@ -1158,14 +1033,13 @@ export class AssetSupport extends Construct {
       role: props.transformRole,
       // Built by `pnpm run build:lambda` (lambda/asset-transform/build.mjs) -
       // esbuild bundle + a real linux/arm64 `npm install sharp` alongside it,
-      // no Docker. `cdk synth`/`deploy` need that script run first; it is
-      // NOT run automatically here (kept explicit rather than magic - see
-      // this construct's class doc comment).
+      // no Docker. `cdk synth`/`deploy` need that script run first; it is NOT
+      // run automatically here.
       code: lambda.Code.fromAsset(transformAssetDir),
       handler: 'handler.handler',
-      // nodejs20.x was deprecated 2026-04-30; CDK's CloudFormation validation
-      // now fails synth on it. The esbuild bundle (lambda/asset-transform/
-      // build.mjs) targets node22 to match; move the two together.
+      // nodejs20.x is deprecated and CDK's CloudFormation validation fails synth
+      // on it. The esbuild bundle (lambda/asset-transform/build.mjs) targets
+      // node22 to match; move the two together.
       runtime: lambda.Runtime.NODEJS_22_X,
       architecture: lambda.Architecture.ARM_64,
       memorySize: TRANSFORM_LAMBDA_MEMORY_MB,
@@ -1185,22 +1059,19 @@ export class AssetSupport extends Construct {
     })
 
     // Explicit, scoped grant - NOT a reliance on the auto-created execution
-    // role's AWSLambdaBasicExecutionRole managed policy (attached by CDK's
-    // lambda.Function regardless of `logGroup`, and never adjusted for it -
-    // passing `logGroup` only points the function's LoggingConfig at this
-    // group, it grants no IAM permissions). That managed policy's
-    // logs:CreateLogStream/logs:PutLogEvents statement is scoped to
-    // `arn:aws:logs:*:*:log-group:/aws/lambda/*:*` only (its
-    // logs:CreateLogGroup statement is the sole one that's unrestricted) -
-    // it grants nothing for a custom-named group like this one. Without this
-    // grantWrite, log delivery to this group would fail permission checks
-    // with no error surfaced anywhere - logs would simply vanish.
+    // role's AWSLambdaBasicExecutionRole managed policy, which CDK attaches
+    // regardless of `logGroup` and never adjusts for it (passing `logGroup`
+    // only points the function's LoggingConfig at this group; it grants no
+    // IAM). That policy's logs:CreateLogStream/logs:PutLogEvents statement is
+    // scoped to `arn:aws:logs:*:*:log-group:/aws/lambda/*:*`, so it grants
+    // nothing for a custom-named group. Without this grantWrite, log delivery
+    // fails its permission check with no error surfaced anywhere - logs simply
+    // vanish.
     this.transformLogGroup.grantWrite(this.transformFunction)
 
-    // Read access to originals (what it transforms) - deviation from the PR
-    // spec's literal "read asset-originals/, write assets/" grant list: the
-    // handler must also read `asset-meta/{hash32}.json` to look up kind/ext
-    // before it can transform anything, so meta read access is granted too.
+    // Originals are what it transforms; `asset-meta/{hash32}.json` carries the
+    // kind/ext it must look up before it can transform anything, so meta is
+    // read too.
     this.bucket.grantRead(this.transformFunction, `${PREFIXES.originals}/*`)
     this.bucket.grantRead(this.transformFunction, `${PREFIXES.meta}/*`)
     // Write access to `assets/*` covers both the public prefix and
@@ -1241,23 +1112,19 @@ export class AssetSupport extends Construct {
     // Setting `uploadBehavior` SATISFIES the standalone guard above, but only
     // ATTACHING the behavior to a distribution actually produces an
     // Access-Control-Allow-Origin from anywhere. Opting in and stopping there -
-    // which is exactly what copying the README snippet and not finishing looks
-    // like - lands a standalone bucket with no CORS rule and no edge route: the
-    // silent failure the guard's own text calls misleading, reached through the
-    // guard rather than around it.
+    // a half-finished copy of the README snippet - lands a standalone bucket
+    // with no CORS rule and no edge route: the silent failure that guard's own
+    // text calls misleading, reached through it rather than around it.
     //
     // The condition is ATTACHMENT, not `uploadBehavior()` having been called.
-    // Those look equivalent and are not: the accessor memoizes, so a caller who
-    // invokes it and loses the value in a refactor sets every flag an accessor
-    // can set and still lands in exactly the state above. That shape is if
-    // anything likelier than never calling it at all, since it is what a
-    // half-finished copy of the README snippet leaves behind. `UploadOrigin`
-    // (above) is what makes the difference observable from here.
+    // The accessor memoizes, so a caller who invokes it and loses the value in
+    // a refactor sets every flag an accessor can set and still lands in exactly
+    // that state. `UploadOrigin` (above) is what makes the difference
+    // observable from here.
     //
-    // A synth-time validation is the only place this can be caught, since the
-    // constructor cannot know what the caller will do next. It is the first
-    // `addValidation` in this package; the alternative (checking in the
-    // constructor) cannot express "and nothing used it".
+    // A synth-time validation is the only place this can be caught: the
+    // constructor cannot know what the caller will do next, so it cannot
+    // express "and nothing used it".
     this.node.addValidation({
       validate: () => {
         if (
@@ -1343,17 +1210,13 @@ export class AssetSupport extends Construct {
   /**
    * The two CloudFront behavior configs this system needs.
    *
-   * If you use this rather than `attachTo` -- which takes an `overrides`
-   * parameter, so needing per-behavior options is not a reason to fall back
-   * here -- you own the ordering, and you should assert it: read the
-   * SYNTHESIZED template's `CacheBehaviors` array index, not your own source
-   * object, since the property is about emitted order.
-   *
-   * Prefer `attachTo(distribution)` or `CanopyCmsDistribution`'s
-   * `assetSupport` prop, which attach these to a distribution in the only
-   * safe order automatically. This method exists as the escape hatch for a
-   * distribution assembled entirely by hand - see `AssetCloudFrontBehaviors`'s
-   * doc comment for that shape and its ordering requirements.
+   * Prefer `attachTo(distribution)` or `CanopyCmsDistribution`'s `assetSupport`
+   * prop, which attach these in the only safe order automatically; `attachTo`
+   * takes an `overrides` parameter, so needing per-behavior options is not a
+   * reason to fall back here. Use this only for a distribution assembled
+   * entirely by hand - you then own the ordering, and should assert it against
+   * the SYNTHESIZED template's `CacheBehaviors` array index rather than your own
+   * source object, since the property is about emitted order.
    */
   public assetBehaviors(): AssetCloudFrontBehaviors {
     return this.behaviors
@@ -1372,43 +1235,21 @@ export class AssetSupport extends Construct {
    * })
    * // media.uploadUrl = `https://${uploads.distributionDomainName}/`
    * ```
+   * No custom domain or certificate is needed, and as the default behavior of a
+   * one-route distribution there is no path pattern, so no ordering question of
+   * the kind `attachTo()` settles. Two shapes this deliberately is NOT:
    *
-   * No custom domain or certificate is needed - the `d111...cloudfront.net`
-   * name is a perfectly good `uploadUrl` - and as the default behavior of a
-   * one-route distribution there is no path pattern and so no ordering
-   * question of the kind `attachTo()` exists to settle.
-   *
-   * Two shapes this deliberately is NOT, both settled 2026-09-11 (the record
-   * is `.claude/future-tasks/resolved/asset-support-upload-behavior.md`):
-   *
-   * - NOT a behavior on the site's own distribution. `CustomErrorResponses`
-   *   are distribution-wide, so a site that maps 403 to its own 404 page
-   *   applies that to S3's upload errors too and the editor reports the
-   *   substituted status. The site's cookies and any cached basic-auth
-   *   credential are also live hazards there that have to be stripped by
-   *   policy and function (`buildUploadBehavior` removes both - cookies via
-   *   the origin request policy, `Authorization` in the viewer-request
-   *   function) rather than simply never
-   *   being sent. It works; it is just strictly worse.
+   * - NOT a behavior on the site's own distribution. `CustomErrorResponses` are
+   *   distribution-wide, so a site mapping 403 to its own 404 page applies that
+   *   to S3's upload errors and the editor reports the substituted status; the
+   *   site's cookies and any cached basic-auth credential are live hazards
+   *   there, stripped by policy and function rather than never sent at all.
    * - NOT one shared distribution serving asset reads AND writes for every
-   *   environment. One assets distribution means one `AssetSupport`, and
-   *   `AssetSupport` owns the transform Lambda - so it would also mean one
-   *   transform Lambda shared by every environment, and that Lambda ships
-   *   inside this package. A `canopycms-cdk` bump would then move every
-   *   environment's asset pipeline at once, which is a graduated rollout
-   *   traded away for an upload path. Reads and transforms stay
-   *   per-environment; only the upload route moves.
-   *
-   * The upload route is the one part of this system with no per-environment
-   * code in it - it depends on the bucket and nothing else - which is why it
-   * is the part that can be split off this way.
-   *
-   * That same property is why `assetUploadBehavior` exists as a free function:
-   * it builds this behavior from a bucket alone, for a caller who wants the
-   * one-route distribution above and has no other use for an `AssetSupport`.
-   * Prefer this method when you already have one; both funnel into the same
-   * builder. See that function for what instantiating the construct purely to
-   * reach this method actually costs.
+   *   environment. That means one `AssetSupport`, which owns the transform
+   *   Lambda shipping inside this package, so a `canopycms-cdk` bump would move
+   *   every environment's asset pipeline at once. Only the upload route moves;
+   *   it depends on the bucket and nothing else, the same property that lets
+   *   `assetUploadBehavior` build it from a bucket alone.
    */
   public uploadBehavior(): cloudfront.BehaviorOptions {
     if (!this.uploadOptions) {
@@ -1421,6 +1262,10 @@ export class AssetSupport extends Construct {
     }
     // Memoized: calling this twice must not attach two sets of policies, and
     // must not fail on duplicate construct ids.
+    //
+    // `scope` is `this`, which is what keeps the three child ids where the
+    // emitted template already has them; moving them replaces deployed
+    // CloudFront resources.
     //
     // `validateUploadBehaviorOptions` is NOT re-run here: the constructor
     // already ran it on these same options, and `this.uploadOptions` is its
@@ -1443,52 +1288,31 @@ export class AssetSupport extends Construct {
    * Attach both asset behaviors to a concrete CloudFront distribution, in the
    * only safe order.
    *
-   * THIS METHOD EXISTS BECAUSE THE ORDER IS THE WHOLE POINT.
-   * `assetBehaviors()` returns `{ assets, assetsTransform }` with no path
-   * pattern attached at all (see that method's and `AssetCloudFrontBehaviors`'s
-   * doc comments) - so nothing stops a caller from attaching the two in
-   * either order. CloudFront matches path patterns in the order given and
-   * stops at the first match. `/assets/*` is a broader, S3-only pattern that
-   * also matches every `/assets/t/*` request; `/assets/t/*` is an origin
-   * group that fails over to the transform Lambda on a miss. Attach
-   * `/assets/*` first and every never-yet-computed transform gets a
-   * permanent 403 (an OAC-signed S3 miss reports 403) while already-computed
-   * transforms keep working - silent, launch-delayed, and permanent.
-   * `'/assets/*'` also sorts BEFORE `'/assets/t/*'` lexicographically (`*` =
-   * 0x2A, `t` = 0x74), so alphabetizing the keys reproduces exactly this
-   * failure, with no synth or deploy error to catch it.
+   * THE ORDER IS THE WHOLE POINT. CloudFront matches path patterns in the order
+   * given and stops at the first match. `/assets/*` is a broader, S3-only
+   * pattern that also matches every `/assets/t/*` request; `/assets/t/*` is an
+   * origin group that fails over to the transform Lambda on a miss. Attach
+   * `/assets/*` first and every never-yet-computed transform gets a permanent
+   * 403 (an OAC-signed S3 miss reports 403) while already-computed transforms
+   * keep working. `'/assets/*'` also sorts BEFORE `'/assets/t/*'`
+   * lexicographically (`*` = 0x2A, `t` = 0x74), so alphabetizing the keys
+   * reproduces exactly this failure with no synth or deploy error to catch it -
+   * and `assetBehaviors()` attaches no path pattern, so nothing there stops a
+   * caller getting it wrong.
    *
-   * `overrides` is merged into BOTH behaviors, and exists because without it
-   * this method is unusable by exactly the adopters who most need the ordering
-   * guarantee. A distribution that runs a viewer-request function on every
-   * behavior - tier basic-auth, most commonly - needs the asset behaviors to
-   * carry that same `functionAssociations`, or `/assets/*` is anonymously
-   * readable on an authenticated tier. Before this parameter existed such an
-   * adopter had to fall back to `assetBehaviors()` plus two hand-ordered
-   * `addBehavior` calls: the precise shape this method was added to eliminate,
-   * re-entered while believing ordering was handled upstream, which is worse
-   * than never having had the method. (`responseHeadersPolicy` is the same
-   * story for a repo with a shared security-headers policy.)
+   * `overrides` is merged into BOTH behaviors. The motivating case is a
+   * distribution running a viewer-request function on every behavior - tier
+   * basic-auth - where without the same `functionAssociations` `/assets/*` is
+   * anonymously readable on an authenticated tier (`responseHeadersPolicy` is
+   * the same story for a shared security-headers policy). One set for both is
+   * what keeps ordering the only thing this method decides; a caller who needs
+   * the two to differ should use `assetBehaviors()` and assert their own order.
    *
-   * Merged into both rather than per-behavior on purpose: applying one set to
-   * both is what preserves the ordering guarantee as the only thing this
-   * method decides. A caller who genuinely needs the two behaviors to differ
-   * has left this method's remit and should use `assetBehaviors()` - and keep
-   * their own ordering assertion.
-   *
-   * Typed `Partial<AddBehaviorOptions>`, not `BehaviorOptions`, because
-   * `addBehavior` takes `origin` positionally - so an `origin` key here would be
-   * a silently ignored no-op. (Measured: passing one changes nothing in the
-   * emitted template. It is a confusing no-op being prevented, not a broken
-   * origin group.)
-   *
-   * Needs a concrete `cloudfront.Distribution` - `addBehavior` is an instance
-   * method on that class, not on `IDistribution` (what an imported/looked-up
-   * distribution reference gives you). For a distribution built entirely
-   * inline (its `additionalBehaviors` fixed at construction, with no
-   * distribution yet to call `addBehavior` on), call `assetBehaviors()`
-   * directly instead and list `/assets/t/*` before `/assets/*` yourself - see
-   * `AssetCloudFrontBehaviors`'s doc comment.
+   * Typed `Partial<AddBehaviorOptions>`, not `BehaviorOptions`: `addBehavior`
+   * takes `origin` positionally, so an `origin` key here is a silent no-op. It
+   * needs a concrete `cloudfront.Distribution` too - `addBehavior` is an
+   * instance method on that class, not on `IDistribution`. For a distribution
+   * built entirely inline, call `assetBehaviors()` and order it yourself.
    */
   public attachTo(
     distribution: cloudfront.Distribution,
@@ -1496,12 +1320,11 @@ export class AssetSupport extends Construct {
   ): void {
     // `addBehavior` does not dedupe, and these calls bypass
     // `CanopyCmsDistribution`'s own synth-time guard because they run after
-    // that distribution is constructed. So attaching twice -- passing the
-    // `assetSupport` prop AND calling this yourself, most likely, since the
-    // prop's doc comment describes them as equivalent -- synthesizes
-    // ['/assets/t/*','/assets/*','/assets/t/*','/assets/*'] and fails at
-    // deploy time when CloudFront rejects the duplicate patterns. Refuse it
-    // here instead, where the message can say which two routes collided.
+    // that distribution is constructed. Attaching twice - passing the
+    // `assetSupport` prop AND calling this yourself - synthesizes
+    // ['/assets/t/*','/assets/*','/assets/t/*','/assets/*'] and fails at deploy
+    // time when CloudFront rejects the duplicate patterns. Refuse it here
+    // instead, where the message can say which two routes collided.
     if (distribution.node.tryFindChild(ATTACHED_MARKER_ID)) {
       throw new Error(
         `AssetSupport: attachTo() was already called for this distribution. Each pattern ` +
@@ -1516,18 +1339,16 @@ export class AssetSupport extends Construct {
     // Drop explicitly-`undefined` keys before merging. A spread copies own
     // enumerable keys INCLUDING ones whose value is undefined, so
     // `{ ...transformRest, ...{ cachePolicy: undefined } }` deletes the
-    // construct's choice and lets CDK substitute its own default - which is a
-    // DIFFERENT default. Measured: `cachePolicy: undefined` swaps this
-    // behavior's custom policy (TRANSFORM_CACHE_MIN_TTL = 0, which exists
-    // solely to stop the oversized-output redirect loop documented above) for
-    // the managed CACHING_OPTIMIZED and its 1-second min TTL; and
-    // `viewerProtocolPolicy: undefined` downgrades BOTH behaviors from
-    // redirect-to-https to allow-all, serving assets over plain HTTP.
-    //
-    // This is not a contrived input - it is what forwarding optional props
-    // produces: `attachTo(dist, { cachePolicy: props.maybePolicy })` with the
-    // prop unset. It typechecks (every AddBehaviorOptions field is already
-    // optional), synthesizes and deploys clean.
+    // construct's choice and lets CDK substitute a DIFFERENT default:
+    // `cachePolicy: undefined` swaps this behavior's custom policy
+    // (TRANSFORM_CACHE_MIN_TTL = 0, which exists solely to stop the
+    // oversized-output redirect loop) for the managed CACHING_OPTIMIZED and its
+    // 1-second min TTL, and `viewerProtocolPolicy: undefined` downgrades BOTH
+    // behaviors from redirect-to-https to allow-all, serving assets over plain
+    // HTTP. Not a contrived input: `attachTo(dist, { cachePolicy:
+    // props.maybePolicy })` with the prop unset typechecks (every
+    // AddBehaviorOptions field is already optional), synthesizes and deploys
+    // clean.
     const definedOverrides = Object.fromEntries(
       Object.entries(overrides ?? {}).filter(([, value]) => value !== undefined),
     )
