@@ -15,7 +15,7 @@ CLI commands (`init`, `init-deploy`, `init-github-app`, `worker run-once`, `gene
 ## `init-github-app.ts`
 
 Registers the GitHub App the worker authenticates as, via GitHub's App-manifest flow.
-`CANOPY_APP_PERMISSIONS` is the whole security surface and each entry carries the call site
+`CANOPY_APP_PERMISSIONS` (`github-app-manifest.ts`) is the whole security surface and each entry carries the call site
 that forces it; `github-app-permission-drift.test.ts` keeps it in step by driving the worker's
 dispatch table against a recording `Proxy` rather than grepping (the call sites have three
 spellings and one spans lines, so a textual scan passed vacuously).

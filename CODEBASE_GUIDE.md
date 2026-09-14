@@ -250,7 +250,9 @@ backoff retries, orphan recovery, deduplication against terminal states, 30-day 
 - `project-root.ts` — `findProjectRoot`, walks up to the nearest `canopycms.config.ts`
 - `sync.ts` — interactive wrapper over `sync-core.ts` for content sync between working tree and branch workspaces
 - `migrate.ts` — converts a plain content tree to CanopyCMS naming conventions, idempotent
-- `init-github-app.ts` — registers or verifies the GitHub App the worker authenticates as; owns `CANOPY_APP_PERMISSIONS`
+- `init-github-app.ts` — registers or verifies the GitHub App the worker authenticates as
+- `github-app-manifest.ts` — App naming, `CANOPY_APP_PERMISSIONS`, and the installation read-back verdict
+- `prompt.ts` — the stdin prompts, sharing one end-of-input flag
 - `generate-ai-content.ts` — the AI static-content generation command
 
 Commands: `init`, `init-deploy aws`, `init-github-app <create|verify>`, `worker run-once`,
