@@ -216,9 +216,6 @@ direction, and every invariant.
 - `history-rewrite.ts` — force-push leasing on a known pre-rebase commit; see [ARCHITECTURE.md](ARCHITECTURE.md#publishing-a-rewritten-history)
 - `github-auth.ts` — which GitHub credential the worker uses, and installation-token minting
 - `log.ts` — `workerLog` / `workerLogWarn` / `workerLogError`, the timestamp-and-level prefixed replacements for `console.*`
-- `task-queue.ts` — CMS-specific queue wrapper with `TaskAction` types
-- `task-queue-config.ts` — `getTaskQueueDir`, resolves `.tasks/` per operating mode
-- `worker-status.ts` — `writeWorkerStatus`, the daemon's single-writer liveness snapshot
 
 Task actions: `push-branch`, `push-and-create-pr`, `push-and-update-pr`,
 `push-and-create-or-update-pr`, `convert-to-draft`, `close-pr`, `delete-remote-branch`. Rebase
@@ -227,11 +224,14 @@ behaviour and conflict tracking are in
 
 ## Task Queue Module
 
-**Location**: `packages/canopycms/src/task-queue/` — generic, zero Canopy dependencies, EFS-safe.
+**Location**: `packages/canopycms/src/task-queue/` — the generic queue (zero Canopy dependencies, EFS-safe) and the CMS contract on top of it.
 
 - `task-queue.ts` — enqueue, dequeue, complete, fail, retry, recover, cleanup, query, `requeueFailedTask`, `listCorruptTaskFiles`
 - `types.ts` — `Task`, `TaskStatus`, `QueueStats`, `TaskQueueLogger`, `CorruptTaskFile`
 - `index.ts` — public re-exports
+- `cms-task-queue.ts` — the CMS contract: `TaskAction`, `WorkerTask`, `cmsTaskQueueLogger`; the `canopycms/worker/task-queue` entrypoint
+- `task-queue-config.ts` — `getTaskQueueDir`, resolves `.tasks/` per operating mode
+- `worker-status.ts` — `writeWorkerStatus`, the daemon's single-writer liveness snapshot
 - `README.md` — the queue's own directory layout and guarantees
 
 On disk: `.tasks/{pending,processing,completed,failed,corrupt}/`. FIFO by `createdAt`, exponential

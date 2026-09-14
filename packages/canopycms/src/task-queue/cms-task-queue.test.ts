@@ -8,10 +8,10 @@ import {
   completeTask,
   failTask,
   retryTask,
-  getTaskResult,
+  getTask,
   recoverOrphanedTasks,
   cleanupOldTasks,
-} from './task-queue'
+} from './cms-task-queue'
 
 describe('Task Queue', () => {
   let tmpDir: string
@@ -139,7 +139,7 @@ describe('Task Queue', () => {
     })
   })
 
-  describe('getTaskResult', () => {
+  describe('getTask', () => {
     it('finds completed task', async () => {
       const id = await enqueueTask(tmpDir, {
         action: 'push-branch',
@@ -148,7 +148,7 @@ describe('Task Queue', () => {
       await dequeueTask(tmpDir)
       await completeTask(tmpDir, id, { pushed: true })
 
-      const result = await getTaskResult(tmpDir, id)
+      const result = await getTask(tmpDir, id)
       expect(result).not.toBeNull()
       expect(result!.status).toBe('completed')
       expect(result!.result).toEqual({ pushed: true })
@@ -162,7 +162,7 @@ describe('Task Queue', () => {
       await dequeueTask(tmpDir)
       await failTask(tmpDir, id, 'error')
 
-      const result = await getTaskResult(tmpDir, id)
+      const result = await getTask(tmpDir, id)
       expect(result!.status).toBe('failed')
     })
 
@@ -172,7 +172,7 @@ describe('Task Queue', () => {
         payload: {},
       })
 
-      const result = await getTaskResult(tmpDir, id)
+      const result = await getTask(tmpDir, id)
       expect(result!.status).toBe('pending')
     })
 
@@ -183,12 +183,12 @@ describe('Task Queue', () => {
       })
       await dequeueTask(tmpDir)
 
-      const result = await getTaskResult(tmpDir, id)
+      const result = await getTask(tmpDir, id)
       expect(result!.status).toBe('processing')
     })
 
     it('returns null for unknown task', async () => {
-      const result = await getTaskResult(tmpDir, 'nonexistent-id')
+      const result = await getTask(tmpDir, 'nonexistent-id')
       expect(result).toBeNull()
     })
   })
@@ -206,7 +206,7 @@ describe('Task Queue', () => {
 
       await completeTask(tmpDir, id, { prUrl: 'https://github.com/pr/42' })
 
-      const result = await getTaskResult(tmpDir, id)
+      const result = await getTask(tmpDir, id)
       expect(result!.status).toBe('completed')
       expect(result!.result!.prUrl).toBe('https://github.com/pr/42')
 
@@ -224,7 +224,7 @@ describe('Task Queue', () => {
       await dequeueTask(tmpDir)
       await failTask(tmpDir, id, 'Remote rejected push')
 
-      const result = await getTaskResult(tmpDir, id)
+      const result = await getTask(tmpDir, id)
       expect(result!.status).toBe('failed')
       expect(result!.error).toBe('Remote rejected push')
     })

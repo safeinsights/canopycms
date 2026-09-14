@@ -11,15 +11,15 @@ import path from 'node:path'
 import { z } from 'zod'
 
 import type { ApiContext, ApiRequest, ApiResponse } from './types'
-import type { Task, QueueStats, CorruptTaskFile } from '../worker/task-queue'
+import type { Task, QueueStats, CorruptTaskFile } from '../task-queue/cms-task-queue'
 import {
   getQueueStats,
   listTasks,
   listCorruptTaskFiles,
   requeueFailedTask,
-} from '../worker/task-queue'
-import { getTaskQueueDir } from '../worker/task-queue-config'
-import { WORKER_STATUS_FILE } from '../worker/worker-status'
+} from '../task-queue/cms-task-queue'
+import { getTaskQueueDir } from '../task-queue/task-queue-config'
+import { WORKER_STATUS_FILE } from '../task-queue/worker-status'
 import type { WorkerStatusReport } from '../types'
 import type { OperatingMode } from '../operating-mode'
 import { defineEndpoint } from './route-builder'

@@ -2,7 +2,13 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import os from 'node:os'
-import { enqueueTask, dequeueTask, completeTask, failTask, getTaskResult } from './task-queue'
+import {
+  enqueueTask,
+  dequeueTask,
+  completeTask,
+  failTask,
+  getTask,
+} from '../task-queue/cms-task-queue'
 import { FileBasedAuthCache } from '../auth/file-based-auth-cache'
 import { CachingAuthPlugin } from '../auth/caching-auth-plugin'
 import type { TokenVerifier } from '../auth/caching-auth-plugin'
@@ -36,7 +42,7 @@ describe('Worker integration: task queue + auth cache', () => {
       })
 
       // Verify task is pending
-      const pending = await getTaskResult(taskDir, taskId)
+      const pending = await getTask(taskDir, taskId)
       expect(pending?.status).toBe('pending')
       expect(pending?.action).toBe('push-and-create-pr')
 
@@ -48,7 +54,7 @@ describe('Worker integration: task queue + auth cache', () => {
       expect(task!.payload.branch).toBe('feature/new-page')
 
       // Verify task is now processing
-      const processing = await getTaskResult(taskDir, taskId)
+      const processing = await getTask(taskDir, taskId)
       expect(processing?.status).toBe('processing')
 
       // 3. Worker completes the task (simulates successful PR creation)
@@ -58,7 +64,7 @@ describe('Worker integration: task queue + auth cache', () => {
       })
 
       // Verify task is completed with result
-      const completed = await getTaskResult(taskDir, taskId)
+      const completed = await getTask(taskDir, taskId)
       expect(completed?.status).toBe('completed')
       expect(completed?.result?.prUrl).toBe('https://github.com/org/repo/pull/42')
       expect(completed?.result?.prNumber).toBe(42)
@@ -80,7 +86,7 @@ describe('Worker integration: task queue + auth cache', () => {
       // Worker fails the task
       await failTask(taskDir, taskId, 'remote rejected push: branch does not exist')
 
-      const result = await getTaskResult(taskDir, taskId)
+      const result = await getTask(taskDir, taskId)
       expect(result?.status).toBe('failed')
       expect(result?.error).toContain('remote rejected push')
     })
@@ -281,7 +287,7 @@ describe('Worker integration: task queue + auth cache', () => {
       })
 
       // 5. Verify final state
-      const result = await getTaskResult(taskDir, taskId)
+      const result = await getTask(taskDir, taskId)
       expect(result?.status).toBe('completed')
       expect(result?.result?.prNumber).toBe(7)
     })

@@ -56,7 +56,7 @@ import type { TaskRunnerContext } from '../worker/task-runner'
 import { createOrUpdatePullRequest, GitHubService } from '../github-service'
 import { pollMergeState } from '../worker/rebase'
 import type { RebaseContext } from '../worker/rebase'
-import type { TaskAction } from '../worker/task-queue'
+import type { TaskAction } from '../task-queue/cms-task-queue'
 import type { Task } from '../task-queue/index'
 import { mockConsole, type MockConsole } from '../test-utils'
 

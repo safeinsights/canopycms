@@ -5,7 +5,7 @@ import { gitChildEnv } from '../git-manager'
 import { sanitizeBranchName } from '../paths/branch-name'
 import { getErrorMessage, redactCredentials } from '../utils/error'
 import { isStaleLeaseRejection } from '../utils/git'
-import { enqueueTask, listTasks } from './task-queue'
+import { enqueueTask, listTasks } from '../task-queue/cms-task-queue'
 import { workerLog, workerLogWarn } from './log'
 import type { WorkerContext } from './worker-context'
 

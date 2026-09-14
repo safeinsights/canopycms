@@ -1,7 +1,13 @@
 import fs from 'node:fs/promises'
 import { simpleGit } from 'simple-git'
-import { completeTask, dequeueTask, failTask, recoverOrphanedTasks, retryTask } from './task-queue'
-import type { Task } from './task-queue'
+import {
+  completeTask,
+  dequeueTask,
+  failTask,
+  recoverOrphanedTasks,
+  retryTask,
+} from '../task-queue/cms-task-queue'
+import type { Task } from '../task-queue/cms-task-queue'
 import { createOrUpdatePullRequest } from '../github-service'
 import { BranchMetadataFileManager, getBranchMetadataFileManager } from '../branch-metadata'
 import { sanitizeBranchName } from '../paths/branch-name'
@@ -9,7 +15,7 @@ import { gitNetworkChildEnv } from '../git-manager'
 import { getErrorMessage, redactCredentials } from '../utils/error'
 import { isNonFastForwardRejection, isStaleLeaseRejection } from '../utils/git'
 import { clearHistoryRewrittenMarker, readPublishedSha } from './history-rewrite'
-import { writeWorkerStatus } from './worker-status'
+import { writeWorkerStatus } from '../task-queue/worker-status'
 import { workerLog, workerLogError } from './log'
 import type { WorkerContext } from './worker-context'
 

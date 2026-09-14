@@ -65,7 +65,7 @@
         },
         "packages/canopycms/src/task-queue": {
           "maxRun": 30,
-          "ratio": 0.259
+          "ratio": 0.307
         },
         "packages/canopycms/src/utils": {
           "maxRun": 43,
@@ -77,7 +77,7 @@
         },
         "packages/canopycms/src/worker": {
           "maxRun": 31,
-          "ratio": 0.99
+          "ratio": 0.999
         }
       },
       "historyMarkers": 0,

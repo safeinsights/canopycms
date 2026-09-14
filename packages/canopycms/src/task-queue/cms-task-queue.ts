@@ -1,10 +1,11 @@
 /**
- * CanopyCMS task queue — re-exports from the generic task-queue module
- * with CMS-specific action types and a WorkerTask alias.
+ * The CMS queue contract: the generic queue in ./task-queue plus the CMS
+ * action vocabulary, a WorkerTask alias and the debug logger. Published as
+ * `canopycms/worker/task-queue`.
  */
 
 import { createDebugLogger } from '../utils/debug'
-import type { Task, TaskQueueLogger } from '../task-queue'
+import type { Task, TaskQueueLogger } from './types'
 
 /** Actions the EC2 worker can execute on behalf of Lambda. */
 export type TaskAction =
@@ -37,10 +38,9 @@ export {
   recoverOrphanedTasks,
   cleanupOldTasks,
   getTask,
-  getTask as getTaskResult, // backward-compatible alias
   listTasks,
   getQueueStats,
   listCorruptTaskFiles,
-} from '../task-queue'
+} from './task-queue'
 
-export type { Task, TaskStatus, QueueStats, TaskQueueLogger, CorruptTaskFile } from '../task-queue'
+export type { Task, TaskStatus, QueueStats, TaskQueueLogger, CorruptTaskFile } from './types'

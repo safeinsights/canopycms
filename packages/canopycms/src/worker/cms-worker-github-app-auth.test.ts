@@ -17,7 +17,7 @@ import { simpleGit } from 'simple-git'
 import { CmsWorker } from './cms-worker'
 import type { GitHubAppAuth } from './github-auth'
 import { isPermanentTaskFailure } from './task-runner'
-import { WORKER_STATUS_FILE } from './worker-status'
+import { WORKER_STATUS_FILE } from '../task-queue/worker-status'
 import type { WorkerStatusReport } from '../types'
 import { initTestRepo, mockConsole, type MockConsole } from '../test-utils'
 
