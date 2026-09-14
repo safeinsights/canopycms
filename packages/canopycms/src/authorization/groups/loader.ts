@@ -1,9 +1,6 @@
 /**
- * Groups file loader
- *
- * Handles loading internal groups from the filesystem and mutating
- * groups.json under the cross-host layered lock in
- * authorization/settings-file-store.ts.
+ * Loads internal groups, and mutates groups.json under the cross-host layered
+ * lock in authorization/settings-file-store.ts.
  */
 
 import { promises as fs } from 'node:fs'
@@ -18,9 +15,7 @@ function getGroupsFilePath(branchRoot: string, mode: OperatingMode): string {
   return operatingStrategy(mode).getGroupsFilePath(branchRoot)
 }
 
-/**
- * Returns null if file doesn't exist.
- */
+/** Returns null when the file doesn't exist. */
 export async function loadGroupsFile(
   branchRoot: string,
   mode: OperatingMode,
@@ -41,12 +36,11 @@ export async function loadGroupsFile(
 }
 
 /**
- * Derive the effective internal groups list from the raw groups array
- * stored on disk: ensures the reserved Admins/Reviewers groups always exist
- * (synthesizing defaults when absent) and merges bootstrap admin IDs into
- * Admins. Pure — no disk I/O — so a caller that already holds a freshly
- * loaded file (e.g. a settings-file mutator, which reloads on every retry
- * attempt) can reconcile against it without a second read.
+ * The effective internal groups for a raw on-disk groups array: the reserved
+ * Admins/Reviewers groups always exist (synthesized when absent) and bootstrap
+ * admin IDs merge into Admins. Pure — no disk I/O — so a caller holding a
+ * freshly loaded file (e.g. a settings-file mutator, which reloads on every
+ * retry attempt) can reconcile against it without a second read.
  */
 export function deriveInternalGroups(
   fileGroups: InternalGroup[],
@@ -86,9 +80,7 @@ export function deriveInternalGroups(
   return [adminsGroup, reviewersGroup, ...otherGroups]
 }
 
-/**
- * Load internal groups from .canopycms/groups.json (or .local.json in dev mode)
- */
+/** Loads .canopycms/groups.json (groups.local.json in dev mode). */
 export async function loadInternalGroups(
   branchRoot: string,
   mode: OperatingMode,
@@ -99,12 +91,11 @@ export async function loadInternalGroups(
 }
 
 /**
- * Mutate groups.json (or .local.json in dev mode) under the full cross-host
- * lock + OCC-retry stack (see authorization/settings-file-store.ts).
- * `mutate` is called with the current parsed file (`null` if it doesn't
- * exist yet) and the version to write under; it returns the next raw
- * payload, or `null` for a deliberate no-op. The returned payload is
- * validated against {@link GroupsFileSchema} before being written.
+ * Mutate groups.json (groups.local.json in dev mode) under the full cross-host
+ * lock + OCC-retry stack (see authorization/settings-file-store.ts). `mutate`
+ * receives the current parsed file (`null` if absent) and the version to write
+ * under, and returns the next raw payload or `null` for a deliberate no-op.
+ * The payload is validated against {@link GroupsFileSchema} before writing.
  */
 export async function mutateGroupsFile(
   branchRoot: string,

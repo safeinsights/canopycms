@@ -1,8 +1,6 @@
 /**
- * Test utilities for authorization types.
- *
- * These are unsafe casts with NO validation. Import only from test files.
- * For production code, use parsePermissionPath() instead.
+ * Test utilities for authorization types: unsafe casts with NO validation,
+ * for test files only. Production code uses parsePermissionPath().
  */
 
 import type { PermissionPath, ContentAccessDeps } from './types'
@@ -18,9 +16,9 @@ import {
 export const unsafeAsPermissionPath = (path: string): PermissionPath => path as PermissionPath
 
 /**
- * Test-only: build the single-call `checkContentAccess` and the batch
- * `createContentAccessChecker` from one shared deps object, so tests can wire both
- * into mock services without duplicating deps. Mirrors how `services.ts` binds them.
+ * Test-only: bind the single-call `checkContentAccess` and the batch
+ * `createContentAccessChecker` to one shared deps object, the way `services.ts`
+ * binds them, so tests can wire both into mock services.
  */
 export const createTestContentAccess = (
   deps: ContentAccessDeps,

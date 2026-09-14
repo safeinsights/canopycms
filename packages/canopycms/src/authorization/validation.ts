@@ -1,11 +1,7 @@
 import { hasTraversalSequence } from '../paths/normalize'
 import type { PermissionPath } from './types'
 
-/**
- * Parse and validate a PermissionPath.
- *
- * SECURITY: Prevents path traversal attacks in permission rules.
- */
+/** Parse a PermissionPath. SECURITY: rejects path traversal in permission rules. */
 export function parsePermissionPath(
   path: string,
 ): { ok: true; path: PermissionPath } | { ok: false; error: string } {

@@ -5,10 +5,10 @@ import type { CanopyUserId, CanopyGroupId } from '../../types'
  * Schema for .canopycms/groups.json
  */
 export const GroupsFileSchema = z.object({
-  // Managed by writeOccJsonFile (see authorization/settings-file-store.ts) —
-  // the single OCC counter for this file. Optional so a hand-written file
-  // with no version field parses as version 0. A legacy `contentVersion`
-  // field (if present) is silently stripped by this non-strict zod parse.
+  // Managed by writeOccJsonFile (see authorization/settings-file-store.ts):
+  // the single OCC counter for this file. Optional so a hand-written file with
+  // no version field parses as version 0; a stray `contentVersion` key is
+  // silently stripped by this non-strict zod parse.
   version: z.number().int().nonnegative().optional(),
   writeId: z.string().optional(),
   updatedAt: z.string().datetime(),

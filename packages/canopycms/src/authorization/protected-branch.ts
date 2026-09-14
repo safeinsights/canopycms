@@ -1,12 +1,11 @@
 /**
- * Protected base branch predicate.
+ * Protected base branch predicate: the single source of truth other modules
+ * key off of — do not re-derive the comparison elsewhere.
  *
- * The base branch (the PR base — usually `main`) can never be submitted for
- * review (both modes: submitting it would push straight to itself, bypassing
- * review) and is read-only in the editor in prod (dev needs the base branch
- * editable since the developer always lands there — see ARCHITECTURE.md
- * "Protected Base Branch"). This is the single source of truth other modules
- * key off of; do not re-derive the comparison elsewhere.
+ * The base branch (the PR base, usually `main`) can never be submitted for
+ * review in either mode, since submitting it would push straight to itself and
+ * bypass review, and is read-only in the editor in prod only — dev needs it
+ * editable (see ARCHITECTURE.md "Protected Base Branch").
  */
 
 import type { CanopyConfig } from '../config'
@@ -35,7 +34,7 @@ export interface BranchWriteProtection extends BranchProtection {
   /**
    * True when content writes must be rejected, for ANY of three reasons: the
    * branch is the read-only protected base branch, its workflow status has
-   * moved past `'editing'` (locked while a reviewer looks at its PR), or its
+   * moved past `'editing'` (locked while its PR is under review), or its
    * status could not be read at all.
    */
   writeBlocked: boolean
@@ -47,45 +46,35 @@ export interface BranchWriteProtection extends BranchProtection {
    * `writeBlocked` does: `status !== 'editing'` is true when `status` is
    * `undefined`).
    *
-   * DELIBERATELY NOT named `submitBlocked` on this type.
-   * `BranchProtection.submitBlocked` (the field this interface inherits) means
-   * ONLY "this is the base branch" -- `api/guards.ts`'s `submittableBranch`
-   * guard reads exactly that, narrow, meaning, and must keep reading it: the
-   * guard's whole point is to refuse the base branch regardless of status.
+   * NOT named `submitBlocked`: `BranchProtection.submitBlocked`, the field
+   * this type inherits, means ONLY "this is the base branch", and
+   * `api/guards.ts`'s `submittableBranch` guard depends on that narrow
+   * meaning, so the compound answer gets a distinct name.
    *
-   * Also worth noting the asymmetry with `writeBlocked` above:
-   * `writeBlocked` is built from `readOnly` (protected base branch, PROD
-   * ONLY) plus the status clause, while this is built from `isProtected` /
-   * `submitBlocked` (protected base branch, BOTH MODES) plus the same status
-   * clause. They are not two spellings of one rule -- in dev, the base branch
-   * is writable (`readOnly` is false there, so `writeBlocked` can be false)
-   * but still never submittable (`isProtected` is true regardless of mode, so
-   * this stays true).
+   * It also differs from `writeBlocked`: in dev the base branch is writable
+   * but never submittable, so the two fields disagree there.
    */
   submitBlockedIncludingStatus: boolean
 }
 
 /**
- * Determine whether `branchName` is the protected base branch for `config`.
+ * Whether `branchName` is the protected base branch for `config`.
  *
- * Comparison is sanitization-aware: branch metadata names are sanitized
- * (`sanitizeBranchName`) but `config.defaultBaseBranch` holds the raw git
- * name, so both sides are sanitized before comparing.
+ * The comparison is sanitization-aware: branch metadata names are sanitized but
+ * `config.defaultBaseBranch` holds the raw git name, so both sides go through
+ * `sanitizeBranchName` first.
  *
- * `recordedBaseBranch` (a branch's own `baseBranch` field, i.e. its recorded
- * fork point) is an additional, independent protection clause: a branch whose
- * fork point equals its own name IS a base workspace, regardless of what
- * `config.defaultBaseBranch` says right now. This matters because in dev
- * mode, `config.defaultBaseBranch` tracks live git HEAD (`refreshActiveBranch`)
- * and can drift to a different branch after the base workspace was created --
- * without this clause, that drift would silently un-protect the branch the
- * base workspace was actually forked from. The clause is purely additive: it
- * only ever adds protection the config clause didn't already grant, so a
- * normal editing branch (`baseBranch !== name`) is never falsely protected.
+ * `recordedBaseBranch` (a branch's own recorded fork point) is a second, purely
+ * additive clause: a branch whose fork point equals its own name IS a base
+ * workspace whatever `config.defaultBaseBranch` says now. In dev that config
+ * value tracks live git HEAD (`refreshActiveBranch`) and can drift, and without
+ * this clause the drift would silently un-protect the branch the base workspace
+ * was forked from; a normal branch (`baseBranch !== name`) is never falsely
+ * protected.
  *
- * This answers base-branch questions only (submit/delete/ACL rails). To
- * authorize a content write or render a lock, use
- * {@link getBranchWriteProtection}, which also accounts for workflow status.
+ * Answers base-branch questions only (submit/delete/ACL rails). To authorize a
+ * content write or render a lock, use {@link getBranchWriteProtection}, which
+ * also accounts for workflow status.
  */
 export function getBranchProtection(
   config: Pick<CanopyConfig, 'mode' | 'defaultBaseBranch'>,
@@ -105,19 +94,16 @@ export function getBranchProtection(
 }
 
 /**
- * {@link getBranchProtection} plus the write decision: writes are blocked on the
- * read-only base branch, and on any branch whose status has left `'editing'`.
- * This is the single expression of the "which statuses lock editing" rule --
- * the API guard, the branches-list wire flag, and the editor all read it here.
+ * {@link getBranchProtection} plus the write decision: writes are blocked on
+ * the read-only base branch and on any branch whose status has left
+ * `'editing'` -- the single expression of that rule, read by the API guard, the
+ * branches-list wire flag and the editor.
  *
- * `status` is REQUIRED, and deliberately typed to admit `undefined`, because a
- * missing status must FAIL CLOSED. `branch.json` is read with a bare
- * `JSON.parse(...) as BranchMetadataFile` (branch-metadata.ts) with no schema
- * validation, so a hand-repaired or partially-written file can yield
- * `status: undefined` at runtime even though the type says otherwise -- and
- * malformed branch metadata is a real, handled condition here (see the
- * corrupt-metadata quarantine in branch-registry/branch-health). A branch whose
- * review state cannot be determined must not be writable.
+ * `status` is REQUIRED and admits `undefined` because a missing status must
+ * FAIL CLOSED: `branch.json` is read with a bare `JSON.parse(...) as
+ * BranchMetadataFile` (branch-metadata.ts), so it can be absent at runtime.
+ * Required, not optional, so "argument omitted" and "file had no status" stay
+ * distinguishable -- the safe answer differs.
  */
 export function getBranchWriteProtection(
   config: Pick<CanopyConfig, 'mode' | 'defaultBaseBranch'>,

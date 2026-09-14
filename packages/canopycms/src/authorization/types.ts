@@ -3,9 +3,8 @@ import type { CanopyUserId, CanopyGroupId } from '../types'
 export type { CanopyUserId, CanopyGroupId }
 
 /**
- * A path used in permission rules.
- * SECURITY CRITICAL: Always validated to prevent path traversal.
- * Example: "content/posts" or "content/settings/config"
+ * A path used in permission rules, e.g. "content/posts".
+ * SECURITY CRITICAL: always validated to prevent path traversal.
  */
 export type PermissionPath = string & { readonly __brand: 'PermissionPath' }
 
@@ -38,9 +37,8 @@ export interface ContentAccessDeps {
   defaultPathAccess: import('../config').DefaultPathAccess
   mode: import('../operating-mode').OperatingMode
   /**
-   * Get the settings branch root path for loading centralized permissions.
-   * Used in modes with a separate settings branch.
-   * Must throw if settings branch cannot be loaded.
+   * Settings branch root for loading centralized permissions, in modes with a
+   * separate settings branch. Must throw if it cannot be loaded.
    */
   getSettingsBranchRoot?: () => Promise<string>
 }

@@ -1,7 +1,7 @@
 /**
- * Reserved groups for CanopyCMS permission system.
- *
- * These groups have special meaning and cannot be deleted or renamed.
+ * Reserved groups for the CanopyCMS permission system; they cannot be deleted
+ * or renamed. Admins have full access to every CMS operation; Reviewers can
+ * review branches, request changes and approve PRs.
  *
  * SECURITY: membership in a reserved group grants privilege, so these IDs must
  * only ever come from Canopy-managed sources (internal groups in
@@ -23,11 +23,10 @@ export function isReservedGroup(groupId: string): groupId is ReservedGroupId {
 /**
  * Remove reserved privileged group IDs (Admins, Reviewers) from a group list.
  *
- * SECURITY: apply this to externally-supplied group lists (identity
- * provider groups) before merging them into a user's effective groups, so a
- * provider-controlled group name can never grant CanopyCMS privilege.
- * Non-reserved groups pass through unchanged and remain usable for ordinary
- * path/branch ACL membership.
+ * SECURITY: apply this to identity-provider group lists before merging them
+ * into a user's effective groups, so a provider-controlled group name can never
+ * grant CanopyCMS privilege. Non-reserved groups pass through unchanged and
+ * remain usable for ordinary path/branch ACL membership.
  */
 export function stripReservedGroups<T extends string>(groups: readonly T[]): T[] {
   return groups.filter((group) => !isReservedGroup(group))
@@ -37,16 +36,12 @@ export function isAdmin(groups: readonly string[] | undefined): boolean {
   return groups?.includes(RESERVED_GROUPS.ADMINS) ?? false
 }
 
-/**
- * Check if user is in the Reviewers group (or is an Admin, since Admins can do everything)
- */
+/** True for the Reviewers group and for Admins, who can do everything. */
 export function isReviewer(groups: readonly string[] | undefined): boolean {
   return isAdmin(groups) || (groups?.includes(RESERVED_GROUPS.REVIEWERS) ?? false)
 }
 
-/**
- * Used for operations that require elevated permissions but not full admin
- */
+/** For operations that need elevated rights but not full admin. */
 export function isPrivileged(groups: readonly string[] | undefined): boolean {
   return isReviewer(groups)
 }

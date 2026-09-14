@@ -1,56 +1,30 @@
 /**
- * Cross-host layered locking for settings JSON files (permissions.json,
- * groups.json) in the settings workspace — a single global orphan-git-branch
+ * Cross-host layered locking for the settings JSON files (permissions.json,
+ * groups.json) in the settings workspace — one global orphan-git-branch
  * checkout at `{settingsRoot}` shared by every branch (see
  * `api/settings-helpers.ts`'s `getSettingsBranchContext`).
  *
- * Without this helper, the write path is a classic unprotected TOCTOU: load
- * -> compare -> mutate -> write with no lock spanning the cycle, so two warm
- * Lambda containers (separate NFS clients on EFS) can each read the same
- * pre-mutation file and have the second write silently clobber the first.
- * `mutateSettingsJsonFile` closes that with the standard 3-layer recipe from
- * docs/concurrency.md, structured identically to {@link CommentStore}'s
- * `withMutation` (see comment-store.ts) and `BranchMetadataFileManager.save()`
- * (see branch-metadata.ts):
+ * `mutateSettingsJsonFile` composes the three layers docs/concurrency.md owns
+ * ("The four layers"; the settings-files row of "Who uses what"): `withLock`
+ * on the resolved path, then `withOccFileLock`, then `withOccRetry` around
+ * `writeOccJsonFile`, which reloads the file on every attempt. Without all
+ * three the write path is an unprotected TOCTOU: two warm Lambda containers
+ * are separate NFS clients on EFS, so both can read the same pre-mutation file
+ * and the second write silently wins.
  *
- * 1. {@link withLock} - an in-process FIFO mutex keyed by the resolved file
- *    path.
- * 2. {@link withOccFileLock} - a server-enforced, cross-process/cross-host
- *    lock (proper-lockfile, mkdir-based), immune to NFS client dentry/
- *    attribute caching.
- * 3. {@link withOccRetry} around {@link writeOccJsonFile} - version/writeId
- *    based optimistic concurrency control, reloading the file fresh on
- *    EVERY retry attempt. With layers 1-2 in place this is defense-in-depth
- *    (e.g. a stale process from a rolling deploy writing without the lock),
- *    not the primary safety mechanism.
+ * What that doc and `utils/occ-json-write.ts` do not cover:
  *
- * Three caveats specific to these files, on top of the generic guarantee
- * documented on `utils/occ-json-write.ts`:
- *
- * (a) UNLIKE comments.json/branch.json (which never leave the branch
- *     workspace), permissions.json/groups.json are git-committed on the
- *     settings orphan branch. `commitSettings()` (api/settings-helpers.ts)
- *     calls `commitToSettingsBranch`, whose `pullCurrentBranch()` merge runs
- *     AFTER this helper has released its lock, and that merge can rewrite
- *     the file's `version` from upstream. So, unlike branch.json, `version`
- *     here is NOT guaranteed monotonic — it remains a correctness aid (it
- *     still catches the common same-host and short-window cross-host races)
- *     but is advisory/defense-in-depth, not a hard guarantee. The LOCKFILE
- *     (layer 2) is the actual cross-host correctness mechanism.
- * (b) The git commit+push deliberately happens OUTSIDE this lock (mirrors
- *     branch-metadata.ts keeping registry invalidation outside the lock it
- *     protects): committing/pushing is comparatively slow network/process
- *     I/O, and holding a mkdir-based lock across it would serialize
- *     unrelated requests behind that I/O for no correctness gain — only the
- *     write to the working tree needs the lock.
- * (c) Because commit+push is outside the lock, two writers' save-then-commit
- *     sequences can interleave (A saves+commits+pushes, B's save lands and
- *     commits before A's push is visible, or similar), and the second
- *     `git commit` can run against an already-clean tree. Verified benign
- *     with simple-git 3.36: its task-error detection depends on stderr
- *     output, and a clean-tree `git commit` exits 1 with "nothing to
- *     commit" on STDOUT only, so `git.commit()` resolves rather than
- *     throwing. Re-verify this on any simple-git upgrade.
+ * (a) These files are git-committed, so `version` is NOT monotonic here --
+ *     `commitSettings()` (api/settings-helpers.ts) calls
+ *     `commitToSettingsBranch`, whose `pullCurrentBranch()` merge runs after
+ *     this helper releases its lock and can rewrite `version` from upstream.
+ *     The lockfile (layer 2) is the cross-host guarantee; OCC is defense.
+ * (b) The git commit+push deliberately runs OUTSIDE this lock: it is slow
+ *     network I/O, and only the working-tree write needs the lock.
+ * (c) So two writers' save-then-commit sequences can interleave and the second
+ *     `git commit` can hit an already-clean tree. Benign with simple-git 3.36,
+ *     whose task-error detection reads stderr while a clean-tree commit exits
+ *     1 with "nothing to commit" on stdout only. Re-verify on upgrade.
  */
 
 import fs from 'node:fs/promises'
@@ -79,14 +53,12 @@ export class SettingsFileConflictError extends Error {
 }
 
 /**
- * Thrown by a caller's `mutate` callback when an app-level
- * `expectedContentVersion` sent by a client doesn't match the file's current
- * `version`. A different concern from {@link SettingsFileConflictError}:
- * this is a real edit conflict the user must resolve by reloading, not
- * transient lock contention a retry can fix — and indeed it never IS
- * retried, since {@link withOccRetry} only recognizes
- * {@link OccWriteConflictError} as retryable, so this propagates on the
- * very first attempt.
+ * Thrown by a caller's `mutate` when a client-supplied
+ * `expectedContentVersion` doesn't match the file's current `version`: a real
+ * edit conflict the user resolves by reloading, not the transient contention
+ * behind {@link SettingsFileConflictError}. It is never retried —
+ * {@link withOccRetry} only retries {@link OccWriteConflictError} — so it
+ * propagates on the first attempt.
  */
 export class SettingsVersionConflictError extends Error {
   constructor(message = 'Settings were modified by another user. Please reload and try again.') {
@@ -96,10 +68,8 @@ export class SettingsVersionConflictError extends Error {
 }
 
 /**
- * Structural shape `mutateSettingsJsonFile` needs from a parsed settings
- * file: just enough to read the OCC version off it without resorting to
- * `any`. Concrete file types (e.g. `PermissionsFile`, `GroupsFile`) satisfy
- * this automatically since `version` is optional on both.
+ * Just enough of a parsed settings file to read its OCC version without `any`.
+ * `PermissionsFile` and `GroupsFile` satisfy it — `version` is optional on both.
  */
 interface VersionedSettingsFile {
   version?: number
@@ -111,13 +81,11 @@ export interface MutateSettingsFileOptions<TFile extends VersionedSettingsFile> 
   /** JSON.parse + zod-parse the raw file contents. Throws propagate untouched (never retried). */
   parse: (raw: string) => TFile
   /**
-   * Compute the next payload from the current parsed file (`null` on
-   * ENOENT) and the version to write it under. Return `null` for a
-   * deliberate no-op — the write is skipped entirely. Called once per
-   * retry attempt against freshly reloaded state, so it must be safe to
-   * call more than once; anything it throws (besides the retried
-   * `OccWriteConflictError`, which it should never throw itself) propagates
-   * out of `mutateSettingsJsonFile` untouched.
+   * Compute the next payload from the current parsed file (`null` on ENOENT)
+   * and the version to write it under; return `null` for a deliberate no-op.
+   * Called once per retry attempt against freshly reloaded state, so it must be
+   * safe to call more than once. Anything it throws propagates out untouched,
+   * and it must never throw `OccWriteConflictError` itself.
    */
   mutate: (
     current: TFile | null,
@@ -130,17 +98,15 @@ export interface MutateSettingsFileOptions<TFile extends VersionedSettingsFile> 
 }
 
 /**
- * Reload the file fresh and report the version to feed both `mutate()` and
+ * Reload the file fresh and report the version fed to both `mutate()` and
  * `writeOccJsonFile`'s `expectedVersion`.
  *
- * ENOENT is the ONLY case that maps to a `null` `occExpectedVersion` (the
- * create-via-link path in {@link writeOccJsonFile}): an EXISTING file —
- * even one hand-written without a `version` field — maps to `0` and takes
- * the rename-based update path instead. Conflating the two would make
- * `writeOccJsonFile` attempt a `link()` create against a file that already
- * exists, spuriously failing with EEXIST instead of doing a normal
- * versioned update. (Same contract as `CommentStore`'s `loadWithVersion` in
- * comment-store.ts.)
+ * ENOENT is the ONLY case mapping to a `null` `occExpectedVersion` (the
+ * create-via-link path in {@link writeOccJsonFile}); an existing file, even one
+ * hand-written with no `version` field, maps to `0` and takes the rename-based
+ * update path. Conflating them makes `writeOccJsonFile` attempt a `link()`
+ * create over a file that exists and fail with EEXIST. (Same contract as
+ * `CommentStore`'s `loadWithVersion` in comment-store.ts.)
  */
 async function loadCurrent<TFile extends VersionedSettingsFile>(
   filePath: string,
@@ -160,15 +126,12 @@ async function loadCurrent<TFile extends VersionedSettingsFile>(
 }
 
 /**
- * Run a load -> mutate -> write cycle for a settings JSON file under the
- * full lock + OCC-retry stack described in the module doc comment above. A
- * conflict that survives every retry surfaces as
+ * Run one load -> mutate -> write cycle under the full lock + OCC-retry stack
+ * described in the module doc. A conflict surviving every retry surfaces as
  * {@link SettingsFileConflictError}; everything else — including
  * {@link SettingsVersionConflictError} thrown by `mutate`, and any
- * parse/validation error — propagates untouched.
- *
- * Returns the `writeOccJsonFile` result, or `null` if `mutate` chose a
- * no-op (no write happened).
+ * parse/validation error — propagates untouched. Returns the
+ * `writeOccJsonFile` result, or `null` if `mutate` chose a no-op.
  */
 export async function mutateSettingsJsonFile<TFile extends VersionedSettingsFile>(
   opts: MutateSettingsFileOptions<TFile>,

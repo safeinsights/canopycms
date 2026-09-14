@@ -26,7 +26,7 @@ function isAllowedByTarget(target: PermissionTarget, user: CanopyUser): boolean 
   const hasUserConstraint = !!target.allowedUsers?.length
   const hasGroupConstraint = !!target.allowedGroups?.length
 
-  // No constraints means allowed (rule applies to everyone)
+  // A target with no constraints applies to everyone.
   if (!hasUserConstraint && !hasGroupConstraint) {
     return true
   }
@@ -39,11 +39,10 @@ function isAllowedByTarget(target: PermissionTarget, user: CanopyUser): boolean 
 }
 
 /**
- * Resolve a `defaultPathAccess` config value to an 'allow'/'deny' verdict for one
- * permission level. String form applies the same value to every level. Object
- * form looks up the level; an absent level resolves to 'deny'
- * (fail-closed), so scoping e.g. `{ read: 'allow' }` doesn't accidentally open
- * edit/review.
+ * Resolve `defaultPathAccess` to an 'allow'/'deny' verdict for one permission
+ * level. String form applies to every level; object form looks up the level,
+ * and an absent level resolves to 'deny' (fail-closed) so `{ read: 'allow' }`
+ * cannot accidentally open edit/review.
  */
 export function resolveDefaultPathAccess(
   defaultAccess: DefaultPathAccess,
@@ -84,7 +83,7 @@ export function checkPathAccess({
 
     const target = rule[level]
     if (!target) {
-      // No permissions defined for this level on this rule, continue to next rule
+      // A rule that defines nothing for this level does not decide it.
       continue
     }
 

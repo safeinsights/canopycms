@@ -1,20 +1,7 @@
 /**
- * Authorization module for CanopyCMS
- *
- * This module provides a unified API for checking user access to branches and content.
- *
- * ## Quick Start
- *
- * For most use cases, use `checkContentAccess` which handles both branch and path permissions:
- *
- * ```ts
- * import { checkContentAccess } from './authorization'
- *
- * const result = await checkContentAccess(deps, context, branchRoot, 'content/posts/post.mdx', user, 'edit')
- * if (result.allowed) {
- *   // User can edit the file
- * }
- * ```
+ * Authorization for CanopyCMS: checking user access to branches and content.
+ * Most callers want `checkContentAccess(deps, context, branchRoot, path, user,
+ * level)`, which covers both the branch and the path layer.
  */
 
 export type {
