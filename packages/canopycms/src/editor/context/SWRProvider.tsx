@@ -20,8 +20,7 @@
  * - dedupingInterval: 2000 -- collapses the duplicate requests React Strict
  *   Mode's mount -> cleanup -> remount cycle produces (each hook's
  *   automatic on-mount fetch runs twice), plus any accidental
- *   near-simultaneous mounts of the same resource. See swr.md /
- *   editor-async-patterns.md (2026-07-24 decision) for the background.
+ *   near-simultaneous mounts of the same resource.
  */
 
 import React from 'react'

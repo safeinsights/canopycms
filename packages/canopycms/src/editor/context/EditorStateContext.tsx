@@ -1,9 +1,8 @@
 'use client'
 
 /**
- * Consolidates editor-wide state that was previously scattered across
- * the Editor component. This reduces prop drilling and makes state
- * management more explicit.
+ * Consolidates editor-wide loading, modal, and preview state in one place
+ * instead of prop-drilling it through the Editor component.
  */
 
 import React, { createContext, useContext, useCallback, useState, useMemo } from 'react'

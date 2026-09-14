@@ -1,13 +1,6 @@
 'use client'
 
-/**
- * EntryCreateModal - Modal for creating new entries.
- *
- * Replaces window.prompt with a proper UI for:
- * - Selecting entry type (if multiple types available)
- * - Entering slug for new entry
- * - Validation and error handling
- */
+/** Modal for creating a new entry: replaces window.prompt with entry-type selection, slug entry, and validation. */
 
 import { useState, useEffect, useRef } from 'react'
 import { Modal, Stack, TextInput, Group, Button, Alert, Text, Select } from '@mantine/core'
@@ -45,10 +38,10 @@ export interface EntryCreateModalProps {
   error?: string | null
   /**
    * Slugs already taken in the target collection (from the already-loaded
-   * entries list). Used to reject an obvious collision client-side with a
-   * clear message, instead of the server returning a 409 (or, for entry
-   * types with no required fields, silently succeeding via an update path
-   * that never mentions the real problem).
+   * entries list). Lets the client flag an obvious collision early with a
+   * clear message; the server is still the authority, and without this
+   * check an entry type with no required fields would silently succeed via
+   * an update path instead of erroring.
    */
   existingSlugs?: Set<string>
 }
@@ -75,17 +68,12 @@ export function EntryCreateModal({
   const [entryTypeName, setEntryTypeName] = useState(getDefaultEntryTypeName())
   const [validationError, setValidationError] = useState<string | null>(null)
 
-  // Seed the form once per open, on the closed -> open transition.
-  //
-  // This deliberately keys on `isOpen` alone. It used to key on the prop
-  // *values* (`[isOpen, selectedEntryTypeName, entryTypes]`), but `entryTypes`
-  // is an array that callers build inline - a fresh identity on every parent
-  // render - so any re-render while the modal was open re-ran this block and
-  // silently discarded what the user had typed or selected.
-  //
-  // Seeding is a lifecycle event, not a derivation of the current props, so the
-  // narrow dep array is the point. Do not "fix" it by adding the props read
-  // below (`entryTypes`, `selectedEntryTypeName`) back in.
+  // Seeds the form once per open, on the closed -> open transition. Keys on
+  // `isOpen` alone, not on `entryTypes`/`selectedEntryTypeName`: `entryTypes`
+  // is an array callers build inline, a fresh identity on every parent
+  // render, so keying on it would silently reset the form on every
+  // re-render while the modal is open. Do not add those props back to the
+  // dep array below.
   const wasOpenRef = useRef(false)
   useEffect(() => {
     if (isOpen && !wasOpenRef.current) {

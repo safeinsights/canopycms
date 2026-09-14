@@ -380,7 +380,7 @@ export const ThreadCarousel: React.FC<ThreadCarouselProps> = ({
                 )
               })}
 
-              {/* Invisible spacer at end to maintain left alignment for last thread */}
+              {/* Without this spacer the last thread right-aligns, showing previous threads on the left. */}
               {sortedThreads.length > 1 && (
                 <div
                   style={{

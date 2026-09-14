@@ -37,18 +37,15 @@ export interface AssetContextProviderProps extends AssetContextValue {
  * full, and a deployment `basePath` cannot apply on top of it. Where the two differ is topology,
  * not precedence - see the asset-mount table in the README.
  *
- * The fallback is kept only so that existing
- * basePath deployments do not break on upgrade, which makes removing it a deliberate decision
- * rather than a cleanup - it is option 1 of
+ * The fallback is kept only so that existing basePath deployments do not break on upgrade,
+ * which makes removing it a deliberate decision rather than a cleanup - it is option 1 of
  * `.claude/future-tasks/editor-asset-mount-topology.md`, still open.
  *
- * KNOWN LIMITATION: the fallback assumes that topology, and consults none. On a CloudFront/CDK
- * deployment a basePath does NOT move the asset space (behaviors are anchored at the distribution
- * root), so prefixing is wrong there — the requests still resolve, because `withCanopy`'s
- * auto-prefixed `/assets/:path*` rewrite catches them and serves through the CMS Lambda, but they
- * bypass the CDN cache and the dedicated transform Lambda. The workaround is real though not
- * obvious: set `media.publicBaseUrl` to the distribution origin, which takes precedence here.
- * Tracked in `.claude/future-tasks/editor-asset-mount-topology.md`.
+ * KNOWN LIMITATION: on a CloudFront/CDK deployment, a basePath does NOT move the asset
+ * space (behaviors are anchored at the distribution root), so this fallback prefixes
+ * wrongly — requests still resolve, via `withCanopy`'s auto-prefixed `/assets/:path*`
+ * rewrite, but bypass the CDN cache and the dedicated transform Lambda. Workaround: set
+ * `media.publicBaseUrl` to the distribution origin instead, which takes precedence here.
  */
 export function AssetContextProvider({ baseUrl, basePath, children }: AssetContextProviderProps) {
   const resolved = baseUrl ?? basePath
