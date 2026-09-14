@@ -27,10 +27,8 @@ export const isDeployedStatic = (config: { deployedAs?: string }): boolean => {
  * `Dockerfile.cms` sets it in its builder stage, ahead of the build command).
  */
 export const isBuildMode = (): boolean => {
-  // Next.js build phase
   if (process.env.NEXT_PHASE === 'phase-production-build') return true
 
-  // Generic build mode flag (can be set by any framework)
   if (process.env.CANOPY_BUILD_MODE === 'true') return true
 
   return false

@@ -46,10 +46,7 @@ export const ANONYMOUS_USER: AnonymousUser = Object.freeze({
  *
  * This is the SINGLE source of truth for converting external auth to CanopyUser.
  *
- * @param authResult - Result from auth plugin's authenticate() method
- * @param bootstrapAdminIds - Set of user IDs that should always be admins
- * @param internalGroups - Optional internal groups from .canopycms/groups.json (loaded by caller)
- * @returns CanopyUser (either authenticated with groups or ANONYMOUS_USER)
+ * @param internalGroups - Internal groups from .canopycms/groups.json, loaded by the caller.
  */
 export function authResultToCanopyUser(
   authResult: AuthenticationResult,
@@ -60,14 +57,12 @@ export function authResultToCanopyUser(
     return ANONYMOUS_USER
   }
 
-  // Step 1: Start with external groups from the auth provider.
   // SECURITY (SEC-H1): reserved privileged group IDs (Admins/Reviewers) are
   // stripped here so a provider-controlled group name can never grant
   // CanopyCMS privilege. Reserved membership is only added below, from
   // bootstrapAdminIds and Canopy-managed internal groups.
   const groups = stripReservedGroups(authResult.user.externalGroups ?? [])
 
-  // Step 2: Add Admins group if user is in bootstrap admin list
   if (bootstrapAdminIds.has(authResult.user.userId) && !groups.includes(RESERVED_GROUPS.ADMINS)) {
     groups.push(RESERVED_GROUPS.ADMINS)
   }

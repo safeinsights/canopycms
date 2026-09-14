@@ -13,14 +13,7 @@ import { isIndexSlug } from './utils/entry-url'
  * many URLs an entry answers at. The forward rule (`computeEntryUrl` in utils/entry-url.ts, which
  * `listEntries` publishes as `item.urlPath` and reference resolution stamps on every resolved
  * reference; and `defaultBuildPath` in content-tree.ts for tree nodes) collapses an `index` slug
- * onto its collection's path and never emits a trailing `/index`. Candidate 1 used to match it
- * anyway, so an index entry ALSO answered at a `.../index` URL that no forward surface publishes
- * — enumeration and resolution disagreeing about how many URLs exist. Adopters paid for that with
- * per-route entryType gates whose only job was to reject the phantom.
- *
- * @param urlPath - URL path like '/docs/guides/getting-started' or 'docs/guides'
- * @param contentRoot - Content root directory name (default: 'content')
- * @returns Array of { entryPath, slug } candidates to try in order
+ * onto its collection's path and never emits a trailing `/index`.
  */
 export function resolveUrlPathCandidates(
   urlPath: string,
@@ -66,7 +59,6 @@ export function resolveUrlPathCandidates(
   // Kept unconditionally, which is what makes the skip above a skip rather than a removal: a
   // collection literally NAMED `index` is handed the path `/x/index` by
   // `defaultBuildPath(kind: 'collection')`, and this candidate is the only one that can answer it.
-  // (Candidate 1 used to shadow that collection entirely, returning the parent's own index entry.)
   candidates.push({
     entryPath: `${contentRoot}/${segments.join('/')}`,
     slug: 'index',

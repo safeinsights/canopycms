@@ -78,23 +78,6 @@ function findFieldType(fields: readonly FieldConfig[], dottedPath: string): stri
  * export type PartnerContent = EntryTypes['partner']
  * ```
  *
- * @example
- * Also valid — keys are schema-variable names (prior convention):
- * ```typescript
- * export const entrySchemaRegistry = createEntrySchemaRegistry({
- *   partnerSchema,  // JS shorthand — key is the string "partnerSchema"
- *   docSchema,
- * })
- *
- * // .collection.json must then say:
- * //   { "name": "partner", "schema": "partnerSchema" }
- * //
- * // EntryTypesFromRegistry produces a map keyed by "partnerSchema" rather than
- * // by "partner", so it can't plug straight into buildContentTree's TEntryTypes.
- * // Either rekey the registry to the recommended convention, or declare the
- * // entry-type map manually using TypeFromEntrySchema<typeof partnerSchema>.
- * ```
- *
  * Runtime validation: registry must be non-empty, each schema must be a
  * non-empty `EntrySchema` array, at most one `isTitle` per schema (string
  * fields only), at most one `isBody` per schema (markdown/mdx only). Field-
@@ -103,7 +86,6 @@ function findFieldType(fields: readonly FieldConfig[], dottedPath: string): stri
  * no field-name collisions after group flattening.
  */
 export function createEntrySchemaRegistry<T extends Record<string, EntrySchema>>(registry: T): T {
-  // Validate that registry is not empty
   if (!registry || typeof registry !== 'object') {
     throw new Error('Entry schema registry must be an object')
   }
@@ -113,7 +95,6 @@ export function createEntrySchemaRegistry<T extends Record<string, EntrySchema>>
     throw new Error('Entry schema registry cannot be empty')
   }
 
-  // Validate each entry schema
   for (const [key, schema] of Object.entries(registry)) {
     if (!Array.isArray(schema)) {
       throw new Error(`Entry schema registry entry "${key}" must be an array of FieldConfig`)
@@ -157,9 +138,6 @@ export function createEntrySchemaRegistry<T extends Record<string, EntrySchema>>
         `Entry schema registry entry "${key}": field "${reservedBodyField}" has isBody: true but "${reservedBodyField}" is reserved — reference resolution sets ${RESOLVED_REFERENCE_KEYS.map((k) => `"${k}"`).join(', ')} on a resolved reference, and a body field with one of those names would overwrite it. Rename the field (the body's field name is yours to choose; only these four are reserved).`,
       )
     }
-    // Field-shape checks moved here from validateCanopyConfig — these used to walk
-    // the (now-removed) inline-config schema; the registry is now the canonical
-    // entry point for entry schemas, so they run here.
     ensureSelectFieldsHaveOptions(schema)
     ensureReferenceFieldsHaveScope(schema)
     ensureNoGroupsInsideComplexFields(schema)
@@ -174,10 +152,6 @@ export function createEntrySchemaRegistry<T extends Record<string, EntrySchema>>
  *
  * Useful for build-time validation to catch schema reference errors early
  * rather than at runtime on first request.
- *
- * @param entrySchemaRegistry - The entry schema registry mapping names to field definitions
- * @param contentPath - Path to the content directory containing .collection.json files
- * @returns Promise that resolves if validation passes, rejects with descriptive error if not
  *
  * @example
  * ```typescript
@@ -194,7 +168,6 @@ export async function validateEntrySchemaRegistry(
   const { loadCollectionMetaFiles } = await import('./schema')
   const { access } = await import('fs/promises')
 
-  // Check if content directory exists
   try {
     await access(contentPath)
   } catch (err) {
@@ -204,13 +177,11 @@ export async function validateEntrySchemaRegistry(
     throw err
   }
 
-  // Load all .collection.json files
   const metaFiles = await loadCollectionMetaFiles(contentPath)
 
   const availableSchemas = Object.keys(entrySchemaRegistry)
   const errors: string[] = []
 
-  // Validate root entry type references
   if (metaFiles.root?.entries) {
     for (const entryType of metaFiles.root.entries) {
       if (!entrySchemaRegistry[entryType.schema]) {
@@ -222,7 +193,6 @@ export async function validateEntrySchemaRegistry(
     }
   }
 
-  // Validate collection entry type references
   for (const collection of metaFiles.collections) {
     if (collection.entries) {
       for (const entryType of collection.entries) {

@@ -7,5 +7,4 @@
  * @module config
  */
 
-// Re-export everything from the config module
 export * from './config/index'

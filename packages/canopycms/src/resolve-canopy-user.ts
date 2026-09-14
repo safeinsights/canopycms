@@ -2,16 +2,6 @@
  * Shared "authenticate -> resolve internal groups -> merge into CanopyUser"
  * pipeline.
  *
- * This used to be duplicated between `http/handler.ts` (the core API
- * handler) and `canopycms-next`'s `context-wrapper.ts` (Next.js SSR user
- * extraction) - including a module-level `warnedNoAdmins` flag in each copy.
- * The duplication let the two drift: `http/handler.ts` loaded internal
- * groups from the BASE BRANCH content clone's `groups.json`, which nothing
- * in the product ever writes (writes go to the settings workspace via
- * `mutateGroupsFile` - `api/groups.ts`), so group-based privileges never
- * actually took effect. Consolidating the pipeline here means both callers
- * read from the same place and cannot silently diverge again.
- *
  * canopyLogWarn, not console.warn: this module has no worker-specific logic,
  * but nothing prevents it from becoming reachable from the worker's runtime
  * import closure later, and the existing "no admins configured" warning is

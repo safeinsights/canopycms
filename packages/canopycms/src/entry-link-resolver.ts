@@ -19,10 +19,6 @@ import { computeEntryUrl } from './utils/entry-url'
 
 const log = createDebugLogger({ prefix: 'EntryLinks' })
 
-/**
- * Base58 alphabet pattern (matches content IDs).
- * Excludes ambiguous characters: 0, O, I, l
- */
 /** Base58 alphabet character class (excludes ambiguous: 0, O, I, l). */
 export const BASE58_CHAR = '[123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz]'
 
@@ -65,7 +61,6 @@ export function resolveEntryLinksInText(
   contentRoot: string,
   customResolver?: EntryLinkUrlResolver,
 ): string {
-  // Split text into protected regions (code blocks/spans) and resolvable regions
   const parts = splitByCodeRegions(text)
 
   return parts
@@ -171,10 +166,6 @@ export function extractEntryLinkIds(text: string): Array<{ id: string; anchor?: 
   return results
 }
 
-// ---------------------------------------------------------------------------
-// Code-region splitting
-// ---------------------------------------------------------------------------
-
 interface TextPart {
   text: string
   isCode: boolean
@@ -195,7 +186,6 @@ function splitByCodeRegions(text: string): TextPart[] {
   let i = 0
 
   while (i < text.length) {
-    // Check for fenced code block (``` or ~~~)
     if (
       (text[i] === '`' || text[i] === '~') &&
       i + 2 < text.length &&
@@ -203,11 +193,9 @@ function splitByCodeRegions(text: string): TextPart[] {
       text[i + 2] === text[i]
     ) {
       const fence = text[i]
-      // Count fence length (could be ``` or ```` etc.)
       let fenceLen = 0
       while (i + fenceLen < text.length && text[i + fenceLen] === fence) fenceLen++
 
-      // Find end of opening fence line
       const lineEnd = text.indexOf('\n', i + fenceLen)
       if (lineEnd === -1) {
         // No newline — rest of text is code block
@@ -216,7 +204,6 @@ function splitByCodeRegions(text: string): TextPart[] {
         return parts
       }
 
-      // Find closing fence
       const closingPattern = fence.repeat(fenceLen)
       let closeStart = lineEnd + 1
       let found = false
@@ -249,13 +236,10 @@ function splitByCodeRegions(text: string): TextPart[] {
       continue
     }
 
-    // Check for inline code span (` or ``)
     if (text[i] === '`') {
-      // Count opening backticks
       let ticks = 0
       while (i + ticks < text.length && text[i + ticks] === '`') ticks++
 
-      // Find matching closing backticks
       const closer = '`'.repeat(ticks)
       const closeIdx = text.indexOf(closer, i + ticks)
 

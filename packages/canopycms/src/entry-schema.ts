@@ -14,10 +14,6 @@
  * reference takes; `validation/entry-validator.ts`'s `normalizeReferenceValues`
  * is the inverse, and the two must agree.
  *
- * `DEFAULT_SEO_FIELD_NAMES` is imported from `static/seo.ts` rather than
- * redeclared, so the schema this module emits and the fields that module reads
- * cannot drift apart.
- *
  * Module map: ./AGENTS.md.
  */
 import type { ComponentType } from 'react'
@@ -65,12 +61,6 @@ type InferableField = {
  * The fields reference resolution adds to a target's own data, on top of whatever
  * `resolvedSchema` declares.
  *
- * These have always been returned at runtime (`resolveSingleReferenceOnce` in
- * content-store.ts) but were missing from the inferred type, so a resolved reference typed
- * narrower than it actually is — which is why reading `ref.id` needed a cast, and one source
- * of the library-internal type error `adopter-migration.md` records under
- * `exactOptionalPropertyTypes` + `skipLibCheck: false`.
- *
  * `urlPath` is what makes a resolved reference linkable without a second lookup; it follows
  * the same collection+slug rule `listEntries` publishes as `item.urlPath`, so an index entry
  * collapses to its parent path.
@@ -100,10 +90,7 @@ export interface ResolvedReferenceMeta {
  * embed it, then the reserved metadata.
  *
  * Exists so the two places that construct one — the server resolver in content-store.ts and
- * the editor's live-preview endpoint in api/resolve-references.ts — cannot drift. They already
- * had: the preview endpoint kept the old `{ id, ...data }` order and carried none of the other
- * three keys, so a component rendering `<a href={ref.urlPath}>` showed `undefined` while
- * previewing and a real URL once published.
+ * the editor's live-preview endpoint in api/resolve-references.ts — cannot drift.
  *
  * The ordering is the contract, not a detail. Metadata last means a target that models `id` as
  * a content field cannot shadow the real content ID — which matters because the write boundary

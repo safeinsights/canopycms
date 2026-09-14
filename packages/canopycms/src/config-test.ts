@@ -34,7 +34,6 @@ export const defineCanopyTestConfig = (
   config: TestConfigInput,
   overrides?: Partial<CanopyConfigInput>,
 ): CanopyConfig => {
-  // Destructure to exclude schema from being spread into defineCanopyConfig
   const { schema: _schema, ...configWithoutSchema } = config
   return defineCanopyConfig({
     ...FALLBACK_AUTHOR,
@@ -56,7 +55,6 @@ export const createTestServices = async (
   const canopyConfig = defineCanopyTestConfig(config)
   const flatSchema = flattenSchema(config.schema, canopyConfig.contentRoot)
 
-  // Create a mock branchSchemaCache that returns the test schema
   const mockBranchSchemaCache = {
     getSchema: async () => ({
       schema: config.schema,
