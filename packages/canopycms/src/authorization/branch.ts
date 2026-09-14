@@ -22,7 +22,10 @@ export interface BranchAccessOptions {
    * around it. It widens nothing dangerous: {@link canPerformWorkflowAction}
    * disables its system-branch grant on the same flag, prod writes stay blocked
    * by `getBranchWriteProtection().readOnly`, and the editor API 401s anonymous
-   * callers before authorization runs.
+   * callers before authorization runs. What it buys: a public-read
+   * `deployedAs: 'server'` site can run 'deny' with
+   * `defaultPathAccess: { read: 'allow' }` and still keep un-ACL'd work branches
+   * private.
    */
   isProtectedBranch?: boolean
 }

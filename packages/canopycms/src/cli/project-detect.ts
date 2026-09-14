@@ -28,7 +28,9 @@ export interface PackageManagerCommands {
   ciInstall: string
   /** Dockerfile COPY line bringing the manifest + lockfile into the build. */
   dockerCopy: string
+  /** Dockerfile install line. */
   dockerInstall: string
+  /** How this manager runs the app's build script. */
   build: string
   /** How this manager adds dev dependencies, for the next-steps note. */
   addDev: string

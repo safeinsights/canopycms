@@ -266,7 +266,8 @@ export class SchemaOps {
 
   /**
    * Invalidate schema cache for this branch after mutations, then eagerly
-   * re-resolve on THIS host.
+   * re-resolve on THIS host. Every mutator calls this after `withSchemaLock`
+   * has returned, never inside the critical section.
    *
    * The eager re-resolve is the durable-snapshot window-E mitigation (see
    * BranchSchemaCache's class docs): the mutating host's own scan is
@@ -498,7 +499,7 @@ export class SchemaOps {
       : input
 
     const result = await this.withSchemaLock(() => this.createCollectionInner(normalizedInput))
-    // Invalidate schema cache after mutation (outside the lock — see withSchemaLock's doc comment)
+    // Outside the lock -- see invalidateSchemaCache.
     await this.invalidateSchemaCache()
     return result
   }
@@ -578,6 +579,7 @@ export class SchemaOps {
 
     const normalizedPath = this.normalizeCollectionPath(collectionPath)
     await this.withSchemaLock(() => this.updateCollectionInner(normalizedPath, updates))
+    // Outside the lock -- see invalidateSchemaCache.
     await this.invalidateSchemaCache()
   }
 
@@ -715,6 +717,7 @@ export class SchemaOps {
   async deleteCollection(collectionPath: LogicalPath): Promise<void> {
     const normalizedPath = this.normalizeCollectionPath(collectionPath)
     await this.withSchemaLock(() => this.deleteCollectionInner(normalizedPath))
+    // Outside the lock -- see invalidateSchemaCache.
     await this.invalidateSchemaCache()
   }
 
@@ -748,6 +751,7 @@ export class SchemaOps {
 
     const normalizedPath = this.normalizeCollectionPath(collectionPath)
     await this.withSchemaLock(() => this.addEntryTypeInner(normalizedPath, entryType))
+    // Outside the lock -- see invalidateSchemaCache.
     await this.invalidateSchemaCache()
   }
 
@@ -801,6 +805,7 @@ export class SchemaOps {
     await this.withSchemaLock(() =>
       this.updateEntryTypeInner(normalizedPath, entryTypeName, updates),
     )
+    // Outside the lock -- see invalidateSchemaCache.
     await this.invalidateSchemaCache()
   }
 
@@ -861,6 +866,7 @@ export class SchemaOps {
   async removeEntryType(collectionPath: LogicalPath, entryTypeName: string): Promise<void> {
     const normalizedPath = this.normalizeCollectionPath(collectionPath)
     await this.withSchemaLock(() => this.removeEntryTypeInner(normalizedPath, entryTypeName))
+    // Outside the lock -- see invalidateSchemaCache.
     await this.invalidateSchemaCache()
   }
 
@@ -965,6 +971,7 @@ export class SchemaOps {
   async updateOrder(collectionPath: LogicalPath, order: string[]): Promise<void> {
     const normalizedPath = this.normalizeCollectionPath(collectionPath)
     await this.withSchemaLock(() => this.updateOrderInner(normalizedPath, order))
+    // Outside the lock -- see invalidateSchemaCache.
     await this.invalidateSchemaCache()
   }
 
