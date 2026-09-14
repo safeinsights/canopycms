@@ -12,11 +12,11 @@ ever authenticated to github.com.** Specifically unproven against the real servi
 
 - that `createAppAuth` + `normalizeGitHubAppPrivateKey` produce a JWT GitHub accepts, at the
   `@octokit/auth-app@6` → `universal-github-app-jwt@1` resolution the worker actually bundles
-  (`packages/canopycms/src/worker/github-auth.ts:345-361` records why that resolution, not the
+  (`packages/canopycms/src/worker/github-auth.ts:548-567` records why that resolution, not the
   key, is the variable);
 - that `buildGitHubUrl()`'s `https://x-access-token:<token>@github.com/…` form is accepted for
   clone, fetch and `--force-with-lease` push by an **installation** token
-  (`worker/cms-worker.ts:817-820`);
+  (`worker/cms-worker.ts:823-826`);
 - that `contents: write` + `pull_requests: write` is genuinely sufficient — in particular for
   the two **GraphQL** mutations, which is the one entry in `CANOPY_APP_PERMISSIONS` derived by
   analogy rather than from GitHub's permissions reference (that reference enumerates REST

@@ -5,7 +5,7 @@ worker). Deliberately scoped **out** of that work, and filed rather than dropped
 
 ## The gap
 
-`createGitHubService` (`packages/canopycms/src/github-service.ts:432-465`) resolves its
+`createGitHubService` (`packages/canopycms/src/github-service.ts:483-521`) resolves its
 credential from the environment and nowhere else:
 
 ```ts
@@ -15,7 +15,7 @@ if (!token) { canopyLogWarn(...); return null }
 ```
 
 It then builds a second Octokit via `createCanopyOctokit({ auth: options.token })`
-(`:223`). When the worker gains GitHub App support, **this path does not**, so an adopter
+(`:274`). When the worker gains GitHub App support, **this path does not**, so an adopter
 who has only App credentials gets `githubService === null`.
 
 ## Why it is NOT a blocker for #45, measured rather than assumed
@@ -25,13 +25,13 @@ On the shipped AWS deployment this path is already inert:
 - `supportsPullRequests()` is `true` in prod (`operating-mode/client-safe-strategy.ts:32`)
   and `false` in dev (`:74`) — so the naive reading is that it is live in prod. It is not.
 - `CanopyCmsService` stamps **no** GitHub token onto the Lambda. Its environment
-  (`packages/canopycms-cdk/src/constructs/cms-service.ts:737-762`) carries only the
+  (`packages/canopycms-cdk/src/constructs/cms-service.ts:1266-1291`) carries only the
   workspace root, the auth-cache path, `...props.environment`, the deployment name and
-  `CANOPY_MODE` — by design, per the Security Model at `docs/deploying-to-aws.md:597-646`.
-- So `createGitHubService` warns, returns `null`, `services.ts:365-378` leaves
+  `CANOPY_MODE` — by design, per the Security Model at `docs/deploying-to-aws.md:991-1039`.
+- So `createGitHubService` warns, returns `null`, `services.ts:366-380` leaves
   `githubService` undefined, and `commitToSettingsBranch` takes the "queue task for worker"
-  branch at `services.ts:484`. Every PR on AWS is created by the worker
-  (`worker/task-runner.ts:362`).
+  branch at `services.ts:485`. Every PR on AWS is created by the worker
+  (`worker/task-runner.ts:360`).
 
 ## Who it actually bites
 
@@ -46,9 +46,9 @@ the obviously-correct answer for an org that mandates Apps.
 
 The change is small and local, and touches nothing in the worker:
 
-- `createCanopyOctokit`'s `options` (`github-service.ts:39`) widens — it will already accept
+- `createCanopyOctokit`'s `options` (`github-service.ts:79`) widens — it will already accept
   a structurally-typed `{ authStrategy, auth }` passthrough after #45.
-- `GitHubServiceOptions` (`:61`) gains an App variant.
+- `GitHubServiceOptions` (`:112`) gains an App variant.
 - `createGitHubService` reads `CANOPYCMS_GITHUB_APP_*` env vars.
 - `GitHubService` never touches git, so `buildGitHubUrl` is not involved at all.
 

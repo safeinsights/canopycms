@@ -484,7 +484,7 @@ function assertNumericId(propName: string, value: string | undefined): void {
  * Guards the GitHub credential props at synth: exactly one shape, fully given.
  *
  * Only the SECOND rule restates `resolveWorkerGitHubAuth`
- * (packages/canopycms/src/worker/github-auth.ts:136-147), which refuses both
+ * (packages/canopycms/src/worker/github-auth.ts:237-248), which refuses both
  * credentials and refuses neither. The first has no counterpart there and could
  * not: core takes one already-built `githubAppAuth` object, so a partial set of
  * three props is not representable by the time it sees anything. Restating the
@@ -919,10 +919,10 @@ export interface CanopyCmsServiceProps {
  * - Lambda function (Docker image, EFS mount, private subnet, no internet)
  * - Lambda Function URL (for CloudFront origin)
  * - EC2 Worker (t4g.nano spot in ASG, public subnet, EFS mount, systemd) -
- *   rolled on every deploy via the ASG's UpdatePolicy, so a changed worker
- *   bundle actually reaches the instance instead of sitting unused in a
- *   launch template until the next spot interruption (see the UpdatePolicy
- *   below)
+ *   rolled via the ASG's UpdatePolicy by every deploy that changes its launch
+ *   template, so a changed worker bundle reaches the instance instead of
+ *   sitting unused in a launch template until the next spot interruption (see
+ *   the UpdatePolicy below)
  * - Dedicated CloudWatch log groups for the CMS Lambda and the worker's
  *   stdout/stderr (the worker's is shipped via the amazon-cloudwatch-agent -
  *   journald is not agent-readable), each with a custom name/retention/

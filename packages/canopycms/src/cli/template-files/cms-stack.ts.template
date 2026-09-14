@@ -155,7 +155,9 @@ export class CmsStack extends Stack {
       baseBranch: canopyConfig.server.defaultBaseBranch,
       settingsBranch: canopyConfig.server.settingsBranch,
 
-      // Secrets the EC2 worker reads. The Lambda needs none of them.
+      // Secrets the EC2 worker reads. CanopyCMS's code on the Lambda reads none
+      // of them; a clerkMiddleware you keep needs the Clerk secret key on the
+      // Lambda as well (see "Security Model" in docs/deploying-to-aws.md).
       secretsArns: [
         githubToken?.secretArn,
         githubAppPrivateKey?.secretArn,

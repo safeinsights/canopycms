@@ -85,3 +85,9 @@ The unauthenticated `GET /users/{owner}` is limited to 60 requests an hour per I
 `detectAccountType` return `null` and discard GitHub's message, and `create` exits with "Check
 the name and your network". There is no flag to state user or organisation, although
 `resolveTarget` already exempts `verify` from this lookup for exactly that reason.
+
+## From the post-merge review of #331 (2026-09-13)
+
+### 9. `init`'s `.gitignore` block does not ignore `*.pem`
+
+`CANOPY_GITIGNORE_BLOCK` in `packages/canopycms/src/cli/init.ts` adds only `.canopy-dev/`, so a key that `create --key-out` wrote inside the project is one `git add .` from being committed. The generated `.dockerignore` gained `**/*.pem` in that review; its `.env*` line still matches only at the context root, the root-only matching measured there on Docker 29.6.2.

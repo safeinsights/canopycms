@@ -189,7 +189,7 @@ npx canopycms init-deploy aws
 This creates:
 
 - `Dockerfile.cms` — Lambda Web Adapter image
-- `.dockerignore` — keeps `.env*` and `infrastructure/` out of the build context
+- `.dockerignore` — keeps `.env*`, `.pem` files and `infrastructure/` out of the build context
 - `.github/workflows/deploy-cms.yml` — CI/CD workflow
 - `cdk.json` — CDK app configuration; `cdk deploy` resolves the app through this
 - `infrastructure/bin/app.ts` — CDK app entry point
@@ -792,12 +792,13 @@ which is the existing boot-time retry).
 Two things to know:
 
 - **A GitHub App private key is read once, at boot.** To rotate one: generate
-  the new key, store it in Secrets Manager, **replace the instance**
-  (`cdk deploy`, or terminate it and let the ASG replace it), and only then
-  delete the old key on GitHub. Delete first and nothing fails at once — tokens
-  already minted keep working for up to an hour — then every publish fails with
-  a 401 until the instance is replaced, and each branch that failed meanwhile
-  must be resubmitted.
+  the new key, store it in Secrets Manager, **replace the instance** (terminate
+  it and let the ASG replace it; `cdk deploy` replaces it only when the
+  worker's launch template changed, and a new value under the same secret ARN
+  changes nothing there), and only then delete the old key on GitHub. Delete
+  first and nothing fails at once — tokens already minted keep working for up
+  to an hour — then every publish fails with a 401 until the instance is
+  replaced, and each branch that failed meanwhile must be resubmitted.
 - **A plain env var is never re-read.** If you set `CANOPYCMS_GITHUB_TOKEN` or
   `CLERK_SECRET_KEY` directly instead of pointing at an ARN, the value is
   whatever the instance booted with. Re-reading an ARN you deliberately

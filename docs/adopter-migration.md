@@ -226,6 +226,11 @@ in the entry above. This closes adopter request #45.
    variable_ whose name starts with `GITHUB_`, so the obvious names cannot exist. The workflow
    maps each onto the unprefixed environment variable the CDK app reads.
 
+Replacing your workflow with a regenerated one, rather than adding those mappings by hand, also
+brings in the arm64 `ubuntu-24.04-arm` runner and a "Type-check the CDK app" step that needs
+`typescript` and `@types/node` installed — see
+[the CMS image entry](#the-cms-image-builds-without-git-canopycmsservice-defaults-to-arm64-and-the-cdk-app-is-type-checked--breaking-deploy-for-a-stack-that-sets-platform-without-architecture).
+
 The private key is **ARN-only**, and passing the key itself where the ARN belongs is refused
 at synth ([why](deploying-to-aws.md#authenticating-as-a-github-app)).
 
@@ -1579,6 +1584,11 @@ built to match: natively on an arm64 host, and on an x86 one only under QEMU emu
      [Where the image is built](deploying-to-aws.md#where-the-image-is-built));
    - an `infrastructure` line in `.dockerignore`;
    - with pnpm, `pnpm-workspace.yam[l]` in the Dockerfile's first `COPY`.
+
+   A regenerated workflow and stack also carry the optional GitHub App wiring (the
+   `CANOPY_GITHUB_APP_*` mappings and the `githubApp*` props) and the optional secret JSON-field
+   variables. Left unset, they change nothing: the token stays the worker's credential. See
+   [the CDK GitHub App entry](#the-cdk-worker-can-authenticate-as-a-github-app-45) to use them.
 
    `--force` replaces every generated file instead, including a stack you have edited.
 
