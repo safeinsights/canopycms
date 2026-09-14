@@ -7,7 +7,8 @@
  * leaves JSX components intact. `toPlainText` has the opposite goal — it
  * removes ALL markup (JSX tags, JSX expressions, markdown syntax) and keeps
  * only the prose, so **paired custom components lose their tags but keep
- * their children's text**.
+ * their children's text**: deleting a `<Callout>...</Callout>` wholesale
+ * would silently drop every word inside it from the search index.
  *
  * Pipeline (each step operates on the previous step's output):
  * 1. Strip YAML frontmatter (via `gray-matter`, the same parser
@@ -15,15 +16,10 @@
  * 2. Strip `import`/`export` statements (via `stripMdxImports`), which also
  *    protects fenced code blocks from every later step.
  * 3. Mask fenced code blocks and inline code spans, capturing their content.
- * 4. Strip JSX/HTML tags — opening, closing, and self-closing — leaving
- *    whatever text sits between them in place. This is a single global
- *    replace, not a matched-pair walk: because we never need the tag name or
- *    the children as a unit, deleting every tag occurrence and leaving the
- *    surrounding text untouched handles nesting for free.
+ * 4. Strip JSX/HTML tags via a single global replace (see `TAG_RE` below).
  * 5. Strip JSX expressions (`{...}`, including nested braces) — these are
  *    code, not prose.
- * 6. Strip common Markdown syntax: headings, emphasis/strikethrough, links,
- *    images, blockquote markers, list markers, and thematic breaks.
+ * 6. Strip common Markdown syntax (see `stripMarkdownSyntax` below).
  * 7. Restore the masked code from step 3 as plain text.
  * 8. Collapse whitespace: trim each line, collapse runs of blank lines,
  *    trim the result. Paragraph breaks (single blank lines) are preserved.

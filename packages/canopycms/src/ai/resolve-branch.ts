@@ -11,13 +11,8 @@ import { detectHeadBranch } from '../utils/git'
 /**
  * Resolve the branch root directory for reading content.
  *
- * - Static deployment, or any build: current working directory (content is in the checkout)
- * - Server (prod/dev) at run time: load or create the default active branch workspace
- *
- * Branch resolution priority (mirrors createActiveBranchDetector in services.ts):
- * 1. Explicit `defaultActiveBranch` in config
- * 2. In dev mode, auto-detect from git HEAD
- * 3. Fall back to `defaultBaseBranch` or 'main'
+ * The active-branch priority below mirrors `createActiveBranchDetector` in services.ts —
+ * keep the two in sync if either changes.
  */
 export async function resolveBranchRoot(config: CanopyConfig): Promise<string> {
   if (readsFromCheckout(config)) {

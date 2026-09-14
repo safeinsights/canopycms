@@ -242,16 +242,11 @@ export interface AIManifestBundle {
 /** Top-level manifest for AI content */
 export interface AIManifest {
   /**
-   * When this content was generated, ISO-8601.
-   *
-   * OPTIONAL, and absent whenever the manifest carries a `buildId` and no usable
-   * `SOURCE_DATE_EPOCH` (unset, blank, or malformed — a rejected value does not fall back to a
-   * live clock, it leaves the field absent):
-   * under build-once-promote one artifact is built once and may be served months later, so a
-   * build clock describes the runner that produced it rather than the content, and anything
-   * reading it as "how fresh is this?" is misled by design. An adopter who has declared a build
-   * id has told us the date is not the identifying fact, so it is omitted rather than filled in
-   * with something arbitrary. Present unconditionally when neither env var is set.
+   * When this content was generated, ISO-8601. Absent when the manifest carries a `buildId`
+   * and no usable `SOURCE_DATE_EPOCH` (unset, blank, or malformed values are never replaced
+   * with a live clock): under build-once-promote a build clock describes the runner, not the
+   * content, and is misleading read as freshness once `buildId` says the artifact — not the
+   * date — is the identifying fact. Present unconditionally when neither env var is set.
    */
   generated?: string
   /**

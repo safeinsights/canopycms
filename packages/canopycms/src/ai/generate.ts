@@ -480,7 +480,7 @@ async function runEntryTransform(
   }
 }
 
-/** Check if an entry matches a bundle filter (filters are AND'd) */
+/** Filters are AND'd: an entry must satisfy every filter field that's set. */
 function matchesBundleFilter(
   entry: AIEntryMeta,
   filter: NonNullable<AIContentConfig['bundles']>[number]['filter'],

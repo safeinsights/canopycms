@@ -400,18 +400,11 @@ function isImageValueLike(value: unknown): value is { src: string; alt?: unknown
 }
 
 /**
- * Sanitize `alt` for the `[...]` link-text span of `![alt](src)`. `alt` is
- * user free-text, so a crafted value like `x](/a) [pwn](https://evil.com)`
- * could otherwise inject a second, attacker-chosen link/image right next to
- * the intended one. Strips (rather than backslash-escapes) `[`, `]`, and any
- * backslash: alt is a human-readable description, so losing a stray literal
- * bracket from it is a non-issue, and stripping sidesteps a real composability
- * bug backslash-escaping would have - `renderObjectListTable`'s
- * `escapeTableCell` blindly DOUBLES every backslash in a cell's final text
- * (to protect its own `|`-splitting), which would silently unescape a
- * `\[`/`\]` produced here the moment this markdown lands in a table cell
- * (formatCellValue's image case, below). Newlines collapse to spaces for the
- * same "can't break out of the link-text span" reason.
+ * Sanitizes `alt` for the `[...]` span of `![alt](src)`: unescaped, a crafted alt like
+ * `x](/a) [pwn](https://evil.com)` injects a second attacker-chosen link/image. Strips
+ * (rather than escapes) `[`, `]`, backslash, and newlines — losing a stray bracket from
+ * descriptive text is harmless, and escaping would break under `escapeTableCell`'s blind
+ * backslash-doubling once this lands in a table cell (formatCellValue's image case).
  */
 function sanitizeMarkdownAltText(text: string): string {
   return text
@@ -421,13 +414,11 @@ function sanitizeMarkdownAltText(text: string): string {
 }
 
 /**
- * Percent-encode the handful of characters that would otherwise break a
- * bare, unbracketed markdown link destination `(src)`: a literal `)` closes
- * the destination early, and a space or `(` confuses where it ends. Percent-
- * encoding (rather than wrapping in `<...>` or backslash-escaping) is used
- * deliberately: it introduces no backslash of its own, so - like
- * `sanitizeMarkdownAltText` above - it survives `escapeTableCell`'s blind
- * backslash-doubling unchanged when this lands in a table cell.
+ * Percent-encodes the characters that would break a bare markdown link destination
+ * `(src)`: `)` closes it early, a space or `(` confuses where it ends. Percent-encoding
+ * (not `<...>` wrapping or backslash-escaping) introduces no backslash, so — like
+ * `sanitizeMarkdownAltText` above — it survives `escapeTableCell`'s blind backslash-doubling
+ * in a table cell.
  */
 function encodeMarkdownLinkDestination(src: string): string {
   return src
@@ -438,14 +429,11 @@ function encodeMarkdownLinkDestination(src: string): string {
 }
 
 /**
- * Format an `image` field value as markdown image syntax: `![alt](src)`.
- * Uses the value's own `alt` when non-empty, otherwise `altFallback`. Both
- * `alt` and `src` are sanitized for their respective markdown contexts (see
- * `sanitizeMarkdownAltText`/`encodeMarkdownLinkDestination`) since `alt` is
- * user free-text and `src` may contain characters unsafe in a bare link
- * destination. Malformed values (not a `{ src, alt }`-shaped object — e.g. a
- * legacy bare URL string) degrade to a plain string, matching how neighboring
- * field serializers (e.g. renderObjectField, formatReference) handle
+ * Formats an `image` field as `![alt](src)`, using `value.alt` when non-empty else
+ * `altFallback`. Both are sanitized (see `sanitizeMarkdownAltText` /
+ * `encodeMarkdownLinkDestination`) since `alt` is free text and `src` may contain
+ * link-breaking characters. A malformed value (not `{ src, alt }`, e.g. a legacy bare URL
+ * string) degrades to a plain string, matching other field serializers' handling of
  * unexpected shapes.
  */
 function formatImageMarkdown(value: unknown, altFallback: string): string {
