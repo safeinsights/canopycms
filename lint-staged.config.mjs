@@ -11,6 +11,11 @@ const config = {
     // a cycle is usually in the file that did NOT change.
     'pnpm run lint:cycles',
   ],
+  // Comment budget is a whole-tree property too: a run cap or ratio is scoped
+  // to one directory, but the check regenerates and compares every directory
+  // in one pass, so it runs once per commit rather than once per file.
+  '{packages/*/**/*.{ts,tsx,mts,cts,js,mjs,cjs},scripts/**/*.{mjs,js,ts},scripts/comment-budget.json}':
+    () => 'pnpm run lint:comments',
   // Backlog consistency (dead links, stale open rows, orphans) is likewise a
   // whole-tree property: a link breaks in the file that did NOT change when its
   // target moved, so a per-file check would miss exactly the case that rots.
@@ -20,6 +25,7 @@ const config = {
   // any move/rename of a package source file.
   '**/*.md': () => 'pnpm run lint:docs',
   'packages/*/package.json': () => 'pnpm run lint:docs',
+  'scripts/docs-budgets.json': () => 'pnpm run lint:docs',
 }
 
 export default config

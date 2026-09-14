@@ -18,6 +18,7 @@
     "lint:cycles": "depcruise packages/canopycms/src packages/canopycms-next/src --output-type err-long",
     "lint:tasks": "node scripts/check-future-tasks.mjs",
     "lint:docs": "node scripts/check-docs.mjs",
+    "lint:comments": "node scripts/check-comment-budget.mjs",
     "lint:actions": "node scripts/check-action-pins.mjs",
     "lint:scripts": "eslint scripts/ *.mjs *.ts packages/*/vitest.config.ts --max-warnings 0",
     "check:esm": "node scripts/add-js-extensions.mjs --self-test && node scripts/check-esm-imports.mjs",
