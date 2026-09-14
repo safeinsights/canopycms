@@ -107,7 +107,6 @@ export async function init(options: InitOptions): Promise<void> {
 
   p.intro('CanopyCMS init')
 
-  // Prompt for auth provider
   let authProvider: AuthProvider
   if (options.authProvider) {
     authProvider = options.authProvider
@@ -129,7 +128,6 @@ export async function init(options: InitOptions): Promise<void> {
     authProvider = choice
   }
 
-  // Prompt for static build
   let staticBuild: boolean
   if (options.staticBuild !== undefined) {
     staticBuild = options.staticBuild
@@ -151,7 +149,6 @@ export async function init(options: InitOptions): Promise<void> {
   const serverPageExt = staticBuild ? 'page.server.tsx' : 'page.tsx'
   const serverRouteExt = staticBuild ? 'route.server.ts' : 'route.ts'
 
-  // Generate files
   await writeFile(
     path.join(projectDir, 'canopycms.config.ts'),
     await canopyCmsConfig({ mode, staticBuild }),
@@ -324,9 +321,6 @@ export async function initDeployAws(options: InitDeployOptions): Promise<void> {
 
   p.intro('CanopyCMS init-deploy aws')
 
-  // Detection never fails the command: each of these falls back to the value
-  // the templates hardcoded before detection existed, so an npm project on a
-  // `main`-default repo gets exactly the output it always got.
   const packageManager = await detectPackageManager(projectDir)
   const pm = commandsFor(packageManager)
   const defaultBranch = await detectDefaultBranch(projectDir)
@@ -361,10 +355,6 @@ export async function initDeployAws(options: InitDeployOptions): Promise<void> {
     writeOpts,
   )
 
-  // The CDK app itself. Without these three files the generated workflow's
-  // `cdk deploy` has nothing to deploy against: `cdk deploy` with no --app
-  // requires a cdk.json, and `cdk init` cannot supply one because it refuses
-  // to run in a non-empty directory.
   const cdkJsonPath = path.join(projectDir, 'cdk.json')
   const existingCdkJson = (await filePathExists(cdkJsonPath))
     ? await fs.readFile(cdkJsonPath, 'utf-8')
@@ -436,7 +426,6 @@ export async function initDeployAws(options: InitDeployOptions): Promise<void> {
     )
   }
 
-  // Check if next.config already has CANOPY_BUILD support
   const nextConfigPath = path.join(projectDir, 'next.config.ts')
   const nextConfigMjsPath = path.join(projectDir, 'next.config.mjs')
   const configPath = (await filePathExists(nextConfigPath))
@@ -656,7 +645,6 @@ export async function workerRunOnce(options: {
   // Dynamic import to avoid loading worker deps when not needed
   const { getTaskQueueDir } = await import('../worker/task-queue-config')
 
-  // Determine workspace and mode from config by actually importing the config file.
   // A regex-based detector here is unreliable: it cannot see through spread operators,
   // helper functions, or dynamic expressions, and can silently fall through to 'dev'
   // on a real prod config — turning a prod-safety guard into a silent task-loss bug.

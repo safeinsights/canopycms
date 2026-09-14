@@ -37,7 +37,6 @@ export interface MigrateOptions {
   contentRoot?: string
   /** Entry type name written into .collection.json and file names (e.g. 'doc') */
   entryType?: string
-  /** File format to migrate */
   format?: MigrateFormat
   /** Entry schema registry key written into .collection.json (e.g. 'docSchema') */
   schema?: string
@@ -197,7 +196,6 @@ export async function migrate(options: MigrateOptions): Promise<{ opCount: numbe
     )
   }
 
-  // Resolve entry type / format / schema from flags, prompting for what's missing
   let entryType = options.entryType
   if (!entryType) {
     const result = await p.text({
@@ -341,7 +339,6 @@ export async function migrate(options: MigrateOptions): Promise<{ opCount: numbe
     await invalidateBranchContentCaches(projectDir)
   }
 
-  // Sanity-check the result: all .collection.json files must parse
   try {
     const result = await loadCollectionMetaFiles(contentDir)
     p.log.success(

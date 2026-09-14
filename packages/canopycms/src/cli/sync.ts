@@ -80,7 +80,6 @@ async function selectBranch(
 
   let branchName = options.branch
   if (!branchName) {
-    // Default to current git branch
     try {
       branchName = await detectCurrentBranch(options.projectDir)
     } catch {
@@ -166,7 +165,6 @@ async function syncPush(options: SyncOptions): Promise<{ fileCount: number }> {
   assertWithinDir(branchPath, branchesDir, '--branch')
   const wsGit = simpleGit({ baseDir: branchPath })
 
-  // Check workspace health
   const status = await wsGit.status()
   if (status.conflicted.length > 0) {
     p.log.error('Branch workspace has unresolved merge conflicts.')
@@ -186,7 +184,6 @@ async function syncPush(options: SyncOptions): Promise<{ fileCount: number }> {
     return { fileCount: 0 }
   }
 
-  // Warn about uncommitted workspace changes (editor saves)
   if (status.files.length > 0 && !options.force) {
     p.log.warn(
       `Branch workspace has ${status.files.length} uncommitted change(s) that will be committed to history then overwritten:`,
@@ -317,7 +314,6 @@ async function syncPull(options: SyncOptions): Promise<{ fileCount: number }> {
     }
   }
 
-  // Replace the working-tree content with the branch workspace content.
   // Uses backup-rename pattern: if interrupted, at least one copy always exists.
   const tmpDestDir = `${destContentDir}.sync-tmp-${Date.now()}`
   try {
@@ -329,7 +325,6 @@ async function syncPull(options: SyncOptions): Promise<{ fileCount: number }> {
     throw err
   }
 
-  // Show what changed using git status (re-check after copy)
   const postStatus = await sourceGit.status()
   const contentChanges = postStatus.files.filter(
     (f) => f.path.startsWith(contentRoot + '/') || f.path === contentRoot,
@@ -380,7 +375,6 @@ async function syncBoth(options: SyncOptions): Promise<{ pushed: number; pulled:
   assertWithinDir(branchPath, branchesDir, '--branch')
   const wsGit = simpleGit({ baseDir: branchPath })
 
-  // Check workspace health
   const status = await wsGit.status()
   if (status.conflicted.length > 0) {
     p.log.error('Branch workspace has unresolved merge conflicts.')
@@ -391,8 +385,6 @@ async function syncBoth(options: SyncOptions): Promise<{ pushed: number; pulled:
       })
       if (!p.isCancel(shouldAbort) && shouldAbort) {
         await wsGit.merge(['--abort'])
-        // The abort rewrote the clone's working tree — tell ContentStore ID
-        // indexes (the dev server is a separate process; on-disk marker).
         await invalidateBranchContentCaches(branchPath)
         p.log.success('Merge aborted. Workspace restored to pre-merge state.')
       }
@@ -407,7 +399,6 @@ async function syncBoth(options: SyncOptions): Promise<{ pushed: number; pulled:
     p.log.info('Committed editor changes before merge')
   }
 
-  // Determine merge base
   let baseRef: string
   try {
     await wsGit.raw(['rev-parse', SYNC_BASE_TAG])
@@ -417,7 +408,6 @@ async function syncBoth(options: SyncOptions): Promise<{ pushed: number; pulled:
     baseRef = 'HEAD'
   }
 
-  // Remember the current branch to switch back after merge
   const currentBranch = (await wsGit.revparse(['--abbrev-ref', 'HEAD'])).trim()
 
   // Everything from here mutates the branch clone's working tree (temp-branch
@@ -425,11 +415,9 @@ async function syncBoth(options: SyncOptions): Promise<{ pushed: number; pulled:
   // ID indexes stale in the finally below. The dev server is a separate
   // process, reached via the on-disk generation marker.
   try {
-    // Create temp branch from the merge base
     const incomingBranch = `sync-incoming-${Date.now()}`
     await wsGit.raw(['checkout', '-b', incomingBranch, baseRef])
 
-    // Replace content on temp branch with working-tree content
     const wsContentDir = path.join(branchPath, contentRoot)
     assertWithinDir(wsContentDir, branchPath, '--content-root')
     const tmpDir = `${wsContentDir}.sync-tmp-${Date.now()}`
@@ -447,7 +435,6 @@ async function syncBoth(options: SyncOptions): Promise<{ pushed: number; pulled:
     await wsGit.add('-A')
     const incomingStatus = await wsGit.status()
 
-    // No working-tree changes — skip merge, just pull editor changes
     if (incomingStatus.files.length === 0) {
       await wsGit.checkout(currentBranch)
       await wsGit.raw(['branch', '-D', incomingBranch])
@@ -458,7 +445,6 @@ async function syncBoth(options: SyncOptions): Promise<{ pushed: number; pulled:
 
     await wsGit.commit('sync: incoming working-tree changes')
 
-    // Switch back to workspace branch and merge
     await wsGit.checkout(currentBranch)
 
     p.log.step('Merging working-tree changes with editor changes...')
@@ -466,7 +452,6 @@ async function syncBoth(options: SyncOptions): Promise<{ pushed: number; pulled:
     try {
       await wsGit.merge([incomingBranch, '--no-edit'])
     } catch (mergeError) {
-      // Check if it's a merge conflict
       let mergeStatus: Awaited<ReturnType<typeof wsGit.status>> | undefined
       try {
         mergeStatus = await wsGit.status()
@@ -487,7 +472,6 @@ async function syncBoth(options: SyncOptions): Promise<{ pushed: number; pulled:
         await wsGit.raw(['branch', '-D', incomingBranch]).catch(() => {})
         return { pushed: 0, pulled: 0 }
       }
-      // Not a conflict — clean up and re-throw original error
       await wsGit.raw(['branch', '-D', incomingBranch]).catch(() => {})
       throw mergeError
     }
@@ -497,7 +481,6 @@ async function syncBoth(options: SyncOptions): Promise<{ pushed: number; pulled:
     await wsGit.tag(['-f', SYNC_BASE_TAG])
     p.log.success('Merged working-tree changes with editor changes')
 
-    // Pull merged result back to working tree
     const pullResult = await syncPull({ ...options, branch: branchName, force: true })
     return { pushed: incomingStatus.files.length, pulled: pullResult.fileCount }
   } finally {
@@ -527,8 +510,6 @@ async function syncAbort(options: SyncOptions): Promise<void> {
   }
 
   await wsGit.merge(['--abort'])
-  // The abort rewrote the clone's working tree — tell ContentStore ID indexes
-  // (the dev server is a separate process; on-disk marker).
   await invalidateBranchContentCaches(branchPath)
   p.log.success(
     `Merge aborted in branch workspace "${branchName}". Workspace restored to pre-merge state.`,

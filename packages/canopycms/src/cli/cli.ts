@@ -161,7 +161,6 @@ export function resolveSyncSubcommand(sub: string | undefined): SyncSubcommand |
   return null
 }
 
-// CLI entrypoint
 async function main() {
   const { argv, flags, command } = parseArgs(process.argv.slice(2))
 
@@ -180,9 +179,6 @@ async function main() {
       process.exit(1)
     }
 
-    // Tri-state: undefined (flag omitted) falls through to init()'s own
-    // prompt-or-default logic; true/false (flag or --no-dual-build passed)
-    // presets the choice and skips the prompt, same as authProvider above.
     let staticBuild: boolean | undefined
     try {
       staticBuild = parseDualBuildFlag(flags['dual-build'])
@@ -323,16 +319,6 @@ async function main() {
     // Resolve auth plugin from the adopter's installed packages.
     // Uses variable-based import() so TypeScript doesn't resolve against canopycms's own deps.
     const authMode = process.env.CANOPY_AUTH_MODE || 'dev'
-    // Validate BEFORE dispatch. The branch below only knows 'clerk' and 'dev',
-    // so any other value -- a typo, wrong casing like 'Clerk', a stale value
-    // from another system -- selected no plugin at all, and the catch below
-    // only fires on an import FAILURE, so nothing warned. workerRunOnce then
-    // skipped the auth refresh entirely and the command ran to "Done" with
-    // exit code 0: a cron'd `CANOPY_AUTH_MODE=clerk canopycms worker run-once`
-    // would refresh nothing for as long as the typo survived, while the cache
-    // aged indefinitely and a user removed from the Clerk org kept editor
-    // access. The non-zero exit that already exists for refresh FAILURES never
-    // fired, because nothing failed.
     if (!isKnownAuthMode(authMode)) {
       console.error(
         `Unknown CANOPY_AUTH_MODE "${authMode}" — expected one of: ${KNOWN_AUTH_MODES.join(', ')}. ` +

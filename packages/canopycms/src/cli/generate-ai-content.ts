@@ -25,7 +25,6 @@ export async function generateAIContentCLI(options: GenerateAIContentCLIOptions)
 
   console.log('\nCanopyCMS generate-ai-content\n')
 
-  // Load adopter's canopycms config
   const canopyConfigPath = path.join(projectDir, 'canopycms.config.ts')
   let canopyConfigModule: Record<string, unknown>
   try {
@@ -43,7 +42,6 @@ export async function generateAIContentCLI(options: GenerateAIContentCLIOptions)
       ? (configExport as { server: unknown }).server
       : configExport
 
-  // Load entry schema registry
   const schemasPath = path.join(projectDir, appDir, 'schemas.ts')
   let entrySchemaRegistry: Record<string, unknown> = {}
   try {
@@ -54,7 +52,6 @@ export async function generateAIContentCLI(options: GenerateAIContentCLIOptions)
     console.warn(`  No ${appDir}/schemas.ts found, using empty entry schema registry`)
   }
 
-  // Load AI config if specified
   let aiConfig: unknown
   if (configPath) {
     try {
@@ -70,13 +67,11 @@ export async function generateAIContentCLI(options: GenerateAIContentCLIOptions)
     }
   }
 
-  // Validate AI config shape if provided
   if (aiConfig !== undefined && (typeof aiConfig !== 'object' || aiConfig === null)) {
     console.error('Invalid AI content config: expected an object.')
     process.exit(1)
   }
 
-  // Validate loaded config has required shape
   if (
     !serverConfig ||
     typeof serverConfig !== 'object' ||

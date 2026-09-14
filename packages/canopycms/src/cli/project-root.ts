@@ -14,10 +14,6 @@ import { filePathExists } from '../utils/fs'
 /** Config file that marks the root of a CanopyCMS project. */
 export const PROJECT_MARKER = 'canopycms.config.ts'
 
-/**
- * Walk up from startDir to the nearest directory containing canopycms.config.ts.
- * Returns null when no project root is found.
- */
 export async function findProjectRoot(startDir: string): Promise<string | null> {
   let dir = path.resolve(startDir)
   for (;;) {
