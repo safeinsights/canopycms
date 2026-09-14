@@ -3,7 +3,7 @@
  * here — keeps this file trivially unit-testable and safe to reason about for
  * path-traversal / header-injection concerns.
  *
- * Bucket-prefix layout (see .claude/future-tasks/assets-media-system.md):
+ * Bucket-prefix layout (see .claude/future-tasks/resolved/assets-media-system.md):
  *   asset-originals/{hash32}.{ext}          private; full-fidelity originals
  *   asset-staging/{uuid}                    presigned-POST target
  *   asset-meta/{hash32}.json                private; filename/uploader/dims/mime

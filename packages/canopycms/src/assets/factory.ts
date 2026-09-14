@@ -2,7 +2,7 @@
  * Instantiate the configured AssetStore from a site's `media` config.
  *
  * This is the one place that turns the (currently-unconsumed) `media` config
- * into a real store — see .claude/future-tasks/assets-media-system.md.
+ * into a real store — see .claude/future-tasks/resolved/assets-media-system.md.
  */
 
 import type { MediaConfig } from '../config/types'
