@@ -624,7 +624,7 @@ export async function workerRunOnce(options: {
   authPlugin?: AuthPlugin
 }): Promise<void> {
   // Dynamic import to avoid loading worker deps when not needed
-  const { getTaskQueueDir } = await import('../worker/task-queue-config')
+  const { getTaskQueueDir } = await import('../task-queue/task-queue-config')
 
   // A regex-based detector here is unreliable: it cannot see through spread operators,
   // helper functions, or dynamic expressions, and can silently fall through to 'dev'
@@ -674,7 +674,7 @@ export async function workerRunOnce(options: {
   }
 
   // Process task queue (if any pending tasks)
-  const { dequeueTask, completeTask, listTasks } = await import('../worker/task-queue')
+  const { dequeueTask, completeTask, listTasks } = await import('../task-queue/cms-task-queue')
 
   if (mode === 'prod') {
     // In prod mode, tasks are real GitHub operations (push-branch, create-PR, etc.).

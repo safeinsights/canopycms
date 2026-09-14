@@ -64,5 +64,3 @@ export const NumberField: React.FC<NumberFieldProps> = ({
     />
   )
 }
-
-export default NumberField

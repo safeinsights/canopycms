@@ -25,6 +25,7 @@ const MTIME_CHECK_DEBOUNCE_MS = 1000
 /** resource-generation.ts resource key for the schema cache's marker. */
 export const SCHEMA_GENERATION_RESOURCE = 'schema'
 
+/** @internal Exported for tests. */
 export interface BranchSchemaCacheEntry {
   version: number
   schema: RootCollectionConfig

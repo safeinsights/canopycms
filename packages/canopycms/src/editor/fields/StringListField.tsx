@@ -43,5 +43,3 @@ export const StringListField: React.FC<StringListFieldProps> = ({
     />
   )
 }
-
-export default StringListField

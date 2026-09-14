@@ -17,7 +17,7 @@ import { MediaLibrary } from '../media/MediaLibrary'
 import { useAssetUpload } from '../media/useAssetUpload'
 import { ACCEPTED_IMAGE_MIME_TYPES, MAX_UPLOAD_BYTES } from '../media/upload-constants'
 
-export interface ImageFieldErrors {
+interface ImageFieldErrors {
   src?: string
   alt?: string
   crop?: string
@@ -305,5 +305,3 @@ export const ImageField: React.FC<ImageFieldProps> = ({
     </Stack>
   )
 }
-
-export default ImageField

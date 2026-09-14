@@ -1,7 +1,3 @@
-import type { CanopyUserId, CanopyGroupId } from '../types'
-
-export type { CanopyUserId, CanopyGroupId }
-
 /**
  * A path used in permission rules, e.g. "content/posts".
  * SECURITY CRITICAL: always validated to prevent path traversal.

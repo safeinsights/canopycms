@@ -2,7 +2,7 @@
   "$comment": "Word-count ratchet read by scripts/check-docs.mjs (pnpm lint:docs). Regenerate with `node scripts/check-docs.mjs --write-baseline [--margin=<pct>] [--allow-raise]`: words and maxSectionWords are written as actual plus the margin, historyMarkers as the actual count, and a write that would raise any existing number is refused without --allow-raise. historyMarkers: null means that file is a dated changelog whose markers are not checked; the null is kept across rewrites.",
   "files": {
     ".claude/agents/branch-review.md": {
-      "historyMarkers": 1,
+      "historyMarkers": 0,
       "maxSectionWords": 95,
       "words": 95
     },
@@ -37,7 +37,7 @@
       "words": 336
     },
     ".claude/agents/review.md": {
-      "historyMarkers": 2,
+      "historyMarkers": 1,
       "maxSectionWords": 309,
       "words": 602
     },
@@ -142,7 +142,7 @@
       "words": 375
     },
     "packages/canopycms/src/operating-mode/AGENTS.md": {
-      "historyMarkers": 1,
+      "historyMarkers": 0,
       "maxSectionWords": 96,
       "words": 151
     },
@@ -157,7 +157,7 @@
       "words": 318
     },
     "packages/canopycms/src/utils/AGENTS.md": {
-      "historyMarkers": 1,
+      "historyMarkers": 0,
       "maxSectionWords": 219,
       "words": 583
     },
@@ -167,7 +167,7 @@
       "words": 435
     },
     "packages/canopycms/src/worker/AGENTS.md": {
-      "historyMarkers": 4,
+      "historyMarkers": 0,
       "maxSectionWords": 347,
       "words": 1164
     }

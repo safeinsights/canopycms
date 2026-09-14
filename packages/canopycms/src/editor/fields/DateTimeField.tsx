@@ -14,6 +14,7 @@ export interface DateTimeFieldProps {
  * Converts a stored value (ISO 8601 UTC, e.g. `YYYY-MM-DDTHH:mm:ss.sssZ`)
  * into the local wall-clock string a `datetime-local` input expects
  * (`YYYY-MM-DDTHH:mm:ss`, no timezone). Returns '' for '' or an unparsable value.
+ * @internal Exported for tests.
  */
 export function isoToDatetimeLocalValue(iso: string): string {
   if (!iso) return ''
@@ -31,6 +32,7 @@ export function isoToDatetimeLocalValue(iso: string): string {
 /**
  * Convert a `datetime-local` input's local wall-clock string back into the
  * ISO 8601 UTC storage format. Returns '' for '' or an unparsable value.
+ * @internal Exported for tests.
  */
 export function datetimeLocalValueToIso(local: string): string {
   if (!local) return ''
@@ -80,5 +82,3 @@ export const DateTimeField: React.FC<DateTimeFieldProps> = ({
     </Input.Wrapper>
   )
 }
-
-export default DateTimeField

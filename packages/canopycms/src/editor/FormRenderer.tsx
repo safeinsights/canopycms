@@ -583,5 +583,3 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
     </Stack>
   )
 }
-
-export default FormRenderer

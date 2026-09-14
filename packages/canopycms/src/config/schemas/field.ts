@@ -7,7 +7,7 @@ import { z } from 'zod'
 import { primitiveFieldTypes, fieldTypes } from '../types'
 import type { FieldType } from '../types'
 
-export const fieldBaseSchema = z.object({
+const fieldBaseSchema = z.object({
   name: z.string().min(1),
   label: z.string().optional(),
   description: z.string().optional(),
@@ -33,7 +33,7 @@ export const referenceOptionSchema = z.union([
   }),
 ])
 
-export const primitiveFieldSchema = fieldBaseSchema.extend({
+const primitiveFieldSchema = fieldBaseSchema.extend({
   type: z.enum(primitiveFieldTypes),
 })
 
@@ -56,12 +56,13 @@ export const imageFieldSchema = fieldBaseSchema.extend({
   altOptional: z.boolean().optional(),
 })
 
-export const selectFieldSchema = fieldBaseSchema.extend({
+const selectFieldSchema = fieldBaseSchema.extend({
   type: z.literal('select'),
   options: z.array(selectOptionSchema).min(1),
 })
 
 // At least one of `collections` or `entryTypes` must be specified (enforced by config validation).
+/** @internal Exported for tests. */
 export const referenceFieldSchema = fieldBaseSchema.extend({
   type: z.literal('reference'),
   collections: z.array(z.string().min(1)).min(1).optional(),
@@ -87,18 +88,18 @@ export const blockSchema = z.object({
   fields: z.array(z.lazy(() => fieldHolder[0])).min(1),
 })
 
-export const blockFieldSchema = fieldBaseSchema.extend({
+const blockFieldSchema = fieldBaseSchema.extend({
   type: z.literal('block'),
   templates: z.array(blockSchema).min(1),
 })
 
-export const objectFieldSchema = fieldBaseSchema.extend({
+const objectFieldSchema = fieldBaseSchema.extend({
   type: z.literal('object'),
   fields: z.array(z.lazy(() => fieldHolder[0])).min(1),
 })
 
 // Inline group field: visual grouping only, no data nesting
-export const inlineGroupFieldSchema = z.object({
+const inlineGroupFieldSchema = z.object({
   type: z.literal('group'),
   name: z.string().min(1),
   label: z.string().optional(),
@@ -106,7 +107,7 @@ export const inlineGroupFieldSchema = z.object({
   fields: z.array(z.lazy(() => fieldHolder[0])).min(1),
 })
 
-export const customFieldSchema = z.lazy(() =>
+const customFieldSchema = z.lazy(() =>
   fieldBaseSchema
     .extend({
       type: z
@@ -132,4 +133,4 @@ const knownFieldSchema: z.ZodTypeAny = z.discriminatedUnion('type', [
 const fieldSchema: z.ZodTypeAny = z.lazy(() => z.union([knownFieldSchema, customFieldSchema]))
 fieldHolder[0] = fieldSchema
 
-export { fieldSchema, knownFieldSchema }
+export { fieldSchema }

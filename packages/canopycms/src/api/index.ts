@@ -7,12 +7,7 @@ export type {
   UpdateBranchAccessBody,
 } from './branch'
 export type { BranchMergeResponse } from './branch-merge'
-export type {
-  CommentsResponse,
-  AddCommentResponse,
-  ResolveCommentResponse,
-  ListCommentsResponse,
-} from './comments'
+export type { CommentsResponse, AddCommentResponse, ResolveCommentResponse } from './comments'
 export type {
   EntriesResponse,
   ListEntriesResponse,
@@ -36,8 +31,6 @@ export type {
   FinalizeAssetResponse,
   FinalizeAssetBody,
   AssetDeleteResponse,
-  ListAssetsParams,
-  DeleteAssetParams,
 } from './assets'
 export type {
   InternalGroupsResponse,
@@ -49,18 +42,6 @@ export type {
 export type { ReferenceOptionsResponse } from './reference-options'
 export type { ResolveReferencesResponse } from './resolve-references'
 export type {
-  SchemaResponse,
-  WireEntryType,
-  WireCollectionConfig,
-  WireFlatSchemaItem,
-  CollectionResponse,
-  CreateCollectionResponse,
-  UpdateCollectionResponse,
-  DeleteCollectionResponse,
-  AddEntryTypeResponse,
-  UpdateEntryTypeResponse,
-  RemoveEntryTypeResponse,
-  UpdateOrderResponse,
   GetSchemaApiResponse,
   GetCollectionApiResponse,
   CreateCollectionApiResponse,
@@ -86,13 +67,9 @@ export type {
   AdminTasksData,
   ListAdminTasksParams,
   AdminRetryTaskResponse,
-  AdminRetryTaskData,
-  RetryTaskParams,
   AdminDeleteTaskResponse,
-  AdminDeleteTaskData,
   DeleteTaskParams,
   WorkerLiveness,
-  WorkerLivenessState,
 } from './admin'
 
 // Export route definitions

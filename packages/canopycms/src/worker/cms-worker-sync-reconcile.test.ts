@@ -33,7 +33,7 @@ import { simpleGit, type SimpleGit } from 'simple-git'
 import { mockConsole, openBareRepo } from '../test-utils'
 import type { WorkerStatusReport } from '../types'
 import { CmsWorker } from './cms-worker'
-import { WORKER_STATUS_FILE } from './worker-status'
+import { WORKER_STATUS_FILE } from '../task-queue/worker-status'
 
 // ---------------------------------------------------------------------------
 // Bare-repo helpers

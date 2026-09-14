@@ -61,6 +61,7 @@ export interface ApplyTransformInput {
   ext: string
 }
 
+/** @internal Exported for tests. */
 export interface TransformSuccess {
   ok: true
   data: Uint8Array
@@ -68,6 +69,7 @@ export interface TransformSuccess {
   ext: string
 }
 
+/** @internal Exported for tests. */
 export interface TransformRejection {
   ok: false
   /** 400: unsupported input; 413: output too large; 422: sharp failed to process the input. */

@@ -60,6 +60,7 @@ class GroupsValidationError extends Error {
 /**
  * Validate that an update to internal groups doesn't remove the last admin.
  * Considers both internal Admins group members and bootstrap admins.
+ * @internal Exported for tests.
  */
 export const validateAdminGroupUpdate = (
   newGroups: InternalGroup[],
@@ -90,6 +91,7 @@ export const validateAdminGroupUpdate = (
 
 /**
  * Validate that reserved groups are not deleted or renamed.
+ * @internal Exported for tests.
  */
 export const validateReservedGroups = (
   newGroups: InternalGroup[],
@@ -286,6 +288,7 @@ const updateInternalGroupsHandler = async (
 
 /**
  * Search external groups (for group UI)
+ * @internal Exported for tests.
  */
 export interface SearchExternalGroupsParams {
   query: string

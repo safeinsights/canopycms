@@ -1,18 +1,6 @@
 import type { ApiResponse } from '../api/types'
 import type { CanopyBinaryResponse } from './types'
-import { BRANCH_ROUTES } from '../api/branch'
-import { WORKFLOW_ROUTES } from '../api/branch-status'
-import { COMMENT_ROUTES } from '../api/comments'
-import { CONTENT_ROUTES } from '../api/content'
-import { REFERENCE_OPTIONS_ROUTES } from '../api/reference-options'
-import { RESOLVE_REFERENCES_ROUTES } from '../api/resolve-references'
-import { ENTRY_ROUTES } from '../api/entries'
-import { ASSET_ROUTES, assetRawRoute } from '../api/assets'
-import { PERMISSION_ROUTES } from '../api/permissions'
-import { GROUP_ROUTES } from '../api/groups'
-import { USER_ROUTES } from '../api/user'
-import { SCHEMA_ROUTES } from '../api/schema'
-import { ADMIN_ROUTES } from '../api/admin'
+import { buildCanopyRoutes } from '../api/routes'
 
 /**
  * `any` because handler signatures differ: some take (ctx, req, params), others
@@ -59,39 +47,6 @@ export interface CanopyRouter {
   readonly routes: RouteDefinition[]
 
   match(method: string, segments: string[]): RouteMatch | null
-}
-
-/**
- * Assembled from the route definitions co-located in each API module. A
- * function, not a top-level constant, so every route module is fully
- * initialized before its exports are read.
- */
-function buildCanopyRoutes(): RouteDefinition[] {
-  return [
-    ...Object.values(BRANCH_ROUTES),
-    ...Object.values(WORKFLOW_ROUTES),
-    ...Object.values(COMMENT_ROUTES),
-    ...Object.values(CONTENT_ROUTES),
-    ...Object.values(REFERENCE_OPTIONS_ROUTES),
-    ...Object.values(RESOLVE_REFERENCES_ROUTES),
-    ...Object.values(ENTRY_ROUTES),
-    ...Object.values(ASSET_ROUTES),
-    assetRawRoute,
-    ...Object.values(PERMISSION_ROUTES),
-    ...Object.values(GROUP_ROUTES),
-    ...Object.values(USER_ROUTES),
-    ...Object.values(SCHEMA_ROUTES),
-    ...Object.values(ADMIN_ROUTES),
-  ].map(
-    (route): RouteDefinition => ({
-      method: route.method,
-      pattern: route.pattern,
-      handler: route.handler,
-      validate: 'validate' in route ? (route.validate as RouteDefinition['validate']) : undefined,
-      bodyFormat:
-        'bodyFormat' in route ? (route.bodyFormat as RouteDefinition['bodyFormat']) : undefined,
-    }),
-  )
 }
 
 /**
@@ -195,6 +150,7 @@ const compareSpecificity = (a: readonly string[], b: readonly string[]): number 
  * differently-guarded static one (`assets`) registered later. Exported
  * standalone so that precedence rule can be unit-tested against synthetic route
  * tables, independent of the real API surface.
+ * @internal Exported for tests.
  */
 export function matchRoute(
   routes: readonly RouteDefinition[],

@@ -75,5 +75,3 @@ export const NumberListField: React.FC<NumberListFieldProps> = ({
     />
   )
 }
-
-export default NumberListField

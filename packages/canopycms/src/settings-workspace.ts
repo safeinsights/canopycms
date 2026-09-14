@@ -29,6 +29,7 @@ const SETTINGS_INIT_LOCK_NAME = 'lock'
  * calls into that while holding this lock, so separate directories make the
  * nesting obvious rather than incidental. For how a lock's anchor path is
  * chosen, see utils/provisioning-lock.ts and docs/concurrency.md.
+ * @internal Exported for tests.
  */
 export function settingsInitLockTarget(settingsRoot: string): string {
   return path.join(path.dirname(path.resolve(settingsRoot)), SETTINGS_INIT_LOCK_DIR)

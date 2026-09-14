@@ -22,7 +22,7 @@ export type GuardId =
   | 'submittableBranch'
 
 /** Maps each guard ID to the context it contributes */
-export interface GuardContextMap {
+interface GuardContextMap {
   branch: { branchContext: BranchContext }
   branchAccess: { branchContext: BranchContext }
   schema: { branchContext: BranchContextWithSchema }

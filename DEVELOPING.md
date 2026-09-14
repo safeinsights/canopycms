@@ -1138,6 +1138,19 @@ pnpm typecheck
 pnpm test
 ```
 
+### Unused-Exports Check
+
+`pnpm lint:exports` runs [knip](https://knip.dev) in production mode over `canopycms` and
+`canopycms-next` (`knip.json`; the other workspaces are ignored). An export nothing in
+production code imports fails the check. An export a test needs carries a one-line
+`/** @internal Exported for tests. */` tag, which the `--tags=-internal` flag excludes; an
+export nothing imports at all carries `@internal No importer; deletion candidate in <task file>.`
+and a `.claude/future-tasks/` entry that owns its deletion. The guard covers declaration sites
+only: barrel `index.ts` files and the two editor re-export shims are excluded from the report,
+so a dead re-export line in a barrel is not detected
+([knip-scope-gaps.md](.claude/future-tasks/knip-scope-gaps.md)). Package `exports` maps, `bin`,
+stories, `.storybook/`, the config barrel and the groups barrel are the entries.
+
 ### Client-Bundle Boundary Check
 
 The editor reaches browsers through `canopycms/client` and `canopycms-next/client`. Anything reachable from those entries, at any depth, must stay free of node built-ins, or an adopter's production `next build` dies with `Module not found: Can't resolve 'fs'`. `next dev` tolerates the violation, so without this check the mistake only surfaces in a production build.

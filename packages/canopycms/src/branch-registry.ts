@@ -33,6 +33,7 @@ const RESOURCE = 'branch-registry'
 /** Throttle for the get() suspicious-miss backstop; mirrors content-store's FORCED_REFRESH_MIN_INTERVAL_MS. */
 const GET_MISS_REFRESH_MIN_INTERVAL_MS = 5000
 
+/** @internal Exported for tests. */
 export interface BranchRegistrySnapshot {
   version: number
   branches: BranchContext[]

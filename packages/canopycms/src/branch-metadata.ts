@@ -24,16 +24,11 @@ import {
 // The file format lives in the leaf so branch-registry.ts can read branch.json
 // without importing this module, which imports it back. Re-exported here so
 // importers of these names do not have to move.
-export {
-  BRANCH_META_DIR,
-  BRANCH_META_FILE,
-  BranchMetadataCorruptError,
-  readBranchMetadataFile,
-  type BranchMetadataFile,
-}
+export { BranchMetadataCorruptError, type BranchMetadataFile }
 
 const CURRENT_SCHEMA_VERSION = 1
 
+/** @internal Exported for tests. */
 export class BranchMetadataConflictError extends Error {
   constructor(message = 'Concurrent modification detected in branch metadata') {
     super(message)

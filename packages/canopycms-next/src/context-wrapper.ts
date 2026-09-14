@@ -52,6 +52,7 @@ import {
  * keys, so a caller who omits them still produces an object whose `fields`/`group` are present but
  * `undefined`, and spreading that would silently clobber the default. Checking each key explicitly
  * avoids that trap. Exported for direct unit testing.
+ * @internal Exported for tests.
  */
 export function mergeSeoFieldLocation(
   contextDefault: SeoFieldLocation | undefined,
@@ -124,6 +125,7 @@ export interface NextCanopyOptions {
  * that ambiguity is gone (generateStaticParams is build-only; request-time build-context use is the
  * footgun). Why not on `static` deployments: they skip ACLs everywhere by design, so there's nothing
  * to leak. `CANOPY_BUILD_MODE=true` marks non-Next static generation as build phase.
+ * @internal Exported for tests.
  */
 export function guardBuildContext(
   buildCtx: CanopyBuildContext,

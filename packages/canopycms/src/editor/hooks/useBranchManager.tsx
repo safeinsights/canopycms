@@ -121,7 +121,7 @@ const showDeleteConfirmation = (
   })
 }
 
-export interface BranchSummary {
+interface BranchSummary {
   name: string
   status: string
   createdBy?: string

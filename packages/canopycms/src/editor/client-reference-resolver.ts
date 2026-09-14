@@ -19,6 +19,7 @@ import { flattenGroupFields } from '../utils/flatten-group-fields'
 
 /**
  * Only returns top-level field configs for fields that changed.
+ * @internal Exported for tests.
  */
 export function findChangedFields(
   prevValue: FormValue,

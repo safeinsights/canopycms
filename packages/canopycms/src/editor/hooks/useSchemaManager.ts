@@ -27,7 +27,7 @@ export interface UseSchemaManagerOptions {
 export type SchemaOpResult = { ok: true } | { ok: false; error: string }
 
 /** Same shape as {@link SchemaOpResult}, plus a payload on success. */
-export type CreateCollectionResult =
+type CreateCollectionResult =
   | { ok: true; data: { collectionPath: LogicalPath; contentId: ContentId } }
   | { ok: false; error: string }
 

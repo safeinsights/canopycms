@@ -19,7 +19,10 @@ import type { OperatingMode } from './operating-mode'
 /** Module-level: warn at most once per process. */
 let warnedNoAdmins = false
 
-/** Test-only: reset the once-per-process "no admins configured" warning latch. */
+/**
+ * Test-only: reset the once-per-process "no admins configured" warning latch.
+ * @internal No importer; deletion candidate in knip-no-importer-deletion-candidates.md.
+ */
 export function resetResolveCanopyUserWarningForTests(): void {
   warnedNoAdmins = false
 }

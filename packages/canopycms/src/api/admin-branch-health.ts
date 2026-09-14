@@ -49,7 +49,7 @@ export interface BranchHealthData {
 /** Response type for GET /admin/branch-health */
 export type BranchHealthResponse = ApiResponse<BranchHealthData>
 
-export interface PurgeBranchDirData {
+interface PurgeBranchDirData {
   /** The dot-prefixed name the directory was renamed to, e.g. `.trash-foo-20260101T000000Z`. */
   trashedAs: string
 }
@@ -57,7 +57,7 @@ export interface PurgeBranchDirData {
 /** Response type for POST /admin/branch-dirs/:dirName/purge */
 export type PurgeBranchDirResponse = ApiResponse<PurgeBranchDirData>
 
-export interface RepairBranchDirData {
+interface RepairBranchDirData {
   branch: BranchMetadata
   /** The archived corrupt file's name, e.g. `branch.json.corrupt-20260101T000000Z`. */
   archivedAs: string
@@ -82,7 +82,7 @@ export interface RepairBranchDirData {
 /** Response type for POST /admin/branch-dirs/:dirName/repair-metadata */
 export type RepairBranchDirResponse = ApiResponse<RepairBranchDirData>
 
-export interface RepairedContentDuplicate {
+interface RepairedContentDuplicate {
   id: string
   /** The path that was kept (the deterministic winner) -- untouched by this repair. */
   keptPath: string
@@ -90,7 +90,7 @@ export interface RepairedContentDuplicate {
   archivedAs: string[]
 }
 
-export interface RepairContentDuplicatesData {
+interface RepairContentDuplicatesData {
   resolved: RepairedContentDuplicate[]
 }
 
@@ -108,7 +108,7 @@ const dirNameSchema = z
   .refine((v) => !v.startsWith('.'), { message: 'dirName must not be dot-prefixed' })
 
 const branchDirParamsSchema = z.object({ dirName: dirNameSchema })
-export type BranchDirParams = z.infer<typeof branchDirParamsSchema>
+type BranchDirParams = z.infer<typeof branchDirParamsSchema>
 
 /** Compact UTC stamp for trash/archive names: `YYYYMMDDTHHMMSSZ` (no colons -- portability). */
 function formatTrashStamp(date: Date): string {

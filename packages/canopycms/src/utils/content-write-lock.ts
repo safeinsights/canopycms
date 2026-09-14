@@ -39,7 +39,7 @@ import { tryAcquireProvisioningLock, type OnLockCompromised } from './provisioni
 const META_DIR = '.canopy-meta'
 
 /** On-disk name of the lock marker (a directory, created by mkdir). */
-export const CONTENT_WRITE_LOCK_NAME = 'content-write.lock'
+const CONTENT_WRITE_LOCK_NAME = 'content-write.lock'
 
 /**
  * Default bounded wait for a content write.
@@ -113,7 +113,7 @@ export function tryAcquireContentWriteLock(
  *
  * @throws ContentWriteLockBusyError when the budget expires under contention.
  */
-export async function acquireContentWriteLock(
+async function acquireContentWriteLock(
   branchRoot: string,
   waitMs: number = DEFAULT_CONTENT_WRITE_LOCK_WAIT_MS,
   onCompromised?: OnLockCompromised,

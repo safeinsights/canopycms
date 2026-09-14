@@ -16,7 +16,7 @@ export interface AddCommentBody {
   canopyPath?: string
 }
 
-export interface ListCommentsResponse {
+interface ListCommentsResponse {
   threads: CommentThread[]
 }
 

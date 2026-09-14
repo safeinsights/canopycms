@@ -1,7 +1,13 @@
 import fs from 'node:fs/promises'
 import { simpleGit } from 'simple-git'
-import { completeTask, dequeueTask, failTask, recoverOrphanedTasks, retryTask } from './task-queue'
-import type { Task } from './task-queue'
+import {
+  completeTask,
+  dequeueTask,
+  failTask,
+  recoverOrphanedTasks,
+  retryTask,
+} from '../task-queue/cms-task-queue'
+import type { Task } from '../task-queue/cms-task-queue'
 import { createOrUpdatePullRequest } from '../github-service'
 import { BranchMetadataFileManager, getBranchMetadataFileManager } from '../branch-metadata'
 import { sanitizeBranchName } from '../paths/branch-name'
@@ -9,7 +15,7 @@ import { gitNetworkChildEnv } from '../git-manager'
 import { getErrorMessage, redactCredentials } from '../utils/error'
 import { isNonFastForwardRejection, isStaleLeaseRejection } from '../utils/git'
 import { clearHistoryRewrittenMarker, readPublishedSha } from './history-rewrite'
-import { writeWorkerStatus } from './worker-status'
+import { writeWorkerStatus } from '../task-queue/worker-status'
 import { workerLog, workerLogError } from './log'
 import type { WorkerContext } from './worker-context'
 
@@ -262,7 +268,7 @@ export async function processTaskQueue(ctx: TaskRunnerContext): Promise<void> {
  * and are not bounded by taskTimeoutMs at all. pushBranchToGitHub additionally
  * kills stalled git processes via simple-git's block timeout.
  */
-export async function executeTaskWithTimeout(
+async function executeTaskWithTimeout(
   ctx: TaskRunnerContext,
   task: Task,
 ): Promise<Record<string, unknown>> {
@@ -474,7 +480,7 @@ export async function updateBranchMetadata(
  * redacted by the caller (see [REDACT] in processTaskQueue) and is recorded as
  * syncFailureReason so the editor can show WHY, not just that it failed.
  */
-export async function updateBranchMetadataOnFailure(
+async function updateBranchMetadataOnFailure(
   ctx: TaskRunnerContext,
   task: Task,
   error: string,

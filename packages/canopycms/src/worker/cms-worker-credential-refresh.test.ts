@@ -26,7 +26,7 @@ import path from 'node:path'
 import { simpleGit } from 'simple-git'
 
 import { CmsWorker } from './cms-worker'
-import { enqueueTask } from './task-queue'
+import { enqueueTask } from '../task-queue/cms-task-queue'
 import { initTestRepo, mockConsole, type MockConsole } from '../test-utils'
 
 /** `syncGit` is public but the wrapper around it is not; both are stubbed here. */

@@ -5,7 +5,7 @@
  *
  * @example
  * ```ts
- * import { defineCanopyConfig, type FieldConfig } from 'canopycms/config'
+ * import { defineCanopyConfig, type FieldConfig } from 'canopycms'
  * ```
  */
 

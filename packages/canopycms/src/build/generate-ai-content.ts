@@ -28,6 +28,7 @@ import { assertBuildEntriesValid } from '../static'
  * consumers. Overloading it with a build-time file list would change a contract adopters read.
  *
  * Dot-prefixed so it sorts out of the way and reads as machine bookkeeping rather than content.
+ * @internal Exported for tests.
  */
 export const GENERATED_RECORD_FILENAME = '.canopy-generated.json'
 

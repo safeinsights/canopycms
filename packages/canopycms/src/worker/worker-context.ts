@@ -1,6 +1,6 @@
 import type { Octokit } from '@octokit/rest'
 import type { SanitizedBranchName } from '../paths/types'
-import type { Task, TaskQueueLogger } from './task-queue'
+import type { Task, TaskQueueLogger } from '../task-queue/cms-task-queue'
 import type { WorkerStatusReport } from '../types'
 
 /**

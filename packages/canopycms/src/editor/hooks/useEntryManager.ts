@@ -15,6 +15,7 @@ import { entriesKey, fetchEntriesAndSchema } from './useEntriesData'
 // Re-exported so existing imports of `listAllEntries` from this module keep
 // working -- the implementation lives in useEntriesData.ts alongside the
 // other fetch/key/type pieces useEntryManager shares with the SWR layer.
+/** @internal Exported for tests. */
 export { listAllEntries } from './useEntriesData'
 
 /**

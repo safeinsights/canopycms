@@ -6,7 +6,8 @@
  * hops away — must stay free of node built-ins, or an adopter's production
  * `next build` fails with "Module not found: Can't resolve 'fs'". `next dev`
  * tolerates the violation, so nothing flags it while authoring; this config
- * makes the reachability itself a lint error (`pnpm lint:bundle`).
+ * makes the reachability itself a lint error (`pnpm lint:bundle`). The other
+ * rules run over the whole of src through `pnpm lint:cycles`.
  *
  * `tsPreCompilationDeps` is left off on purpose: we want the graph the bundler
  * sees, so `import type` edges (erased at compile time) are not followed.
@@ -33,6 +34,9 @@ const OWN_SRC = '^packages/[^/]+/src/'
 const NODE_BUILTIN =
   '^node:|^(assert|assert/strict|async_hooks|buffer|child_process|cluster|console|constants|crypto|dgram|diagnostics_channel|dns|dns/promises|domain|events|fs|fs/promises|http|http2|https|inspector|module|net|os|path|path/posix|path/win32|perf_hooks|process|punycode|querystring|readline|readline/promises|repl|stream|stream/consumers|stream/promises|stream/web|string_decoder|sys|timers|timers/promises|tls|trace_events|tty|url|util|util/types|v8|vm|wasi|worker_threads|zlib)$'
 
+/** Test code may reach across module boundaries; the three boundary rules below skip it. */
+const TEST_FILES = '\\.test\\.tsx?$|/__test__/|\\.stories\\.tsx?$'
+
 export default {
   forbidden: [
     {
@@ -50,6 +54,36 @@ export default {
         "`@octokit/auth-app` must not enter canopycms's own graph. github-service.ts is reachable from services.ts, so anything it imports lands in EVERY adopter's Next.js server bundle — including the majority who authenticate with a personal access token and will never register a GitHub App. The client-bundle rule above does not cover the server bundle, which is why this rule exists. A deployment that does use an App constructs the strategy in its own entrypoint and injects it through the structural `{ authStrategy, auth }` passthrough in github-service.ts; the dependency is declared by packages/canopycms-cdk/package.json. NOTE this rule is evaluated by `pnpm lint:cycles`, not `pnpm lint:bundle` -- lint:bundle cruises only the two client entries, which never reach github-service.ts.",
       from: { path: OWN_SRC },
       to: { path: '@octokit[/+]auth-app' },
+    },
+    {
+      name: 'http-reaches-api-only-via-routes',
+      severity: 'error',
+      comment:
+        'http/ value-imports from api/ only through api/routes.ts, the server-only aggregate of every route table. Type imports are erased (tsPreCompilationDeps is off), so http/handler.ts importing api/types stays legal. Evaluated by `pnpm lint:cycles`.',
+      from: { path: '^packages/canopycms/src/http/', pathNot: TEST_FILES },
+      to: {
+        path: '^packages/canopycms/src/api/',
+        pathNot: '^packages/canopycms/src/api/routes\\.ts$',
+      },
+    },
+    {
+      name: 'api-never-imports-worker',
+      severity: 'error',
+      comment:
+        'api/ never imports worker/. The queue contract both sides share lives in task-queue/ (cms-task-queue.ts, task-queue-config.ts, worker-status.ts); import it from there. Evaluated by `pnpm lint:cycles`.',
+      from: { path: '^packages/canopycms/src/api/', pathNot: TEST_FILES },
+      to: { path: '^packages/canopycms/src/worker/' },
+    },
+    {
+      name: 'editor-imports-api-only-client-index-constants',
+      severity: 'error',
+      comment:
+        'editor/ value-imports from api/ only api/client.ts, api/index.ts and api/entries-constants.ts, the three modules that are client-safe by construction; every other api/ module reaches node built-ins. Type imports are erased and stay legal. Evaluated by `pnpm lint:cycles`.',
+      from: { path: '^packages/canopycms/src/editor/', pathNot: TEST_FILES },
+      to: {
+        path: '^packages/canopycms/src/api/',
+        pathNot: '^packages/canopycms/src/api/(client|index|entries-constants)\\.ts$',
+      },
     },
     {
       name: 'no-circular',

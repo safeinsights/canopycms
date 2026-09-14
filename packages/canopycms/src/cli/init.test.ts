@@ -1092,8 +1092,8 @@ describe('workerRunOnce', () => {
     await writeConfig('prod')
 
     // Enqueue a task in the prod task directory (redirected to tmpDir via env var)
-    const { getTaskQueueDir } = await import('../worker/task-queue-config')
-    const { enqueueTask } = await import('../worker/task-queue')
+    const { getTaskQueueDir } = await import('../task-queue/task-queue-config')
+    const { enqueueTask } = await import('../task-queue/cms-task-queue')
     const taskDir = getTaskQueueDir({ mode: 'prod' })
     await enqueueTask(taskDir, { action: 'push-branch', payload: { branch: 'feature-x' } })
 
@@ -1165,8 +1165,8 @@ describe('workerRunOnce', () => {
     )
 
     // Enqueue a task so we can observe the prod-mode guard firing.
-    const { getTaskQueueDir } = await import('../worker/task-queue-config')
-    const { enqueueTask } = await import('../worker/task-queue')
+    const { getTaskQueueDir } = await import('../task-queue/task-queue-config')
+    const { enqueueTask } = await import('../task-queue/cms-task-queue')
     const taskDir = getTaskQueueDir({ mode: 'prod' })
     await enqueueTask(taskDir, { action: 'push-branch', payload: { branch: 'feature-x' } })
 

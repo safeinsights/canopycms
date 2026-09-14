@@ -1,4 +1,7 @@
-/** Path utilities for CanopyCMS. */
+/**
+ * Path utilities. Client-reachable code deep-imports `./branch-name` instead,
+ * because this barrel pulls in node:fs; `pnpm lint:bundle` enforces that.
+ */
 
 export type {
   LogicalPath,
@@ -50,7 +53,6 @@ export {
   type BranchPathOptions,
   type BranchPathResult,
 } from './branch'
-// From ./branch-name, not ./branch (which imports node:fs).
 export {
   sanitizeBranchName,
   RESERVED_SETTINGS_BRANCH_PREFIX,

@@ -19,7 +19,6 @@ import { IDENTITY_TRANSFORM_DIRECTIVE } from './transform-directives'
 import type { AssetMeta } from './types'
 
 /** Re-exported for existing importers (assets/index.ts barrel) - the value now lives in transform-directives.ts, so it's reachable without pulling keys.ts's node:crypto import into client bundles. */
-export { IDENTITY_TRANSFORM_DIRECTIVE }
 
 export function assetSrc(meta: Pick<AssetMeta, 'hash32' | 'slug' | 'ext' | 'kind'>): string {
   if (meta.kind === 'svg' || meta.kind === 'pdf') {

@@ -3,8 +3,8 @@ import path from 'node:path'
 import { simpleGit } from 'simple-git'
 import lockfile from 'proper-lockfile'
 import { Octokit } from '@octokit/rest'
-import { recoverOrphanedTasks, cmsTaskQueueLogger } from './task-queue'
-import type { Task } from './task-queue'
+import { recoverOrphanedTasks, cmsTaskQueueLogger } from '../task-queue/cms-task-queue'
+import type { Task } from '../task-queue/cms-task-queue'
 import { createCanopyOctokit } from '../github-service'
 import {
   isTransientAuthFailure,
@@ -18,7 +18,7 @@ import { sanitizeBranchName, RESERVED_SETTINGS_BRANCH_PREFIX } from '../paths/br
 import { resolveDeploymentName } from '../operating-mode/deployment-name'
 import type { WorkerStatusReport } from '../types'
 import { getErrorMessage, isNodeError, redactCredentials } from '../utils/error'
-import { writeWorkerStatus } from './worker-status'
+import { writeWorkerStatus } from '../task-queue/worker-status'
 import { workerLog, workerLogWarn, workerLogError } from './log'
 import type { WorkerContext } from './worker-context'
 import {

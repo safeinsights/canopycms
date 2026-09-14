@@ -2,7 +2,7 @@ import React, { useId } from 'react'
 
 import { MultiSelect, Select, Stack, Text } from '@mantine/core'
 
-export interface SelectOption {
+interface SelectOption {
   label: string
   value: string
 }
@@ -72,5 +72,3 @@ export const SelectField: React.FC<SelectFieldProps> = ({
     </Stack>
   )
 }
-
-export default SelectField

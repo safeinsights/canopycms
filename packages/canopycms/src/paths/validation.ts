@@ -14,7 +14,10 @@ const CONTENT_ID_PATTERN = new RegExp(`^${BASE58_PATTERN}{12}$`)
  */
 const PHYSICAL_SEGMENT_PATTERN = new RegExp(`\\.${BASE58_PATTERN}{12}(?:\\.[a-z]+)?$`)
 
-/** Reject a content path that traverses, or that escapes `rootPath`. */
+/**
+ * Reject a content path that traverses, or that escapes `rootPath`.
+ * @internal Exported for tests.
+ */
 export function validateContentPath(
   path: string,
   rootPath: string,
@@ -37,7 +40,10 @@ export function validateContentPath(
   return { valid: true }
 }
 
-/** A collection path must be non-empty, traversal-free, and `[A-Za-z0-9_/-]+`. */
+/**
+ * A collection path must be non-empty, traversal-free, and `[A-Za-z0-9_/-]+`.
+ * @internal Exported for tests.
+ */
 export function isValidCollectionPath(collectionPath: string): boolean {
   if (!collectionPath || collectionPath.length === 0) {
     return false
@@ -52,7 +58,10 @@ export function isValidCollectionPath(collectionPath: string): boolean {
   return validPattern.test(normalized)
 }
 
-/** Strip the characters that make a string unsafe as a path component. */
+/**
+ * Strip the characters that make a string unsafe as a path component.
+ * @internal Exported for tests.
+ */
 export function sanitizeForPath(input: string): string {
   return input
     .replace(/[<>:"|?*\\]/g, '') // Remove invalid filesystem chars
@@ -61,7 +70,10 @@ export function sanitizeForPath(input: string): string {
     .trim()
 }
 
-/** Whether a single path segment (no slashes) carries an embedded content ID. */
+/**
+ * Whether a single path segment (no slashes) carries an embedded content ID.
+ * @internal Exported for tests.
+ */
 export function hasEmbeddedContentId(segment: string): boolean {
   return PHYSICAL_SEGMENT_PATTERN.test(segment)
 }
@@ -70,12 +82,14 @@ export function hasEmbeddedContentId(segment: string): boolean {
  * Whether any segment carries an embedded content ID:
  * `content/posts.abc123/post.hello.def456.json` does, `content/posts/hello`
  * does not.
+ * @internal Exported for tests.
  */
 export function looksLikePhysicalPath(path: string): boolean {
   const segments = path.split('/')
   return segments.some(hasEmbeddedContentId)
 }
 
+/** @internal Exported for tests. */
 export function looksLikeLogicalPath(path: string): boolean {
   return !looksLikePhysicalPath(path)
 }
@@ -112,6 +126,7 @@ export function parseLogicalPath(
 /**
  * Validate an incoming path string at an API boundary and cast it to the
  * branded PhysicalPath type.
+ * @internal Exported for tests.
  */
 export function parsePhysicalPath(
   path: string,

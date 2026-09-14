@@ -57,7 +57,7 @@ export interface FinalizeInput {
   uploadedBy?: string
 }
 
-export interface FinalizePublicObject {
+interface FinalizePublicObject {
   key: string
   data: Uint8Array
   contentType: string
@@ -65,7 +65,7 @@ export interface FinalizePublicObject {
   cacheControl: string
 }
 
-export interface FinalizeSuccess {
+interface FinalizeSuccess {
   ok: true
   meta: AssetMeta
   /** Canonical bytes to persist as the original - sanitized bytes for svg, untouched otherwise. */

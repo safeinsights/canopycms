@@ -33,5 +33,3 @@ export const ToggleField: React.FC<ToggleFieldProps> = ({
     />
   )
 }
-
-export default ToggleField

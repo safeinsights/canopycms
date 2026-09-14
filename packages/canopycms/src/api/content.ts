@@ -104,7 +104,6 @@ export interface RenameEntryBody {
 }
 
 /** Re-exported for convenience. */
-export type { ReferenceOptionsResponse } from './reference-options'
 
 const readContentParamsSchema = z.object({
   branch: branchNameSchema,

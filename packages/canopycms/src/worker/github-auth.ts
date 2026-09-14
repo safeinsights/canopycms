@@ -433,6 +433,7 @@ async function mintInstallationToken(app: GitHubAppAuth, timeoutMs: number): Pro
  * A named class rather than a bare Error because `isTransientAuthFailure`
  * below has to recognise it: a timeout carries no HTTP status, and the
  * fail-closed rule there would otherwise read "slow network" as "wrong key".
+ * @internal Exported for tests.
  */
 export class MintTimeoutError extends Error {
   constructor(timeoutMs: number) {

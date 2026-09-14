@@ -18,11 +18,13 @@ export interface BranchPathResult {
   branchName: string
 }
 
+/** @internal Exported for tests. */
 export class BranchPathError extends Error {}
 
 // Lives in ./branch-name (dependency-free); re-exported here for server-side
 // importers, who may safely reach this module's node:fs imports.
 import { sanitizeBranchName } from './branch-name'
+/** @internal Exported for tests. */
 export { sanitizeBranchName }
 
 const resolveContentBranchesRoot = (mode: OperatingMode, override?: string): string => {

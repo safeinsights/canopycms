@@ -184,6 +184,7 @@ function nodeModulesLookupDirs(fromDir: string): string[] {
  * of the packages this module needs defeat it:
  * - a `canopycms` published without a `require` condition throws ERR_PACKAGE_PATH_NOT_EXPORTED;
  * - sharp exports no `./package.json` at all.
+ * @internal Exported for tests.
  */
 export function findInstalledPackage(fromDir: string, name: string): string | null {
   for (const lookupDir of nodeModulesLookupDirs(fromDir)) {
@@ -232,6 +233,7 @@ function findLockFileUpwards(startDir: string, names: readonly string[]): string
  *
  * Next resolves a relative configured root against the working directory; `withCanopy` only calls
  * this when that directory is the project dir.
+ * @internal Exported for tests.
  */
 export function resolveTracingRoot(input: SharpTracingInput): string {
   const configured = input.outputFileTracingRoot || input.turbopackRoot

@@ -136,7 +136,7 @@ interface Task {
 
 ## CanopyCMS integration
 
-Within CanopyCMS, the worker layer (`src/worker/`) wraps this module with:
+Within CanopyCMS, the sibling `cms-task-queue.ts` wraps this module with:
 
 - **`TaskAction` type** — a union of CMS-specific actions (`push-and-create-pr`, `close-pr`, etc.)
 - **`WorkerTask` alias** — `Task & { action: TaskAction }`

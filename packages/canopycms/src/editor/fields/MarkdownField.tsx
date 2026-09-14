@@ -255,5 +255,3 @@ export const MarkdownField: React.FC<MarkdownFieldProps> = ({
     </div>
   )
 }
-
-export default MarkdownField

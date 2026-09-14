@@ -25,7 +25,10 @@ import { SCHEMA_GENERATION_RESOURCE } from './branch-schema-cache'
 
 const RESOURCE = 'content-index'
 
-/** Absolute path of the generation marker for a branch-clone root. */
+/**
+ * Absolute path of the generation marker for a branch-clone root.
+ * @internal No importer; deletion candidate in knip-no-importer-deletion-candidates.md.
+ */
 export function contentIndexGenerationPath(root: string): string {
   return resourceGenerationPath(root, RESOURCE)
 }

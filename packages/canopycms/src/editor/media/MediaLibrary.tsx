@@ -63,5 +63,3 @@ export const MediaLibrary: React.FC<MediaLibraryProps> = ({ opened, onClose, mod
     </Drawer>
   )
 }
-
-export default MediaLibrary

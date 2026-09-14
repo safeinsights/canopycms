@@ -22,8 +22,8 @@ Measured 2026-09-13 at `c25035d2`, the tip of `int-202609-a`. Non-test TypeScrip
   "used to", review references). `canopycms-cdk` sits at 1.58, `canopycms-next` at 0.93.
   Roughly 35% of comment lines can go with no rule lost: re-explained shared mechanisms,
   bug archaeology, essays where two lines fit, and transcribed code.
-- Encapsulation: no true layering inversion. The queue contract (`worker/task-queue.ts`,
-  `task-queue-config.ts`, `worker-status.ts`) is misfiled under `worker/`;
+- Encapsulation: no true layering inversion. The queue contract (`worker/task-queue.ts`, `task-queue-config.ts`, `worker-status.ts`) is
+  misfiled under `worker/`, moved to `task-queue/` in PR #349;
   `cli/init-github-app.ts` has 37 exports, 21 test-only; `editor/hooks/index.ts` re-exports
   21 names for 2 importers; `.dependency-cruiser.mjs` has no module-boundary rule and
   nothing checks for unused exports. The flat `src/` namespace is a recorded decision and
@@ -37,12 +37,12 @@ Measured 2026-09-13 at `c25035d2`, the tip of `int-202609-a`. Non-test TypeScrip
 
 | PR  | Chip | Scope                                                                                                                           | Status      |
 | --- | ---- | ------------------------------------------------------------------------------------------------------------------------------- | ----------- |
-| 1   | G    | Guards and rules: `pnpm lint:comments`, `scripts/diff-comments-only.mjs`, doc word budgets in `check-docs.mjs`, the style rule in `AGENTS.md`, review briefs, charters | in progress |
-| 2   | A1   | Comment compression, Opus tier: `worker/`, `utils/`, `paths/`, `operating-mode/`, `http/`, `auth/`, flat `src/*.ts`, plus `worker/AGENTS.md` and `utils/AGENTS.md` dedupe | planned     |
-| 3   | A2   | Comment compression, Sonnet tier: `authorization/`, `schema/`, `config/`, `static/`, `build/`, `validation/`, `task-queue/`, `api/`, `cli/`, `assets/`, `ai/`, `editor/` | planned     |
-| 4   | A3   | Comment compression, other packages: `canopycms-cdk` (Opus), `canopycms-next`, both auth packages, root `scripts/`              | planned     |
-| 5   | D    | Docs consolidation: ARCHITECTURE to 25k words, DEVELOPING to 18k, README to 20k, CODEBASE_GUIDE to 10k as a map; `docs/adopter-migration.md` audited | planned     |
-| 6   | B    | Encapsulation: `api/routes.ts` aggregator, queue contract moved to `task-queue/`, `cli/init-github-app.ts` split, dependency-cruiser boundary rules, knip as `pnpm lint:exports` | planned     |
+| 1 | G | Guards and rules: `pnpm lint:comments`, `scripts/diff-comments-only.mjs`, doc word budgets in `check-docs.mjs`, the style rule in `AGENTS.md`, review briefs, charters | merged (#344) |
+| 2 | A1 | Comment compression, Opus tier: `worker/`, `utils/`, `paths/`, `operating-mode/`, `http/`, `auth/`, flat `src/*.ts`, plus `worker/AGENTS.md` and `utils/AGENTS.md` dedupe | merged (#347) |
+| 3 | A2 | Comment compression, Sonnet tier: `authorization/`, `schema/`, `config/`, `static/`, `build/`, `validation/`, `task-queue/`, `api/`, `cli/`, `assets/`, `ai/`, `editor/` | merged (#346) |
+| 4 | A3 | Comment compression, other packages: `canopycms-cdk` (Opus), `canopycms-next`, both auth packages, root `scripts/`              | merged (#345) |
+| 5 | D | Docs consolidation: ARCHITECTURE to 25k words, DEVELOPING to 18k, README to 20k, CODEBASE_GUIDE to 10k as a map; `docs/adopter-migration.md` audited | merged (#348) |
+| 6 | B | Encapsulation: `api/routes.ts` aggregator, queue contract moved to `task-queue/`, `cli/init-github-app.ts` split, dependency-cruiser boundary rules, knip as `pnpm lint:exports` | PR #349, in review |
 | 7   | E    | Manager bookkeeping: ratchet both budget files, `docs/reviews/2026-09-baseline-quality.md`, Fable review of the whole diff, the epic PR | planned     |
 
 Sequence: G, then A1/A2/A3 and D in parallel (disjoint files), then B, then E.

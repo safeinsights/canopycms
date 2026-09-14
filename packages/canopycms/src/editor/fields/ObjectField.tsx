@@ -85,5 +85,3 @@ export const ObjectField: React.FC<ObjectFieldProps> = ({
     </Paper>
   )
 }
-
-export default ObjectField

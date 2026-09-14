@@ -31,12 +31,15 @@
 import { canopyLogWarn } from '../utils/logger'
 import type { OperatingMode } from './types'
 
-export const SERVER_MODE_ENV_VAR = 'CANOPY_MODE'
-export const BROWSER_MODE_ENV_VAR = 'NEXT_PUBLIC_CANOPY_MODE'
+const SERVER_MODE_ENV_VAR = 'CANOPY_MODE'
+const BROWSER_MODE_ENV_VAR = 'NEXT_PUBLIC_CANOPY_MODE'
 
 let warned = false
 
-/** Reset the once-per-process warning latch. Test-only. */
+/**
+ * Reset the once-per-process warning latch. Test-only.
+ * @internal Exported for tests.
+ */
 export function resetModeWarning(): void {
   warned = false
 }

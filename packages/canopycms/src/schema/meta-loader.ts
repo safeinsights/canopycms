@@ -65,7 +65,7 @@ const rootCollectionMetaSchema = z.object({
   order: z.array(z.string()).optional(), // Embedded IDs for ordering items
 })
 
-export type EntryTypeMeta = {
+type EntryTypeMeta = {
   name: string
   format: 'md' | 'mdx' | 'json' | 'yaml'
   schema: string // Entry schema registry key

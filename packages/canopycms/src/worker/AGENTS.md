@@ -1,6 +1,6 @@
 # `worker/` — Worker
 
-The CmsWorker daemon, its task queue, and the git sync/rebase loop.
+The CmsWorker daemon and the git sync/rebase loop. The queue contract it consumes (`cms-task-queue.ts`, `task-queue-config.ts`, `worker-status.ts`) lives in `../task-queue/`.
 
 The **code comment at the point of the rule is authoritative**; this file is the map to
 where those rules live.

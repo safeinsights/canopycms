@@ -70,7 +70,10 @@ export async function createContentAccessChecker(
   }
 }
 
-/** Single-path check; loads the path permissions from the branch root per call. */
+/**
+ * Single-path check; loads the path permissions from the branch root per call.
+ * @internal Exported for tests.
+ */
 export async function checkContentAccess(
   deps: ContentAccessDeps,
   context: BranchContext,

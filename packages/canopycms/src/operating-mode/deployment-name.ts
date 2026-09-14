@@ -39,6 +39,7 @@ const VALID_DEPLOYMENT_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
  * construct deliberately does not import this directly — see its own
  * `isValidDeploymentName` doc comment. The drift check is therefore test-only,
  * over `deployment-name-fixtures.ts`.
+ * @internal Exported for tests.
  */
 export const isValidDeploymentName = (name: string): boolean =>
   VALID_DEPLOYMENT_NAME.test(name) &&

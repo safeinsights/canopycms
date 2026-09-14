@@ -9,8 +9,8 @@ import { getErrorMessage, isNodeError, redactCredentials } from '../utils/error'
 import { isNonFastForwardRejection } from '../utils/git'
 import { hasPendingHistoryRewrite } from './history-rewrite'
 import { runRebaseCycle, type RebaseContext } from './rebase'
-import { cleanupOldTasks } from './task-queue'
-import { writeWorkerStatus } from './worker-status'
+import { cleanupOldTasks } from '../task-queue/cms-task-queue'
+import { writeWorkerStatus } from '../task-queue/worker-status'
 import { workerLog, workerLogError, workerLogWarn } from './log'
 import type { WorkerContext } from './worker-context'
 
@@ -86,7 +86,7 @@ function parseTrashStamp(stamp: string): Date | null {
  * the worker's self-reported status (`WorkerStatusReport.lastGitSync.tracked`,
  * see worker-status.ts).
  */
-export interface TrackedBranchSummary {
+interface TrackedBranchSummary {
   /** GitHub branches with no corresponding local `refs/heads/<name>` yet -- created at GitHub's tip. */
   created: string[]
   /** Local heads that were strict ancestors of GitHub's tip -- fast-forwarded to it. */
@@ -240,7 +240,7 @@ export async function pushSettingsBranches(
  * write loses the ref update instead of silently clobbering it -- that branch
  * is simply revisited next cycle.
  */
-export async function reconcileTrackedBranches(
+async function reconcileTrackedBranches(
   ctx: GitSyncContext,
   git: ReturnType<typeof simpleGit>,
 ): Promise<{ summary: TrackedBranchSummary; trackedNames: Set<string> }> {

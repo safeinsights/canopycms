@@ -38,7 +38,7 @@ export type FieldVisitor<T> = (context: TraversalContext) => T[]
  * knows about. A container visitor sees the record itself, which is what a check on the data's
  * OWN keys needs (`findUnknownKeys` in entry-validator.ts).
  */
-export interface ContainerContext {
+interface ContainerContext {
   /** The schema fields governing this record. Inline groups are NOT flattened. */
   fields: readonly FieldConfig[]
   /** The data record those fields govern. */

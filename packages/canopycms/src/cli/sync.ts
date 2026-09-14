@@ -45,7 +45,7 @@ export interface SyncOptions {
  * Thrown so the CLI exits non-zero — scripts/CI must not sail past a
  * push that synced nothing.
  */
-export class SyncError extends Error {
+class SyncError extends Error {
   constructor(message: string) {
     super(message)
     this.name = 'SyncError'

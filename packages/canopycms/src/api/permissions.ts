@@ -61,7 +61,9 @@ const getUserMetadataParamsSchema = z.object({
 })
 
 export type UpdatePermissionsBody = z.infer<typeof updatePermissionsBodySchema>
+/** @internal No importer; deletion candidate in knip-no-importer-deletion-candidates.md. */
 export type SearchUsersParams = z.infer<typeof searchUsersParamsSchema>
+/** @internal No importer; deletion candidate in knip-no-importer-deletion-candidates.md. */
 export type GetUserMetadataParams = z.infer<typeof getUserMetadataParamsSchema>
 
 const getPermissionsHandler = async (

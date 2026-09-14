@@ -17,6 +17,7 @@ import * as p from '@clack/prompts'
 import type { AuthPlugin } from '../auth/plugin'
 import type { AuthProvider } from './init'
 import { getErrorMessage } from '../utils/error'
+import type { MigrateFormat } from './migrate'
 
 /** Parse raw CLI args into structured flags and positional command. Exported for testing. */
 export function parseArgs(rawArgs: string[]) {
@@ -362,10 +363,7 @@ async function main() {
       projectDir: await requireProjectRoot('migrate'),
       contentRoot: typeof flags['content-root'] === 'string' ? flags['content-root'] : undefined,
       entryType: typeof flags['entry-type'] === 'string' ? flags['entry-type'] : undefined,
-      format:
-        typeof flags['format'] === 'string'
-          ? (flags['format'] as import('./migrate').MigrateFormat)
-          : undefined,
+      format: typeof flags['format'] === 'string' ? (flags['format'] as MigrateFormat) : undefined,
       schema: typeof flags['schema'] === 'string' ? flags['schema'] : undefined,
       dryRun: flags['dry-run'] === true,
       force: flags['force'] === true,

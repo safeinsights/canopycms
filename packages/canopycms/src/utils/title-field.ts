@@ -7,6 +7,7 @@ function isGroupField(field: FieldConfig): field is InlineGroupFieldConfig {
 /**
  * Value of the field marked `isTitle: true`, or undefined when there is none or it is not a
  * string. Recurses into object fields, so a nested title (`hero.title`) is found.
+ * @internal Exported for tests.
  */
 export function extractTitleFromSchema(
   fields: readonly FieldConfig[],
@@ -39,7 +40,10 @@ function findTitleValue(
   return undefined
 }
 
-/** Convert a slug like "my-cool-page" to "My Cool Page". */
+/**
+ * Convert a slug like "my-cool-page" to "My Cool Page".
+ * @internal Exported for tests.
+ */
 export function humanizeSlug(slug: string): string {
   return slug
     .replace(/[-_]/g, ' ')

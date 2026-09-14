@@ -26,7 +26,7 @@
  * The discriminator keys, in the precedence `resolveBlockItem` reads them. Ordered (not a
  * bare Set) so a caller needing the VALUE can iterate, and the canonical key stays first.
  */
-export const BLOCK_DISCRIMINATOR_KEYS = ['template', '_type'] as const
+const BLOCK_DISCRIMINATOR_KEYS = ['template', '_type'] as const
 
 /** Membership form of {@link BLOCK_DISCRIMINATOR_KEYS}, for the two set-test callers. */
 export const BLOCK_STRUCTURAL_KEYS: ReadonlySet<string> = new Set(BLOCK_DISCRIMINATOR_KEYS)

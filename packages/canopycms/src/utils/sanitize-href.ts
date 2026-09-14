@@ -48,6 +48,7 @@ export function declaresScheme(url: string): boolean {
  * (e.g. `utils/url-prefix.ts`'s `isAbsoluteUrl`, for a CDN-hosted `ogImage`) should check that
  * separately and only fall back to this function to catch the spellings that slip past a
  * `startsWith('//')` check.
+ * @internal Exported for tests.
  */
 export function isImplicitlyOffOrigin(url: string): boolean {
   if (declaresScheme(url)) return false
