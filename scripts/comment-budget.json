@@ -1,5 +1,5 @@
 {
-  "$comment": "Comment-volume ratchet read by scripts/check-comment-budget.mjs (pnpm lint:comments). Regenerate with `node scripts/check-comment-budget.mjs --write-baseline`; lower numbers as code improves, and treat raising one as a reviewed decision.",
+  "$comment": "Comment-volume ratchet read by scripts/check-comment-budget.mjs (pnpm lint:comments). Regenerate with `node scripts/check-comment-budget.mjs --write-baseline [--margin=<pct>] [--allow-raise]`: ratios are written as actual plus the margin, run caps (floor 30) and marker counts as measured, and a write that would raise any existing number is refused without --allow-raise.",
   "packages": {
     "canopycms": {
       "directories": {
@@ -147,7 +147,7 @@
       "directories": {
         "scripts": {
           "maxRun": 49,
-          "ratio": 0.352
+          "ratio": 0.346
         },
         "scripts/smoke": {
           "maxRun": 45,
@@ -155,7 +155,7 @@
         }
       },
       "historyMarkers": 15,
-      "ratio": 0.316
+      "ratio": 0.311
     }
   }
 }

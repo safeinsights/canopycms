@@ -131,7 +131,8 @@ Before adding a fact, ask where it belongs, in this order: the code comment at t
 of the rule, the owning module's `AGENTS.md`, and only then this file. Then find what the
 addition supersedes and delete or merge it. Report the net **word** delta of your edit,
 per file and per H2 section, naming each section you shrank with its before and after
-word counts (`node scripts/check-docs.mjs --report` prints them).
+word counts (`node scripts/check-docs.mjs --report --sections <file>` prints one row per
+H2 section; `--report` alone prints the per-file table).
 
 - Rewrite a paragraph whose behavior changed in place; never leave an older version
   beside it.

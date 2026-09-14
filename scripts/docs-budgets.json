@@ -1,6 +1,66 @@
 {
-  "$comment": "Word-count ratchet read by scripts/check-docs.mjs (pnpm lint:docs). Regenerate with `node scripts/check-docs.mjs --write-baseline`; lower numbers as docs shrink, and treat raising one as a reviewed decision.",
+  "$comment": "Word-count ratchet read by scripts/check-docs.mjs (pnpm lint:docs). Regenerate with `node scripts/check-docs.mjs --write-baseline [--margin=<pct>] [--allow-raise]`: words and maxSectionWords are written as actual plus the margin, historyMarkers as the actual count, and a write that would raise any existing number is refused without --allow-raise. historyMarkers: null means that file is a dated changelog whose markers are not checked; the null is kept across rewrites.",
   "files": {
+    ".claude/agents/branch-review.md": {
+      "historyMarkers": 1,
+      "maxSectionWords": 95,
+      "words": 95
+    },
+    ".claude/agents/codebase-guide.md": {
+      "historyMarkers": 0,
+      "maxSectionWords": 86,
+      "words": 86
+    },
+    ".claude/agents/debug.md": {
+      "historyMarkers": 1,
+      "maxSectionWords": 76,
+      "words": 239
+    },
+    ".claude/agents/docs-architecture.md": {
+      "historyMarkers": 0,
+      "maxSectionWords": 174,
+      "words": 587
+    },
+    ".claude/agents/docs-developing.md": {
+      "historyMarkers": 0,
+      "maxSectionWords": 174,
+      "words": 414
+    },
+    ".claude/agents/docs-readme.md": {
+      "historyMarkers": 0,
+      "maxSectionWords": 174,
+      "words": 446
+    },
+    ".claude/agents/init-maintenance.md": {
+      "historyMarkers": 0,
+      "maxSectionWords": 68,
+      "words": 336
+    },
+    ".claude/agents/review.md": {
+      "historyMarkers": 2,
+      "maxSectionWords": 309,
+      "words": 602
+    },
+    ".claude/agents/test.md": {
+      "historyMarkers": 0,
+      "maxSectionWords": 65,
+      "words": 208
+    },
+    ".claude/agents/typecheck.md": {
+      "historyMarkers": 0,
+      "maxSectionWords": 54,
+      "words": 201
+    },
+    ".claude/agents/update-codebase-guide.md": {
+      "historyMarkers": 0,
+      "maxSectionWords": 174,
+      "words": 502
+    },
+    "AGENTS.md": {
+      "historyMarkers": 0,
+      "maxSectionWords": 323,
+      "words": 1245
+    },
     "ARCHITECTURE.md": {
       "historyMarkers": 34,
       "maxSectionWords": 8911,
@@ -22,7 +82,7 @@
       "words": 18296
     },
     "docs/adopter-migration.md": {
-      "historyMarkers": 36,
+      "historyMarkers": null,
       "maxSectionWords": 13027,
       "words": 18147
     },

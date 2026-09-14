@@ -196,6 +196,13 @@ const args = process.argv.slice(2)
 const writeBaseline = args.includes('--write-baseline')
 const showReport = args.includes('--report')
 const showMarkers = args.includes('--markers')
+const allowRaise = args.includes('--allow-raise')
+const marginArg = args.find((a) => a.startsWith('--margin='))
+const margin = marginArg ? Number(marginArg.slice('--margin='.length)) : 0
+if (!Number.isFinite(margin) || margin < 0) {
+  console.error('❌ --margin must be a non-negative percentage, e.g. --margin=2')
+  process.exit(1)
+}
 
 const files = discoverFiles()
 const fileResults = files.map((f) => {
@@ -242,10 +249,23 @@ function aggRatio(agg) {
   return agg.code > 0 ? agg.comment / agg.code : 0
 }
 
-// --- --write-baseline: regenerate scripts/comment-budget.json from actuals ---
+function loadBudget() {
+  return existsSync(budgetPath) ? JSON.parse(readFileSync(budgetPath, 'utf8')) : { packages: {} }
+}
+
+// --- --write-baseline: regenerate scripts/comment-budget.json from actuals.
+// Ratios get the margin; run caps and marker counts are written as measured.
+// Raising any number already in the file needs --allow-raise, so a branch
+// cannot go green by rewriting its own budget.
 if (writeBaseline) {
   const discoveredBuckets = new Map()
   for (const f of fileResults) discoveredBuckets.set(f.bucket, f.pkg)
+  const existing = loadBudget()
+  const ceilRatio = (r) => Math.ceil(r * (1 + margin / 100) * 1000) / 1000
+  const raises = []
+  const noteRaise = (label, prior, next) => {
+    if (typeof prior === 'number' && next > prior) raises.push(`${label} ${prior} -> ${next}`)
+  }
 
   const packages = {}
   for (const pkg of Object.keys(PACKAGE_ROOTS).sort()) {
@@ -258,21 +278,28 @@ if (writeBaseline) {
       .sort()
     for (const bucket of bucketsForPkg) {
       const d = dirAgg.get(bucket)
-      directories[bucket] = {
-        maxRun: Math.max(d.maxRun, 30),
-        ratio: Math.ceil(aggRatio(d) * 1000) / 1000,
-      }
+      const prior = existing.packages?.[pkg]?.directories?.[bucket]
+      directories[bucket] = { maxRun: Math.max(d.maxRun, 30), ratio: ceilRatio(aggRatio(d)) }
+      noteRaise(`${bucket} maxRun`, prior?.maxRun, directories[bucket].maxRun)
+      noteRaise(`${bucket} ratio`, prior?.ratio, directories[bucket].ratio)
     }
-    packages[pkg] = {
-      directories,
-      historyMarkers: agg.markers,
-      ratio: Math.ceil(aggRatio(agg) * 1000) / 1000,
-    }
+    const prior = existing.packages?.[pkg]
+    packages[pkg] = { directories, historyMarkers: agg.markers, ratio: ceilRatio(aggRatio(agg)) }
+    noteRaise(`${pkg} historyMarkers`, prior?.historyMarkers, agg.markers)
+    noteRaise(`${pkg} ratio`, prior?.ratio, packages[pkg].ratio)
+  }
+
+  if (raises.length > 0 && !allowRaise) {
+    console.error(
+      `❌ refusing to raise ${raises.length} budget number(s); pass --allow-raise to do it on purpose:`,
+    )
+    for (const r of raises) console.error(`    ${r}`)
+    process.exit(1)
   }
 
   const baseline = {
     $comment:
-      'Comment-volume ratchet read by scripts/check-comment-budget.mjs (pnpm lint:comments). Regenerate with `node scripts/check-comment-budget.mjs --write-baseline`; lower numbers as code improves, and treat raising one as a reviewed decision.',
+      'Comment-volume ratchet read by scripts/check-comment-budget.mjs (pnpm lint:comments). Regenerate with `node scripts/check-comment-budget.mjs --write-baseline [--margin=<pct>] [--allow-raise]`: ratios are written as actual plus the margin, run caps (floor 30) and marker counts as measured, and a write that would raise any existing number is refused without --allow-raise.',
     packages,
   }
   writeFileSync(budgetPath, JSON.stringify(baseline, null, 2) + '\n')
@@ -281,7 +308,7 @@ if (writeBaseline) {
     0,
   )
   console.log(
-    `📝 wrote baseline: ${Object.keys(packages).length} package(s), ${dirCount} director(y/ies)`,
+    `📝 wrote baseline: ${Object.keys(packages).length} package(s), ${dirCount} director(y/ies), margin ${margin}%${raises.length > 0 ? `, ${raises.length} raised` : ''}`,
   )
   process.exit(0)
 }
@@ -340,10 +367,7 @@ if (showReport || showMarkers) {
 }
 
 // --- default mode: check actuals against scripts/comment-budget.json ---
-let budget = { packages: {} }
-if (existsSync(budgetPath)) {
-  budget = JSON.parse(readFileSync(budgetPath, 'utf8'))
-}
+const budget = loadBudget()
 
 const problems = []
 const addProblem = (kind, lines) =>

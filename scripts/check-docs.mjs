@@ -176,11 +176,17 @@ function candidateRepoPath(token) {
 }
 
 // Word budgets. A separate, explicit file list from findMarkdown() above: the
-// four root docs, docs/*.md, and every AGENTS.md and README.md under a
-// package's src/ tree, not every markdown file in the tree.
+// root docs below, .claude/agents/*.md, docs/*.md, and every AGENTS.md and
+// README.md under a package's src/ tree. CLAUDE.md is user-owned and stays out.
 
 /** Root docs carrying a word budget. */
-const BUDGET_ROOT_FILES = ['ARCHITECTURE.md', 'DEVELOPING.md', 'README.md', 'CODEBASE_GUIDE.md']
+const BUDGET_ROOT_FILES = [
+  'AGENTS.md',
+  'ARCHITECTURE.md',
+  'DEVELOPING.md',
+  'README.md',
+  'CODEBASE_GUIDE.md',
+]
 
 const budgetsPath = join(repoRoot, 'scripts', 'docs-budgets.json')
 
@@ -202,11 +208,12 @@ function findAgentsAndReadme(dir) {
 /** The explicit, sorted file list the word budget applies to. */
 function findDocsBudgetFiles() {
   const files = new Set(BUDGET_ROOT_FILES)
-  const docsDir = join(repoRoot, 'docs')
-  if (existsSync(docsDir)) {
-    // Non-recursive: docs/reviews/*.md are dated snapshots, out of scope.
-    for (const entry of readdirSync(docsDir, { withFileTypes: true })) {
-      if (entry.isFile() && entry.name.endsWith('.md')) files.add(`docs/${entry.name}`)
+  // Both non-recursive: docs/reviews/*.md are dated snapshots, out of scope.
+  for (const dir of ['docs', '.claude/agents']) {
+    const abs = join(repoRoot, dir)
+    if (!existsSync(abs)) continue
+    for (const entry of readdirSync(abs, { withFileTypes: true })) {
+      if (entry.isFile() && entry.name.endsWith('.md')) files.add(`${dir}/${entry.name}`)
     }
   }
   const packagesDir = join(repoRoot, 'packages')
@@ -316,27 +323,61 @@ function loadBudgets() {
 }
 
 const BASELINE_COMMENT =
-  'Word-count ratchet read by scripts/check-docs.mjs (pnpm lint:docs). Regenerate with `node scripts/check-docs.mjs --write-baseline`; lower numbers as docs shrink, and treat raising one as a reviewed decision.'
+  'Word-count ratchet read by scripts/check-docs.mjs (pnpm lint:docs). Regenerate with `node scripts/check-docs.mjs --write-baseline [--margin=<pct>] [--allow-raise]`: words and maxSectionWords are written as actual plus the margin, historyMarkers as the actual count, and a write that would raise any existing number is refused without --allow-raise. historyMarkers: null means that file is a dated changelog whose markers are not checked; the null is kept across rewrites.'
 
-/** Writes scripts/docs-budgets.json from the CURRENT actuals of every in-scope file. */
-function writeBaseline() {
-  const files = findDocsBudgetFiles()
+/**
+ * Writes scripts/docs-budgets.json from the current actuals of every in-scope
+ * file. Refuses to raise a number that is already in the file unless
+ * `allowRaise` is set, so a branch cannot go green by rewriting its own budget.
+ */
+function writeBaseline(margin, allowRaise) {
+  const existing = loadBudgets()
+  const withMargin = (n) => Math.ceil(n * (1 + margin / 100))
   const out = { $comment: BASELINE_COMMENT, files: {} }
-  for (const f of files) {
+  const raises = []
+  for (const f of findDocsBudgetFiles()) {
     const m = computeMetrics(f)
-    out.files[f] = {
-      historyMarkers: m.historyMarkers,
-      maxSectionWords: m.maxSectionWords,
-      words: m.words,
+    const prior = existing[f]
+    const entry = {
+      historyMarkers: prior?.historyMarkers === null ? null : m.historyMarkers,
+      maxSectionWords: withMargin(m.maxSectionWords),
+      words: withMargin(m.words),
     }
+    for (const key of Object.keys(entry)) {
+      if (prior && typeof prior[key] === 'number' && entry[key] > prior[key]) {
+        raises.push(`${f}: ${key} ${prior[key]} -> ${entry[key]}`)
+      }
+    }
+    out.files[f] = entry
+  }
+  if (raises.length > 0 && !allowRaise) {
+    console.error(
+      `❌ refusing to raise ${raises.length} budget number(s); pass --allow-raise to do it on purpose:`,
+    )
+    for (const r of raises) console.error(`    ${r}`)
+    process.exit(1)
   }
   writeFileSync(budgetsPath, JSON.stringify(out, null, 2) + '\n')
-  console.log(`✅ wrote word budgets for ${files.length} file(s) to ${rel(budgetsPath)}`)
+  const files = Object.keys(out.files)
+  console.log(
+    `✅ wrote word budgets for ${files.length} file(s) to ${rel(budgetsPath)} (margin ${margin}%${raises.length > 0 ? `, ${raises.length} raised` : ''})`,
+  )
 }
 
-/** Prints a markdown table of current metrics for every in-scope file, plus a total row. */
-function printReport() {
-  const files = findDocsBudgetFiles()
+/** Restricts a report to the in-scope files named on the command line, or all of them. */
+function reportFiles(named) {
+  const all = findDocsBudgetFiles()
+  if (named.length === 0) return all
+  const unknown = named.filter((f) => !all.includes(f))
+  if (unknown.length > 0) {
+    console.error(`❌ not in the budget scope: ${unknown.join(', ')}`)
+    process.exit(1)
+  }
+  return named
+}
+
+/** Prints a markdown table of current metrics per file, plus a total row. */
+function printReport(files) {
   console.log('| file | words | max H2 section | section words | markers |')
   console.log('| --- | --- | --- | --- | --- |')
   let totalWords = 0
@@ -352,8 +393,21 @@ function printReport() {
   console.log(`| TOTAL | ${totalWords} | - | - | ${totalMarkers} |`)
 }
 
+/** Prints one row per H2 section (the preamble included) for each file. */
+function printSections(files) {
+  console.log('| file | H2 section | words |')
+  console.log('| --- | --- | --- |')
+  for (const f of files) {
+    for (const [name, count] of computeMetrics(f).sectionWords) {
+      console.log(`| ${f} | ${name} | ${count} |`)
+    }
+  }
+}
+
 // 25-word cap on list items and table cells in CODEBASE_GUIDE.md and module
-// AGENTS.md files. Warning only: it never changes the exit code.
+// AGENTS.md files. A warning while the constant below is true; flipping it
+// makes every hit an error.
+const WARN_ONLY_LONG_ITEMS = true
 
 /** CODEBASE_GUIDE.md plus every AGENTS.md under a package's src/ tree. */
 function findWarningScopeFiles() {
@@ -421,25 +475,37 @@ function findLongTableCells(records, filePath) {
   return out
 }
 
-// --- CLI flags: --write-baseline and --report short-circuit everything else ---
+// --- CLI flags: --write-baseline, --report and --sections short-circuit the checks ---
 
 const argv = process.argv.slice(2)
 const flagWriteBaseline = argv.includes('--write-baseline')
 const flagReport = argv.includes('--report')
+const flagSections = argv.includes('--sections')
 const flagListLongItems = argv.includes('--list-long-items')
+const flagAllowRaise = argv.includes('--allow-raise')
+const marginArg = argv.find((a) => a.startsWith('--margin='))
+const margin = marginArg ? Number(marginArg.slice('--margin='.length)) : 0
+const namedFiles = argv.filter((a) => !a.startsWith('--'))
 
-if (flagWriteBaseline && flagReport) {
-  console.error('❌ --write-baseline and --report are mutually exclusive')
+if (flagWriteBaseline && (flagReport || flagSections)) {
+  console.error('❌ --write-baseline cannot be combined with --report or --sections')
+  process.exit(1)
+}
+if (!Number.isFinite(margin) || margin < 0) {
+  console.error('❌ --margin must be a non-negative percentage, e.g. --margin=3')
   process.exit(1)
 }
 
 if (flagWriteBaseline) {
-  writeBaseline()
+  writeBaseline(margin, flagAllowRaise)
   process.exit(0)
 }
 
-if (flagReport) {
-  printReport()
+if (flagReport || flagSections) {
+  const files = reportFiles(namedFiles)
+  if (flagReport) printReport(files)
+  if (flagReport && flagSections) console.log('')
+  if (flagSections) printSections(files)
   process.exit(0)
 }
 
@@ -559,7 +625,7 @@ for (const f of inScopeFiles) {
     }
   }
 
-  if (metrics.historyMarkers > budget.historyMarkers) {
+  if (budget.historyMarkers !== null && metrics.historyMarkers > budget.historyMarkers) {
     problems.push({
       kind: 'doc history markers over budget',
       file: f,
@@ -577,42 +643,54 @@ for (const f of inScopeFiles) {
   }
 }
 
-if (problems.length === 0) {
+// --- check 8: 25-word cap on list items and table cells, warn-only while WARN_ONLY_LONG_ITEMS ---
+const longItems = []
+for (const f of findWarningScopeFiles()) {
+  const records = extractText(readFileSync(join(repoRoot, f), 'utf8'))
+  longItems.push(...findLongListItems(records, f), ...findLongTableCells(records, f))
+}
+longItems.sort((a, b) => b.words - a.words)
+for (const item of longItems) {
+  problems.push({
+    kind: 'list item or table cell over 25 words',
+    severity: WARN_ONLY_LONG_ITEMS ? 'warn' : 'error',
+    file: item.file,
+    line: item.lineNo,
+    message: `${item.words} words`,
+  })
+}
+
+const errors = problems.filter((p) => p.severity !== 'warn')
+const warnings = problems.filter((p) => p.severity === 'warn')
+
+function printGrouped(list, log) {
+  for (const kind of [...new Set(list.map((p) => p.kind))]) {
+    log(`  ${kind}:`)
+    for (const p of list.filter((x) => x.kind === kind)) {
+      const loc = p.line != null ? `${p.file}:${p.line}` : p.file
+      log(`    ${loc} -- ${p.message}`)
+    }
+    log('')
+  }
+}
+
+if (errors.length === 0) {
   console.log(
     `✅ docs cite real paths, links and entrypoints, and stay within word budgets (${markdownFiles.length} files checked, ${inScopeFiles.length} budgeted)`,
   )
 } else {
-  console.error(`❌ docs have ${problems.length} problem(s):\n`)
-  for (const kind of [...new Set(problems.map((p) => p.kind))]) {
-    console.error(`  ${kind}:`)
-    for (const p of problems.filter((x) => x.kind === kind)) {
-      const loc = p.line != null ? `${p.file}:${p.line}` : p.file
-      console.error(`    ${loc} -- ${p.message}`)
-    }
-    console.error('')
-  }
+  console.error(`❌ docs have ${errors.length} problem(s):\n`)
+  printGrouped(errors, (l) => console.error(l))
   console.error(
     'Run `pnpm lint:docs` after fixing. See scripts/check-docs.mjs for the scope rules.',
   )
 }
 
-// --- warning: 25-word cap on list items and table cells (never affects exit code) ---
-const warningFiles = findWarningScopeFiles()
-const longItems = []
-for (const f of warningFiles) {
-  const records = extractText(readFileSync(join(repoRoot, f), 'utf8'))
-  longItems.push(...findLongListItems(records, f), ...findLongTableCells(records, f))
-}
-longItems.sort((a, b) => b.words - a.words)
-
-if (longItems.length > 0) {
+if (warnings.length > 0) {
   console.log(
-    `⚠️ ${longItems.length} list item(s)/table cell(s) over 25 words in CODEBASE_GUIDE.md and module AGENTS.md files (warning only; the cap becomes an error later)`,
+    `⚠️ ${warnings.length} warning(s), not failing the run; the first 10 shown, --list-long-items prints all:\n`,
   )
-  const shown = flagListLongItems ? longItems : longItems.slice(0, 10)
-  for (const item of shown) {
-    console.log(`  ${item.file}:${item.lineNo} -- ${item.words} words`)
-  }
+  printGrouped(flagListLongItems ? warnings : warnings.slice(0, 10), (l) => console.log(l))
 }
 
-process.exit(problems.length === 0 ? 0 : 1)
+process.exit(errors.length === 0 ? 0 : 1)

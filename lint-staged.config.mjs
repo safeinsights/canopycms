@@ -12,8 +12,9 @@ const config = {
     'pnpm run lint:cycles',
   ],
   // Comment budget is a whole-tree property too: a run cap or ratio is scoped
-  // to one directory, but the check regenerates and compares every directory
-  // in one pass, so it runs once per commit rather than once per file.
+  // to one directory, so the check recomputes every directory's actuals and
+  // compares them with the committed baseline in one pass (it never writes
+  // the baseline), once per commit rather than once per file.
   '{packages/*/**/*.{ts,tsx,mts,cts,js,mjs,cjs},scripts/**/*.{mjs,js,ts},scripts/comment-budget.json}':
     () => 'pnpm run lint:comments',
   // Backlog consistency (dead links, stale open rows, orphans) is likewise a
