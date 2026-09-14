@@ -47,6 +47,7 @@ export async function fetchBranches(apiClient: Pick<ApiClient, 'branches'>): Pro
  * How often to re-poll while at least one branch is mid-flight, in ms.
  * Only ever active in the transient window below, so this is not a
  * standing background poll.
+ * @internal Exported only for the test that pins it.
  */
 export const IN_FLIGHT_POLL_MS = 15_000
 
@@ -60,6 +61,7 @@ export const IN_FLIGHT_POLL_MS = 15_000
  * without it, a user who submits a branch would watch "Pending sync"
  * forever until they reloaded the page or performed some unrelated branch
  * mutation.
+ * @internal Exported only for the test that pins it.
  */
 export function hasInFlightBranch(data: BranchesData | undefined): boolean {
   return (data?.branches ?? []).some((b) => b.syncStatus === 'pending-sync')
