@@ -81,10 +81,6 @@ export interface ListEntriesResponse {
 /** Response type for listing entries */
 export type EntriesResponse = ApiResponse<ListEntriesResponse>
 
-// ============================================================================
-// Zod Schemas for Validation
-// ============================================================================
-
 const listEntriesParamsSchema = z.object({
   branch: branchNameSchema,
   collection: logicalPathSchema.optional(),
@@ -292,10 +288,6 @@ const listEntriesHandler = async (
   }
 }
 
-// ============================================================================
-// Route Definitions with defineEndpoint
-// ============================================================================
-
 /**
  * List entries for a branch
  * GET /:branch/entries
@@ -318,10 +310,6 @@ export const listEntries = defineEndpoint({
   guards: ['schema'] as const,
   handler: listEntriesHandler,
 })
-
-// ============================================================================
-// Delete Entry
-// ============================================================================
 
 /** Response type for deleting an entry */
 export type DeleteEntryResponse = ApiResponse<{
@@ -357,14 +345,10 @@ const deleteEntryHandler = async (
 ): Promise<DeleteEntryResponse> => {
   const { branchContext } = gc
 
-  // Parse entryPath to get collection and slug
   // Format: collectionPath/slug (e.g., "posts/hello-world" or "docs/api/getting-started")
   // params.entryPath is already decoded exactly once, uniformly with every
-  // other route param, by http/router.ts's matchRoute (C5) - re-decoding it
-  // here was the redundant second decode that made this route inconsistent
-  // with content.ts's (undecoded) catch-all and vulnerable to a malformed
-  // `%` escape throwing past this handler's try/catch. Still re-validate the
-  // final decoded value for traversal, same as before.
+  // other route param, by http/router.ts's matchRoute (C5). Still re-validate the
+  // final decoded value for traversal.
   const entryPathResult = parseLogicalPath(params.entryPath)
   if (!entryPathResult.ok) {
     return {
@@ -397,8 +381,6 @@ const deleteEntryHandler = async (
 
   const flatSchema = branchContext.flatSchema
 
-  // Check edit permission on the entry
-  // Build the physical path for permission check
   const collection = flatSchema.find(
     (item) => item.type === 'collection' && item.logicalPath === collectionPath,
   )
@@ -430,17 +412,12 @@ const deleteEntryHandler = async (
     if (isNotFoundError(err)) {
       return { ok: false, status: 404, error: 'Entry not found' }
     }
-    // C2: only a recognized ContentStoreError is the client's fault (bad
-    // slug/path shape); anything else - a real fs error, a bug - is a
-    // server fault and must surface as a 500, not get mislabeled as
-    // "Invalid entry path".
     if (err instanceof ContentStoreError) {
       return { ok: false, status: 400, error: 'Invalid entry path' }
     }
     throw err
   }
 
-  // Check edit access using the real physical path
   const editAccess = await ctx.services.checkContentAccess(
     branchContext,
     branchContext.branchRoot,
@@ -462,7 +439,6 @@ const deleteEntryHandler = async (
     // Get the entry's content ID before deleting (for order update)
     const contentId = await contentStore.getIdForEntry(collectionLogicalPath, entrySlug)
 
-    // Delete the entry
     await contentStore.delete(collectionLogicalPath, entrySlug)
 
     // Update the collection's order array to remove the deleted item.
@@ -534,11 +510,6 @@ const deleteEntryHandler = async (
   }
 }
 
-/**
- * Delete an entry
- * DELETE /:branch/entries/...entryPath
- * Note: Uses catch-all to support paths with slashes (e.g., content/posts/hello-world)
- */
 export const deleteEntry = defineEndpoint({
   namespace: 'entries',
   name: 'delete',

@@ -21,10 +21,6 @@ import type { ApiContext, ApiRequest, ApiResponse } from './types'
 import { isAdmin, isReviewer, isPrivileged } from '../authorization/helpers'
 import { getBranchProtection, getBranchWriteProtection } from '../authorization/protected-branch'
 
-// ============================================================================
-// Guard IDs and Context Map
-// ============================================================================
-
 /** All available guard identifiers */
 export type GuardId =
   | 'branch'
@@ -50,10 +46,6 @@ export interface GuardContextMap {
   submittableBranch: { branchContext: BranchContext }
 }
 
-// ============================================================================
-// Type-level computation of guard context
-// ============================================================================
-
 /** Helper: convert union to intersection */
 type UnionToIntersection<U> = (U extends unknown ? (k: U) => void : never) extends (
   k: infer I,
@@ -65,10 +57,6 @@ type UnionToIntersection<U> = (U extends unknown ? (k: U) => void : never) exten
 export type ComputeGuardContext<T extends readonly GuardId[]> = UnionToIntersection<
   GuardContextMap[T[number]]
 >
-
-// ============================================================================
-// Guard runner types
-// ============================================================================
 
 /** Result of a single guard execution */
 type GuardRunnerResult =
@@ -88,11 +76,6 @@ type GuardRunner = (
   accumulated: GuardContext,
 ) => Promise<GuardRunnerResult>
 
-// ============================================================================
-// Guard runner implementations
-// ============================================================================
-
-/** Extracts branch name from params, returning error response if missing */
 function extractBranchName(params: Record<string, unknown>): string | ApiResponse<never> {
   const branch = params.branch
   if (typeof branch !== 'string' || !branch) {
@@ -303,10 +286,6 @@ const runPrivilegedGuard: GuardRunner = async (_ctx, req) => {
   return { ok: true, context: {} }
 }
 
-// ============================================================================
-// Guard registry
-// ============================================================================
-
 const GUARD_RUNNERS: Record<GuardId, GuardRunner> = {
   branch: runBranchGuard,
   branchAccess: runBranchAccessGuard,
@@ -318,10 +297,6 @@ const GUARD_RUNNERS: Record<GuardId, GuardRunner> = {
   writableBranch: runWritableBranchGuard,
   submittableBranch: runSubmittableBranchGuard,
 }
-
-// ============================================================================
-// Guard execution
-// ============================================================================
 
 /** Result of executeGuards */
 export type ExecuteGuardsResult<T extends readonly GuardId[]> =

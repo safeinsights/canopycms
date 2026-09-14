@@ -3,21 +3,6 @@
  *
  * These schemas validate incoming strings from HTTP requests
  * and cast them to branded types for type-safe handling in API handlers.
- *
- * Usage:
- * ```ts
- * import { branchNameSchema, logicalPathSchema } from './validators'
- *
- * const paramsSchema = z.object({
- *   branch: branchNameSchema,
- *   path: logicalPathSchema,
- * })
- *
- * // TypeScript infers branded types automatically
- * const params = paramsSchema.parse(req.params)
- * // params.branch is BranchName (not string)
- * // params.path is LogicalPath (not string)
- * ```
  */
 
 import { z } from 'zod'

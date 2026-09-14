@@ -125,10 +125,6 @@ export type GuardedRouteHandler<
   ]
 ) => Promise<TResponse>
 
-// ============================================================================
-// Endpoint configuration types
-// ============================================================================
-
 /** Base config fields shared by guarded and unguarded endpoints */
 interface EndpointConfigBase<
   TParams extends z.ZodType | undefined,
@@ -171,10 +167,6 @@ interface GuardedEndpointConfig<
   response: TResponse
   handler: GuardedRouteHandler<TGuards, TParams, TBody, TResponse>
 }
-
-// ============================================================================
-// defineEndpoint overloads
-// ============================================================================
 
 /** Define an endpoint without guards */
 export function defineEndpoint<

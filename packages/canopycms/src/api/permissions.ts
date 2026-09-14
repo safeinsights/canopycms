@@ -31,10 +31,6 @@ export type GetUserMetadataResponse = ApiResponse<{
   user: UserSearchResult | null
 }>
 
-// ============================================================================
-// Zod Schemas for Validation
-// ============================================================================
-
 const permissionTargetSchema = z.object({
   allowedUsers: z.array(z.string()).optional(),
   allowedGroups: z.array(z.string()).optional(),
@@ -69,9 +65,6 @@ export type UpdatePermissionsBody = z.infer<typeof updatePermissionsBodySchema>
 export type SearchUsersParams = z.infer<typeof searchUsersParamsSchema>
 export type GetUserMetadataParams = z.infer<typeof getUserMetadataParamsSchema>
 
-/**
- * Get current permissions (admin only)
- */
 const getPermissionsHandler = async (
   _gc: Record<string, never>,
   ctx: ApiContext,
@@ -100,9 +93,6 @@ const getPermissionsHandler = async (
   }
 }
 
-/**
- * Update permissions (admin only)
- */
 const updatePermissionsHandler = async (
   _gc: Record<string, never>,
   ctx: ApiContext,
@@ -307,10 +297,6 @@ const getUserMetadataHandler = async (
     }
   }
 }
-
-// ============================================================================
-// Route Definitions with defineEndpoint
-// ============================================================================
 
 /**
  * Get current permissions (admin only)

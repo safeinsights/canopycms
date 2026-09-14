@@ -46,10 +46,6 @@ export type FinalizeAssetResponse = ApiResponse<{ asset: AssetRecord }>
 /** Response type for deleting an asset */
 export type AssetDeleteResponse = ApiResponse<{ deleted: boolean }>
 
-// ============================================================================
-// Zod Schemas for Validation
-// ============================================================================
-
 const filenameSchema = z.string().min(1).max(255)
 
 const presignAssetBodySchema = z.object({
@@ -84,10 +80,6 @@ const hash32Schema = z
 
 const deleteAssetParamsSchema = z.object({ key: hash32Schema })
 export type DeleteAssetParams = z.infer<typeof deleteAssetParamsSchema>
-
-// ============================================================================
-// Handlers
-// ============================================================================
 
 /**
  * Presign a direct (or proxied) upload target. Any authenticated user - there
@@ -454,17 +446,10 @@ const rawAssetHandler = async (
   return serveLazyTransform(ctx.assetStore, key)
 }
 
-// ============================================================================
-// Route Definitions with defineEndpoint
-// ============================================================================
-//
 // Deliberately no 'writableBranch' guard on any endpoint below: none take a
 // :branch param -- the asset store is branch-agnostic (a single global store,
 // see assets/factory.ts), so the protected-base-branch predicate doesn't apply.
 
-/**
- * POST /assets/presign
- */
 const presignAsset = defineEndpoint({
   namespace: 'assets',
   name: 'presign',
@@ -480,9 +465,6 @@ const presignAsset = defineEndpoint({
   handler: presignAssetHandler,
 })
 
-/**
- * POST /assets/finalize
- */
 const finalizeAsset = defineEndpoint({
   namespace: 'assets',
   name: 'finalize',
@@ -511,9 +493,6 @@ const uploadProxied = defineEndpoint({
   handler: uploadProxiedHandler,
 })
 
-/**
- * GET /assets
- */
 const listAssets = defineEndpoint({
   namespace: 'assets',
   name: 'list',

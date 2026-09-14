@@ -13,14 +13,9 @@ export interface ResolveReferencesBody {
   ids: string[] // ContentId strings at runtime
 }
 
-/** Response type for resolved references */
 export type ResolveReferencesResponse = ApiResponse<{
   resolved: Record<string, unknown>
 }>
-
-// ============================================================================
-// Zod Schemas for Validation
-// ============================================================================
 
 /**
  * Resolution does sequential per-ID file I/O (see the loop below), so the
@@ -118,10 +113,6 @@ const resolveReferencesHandler = async (
     data: { resolved },
   }
 }
-
-// ============================================================================
-// Route Definitions
-// ============================================================================
 
 /**
  * Resolve reference IDs to full document objects

@@ -1,11 +1,6 @@
 /**
  * Schema API - endpoints for managing collection structure.
  *
- * Provides CRUD operations for:
- * - Collections (create, read, update, delete)
- * - Entry types (add, update, remove)
- * - Ordering (update item order within collections)
- *
  * All mutations require Admin group membership.
  * Schema changes are branch-specific (like content edits).
  */
@@ -39,9 +34,7 @@ import type {
 } from '../config'
 import { type LogicalPath, type ContentId } from '../paths'
 
-// ============================================================================
 // Wire Types — API response shapes with schemaRef instead of resolved schema
-// ============================================================================
 
 /** Entry type in wire format: schemaRef instead of resolved schema */
 export interface WireEntryType {
@@ -92,10 +85,6 @@ export type WireFlatSchemaItem =
       default?: boolean
       maxItems?: number
     }
-
-// ============================================================================
-// Wire conversion functions
-// ============================================================================
 
 type Registry = Record<string, EntrySchema>
 
@@ -199,10 +188,6 @@ function toWireFlatSchema(items: FlatSchemaItem[], registry: Registry): WireFlat
   })
 }
 
-// ============================================================================
-// Response Types
-// ============================================================================
-
 export interface SchemaResponse {
   flatSchema: WireFlatSchemaItem[]
   /** Entry schema definitions keyed by registry name */
@@ -273,10 +258,6 @@ export type RemoveEntryTypeApiResponse = ApiResponse<RemoveEntryTypeResponse>
 export type UpdateOrderApiResponse = ApiResponse<UpdateOrderResponse>
 export type InvalidateSchemaCacheApiResponse = ApiResponse<InvalidateSchemaCacheResponse>
 
-// ============================================================================
-// Zod Schemas for Params
-// ============================================================================
-
 const branchParamsSchema = z.object({
   branch: branchNameSchema,
 })
@@ -305,10 +286,6 @@ const updateOrderBodySchema = z.object({
   order: z.array(z.string()),
 })
 
-// ============================================================================
-// Helper Functions
-// ============================================================================
-
 /**
  * Get a SchemaOps instance for a branch
  */
@@ -333,9 +310,7 @@ async function getSchemaOps(
 }
 
 /**
- * `collectionPath` (C5, August 2026 baseline review follow-up): this used to
- * decode the catch-all param itself, because http/router.ts's matchRoute did
- * not decode catch-all segments at all - only `:param` ones. matchRoute now
+ * `collectionPath`: matchRoute now
  * decodes every matched param exactly once, uniformly for `:param` and
  * catch-all alike, and `collectionParamsSchema`'s `logicalPathSchema`
  * already re-validates that single decoded value for traversal before this
@@ -352,13 +327,6 @@ function decodeCollectionPath(
   return { ok: true, path: collectionPath }
 }
 
-// ============================================================================
-// Handlers
-// ============================================================================
-
-/**
- * GET /:branch/schema - Get full schema tree
- */
 const getSchemaHandler = async (
   gc: { branchContext: BranchContextWithSchema },
   ctx: ApiContext,
@@ -377,10 +345,6 @@ const getSchemaHandler = async (
   }
 }
 
-/**
- * GET /:branch/schema/collection/...collectionPath - Get single collection details
- * Note: Uses 'collection' (singular) with catch-all to support paths with slashes
- */
 const getCollectionHandler = async (
   gc: { branchContext: BranchContextWithSchema },
   ctx: ApiContext,
@@ -458,9 +422,6 @@ const getCollectionHandler = async (
   }
 }
 
-/**
- * POST /:branch/schema/collections - Create collection
- */
 const createCollectionHandler = async (
   _gc: Record<string, never>,
   ctx: ApiContext,
@@ -492,10 +453,6 @@ const createCollectionHandler = async (
   }
 }
 
-/**
- * PATCH /:branch/schema/collection/...collectionPath - Update collection
- * Note: Uses 'collection' (singular) with catch-all to support paths with slashes
- */
 const updateCollectionHandler = async (
   _gc: Record<string, never>,
   ctx: ApiContext,
@@ -533,10 +490,6 @@ const updateCollectionHandler = async (
   }
 }
 
-/**
- * DELETE /:branch/schema/collection/...collectionPath - Delete collection
- * Note: Uses 'collection' (singular) with catch-all to support paths with slashes
- */
 const deleteCollectionHandler = async (
   _gc: Record<string, never>,
   ctx: ApiContext,
@@ -573,10 +526,6 @@ const deleteCollectionHandler = async (
   }
 }
 
-/**
- * POST /:branch/schema/entry-types/...collectionPath - Add entry type
- * Note: Restructured URL with catch-all at end to support paths with slashes
- */
 const addEntryTypeHandler = async (
   _gc: Record<string, never>,
   ctx: ApiContext,
@@ -614,10 +563,6 @@ const addEntryTypeHandler = async (
   }
 }
 
-/**
- * PATCH /:branch/schema/entry-types/:entryTypeName/...collectionPath - Update entry type
- * Note: Restructured URL with entry type name before catch-all path
- */
 const updateEntryTypeHandler = async (
   _gc: Record<string, never>,
   ctx: ApiContext,
@@ -666,10 +611,6 @@ const updateEntryTypeHandler = async (
   }
 }
 
-/**
- * DELETE /:branch/schema/entry-types/:entryTypeName/...collectionPath - Remove entry type
- * Note: Restructured URL with entry type name before catch-all path
- */
 const removeEntryTypeHandler = async (
   _gc: Record<string, never>,
   ctx: ApiContext,
@@ -706,10 +647,6 @@ const removeEntryTypeHandler = async (
   }
 }
 
-/**
- * PATCH /:branch/schema/order/...collectionPath - Update item order
- * Note: Restructured URL with catch-all at end to support paths with slashes
- */
 const updateOrderHandler = async (
   _gc: Record<string, never>,
   ctx: ApiContext,
@@ -747,9 +684,6 @@ const updateOrderHandler = async (
   }
 }
 
-/**
- * POST /:branch/schema/invalidate-cache - Invalidate schema cache (for debugging/manual refresh)
- */
 const invalidateSchemaCacheHandler = async (
   gc: { branchContext: BranchContext },
   ctx: ApiContext,
@@ -776,10 +710,6 @@ const invalidateSchemaCacheHandler = async (
     }
   }
 }
-
-// ============================================================================
-// Route Definitions
-// ============================================================================
 
 /**
  * GET /:branch/schema - Get full schema
@@ -961,10 +891,6 @@ export const invalidateSchemaCache = defineEndpoint({
   guards: ['admin', 'branch'] as const,
   handler: invalidateSchemaCacheHandler,
 })
-
-// ============================================================================
-// Exports
-// ============================================================================
 
 /** Body type for updateOrder endpoint */
 export type UpdateOrderBody = z.infer<typeof updateOrderBodySchema>

@@ -9,7 +9,6 @@ import { parseLogicalPath } from '../paths'
 import type { LogicalPath } from '../paths/types'
 import { branchNameSchema } from './validators'
 
-/** Response type for reference options */
 export type ReferenceOptionsResponse = ApiResponse<{
   options: Array<{
     id: string
@@ -17,10 +16,6 @@ export type ReferenceOptionsResponse = ApiResponse<{
     collection: string
   }>
 }>
-
-// ============================================================================
-// Zod Schemas for Validation
-// ============================================================================
 
 const getReferenceOptionsParamsSchema = z.object({
   branch: branchNameSchema,
@@ -121,10 +116,6 @@ const getReferenceOptionsHandler = async (
     data: { options },
   }
 }
-
-// ============================================================================
-// Route Definitions
-// ============================================================================
 
 /**
  * Get reference options for a field

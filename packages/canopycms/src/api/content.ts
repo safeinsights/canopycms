@@ -37,7 +37,6 @@ function parseApiPath(apiPath: string, contentRoot: string): string[] {
   return segments[0] === contentRoot ? segments : [contentRoot, ...segments]
 }
 
-/** Response type for content read operations */
 export type ContentReadResponse = ApiResponse<{
   format: string
   data: Record<string, unknown>
@@ -46,7 +45,6 @@ export type ContentReadResponse = ApiResponse<{
   version?: number
 }>
 
-/** Response type for content write operations */
 export type ContentWriteResponse = ApiResponse<{
   format: string
   data: Record<string, unknown>
@@ -62,7 +60,6 @@ export type ContentWriteResponse = ApiResponse<{
   validationWarnings?: EntryValidationIssue[]
 }>
 
-/** Response type for reference validation */
 export type ReferenceValidationResponse = ApiResponse<{
   valid: boolean
   errors?: Array<{
@@ -73,7 +70,6 @@ export type ReferenceValidationResponse = ApiResponse<{
   }>
 }>
 
-/** Response type for entry rename operations */
 export type RenameEntryResponse = ApiResponse<{
   newPath: string
 }>
@@ -109,10 +105,6 @@ export interface RenameEntryBody {
 
 /** Response type for reference options - re-exported for convenience */
 export type { ReferenceOptionsResponse } from './reference-options'
-
-// ============================================================================
-// Zod Schemas for Validation
-// ============================================================================
 
 const readContentParamsSchema = z.object({
   branch: branchNameSchema,
@@ -185,11 +177,9 @@ const readContentHandler = async (
     contentRootName: ctx.services.config.contentRoot || 'content',
   })
 
-  // Parse path segments: params.path is like "content/posts/hello"
   const contentRoot = ctx.services.config.contentRoot || 'content'
   const logicalPathSegments = parseApiPath(params.path, contentRoot)
 
-  // Use trivial path resolution
   let schemaItem: FlatSchemaItem
   let slug: Slug
   let relativePath: PhysicalPath
@@ -239,11 +229,9 @@ const writeContentHandler = async (
     contentRootName: ctx.services.config.contentRoot || 'content',
   })
 
-  // Parse path segments: params.path is like "content/posts/hello" or "posts/hello"
   const contentRoot = ctx.services.config.contentRoot || 'content'
   const logicalPathSegments = parseApiPath(params.path, contentRoot)
 
-  // Use trivial path resolution
   let schemaItem: FlatSchemaItem
   let slug: Slug
   let relativePath: PhysicalPath
@@ -269,7 +257,6 @@ const writeContentHandler = async (
     return { ok: false, status: 403, error: 'Forbidden' }
   }
 
-  // ------------------------------------------------------------------
   // Authoritative schema validation at the write boundary (COMPOUND-2).
   //
   // The server rejects structurally invalid entry data even when the client
@@ -283,7 +270,6 @@ const writeContentHandler = async (
   // the user fill the form — so a create scaffold (target file does not exist
   // yet AND the payload is completely empty) skips field validation. Any write
   // carrying actual data, and every write to an existing entry, is validated.
-  // ------------------------------------------------------------------
 
   // Resolve the entry-type config the store will write with (mirrors ContentStore.write)
   let entryTypeConfig: EntryTypeConfig | undefined
@@ -313,7 +299,7 @@ const writeContentHandler = async (
     // ContentStore.write() preserves it regardless of what's requested (see
     // buildPaths in content-store.ts) — so resolving from params.entryType
     // or the default here instead would let a direct API write validate a
-    // payload against the WRONG entry type's schema (post-review M2). The
+    // payload against the WRONG entry type's schema. The
     // editor always sends the entry's real entryType, so this only changes
     // behavior for non-editor callers.
     const existingEntryType = await store.getExistingEntryType(schemaItem.logicalPath, slug)
@@ -344,7 +330,7 @@ const writeContentHandler = async (
   try {
     const exists = await store.documentExists(schemaItem.logicalPath, slug)
 
-    // Create-intent guard (August 2026 baseline review, Critical finding): a
+    // Create-intent guard: a
     // create request (expectedVersion === null, "must not already exist")
     // against a slug that already has content must never silently overwrite
     // it. Without this, an entry type with no required fields passes field
@@ -466,10 +452,8 @@ const writeContentHandler = async (
   // later save rewrites it. The reference is then permanently severed from its target: renaming
   // or editing the target changes nothing, silently.
   //
-  // The mechanism predates reference resolution reaching listings, but `includeBody` makes it
-  // materially worse — the snapshot now carries the target's entire prose — and `urlPath` adds a
-  // value that goes stale the moment the target is renamed. Normalizing here is schema-driven and
-  // idempotent: a payload that already holds ID strings is unchanged.
+  // Normalizing here is schema-driven and idempotent: a payload that already holds ID strings is
+  // unchanged.
   const normalizedData =
     body.data === undefined ? undefined : normalizeReferenceValues(fields, body.data)
   //
@@ -483,7 +467,7 @@ const writeContentHandler = async (
   // Keys with no counterpart in the schema. validateEntryData iterates the SCHEMA, so nothing
   // reported the inverse: a renamed or reshaped field left its old key on disk forever (the
   // editor round-trips the whole record, so every save rewrote it) and the only symptom was a
-  // component receiving `undefined`. Adopter request log item 29.
+  // component receiving `undefined`.
   //
   // Run against normalizedData -- the shape that will actually be persisted -- so the report
   // matches the bytes, and so a resolved reference collapsed back to an ID string cannot be
@@ -574,8 +558,7 @@ const writeContentHandler = async (
     // Reuses the entry-type fields resolved above for schema validation. Folded into
     // `validationWarnings` (not a separate `entryLinkWarnings` field) so the editor's one
     // save-warnings notification (useEntryManager.ts) is the single place any save-time
-    // warning surfaces -- a broken `entry:ID` link used to be computed and returned here
-    // with no consumer anywhere in the editor, so it was silently discarded.
+    // warning surfaces.
     const idIndex = await store.idIndex()
     const linkValidation = validateEntryLinks(normalizedData ?? {}, fields, idIndex, body.body)
     if (linkValidation.warnings.length > 0) {
@@ -662,7 +645,6 @@ const validateReferencesHandler = async (
     contentRootName: ctx.services.config.contentRoot || 'content',
   })
 
-  // Parse path segments to get collection/schema info
   const contentRoot = ctx.services.config.contentRoot || 'content'
   const logicalPathSegments = parseApiPath(params.path, contentRoot)
 
@@ -693,7 +675,6 @@ const validateReferencesHandler = async (
   // Get ID index (automatically loads if needed)
   const idIndex = await store.idIndex()
 
-  // Resolve fields from entry type schema
   let fields: EntrySchema = []
   if (schemaItem.type === 'entry-type') {
     fields = schemaItem.schema
@@ -720,7 +701,6 @@ const validateReferencesHandler = async (
     fields = entryTypeConfig.schema || []
   }
 
-  // Validate references
   const validator = new ReferenceValidator(
     idIndex,
     fields,
@@ -751,11 +731,9 @@ const renameEntryHandler = async (
     contentRootName: ctx.services.config.contentRoot || 'content',
   })
 
-  // Parse path segments
   const contentRoot = ctx.services.config.contentRoot || 'content'
   const logicalPathSegments = parseApiPath(params.path, contentRoot)
 
-  // Resolve to collection and slug
   let schemaItem: FlatSchemaItem
   let currentSlug: Slug
   let relativePath: PhysicalPath
@@ -770,7 +748,6 @@ const renameEntryHandler = async (
     return { ok: false, status: 400, error: sanitizeErrorMessage(message) }
   }
 
-  // Check edit permission on current path
   const access = await ctx.services.checkContentAccess(
     branchContext,
     branchContext.branchRoot,
@@ -782,7 +759,6 @@ const renameEntryHandler = async (
     return { ok: false, status: 403, error: 'Forbidden' }
   }
 
-  // Rename the entry
   try {
     const result = await store.renameEntry(schemaItem.logicalPath, currentSlug, body.newSlug)
     return { ok: true, status: 200, data: { newPath: result.newPath } }
@@ -802,20 +778,12 @@ const renameEntryHandler = async (
         error: passThrough ? err.message : 'Content conflict: entry was modified by another editor',
       }
     }
-    // C2: same distinction as writeContentHandler above - a ContentStoreError
-    // is an expected client fault and keeps its 400; anything else is a
-    // genuine server fault and must surface as a 500, not get mislabeled as
-    // "Rename failed" (the client's mistake).
     if (err instanceof ContentStoreError) {
       return { ok: false, status: 400, error: sanitizeErrorMessage(err.message) }
     }
     throw err
   }
 }
-
-// ============================================================================
-// Route Definitions with defineEndpoint
-// ============================================================================
 
 /**
  * Read content using path-based routing
