@@ -20,9 +20,9 @@ const toFieldErrorMap = (errors: EntryFieldError[]): Record<string, string> => {
 
 /**
  * True when two field-error maps have the same keys and values (order
- * independent). Used to bail out of a state update with the same object
- * reference when a recompute produces an equal-but-newly-allocated map, so
- * consumers that memo on `fieldErrors` identity don't churn.
+ * independent). Bails a state update out with the same object reference
+ * when a recompute produces an equal-but-newly-allocated map, so consumers
+ * that memo on `fieldErrors` identity don't churn.
  */
 export const shallowEqualRecord = (
   a: Record<string, string>,
@@ -103,8 +103,8 @@ export interface UseDraftManagerOptions {
   saveEntry: (entry: EditorEntry, value: FormValue) => Promise<FormValue>
   /**
    * The OCC version token currently held for an entry on the branch being
-   * shown (useEntryManager's `getEntryVersion`). Used to stamp each draft with
-   * the version it was based on, and to detect at save time that the token has
+   * shown (useEntryManager's `getEntryVersion`). Stamps each draft with the
+   * version it was based on, and detects at save time that the token has
    * since moved on. Optional: without it no base versions are recorded and
    * conflict detection falls back entirely to the server's 409.
    */
@@ -352,31 +352,27 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
     }
   }, [drafts, storageKey])
 
-  // While field errors are showing, recompute them as the user edits — or as
-  // the selected entry's schema/format changes while it stays open — so each
-  // error clears when its field is fixed or no longer required. Errors for a
-  // different entry are simply not visible (see the `fieldErrors` derivation
-  // above), so this effect only needs to keep `errorState` itself correct.
+  // Recomputes field errors as the user edits, or as the selected entry's
+  // schema/format changes while it stays open, so each error clears when its
+  // field is fixed or no longer required. Errors for a different entry are
+  // simply not visible (see the `fieldErrors` derivation above), so this
+  // effect only needs to keep `errorState` itself correct. Server-only
+  // errors (e.g. reference existence) can't be recomputed client-side and
+  // clear on edit; the server re-reports them on save.
   //
-  // Three things here are load-bearing against render loops/churn:
-  //
+  // Three things keep this from causing render loops/churn:
   // 1. `options.currentEntry?.schema`/`.format` are in the deps (not just
-  //    `effectiveValue`/`currentId`) so a schema change while the same entry
-  //    stays open re-validates instead of leaving stale errors.
-  // 2. The updater is FUNCTIONAL (reads/writes via the `prev` argument), so
-  //    `errorState` itself stays out of the dep array. Depending on
-  //    `errorState` would mean every write below re-triggers this effect.
-  // 3. `shallowEqualRecord` bails out by returning `prev` (the same object
-  //    reference) when the recomputed map is equal to the last one. This
-  //    matters because `options.currentEntry` is a NEW reference whenever
-  //    useEntryManager's `entriesState` is replaced (its `currentEntry` is a
-  //    `useMemo` over `entriesState.find(...)`), which would otherwise re-run
-  //    this effect on every entries refresh and allocate a new-but-equal
-  //    errors object each time — churning any consumer that memoizes on
-  //    `fieldErrors` identity.
-  //
-  // Note: server-only errors (e.g. reference existence) cannot be recomputed
-  // client-side and clear on edit; the server re-reports them on save.
+  //    `effectiveValue`/`currentId`), so a schema change while the same
+  //    entry stays open re-validates instead of leaving stale errors.
+  // 2. The updater is FUNCTIONAL (via the `prev` argument), keeping
+  //    `errorState` itself out of the dep array -- depending on it would
+  //    mean every write below re-triggers this effect.
+  // 3. `shallowEqualRecord` returns `prev` unchanged when the recomputed map
+  //    is equal, which matters because `options.currentEntry` is a NEW
+  //    reference on every entries refresh (`currentEntry` is a `useMemo`
+  //    over `entriesState.find(...)`) -- without it, every refresh would
+  //    allocate a new-but-equal errors object and churn any consumer
+  //    memoizing on `fieldErrors` identity.
   useEffect(() => {
     const entry = options.currentEntry
     const value = effectiveValue

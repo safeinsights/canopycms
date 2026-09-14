@@ -211,7 +211,7 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
     }
   }, [branchesData, branchName])
 
-  // Surface/clear the sticky error toast the same way loadBranches() used to.
+  // Surfaces/clears the sticky error toast the same way loadBranches() does.
   useEffect(() => {
     if (branchesError) {
       console.error(branchesError)
