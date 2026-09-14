@@ -6,9 +6,7 @@
 import { createDebugLogger } from '../utils/debug'
 import type { Task, TaskQueueLogger } from '../task-queue'
 
-/**
- * Actions the EC2 worker can execute on behalf of Lambda.
- */
+/** Actions the EC2 worker can execute on behalf of Lambda. */
 export type TaskAction =
   | 'push-and-create-pr'
   | 'push-and-update-pr'

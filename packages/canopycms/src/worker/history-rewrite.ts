@@ -11,11 +11,8 @@ import type { WorkerContext } from './worker-context'
 
 /**
  * [SYNC-H1] The history-rewrite kernel: what happens when the rebase loop
- * rewrites history that was ALREADY published to `remote.git` (and from there
- * to GitHub).
- *
- * Extracted from cms-worker.ts because it is the one thing all three of the
- * worker's big clusters touch, and for opposite-looking reasons:
+ * rewrites history ALREADY published to `remote.git` (and from there to
+ * GitHub). It lives here because all three of the worker's clusters touch it:
  *
  * - rebase.ts ARMS a rewrite (mark -> publish -> queue) and completes an
  *   interrupted one via `reconcilePendingRewrite`;
@@ -27,9 +24,9 @@ import type { WorkerContext } from './worker-context'
  * THE INVARIANT, since it is spread across those three callers: every force
  * push leases on a SPECIFIC commit this worker knows its own rebase replaced
  * -- the marker, or the pre-rebase tip -- never on "whatever remote.git holds
- * right now". A lease on the current tip is satisfied by a reviewer's direct
- * push to the PR branch and would delete it, silently, from remote.git and
- * then from GitHub.
+ * right now". A lease on the current tip is satisfied by anyone's direct push
+ * to the PR branch and would delete it, silently, from remote.git and then
+ * from GitHub.
  */
 export type HistoryRewriteContext = Pick<
   WorkerContext,
@@ -37,15 +34,13 @@ export type HistoryRewriteContext = Pick<
 >
 
 /**
- * What `remote.git` currently holds for `branchRef`, or null when this
- * branch was never published there (never submitted) or the ref is
- * unreadable.
+ * What `remote.git` currently holds for `branchRef`, or null when this branch
+ * was never published there (never submitted) or the ref is unreadable.
  *
- * Uses the same explicit `--git-dir` shape as verifyBaseBranchExists()
- * in cms-worker.ts: reading a bare repo that way does not depend on
- * `safe.bareRepository` being permissive, which is why prod code takes
- * this route rather than the config override the test-only `openBareRepo`
- * helper uses.
+ * Explicit `--git-dir`, like verifyBaseBranchExists() in cms-worker.ts:
+ * reading a bare repo that way does not depend on `safe.bareRepository` being
+ * permissive, which is why prod code takes this route rather than the config
+ * override the test-only `openBareRepo` helper uses.
  */
 export async function readPublishedSha(
   ctx: Pick<HistoryRewriteContext, 'remoteGitPath'>,
@@ -72,14 +67,14 @@ export async function readPublishedSha(
  * Record that this worker rewrote `expectedSha` out of a branch's already
  * published history (see BranchMetadata.historyRewrittenFrom).
  *
- * Set-once: if a marker is already present it is LEFT ALONE. Across two
- * rebases before any GitHub push lands, GitHub still holds the commit the
- * FIRST rebase replaced, so advancing the marker would aim the lease at a
- * commit GitHub never had and permanently wedge the branch.
+ * Set-once: an existing marker is LEFT ALONE. Across two rebases before any
+ * GitHub push lands, GitHub still holds the commit the FIRST rebase replaced,
+ * so advancing the marker would aim the lease at a commit GitHub never had and
+ * permanently wedge the branch.
  *
- * Re-reads metadata rather than trusting the caller's loop-top snapshot:
- * the task loop runs concurrently with syncGit() (see scheduleLoop) and may
- * have cleared the marker while this branch was rebasing.
+ * Re-reads metadata rather than trusting the caller's snapshot: the task loop
+ * runs concurrently with syncGit() and may have cleared the marker while this
+ * branch was rebasing.
  */
 export async function markHistoryRewritten(
   ctx: Pick<HistoryRewriteContext, 'contentBranchesPath'>,
@@ -96,18 +91,16 @@ export async function markHistoryRewritten(
 /**
  * Clear the marker once GitHub is confirmed to hold the rewritten history.
  *
- * Best-effort only in the sense that a failure here destroys nothing: the
- * lease still refuses anything unexpected, and the plain-push fallback only
- * ever fast-forwards. It is NOT harmless. A marker that outlives its
- * episode can wedge the NEXT one -- if the base advances before the stale
- * marker is revisited, the queued push leases a commit GitHub has already
- * moved off, falls back to a plain push of a rebased (non-ancestor)
- * history, and fails permanently with a "something else moved it on
- * GitHub" diagnosis that is false: we did.
+ * A failure here destroys nothing (the lease still refuses anything
+ * unexpected, and the plain-push fallback only ever fast-forwards) but is NOT
+ * harmless: a marker that outlives its episode can wedge the NEXT one. If the
+ * base advances before the stale marker is revisited, the queued push leases a
+ * commit GitHub has already moved off, falls back to a plain push of a rebased
+ * (non-ancestor) history, and fails permanently with a "something else moved
+ * it on GitHub" diagnosis that is false -- we did.
  *
- * Tracked, with the concurrent-clear race that can drop a marker
- * mid-arming, in
- * .claude/future-tasks/worker-history-rewrite-marker-races.md.
+ * Tracked, with the concurrent-clear race that can drop a marker mid-arming,
+ * in .claude/future-tasks/worker-history-rewrite-marker-races.md.
  */
 export async function clearHistoryRewrittenMarker(
   ctx: Pick<HistoryRewriteContext, 'contentBranchesPath'>,
@@ -130,16 +123,15 @@ export async function clearHistoryRewrittenMarker(
  * Publish a branch clone's rebased history into `remote.git`, replacing
  * EXACTLY `expectedSha` and nothing else.
  *
- * The lease is the entire safety argument. `--force-with-lease=<ref>:<sha>`
- * refuses unless `remote.git` still stands at `<sha>`, so this can only
- * ever undo the commit our own rebase rewrote away. Callers must never pass
- * "whatever remote.git currently holds" -- see the arming guard in
- * rebase.ts's carryForwardRewrittenHistory for the interleaving where that
- * would silently delete a reviewer's direct push.
+ * The lease is the entire safety argument: `--force-with-lease=<ref>:<sha>`
+ * refuses unless `remote.git` still stands at `<sha>`, so this can only ever
+ * undo the commit our own rebase rewrote away. Callers must NEVER pass
+ * "whatever remote.git currently holds" -- see the arming guard in rebase.ts's
+ * carryForwardRewrittenHistory for the interleaving where that would silently
+ * delete someone's direct push.
  *
- * Returns whether the push landed. A refused lease means a concurrent
- * Lambda push moved the ref; that is logged and retried by the self-heal
- * pass on a later cycle, never thrown.
+ * Returns whether the push landed. A refused lease means a concurrent Lambda
+ * push moved the ref; logged and retried by the self-heal pass, never thrown.
  */
 export async function forcePublishToLocalRemote(
   ctx: Pick<HistoryRewriteContext, 'taskTimeoutMs'>,
@@ -147,11 +139,11 @@ export async function forcePublishToLocalRemote(
   branchRef: string,
   expectedSha: string,
 ): Promise<boolean> {
-  // A dedicated instance rather than the caller's: `.env()` replaces the
-  // whole child environment, and the rebase loop's instance must keep its
-  // ambient one. gitChildEnv (not gitNetworkChildEnv) because this push
-  // targets the local bare repo -- and the locale pin is what keeps
-  // isStaleLeaseRejection below from silently becoming a no-op.
+  // A dedicated instance rather than the caller's: `.env()` replaces the whole
+  // child environment, and the rebase loop's instance must keep its ambient
+  // one. gitChildEnv (not gitNetworkChildEnv) because this push targets the
+  // local bare repo -- and its locale pin is what keeps isStaleLeaseRejection
+  // below from silently becoming a no-op on a non-English host.
   const pushGit = simpleGit({ baseDir: branchPath, timeout: { block: ctx.taskTimeoutMs } })
   pushGit.env(gitChildEnv({}))
   try {
@@ -179,14 +171,13 @@ export async function forcePublishToLocalRemote(
 
 /**
  * Queue the GitHub hop for a branch whose rewritten history now sits in
- * `remote.git`, so an open PR's head follows the rebase within a cycle
- * instead of waiting for the editor's next submit.
+ * `remote.git`, so an open PR's head follows the rebase within a cycle instead
+ * of waiting for the editor's next submit.
  *
- * Deliberately NOT skipped when a marker is already set: inferring "a task
- * must already be queued" from the marker starves this hop whenever a task
- * was lost, failed permanently, or was never written. Duplicate push tasks
- * are bounded by base-branch advances and are idempotent (a repeat push is
- * a no-op once GitHub holds the tip).
+ * Deliberately NOT skipped when a marker is already set: inferring "a task must
+ * already be queued" from the marker starves this hop whenever a task was lost,
+ * failed permanently, or was never written. Duplicate push tasks are bounded by
+ * base-branch advances and are idempotent.
  */
 export async function enqueueGitHubPush(
   ctx: Pick<HistoryRewriteContext, 'taskDir'>,
@@ -210,15 +201,15 @@ export async function enqueueGitHubPush(
 }
 
 /**
- * Complete a rewrite this worker started but did not finish: get the
- * rebased history into `remote.git` and queued for GitHub.
+ * Complete a rewrite this worker started but did not finish: get the rebased
+ * history into `remote.git` and queued for GitHub.
  *
- * Runs from the rebase loop for any branch carrying a marker, whether or
- * not it is behind base this cycle, so an interrupted publish converges
- * without waiting for the next base-branch advance.
+ * Runs from the rebase loop for any branch carrying a marker, whether or not it
+ * is behind base this cycle, so an interrupted publish converges without
+ * waiting for the next base-branch advance.
  *
- * Always leases on the MARKER, never on remote.git's current tip -- the
- * marker is the one commit we know our own rebase replaced.
+ * Always leases on the MARKER, never on remote.git's current tip -- the marker
+ * is the one commit we know our own rebase replaced.
  */
 export async function reconcilePendingRewrite(
   ctx: HistoryRewriteContext,
@@ -266,11 +257,11 @@ export async function reconcilePendingRewrite(
  * rewrote already-published history and the GitHub push has not landed yet
  * (see BranchMetadata.historyRewrittenFrom).
  *
- * `branchName` is a git ref name; branch workspaces are directories named
- * with the sanitized form, hence the conversion. Best-effort: a settings
- * branch (no workspace at all), a missing directory or an unreadable
- * branch.json all mean "no known rewrite", which is the conservative
- * answer -- it keeps the branch in the louder `diverged` bucket.
+ * `branchName` is a git ref name; branch workspaces are directories named with
+ * the sanitized form, hence the conversion. Best-effort: a settings branch (no
+ * workspace at all), a missing directory or an unreadable branch.json all mean
+ * "no known rewrite", the conservative answer -- it keeps the branch in the
+ * louder `diverged` bucket.
  */
 export async function hasPendingHistoryRewrite(
   ctx: Pick<HistoryRewriteContext, 'contentBranchesPath'>,

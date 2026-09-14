@@ -5,46 +5,22 @@ import type { WorkerStatusReport } from '../types'
 
 /**
  * The slice of {@link import('./cms-worker').CmsWorker} that its extracted
- * clusters (task-runner.ts, git-sync.ts, rebase.ts, history-rewrite.ts) are
- * allowed to reach.
+ * clusters (task-runner.ts, git-sync.ts, rebase.ts, history-rewrite.ts) may
+ * reach — the ONLY channel between the class and that code. Each module narrows
+ * it further with a `Pick<WorkerContext, ...>` alias, so a function's signature
+ * names its real dependency set rather than the union.
  *
- * `CmsWorker` used to be 2,949 lines holding four disjoint call trees under one
- * entry point, sharing six helper methods and a 16-field config. The clusters
- * now live in their own modules as free functions taking this context, and the
- * class keeps thin delegating methods. This interface is what makes the sharing
- * explicit: it is the ONLY channel between the class and the extracted code, so
- * "what does the rebase loop actually need from the worker?" has an answer you
- * can read, rather than being whatever `this.` happens to resolve to.
- *
- * Each module narrows it further with a `Pick<WorkerContext, ...>` alias, so a
- * function's signature names its real dependency set rather than the union.
- *
- * ## Why the second group are FUNCTIONS, not fields
- *
- * Everything below the divider is resolved by CALLING back onto the live
- * `CmsWorker` instance, never snapshotted into the context object. That is
- * load-bearing, not stylistic. The worker's ten `cms-worker*.test.ts` files drive it by
- * reaching through the instance:
- *
- * - `cms-worker.test.ts` and `cms-worker-sync-reconcile.test.ts` REPLACE
- *   `buildGitHubUrl` on the instance to redirect pushes at a local fixture repo
- *   instead of github.com;
- * - `cms-worker-merge-poll.test.ts` and `cms-worker.test.ts` ASSIGN a mock over
- *   the `octokit` field;
- * - `cms-worker.test.ts` REPLACES `executeTask` (to drive the retry/timeout
- *   paths without real work) and `pushBranchToGitHub` (to exercise the PR
- *   actions with no git remote), then asserts on the replacement;
- * - several set `running` directly instead of calling `start()`;
- * - `cms-worker-content-lock.test.ts` SUBCLASSES `CmsWorker` to override the two
- *   `afterConflictDetectedForTesting`/`afterRebaseCompletedForTesting` hooks.
- *
- * A context built with `octokit: this.octokit` would capture the real Octokit
- * before the test ever installs its mock, and a captured `buildGitHubUrl` string
- * would send a test's push to github.com for real. Writing them as functions
- * (`ctx.octokit()`, `ctx.buildGitHubUrl()`) makes the late binding visible at
- * every call site, which a getter would hide. `CmsWorker.ctx()` builds a fresh
- * context per call for the same reason — there is no long-lived object for a
- * stale reference to hide in.
+ * INVARIANT: everything below the divider is a FUNCTION, resolved by CALLING
+ * back onto the live instance and never snapshotted, and `CmsWorker.ctx()`
+ * builds a fresh context per call. That is load-bearing, not stylistic. The
+ * `cms-worker*.test.ts` files drive the class by reaching through the instance:
+ * they REPLACE `buildGitHubUrl` (aiming pushes at a local fixture repo rather
+ * than github.com), `executeTask` and `pushBranchToGitHub`, ASSIGN a mock over
+ * the `octokit` field, set `running` directly, and SUBCLASS to override the two
+ * rebase test hooks. A context that captured any of those at construction would
+ * hand the extracted code the pre-test value — which for `buildGitHubUrl` means
+ * a test's push going to github.com for real. Functions (`ctx.octokit()`) make
+ * the late binding visible at every call site, which a getter would hide.
  */
 export interface WorkerContext {
   // --- Resolved once in the constructor and never mutated. Safe to copy. ---
@@ -59,8 +35,8 @@ export interface WorkerContext {
    */
   readonly baseBranch: string
   /**
-   * The base branch's workspace DIRECTORY name. Computed once so every
-   * filesystem call site agrees instead of re-deriving it and risking drift.
+   * The base branch's workspace DIRECTORY name, computed once so every
+   * filesystem call site agrees instead of re-deriving it.
    */
   readonly sanitizedBaseBranch: SanitizedBranchName
   /** `{workspacePath}/.tasks` — the task queue and worker-status.json. */
@@ -87,34 +63,24 @@ export interface WorkerContext {
   octokit(): Octokit
   /**
    * The tokenized GitHub clone URL, resolved at call time (tests replace this
-   * method to point at a local fixture repo).
+   * method to point at a local fixture repo). Async because under GitHub App
+   * auth the credential is minted on demand and lasts about an hour (see
+   * worker/github-auth.ts); the token path resolves immediately.
    *
-   * Async because the credential need not be something the worker already
-   * holds: a credential that has to be fetched or minted cannot be assembled
-   * synchronously out of config. Under GitHub App auth it is minted on
-   * demand and lasts about an hour (see worker/github-auth.ts); the personal
-   * access token path still resolves immediately.
-   *
-   * A caller that needs the URL more than once must resolve it ONCE into a
-   * local and reuse that, rather than calling again per push -- see
-   * pushBranchToGitHub, where a second resolution inside the stale-lease catch
-   * block would replace the very error being classified.
-   *
-   * Anything derived from it can embed the bot token, so a message that reaches
-   * worker-status.json, branch.json or a task file must go through
-   * `redactCredentials` first.
+   * A caller that needs the URL more than once resolves it ONCE into a local --
+   * see pushBranchToGitHub, where a second resolution inside the stale-lease
+   * catch would replace the very error being classified. Anything derived from
+   * it can embed the bot token, so a message reaching worker-status.json,
+   * branch.json or a task file goes through `redactCredentials` first.
    */
   buildGitHubUrl(): Promise<string>
   /**
    * Re-read the GitHub credential because an operation that used it just
-   * failed, read at call time.
-   *
-   * Best-effort and NEVER throws: a failed read, or one that does not settle
-   * within `taskTimeoutMs`, is logged and swallowed, because every caller is
-   * already handling a failure and that failure is the one to report. Once it
-   * resolves, the next `buildGitHubUrl()` or `octokit()` call sees any rotated
-   * value. See `CmsWorker.refreshGitHubCredential` for the two call sites and
-   * why neither is gated on the error's shape.
+   * failed, read at call time. Best-effort and NEVER throws: a failed read, or
+   * one that does not settle within `taskTimeoutMs`, is logged and swallowed,
+   * because every caller is already reporting the failure that matters. The
+   * next `buildGitHubUrl()`/`octokit()` sees any rotated value. See
+   * `CmsWorker.refreshGitHubCredential`.
    */
   refreshGitHubCredential(): Promise<void>
   /**
@@ -123,23 +89,18 @@ export interface WorkerContext {
    */
   branchWorkspacePath(branchRefName: string): string
   /**
-   * Run one task, read at call time.
-   *
-   * Routed back through the instance even though the implementation lives in
-   * task-runner.ts beside its only caller, because cms-worker.test.ts REPLACES
-   * this method on the instance to drive the retry and timeout paths without
-   * doing real work. `executeTaskWithTimeout` must therefore call
-   * `ctx.executeTask(...)`, never the module-level function directly -- doing
-   * the latter silently bypasses the stub and the tests go red.
+   * Run one task, read at call time. Routed back through the instance even
+   * though the implementation lives in task-runner.ts beside its only caller,
+   * because cms-worker.test.ts REPLACES this method on the instance:
+   * `executeTaskWithTimeout` must call `ctx.executeTask(...)`, never the
+   * module-level function, which would silently bypass the stub.
    */
   executeTask(task: Task, signal: AbortSignal): Promise<Record<string, unknown>>
   /**
-   * Push a branch from remote.git to GitHub, read at call time.
-   *
-   * Routed through the instance for the same reason as `executeTask`:
-   * cms-worker.test.ts replaces it with a spy so the PR actions can be
-   * exercised with no git remote, and then asserts the spy was NOT called on
-   * the base-branch-refusal path.
+   * Push a branch from remote.git to GitHub, read at call time. Routed through
+   * the instance for the same reason as `executeTask`: cms-worker.test.ts
+   * replaces it with a spy and asserts the spy was NOT called on the
+   * base-branch-refusal path.
    */
   pushBranchToGitHub(branch: string): Promise<void>
   /** Whether the worker is still running; both poll loops bail when false. */
@@ -150,8 +111,7 @@ export interface WorkerContext {
   ensureSettingsBranch(): string
   /**
    * Test hook: fires when the rebase has reported conflicted files and is about
-   * to `checkout --theirs` them. No-op in production; overridden by a subclass
-   * in cms-worker-content-lock.test.ts.
+   * to `checkout --theirs` them. No-op in production.
    */
   afterConflictDetectedForTesting(): Promise<void>
   /**
