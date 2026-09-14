@@ -67,7 +67,7 @@ export interface BranchHealthEntry {
   /** orphan only: age of the directory's mtime in ms, clamped to >= 0. */
   ageMs?: number
   /**
-   * Present iff the dir's provisioning init-lock marker is on disk, for orphan
+   * [H1] Present iff the dir's provisioning init-lock marker is on disk, for orphan
    * and corrupt-metadata entries only. Presence alone means nothing: a crashed
    * provisioner's lock lingers forever, since proper-lockfile reaps a stale
    * lock only on a later acquisition and a health scan never acquires.

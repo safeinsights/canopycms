@@ -32,22 +32,34 @@ lint and still break the layering above. Keep the direction by review.
 Every rule below is stated at the point it applies, in the code. This section only says
 which comment owns it.
 
-| Rule                                                                                                                                                    | Owning comment                                                                                                                            |
-| ------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
-| Fresh context per call; instance-backed members are FUNCTIONS                                                                                           | `worker-context.ts`, the `WorkerContext` doc comment (INVARIANT)                                                                          |
-| Extracted modules call `ctx.executeTask` / `ctx.pushBranchToGitHub`, never the module-level function                                                    | same comment, and the `TaskRunnerContext` pick list in `task-runner.ts`                                                                   |
-| Non-fast-forward push → `PermanentTaskError`, not retries                                                                                               | `task-runner.ts`, `pushBranchToGitHub`'s rejection branches                                                                               |
-| Push ONLY this deployment's settings branch                                                                                                             | `git-sync.ts`, `pushSettingsBranches`'s doc comment                                                                                       |
-| `scrubPersistedRemote` fails CLOSED and re-runs every boot                                                                                              | `cms-worker.ts`, `scrubPersistedRemote` (it is part of provisioning, so it stays there)                                                   |
-| `rebaseOneBranch` never throws; the `rebased` rider on `{ kind: 'failed' }`                                                                             | `rebase.ts`, `BranchRebaseOutcome`                                                                                                        |
-| Interrupted-rebase recovery is lossy, keyed on the WORKING-TREE column                                                                                  | `rebase.ts`, the `isRebaseInProgress` block                                                                                               |
-| MODIFY/DELETE conflicts resolved by `git rm`/`git add`                                                                                                  | `rebase.ts`, inside `runRebaseRounds`'s conflict branch                                                                                   |
-| ABORT OWNERSHIP split across four sites, none redundant                                                                                                 | `rebase.ts`, `runRebaseRounds`'s doc comment                                                                                              |
-| `isLockCompromised` is a CALLBACK: [SYNC-C1] the lock can be lost between rounds                                                                        | same comment                                                                                                                              |
-| [SYNC-H1] every force push leases on a commit THIS worker replaced                                                                                      | `history-rewrite.ts`, the module doc comment                                                                                              |
-| Worker log prefix (CloudWatch `multi_line_start_pattern`)                                                                                               | `log.ts`, the module doc comment (INVARIANT); enforced by eslint `no-restricted-syntax` on `**/worker/**`, which a new file here inherits |
-| The `log.ts` re-export from `cms-worker.ts` must survive any reshuffle, since `canopycms-cdk/worker/index.ts` has no other entrypoint                   | `cms-worker.ts`, at that re-export                                                                                                        |
-| github-auth's own invariants (fail-closed boot classification, mint-timeout bounds, never caching a resolved token, never re-wrapping a mint rejection) | `github-auth.ts`, at each rule                                                                                                            |
+- Fresh context per call; every instance-backed member is a FUNCTION: `worker-context.ts`,
+  the `WorkerContext` doc comment (INVARIANT).
+- Extracted modules call `ctx.executeTask` / `ctx.pushBranchToGitHub`, never the module-level
+  function: the same comment, and the `TaskRunnerContext` pick list in `task-runner.ts`.
+- Non-fast-forward push rejection fails fast as `PermanentTaskError`, not retries:
+  `task-runner.ts`, `pushBranchToGitHub`'s rejection branches.
+- Push ONLY this deployment's settings branch: `git-sync.ts`, `pushSettingsBranches`'s doc.
+- `scrubPersistedRemote` fails CLOSED and re-runs every boot: `cms-worker.ts`, at that
+  function (it is part of provisioning, so it stays there).
+- `rebaseOneBranch` never throws; the `rebased` rider on `{ kind: 'failed' }`: `rebase.ts`,
+  `BranchRebaseOutcome`.
+- Interrupted-rebase recovery is lossy and keyed on the WORKING-TREE column: `rebase.ts`, the
+  `isRebaseInProgress` block.
+- MODIFY/DELETE conflicts resolve by `git rm`/`git add`: `rebase.ts`, inside `runRebaseRounds`'s
+  conflict branch.
+- ABORT OWNERSHIP is split across four sites, none redundant: `rebase.ts`, `runRebaseRounds`'s
+  doc comment.
+- `isLockCompromised` is a CALLBACK because [SYNC-C1] the lock can be lost between rounds: the
+  same comment.
+- [SYNC-H1] every force push leases on a commit THIS worker replaced: `history-rewrite.ts`, the
+  module doc comment.
+- Worker log prefix (CloudWatch `multi_line_start_pattern`): `log.ts`, the module doc comment
+  (INVARIANT); enforced by eslint `no-restricted-syntax` on `**/worker/**`, which a new file
+  here inherits.
+- The `log.ts` re-export from `cms-worker.ts` must survive any reshuffle, since
+  `canopycms-cdk/worker/index.ts` has no other entrypoint: `cms-worker.ts`, at that re-export.
+- github-auth's own invariants (fail-closed boot classification, mint-timeout bounds, never
+  caching a resolved token, never re-wrapping a mint rejection): `github-auth.ts`, at each rule.
 
 ## `github-auth.ts`: the one cross-file rule
 
@@ -61,5 +73,5 @@ strategy in its own entrypoint and injects it, through the seam `refreshAuthCach
 
 Two guards hold it, and **neither is `pnpm lint:bundle`**, which cruises only the two
 client entries and never reaches `github-service.ts`: the `core-no-github-app-auth`
-dependency-cruiser rule, evaluated by `pnpm lint:cycles`, and a manifest assertion in
-`github-auth.test.ts`.
+dependency-cruiser rule, evaluated by `pnpm lint:cycles` (CI and the pre-commit hook), and a
+manifest assertion in `github-auth.test.ts`.

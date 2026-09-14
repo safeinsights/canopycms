@@ -112,14 +112,17 @@ export function isNodeError(err: unknown): err is NodeJS.ErrnoException {
   return err instanceof Error && 'code' in err
 }
 
+/** True for ENOENT. */
 export function isNotFoundError(err: unknown): boolean {
   return isNodeError(err) && err.code === 'ENOENT'
 }
 
+/** True for EACCES. */
 export function isPermissionError(err: unknown): boolean {
   return isNodeError(err) && err.code === 'EACCES'
 }
 
+/** True for EEXIST. */
 export function isFileExistsError(err: unknown): boolean {
   return isNodeError(err) && err.code === 'EEXIST'
 }

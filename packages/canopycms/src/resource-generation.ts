@@ -32,8 +32,8 @@ import { createDebugLogger } from './utils/debug'
  * durably record a fresh token over data its scan read from a stale NFS cache,
  * which every other host then trusts. So the mutating host regenerates eagerly
  * right after its own bump — that scan is coherent with its own mutation — and
- * the registry adds a suspicious-miss backstop. Staleness windows (A-E) and
- * the rolling-deploy transient: docs/concurrency.md §4.
+ * the registry adds a suspicious-miss backstop. Staleness windows (A/B/C/E) and
+ * the rolling-deploy transient: docs/concurrency.md, "Residual staleness windows".
  */
 
 const log = createDebugLogger({ prefix: 'ResourceGeneration' })
