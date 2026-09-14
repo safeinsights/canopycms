@@ -172,14 +172,6 @@ const TRANSFORM_CACHE_MAX_TTL = Duration.days(365)
  * same two patterns, so the second is always wrong regardless of which construct
  * owns it - so the check has to be keyed on the distribution, not the attacher.
  *
- * A module-level `WeakSet` keyed on the distribution object did that correctly
- * (a `cloudfront.Distribution` instance belongs to exactly one construct tree,
- * and `attachTo` takes a concrete instance, so one could never be claimed by a
- * second CDK app). A child construct is preferred anyway because the scoping is
- * then a property of the tree rather than something the reader has to reason
- * about process lifetime to trust - and it is visible in `node.children`, so a
- * test can assert the guard's state instead of only its error.
- *
  * The marker is a bare `Construct`, which emits nothing into the template.
  */
 const ATTACHED_MARKER_ID = 'CanopyAssetBehaviorsAttached'
@@ -739,10 +731,6 @@ function buildUploadBehavior(
   // is not a 2xx fails the browser's check whatever headers are attached, so
   // the POST is never sent and the upload dies as an opaque network error.
   //
-  // This is why the end-to-end measurements did not catch it: they replayed
-  // the POST as a script, which has no preflight. A scripted POST is not an
-  // acceptance test for this route; a real browser upload is.
-  //
   // Short-circuiting at the viewer also strengthens the containment argument
   // above rather than weakening it - an OPTIONS that never reaches the origin
   // can address nothing.
@@ -916,14 +904,6 @@ function buildUploadBehavior(
  * adopter gets the identity half here and writes the resource half
  * themselves, on the bucket's own side.
  *
- * What it costs instead is legibility: a second `AssetSupport` standing in a
- * stack that has no asset pipeline, existing only so that a method can be
- * called on it, is fine on the day and unexplainable six months later. That
- * is what this function removes, and it matters most for the shape the
- * one-route topology invites - one bucket shared by every environment, owned
- * by a stack that holds no per-environment resources, with reads and
- * transforms staying per-environment.
- *
  * `AssetSupport.uploadBehavior()` remains the right call when you already have
  * an `AssetSupport`; both funnel into the same builder, so the two cannot
  * drift.
@@ -999,7 +979,6 @@ export class AssetSupport extends Construct {
   /** The bucket in use (either created here, or the BYO `props.bucket`). */
   public readonly bucket: s3.IBucket
 
-  /** The transform Lambda function. */
   public readonly transformFunction: lambda.Function
 
   /** The transform Lambda's CloudWatch log group (Lambda stdout/stderr). */
@@ -1113,13 +1092,6 @@ export class AssetSupport extends Construct {
         // under `assets/t/` after `transformOutputRetention`. Originals, meta
         // and the public prefix are kept forever by design (content-addressed,
         // immutable - see the design record's "Storage" section).
-        //
-        // Derivatives were originally in that keep-forever set, on the same
-        // "immutable" reasoning. That holds for their CONTENT but not for
-        // their COUNT: `assets/t/` is the one prefix an anonymous caller can
-        // mint unbounded distinct keys in (see
-        // TRANSFORM_LAMBDA_RESERVED_CONCURRENCY), and unlike an original, a
-        // derivative that is deleted can simply be recomputed.
         lifecycleRules: [
           {
             id: 'expire-asset-staging',
@@ -1449,11 +1421,6 @@ export class AssetSupport extends Construct {
     }
     // Memoized: calling this twice must not attach two sets of policies, and
     // must not fail on duplicate construct ids.
-    //
-    // `scope` is `this`, which is what keeps the three child ids
-    // (`AssetUploadRewriteFunction` and the two policies) exactly where they
-    // were before the builder moved out of this class - the emitted template
-    // is unchanged, so no existing deployment sees a resource replacement.
     //
     // `validateUploadBehaviorOptions` is NOT re-run here: the constructor
     // already ran it on these same options, and `this.uploadOptions` is its

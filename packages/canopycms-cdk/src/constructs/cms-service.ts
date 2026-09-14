@@ -29,16 +29,6 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 /**
  * Synth-time mirror of `resolveDeploymentName`'s rule in the `canopycms`
  * package (packages/canopycms/src/operating-mode/deployment-name.ts).
- * Duplicated rather than imported, but NOT for the reason this comment used
- * to give ("canopycms-cdk publishes with no runtime dependency on canopycms").
- * That was false, and measurably so: `pnpm --filter canopycms-cdk run build`
- * emits `dist/index.js` -> `export { CmsWorker } from './worker.js'` and
- * `dist/worker.js` -> `export { CmsWorker } from 'canopycms/worker/cms-worker'`
- * -- a bare, unresolved specifier in tsc output, reached from this package's
- * MAIN entry point. (The esbuild bundle is a different artifact,
- * `worker/dist/index.js`, built for the EC2 instance.) `canopycms` is
- * correspondingly a non-optional `peerDependency` in package.json, so
- * importing `canopycms-cdk` already requires `canopycms` to resolve.
  *
  * The honest reason is narrower: importing the predicate here would make a
  * CONSTRUCT-only consumer pay for the core package's module graph, and the
@@ -88,8 +78,6 @@ const ENV_HEREDOC_DELIMITER = 'ENVEOF'
  * remembering to call it — the previous version validated `deploymentName`
  * only, while giving a rationale that applied verbatim to the other three
  * interpolated values.
- *
- * Returns the value so it can be used inline.
  */
 function assertEnvSafe(name: string, value: string): string {
   if (/[\r\n]/.test(value)) {
@@ -231,13 +219,6 @@ function assertValidGitBranchName(propName: string, value: string): string {
  * complete one rather than the partial form this guard deliberately accepts --
  * and a further colon can only begin the `:json-key:version-stage:version-id`
  * tail.
- *
- * An earlier version of this anchored on the six-character suffix itself
- * (`-[A-Za-z0-9]{6}:`) and therefore missed the suffix form built on a
- * name-only ARN -- `arn:…:secret:gh:MY_KEY::`, which is the shape ECS's own
- * documentation shows. That ARN was accepted, stamped, and written into the IAM
- * policy, producing exactly the AccessDenied restart-loop this guard exists to
- * prevent.
  */
 const SECRET_ARN_WITH_FIELD_SUFFIX = /:secret:[^:]*:/
 
@@ -971,9 +952,7 @@ export class CanopyCmsService extends Construct {
   constructor(scope: Construct, id: string, props: CanopyCmsServiceProps) {
     super(scope, id)
 
-    // ------------------------------------------------------------------
     // Deployment name: ONE effective value, validated once, used by both halves
-    // ------------------------------------------------------------------
     //
     // `props.environment` is spread into the Lambda's environment, so an
     // adopter can set CANOPYCMS_DEPLOYMENT_NAME there directly. That escape
@@ -1010,9 +989,7 @@ export class CanopyCmsService extends Construct {
       )
     }
 
-    // ------------------------------------------------------------------
     // Base branch / settings branch: validated the same way as deploymentName
-    // ------------------------------------------------------------------
     //
     // Both are interpolated into a git ref and the worker's `.env` heredoc, so
     // both are guarded at synth rather than left to fail (or silently diverge
@@ -1028,10 +1005,6 @@ export class CanopyCmsService extends Construct {
         ? assertValidGitBranchName('settingsBranch', props.settingsBranch)
         : undefined
 
-    // ------------------------------------------------------------------
-    // Secret ARNs and their JSON fields
-    // ------------------------------------------------------------------
-    //
     // Checked here, at the top, so a misconfigured pair fails `cdk synth`
     // rather than `cdk deploy`-then-restart-loop. See `assertSecretPropPair`
     // for what each of the two checks costs when it is absent.
@@ -1072,10 +1045,6 @@ export class CanopyCmsService extends Construct {
       assertSecretArnHasNoFieldSuffix(`secretsArns[${index}]`, arn)
     }
 
-    // ------------------------------------------------------------------
-    // Operating mode
-    // ------------------------------------------------------------------
-    //
     // The adopter's `canopycms.config.ts` is shared by local dev, the image
     // build and this deployment, and it says `dev`. `next dev` needs that, and
     // the image build should stay in dev mode too: build-time reads come from
@@ -1104,10 +1073,6 @@ export class CanopyCmsService extends Construct {
           `Omit it to get the default.`,
       )
     }
-
-    // ========================================================================
-    // VPC — 2 AZs, public + private subnets, NO NAT
-    // ========================================================================
 
     this.vpc =
       props.vpc ??
@@ -1139,10 +1104,7 @@ export class CanopyCmsService extends Construct {
       service: ec2.GatewayVpcEndpointAwsService.S3,
     })
 
-    // ========================================================================
     // EFS — persistent filesystem for content, git repos, cache
-    // ========================================================================
-
     const efsSg = new ec2.SecurityGroup(this, 'EfsSg', {
       vpc: this.vpc,
       description: 'CanopyCMS EFS',
@@ -1170,10 +1132,6 @@ export class CanopyCmsService extends Construct {
         uid: '1000',
       },
     })
-
-    // ========================================================================
-    // Lambda — CMS app, private subnet, no internet, EFS mount
-    // ========================================================================
 
     const lambdaSg = new ec2.SecurityGroup(this, 'LambdaSg', {
       vpc: this.vpc,
@@ -1341,28 +1299,21 @@ export class CanopyCmsService extends Construct {
       props.assetBucket.grantDelete(this.lambdaFunction, `${prefixes.meta}/*`)
     }
 
-    // ========================================================================
-    // EC2 Worker — t4g.nano spot, public subnet, internet, EFS mount
-    // ========================================================================
-
     const workerSg = new ec2.SecurityGroup(this, 'WorkerSg', {
       vpc: this.vpc,
       description: 'CanopyCMS EC2 Worker',
       allowAllOutbound: false,
     })
 
-    // Worker ↔ EFS (ingress on EFS SG + egress on Worker SG)
     efsSg.addIngressRule(workerSg, ec2.Port.tcp(2049), 'Worker NFS access')
     workerSg.addEgressRule(efsSg, ec2.Port.tcp(2049), 'NFS to EFS')
 
-    // Worker → internet (HTTPS only)
     workerSg.addEgressRule(ec2.Peer.anyIpv4(), ec2.Port.tcp(443), 'HTTPS outbound')
 
     // Worker → DNS (needed for EFS DNS-based mount targets)
     workerSg.addEgressRule(ec2.Peer.anyIpv4(), ec2.Port.tcp(53), 'DNS TCP')
     workerSg.addEgressRule(ec2.Peer.anyIpv4(), ec2.Port.udp(53), 'DNS UDP')
 
-    // Worker IAM role
     const workerRole = new iam.Role(this, 'WorkerRole', {
       assumedBy: new iam.ServicePrincipal('ec2.amazonaws.com'),
       description: 'CanopyCMS EC2 Worker role',
@@ -1436,7 +1387,6 @@ export class CanopyCmsService extends Construct {
     // the group is pre-created by CFN so the agent never needs CreateLogGroup).
     this.workerLogGroup.grantWrite(workerRole)
 
-    // Worker S3 Asset — upload bundled worker code to CDK assets bucket
     // The worker is bundled with esbuild into a single JS file (npm run build:worker)
     const workerAsset = new s3assets.Asset(this, 'WorkerCode', {
       path: path.join(__dirname, '../../worker/dist'),
@@ -1520,7 +1470,6 @@ export class CanopyCmsService extends Construct {
       .map(([name, value]) => `${name}=${assertEnvSafe(name, value)}`)
       .join('\n')
 
-    // UserData script
     const userData = ec2.UserData.forLinux()
     userData.addCommands(
       '#!/bin/bash',
@@ -1759,7 +1708,6 @@ export class CanopyCmsService extends Construct {
       },
     })
 
-    // Auto Scaling Group
     this.workerAsg = new autoscaling.AutoScalingGroup(this, 'WorkerAsg', {
       vpc: this.vpc,
       vpcSubnets: { subnetType: ec2.SubnetType.PUBLIC },

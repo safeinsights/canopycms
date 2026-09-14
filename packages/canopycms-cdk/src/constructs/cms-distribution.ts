@@ -315,7 +315,6 @@ export interface CanopyCmsDistributionProps {
  *   order, when the `assetSupport` prop is passed
  */
 export class CanopyCmsDistribution extends Construct {
-  /** The CloudFront distribution */
   public readonly distribution: cloudfront.Distribution
 
   constructor(scope: Construct, id: string, props: CanopyCmsDistributionProps) {
@@ -335,19 +334,11 @@ export class CanopyCmsDistribution extends Construct {
       )
     }
 
-    // ========================================================================
-    // DNS — Hosted Zone lookup
-    // ========================================================================
-
     const hostedZone =
       props.hostedZone ??
       route53.HostedZone.fromLookup(this, 'Zone', {
         domainName: props.hostedZoneDomain,
       })
-
-    // ========================================================================
-    // ACM Certificate
-    // ========================================================================
 
     // CloudFront requires its ACM certificate to live in us-east-1, and this
     // construct creates one in the STACK's region. Nothing in the construct,
@@ -377,10 +368,6 @@ export class CanopyCmsDistribution extends Construct {
         domainName: props.domainName,
         validation: acm.CertificateValidation.fromDns(hostedZone),
       })
-
-    // ========================================================================
-    // CloudFront Distribution
-    // ========================================================================
 
     // Origin: Lambda Function URL secured with Origin Access Control (OAC).
     // CloudFront signs each origin request with SigV4 so the AWS_IAM-protected
@@ -486,15 +473,7 @@ export class CanopyCmsDistribution extends Construct {
     // logic lives exactly once, inside attachTo() itself. Callers who instead
     // pass `assetSupport.assetBehaviors()` through `additionalBehaviors` by
     // hand are covered by `mergeBehaviors`'s synth-time guard above instead.
-    //
-    // `assetBehaviorOverrides` is forwarded so that needing per-behavior
-    // options is not a reason to leave this prop - and so the ordering
-    // guarantee survives the tier-auth case that most needs it.
     props.assetSupport?.attachTo(this.distribution, props.assetBehaviorOverrides)
-
-    // ========================================================================
-    // DNS Records
-    // ========================================================================
 
     new route53.ARecord(this, 'ARecord', {
       zone: hostedZone,

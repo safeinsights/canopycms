@@ -53,10 +53,6 @@
  * that bundle straight through to a deploy; requiring `.deployable` blocks
  * it, because the marker can only exist if the native install actually
  * verified.
- *
- * `--skip-native` additionally writes a `.skip-native` marker. Nothing
- * consumes it - it is there so a human running `ls` can see at a glance why
- * a bundle is being rejected.
  */
 
 import { execFileSync } from 'node:child_process'

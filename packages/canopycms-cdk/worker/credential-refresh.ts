@@ -55,14 +55,6 @@ import { getSecret, type GetSecretOptions } from './secrets'
  * twelve `refresh()` attempts an hour per secret, no matter how the loops are
  * tuned or how many tasks fail.
  *
- * That is twelve `GetSecretValue` calls an hour in the normal case, but up to
- * FOUR times that if the call itself is failing: one `refresh()` is one
- * `getSecret`, and `fetchSecretString` retries any failed `send` up to
- * `retries` times (default 3, so four calls at 1s/2s/4s — see secrets.ts).
- * Forty-eight calls an hour is about 17 cents a month at $0.05 per 10,000
- * (AWS Secrets Manager API pricing, as of 2026), and it needs every read to
- * fail for a month — an outage, or an IAM policy narrowed after boot.
- *
  * Note what it does NOT throttle: GitHub and Clerk traffic. The loops call
  * those on their own schedule whether or not a refresh happens, and this
  * module adds no request to either.

@@ -12,11 +12,6 @@
  *   - `AssetSupport` in standalone mode (creates its own bucket) with
  *     `editorOrigins: ['http://localhost:3000']` - a dev-mode editor is the
  *     only realistic caller of the canary's presigned-upload CORS.
- *   - A minimal `cloudfront.Distribution` wiring both behaviors
- *     `AssetSupport.assetBehaviors()` returns: the default behavior serves
- *     the S3 origin directly (so an unmatched path just 404s, cheaply -
- *     nothing else is being served by this canary), and `/assets/t/*` is
- *     the origin-group behavior with the transform Lambda as fallback.
  *   - No cert/DNS - default `*.cloudfront.net` domain, `PriceClass_100`.
  *
  * Deploy via the CDK bootstrap exec role, qualifier `canopy` (bootstrap

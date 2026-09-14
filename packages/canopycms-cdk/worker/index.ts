@@ -42,7 +42,6 @@ async function main() {
 
   workerLog('CMS Worker starting...')
 
-  // Required env vars
   const workspacePath = process.env.CANOPYCMS_WORKSPACE_ROOT
   if (!workspacePath) throw new Error('CANOPYCMS_WORKSPACE_ROOT is required')
 

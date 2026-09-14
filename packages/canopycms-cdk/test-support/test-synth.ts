@@ -20,14 +20,6 @@ import { isNodeError } from '../../canopycms/src/utils/error'
  * `process.on('exit')` never fires it.) That is the whole bug; CDK is not at
  * fault and an `outdir` sidesteps the question entirely.
  *
- * This suite constructs an `App` per helper call and most of its tests synth,
- * at a measured 0.6-3.2 MB per cloud assembly depending on the stack, so it was
- * leaking a few hundred megabytes per full run. Left alone it accumulates:
- * 26,537 orphaned `cdk.out*` directories totalling 13 GB built up over eight
- * days of ordinary development before this was caught, exhausting free disk.
- * Worth knowing why that took eight days -- a full temp filesystem breaks
- * unrelated tooling, so the symptom surfaces nowhere near this cause.
- *
  * Two halves, both required:
  *
  *  - `setup`/`teardown` are vitest's `globalSetup` (wired in vitest.config.ts).

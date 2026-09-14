@@ -77,9 +77,6 @@ const TRANSFORM_CACHE_CONTROL = 'public, max-age=31536000, immutable'
  * overhead this response doesn't actually have (the body IS the raw base64,
  * not JSON-wrapped - see `inlineImageResponse`) plus the response headers
  * Lambda's own invoke-result framing adds on top of the payload itself.
- * (A previous 4.5 MiB threshold based its headroom claim on 4.5 MiB * 4/3
- * landing EXACTLY at 6 MiB, i.e. zero headroom - any framing overhead at all
- * pushed it over, 502-ing the first request for an output near the cap.)
  */
 const INLINE_BODY_LIMIT_BYTES = 4 * 1024 * 1024
 
