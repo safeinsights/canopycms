@@ -1,996 +1,215 @@
 # CanopyCMS Architecture
 
-This document explains how CanopyCMS works at a systems level. For usage instructions, see [README.md](README.md). For contributor workflows, see [DEVELOPING.md](DEVELOPING.md).
+This document explains how CanopyCMS works at a systems level, and why it is built this way. For usage instructions, see [README.md](README.md). For contributor workflows, see [DEVELOPING.md](DEVELOPING.md). For which file or symbol does what, see [CODEBASE_GUIDE.md](CODEBASE_GUIDE.md) and each module's own `AGENTS.md`.
 
 ## What is CanopyCMS?
 
-CanopyCMS is a schema-driven, branch-aware content management system for git-backed, statically-generated websites. It provides an editing interface on top of a git-backed content store, enabling non-technical users to edit website content without touching Git directly.
+CanopyCMS is a schema-driven, branch-aware content management system for git-backed, statically-generated websites. It puts an editing interface on top of a git-backed content store so non-technical users can edit a site without touching git.
 
 Key characteristics:
 
-- **Editing interface**: Schema-driven forms, block-based page building, live preview
-- **Git as source of truth**: All content lives as files in git, enabling version history, rollback, and familiar workflows
-- **Branch-based editing**: Each editing session works on its own branch, enabling review workflows
-- **Schema-driven**: Content structure is defined by a schema, ensuring type safety and validation
-- **File system based**: No external databases or caching servers—designed for deployment with an attached file system
-- **Framework-agnostic core**: The core library works with any framework; adapters provide integration
+- **Git as source of truth**: content lives as files in git, so version history, rollback and review are the repository's own.
+- **Branch-based editing**: each editing session works on its own branch, which is what makes review workflows possible.
+- **Schema-driven**: content structure is declared in a schema and enforced at runtime.
+- **File system based**: no external database or cache server — a server (or serverless function) plus an attached filesystem.
+- **Framework-agnostic core**: all business logic lives in the core library; adapters are integration layers.
 
 ## Package Architecture
 
-CanopyCMS is organized as a monorepo with separate packages for extensibility:
+- **canopycms** (core): content store, branch management, permissions, editor UI, API handlers, AI content generation, and the asset store plus its image-transform engine. Entrypoints: `canopycms/server` (content reading, API setup), `canopycms/client` (editor components), `canopycms/ai`, `canopycms/build`, and the bare `canopycms` entry (config helpers, plus the isomorphic `assetUrl`/`assetSrcSet` builders host apps use).
+- **canopycms-next**: Next.js adapter — user extraction, `React cache()` per-request memoization, and the `withCanopy()` config wrapper (see [Framework Adapters](#framework-adapters)).
+- **canopycms-auth-clerk** / **canopycms-auth-dev**: auth plugins. The dev plugin provides a mock flow with configurable test users and is never valid in prod (see [Authentication](#authentication)).
+- **canopycms-cdk**: AWS CDK constructs (not imported by the CMS runtime) — the CMS service (Lambda + EFS), the CloudFront distribution, the `AssetSupport` construct, and the `CmsWorker` daemon. Its transform Lambda reuses the core transform engine verbatim, so the deployed CDN and dev mode apply identical transformations.
 
-- **canopycms** (core): The main library containing content store, branch management, permissions, editor UI, API handlers, AI content generation, and the asset/media store plus its on-demand image-transform engine. This package is framework-agnostic and contains all business logic. It exposes multiple entrypoints: `canopycms/server` (content reading, API setup), `canopycms/client` (editor components), `canopycms/ai` (AI content route handler and generation), and `canopycms/build` (static file generation utilities). The main `canopycms` entry exports the configuration helpers (`defineCanopyConfig`, `getConfigDefaults`) and the isomorphic `assetUrl`/`assetSrcSet` helpers so host apps can build transform URLs (see [Asset & Media System](#asset--media-system)).
+All business logic stays in core so the core is framework-agnostic and adapters handle only framework-specific concerns. Auth and framework support are separate packages for the same reason: adopters install only what they need, and the core can be tested with neither Next.js nor Clerk installed, so a new framework or provider is additive rather than a core change.
 
-- **canopycms-next**: Next.js adapter that provides thin integration (~10 lines of user extraction code). Wraps core context with React cache() for per-request memoization. Also provides a `withCanopy()` Next.js config wrapper that handles module transpilation and React deduplication (see [Framework Adapters](#framework-adapters) below).
-
-- **canopycms-auth-clerk**: Authentication plugin using Clerk.
-
-- **canopycms-auth-dev**: Development authentication plugin that provides a mock auth flow with configurable test users. Used for local development without requiring a real auth provider.
-
-- **canopycms-cdk**: AWS CDK infrastructure package (not imported by the CMS runtime). It ships the constructs adopters use to provision a CanopyCMS deployment — the CMS service (Lambda + EFS), the CloudFront distribution, and the `AssetSupport` construct that wires up the asset bucket, CloudFront behaviors, and the image-transform Lambda — plus the `CmsWorker` daemon. The transform Lambda reuses the core package's transform engine verbatim, so the deployed CDN and dev mode apply identical image transformations. See [Asset & Media System](#asset--media-system) and [Deployment Architecture](#deployment-architecture).
-
-This separation keeps the core framework-agnostic while allowing adapters to be minimal integration layers. All business logic lives in core—adapters only handle framework-specific concerns like extracting user identity from request contexts.
-
-The core package also exposes a `canopycms/test-utils` subpath for shared test utilities (API test helpers, console spies, git test repo initialization), which spares sibling packages fragile cross-package relative imports. **This subpath is workspace-internal by design and is deliberately not published**: it appears in the dev `exports` map, but not in `publishConfig.exports`, so it resolves for other packages in this monorepo and does not exist for npm consumers.
-
-It stays unpublished because its sources are vitest-coupled in ways that do not belong in a published package: they import `vitest` (a devDependency) at module scope, `console-spy.ts` calls `expect.extend()` as an import side effect — so merely importing the module would require a live vitest context, not just vitest installed — and it declares a global `declare module 'vitest'` augmentation that would attach CanopyCMS's custom matchers to every consumer's `Assertion` interface. The mock factories also traffic in internal types (`ApiContext`, `CanopyServices`, `BranchContext`) that are not part of the public contract. `tsconfig.build.json` accordingly excludes `src/test-utils/**` from the build.
-
-The two halves once disagreed — `publishConfig.exports` advertised `./test-utils` while the build never emitted `dist/test-utils/`, so any external `import 'canopycms/test-utils'` failed with `ERR_MODULE_NOT_FOUND` while in-repo consumers resolved through the dev `exports` field and never noticed. That is the blind spot described under [ESM Output Must Be Node-Resolvable](#esm-output-must-be-node-resolvable-not-just-bundler-resolvable). `scripts/check-esm-imports.mjs` now enforces the invariant rather than documenting it: each subpath is declared `test`, `skip`, or `devOnly`, and its `checkCoverage()` fails if a `devOnly` subpath reappears in `publishConfig.exports`, if a published subpath goes missing from it, or if the two maps disagree in either direction.
+`canopycms/test-utils` is a workspace-internal subpath: it appears in the dev `exports` map and deliberately **not** in `publishConfig.exports`, so it resolves for sibling packages in this monorepo and does not exist for npm consumers. It stays unpublished because its sources are vitest-coupled in ways a published package must not be — they import `vitest` at module scope, `console-spy.ts` calls `expect.extend()` as an import side effect, a `declare module 'vitest'` augmentation would attach Canopy's matchers to every consumer's `Assertion` interface, and the mock factories traffic in internal types. `tsconfig.build.json` excludes it from the build, and `scripts/check-esm-imports.mjs` fails if a `devOnly` subpath reappears in `publishConfig.exports`, if a published subpath goes missing from it, or if the two maps disagree in either direction.
 
 ### ESM Output Must Be Node-Resolvable, Not Just Bundler-Resolvable
 
-Every published package declares `"type": "module"`, so every relative import in its `dist/` must carry a `.js` extension — in the emitted `.d.ts` as well as the emitted `.js`. `tsc` alone doesn't do this: with `moduleResolution: "Bundler"`, it preserves bare specifiers verbatim, which bundlers (Next, Vite) resolve happily but Node's native ESM resolver rejects outright. A build that skips the rewrite step produces a package that works for bundler-based adopters but is broken for anyone importing it directly under Node — `canopycms-cdk` is the sharpest case, since CDK apps run directly under Node with no bundler in front of them. All five published packages now run a shared rewrite step (`scripts/add-js-extensions.mjs`) as part of their build, added after this gap let four of the five packages ship broken for a period while only the core package ran it.
+Every published package declares `"type": "module"`, so **every relative import in its `dist/` must carry a `.js` extension — in the emitted `.d.ts` as well as the emitted `.js`** — and bare `.`/`..` specifiers must expand to `./index.js`. `tsc` alone does not do this: under `moduleResolution: "Bundler"` it preserves bare specifiers, which bundlers resolve and Node's native ESM resolver rejects. All five published packages therefore run a shared rewrite step in their build. Appending `.js` is correct for a `.d.ts` too: TypeScript maps a `./x.js` specifier to `./x.d.ts`, so declarations must name the runtime extension.
 
-**The `.d.ts` half fails silently, which is why it outlived the `.js` half.** A missing extension in a `.js` file throws `ERR_MODULE_NOT_FOUND` — loud, immediate, and caught by importing the built output. The same omission in a `.d.ts` throws nothing: an adopter on `moduleResolution: "node16"`/`"nodenext"` cannot resolve `export * from './x'`, and TypeScript's recovery is to type the entire import as `any`. Their build stays **green** while every type this package exports quietly degrades to `any`, and with `skipLibCheck: true` — what most scaffolds set, Next.js included — there is not even a diagnostic to notice. Both states were reproduced against a real packed tarball: under `nodenext` a deliberately bogus property on an imported type was accepted, and under `bundler` the same code was correctly rejected. Note that appending `.js` is right for a `.d.ts` too: TypeScript maps a `./x.js` specifier to `./x.d.ts`, so declarations must name the runtime extension and never `.d.ts`.
+**The `.d.ts` half fails silently, which is the reason this needs a guard rather than a convention.** A missing extension in a `.js` file throws `ERR_MODULE_NOT_FOUND`; the same omission in a `.d.ts` throws nothing — an adopter on `moduleResolution: "node16"`/`"nodenext"` cannot resolve the re-export, and TypeScript's recovery is to type the whole import as `any`, so their build stays green while every type this package exports has quietly degraded, with no diagnostic at all under `skipLibCheck: true` (what most scaffolds, Next.js included, set).
 
-Bare `.` and `..` specifiers count as relative imports and need the same expansion to `./index.js`. This is easy to miss because such a specifier looks nothing like the `./x` case and slips past a pattern that expects a slash; exactly one existed in the repo (`operating-mode/types.ts`), and it stayed invisible until the `.d.ts` rewrite started running.
+It is also a structural blind spot of pnpm workspaces rather than a missed build step: inside the workspace, one package importing another resolves through the dev `exports` field (raw `.ts` source), never through `publishConfig.exports` — the shape a real consumer gets — so in-repo tests can pass against a broken tarball. `scripts/check-esm-imports.mjs` therefore reconstructs what publish produces and checks it two ways. See [DEVELOPING.md](DEVELOPING.md#published-package-esm-import-check) for how to run it.
 
-`scripts/check-esm-imports.mjs` guards both halves, and needs to, because neither guard sees the other's failure: the runtime probe imports each entry point under real Node ESM, while a second pass typechecks a consumer against the same sandbox under `nodenext` with `skipLibCheck` deliberately **off**. A `.d.ts` regression leaves the runtime probe entirely green, which is precisely the hole the second pass fills.
-
-That second pass fails on two classes of diagnostic, and needs both. Anything attributed to the generated consumer counts unconditionally — it imports nothing but our own packages, so a missing declaration file (`TS7016`) or a `publishConfig` path pointing at output that was never built (`TS2307`) is ours by construction. Restricting the pass to diagnostics whose _path_ pointed into our `dist/` was this guard's own first bug: a deleted `dist/server.d.ts` sailed through it. Separately, `TS2834`/`TS2835`/`TS2307`/`TS7016` inside our own `dist/` catch the extensionless-import case. The pass covers every published subpath rather than only the runtime-testable ones, because each runtime `skip` (a CSS import Node rejects, a `next/server` specifier only a bundler resolves) is irrelevant to `import type` — restricting it to those left the whole `editor/` declaration subtree, reachable only via `./client`, unguarded. See [DEVELOPING.md](DEVELOPING.md#published-package-esm-import-check).
-
-This is a structural blind spot particular to pnpm workspaces, not just a missed build step: inside the workspace, importing one package from another resolves through the package's dev `exports` field (raw `.ts` source), never through `publishConfig.exports` — the shape a real npm/pnpm consumer actually gets. So in-repo tests and dev usage exercise a different resolution path than the published tarball, and can pass while the tarball is broken. Catching this requires reconstructing what publish actually produces — merging each package's `publishConfig` the way `npm publish` does, against the built `dist/` output — rather than just importing the package by name.
-
-Published packages retain `declaration` (`.d.ts` output) but not `sourceMap`/`declarationMap`, since `files: ["dist"]` means the source files those maps reference are never included in the tarball.
+Published packages keep `declaration` output but not `sourceMap`/`declarationMap`, since `files: ["dist"]` means the sources those maps reference never ship.
 
 ## Dependency Model
 
-### pnpm Workspace Isolation
+**pnpm workspace isolation.** Workspaces are defined in `pnpm-workspace.yaml`. pnpm's content-addressable store and strict resolution mean each package can only import dependencies it declares, so phantom-dependency bugs — importing an undeclared package that a sibling happened to hoist — surface in development rather than after publishing, at a fraction of the disk cost of duplicated `node_modules` trees. Inter-package references use the `workspace:` protocol (`workspace:^` for peers, `workspace:*` for dev dependencies), which pnpm resolves to real version ranges at publish time. That isolation motivates the next two choices.
 
-The monorepo uses pnpm with workspaces defined in `pnpm-workspace.yaml`. pnpm's content-addressable store and strict dependency resolution provide workspace isolation by default: each package can only import dependencies it explicitly declares. There is no dependency hoisting to the root `node_modules`, so phantom dependency bugs (importing an undeclared package that happens to be hoisted by a sibling) are caught during development rather than after publishing.
+**Peer dependencies for plugins and adapters.** Auth plugins and framework adapters declare their upstream framework and UI dependencies as `peerDependencies`, so the adopter's project provides the instances and the plugin links against those same ones — React and Mantine crash or isolate context if a bundle holds two copies. For monorepo development the same dependencies are also `devDependencies`; only the `peerDependencies` declaration ships.
 
-**Why pnpm?** pnpm provides the same correctness guarantees that previously required npm's `install-strategy=nested`, but with better performance and lower disk usage (shared content-addressable store instead of duplicated `node_modules` trees). Inter-package references use the `workspace:` protocol (`workspace:^` for peer dependencies, `workspace:*` for dev dependencies), which pnpm resolves to real version ranges at publish time.
+**Standard types at package edges.** The `canopycms-next` adapter's public handler signature uses the global `Request`/`Response` types, never `NextRequest`/`NextResponse`, because framework-specific types resolved from two `node_modules` copies are incompatible even when structurally identical. Internally the adapter still uses Next.js APIs. The general principle: a type in a cross-package API must be a standard global or come from a shared package.
 
-### Peer Dependencies for Plugins and Adapters
-
-Auth plugins and framework adapters declare their upstream framework and UI dependencies as `peerDependencies`. This means the adopter's project provides the actual dependency instances, and the plugin links against those same instances at runtime.
-
-For example, `canopycms-auth-clerk` declares `@clerk/nextjs` and `@clerk/backend` as peer dependencies. The adopter installs these in their project; the auth plugin uses whatever version the adopter provides (within the declared range). Similarly, `canopycms-auth-dev` declares `@mantine/core`, `@mantine/hooks`, and `react` as peers.
-
-**For monorepo development**, the same dependencies are also listed as `devDependencies` (using `workspace:*` for internal packages, or standard version ranges for external packages) in each plugin's `package.json`. pnpm's strict resolution ensures each package resolves only its declared dependencies. When the package is published, only the `peerDependencies` declaration ships -- consumers provide the actual installations.
-
-**Why peerDependencies?** Libraries like React and Mantine require a single instance in the bundle. If a plugin bundled its own copy of React, the adopter's app would have two React instances, causing hook crashes and context isolation bugs. Peer dependencies ensure the plugin and the adopter share the same instance.
-
-### Standard Type Boundaries at Package Edges
-
-The `canopycms-next` adapter uses standard Web API types (`Request` and `Response`) in its public handler signature rather than Next.js-specific types like `NextRequest`. This is a deliberate design choice that keeps package boundaries clean regardless of the package manager's dependency resolution strategy.
-
-Even with pnpm's strict isolation, framework-specific types from different resolution contexts can cause cross-package type mismatches. Standard `Request` and `Response` types come from the global Web API type definitions, which are shared across all packages. By using these as the public contract, the adapter avoids cross-package type duplication entirely. Internally, the adapter can still use Next.js-specific APIs (like `NextResponse.json()`) for its own implementation.
-
-**Design principle**: Package boundaries should use standard, globally-available types. Framework-specific types should be confined to the package's internal implementation.
-
-### Root Package Hygiene
-
-The root `package.json` contains only monorepo tooling dependencies (eslint, prettier, typescript, husky, playwright). All library dependencies live in the packages that actually use them. For example, `simple-git` and `@tabler/icons-react` are dependencies of the `canopycms` core package, not the root.
-
-This ensures that each package's dependency declarations are accurate and complete, and that root-level tooling does not leak into package resolution.
+**Root package hygiene.** The root `package.json` carries only monorepo tooling (eslint, prettier, typescript, husky, playwright); every library dependency lives in the package that uses it, so each package's declarations stay accurate and root tooling cannot leak into package resolution.
 
 ## Module Structure
 
-The core package organizes code into focused modules, each with a single responsibility. This modular structure emerged from decomposing larger monolithic files into smaller, more maintainable units.
+The core package organizes code into focused modules with single responsibilities: `api/`, `assets/`, `authorization/`, `ai/`, `build/`, `cli/`, `config/`, `editor/`, `operating-mode/`, `paths/`, `schema/`, `static/`, `utils/`, `validation/`, `worker/`, and a set of flat `src/*.ts` domain modules. **The table in [AGENTS.md](AGENTS.md#code-organization) maps each one to its own `AGENTS.md`, which is where its invariants live, and the code comment at the point of a rule is authoritative over any document.** This section covers only what spans modules.
 
-### Modularized Domains
+**Three structural rules hold across the tree.** Client-safe code is separated from server-only code by file (`normalize.ts` versus `normalize-server.ts` in `paths/`, for instance), and `pnpm lint:bundle` fails the build if anything reachable from `canopycms/client` pulls in a node built-in — which is why the URL-prefix join shared by SEO and asset URL building is pure and dependency-free (see [Render-Time URL Prefixes](#render-time-url-prefixes)). Paths are **branded types** (`LogicalPath`, `PhysicalPath`, `CollectionPath`, `SanitizedBranchName`) so the compiler catches a logical path used as a filesystem path, which matters most where such a bug would be a traversal vulnerability (see [Why branded types for paths?](#why-branded-types-for-paths)). And a rule about content structure lives in exactly one place: `validation/field-traversal.ts`'s `traverseFields` is the single encoding of the schema-nesting rules, which the reference, entry-link, unknown-key and deletion checks all build on rather than re-walking the schema themselves.
 
-**Authorization** - Unified access control combining branch and path permissions:
+**The worker is the one module whose internal layering is architectural.** It is a lifecycle shell holding process concerns — start/stop, the cross-host single-worker lock, the poll loops, `remote.git` provisioning, the auth-cache refresh — plus one module per otherwise-disjoint duty cycle (task queue, git sync, the rebase loop beneath it) and a shared history-rewrite kernel all three touch, reached through a context object rather than the daemon instance. Imports run one direction only, and a lint cycle check holds the weaker guarantee that the graph stays acyclic. See [Why is the worker daemon split into free functions over a context?](#why-is-the-worker-daemon-split-into-free-functions-over-a-context).
 
-- Branch-level access control (who can access which branches)
-- Path-level permissions (who can edit which content paths)
-- Combined content access checks (main entry point for authorization)
-- Helper functions for role checking (isAdmin, isReviewer, etc.)
-- File loaders for permissions and groups configuration
-
-**Configuration** - Configuration types, schemas, and validation:
-
-- Type definitions for all configuration options
-- Zod schemas organized by concern (field, collection, permissions, media)
-- Schema flattening utilities for O(1) path lookups
-- Validation and helper functions for config authoring
-
-**Schema** - Schema loading and resolution:
-
-- Meta file loader for `.collection.json` files
-- Reference resolution against schema registries
-- High-level resolver that combines loading and resolution
-
-**Paths** - Path utilities with branded types for type safety:
-
-- Branded types: `LogicalPath`, `PhysicalPath`, `CollectionPath`, `SanitizedBranchName`
-- Normalization utilities (client-safe and server-only variants)
-- Security validation for path traversal prevention
-- Branch workspace path resolution
-
-**Editor** - React components, hooks, and context providers:
-
-- Context providers for dependency injection (ApiClient, EditorState)
-- Extracted hooks for state management (branch, entry, draft, comment, permissions, groups)
-- Component subdirectories for permission-manager and group-manager utilities
-
-**API** - API handlers, declarative guards, and route building:
-
-- Route handlers for all API endpoints
-- Declarative guard system for authorization, branch resolution, and schema loading
-- Route builder with Zod validation and typed guard context
-- API client for editor-to-server communication
-- Settings helpers for mode-aware configuration storage
-
-**Operating Mode** - Strategy pattern for deployment modes:
-
-- Client-safe strategies (UI flags, simple configuration)
-- Client-unsafe strategies (file system operations, git integration)
-- Type definitions for strategy interfaces
-
-**Worker** - The background daemon, split along its own call graph rather than by topic:
-
-- A lifecycle shell holding only process concerns: start/stop, the cross-host single-worker lock, the poll loops, `remote.git` provisioning, and the auth-cache refresh
-- The daemon's otherwise-disjoint duty cycles as separate modules — the task queue, the git sync, and the rebase loop beneath it — reached through a worker context object rather than by sharing the daemon instance
-- A shared history-rewrite kernel (the force-push leasing described in [Publishing a Rewritten History](#publishing-a-rewritten-history)) that all three touch
-- Imports run one direction only (shell → task queue / git sync → rebase → history rewrite → context); a lint cycle check holds the weaker guarantee that the graph stays acyclic, and the layering itself is a review concern
-- See [Deployment Architecture](#deployment-architecture) for what the daemon does and [Why is the worker daemon split into free functions over a context?](#why-is-the-worker-daemon-split-into-free-functions-over-a-context) for the shape of the split
-
-**AI Content Generation** - Schema-driven content export for AI consumption:
-
-- Entry-to-markdown conversion using schema field definitions
-- Content tree walking with configurable exclusions and bundles
-- Manifest generation for AI tool discovery
-- Shared generation engine used by both the route handler and the build utility
-
-**Build Utilities** - Static file generation for build-time content export:
-
-- Static AI content writer (writes generated markdown and manifest to disk)
-- Used by the CLI and during static site builds
-
-**Content Serialization** - Comment-preserving writes for YAML and md/mdx frontmatter:
-
-- `utils/content-serialize.ts` re-serialises an entry onto the file's OWN parsed `yaml` document rather than stringifying a fresh plain object, so a node whose value did not change keeps its comments, quoting and block style. Writing a fresh object is why an editor save used to delete every comment in a content file.
-- The reconciler is deliberately schema-blind: it makes the document's key set match the write payload exactly, so data authority stays with the payload and comments are the only thing inherited from disk. Whether a surviving key still belongs is answered a layer up, by the unknown-key report below.
-- Sequences align by value before position, so reordering a list carries each comment with the content it describes instead of leaving it on whatever moved into that index.
-- Every fallback path (new file, unparseable existing bytes, no frontmatter) emits byte-identical output to the pre-fix behaviour, so entry creation is unchanged and a malformed file can still be saved over.
-- Because the write now reads the file it is about to replace, the read sits inside the per-entry lock and the [SYNC-C1] content-write lock and after the OCC stat — see [docs/concurrency.md](docs/concurrency.md).
-
-**Unknown-Key Reporting** - Content keys the schema no longer defines:
-
-- `validation/field-traversal.ts`'s `traverseFields` is the single encoding of the schema-nesting rules; its optional `onContainer` hook reports each (data record, governing fields) pair, which is what lets a check inspect the data's own keys rather than only the schema's. An inline group does not fire the hook — it shares its parent's record, so treating it as a container would make every sibling of the group read as unknown.
-- `validation/entry-validator.ts`'s `findUnknownKeys` builds on that hook. It is non-blocking by design and feeds two surfaces: `validationWarnings` on the write response (already rendered by the editor) and `static/`'s `warnUnknownEntryKeys` during a production build.
-- It runs on the normalized, about-to-be-persisted data, so a resolved reference collapsed back to an id string cannot be misread, and it reports nothing for a container with no fields at all.
-
-**Static-Export Helpers** - Framework-agnostic static-site-generation support:
-
-- Core `collectStaticPaths` (canopycms/server) produces neutral route descriptors (URL path, segments, slug, entry type) from the build context
-- The Next.js adapter (canopycms-next) maps those onto `generateStaticParams` via the free `collectStaticParams` helper and the bound `generateContentStaticParams` method, so page modules never hold the admin build context
-- See [Static-Export Helpers](#static-export-helpers) for the core-plus-adapter design and the enumeration / content-read / admin capability split
-
-**Assets & Media** - Content-addressed asset storage, upload finalize pipeline, and on-demand image transforms:
-
-- Store contract with S3 and local-filesystem adapters, selected by the `media` config
-- Content-addressed key builders (sha-256 hashing, filename slugging) and the fixed set of bucket prefixes
-- Finalize pipeline (magic-byte sniffing, SVG sanitization, dimension extraction, dedup ordering)
-- Isomorphic transform-directive parser and canonical formatter, a server-only image transform (sharp), and the isomorphic `assetUrl`/`assetSrcSet` URL helpers
-- A hard split between the stored src (always root-relative) and the rendered URL (mount point applied at render time only)
-- See [Asset & Media System](#asset--media-system) for the full subsystem
-
-**Validation** - Content validation utilities:
-
-- Reference validator for checking content references
-- Entry link validator for checking inline entry:ID links in body content
-- Deletion checker for referential integrity
-- Field traversal utilities for schema-aware content inspection
-
-**Utilities** - Shared utilities:
-
-- Type-safe error handling patterns
-- Debug logging utilities
-- Formatting helpers
-- URL sanitization for safe rendering of CMS-sourced links
-- The single URL-prefix join shared by SEO URL resolution and asset URL building — pure and node-free, since it is reachable from the editor's client bundle (see [Render-Time URL Prefixes](#render-time-url-prefixes))
-
-### Top-Level Files
-
-Some files remain at the source root because they represent core domain concepts that span multiple modules:
-
-**Branch Management:**
-
-- Branch metadata (per-branch state storage)
-- Branch registry (branch listing cache)
-- Branch workspace (workspace provisioning)
-- Settings branch utilities (mode-aware settings storage)
-
-**Content:**
-
-- Content ID index (bidirectional ID-to-path mapping)
-- Content index generation (on-disk cross-process generation marker for the ContentId index; complements the in-process index registry)
-- Content listing (shared entry-listing utilities: filename parsing, entry data reading, ordering, flat entry listing)
-- Content reader (authenticated content access)
-- Content store (file-based content persistence)
-- Content tree (build-time content tree builder for adopter navigation, sitemaps, etc.)
-- Content types (content data structures)
-- Entry link resolver (inline entry:ID link resolution for body content)
-
-**Git:**
-
-- Git manager (low-level git operations)
-- GitHub service (GitHub API integration)
-
-**Dev Content Sync:**
-
-- Sync core (prompt-free content-tree diffing, copy, and commit primitives shared by the sync CLI and the dev watcher)
-- Dev content watcher (dev-only divergence detection between the working tree and the served branch clone; see [Dev Content Divergence Detection](#dev-content-divergence-detection))
-
-**Core:**
-
-- Services (service container and factory)
-- Context (request context creation)
-- Types (shared type definitions)
-- User (user data structures)
-- ID generation
-
-**Other:**
-
-- Comment store (review comment persistence)
-- Reference resolver (content reference handling)
-- Settings workspace (settings file management)
-- Build mode and deployment type detection (static vs server)
-
-### Design Rationale
-
-**Why modularize?** The original codebase had several large files (600-1100+ lines) that made navigation difficult and created implicit coupling. Breaking these into focused modules with explicit exports improves:
-
-- Discoverability (clear module boundaries)
-- Testability (smaller units with defined interfaces)
-- Maintainability (changes are localized)
-
-**Why keep some files at root?** Files that represent core domain concepts used across many modules remain at the root to avoid deep import chains. These are stable abstractions that change infrequently.
-
-**Why branded types for paths?** Path handling is error-prone because different contexts need different path representations (logical content paths vs physical filesystem paths). Branded types make the compiler catch misuse at development time rather than runtime.
+**The flat `src/*.ts` modules stay flat deliberately**: branch metadata, the registry and workspace provisioning; the content store, reader, listing, tree and ID index; the git manager and GitHub service; the dev sync core and content watcher; services, context and types. Measured against the alternative, those name clusters have several times more inbound traffic from outside than between themselves, so directories would add a hop while encapsulating nothing.
 
 ## Service Architecture
 
-CanopyCMS uses **dependency injection** to manage service lifecycle and avoid global singletons. Services are created once at initialization and passed down through the call stack.
+CanopyCMS uses dependency injection rather than global singletons: services are created once at initialization and passed down the call stack.
 
-### Service Container
+The `CanopyServices` container ([services.ts](packages/canopycms/src/services.ts) holds its shape) carries the validated config, the flattened schema, the three access checkers, the branch registry, the GitHub service when configured, and the git factory/commit/submit helpers. `createCanopyServices()` builds it once and returns it immutable: it validates and flattens the schema, creates the authorization checkers, initializes the branch registry, sets up GitHub integration when configured, and — first — **detects the effective active branch and base branch** (dev-mode git HEAD detection for whichever the adopter left unset, skipped during a build; see [Branch Identity](#branch-identity-defaultbasebranch-vs-defaultactivebranch)) and bakes both into the config, so all downstream code uses consistent values. In dev mode `refreshActiveBranch()` re-detects per request, again only the fields the adopter left unset.
 
-The `CanopyServices` interface (defined in [services.ts](packages/canopycms/src/services.ts)) is the central service container that holds all global services and factory functions:
+API handlers receive the container on `ApiContext`, content readers take it at creation, framework adapters create it once and inject it, and editor components never touch it at all — they go through the `useApiClient()` hook. Dependencies are therefore explicit and easy to mock, TypeScript enforces that every service is provided, and in a Lambda the container is built once per container lifecycle.
 
-```typescript
-export interface CanopyServices {
-  config: CanopyConfig                    // Validated configuration
-  flatSchema: FlatSchemaItem[]            // Flattened schema for O(1) lookups
-  checkBranchAccess: (...)                // Branch permission checker
-  checkPathAccess: (...)                  // Path permission checker
-  checkContentAccess: (...)               // Combined content access checker
-  registry?: BranchRegistry               // Branch cache (always present in prod and dev modes)
-  githubService?: GitHubService           // GitHub API client (if configured)
-  createGitManagerFor: (...)              // Factory for git operations
-  commitFiles: (...)                      // Helper for committing files
-  submitBranch: (...)                     // Helper for submitting branches
-}
-```
+**Global vs scoped.** Config, flattened schema, authorization checkers, branch registry and GitHub service are created once and shared, because they are stateless or hold shared caches. `ContentStore`, `GitManager` and `ReferenceResolver` are created per branch context or per operation, because they are tied to one and must not carry state across.
 
-**Service Creation:**
-
-Services are created once at application startup using `createCanopyServices()`:
-
-```typescript
-const services = await createCanopyServices({
-  config,
-  authPlugin,
-  entrySchemaRegistry,
-})
-```
-
-This function:
-
-1. Detects the effective active branch **and** base branch (dev-mode git HEAD detection for whichever the adopter left unset, skipped during a build; see [Branch Identity](#branch-identity-defaultbasebranch-vs-defaultactivebranch)) and bakes both into the config so all downstream code uses consistent values. In dev mode, `refreshActiveBranch()` re-detects them per request — again, only the fields the adopter left unset
-2. Validates and flattens the schema
-3. Creates authorization checkers
-4. Initializes the branch registry (prod and dev modes)
-5. Sets up GitHub integration (if configured)
-6. Returns an immutable service container
-
-### Service Access Patterns
-
-Different layers of the application access services in different ways:
-
-**API Handlers** receive services via `ApiContext`:
-
-```typescript
-const readContentHandler = async (
-  ctx: ApiContext,        // Contains services
-  req: ApiRequest,
-  params: ValidatedParams
-): Promise<ApiResponse> => {
-  const store = new ContentStore(branchRoot, ctx.services.flatSchema)
-  const hasAccess = await ctx.services.checkContentAccess(...)
-  // ...
-}
-```
-
-**Content Readers** receive services at creation:
-
-```typescript
-const reader = createContentReader({ services })
-const doc = await reader.read({ branch, path })
-```
-
-**Editor Components** use the ApiClient hook (never access services directly):
-
-```typescript
-export function MyComponent() {
-  const client = useApiClient()
-  const data = await client.content.read(...)
-}
-```
-
-**Framework Adapters** create services once and inject them:
-
-```typescript
-// apps/example1/app/lib/canopy.ts
-const canopyContextPromise = createNextCanopyContext({
-  config: config.server,
-  authPlugin: getAuthPlugin(),
-  entrySchemaRegistry,
-})
-
-export const getHandler = async () => {
-  const context = await canopyContextPromise
-  return context.handler // Handler has services injected
-}
-```
-
-### Scoped vs Global Services
-
-**Global Services** (created once, shared across requests):
-
-- Configuration (`config`)
-- Flattened schema (`flatSchema`)
-- Authorization checkers (`checkBranchAccess`, `checkPathAccess`)
-- Branch registry (`registry`)
-- GitHub service (`githubService`)
-
-**Scoped Services** (created per-request or per-operation):
-
-- **ContentStore**: Created for each branch context (lightweight wrapper)
-- **GitManager**: Created via factory for specific repository paths
-- **ReferenceResolver**: Created when resolving references
-
-**Why this split?** Global services are stateless or contain shared caches. Scoped services are tied to specific branch contexts or operations and must be created fresh to avoid cross-contamination.
-
-### Default Value Handling
-
-CanopyCMS centralizes default values in the configuration layer using Zod schemas. The `getConfigDefaults()` helper extracts default values from schemas:
-
-```typescript
-import { getConfigDefaults } from 'canopycms'
-
-const defaults = getConfigDefaults()
-// { baseBranch: 'main', remoteName: 'origin', ... }
-```
-
-This ensures:
-
-- Single source of truth for defaults
-- Type safety from Zod schema validation
-- No hardcoded defaults scattered across the codebase
-
-**Usage in services:**
-
-```typescript
-const configDefaults = getConfigDefaults()
-const createGitManagerFor = (repoPath, opts?) =>
-  new GitManager({
-    repoPath,
-    baseBranch: opts?.baseBranch ?? config.defaultBaseBranch ?? configDefaults.baseBranch,
-    remote: opts?.remote ?? config.defaultRemoteName ?? configDefaults.remoteName,
-  })
-```
-
-### Testing with Services
-
-Mock services for testing by creating a minimal `CanopyServices` object:
-
-```typescript
-const mockServices: CanopyServices = {
-  config: testConfig,
-  flatSchema: flattenSchema(testConfig.schema, testConfig.contentRoot),
-  checkBranchAccess: async () => ({ allowed: true }),
-  checkPathAccess: async () => 'write',
-  checkContentAccess: async () => ({ allowed: true, level: 'write' }),
-  createGitManagerFor: () => mockGitManager,
-  // ...
-}
-
-const ctx: ApiContext = {
-  services: mockServices,
-  getBranchContext: async () => mockBranchContext,
-}
-
-await handler(ctx, req, params)
-```
-
-### Benefits of This Architecture
-
-1. **No Global State**: Services are explicitly passed, making dependencies clear
-2. **Testable**: Easy to mock services for unit tests
-3. **Type Safe**: TypeScript ensures all services are provided
-4. **Lambda-Friendly**: Services created once per Lambda instance, reused across requests
-5. **Clear Boundaries**: Each layer knows exactly what it has access to
+**Defaults live in the configuration layer.** `getConfigDefaults()` extracts default values from the Zod schemas, so there is one source of truth for them and no hardcoded fallbacks scattered through the codebase.
 
 ## Storage Architecture
 
-CanopyCMS is entirely file system based. There are no external databases, no Redis/Valkey caching servers, and no separate worker processes by default. This simplifies deployment and operations.
+CanopyCMS is entirely file system based: no external database, no cache server, and no worker process by default. Git already provides versioning and the filesystem provides persistence, so there is no state to synchronize between a database and git, and nothing extra to operate — which suits serverless plus attached storage directly. What gets stored:
 
-**What gets stored:**
+- **Content**: MD/MDX/JSON/YAML files under the content directory, committed to git.
+- **Branch metadata**: `.canopy-meta/branch.json` per workspace — state, the recorded base branch (the immutable fork point set at creation), PR references, sync status, conflict tracking. Excluded from git via info/exclude.
+- **Branch registry**: `branches.json` at the branches root, an inventory of all branches, gitignored.
+- **Comments**: `.canopy-meta/comments.json` per branch, not committed, automatically excluded.
+- **Settings**: `groups.json` and `permissions.json` on the orphan branch `canopycms-settings-{deploymentName}`, with the workspace under the mode's workspace root.
 
-- **Content**: MD/MDX/JSON/YAML files in the content directory (committed to git)
-- **Branch metadata**: `.canopy-meta/branch.json` per workspace (state, recorded base branch — the immutable fork point set at creation — PR references, sync status, conflict tracking, automatically excluded via git info/exclude)
-- **Branch registry**: `branches.json` at branches root (inventory of all branches, gitignored)
-- **Comments**: `.canopy-meta/comments.json` per branch (NOT committed to git, automatically excluded)
-- **Settings (prod)**: `groups.json` and `permissions.json` on orphan branch `canopycms-settings-{deploymentName}` (version-controlled, deployment-specific), workspace at `{workspaceRoot}/settings/`
-- **Settings (dev)**: Same orphan branch mechanism as prod (`canopycms-settings-{deploymentName}`), workspace at `.canopy-dev/settings/` (gitignored, local development only)
+**Deliberately not on this filesystem:** binary assets. Images and PDFs live in a separate content-addressed object store — S3 in prod, a local directory in dev — and content references them only by immutable key, which keeps git history and per-branch clones lean. See [Asset & Media System](#asset--media-system).
 
-**What is deliberately not on this filesystem:** Binary assets (images, PDFs) are not stored in git or on the CMS workspace filesystem. They live in a separate content-addressed object store — S3 in prod, a local directory in dev — and content only ever references them by immutable key. This keeps git history and per-branch EFS clones lean. See [Asset & Media System](#asset--media-system).
-
-**Concurrent writes**: Branch metadata, comments, and the settings files (permissions/groups) are each mutated by more than one host at a time in practice (several warm Lambda containers plus the worker, all sharing EFS). All three are protected by a server-enforced cross-host lock in addition to in-process serialization, so a lost update across hosts is not an accepted risk for any of them. Settings files additionally carry a per-write version check, but it is advisory there rather than the guarantee: the files are git-committed, and a settings-branch merge can rewrite that version, so the cross-host lock is what actually prevents lost updates. Collection metadata (`.collection.json`) mutations get the same in-process-plus-cross-host-lock treatment across their full read-then-write, but deliberately carry no version field at all, for the same git-rewrite reason. See [docs/concurrency.md](docs/concurrency.md) for the full protection model and why each layer alone isn't sufficient.
-
-**Deployment model**: CanopyCMS is designed to be deployed to a server or serverless function with an attached file system shared by all server processes. On AWS, this could mean Lambda + EFS.
+**Concurrent writes.** Branch metadata, comments and the settings files are each mutated by more than one host at a time in practice (several warm Lambda containers plus the worker, all sharing EFS), so all three are protected by a server-enforced cross-host lock in addition to in-process serialization: a lost update across hosts is not an accepted risk for any of them. Settings files also carry a per-write version check, but it is advisory there — they are git-committed and a settings-branch merge can rewrite the version, so the lock is what actually prevents lost updates. Collection metadata (`.collection.json`) gets the same in-process-plus-cross-host locking across its whole read-then-write and deliberately carries no version field, for the same git-rewrite reason. [docs/concurrency.md](docs/concurrency.md) is the full protection model and the required reading before adding any cache, lock, or read-modify-write.
 
 ## Content Identification System
 
-Every entry and collection in CanopyCMS has a stable, globally unique identifier that persists across renames and moves. This enables robust reference fields, relationship tracking, and reliable content linking.
+Every entry and collection has a stable, globally unique identifier that survives renames and moves, which is what makes reference fields and reliable content linking possible. IDs are 12-character Base58 strings (from `short-uuid`): ~58^12 possible values, URL-safe, and short enough to sit inside a filename.
 
-### Short UUIDs
+**IDs live in filenames.** Entries are `type.slug.id.ext` (e.g. `post.hello-world.vh2WdhwAFiSL.json`), directories are `slug.id` (e.g. `posts.916jXZabYCxu`), and metadata files carry no ID. A slug of `index` makes the entry its collection's landing page, answering at the collection's own path — which is why a root `home.index.…` entry answers at `/`. So the slug can change without breaking references, and a filename shows both a human-friendly slug and a unique ID. See [Why filename-embedded content IDs?](#why-filename-embedded-content-ids).
 
-CanopyCMS uses **short UUIDs** (12-character Base58-encoded strings) for all content IDs. These are generated using the `short-uuid` package (truncated to 12 chars) and provide:
-
-- **Global uniqueness**: ~58^12 = 2.6 × 10^21 possible IDs; collision probability with 10,000 entries is ~0.000000002%
-- **Compact representation**: 12 characters (vs. 36 for standard UUIDs)
-- **URL-safe**: Can be used in URLs and APIs without encoding
-- **Human-friendly**: Short enough to include in filenames while maintaining uniqueness
-
-Example ID: `a1b2c3d4e5f6`
-
-### ID Storage in Filenames
-
-IDs are embedded directly in filenames and directory names using a simple pattern:
-
-```
-content/
-  .collection.json
-  home.index.agfzDt2RLpSn.json
-  posts.916jXZabYCxu/
-    .collection.json
-    post.hello-world.vh2WdhwAFiSL.json
-    post.mermaid-demo.tuggGbrydvYr.json
-  authors.q52DCVPuH4ga/
-    .collection.json
-    author.alice.5NVkkrB1MJUv.json
-    author.bob.jm6FYVAtJie8.json
-```
-
-**Filename Pattern:**
-
-- Entries: `type.slug.id.ext` (e.g., `post.hello-world.vh2WdhwAFiSL.json`). A slug of `index`
-  makes the entry its collection's landing page, and its URL is the collection's own path — which
-  is why the root entry above (`home.index.…`) answers at `/`
-- Directories: `slug.id` (e.g., `posts.916jXZabYCxu`)
-- Metadata files: No ID (e.g., `.collection.json`, `.gitignore`)
-
-**Benefits:**
-
-- **Stable IDs across moves**: Rename slug portion without breaking references; ID stays in filename
-- **Self-contained**: No separate database or symlink directory needed
-- **Git-friendly**: IDs visible in diffs, file moves preserve IDs via git mv
-- **Atomic operations**: Filesystem renames are atomic
-- **Human-readable**: Filenames show both human-friendly slug and unique ID
-
-### Bidirectional ID Index
-
-The `ContentIdIndex` class maintains an in-memory bidirectional mapping between IDs and file paths by scanning filenames:
-
-```
-Forward map:  ID → {path, type, collection, slug}
-Reverse map:  path → ID
-```
-
-This enables O(1) lookups in both directions:
-
-- **Forward**: "What file does ID `a1b2c3d4e5f6` refer to?"
-- **Reverse**: "What ID does the file at `content/posts/hello.json` have?"
-
-**Lazy loading optimization**: The index is built on first access by recursively scanning filenames in the content directory. This minimizes Lambda cold starts—building the index for 1000 entries takes approximately 10-50ms. Subsequent accesses are instant (index already in memory).
-
-**Performance characteristics**:
-
-- Cold start (first access): ~10-50ms for 1000 entries
-- Warm execution (index in memory): 0ms
-- Memory overhead: ~1KB per entry
+**Bidirectional index.** `ContentIdIndex` scans filenames to maintain ID → {path, type, collection, slug} and path → ID maps, giving O(1) lookups in both directions. It is built lazily on first access (~10-50ms for 1000 entries, which minimizes Lambda cold-start cost, then 0ms while warm).
 
 ### Multi-Process Consistency
 
-> The full concurrency model — the four protection layers (in-process mutex, per-file
-> OCC, server-enforced lockfile, generation markers), EFS/NFS semantics, the
-> per-resource protection table, residual staleness windows, and recipes for new
-> caches/stores — lives in [docs/concurrency.md](docs/concurrency.md). This section
-> covers only the ContentId index.
+> The full concurrency model — the four protection layers, EFS/NFS semantics, the per-resource protection table, residual staleness windows, and recipes for new caches — lives in [docs/concurrency.md](docs/concurrency.md).
 
-The index is NOT thread-safe, and each process holds its own in-memory copy. There is no shared memory or cross-host file watching between processes (several warm Lambda containers plus the worker sharing branch clones on EFS), so the shared filesystem itself is the coordination medium:
+The index is not thread-safe and each process holds its own copy, with no shared memory or cross-host file watching between processes, so the shared filesystem is the coordination medium:
 
-- **Filenames are source of truth**: Each process rebuilds its index by scanning filenames on disk
-- **Atomic operations**: File renames are atomic; all processes discover the same filenames
-- **On-disk generation marker**: Every operation that mutates indexed files under a branch clone rewrites a small per-clone marker file (`.canopy-meta/content-index.generation`) with a fresh random token, strictly after the mutation. Each store re-reads the marker on a throttled probe (default one second) and rebuilds when the token differs from the one it captured before its last scan.
-- **Random token, not a counter**: Readers only need to answer "did it change since I captured it?", so inequality suffices. A monotonic counter would require read-modify-write and silently lose concurrent bumps without a lock; a unique token per bump has no lost-update problem and sidesteps NFS mtime granularity and cross-host clock skew.
-- **Rebuilds swap, never clear**: A rebuild constructs a fresh index and swaps it in, so concurrent readers never observe a half-built index.
-- **Suspicious-lookup backstop**: An ID miss, or an index hit pointing at a file that no longer exists, forces one immediate rebuild (throttled to once per few seconds) before the lookup fails—self-healing for the residual windows below.
-- **Write existence guard**: A write targeting an existing ID consults the actual directory listing before recreating a missing expected file, and raises a conflict error instead of resurrecting an entry another process concurrently renamed. This prevents duplicate-ID files independently of the marker.
-- **Unique ID generation**: Multiple processes can't create duplicate IDs (globally unique)
-- **Duplicate-ID quarantine**: a duplicate embedded ID (rename-crash debris, or a merge landing two files sharing one ID) no longer fails the build — that used to brick every content operation on the branch permanently. The scan keeps one deterministic winner (string-MIN of the relative paths, so every host agrees regardless of `readdir()` order), drops the loser from the index, and reports the pair through `branch-health` for the `repair-content-duplicates` admin action. The dropped file stays on disk **and stays addressable by collection+slug** (slugs resolve by directory scan, which knows nothing about the quarantine), so `ContentStore.write()` refuses a save whose content ID is on two files (`DuplicateContentIdError`, a 409 naming both files and the repair action) instead of mutating an ambiguous target; `delete()`/`renameEntry()` stay allowed because each only touches the file the caller addressed. An index is a hint about where an ID lives, never authority to delete — see [docs/concurrency.md](docs/concurrency.md).
+- **Filenames are the source of truth**, rebuilt by scanning disk; renames are atomic, so every process discovers the same names.
+- **On-disk generation marker**: every operation that mutates indexed files under a branch clone rewrites `.canopy-meta/content-index.generation` with a fresh random token, strictly after the mutation. Each store re-reads the marker on a throttled probe (about a second) and rebuilds when the token differs from the one it captured. **A random token, not a counter**: readers only need "did it change since I captured it?", and inequality answers that, while a counter would need a read-modify-write that loses concurrent bumps without a lock.
+- **Rebuilds swap, never clear**, so a concurrent reader never observes a half-built index.
+- **Suspicious-lookup backstop**: an ID miss, or an index hit pointing at a file that is gone, forces one immediate rebuild (throttled to once per few seconds) before the lookup fails.
+- **Write existence guard**: a write targeting an existing ID consults the real directory listing before recreating a missing expected file, and raises a conflict rather than resurrecting an entry another process just renamed. This prevents duplicate-ID files independently of the marker.
+- **Duplicate-ID quarantine**: a duplicate embedded ID (rename-crash debris, or a merge landing two files on one ID) must not fail the build. The scan keeps one deterministic winner (string-MIN of the relative paths, so every host agrees regardless of `readdir()` order), drops the loser from the index, and reports the pair through `branch-health` for the `repair-content-duplicates` admin action. The dropped file stays on disk **and stays addressable by collection+slug**, since slugs resolve by directory scan and know nothing about the quarantine — so `ContentStore.write()` refuses a save whose content ID is on two files (a 409 naming both files and the repair action) rather than mutating an ambiguous target, while `delete()`/`renameEntry()` stay allowed because each touches only the file the caller addressed. **An index is a hint about where an ID lives, never authority to delete.**
 
-Residual staleness is bounded rather than open-ended: the probe throttle (about a second) plus, across hosts on EFS/NFS, attribute caching that can delay marker visibility for roughly 3-60 seconds on default mounts. These windows are further bounded by per-request store lifetimes and healed by the suspicious-lookup backstop—acceptable for human-paced editing workflows.
+Residual staleness is bounded rather than open-ended: the probe throttle plus, across hosts on EFS/NFS, attribute caching that can delay marker visibility for roughly 3-60 seconds on default mounts. Per-request store lifetimes and the suspicious-lookup backstop bound it further — acceptable for human-paced editing.
 
-## Case Sensitivity
+### Case Sensitivity
 
-Content directories and filenames may have mixed casing (e.g., `content/docs/API-Reference/`), but URL-facing paths are lowercased. Here is where case sensitivity matters and where it does not:
-
-**Case-insensitive (safe with mixed-case content on disk):**
-
-- **Collection path resolution** (`resolveCollectionPath` in `content-id-index.ts`): Reads actual directory entries from disk and matches via `extractSlugFromFilename()`, which lowercases. A request for `content/docs/api-reference` resolves correctly even if the directory is `API-Reference.bChqT78gcaLd`.
-- **Entry slug matching** (`content-store.ts`): Slugs are lowercased before comparison, so a query for slug `getting-started` finds a file named `doc.Getting-Started.a1b2c3d4e5f6.md`.
-- **Content tree paths** (`content-tree.ts`): The default `buildPath` lowercases all URL paths, so `content/docs/API-Reference` produces `/docs/api-reference`.
-- **`readByUrlPath`** (`context.ts`): Because it calls `read()` which flows through the case-insensitive store lookups above, lowercased URL paths resolve to mixed-case filesystem paths.
-
-**Case-sensitive (filesystem-dependent):**
-
-- **Direct `fs.readFile` / `fs.readdir` calls**: If code constructs a path string without going through `resolveCollectionPath`, the lookup is case-sensitive on Linux/EFS. This only affects the fallback path in `buildPaths` when a collection directory does not yet exist on disk.
-- **macOS vs Linux**: macOS filesystems are case-insensitive by default; Linux and EFS are case-sensitive. Always test path resolution on a case-sensitive filesystem if your content has mixed casing.
-
-**Rule of thumb**: Content paths are case-insensitive for reads (thanks to directory scanning), but always use lowercase for new content directories to avoid platform-dependent behavior.
+Content directories and filenames may be mixed-case, but URL-facing paths are lowercased. Reads are **case-insensitive** wherever they go through a directory scan that lowercases before comparing — collection path resolution, entry slug matching, content tree paths, and `readByUrlPath`. A direct `fs.readFile`/`fs.readdir` on a hand-built path string is **case-sensitive** on Linux and EFS, which affects only the `buildPaths` fallback for a collection directory that does not exist yet. macOS is case-insensitive by default, so mixed-case content must be tested on a case-sensitive filesystem — and new content directories should be lowercase.
 
 ## Schema-Driven Content Model
 
-CanopyCMS uses a schema model based on **collections** and **entry types**. Schemas are defined in `.collection.json` files alongside content, with entry types referencing field definitions in a centralized schema registry.
+Content is modelled as **collections** and **entry types**. Collections are declared in `.collection.json` files alongside the content; entry types inside them reference field definitions in a central schema registry. The root content directory is itself a collection, so every collection behaves identically and no code special-cases the root.
 
-### Schema Structure
+**Entry types** carry a `name`, a `format` (md, mdx, json, yaml), `fields`, an optional `maxItems` cardinality limit (`1` behaves like a singleton), and a `default` flag for the "Add" button. They are schema metadata, not navigable nodes: a collection appears in navigation, its entry types appear in type selectors.
 
-The schema is defined as a `RootCollectionConfig` with two optional properties:
+**Field flags and structured values.** `isTitle` marks the field the editor, listings and tree builders display instead of a raw slug. Only one field per entry type may carry it, and it must be a scalar the system can resolve at runtime — so it is rejected on fields nested inside a `list: true` object field, where there is no single element to read. Beyond scalars, a field's value can be an object: the `image` field carries a content-addressed asset reference plus alt text, dimensions and an optional crop rectangle. Structured values are enforced at the server write boundary by the shared isomorphic entry validator (see [Asset & Media System](#asset--media-system)).
 
-- **entries**: Array of entry type configurations (typed content items)
-- **collections**: Nested collection hierarchies
+**Reserved names and formats.** For md/mdx entry types the field name `body` is reserved, because `body` carries the markdown below the frontmatter, and schema validation rejects a frontmatter field with that name. That is the one place the two format categories differ structurally: **document formats** (md, mdx) separate frontmatter from a body, while **data-only formats** (json, yaml) store every field as structured data and have no body concept.
 
-**Entry types** define the types of content allowed in a collection. Each entry type has:
+### Index Entries and the One-URL Invariant
 
-- **name**: The type identifier (e.g., 'post', 'doc', 'settings')
-- **format**: Content format (md, mdx, json, yaml)
-- **fields**: Field schema definitions
-- **maxItems**: Optional cardinality limit (1 = only one instance allowed, like a singleton)
-- **default**: Whether this is the default type for "Add" button
+An entry whose slug is `index` represents its collection rather than a child page, the same convention as `index.html`. CanopyCMS collapses index entries consistently across the whole content API: `readByUrlPath('/docs')` resolves the docs collection's index entry, `listEntries()` reports its `urlPath` as `/docs`, `buildContentTree()` generates `/docs` for the node, and the root index entry resolves to `/`. Adopters can therefore use the content APIs' URL paths directly for routing.
 
-**Collections** contain entry types and can nest other collections. The root itself is a collection (the content root), creating a uniform model where every collection behaves identically.
+**An index entry answers at exactly one URL** — its collapsed collection path. `readByUrlPath('/docs/index')` returns `null` absent a collection or entry type literally named `index`, an index entry does not also answer at `/<collection>/<entryTypeName>`, and no entry answers at `/<collection>/<entryTypeName>/<slug>`. Those candidates all land on a registered entry-TYPE schema item, which `buildPaths` delegates to the parent collection, so the gate sits one layer up: `content-reader.ts`'s `ReadContentInput.urlAddressableOnly` (set by `readByUrlPath` and nothing else) requires each candidate's `entryPath` to be an actual collection and the resolved entry's on-disk type to be one that collection declares — checked with two non-throwing `ContentStore` predicates reading the same `schemaIndex` `buildPaths` reads, so the gate and the resolver cannot disagree. The comparison is case-insensitive through the shared `isIndexSlug`, because this resolver is the one consumer seeing a raw URL segment while everything downstream lowercases, and the index-fallback candidate survives unconditionally, which is what resolves a collection literally _named_ `index`. One qualifier: this covers entries in the typed filename grammar with a declared type, exactly what `listEntries` sees, while a legacy untyped file stays resolvable by URL and invisible to `listEntries` — an open gap.
 
-**Field flags**: Individual fields within an entry type can carry behavioral flags:
+Each entry gets one `urlPath`, but two _different_ entries can compute the same one — an entry whose slug matches a sibling collection that also has an index entry, or two slugs differing only by case. Only one would then be reachable, so **no two entries may share a `urlPath`**, enforced twice: `assertNoDuplicateUrlPaths` fails a production build naming every contested URL, and `url-collision.ts` is consulted by `ContentStore` on entry create and rename and by the schema store on collection rename. Neither guard subsumes the other — content also arrives by merge, by direct commit, and by adopters retrofitting a repo, none of which pass the write boundary, while the build guard cannot stop an author creating the collision. Both are keyed on the URL and deliberately **not** on the name: an entry beside a same-named sibling collection with no index entry is a legitimate shape (a landing page plus a folder of children), and a name-based rule would forbid it. See [static/AGENTS.md](packages/canopycms/src/static/AGENTS.md) and [src/AGENTS.md](packages/canopycms/src/AGENTS.md) for the two halves.
 
-- **isTitle**: Marks a field as the human-readable title for entries of this type. The editor UI, content listings, and tree builders use this to display meaningful labels instead of raw slugs. Only one field per entry type may be marked `isTitle`. The field must be a scalar (string-like) value that can be resolved at runtime, so `isTitle` is rejected on fields nested inside `list: true` object fields where the system cannot determine which array element to use.
+### Schema Registry and Meta Files
 
-**Structured field types**: Beyond scalar fields, the schema supports structured field types whose value is an object rather than a primitive. The `image` field is one such type — its value carries a content-addressed asset reference plus alt text, dimensions, and an optional crop rectangle, and its definition can require a fixed aspect ratio. Structured values are enforced at the server write boundary by the shared isomorphic entry validator. See [Asset & Media System](#asset--media-system).
+The registry (`createEntrySchemaRegistry` in the adopter's own `app/schemas.ts`) is a central home for field definitions; a collection's `.collection.json` names one by string (`"schema": "postSchema"`), resolved against the registry at initialization, and a collection can declare several entry types each with its own schema. See [README.md](README.md) for the authoring shape.
 
-**Reserved field names**: For md/mdx entry types, the field name "body" is reserved. The system uses `body` to carry the markdown content itself (everything below the frontmatter). Schema validation rejects md/mdx entry types that define a frontmatter field named "body" to prevent collisions with the content body. Data-only formats (JSON and YAML) have no such restriction since they have no separate body concept.
+This keeps field definitions DRY and type-checked in TypeScript, keeps content structure (meta files, co-located with content, visible in the same diffs) separate from field definitions, and lets a collection be added by creating a folder with a `.collection.json`. The limits are the flip side: references are validated at runtime rather than by the compiler, and the registry has to be maintained alongside the meta files.
 
-**Format categories**: Content formats fall into two categories. **Document formats** (md, mdx) use frontmatter/body separation, where structured fields live in YAML frontmatter and the markdown body is a distinct content area. **Data-only formats** (json, yaml) store all fields as structured data with no body concept. This distinction drives how the system reads, writes, and validates entries of each format.
+A meta file declares its collection's name and label, its entry type configurations, and an optional `order` array of content IDs (when omitted or empty, children sort alphabetically). A collection's path comes from the folder structure, never from the meta file, and nesting is detected by scanning subdirectories. The root `content/.collection.json` is optional and takes no `name` or `path`.
 
-**Key design principle**: Entry types are schema metadata, not navigable tree nodes. A collection with `entries: [{ name: 'post', ... }]` defines that entries of type "post" can be created in that collection. The entry type itself doesn't appear in navigation—only the collection does.
+### Schema Resolution
 
-**Index entries**: An entry with the slug "index" represents the collection itself rather than a child page. This is a convention borrowed from filesystem-based routing (like `index.html`). For example, a `docs` collection might have an index entry that serves as the landing page for `/docs`. CanopyCMS collapses index entries in URL paths consistently across the entire content API surface: `readByUrlPath('/docs')` resolves to the index entry in the docs collection, `listEntries()` reports its `urlPath` as `/docs` (not `/docs/index`), and `buildContentTree()` generates a path of `/docs` for the node. The root content directory's index entry resolves to `/`. This collapsing convention means adopters can use URL paths directly from the content APIs for routing and linking without needing to special-case index entries.
+Resolution runs during service initialization, in three steps:
 
-The collapse is **exclusive for the `/docs/index` spelling**: `readByUrlPath('/docs/index')` returns `null` (absent a collection or entry type literally named `index`), because `resolveUrlPathCandidates` skips its direct-entry candidate when the last URL segment is an index slug. It is now exclusive in general, not only for that spelling: an index entry does not also answer at `/<collection>/<entryTypeName>`, nor does any entry answer at `/<collection>/<entryTypeName>/<slug>` — both candidates land on a registered entry-TYPE item that `buildPaths` would delegate to the parent collection, and `readByUrlPath` (`content-reader.ts`'s `ReadContentInput.urlAddressableOnly`) rejects any candidate whose `entryPath` is not an actual collection, plus any resolved entry whose on-disk type its collection does not declare. That is checked with two non-throwing `ContentStore` predicates, `isCollectionPath`/`declaresEntryType`, reading the same `schemaIndex` `buildPaths` reads so the gate and the resolver cannot disagree. The one qualifier that still applies: this covers entries written in the typed filename grammar with a declared type — exactly what `listEntries` can see. A legacy untyped file (no `{type}.{slug}.{id}.{ext}` grammar, e.g. a hand-authored `overview.json`) is still resolvable by URL and still invisible to `listEntries`; closing that is a separate, open gap. The comparison is case-insensitive (via the shared `isIndexSlug`), because this resolver is the one consumer that sees a raw URL segment while everything downstream lowercases — a strict compare closed `/docs/index` and left `/docs/Index` answering. The index-fallback candidate survives unconditionally, which is what resolves a collection literally _named_ `index` — its own index entry, rather than the parent's.
+1. **Load** (`loadCollectionMetaFiles`): recursively scan for `.collection.json`, parse and validate each with Zod, and extract each collection's ContentId from its directory name.
+2. **Resolve** (`resolveCollectionReferences`): replace each string reference with the registry's real field definitions, validate that every referenced schema exists, build the nested hierarchy, and thread each ContentId into the resolved config.
+3. **Flatten**: reduce the hierarchy to `Map<path, FlatSchemaItem>` for O(1) lookups. Items are a discriminated union of `collection` and `entry-type`, each carrying its full `logicalPath` as a branded type. The content root is included as a collection with `parentPath: undefined` and root-level collections have `parentPath: 'content'`, which is what eliminates every "is this root-level?" check; the root receives a sentinel `ROOT_COLLECTION_ID`, since its directory has no embedded ID.
 
-Each entry gets exactly one `urlPath`, but two _different_ entries can still compute the same one — an entry whose slug matches a sibling collection that also has an index entry, or two slugs differing only by case. Only one is then reachable and the other silently has no route, so `assertNoDuplicateUrlPaths` (`static/index.ts`) fails a production build naming every contested URL. An entry beside a sibling collection with **no** index entry is a different, legitimate shape (a landing page plus a folder of children) and is untouched.
+Every error is raised at initialization rather than request time: a missing referenced schema names the available registry keys, collection structure is validated during parse, and a content directory with no `.collection.json` at all throws. Resolution is async because it reads from disk, so `createCanopyServices()` is async and framework adapters create the context once at module load and cache the promise (see [Why async service initialization?](#why-async-service-initialization)).
 
-That build-time guard has a write-time counterpart, `url-collision.ts`, consulted by `ContentStore` on entry create and rename and by the schema store on collection rename — the three write paths that can newly contest a `urlPath`. Neither guard subsumes the other: content also arrives by merge, by direct commit, and by adopters retrofitting an existing repo, none of which pass through the write boundary, while the build guard cannot stop an author from creating the collision in the first place. Both are keyed on the same invariant (no two entries may share a `urlPath`), deliberately not on name — an entry beside a same-named sibling collection with no index entry is the legitimate shape above, and a name-based rule would forbid it.
-
-### Schema Registry and References
-
-The schema registry is a centralized location for field definitions that can be referenced by collection meta files:
-
-**Schema Definitions** (`app/schemas.ts`):
-
-```typescript
-import { createEntrySchemaRegistry } from 'canopycms/server'
-
-export const postSchema = [
-  /* field definitions */
-]
-export const authorSchema = [
-  /* field definitions */
-]
-export const docSchema = [
-  /* field definitions */
-]
-
-export const entrySchemaRegistry = createEntrySchemaRegistry({
-  postSchema,
-  authorSchema,
-  docSchema,
-})
-```
-
-**Collection Meta File** (`content/posts/.collection.json`):
-
-```json
-{
-  "name": "posts",
-  "label": "Posts",
-  "entries": [
-    {
-      "name": "post",
-      "format": "json",
-      "schema": "postSchema",
-      "default": true
-    }
-  ]
-}
-```
-
-The `schema` property contains a string reference (like `"postSchema"`) that is resolved against the registry during initialization. Collections can define multiple entry types, each with different schemas.
-
-**Benefits:**
-
-- **DRY principle**: Field definitions live in one place, referenced by multiple collections
-- **Type safety**: Schema registry is defined in TypeScript with full type checking
-- **Separation of concerns**: Content structure (meta files) is separate from field definitions (registry)
-- **Co-location**: Collection metadata lives with content files, not in config
-
-### Schema Meta Files
-
-Each collection folder can contain a `.collection.json` file that defines:
-
-- Collection name and label
-- Entry type configurations (array of typed content definitions)
-- Optional child ordering (an `order` array of content IDs; when omitted or empty, children sort alphabetically)
-
-**Structure:**
-
-```
-content/
-  .collection.json           # Root collection (optional)
-  posts/
-    .collection.json         # Posts collection definition
-    hello.json
-    world.json
-  docs/
-    .collection.json         # Docs collection
-    guides/
-      .collection.json       # Nested guides collection
-      getting-started.md
-```
-
-**Root collection** (`content/.collection.json`):
-
-- No `name` or `path` fields (derived from contentRoot)
-- Can define root-level entry types
-- Optional—system works without it
-
-**Nested collections**:
-
-- Collection path is derived from folder structure, not from meta file
-- Each collection can have its own `.collection.json`
-- Nesting is detected automatically by scanning subdirectories
-
-**Entry type cardinality**: Entry types with `maxItems: 1` provide singleton-like behavior where only one instance of that type can exist. For example, a settings entry type with `maxItems: 1` ensures only one settings file can be created.
-
-### Schema Resolution System
-
-Schema resolution happens during service initialization through a multi-step process:
-
-**Step 1: Load meta files** (`loadCollectionMetaFiles`)
-
-- Recursively scans content directory for `.collection.json` files
-- Parses and validates each file using Zod schemas
-- Extracts each collection's ContentId from its directory name (e.g., `posts.916jXZabYCxu` yields ContentId `916jXZabYCxu`)
-- Returns raw metadata with string references to schema registry, plus the extracted ContentId per collection
-
-**Step 2: Resolve references** (`resolveCollectionReferences`)
-
-- Takes loaded meta files and schema registry
-- Replaces string references (like `"postSchema"`) with actual field definitions
-- Validates that all referenced schemas exist in the registry
-- Builds nested collection hierarchy
-- Threads each collection's ContentId into the resolved `CollectionConfig`
-
-**Step 3: Flatten schema**
-
-- Final merged schema is flattened into `Map<path, FlatSchemaItem>` for O(1) lookups
-- Each flattened collection item carries its ContentId (used for conflict tracking and ordering)
-- The root collection receives a sentinel `ROOT_COLLECTION_ID` since the content root directory has no embedded ID
-- All path resolution and validation happens at initialization, not request time
-
-**Error handling:**
-
-- Clear error messages when referenced schemas don't exist
-- Lists available schema registry keys in error messages
-- Validates collection structure during parse (must have entries or collections)
-- Throws if no `.collection.json` files are found in the content directory
+In development `watchCollectionMetaFiles(contentRoot, onChange)` watches `**/.collection.json` through chokidar and fires on add/change/unlink. Auto-reload is not implemented yet: a server restart is still required after a meta file change.
 
 ### Schema Cache Invalidation
 
-The resolved schema is cached per branch so ordinary requests don't re-scan and re-parse every `.collection.json` file. Schema edits (adding a collection, changing an entry type, reordering) invalidate that cache the same way branch metadata and the content ID index do: by bumping a cross-process generation marker rather than mutating the cache in place. Every warm host sharing the branch workspace (Lambda containers, the worker) notices the bump at its next read and re-resolves.
+The resolved schema is cached per branch so ordinary requests don't re-parse every `.collection.json`. Schema edits invalidate that cache the same way branch metadata and the content ID index do — by bumping a cross-process generation marker, never by mutating the cache in place — so every warm host sharing the workspace re-resolves at its next read.
 
-Bulk working-tree operations — a rebase pulling in upstream `.collection.json` changes, a sync, a migration — also bump the schema marker, not just direct schema edits made through the editor. This was a deliberate backstop: a git operation that changes schema files on disk without going through the schema-editing API would otherwise leave every process serving a stale schema with no signal to refresh. See [docs/concurrency.md](docs/concurrency.md) for the generation-marker protocol and the residual staleness windows it accepts.
+Bulk working-tree operations (a rebase pulling in upstream `.collection.json` changes, a sync, a migration) bump the schema marker too, not just editor-driven schema edits. This is a deliberate backstop: a git operation that changes schema files on disk without passing through the schema API would otherwise leave every process serving a stale schema with no signal to refresh. See [docs/concurrency.md](docs/concurrency.md).
 
-### Async Initialization Pattern
+### Content Store and API Surface
 
-The schema resolution system requires async initialization because it reads files from disk:
+`ContentStore` resolves a path by splitting it into segments, looking the collection up in the flat schema map, and deciding whether the path names an entry type (a slug is present) or the collection itself. `read()` and `write()` take a collection path and slug; the entry type configuration determines format, fields and extension; `maxItems` is a schema constraint, never a filename difference. The API is therefore uniform across entry types regardless of cardinality, and the editor navigates the same way — `buildEditorCollections()` returns collections only, entry types appear in "Add" buttons and type selectors, and every entry renders through the same field infrastructure with its entry type deciding which fields appear.
 
-**Service creation** is async:
-
-```typescript
-const services = await createCanopyServices(config, entrySchemaRegistry)
-```
-
-**Context creation** in framework adapters:
-
-```typescript
-// Create once at module load
-const canopyContextPromise = createNextCanopyContext({
-  config,
-  authPlugin,
-  entrySchemaRegistry,
-})
-
-// Request-scoped: uses headers() + React cache()
-export const getCanopy = async () => {
-  const context = await canopyContextPromise
-  return context.getCanopy()
-}
-
-// Build-scoped: no request context needed
-export const getCanopyForBuild = async () => {
-  const context = await canopyContextPromise
-  return context.getCanopyForBuild()
-}
-```
-
-**Why this pattern:**
-
-- **One-time cost**: File scanning happens once at server startup, not per request
-- **Shared services**: All requests use the same services instance with cached schemas
-- **Lambda-safe**: In serverless environments, the promise resolves once per container lifecycle
-- **Type safety**: Async await ensures services are fully initialized before use
-- **Explicit scope**: `getCanopy()` for request-scoped contexts, `getCanopyForBuild()` for build-time contexts like `generateStaticParams`
-
-### Watch System for Meta Files
-
-In development mode, the system watches for changes to `.collection.json` files:
-
-```typescript
-watchCollectionMetaFiles(contentRoot, onChange)
-```
-
-**Implementation:**
-
-- Uses `chokidar` library for efficient file watching
-- Watches pattern: `${contentRoot}/**/.collection.json`
-- Triggers callback on: add, change, unlink events
-- Returns cleanup function to stop watching
-
-**Current limitation:**
-
-- Watch system exists but auto-reload is not yet implemented
-- Server restart required after meta file changes
-- Future: Hot reload of schema without server restart
-
-### Schema Flattening
-
-At initialization, the hierarchical schema is flattened into a `Map<path, FlatSchemaItem>` for O(1) lookups. Each flattened item is a discriminated union:
-
-**Collection item**:
-
-- `type: 'collection'`
-- `logicalPath`: Complete logical path from content root (e.g., "content/blog") - branded type for compile-time safety
-- `contentId`: The collection's stable identifier, extracted from its directory name (or `ROOT_COLLECTION_ID` sentinel for the content root)
-- `entries`: Optional array of entry type configurations
-- `collections`: Optional nested collections
-- `name`, `label`, `parentPath`: For navigation and display
-
-**Entry type item**:
-
-- `type: 'entry-type'`
-- `logicalPath`: Complete logical path including entry type name (e.g., "content/posts/post") - branded type
-- `name`: Entry type name (e.g., 'post', 'doc')
-- `format`: Content format (md, mdx, json, yaml)
-- `fields`: Field definitions
-- `maxItems`: Optional cardinality limit
-- `parentPath`: Logical path of the parent collection
-
-**Important**: The content root itself is included as a collection with `type: 'collection'`, `logicalPath: 'content'`, and `parentPath: undefined`. Root-level collections have `parentPath: 'content'`, making them children of the content root. This eliminates all special-casing for root vs. nested collections.
-
-### Content Store Integration
-
-The `ContentStore` uses the flat schema index for O(1) path resolution:
-
-**Path resolution** (`resolvePath`):
-
-1. Split the path into segments
-2. Look up the collection in the flat schema map
-3. Determine if the path refers to an entry type (has a slug) or the collection itself
-4. Return the schema item, slug, and entry type
-
-**Reading and writing**:
-
-- `read()` and `write()` accept a collection path and slug
-- All entries use the unified filename pattern `{type}.{slug}.{id}.{ext}`
-- The entry type configuration determines format, fields, and file extension
-- `maxItems` is enforced as a schema constraint, not a filename difference
-
-The API works uniformly across all entry types regardless of cardinality constraints.
-
-**Structured error codes**:
-
-The content store uses typed error codes (`NOT_FOUND`, `NO_SCHEMA_ITEM`, `FORBIDDEN`, `VALIDATION`) on its domain error class rather than encoding failure reasons in message strings. This lets callers branch on `err.code` with exhaustive checks instead of fragile regex matching against error messages. For example, the URL-to-content resolution layer needs to distinguish "this path doesn't exist in the schema" from "the entry file is missing on disk" so it can probe multiple candidate paths without treating a missing file as a fatal error. Structured codes make that distinction reliable and refactor-safe.
-
-### API Layer
-
-The API exposes collections through a unified interface:
-
-**Collection summaries** (`buildCollectionSummaries`):
-
-- Returns only collections (not individual entry types)
-- Collections have `type: 'collection'`
-- Entry types are part of the collection configuration, accessed via `collection.entries`
-
-**Entries list** (`listCollectionEntries`):
-
-- Returns entries based on the collection's entry type configurations
-- Supports multiple entry types per collection (each type can have different schemas)
-- Entry types with `maxItems: 1` are included if they exist
-- Entry filenames include type information for multi-type collections
-
-**Entry identification**:
-
-- Entries have a `slug` derived from filename
-- Entry type is determined by filename pattern or extension
-- All entries have a `collectionId` pointing to their parent collection path
+**Structured error codes.** The content store's domain error class carries typed codes (`NOT_FOUND`, `NO_SCHEMA_ITEM`, `FORBIDDEN`, `VALIDATION`) rather than encoding the reason in a message string, so callers branch on `err.code` exhaustively instead of matching regexes. URL resolution depends on it: probing candidate paths requires telling "this path isn't in the schema" from "the entry file is missing on disk" without treating either as fatal.
 
 ### Declarative Guard System
 
-API endpoints use a declarative guard system to handle common preconditions -- branch resolution, access control, schema loading, and role checks -- before the handler runs. Guards are declared as an array on the endpoint definition and execute in order, short-circuiting with an error response if any guard fails.
+API endpoints declare an array of guards that run in order before the handler, short-circuiting with an error response on the first failure and accumulating a typed guard context — so a handler guarded by `branchAccessWithSchema` receives a context in which the branch context and flattened schema are guaranteed non-null, with no defensive checks inside the handler. The available guards cover branch resolution, branch access, schema loading, the role checks, and the two write/submit protections; see [api/AGENTS.md](packages/canopycms/src/api/AGENTS.md) for the list.
 
-**How it works**: Each endpoint declares which guards it needs. The guard runner executes them sequentially, accumulating a typed guard context. If all guards pass, the handler receives this context as its first argument with full type safety -- for example, a handler guarded by `branchAccessWithSchema` receives a context where the branch context and flattened schema are guaranteed to be present and non-null.
-
-**Available guards**:
-
-- `branch`: Resolves the branch from request parameters (404 if not found)
-- `branchAccess`: Resolves branch and checks user access permissions (404/403)
-- `schema`: Resolves branch and loads the flattened schema (404/500)
-- `branchAccessWithSchema`: Combines access check and schema loading (404/403/500)
-- `admin`: Requires the user to be in the admin group (403)
-- `reviewer`: Requires reviewer-level access (403)
-- `privileged`: Requires admin or reviewer access (403)
-
-**Design rationale**: The previous approach used imperative middleware calls (`guardBranchAccess`, `guardBranchExists`) that each handler invoked manually. This led to duplicated boilerplate -- every branch-aware handler had the same guard call, null check, and error return pattern. The declarative approach eliminates this duplication and makes each endpoint's preconditions visible at a glance in its definition. The guard system also provides stronger type guarantees: handlers with schema guards receive a context type where `flatSchema` is non-nullable, eliminating defensive null checks inside handler logic.
-
-**Scope boundary**: Guards run inside `defineEndpoint` at handler invocation time. They do not affect HTTP dispatch, URL routing, or client code generation. The generated API client remains unchanged -- guards are purely a server-side concern.
-
-### Editor Integration
-
-The editor uses collection-based navigation:
-
-**Navigation**:
-
-- `buildEditorCollections()` returns only collections, not individual entry types
-- Entry types are schema metadata that define what can be created in a collection
-- Collections appear as navigable tree nodes in the content navigator
-- Entry types appear in "Add" buttons and entry type selectors, not as navigation nodes
-
-**Preview URLs**:
-
-- Collections map to base preview paths
-- Individual entries append their slug to the collection's preview base
-- Entry types with `maxItems: 1` use their type name as the slug
-
-**Form rendering**:
-
-- All entries use the same field rendering infrastructure
-- Entry type configuration determines which fields appear
-- Multi-type collections can have different forms for different entry types
-
-## Core Mental Model
-
-Content in CanopyCMS flows through a predictable lifecycle:
-
-```
-Git Repository (source of truth)
-        ↓
-   Create/Open Branch (isolated workspace)
-        ↓
-   Edit Content (changes stay in branch)
-        ↓
-   Submit for Review (requests publication)
-        ↓
-   Review & Approve (on GitHub)
-        ↓
-   Merge PR (outside CanopyCMS)
-        ↓
-   Deploy Updated Site (outside CanopyCMS)
-```
-
-The key insight is that editors never interact with git or GitHub directly. CanopyCMS abstracts away the git operations, PR creation, and branch management. When an editor hits "Publish Branch", they are _requesting to publish_—the actual merge and deployment happen separately (typically through GitHub and CI/CD).
+Each endpoint's preconditions are therefore visible at a glance in its own definition, and the type guarantee is stronger than an imperative middleware call can give. Guards run inside `defineEndpoint` at handler invocation time: they do not affect HTTP dispatch, routing, or client generation.
 
 ## Branch-Based Editing
 
-When a user opens a branch, CanopyCMS either opens an existing workspace or creates a new one:
+Content flows in one direction: the git repository is the source of truth, a branch gives an isolated workspace, edits stay in that branch until submitted, and review, merge and deploy all happen outside CanopyCMS — so editors never interact with git or GitHub directly. [Content Workflow](#content-workflow) covers each step.
 
-1. **Workspace resolution**: If a clone already exists for the branch, it's used. Otherwise, a new git clone is created (in production modes).
-2. **Isolation**: Each branch has its own working directory with independent files
-3. **Parallel editing**: Multiple users can work on different branches simultaneously without interference
+Opening a branch either resolves its existing workspace or creates a new git clone for it. Each branch has its own working directory, so several users can edit different branches with no interference, and a crash or bad edit on one cannot affect another.
 
-Branches have a lifecycle with several states:
+A branch's lifecycle states are **editing** (the only status from which content can be written or the branch submitted), **submitted** (locked for review, awaiting merge), **approved** (ready to merge), and **archived** (merged, preserved for audit). There is deliberately no separate `locked` state: `submitted` already means locked for review.
 
-- **editing**: Active work in progress — the only status from which content can be written or the branch submitted
-- **submitted**: Sent for review, awaiting merge
-- **approved**: Approved and ready to merge
-- **archived**: Merged and preserved for audit
-
-There is deliberately no separate `locked` state: `submitted` already means "locked for review" (see `BranchStatus` in `types.ts`).
-
-In dev mode, users normally work directly on the base branch too—that's the expected local flow, and nothing prevents it. In prod mode, the base branch is read-only in the editor (see [Protected Base Branch](#protected-base-branch) below); real edits require creating a separate branch, which then goes through the submit/review/merge flow. The branch model provides isolation for team collaboration and, in prod, enforces it for the base branch specifically.
+In dev mode users normally work directly on the base branch — that is the expected local flow and nothing prevents it. In prod the base branch is read-only in the editor (see [Protected Base Branch](#protected-base-branch)); real edits require a separate branch that goes through submit/review/merge.
 
 ### Branch Identity: defaultBaseBranch vs defaultActiveBranch
 
-CanopyCMS distinguishes between two branch concepts that serve different purposes:
+Two branch concepts serve different purposes:
 
-- **`defaultBaseBranch`** is the fork point for CMS content branches. When a user creates a new editing branch, it is forked from this branch, and the branch used to seed workspace clones from the (real or simulated) remote. Git operations like rebasing editing branches use this as the upstream target.
+- **`defaultBaseBranch`** is the fork point for CMS content branches: new editing branches fork from it, workspace clones are seeded from it, and rebases target it upstream.
+- **`defaultActiveBranch`** is the workspace content is served from by default — the branch the editor opens when none is specified, and the one the content-reading APIs, AI content generation and the content tree builder read.
 
-- **`defaultActiveBranch`** is the workspace from which content is served by default — the branch the editor opens when no branch is specified, the branch used for content reading APIs, AI content generation, and the content tree builder. It answers the question "which branch should I look at right now?"
+**Why they are separate:** a developer working on a feature branch wants the CMS to show that branch's content while new editing branches still fork from a stable base. Conflating the two would force a choice between serving stale base content and forking editing branches off an unstable feature branch.
 
-**Why they are separate:** In dev mode, a developer is often working on a feature branch (e.g., `redesign-nav`). They want the CMS editor to show content from that branch, not from `main`. Setting `defaultBaseBranch` explicitly lets new CMS editing branches still fork from a stable branch while the served content follows the feature branch. Conflating the two concepts would force developers to either serve stale `main` content or fork editing branches from an unstable feature branch.
-
-**Detection matrix** (the single implementation is `resolveBaseBranch()` in `utils/git.ts` plus the active-branch detector in `services.ts`):
+**Detection matrix** (implemented by `resolveBaseBranch()` in `utils/git.ts` plus the active-branch detector in `services.ts`):
 
 |          | `defaultBaseBranch` set                            | `defaultBaseBranch` unset                                                                           |
 | -------- | -------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
 | **dev**  | base = configured value; active follows git HEAD   | base **and** active follow git HEAD (workspaces fork from the branch the developer has checked out) |
 | **prod** | base = configured value; active falls back to base | base = `'main'`; active falls back to base                                                          |
 
-- An explicitly configured value (for either field) is always respected and never overridden by detection
-- Static deployments (`deployedAs: 'static'`) skip detection and per-request refresh entirely — a static export serves from the checkout, so there is no git HEAD to track and no git calls are made
-- A build (`isBuildMode()`) skips detection the same way, in every mode and deployment type: an unset active branch falls back to `defaultBaseBranch ?? 'main'` and an unset base branch to `'main'`, with no git HEAD detection and no per-request refresh, because a build reads the working tree directly rather than a git-HEAD-selected branch (see [Static Deployment and Build Mode](#static-deployment-and-build-mode))
-- Both resolved values are baked into the config at service creation time, and refreshed per-request via `refreshActiveBranch()` (dev mode only, outside a build, with a 5-second cache); only fields the adopter left unset are refreshed
-- On detached HEAD (or no git repo), detection falls back to `defaultBaseBranch ?? 'main'`
-- The Zod schema intentionally leaves `defaultBaseBranch` undefined when unset (`.optional()` defeats the `.default('main')`) — that is what makes "unset" detectable for dev-mode HEAD detection
+- An explicitly configured value, for either field, is always respected and never overridden by detection. Adopters opt out of detection entirely by setting both.
+- Static deployments (`deployedAs: 'static'`) skip detection and per-request refresh: a static export serves from the checkout, so there is no git HEAD to track and no git calls are made.
+- A build (`isBuildMode()`) skips detection the same way in every mode and deployment type — an unset active branch falls back to `defaultBaseBranch ?? 'main'` and an unset base branch to `'main'` — because a build reads the working tree directly rather than a git-HEAD-selected branch (see [Static Deployment and Build Mode](#static-deployment-and-build-mode)).
+- Both resolved values are baked into the config at service creation, and refreshed per request by `refreshActiveBranch()` in dev mode only, outside a build, with a 5-second cache; only fields the adopter left unset are refreshed.
+- On detached HEAD, or no git repo, detection falls back to `defaultBaseBranch ?? 'main'`.
+- The Zod schema intentionally leaves `defaultBaseBranch` undefined when unset (`.optional()` defeats the `.default('main')`), which is what makes "unset" detectable for HEAD detection.
 
-**Recorded fork point:** When a branch workspace is created, the resolved base branch is recorded in the branch's metadata (`.canopy-meta/branch.json`, `branch.baseBranch`) and is immutable afterwards. Git operations on an existing branch (commits, submit, PR base) prefer the recorded fork point over the config value, so a developer switching git branches mid-session cannot retarget an existing branch's base.
+**The recorded fork point is immutable.** When a branch workspace is created, the resolved base branch is recorded in `.canopy-meta/branch.json` (`branch.baseBranch`) and never changes. Git operations on an existing branch — commits, submit, PR base — prefer that recorded value over the config, so a developer switching git branches mid-session cannot retarget an existing branch's base.
 
-**Decision history** (recorded here because the question "did we decide to auto-detect branches?" has come up repeatedly): branch auto-detection was deliberately introduced twice — PR #26 (dev-mode consolidation; HEAD detection for the fork point when `defaultBaseBranch` is unset) and PR #36 (the `defaultBaseBranch`/`defaultActiveBranch` split with per-request active-branch detection). PR #74 (v0.0.50) hardened the dev simulated remote to serve newly-detected base branches on demand; it changed no detection semantics. There was never a decision _against_ detection; adopters can opt out at any time by setting both fields explicitly.
+**Per-request branch tracking.** In dev mode every content-serving entry point calls `refreshActiveBranch()`, so switching git branches silently updates the active branch — and, when unset, the base branch used for newly provisioned workspaces — with no server restart, and the new branch's workspace is created lazily on the first content request. This affects only non-editor content serving: the editor is pinned to its own branch through URL params and keeps branch-specific drafts in localStorage. An editor opened with no pinned branch adopts the server's effective default, which the branches-list API reports per request, and an explicitly pinned branch is never overridden.
 
-**Per-request branch tracking:** In dev mode, every content-serving entry point — the API handler and the context factory behind `getCanopy()` — calls `refreshActiveBranch()` on each request. If the developer switches git branches, the active branch (and, when unset, the base branch used for newly provisioned workspaces) silently updates — no server restart needed. The workspace for the new branch is lazily created on the first content request via the handler's auto-create path (`BranchWorkspaceManager.openOrCreateBranch`). This only affects non-editor content serving (the public dev site, `getCanopy()`, AI content); the editor is pinned to its own branch via URL params and has branch-specific drafts in localStorage. An editor opened without a pinned branch (no URL parameter, no client-config value) adopts the server's effective default branch, which the branches-list API reports per request — nothing is hardcoded client-side, and an explicitly pinned branch is never overridden.
+**Fallback chain.** Content-serving code resolves the active branch as `defaultActiveBranch ?? defaultBaseBranch ?? 'main'`. The HTTP handler provisions the base-branch workspace on the first request, since internal groups load from it; if that provisioning fails outright it fails loudly — logging the cause and returning a 503 naming the branch and the reason — rather than letting every endpoint return confusingly empty results.
 
-**Fallback chain:** Throughout the system, content-serving code resolves the active branch as `defaultActiveBranch ?? defaultBaseBranch ?? 'main'`. The handler auto-creates workspaces for `defaultActiveBranch` on demand, ensuring the active branch is always ready to serve content. The HTTP handler also provisions the base-branch workspace on the first request (it is needed to load internal groups); if that provisioning fails outright, the handler fails loudly — logging the cause and returning a 503 that names the branch and the underlying reason — rather than letting every endpoint return confusing empty results.
-
-**Corrupt base-branch metadata is an exception to that 503:** if the base branch's `branch.json` exists but fails to parse, the handler degrades instead of failing — it serves the request with no internal groups (bootstrap admins retain access via their configured IDs) and logs the condition, rather than 503ing every endpoint. A hard 503 here would make the problem unrecoverable through the product itself: the only fix is the admin branch-health repair action (see [Admin Observability and Recovery API](#admin-observability-and-recovery-api)), which is one of those same endpoints. Every other provisioning failure (disk full, filesystem unavailable, etc.) still 503s as before.
+**Corrupt base-branch metadata is the one exception to that 503.** If the base branch's `branch.json` exists but fails to parse, the handler serves the request with no internal groups (bootstrap admins keep access through their configured IDs) and logs the condition. A hard 503 here would make the problem unrecoverable through the product itself, because the only fix is the admin branch-health repair action, which is one of those same endpoints. Every other provisioning failure still 503s.
 
 ### Protected Base Branch
 
-The resolved base branch is **protected**: it can never be submitted for review (submitting it would commit and push directly to itself — a review bypass — and then ask GitHub for a head==base PR, which 422s), and in prod mode it is **read-only in the editor** (content on the base branch only changes via merged PRs, matching the branch-first workflow). In dev mode the base branch stays editable — the developer always lands on it by definition (it follows git HEAD when unset), and editing it is the normal local flow, reconciled via `canopycms sync`.
+The resolved base branch is **protected**: it can never be submitted for review — submitting it would commit and push directly to itself, a review bypass, and then ask GitHub for a head==base PR, which 422s — and in prod mode it is **read-only in the editor**, since content there changes only via merged PRs. In dev the base branch stays editable, because the developer lands on it by definition and editing it is the normal local flow, reconciled through `canopycms sync`.
 
-The single source of truth is `getBranchProtection(config, branchName, recordedBaseBranch?)` in `authorization/protected-branch.ts`, keyed off the resolved `config.defaultBaseBranch` (never a hard-coded `'main'` — `master`/`develop` bases work) with sanitization-aware comparison (metadata names are sanitized; config holds the raw git name). It returns three flags:
+`getBranchProtection(config, branchName, recordedBaseBranch?)` in `authorization/protected-branch.ts` is the single source of truth, keyed off the resolved `config.defaultBaseBranch` (never a hardcoded `'main'`, so `master`/`develop` bases work) with sanitization-aware comparison, since metadata names are sanitized while config holds the raw git name. It returns three flags:
 
 |                 | dev | prod |
 | --------------- | --- | ---- |
@@ -998,2340 +217,734 @@ The single source of truth is `getBranchProtection(config, branchName, recordedB
 | `submitBlocked` | ✓   | ✓    |
 | `readOnly`      | —   | ✓    |
 
-To authorize a content write, or to render a lock in the editor, use the sibling `getBranchWriteProtection(config, branchName, recordedBaseBranch, status)` instead. It delegates to `getBranchProtection` and adds two flags:
+To authorize a content write or render a lock in the editor, use the sibling `getBranchWriteProtection(config, branchName, recordedBaseBranch, status)`, which delegates to it and adds two compound flags:
 
-- `writeBlocked` = `readOnly || status !== 'editing'` — the single expression of the "which statuses lock editing" rule, so the API guard, the branches-list wire flag, and the editor all agree by construction rather than by three parallel derivations. `readOnly` keeps its narrow meaning: it distinguishes _which_ lock applies, and therefore which banner the editor shows.
-- `submitBlockedIncludingStatus` = `submitBlocked || status !== 'editing'` — the compound submit rule, consumed as-is by the editor's `canSubmit` instead of being re-derived client-side from `status`/`isProtected` (the drift hazard a bare, base-only `submitBlocked` flag would not have closed, since the status half would still be re-derived — this is why the wider flag exists as its own, deliberately verbosely-named field rather than overloading `submitBlocked`'s meaning, which `api/guards.ts`'s `submittableBranch` guard must keep reading as "base branch only"). Note the asymmetry with `writeBlocked`: it is built from `readOnly` (prod-only), while this is built from `submitBlocked`/`isProtected` (both modes) — in dev the base branch is writable but never submittable, so the two compounds genuinely disagree there (`writeBlocked: false`, `submitBlockedIncludingStatus: true`), not just two names for the same value.
+- `writeBlocked` = `readOnly || status !== 'editing'` — the single expression of "which statuses lock editing", so the API guard, the branches-list wire flag and the editor agree by construction rather than by three parallel derivations. `readOnly` keeps its narrow meaning: which lock applies, and therefore which banner the editor shows.
+- `submitBlockedIncludingStatus` = `submitBlocked || status !== 'editing'` — the compound submit rule, consumed as-is by the editor's `canSubmit` rather than re-derived client-side. It is its own deliberately verbose field instead of a widened `submitBlocked`, which `api/guards.ts`'s `submittableBranch` must keep reading as "base branch only". Note the asymmetry: `writeBlocked` builds on the prod-only `readOnly` while this builds on `submitBlocked`, so in dev the base branch is writable but never submittable and the two genuinely disagree.
 
-`status` is a **required** parameter there, deliberately typed to admit `undefined`, so that a missing status fails closed. `branch.json` is parsed with a bare cast and no schema validation, so a hand-repaired or partially-written file can yield no status at runtime despite the required type — and malformed branch metadata is a handled condition here (see the corrupt-metadata quarantine). Making the parameter required is what keeps "the caller didn't ask about status" distinguishable from "the file had no status": those two cases want opposite answers, and only the second should block. Callers that genuinely don't care — the submit, delete, and ACL rails — call `getBranchProtection` and get no `writeBlocked` at all.
+`status` is a **required** parameter there, deliberately typed to admit `undefined`, so a missing status fails closed. `branch.json` is parsed with a bare cast and no schema validation, so a hand-repaired or partially-written file can yield no status at runtime despite the required type. Making the parameter required is what keeps "the caller didn't ask about status" distinguishable from "the file had no status" — those two cases want opposite answers, and only the second should block. Callers that genuinely don't care (submit, delete, and the ACL rails) call `getBranchProtection` and get no `writeBlocked` at all.
 
 Enforcement is layered:
 
-- **API guards** (`api/guards.ts`): `writableBranch` (403 on content/entry/schema mutations when `writeBlocked` — base-branch `readOnly` and status locks share the guard but produce different messages) and `submittableBranch` (403 on submit when `submitBlocked`). `deleteBranch` and `updateBranchAccess` refuse the base branch with handler-level checks.
-- **Workflow authorization** (`authorization/branch.ts`): the system-branch grant in `canPerformWorkflowAction` (the base branch is auto-provisioned with `createdBy: 'canopycms-system'`) is disabled on protected branches, so only admins/reviewers/explicit-ACL users retain workflow rights there.
-- **Backstops** (defense in depth, all refusing sanitized head==base): `services.submitBranch` throws before any git operation; `syncSubmitPr` returns `sync-failed` without calling GitHub or enqueueing; the worker's `push-and-create-or-update-pr` task throws a `PermanentTaskError` (the same task also throws `PermanentTaskError` for an unrelated reason — a genuine non-fast-forward push rejection between two deployments; see [Push Rejection Classification](#push-rejection-classification)).
-- **Editor UI**: renders purely from server-computed wire flags (`isProtected`/`readOnly`/`writeBlocked`/`submitBlocked` on the branches-list response, the last populated from `submitBlockedIncludingStatus`) — Submit is hidden or disabled, Save is disabled, and a banner with a "Create a branch" action appears on a read-only branch. Because `writeBlocked`/`submitBlocked` come from the same predicates the API guards use, the UI cannot enable a write or submit the API would reject — **provided the client actually received the flags**. All four flags are optional on the wire (for compatibility with older/newer servers), and the editor's wire→view mapping (`useBranchManager.tsx`) defaults the three that gate a mutating action (`isProtected`, `writeBlocked`, `submitBlocked`) to `true` — fail CLOSED — when absent, not `false`. A branches-list fetch that is still loading, has failed, or hit a version-skewed server that doesn't emit these fields yet renders the branch locked rather than silently open; `readOnly` alone stays `false` when absent, since it only selects which banner to show once something else has already established that the branch is locked. The editor still lands on the protected branch for browsing.
+- **API guards** (`api/guards.ts`): `writableBranch` 403s content, entry and schema mutations when `writeBlocked` (base-branch `readOnly` and status locks share the guard and produce different messages); `submittableBranch` 403s submit when `submitBlocked`. `deleteBranch` and `updateBranchAccess` refuse the base branch in the handler.
+- **Workflow authorization** (`authorization/branch.ts`): the system-branch grant in `canPerformWorkflowAction` — the base branch is auto-provisioned with `createdBy: 'canopycms-system'` — is disabled on protected branches, so only admins, review-capable users and explicit-ACL users keep workflow rights there.
+- **Backstops**, all refusing a sanitized head==base: `services.submitBranch` throws before any git operation, `syncSubmitPr` returns `sync-failed` without calling GitHub or enqueueing, and the worker's `push-and-create-or-update-pr` task throws a `PermanentTaskError`.
+- **Editor UI**: renders purely from the server-computed wire flags on the branches-list response, so it cannot enable a write or submit the API would reject — **provided the client received the flags**. All four are optional on the wire for version skew, so the editor's wire→view mapping (`useBranchManager.tsx`) defaults the three that gate a mutating action to `true` — fail CLOSED — when absent: a branches-list fetch that is loading, has failed, or hit a server that doesn't emit these fields renders the branch locked rather than silently open. `readOnly` alone defaults to `false`, since it only selects which banner to show once something else established the lock. The editor still lands on the protected branch for browsing.
 
-**Withdraw is deliberately not blocked** on protected branches: it is the self-serve recovery path for a base branch wrongly stuck in `submitted` (the pre-protection failure mode), and the workflow-authorization change above restricts it to privileged users there.
+**Withdraw is deliberately not blocked** on protected branches: it is the self-serve recovery path for a base branch wrongly stuck in `submitted`, and the workflow-authorization rule above already restricts it to privileged users there.
 
 ### Reserved Branch Names
 
-The API serves branch-specific routes (`/:branch/...`) and a handful of static top-level routes (admin, assets, branches, groups, permissions, users, whoami) from the same route table, and a static segment always wins over the dynamic `:branch` parameter. A branch literally named e.g. `admin` would therefore have its own routes shadowed by the static `/admin` namespace — not cleanly rejected, just confusingly half-alive: the branch's bare top-level route still resolves, while every nested route on it 404s or 403s unpredictably.
+The API serves branch-specific routes (`/:branch/...`) and a handful of static top-level routes (admin, assets, branches, groups, permissions, users, whoami) from one route table, and a static segment always beats the dynamic `:branch` parameter. A branch named e.g. `admin` would therefore be half-alive rather than cleanly rejected: its bare top-level route still resolves while every nested route 404s or 403s unpredictably.
 
-Branch creation rejects any name that collides with a static top-level route namespace (checked against both the requested name and its sanitized, git-ref-safe form; matching is exact and case-sensitive, so `Admin` and `admin-docs` stay creatable). This is enforced only on the creation path, deliberately not as a general branch-name validation rule: a blanket rule would also reject an already-existing branch with a colliding name on every one of its own routes, including its delete route, making it permanently un-removable. This is a separate reservation from the settings-branch namespace (`canopycms-settings-{deploymentName}`, see [Sharing one repository across two deployments](#lambda--efs--ec2-worker-aws-cost-optimized)) — one protects the route table, the other protects a specific deployment's settings from collision.
+Branch creation rejects any name colliding with a static top-level namespace, checked against both the requested name and its sanitized git-ref-safe form, matching exactly and case-sensitively so `Admin` and `admin-docs` stay creatable. It is enforced **only on the creation path**, deliberately not as general name validation: a blanket rule would also reject an already-existing colliding branch on every one of its own routes, including its delete route, making it permanently un-removable. This reservation protects the route table; the settings-branch namespace is a separate one, protecting a deployment's settings from collision.
 
 ## Operating Modes
 
-CanopyCMS supports two operating modes to fit different environments. The mode is configured in `canopycms.config.ts` via a required `mode` field with no default. Omitting it fails Zod validation loudly at startup, rather than silently falling back to a mode — a prod deployment that forgot to set `mode` would otherwise run with dev's header-trusting auth semantics, trusting whatever identity a caller claims in a request header. After validation, `config.mode` is always defined and can be used throughout the codebase without fallback checks.
+The mode is configured in `canopycms.config.ts` via a required `mode` field with **no default**. Omitting it fails Zod validation loudly at startup rather than falling back, because a prod deployment that forgot `mode` would otherwise run with dev's header-trusting auth semantics, trusting whatever identity a caller claims in a request header. After validation `config.mode` is always defined and needs no fallback checks anywhere. An environment variable outranks the config literal so one config file can serve `next dev`, an image build and a deployed prod Lambda; [operating-mode/AGENTS.md](packages/canopycms/src/operating-mode/AGENTS.md) holds the resolution points and [docs/deploying-to-aws.md](docs/deploying-to-aws.md#operating-mode) the deployment recipe.
 
 ### dev
 
-Full-featured local development with branching and git operations — a local simulation of production behavior. Creates per-branch workspaces in `.canopy-dev/content-branches/` and maintains a local bare git remote at `.canopy-dev/remote.git`. This mode mirrors prod behavior: branch creation, workspace cloning, the settings branch, and the worker CLI all work the same way locally as they do in production.
+Full-featured local development with branching and git operations — a local simulation of production. Per-branch workspaces live in `.canopy-dev/content-branches/` and a local bare git remote at `.canopy-dev/remote.git` stands in for GitHub, so branch creation, workspace cloning, the settings branch and the worker CLI (`npx canopycms worker run-once`, which processes queued tasks and refreshes the auth cache) all work the same way as in prod. Commits go to the local bare remote and no PR is created. `defaultActiveBranch` and `defaultBaseBranch` are auto-detected from git HEAD when unset, and the AI content cache is invalidated on every request so content edits show immediately.
 
-`defaultActiveBranch` and `defaultBaseBranch` are each auto-detected from the current git HEAD if not explicitly set in the config (see [Branch Identity](#branch-identity-defaultbasebranch-vs-defaultactivebranch)). The detected values are baked into the config object at service creation time so that all downstream code uses the same values without re-detecting (avoids races if HEAD changes mid-request). Settings (groups and permissions) use the same orphan branch mechanism as prod (`canopycms-settings-{deploymentName}`, default: `canopycms-settings-local`), with the workspace at `.canopy-dev/settings/`. Commits go to the local bare remote but no PR is created, keeping the workflow lightweight during development. The AI content cache is invalidated on every request in dev mode so content edits are reflected immediately.
+**Dev content sync.** The developer's working tree and the editor's branch workspaces are separate git structures, and they drift: the developer edits content files directly, or an editor publishes changes the developer wants back in their repo. `canopycms sync push`/`pull`/`both`/`abort` moves content across that boundary explicitly (see [cli/AGENTS.md](packages/canopycms/src/cli/AGENTS.md) and [README.md](README.md)). Directory replacements use a backup-rename pattern — rename the old aside, rename the new into place, then delete the backup — so an interruption always leaves one complete copy on disk, and a `--branch` value is validated against path traversal: the resolved path must stay inside the branches directory. Every project-bound command (`sync`, `migrate`, `generate-ai-content`, `worker run-once`) finds its project root by walking up to the nearest `canopycms.config.ts`, the way git finds `.git`, and fails non-zero outside a project rather than guessing.
 
-Use `npx canopycms worker run-once` to process queued tasks, refresh the auth cache, and simulate the EC2 worker locally. Use `npx canopycms sync push` / `npx canopycms sync pull` to synchronize content between the developer's working tree and the CMS editor's branch workspaces (see [Content Sync CLI](#content-sync-cli) below). A background watcher (see [Dev Content Divergence Detection](#dev-content-divergence-detection) below) surfaces divergence between the working tree and the served branch clone, so developers do not silently serve stale content when they forget to run sync.
+**Why a separate sync step?** Branch workspaces are the boundary between the developer's git state and the CMS's editing state, and the editor deliberately never writes into the developer's repo — it would create unexpected commits and touch their index. Sync gives the developer explicit control over when content crosses. It also deliberately does not update `remote.git`: the bare remote is kept current by the publish and submit flows, and mixing those responsibilities into sync made the "both" direction's semantics confusing.
+
+**Divergence is surfaced, never auto-resolved.** In dev the editor and dev server read the served branch clone while a build reads the working tree directly, so a working-tree edit made outside the editor leaves the dev server serving stale content until a sync runs. A background watcher compares the two trees by exact file content and, under the dev-only `dev.contentSync` knob, logs a warning naming the diverged files (`'warn'`, the default) or does nothing (`'off'`). There is intentionally **no auto-push mode**: overwriting the branch clone from the working tree would clobber unsubmitted editor saves with no Canopy-level recovery path, so reconciliation goes through the conflict-aware `sync push`. The watcher's own invariants live in [src/AGENTS.md](packages/canopycms/src/AGENTS.md); its logic is all in core, and the Next.js adapter only starts it, reusing the CLI's sync core so there is one implementation of "compare two content trees".
+
+**A "dev reads the working tree directly" mode was deliberately rejected.** The branch-clone model is the foundation of branch isolation, drafts, ACLs and the publish flow, and a dev-only read path around it would diverge dev from prod and undermine the guarantee that every edit happens on a branch.
 
 ### prod
 
-Full production deployment. Branch workspaces live on persistent storage (e.g., EFS on AWS). Integrates with GitHub for PR creation and management. Designed for team collaboration with proper review workflows.
+Branch workspaces live on persistent storage (EFS on AWS), and GitHub integration handles PR creation and management. Settings live on the orphan branch `canopycms-settings-{deploymentName}` (default `canopycms-settings-prod`), whose name the operating mode strategy computes; changes there open PRs, so permission changes get the same review as content. Settings PR creation follows the same dual path as content branches: directly when `githubService` is available, otherwise a `push-and-create-or-update-pr` task for the worker, which checks for an existing open PR first since the same branch is updated repeatedly.
 
-Settings (groups and permissions) are stored on a separate orphan branch whose name is computed by the operating mode strategy as `canopycms-settings-{deploymentName}` (default: `canopycms-settings-prod`). Changes create PRs for review before merging to main, ensuring permission changes go through the same review process as content changes.
-
-Settings PR creation follows the same dual-path as content branches: when `githubService` is available the PR is created directly; when it is not (e.g., Lambda with no internet), a `push-and-create-or-update-pr` task is queued for the EC2 worker. Because the same settings branch is updated repeatedly, this task checks for an existing open PR before creating a new one.
-
-**Security**: In both prod and dev modes, the system will throw an error if the settings branch cannot be loaded, ensuring permissions are never accidentally read from a content branch. Concurrent admin updates to settings files are guarded by the same locking stack described in [Storage Architecture](#storage-architecture): a conflicting update is rejected rather than silently overwritten, and the editor surfaces the conflict to the admin instead of failing silently or clobbering another admin's change. See [docs/concurrency.md](docs/concurrency.md) for the full model.
+**Security:** in both modes the system throws if the settings branch cannot be loaded, so permissions are never accidentally read from a content branch. Concurrent admin updates to settings files are guarded by the locking stack in [Storage Architecture](#storage-architecture): a conflicting update is rejected and surfaced to the admin rather than silently overwriting another admin's change.
 
 ### Mode Strategy Pattern
 
-Operating modes are implemented using the Strategy pattern, which encapsulates mode-specific behavior into strategy objects. Each mode has two strategy implementations:
+Each mode has two strategy implementations: a **ClientSafeStrategy** of UI feature flags and plain configuration (no Node APIs, safe for `'use client'`), and a **ClientUnsafeStrategy** extending it with filesystem and git behavior. Strategies return configuration values and flags, never business logic — git commands belong to `GitManager` and `BranchWorkspaceManager`, which read those flags to decide.
 
-- **ClientSafeStrategy**: Contains UI feature flags and simple configuration (no Node.js APIs). Safe for 'use client' components.
-- **ClientUnsafeStrategy**: Extends ClientSafeStrategy with server-side functionality (file system operations, git integration).
-
-**Key design principle**: Strategies return configuration values and flags, not business logic. Complex operations (like git commands) are handled by domain-specific managers (GitManager, BranchWorkspaceManager) that use strategy flags to make decisions.
-
-**Workspace root as the single source of truth**: `ClientUnsafeStrategy` requires a `getWorkspaceRoot()` method that returns the mode-specific top-level directory for all CMS state:
-
-- `prod`: `CANOPYCMS_WORKSPACE_ROOT` env var, falling back to `/mnt/efs/workspace`
-- `dev`: `{cwd}/.canopy-dev`
-
-All other path methods on `ClientUnsafeStrategy` (`getContentBranchesRoot`, `getSettingsRoot`, etc.) are derived from `getWorkspaceRoot()` internally. This consolidates the single-root principle: there is exactly one place per mode that determines where on disk the CMS writes its state, and all subdirectories fan out from there. The auth metadata cache (`.cache/`) also lives under the workspace root, making the path available automatically without adopter configuration.
+**The workspace root is the single source of truth for where state lives.** `ClientUnsafeStrategy.getWorkspaceRoot()` returns `CANOPYCMS_WORKSPACE_ROOT` (falling back to `/mnt/efs/workspace`) in prod and `{cwd}/.canopy-dev` in dev, and every other path method derives from it internally — so there is exactly one place per mode that decides where the CMS writes, and everything including the auth metadata cache fans out from it with no extra adopter configuration.
 
 ## Deployment Architecture
 
-CanopyCMS is designed to work in multiple deployment scenarios, from a single server to a split Lambda + worker architecture optimized for cost and security.
+CanopyCMS runs in two shapes: a single server with internet access, or a split Lambda + worker topology chosen for cost and blast radius. [docs/deploying-to-aws.md](docs/deploying-to-aws.md) is the operational guide for the second.
 
 ### Single Server (Simplest)
 
-The simplest deployment runs CanopyCMS on a single server (EC2, Railway, etc.) with direct internet access:
-
-- Auth plugin calls the provider API directly (e.g., Clerk)
-- Git operations push/pull to GitHub directly
-- GitHub PR operations happen synchronously in the request cycle
-- No worker, no caching, no task queue needed
-
-This is the default behavior when `githubService` is available and the auth plugin has internet access.
+One server with direct internet access: the auth plugin calls the provider API, git operations push and pull to GitHub directly, and PR operations happen synchronously in the request cycle — no worker, no caching, no task queue. This is the default whenever `githubService` is available and the auth plugin can reach the internet.
 
 ### Lambda + EFS + EC2 Worker (AWS, Cost-Optimized)
 
-For low-cost AWS deployments, CanopyCMS supports splitting into two components that share an EFS filesystem:
+Two components share an EFS filesystem, and the split is driven by one constraint: **the Lambda has no internet access**, because a NAT Gateway costs more per month than the rest of the deployment combined. The Lambda sits in isolated subnets behind a Function URL, fronted by CloudFront for a stable domain and TLS.
 
-**Lambda (no internet access):**
+**Lambda** runs the CMS app (editor, preview, API). It authenticates with networkless JWT verification plus a file-based metadata cache, performs git operations against a local bare repo on EFS over a `file://` URL — local git is fast, so those run synchronously in the request rather than through a job queue — queues anything needing the internet as a task file on EFS, and reaches S3 for asset presign and finalize through a gateway VPC endpoint. It holds no sensitive secrets: only public keys and configuration.
 
-- Runs the CMS app (editor + preview + API)
-- Authenticates via networkless JWT verification + file-based metadata cache
-- Git operations use a local bare repo (`remote.git`) on EFS via `file://` URL
-- PR operations are queued to a task directory on EFS
-- Reaches S3 for asset presign/finalize through a gateway VPC endpoint (no NAT needed); see [Asset & Media System](#asset--media-system)
-- Holds no sensitive secrets (only public keys and config)
+**EC2 worker** is a tiny daemon on a t4g.nano spot instance (~$1.50/month) with outbound HTTPS. It does everything that needs the internet or a whole-repository view: processing queued tasks (pushing branches to GitHub, creating and updating PRs), syncing `remote.git` with GitHub, pushing this deployment's own settings branch each cycle as a backstop, rebasing active branch workspaces onto the updated base branch, and refreshing the auth metadata cache. Those duties share a process, a lock and a filesystem rather than a call path, which is why the daemon is a lifecycle shell plus one module per duty cycle (see [Module Structure](#module-structure)).
 
-**EC2 Worker (internet access):**
+All secrets therefore live on the worker, and a compromised Lambda can read and write content on EFS but cannot reach GitHub, Clerk, or any other external service. The worker is otherwise silent — no HTTP endpoint, no health API — so its stdout and stderr ship to CloudWatch and its status snapshots land on EFS for the admin API below.
 
-- Tiny daemon (t4g.nano spot instance, ~$1.50/month)
-- Processes queued tasks: pushes branches to GitHub, creates/updates PRs
-- Syncs `remote.git` with GitHub (fetches upstream changes)
-- Pushes this deployment's own settings branch to GitHub on each sync cycle (belt-and-suspenders for the task queue) — never a blanket push of every local `canopycms-settings-*` branch. Once another deployment's settings branch can legitimately show up as a local head (see below), pushing all of them would mean one deployment's worker publishing another deployment's settings; it warns about any such foreign branch instead of touching it
-- Rebases active branch workspaces onto updated base branch (with conflict detection and resolution)
-- Refreshes auth metadata cache (Clerk users/orgs, or dev test users)
-- Ships its own stdout/stderr to a dedicated CloudWatch log group, every line prefixed with an ISO-8601 UTC timestamp and a level tag (INFO/WARN/ERROR)
+### `remote.git` — the Local Bare Repo
 
-Those duties are independent of one another — they share a process, a lock and a filesystem, not a call path — and the daemon's internal structure follows that: a lifecycle shell that owns the process concerns, plus one module per duty cycle reached through a context object. See [Modularized Domains](#modularized-domains) for the map and [Why is the worker daemon split into free functions over a context?](#why-is-the-worker-daemon-split-into-free-functions-over-a-context) for the rationale.
+Both modes use a local bare git repository as the "remote" for all branch workspace operations; workspaces clone from and push to it over `file://`. In dev it is auto-created at `.canopy-dev/remote.git` from the local checkout; in prod the worker creates it at `{workspaceRoot}/remote.git` and keeps it in step with GitHub. CanopyCMS auto-detects it at the workspace root, so no `CANOPYCMS_REMOTE_URL` is needed when it exists.
 
-This architecture eliminates NAT Gateway ($32/month) and keeps all secrets on the worker (not Lambda). The worker's AWS permissions: EFS client access (managed policy), Secrets Manager reads for its specific secrets, SSM core (`AmazonSSMManagedInstanceCore`, the Session Manager observation channel for operators whose roles allow it), read access to the CDK asset bucket (its own code bundle), and write-only access to its one CloudWatch log group — no broader logging or monitoring policy (no `CloudWatchAgentServerPolicy`). Log shipping exists because production operators may not have SSM Session Manager access into the instance (an organization's SSO role can be provisioned without `ssm:StartSession`), leaving the shipped logs as the only window into worker behavior beyond the task queue's own success/failure records. Because the worker is otherwise silent — no HTTP endpoint, no health API — log delivery is treated as best-effort rather than a hard dependency: the worker daemon starts and keeps running even if the log agent fails to install or configure.
+When dev-mode site content lives in a subdirectory of the repo, the simulated remote is seeded with a single snapshot commit of that subdirectory's tree at the configured base branch — not whatever branch HEAD is on, and not the subdirectory's full history, since extracting that forks a subprocess per commit and takes minutes on a large repo while editor state is committed on top of the seed anyway. Because branch auto-detection routinely clones from base branches that postdate the remote's creation, a base branch missing from it is pushed from the source repo on demand; branches already present are never refreshed that way, because the CMS pushes editor state into the remote and a refresh would clobber it.
 
-The timestamp/level prefix is load-bearing, not cosmetic. The worker's systemd unit sends both stdout and stderr into the same log file, so the level tag is the only thing that lets a downstream reader tell a `console.log` line from a `console.error` line; timestamp and level are passed as separate arguments rather than concatenated into the message so console's native formatting of non-string arguments still applies (an `Error` still prints with its stack). The CloudWatch agent config reads that same prefix twice: as `timestamp_format`/`timezone`, so each CloudWatch event is stamped with when the worker actually emitted the line rather than when the agent ingested it (the two diverge during agent hiccups, buffered bursts, and post-restart backlogs), and as `multi_line_start_pattern`, so a multi-line stack trace stays one CloudWatch event instead of fragmenting into one event per line. Because the multi-line grouping is keyed on that prefix, any line written to the log file without it is folded into the preceding event instead of starting its own — so every writer to the log file goes through the same shared logging helper. The one gap is an uncaught-exception dump Node prints on its own on the way down, which still attaches to the preceding event rather than starting its own — worse than a correctly-tagged line, but still better than the per-line fragmentation this scheme replaces.
+**Prod-mode network-remote guard.** Because the Lambda in this topology has no internet access, `GitManager.resolveRemoteUrl` rejects a resolved NETWORK remote URL (`http(s)://`, `ssh://`, `git://`, or scp-like `user@host:path`) in prod mode, whatever its source — an explicit `remoteUrl` argument, `config.defaultRemoteUrl`, or the `CANOPYCMS_REMOTE_URL` env var — since pointing any of them at GitHub would make the internet-less Lambda hang trying to clone, fetch or push. `file://` URLs and plain filesystem paths are unaffected. A prod host that genuinely has internet access and intentionally runs git against a network remote opts out per deployment with `config.allowNetworkRemoteInProd: true`.
 
-The worker's Auto Scaling Group carries a rolling `UpdatePolicy` (`minInstancesInService: 0`, forced by `minCapacity`/`maxCapacity` both being 1), so `cdk deploy` actually terminates and relaunches the instance whenever its launch template changes — most notably a new worker code bundle, which is a CDK S3 asset baked into the launch template's user-data. Without this, CloudFormation updates the template resource and stops there: the running instance keeps its stale user-data (and stale worker bundle) until a spot interruption or manual terminate happens to replace it, so a plain `cdk deploy` would silently update everything except the worker. This makes instance replacement — previously a rare event (spot interruption) — routine (every deploy that touches the worker), which is why orphaned-task recovery now runs on every task-queue cycle rather than only at worker boot; see [Task Queue](#task-queue-async-github-operations) below. The CMS and transform Lambdas each get an analogous dedicated CloudWatch log group (`cmsLogGroup`/`transformLogGroup`), all following the same custom-name/90-day-retention/`RemovalPolicy.DESTROY` convention as the worker's, instead of the CloudFormation-implicit `/aws/lambda/<function-name>` group (which CDK can't manage and which survives `cdk destroy`).
+**The bot token never persists on shared storage.** The worker clones `remote.git` from GitHub with the token in the clone URL, and a plain `git clone` records that URL verbatim in the repo's config — which on EFS would leave the token in cleartext, readable by anything that can read the workspace, notably a compromised Lambda with no egress of its own. Nothing needs that stored remote, since every push passes its URL explicitly, so the clone lands under a staging name and is renamed into place only once the scrub is confirmed, and the scrub re-runs on every boot against an existing `remote.git`. See [Security Model](docs/deploying-to-aws.md#security-model) for the residual window and [worker/AGENTS.md](packages/canopycms/src/worker/AGENTS.md) for the fail-closed rule.
 
-Because instance replacement is now routine rather than rare, the boot script's own reliability matters more than it used to. It draws a hard line between what must exist for the worker to run at all and what is merely nice to have: a failure in any prerequisite step (package installs, the EFS mount, unpacking the worker bundle, starting the systemd service) shuts the instance down immediately, so the ASG replaces it — the only automatic recovery available in this topology, and a deliberate choice over doing nothing, since a half-booted instance still passes the ASG's own EC2-only health check indefinitely while doing nothing useful. That fail-fast behavior is then explicitly turned off before the best-effort CloudWatch log-shipping setup described above, so a package-mirror hiccup while installing the logging agent can't take down an otherwise-healthy worker and hand it right back into the same outage on relaunch. Node itself now installs from the OS's own package repository rather than a piped third-party installer script, for the same reason: a routine, unattended replacement path shouldn't depend on a third party being reachable just to boot.
+### Auth Caching (CachingAuthPlugin)
 
-**Sharing one repository across two deployments:** The CDK service construct accepts a `deploymentName` prop (default `prod`), stamped into both the Lambda's and the worker's environment as `CANOPYCMS_DEPLOYMENT_NAME`. This is what lets two independent CanopyCMS stacks — e.g. staging and production — point at the same GitHub repo without colliding on the same settings branch: each stack gets its own `canopycms-settings-{deploymentName}` branch, and the worker above pushes only the one belonging to its own stack. See [Deployment Name Resolution](#deployment-name-resolution) for how this value is resolved end-to-end and why the environment variable — not the adopter's config — is what actually distinguishes the two stacks.
+`CachingAuthPlugin` wraps any auth plugin so that a request costs no network: a `TokenVerifier` verifies the JWT locally, and `FileBasedAuthCache` reads user and group metadata from JSON files on EFS. Each auth plugin package supplies both halves. The worker populates the cache — or `npx canopycms worker run-once` in dev — and the Lambda picks new files up by mtime on the next request; in dev the wrapper takes an optional lazy refresher so the cache auto-populates on first request. Wrapping is transparent: when a plugin implements the optional `verifyTokenOnly(context)` method, `createNextCanopyContext` wraps it in both prod and dev, so adopters wire nothing. The cache directory derives from the strategy's workspace root (`{workspaceRoot}/.cache`) and can be overridden with `CANOPY_AUTH_CACHE_PATH`.
 
-Content branches have no equivalent namespacing — an editor on either stack can independently create a branch with the same name — so that scenario surfaces instead as a real git push rejection rather than silent data loss. See [Push Rejection Classification](#push-rejection-classification) below for how both hops of the push flow detect and report it.
+`CachingAuthPlugin` **forwards** the wrapped plugin's `verifiesCredentials` affirmation through a constructor option rather than declaring its own, and the framework adapter asserts trust against the inner plugin before wrapping — so adding a cache in front of an insecure plugin can never launder it into a trusted one (see [Authentication](#authentication)).
 
-### Key Deployment Components
+### Two Deployments, One Repository
 
-#### CloudFront Distribution and Origin Timeout
+Two independent CanopyCMS stacks can point at the same GitHub repo, and the CDK service construct's `deploymentName` prop (stamped into both the Lambda's and the worker's environment) is what keeps them apart: each stack gets its own `canopycms-settings-{deploymentName}` branch, and each worker pushes only its own — warning about, never touching, a foreign settings branch it finds locally. See [Deployment Name Resolution](#deployment-name-resolution) for why the environment variable, not the shared repo's config, distinguishes the two, and [docs/deploying-to-aws.md](docs/deploying-to-aws.md#two-deployments-one-repository) for the steps. Content branches have no equivalent namespacing — an editor on either stack can create a branch with the same name — so that case surfaces as a real git push rejection rather than silent data loss (see [Push Rejection](#push-rejection)).
 
-The CMS Lambda's Function URL is fronted by a CloudFront distribution (`CanopyCmsDistribution`) for a stable custom domain and TLS. Its origin-read timeout and the Lambda's own execution timeout are two independent settings that must agree: CloudFront's own default origin-read timeout is 30 seconds, well under a Lambda that can legitimately run longer (a first-touch branch provision doing a full `git clone` onto EFS inside the request is a real case), so leaving it unset silently caps every such request at half the Lambda's actual budget — CloudFront answers 504 at the 30-second mark while the Lambda keeps running to completion behind it, succeeding server-side with nothing to correlate that success to the viewer-facing failure. The CDK constructs close this by construction rather than by convention: both the Lambda's timeout and the distribution's default origin-read timeout resolve from the same constant, and the service construct exposes its own resolved timeout so a caller overriding the Lambda's can pass that same value through to the distribution instead of the two silently drifting apart. Because CloudFront rejects an origin-read timeout above 60 seconds without a support-requested quota increase, an override past that ceiling fails at synth time rather than deploying a distribution that can never work.
+## Admin Observability and Recovery API
 
-The distribution also accepts extra CloudFront behaviors, merged with its own defaults. This is what gives the `AssetSupport` construct (see [Asset & Media System](#asset--media-system)) a route to attach its `/assets/*` and `/assets/t/*` behaviors onto the very distribution the CDK scaffold generates, rather than requiring adopters to stand up a second one. The merge deliberately preserves the caller's own ordering for every behavior they pass, rather than a plain object merge's usual "overridden key keeps its original position": CloudFront matches path patterns in the order they're listed, so pinning an overridden key at the defaults' position could silently make a more specific pattern the caller meant to list first unreachable behind a more general one.
+In the Lambda + worker topology two things fail silently by default: worker and task-queue health, since the worker has no endpoint to ping and operators may have no shell access to the instance; and branch directories left broken by a crash mid-provision or mid-write, since admins have no filesystem access in prod. A namespaced `/admin/*` surface addresses both. Every endpoint carries the same `admin` role check as the rest of the API and is reached through the existing catch-all route — this is recovery tooling, not a new adopter touchpoint — and the editor's System Health panel is its only consumer.
 
-#### `remote.git` — Local Bare Repo
+**Worker liveness and the task queue.** Queue stats come from the task directory. Liveness is classified from the mtime of the worker's lock-heartbeat file rather than a live ping, with a deliberately generous staleness threshold that adds a budget on top of the worker's own stale-lock window: a reader on another host can see a heartbeat mtime lagging the true write by the EFS attribute cache's window, and a tight threshold would report a healthy worker as crashed. The worker also writes a status snapshot each cycle — its last git sync and what happened, the last sync error, and the last fatal error including startup failures. Only the lock-holding worker writes that file, and each write is a full-snapshot replace, so a reader never sees a half-written report. Tasks can be listed by status, including files the queue could not parse, then retried or deleted. **A retry requeues under a freshly generated ID**, because the dequeue path dedupes by ID and replaying the same one would be silently absorbed instead of retried. Retry and delete are accepted as safe-to-race with the worker rather than coordinated against it: a task that runs anyway is harmless.
 
-Both `prod` and `dev` modes use a local bare git repository as the "remote" for all branch workspace operations. Branch workspaces clone from and push to this bare repo using `file://` URLs.
-
-- **dev**: Auto-created at `.canopy-dev/remote.git` from the local checkout. When site content lives in a subdirectory of the repo, the remote is seeded with a single snapshot commit of that subdirectory's tree at the configured base branch — not whatever branch HEAD happens to be on, and not the subdirectory's full history. Extracting that history (`git subtree split`) forks a subprocess per commit and takes minutes on large repos, and the simulated remote never needs it: editor state is committed on top of the seed. Branch auto-detect means workspaces are routinely cloned from base branches that postdate the remote's creation, so a base branch missing from the existing remote is pushed from the source repo on demand. Branches already present in the remote are never updated this way — the CMS pushes editor state into the remote, and a refresh from the source repo would clobber it.
-- **prod**: Created by the EC2 worker at `{workspaceRoot}/remote.git`, synced with GitHub
-
-CanopyCMS auto-detects `remote.git` at the workspace root (via `autoDetectRemotePath` in the operating mode strategy). No explicit `CANOPYCMS_REMOTE_URL` env var needed if `remote.git` exists.
-
-**Prod-mode network-remote guard:** because the Lambda in this topology has no internet access, `GitManager.resolveRemoteUrl` rejects a resolved NETWORK remote URL (`http(s)://`, `ssh://`, `git://`, or scp-like `user@host:path`) in `prod` mode, regardless of whether it came from an explicit `remoteUrl` param, `config.defaultRemoteUrl`, or the `CANOPYCMS_REMOTE_URL` env var — pointing any of those at GitHub directly would make the internet-less Lambda hang trying to clone/fetch/push it. `file://` URLs and plain filesystem paths (including the auto-detected `remote.git` above) are local and unaffected. Prod hosts that genuinely have internet access and intentionally run git against a network remote (e.g. a single-VM deployment outside this topology) can opt out per-deployment via `config.allowNetworkRemoteInProd: true`.
-
-**The bot token never persists on shared storage.** The worker clones `remote.git` from GitHub with the bot token embedded in the clone URL, and a plain `git clone` records that URL verbatim in the repo's config — which for `remote.git` would mean the token sitting in cleartext on EFS, readable by anything that can read the workspace (including, notably, a compromised Lambda that otherwise has no network egress of its own to exfiltrate anything with). Nothing actually needs that stored remote — every push passes the URL explicitly as an argument instead — so the worker scrubs it immediately after cloning, and verifies the scrub took rather than assuming it did. To close the crash window in between (a worker killed mid-clone would otherwise leave a token-bearing config sitting under the real `remote.git` name, indistinguishable from a healthy repo by a simple existence check), the clone lands under a staging name first and is only renamed into place once the scrub is confirmed; a crash before that rename leaves nothing but a staging directory the next boot deletes and retries from. The same scrub also runs as a self-heal on every boot against an already-existing `remote.git`, so a repo that somehow slipped through an earlier version of this guard doesn't stay poisoned forever.
-
-#### Auth Caching (CachingAuthPlugin)
-
-`CachingAuthPlugin` wraps any auth plugin's JWT verification with file-based metadata lookups:
-
-1. **Token verification**: A `TokenVerifier` function verifies the JWT locally (no API calls)
-2. **Metadata lookup**: `FileBasedAuthCache` reads user/group data from JSON files on EFS
-
-Each auth plugin package provides its own token verifier and cache writer:
-
-- `canopycms-auth-clerk`: `createClerkJwtVerifier()` + `refreshClerkCache()`
-- `canopycms-auth-dev`: `createDevTokenVerifier()` + `refreshDevCache()`
-
-The cache is populated by the worker daemon (or `npx canopycms worker run-once` in dev mode). Lambda reads it on every request. Cache invalidation is mtime-based — when the worker writes new cache files, Lambda picks them up on the next request. In dev mode, `CachingAuthPlugin` accepts an optional lazy refresher callback that auto-populates the cache on first request if it does not yet exist, so developers do not need to run the worker manually before their first login.
-
-`CachingAuthPlugin` does not declare its own production trust — it forwards the wrapped plugin's `verifiesCredentials` affirmation through a constructor option (see [Authentication](#authentication) below). This matters because the framework adapter asserts trust against the wrapped (inner) plugin before wrapping it, so `CachingAuthPlugin` can never launder an insecure plugin into a trusted one just by adding a cache in front of it.
-
-**Transparent auto-wrapping via `verifyTokenOnly`**: Auth plugins can declare a `verifyTokenOnly?(context)` method on the `AuthPlugin` interface. This is a lightweight, networkless token verification path — it confirms the JWT signature and extracts a user ID without making any API calls or fetching metadata. When this optional method is present, `createNextCanopyContext` (the Next.js adapter) automatically wraps the plugin with `CachingAuthPlugin` + `FileBasedAuthCache` in `prod` and `dev` modes. Adopters do not need to wire up caching manually; the adapter detects the capability and enables caching transparently.
-
-**Cache path derivation**: The auth cache directory is derived from the workspace root returned by the operating mode strategy: `{workspaceRoot}/.cache`. Adopters can override this with the `CANOPY_AUTH_CACHE_PATH` environment variable. Because the workspace root is already the authoritative base for all mode-specific state, no additional configuration is needed in the common case.
-
-#### Task Queue (Async GitHub Operations)
-
-When `githubService` is unavailable (Lambda has no internet), PR operations are queued to the filesystem:
-
-```
-.tasks/
-  pending/      # Lambda writes task files here
-  processing/   # Worker moves tasks here while executing
-  completed/    # Successful tasks
-  failed/       # Failed tasks (with error details)
-```
-
-The shared helper `github-sync.ts` provides `syncSubmitPr()` and `syncConvertToDraft()` which transparently use `githubService` directly when available, or fall back to the task queue when not. API handlers (submit, withdraw, request-changes) use these helpers without needing to know about the deployment topology.
-
-**Task actions:**
-
-- `push-branch` -- pushes a branch from `remote.git` to GitHub
-- `push-and-create-pr` / `push-and-update-pr` -- push then create or update a specific, already-known PR
-- `push-and-create-or-update-pr` -- pushes, then looks up any existing open PR for the branch and updates it in place, only creating a new one if none exists. This idempotent create-or-update is the standard path for both content-branch submits and settings-branch syncs, because either can be safely retried after a partial failure (e.g. the PR was created on GitHub but its number was never recorded in branch metadata) without hitting GitHub's duplicate-PR error. Content submits set a `markReadyIfDraft` flag in the task payload so the worker converts a pre-existing draft PR to ready-for-review; settings syncs, which are not review requests, omit the flag. The create-or-update logic itself lives in one shared helper (`createOrUpdatePullRequest` in `github-service.ts`), used by both the worker task and the direct-API path's initial-submit/crash-recovery branch (`GitHubService.createOrUpdatePR`, single-server deployments with internet) when a branch's PR number isn't yet known, so idempotency has a single implementation regardless of deployment topology. The direct-API path's other branch -- updating a PR by an already-known number -- calls `updatePullRequest` directly and performs its own draft-to-ready conversion rather than routing through the shared helper. Draft-conversion is therefore best-effort everywhere (a permissions-limited token can't fail an otherwise-successful submit or update), but has two independent call sites rather than one: the shared helper's `markReadyIfDraft` handling, and this second, separately-wrapped conversion in `api/github-sync.ts`.
-- `convert-to-draft` -- converts a PR to draft status (withdraw)
-- `close-pr` -- closes a PR
-- `delete-remote-branch` -- removes a branch from GitHub
-
-Branch metadata includes a `syncStatus` field (`synced`, `pending-sync`, `sync-failed`) so the editor UI can show sync progress. The settings branch commit operation (`commitToSettingsBranch`) returns the same `syncStatus` values, allowing the permissions and groups UI to surface sync state to admins. A `sync-failed` status is paired with a `syncFailureReason` field recording why (see [Push Rejection Classification](#push-rejection-classification) below), so the editor's sync-failed badge can show the actual cause instead of a generic message.
-
-**Orphaned-task recovery**: a task file left in `processing/` — because the worker process that dequeued it died before completing, failing, or retrying it — is recovered (moved back to `pending/`) once its file's age exceeds a threshold (5 minutes by default). `recoverOrphanedTasks` runs on every task-queue poll cycle (`CmsWorker.processTaskQueue`), not only at worker startup: a boot-only call is insufficient once instance replacement is routine rather than rare (see the ASG rolling-update policy above) — a replacement instance typically boots within the 5-minute threshold, so a single boot-time check would see the just-orphaned file as "too fresh" and skip it, and nothing would ever re-check afterward. Running the check every cycle is safe because the per-task execution timeout (60 seconds by default) is well under the recovery threshold, so no task genuinely still in flight can accumulate enough age in `processing/` to be misclassified as orphaned.
-
-**Rate-limit handling**: Every Octokit instance CanopyCMS creates -- the worker's and `GitHubService`'s -- goes through a shared factory that attaches the `@octokit/plugin-throttling` plugin, so both proactively honor GitHub's retry-after guidance on primary and secondary (abuse-detection) rate limits instead of failing immediately. The worker retains a manual classification of HTTP 403 responses as a safety net for what the throttling plugin doesn't cover -- retries the plugin has already exhausted, and errors it never sees at all (e.g. non-403 network failures) -- so a rate-limited task fails permanently only when it genuinely should.
-
-#### Push Rejection Classification
-
-Two CanopyCMS deployments sharing one GitHub repo (see [Sharing one repository across two deployments](#lambda--efs--ec2-worker-aws-cost-optimized) above) can independently create a content branch with the same name, since content branches — unlike the settings branch — are not namespaced by `deploymentName`. When that happens, a push genuinely collides with the other deployment's history for that branch name, and git reports it as a real non-fast-forward rejection: the remote has commits this side never fetched, so retrying the identical push can never succeed.
-
-A shared classifier recognizes this specific shape (`[rejected]` plus git's `non-fast-forward`/`fetch first` wording, or its "Updates were rejected" hint) and deliberately nothing broader — ordinary transient push failures (network, auth, lock contention) are left alone to keep retrying with backoff as before. Because the classifier depends on git's untranslated English wording, every git child process CanopyCMS spawns is now forced to the `C` locale, so a host's ambient language settings can never silently turn the classifier into a permanent no-op.
-
-This classification applies at both hops of a content branch's push to GitHub:
-
-- **Hop 1 — Lambda's synchronous push to the local `remote.git`** (on submit-for-review): a rejection returns HTTP 409 instead of the generic 500 used for other push failures. This hop targets the deployment's **own** local origin, which a foreign deployment cannot reach, so the message deliberately states only the observable fact — the branch diverged from the copy in this deployment's repository and needs reconciling — and names no cause. It also never advises renaming the branch: a branch that reaches this push has usually been submitted before, so a rename can orphan an open PR. As with all error responses, only the branch name and static guidance text reach the client; full detail (redacted of credentials) goes to server logs only.
-- **Hop 2 — the worker's async push from `remote.git` to real GitHub**: a rejection is classified as a permanent failure — the task fails immediately instead of retrying with backoff, since an identical push can never resolve itself. This is a different trigger of the same `PermanentTaskError` used for the head-equals-base backstop (see [Protected Base Branch](#protected-base-branch)); both come from the same task type but for unrelated reasons. This is the hop where a foreign deployment genuinely is a plausible cause, so its message says so; it too stops short of advising a rename.
-
-**Refused leases are a separate shape.** When the worker pushes history it rewrote (see [Publishing a Rewritten History](#publishing-a-rewritten-history)) it uses `--force-with-lease`, and git reports a refused lease as `[rejected] … (stale info)` — which shares none of the wording the classifier above matches, so it has its own predicate. A refused lease is usually benign (the marker is stale because an earlier attempt already landed, or the branch moved on since), and git refuses a stale lease even when the update would be an ordinary fast-forward. The push therefore retries **plain** on a refusal: a non-forced push succeeds only if it fast-forwards, so it can never destroy anything, and only a rejection of that retry is treated as a genuine divergence.
-
-- **The worker's own settings-branch push** (belt-and-suspenders alongside the task queue, described above) has no task to fail into, so it still just logs a warning on any push failure — but now names the collision explicitly when it is one, distinct from the existing warning for a differently-named foreign settings branch found locally.
-
-A permanent push failure is recorded on the branch's metadata as `syncFailureReason`, alongside the existing `syncStatus: 'sync-failed'`, so the editor's sync-failed badge and the admin System Health panel can show why a branch is stuck instead of a generic failure message. It is cleared automatically on the branch's next successful sync, the same pattern used for `rebaseFailure` (see [Rebase Failure Tracking](#rebase-failure-tracking)).
-
-#### Worker CLI
-
-For local development in `dev` mode, the worker can be triggered manually:
-
-```bash
-npx canopycms worker run-once
-```
-
-This processes pending tasks, refreshes the auth cache, and exits. It simulates what the EC2 worker daemon does continuously in production.
-
-#### Admin Observability and Recovery API
-
-In the Lambda + EC2 worker topology, two things fail silently by default: task-queue/worker health (the worker has no HTTP endpoint, and operators may not have SSM Session Manager access into the instance — see [above](#lambda--efs--ec2-worker-aws-cost-optimized)), and branch directories left in a broken state by a crash mid-provision or mid-write (admins have no direct filesystem access in prod). A namespaced `/admin/*` surface addresses both. Every endpoint is guarded by the same `admin` role check used elsewhere (see [Declarative Guard System](#declarative-guard-system)) and reached through the existing catch-all API route — this is observability and recovery tooling, not a new adopter touchpoint. The Editor's admin-only "System Health" panel is the only consumer (see [Editor Architecture](#editor-architecture)).
-
-**Task queue and worker liveness** (`GET /admin/status`): Task-queue stats (counts per status, oldest pending task's age) are read directly from the task-queue directory. Worker liveness is classified from the mtime of the worker's own lock-heartbeat file rather than a live ping — there is nothing to ping. The staleness threshold is deliberately generous, adding a budget on top of the worker's own stale-lock window to absorb EFS attribute-cache staleness: a reader on a different host than the worker can see a heartbeat mtime that lags the true write by that cache's window, and a tight threshold would misreport a healthy worker as crashed. The worker also self-reports a status snapshot on every sync/task cycle — when its last git sync ran and what happened (branches rebased, skipped as dirty, failed with error), the last sync error, and the last fatal error including startup failures (e.g. an unreachable or corrupted git remote). Only the lock-holding worker ever writes this file, and each write is a full-snapshot replace rather than a partial update, so a reader never observes a half-written report; the endpoint tolerates the file being missing or stale.
-
-**Task recovery** (`GET /admin/tasks/:status`, `POST /admin/tasks/:taskId/retry`, `DELETE /admin/tasks/:status/:fileName`): Lists tasks by status, including a dedicated listing for task files the queue itself could not parse. Retrying a failed task requeues it under a freshly generated ID rather than reusing the original one — the queue's own dequeue path dedupes by ID, so replaying the same ID would be silently absorbed instead of actually retried. Both retry and delete are accepted as safe-to-race with the worker (a task that ends up running anyway is treated as harmless, not prevented) rather than coordinated against it.
-
-**Branch directory health and recovery** (`GET /admin/branch-health`, `POST /admin/branch-dirs/:dirName/purge`, `POST /admin/branch-dirs/:dirName/repair-metadata`): Classifies every directory under the branches root as healthy, corrupt-metadata (a `branch.json` that exists but fails to parse — see [registry quarantine](#why-is-the-branch-registry-a-cache-not-a-source-of-truth)), or orphan (no `branch.json` at all, left behind by a partial delete or an interrupted clone). Purge is reversible: the directory is renamed to a trash name rather than deleted outright, with the trash timestamp embedded in the name itself rather than relied on from the directory's mtime (a rename preserves the original mtime, so mtime-based retention would delete a months-stale orphan's trash on the very first sweep). The worker's sync cycle sweeps trashed directories older than 30 days. Repair-metadata recovers a corrupt-metadata directory by archiving the unparseable `branch.json` alongside itself for forensics and recreating a fresh one with default values — including for the base branch, which is the case that matters most, since a corrupt base branch degrades every request until it's repaired (see [Branch Identity](#branch-identity-defaultbasebranch-vs-defaultactivebranch)).
-
-#### Project-Bound CLI Commands
-
-CLI commands that operate on an existing project (`sync`, `migrate`, `generate-ai-content`, `worker run-once`) resolve the project root by walking up from the current directory to the nearest `canopycms.config.ts` — the same way git discovers `.git`. Running from a subdirectory works, and CMS state (e.g. `.canopy-dev/`) is never scattered into the wrong directory. Running outside a project is a hard failure: the command prints an error and exits non-zero rather than guessing. The same hard-failure stance applies to other CLI preconditions (missing content directory, unknown branch workspace), so scripts and CI can rely on exit codes.
-
-#### Content Sync CLI
-
-In dev mode, the developer's working tree and the CMS editor operate on separate git structures. The developer edits files in their normal repo, while the editor works through branch workspaces cloned from the local bare remote. These two worlds can drift apart: the developer might update content files directly, or an editor might publish changes through the CMS that the developer wants to pull back into their repo.
-
-The `sync` command bridges this gap with bidirectional content synchronization between the developer's working tree and a specific branch workspace. It uses subcommands (`sync push`, `sync pull`, `sync both`, `sync abort`) to make each operation explicit. If no `--branch` flag is provided, sync auto-detects the current git branch from HEAD and targets that workspace. If the workspace does not yet exist for push operations, sync auto-creates it (cloning from the local bare remote), so developers can immediately push content into a new branch without manual workspace setup. Content validation happens before this auto-creation — a push with nothing to push (e.g. a missing or misconfigured content directory) fails fast without leaving a freshly provisioned workspace behind.
-
-- **Push** (`npx canopycms sync push`): Copies the developer's current working-tree content directly into the selected branch workspace and commits it there. This is useful after the developer makes direct content edits outside the CMS. Push does not update the local bare remote; `remote.git` stays current through the normal publish/submit mechanisms.
-
-- **Pull** (`npx canopycms sync pull`): Copies content from a branch workspace back into the developer's working tree. The developer can then review the changes with normal git tools and commit when ready. This closes the loop after content is edited through the CMS.
-
-- **Both** (`npx canopycms sync both`): Performs a proper 3-way git merge between working-tree changes and editor changes. It uses a `canopycms-sync-base` tag (set by each successful sync) as the merge base, creates a temporary branch from that base with the working-tree content, and merges it with the workspace branch. If conflicts arise, the workspace is left in a merge state for manual resolution. On a clean merge, the result is pulled back into the working tree automatically.
-
-- **Abort** (`npx canopycms sync abort`): Cancels a failed merge in a branch workspace by running `git merge --abort`, restoring it to the pre-merge state. This is the recovery path when a "both" sync encounters conflicts the developer does not want to resolve in the workspace.
-
-**Safety guarantees:** Directory replacements during sync use a backup-rename pattern: the old directory is renamed to a timestamped backup, the new directory is renamed into place, and only then is the backup deleted. If the process is interrupted at any point, at least one complete copy of the content always exists on disk. Branch names provided via the `--branch` flag are validated against path traversal (the resolved path must stay within the branches directory), preventing a crafted branch name like `../../etc` from escaping the workspace root.
-
-**Why a separate sync step?** The CMS editor intentionally does not write directly to the developer's repo. Branch workspaces act as a boundary between the developer's git state and the CMS's editing state. This isolation prevents the CMS from creating unexpected commits or modifying the developer's index. The sync command gives the developer explicit control over when content crosses that boundary.
-
-**Why sync does not touch remote.git:** Earlier designs had push update the local bare remote and fan out fetches to all branch workspaces. This was removed because the sync command's purpose is narrow: move content between the developer's working tree and a single branch workspace. The bare remote is kept current by the existing publish and submit flows, and mixing those responsibilities in sync created confusing semantics (especially for the "both" direction).
-
-#### Content Migration CLI
-
-The `migrate` command (`npx canopycms migrate`) converts an existing plain content tree into CanopyCMS conventions: entry files and collection directories are renamed to embed stable content IDs, and `.collection.json` meta files are scaffolded for the root and each collection. Only files of the chosen format are touched — assets and other formats are left alone — and already-conforming names are skipped, so re-running is a no-op. Source-specific ordering conventions (e.g. Nextra's `_meta.json`) are deliberately out of scope: migrated collections fall back to alphabetical ordering, which adopters can refine afterward through the editor. This gives sites with pre-existing content (docs sites, blogs) a one-command on-ramp instead of hand-renaming every file.
-
-### Dev Content Divergence Detection
-
-The content sync CLI closes the gap between the developer's working tree and the editor's branch clones, but only when the developer remembers to run it. In dev mode there are two distinct content readers that can silently disagree:
-
-- The **editor and dev server** read content from the served branch clone under `.canopy-dev/content-branches/<branch>/`.
-- **A build** — `next build`, of either deployment type — reads the working-tree `content/**` directly, never the branch clone (see [Static Deployment and Build Mode](#static-deployment-and-build-mode)).
-
-When a developer edits working-tree content outside the editor, the dev server keeps serving the stale branch clone until a sync runs. A background watcher surfaces this divergence automatically. Its behavior is controlled by a single dev-only config knob, `dev.contentSync`:
-
-- **`'warn'`** (default): Log a warning that names the diverged files (added, removed, and changed), pointing the developer at `npx canopycms sync push`.
-- **`'off'`**: Disable the watcher entirely.
-
-There is intentionally **no auto-push mode**. Auto-overwriting the branch clone from the working tree would silently clobber uncommitted editor "Save" state with no Canopy-level recovery path for the editor. Reconciliation instead goes through the interactive, conflict-aware `canopycms sync push`.
-
-The watcher runs an initial check at dev startup and re-checks whenever a working-tree content file is added, changed, or removed. It re-resolves the served active branch on each check (so it tracks git-HEAD switches the dev server follows) and dedupes across HMR (a restart disposes any prior watcher for the same content directory). It compares the two directories by exact file content (byte comparison, robust to mtime differences), so it only fires on real divergence. It is a no-op outside dev mode, when the working tree has no content directory, or before the branch clone has been created.
-
-**Why this lives in core:** All the divergence-detection logic lives in the core package's watcher. The Next.js adapter merely starts the watcher once at dev startup (a thin, framework-specific trigger), keeping the adapter free of behavior. The watcher extracts and reuses the same non-interactive sync core -- copy, commit, and content-tree diffing -- that backs the interactive sync CLI, so there is a single implementation of "compare two content trees" and "push working-tree content into a branch clone."
-
-**Deliberate non-goal -- no "dev reads working tree directly" mode:** A simpler-seeming alternative would be to have the dev server read the working tree directly, bypassing the branch clone. This was deliberately rejected. The branch-clone model is the foundation of the editing workflow (branch isolation, drafts, ACLs, the publish/submit flow), and a special dev read path that skips it would diverge dev behavior from prod and undermine the guarantee that "every edit happens on a branch." Surfacing divergence (and reconciling it through `canopycms sync push`) preserves the branch-clone model while still giving developers a fast, low-friction loop.
+**Branch directory health and recovery.** Every directory under the branches root is classified as healthy, corrupt-metadata (a `branch.json` that exists but won't parse), or orphan (no `branch.json` at all, from a partial delete or interrupted clone). Purge is reversible — the directory is renamed to a trash name with the timestamp **in the name**, not read from mtime, since a rename preserves the original mtime and mtime-based retention would delete a months-stale orphan's trash on the first sweep — and the worker's sync cycle sweeps trash older than 30 days. Repair archives the unparseable file alongside itself for forensics and writes a fresh one with defaults, including for the base branch, which is the case that matters most (see [Branch Identity](#branch-identity-defaultbasebranch-vs-defaultactivebranch)).
 
 ## Context Architecture
 
-CanopyCMS provides a context system that manages authentication, permissions, and content access in a framework-agnostic way.
+The context system manages authentication, permissions and content access framework-agnostically.
 
-### Core Context Factory
+`createCanopyContext(options)` takes the config plus a framework-specific `getUser` function and returns `getContext()` and the underlying services. It knows nothing about Next.js or any other framework; the adapter supplies `getUser`.
 
-The core provides `createCanopyContext(options)` which takes:
+Calling `getContext()` returns a `CanopyContext` carrying the current user (with bootstrap admin groups applied), the services, and four readers:
 
-- **config**: CanopyCMS configuration
-- **getUser**: Framework-specific function to extract current user
+- **`read()`** — content reader with the user already injected. Always throws on a denied read, for callers that must tell "not found" from "forbidden".
+- **`readByUrlPath()`** — resolves exactly the URLs `listEntries()` publishes: direct slug match first, then the index-entry fallback, with the one-URL rule and its `urlAddressableOnly` gate described under [Schema-Driven Content Model](#schema-driven-content-model). A denied read — no access, or an anonymous request against a private path — resolves to `null` rather than throwing, so a page's ordinary `if (!result) return notFound()` renders a privacy-preserving 404 instead of letting an unhandled 500 escape the server component. That is the same choice the JSON API makes by returning 401/403: don't reveal _why_ a path is inaccessible.
+- **`buildContentTree()`** and **`listEntries()`** — the two batch readers (see [Content Tree and Entry Listing](#content-tree-and-entry-listing)).
 
-Returns:
+The context also handles user extraction, static-deployment and build-mode detection, permission checks during reading, and **bootstrap admin group application** — config-designated admins get the Admins group regardless of what the auth provider returns, applied here so it happens once, before any read or permission check, rather than in every page.
 
-- **getContext()**: Function that returns authenticated context with `read()` method
-- **services**: Underlying services (branch manager, permissions, etc.)
-
-This factory is framework-agnostic—it doesn't know about Next.js, Express, or any other framework. The framework adapter provides the `getUser` function.
-
-### Authenticated Context
-
-Calling `getContext()` returns a `CanopyContext` with:
-
-- **read()**: Content reader with user already injected, no need to pass user manually
-- **readByUrlPath()**: URL-path-based content reader that resolves exactly the URLs `listEntries()` publishes (tries direct slug match first, then falls back to index entry lookup; root path '/' resolves to the content root's index entry; a path whose last segment is an index slug, in any case, skips the direct-slug attempt, so an index entry is reachable only at its collapsed path). Both attempts additionally require the collection segment to actually be a collection, and the resolved entry's on-disk type to be one that collection declares — so a candidate landing on an entry-TYPE schema item, or on an entry whose type was renamed out of the schema, is not a match (`ContentStore.isCollectionPath`/`declaresEntryType`, gated via `ReadContentInput.urlAddressableOnly`). A denied read (no access, or an anonymous request against a private path) resolves to `null` rather than throwing, so a page's ordinary `if (!result) return notFound()` renders a privacy-preserving 404 instead of an unhandled 500 escaping the server component — the same choice (don't reveal _why_ a path is inaccessible) the JSON API already makes by returning 401/403 rather than leaking content. The stricter **read()** always throws on a denied read, for callers that need to distinguish "not found" from "forbidden."
-- **buildContentTree()**: Build-time content tree builder (see [Content Tree Builder](#content-tree-builder) below)
-- **listEntries()**: Flat content listing for static params, search indexes, sitemaps, etc. (see [Content Entry Listing](#content-entry-listing) below)
-- **services**: Access to underlying services if needed
-- **user**: Current authenticated user (with bootstrap admin groups applied)
-
-**Resolved filesystem path on single reads:** `read()` and `readByUrlPath()` return a `meta.physicalPath` field — the absolute filesystem path to the resolved entry file. This lets server-side and build-time adopters read artifacts colocated with an entry (e.g. a sibling `profile.json` in the same directory) without re-deriving CanopyCMS's URL-to-filesystem mapping. This is the only place an absolute filesystem path appears on the public-ish surface, and it is deliberately confined to these single-result, server-only readers. It is **not** present on the higher-fanout `listEntries()` (`ListEntriesItem`) or `buildContentTree()` (`ContentTreeNode`) shapes, because Next.js adopters routinely serialize those as component props, RSC payloads, or JSON API responses — keeping them free of absolute paths avoids leaking deployment layout (home directory, EFS mount point, branch name) into output. The field is structurally sealed as server-only: it is reachable only through `canopycms/server`, the bare `canopycms` entrypoint exports types only, the client bundle never imports the context module, and the implementing modules import `node:fs`/`node:path` so a browser build would fail. This complements the server-only, ACL-bypassing nature of `getCanopyForBuild()` and the stripping of internal content IDs from output.
-
-The context automatically handles:
-
-- User extraction via the provided `getUser` function
-- Bootstrap admin group application (designated users get Admins group)
-- Static deployment and build mode detection (returns STATIC_DEPLOY_USER with admin access when auth is unavailable)
-- Permission checks during content reading
+**Resolved filesystem path on single reads.** `read()` and `readByUrlPath()` return `meta.physicalPath`, the absolute path to the resolved entry file, so server-side and build-time adopters can read artifacts colocated with an entry without re-deriving Canopy's URL-to-filesystem mapping. This is the only absolute path on the public surface and is deliberately confined to these single-result, server-only readers: it is **not** on `ListEntriesItem` or `ContentTreeNode`, because Next.js adopters routinely serialize those as props, RSC payloads or JSON responses, and keeping them free of absolute paths avoids leaking deployment layout (home directory, EFS mount point, branch name) into output. The field is structurally sealed server-side — reachable only through `canopycms/server`, and the implementing modules import `node:fs`/`node:path`, so a browser build would fail.
 
 ### Static Deployment and Build Mode
 
-CanopyCMS supports two deployment types, declared via the `deployedAs` config field:
+The `deployedAs` config field declares the deployment type: **`'server'`** (default) means a running server with full authentication and authorization; **`'static'`** means a static export with no request context, no users and no auth, where all content is assumed publicly readable. With `'static'` the system uses a synthetic admin (`STATIC_DEPLOY_USER`) and bypasses permission checks for the full lifecycle of that deployment — `next build` and `next dev` alike. `isBuildMode()` covers the remaining case, the build of a _server_ deployment, where there is no request context even though the deployment is not static; it reads `NEXT_PHASE=phase-production-build` (set by `next build` before page-data collection, though not yet when it loads `next.config`) or `CANOPY_BUILD_MODE=true` for other frameworks and scripts run beside a build.
 
-- **`'server'`** (default): A running server handles requests with full authentication and authorization. This is the standard CMS deployment.
-- **`'static'`**: The site is a static export with no request context, no users, and no auth. All content is assumed publicly readable.
+**WHO and WHERE.** `isDeployedStatic(config) || isBuildMode()` answers two questions with one expression. The context factory and content reader use it to decide WHO reads: `STATIC_DEPLOY_USER`, no permission checks. As `readsFromCheckout(config)` it decides WHERE: **every build, in either mode and either deployment type, reads the working tree at `process.cwd()` and never touches git, a branch workspace or `.canopy-dev`**, and a `branch` passed to a read selects nothing. CI therefore builds the checked-out commit and a local build reads what is on disk. Only request-time reads on a server deployment resolve a branch workspace. See [Why does a build read the working tree instead of a branch clone?](#why-does-a-build-read-the-working-tree-instead-of-a-branch-clone).
 
-**The `deployedAs` field is the primary mechanism** for declaring deployment type. When `deployedAs` is `'static'`, the system uses a synthetic admin user (`STATIC_DEPLOY_USER`) and bypasses all permission checks—whether during `next build` or `next dev`. This covers the full lifecycle of a static site, not just the build phase.
-
-**Build mode detection** (`isBuildMode()`) covers the build of a server deployment, where there is no request context even though the deployment is not static. It checks environment variables:
-
-- `NEXT_PHASE=phase-production-build` (set by `next build` before page-data collection and prerendering, but not yet when it loads `next.config`)
-- `CANOPY_BUILD_MODE=true` (other frameworks, and scripts run beside a build)
-
-**WHO and WHERE**: `isDeployedStatic(config) || isBuildMode()` answers two questions. The context factory and content reader use it to decide WHO reads (`STATIC_DEPLOY_USER`, no permission checks). As `readsFromCheckout(config)` it decides WHERE: every build, in either mode and either deployment type, reads the working tree at `process.cwd()` and never touches git, a branch workspace or `.canopy-dev`, exactly like a static deployment, and a `branch` passed to a read selects nothing. CI therefore builds the checked-out commit, and a local build reads what is on disk. Only request-time reads on a server deployment resolve a branch workspace.
-
-**Two-deployment model**: A single codebase can produce both a static export and a CMS server build. The `deployedAs` field in each build's config controls which deployment type is active. This enables patterns like a public-facing static site alongside a separate CMS editor deployment, both reading from the same content repository. At the build-tooling level, the `withCanopy()` Next.js config wrapper supports this via its `staticBuild` option, which controls whether CMS-only files (using the `.server.ts`/`.server.tsx` convention) are included in `pageExtensions`. A content route whose rendering must itself differ between the two builds (prerendered vs. request-time) additionally ships a matching `.static.ts`/`.static.tsx` variant — see [Why split a dual-build content route into static and server page variants?](#why-split-a-dual-build-content-route-into-static-and-server-page-variants). See [Framework Adapters](#framework-adapters) for details.
-
-This means you can use the same `read()` calls in both authenticated pages and static generation—the context handles the difference automatically.
+**Two-deployment model.** One codebase can produce both a static export and a CMS server build, with each build's `deployedAs` selecting the behavior — a public static site alongside a separate CMS editor deployment, both reading the same content repository. At the build-tooling level `withCanopy()`'s `staticBuild` option controls whether CMS-only files (the `.server.ts`/`.server.tsx` convention) are in `pageExtensions`; a content route whose rendering must differ between the two builds also ships a `.static.ts`/`.static.tsx` variant (see [Why split a dual-build content route into static and server page variants?](#why-split-a-dual-build-content-route-into-static-and-server-page-variants)).
 
 ### Framework Adapter Pattern
 
-Framework adapters wrap the core context to provide framework-specific integration:
+Adapters extract user identity from the framework's request context, apply framework-specific optimizations (`React cache()` for Next.js), and adapt request/response types — nothing else. All business logic, bootstrap admin groups, build-mode detection and access control stay in core. The Next.js adapter is about ten lines of user extraction, and adapters for Express, Fastify or Hono would be similarly minimal.
 
-**Adapter responsibilities**:
+**Auth plugin is optional only for static deployments.** With `deployedAs: 'static'` the adapter needs no auth plugin, and warns at startup as a safeguard against setting that flag in a server build; the API handler receives a stub plugin that 401s everything, since a static deployment should never serve API requests. With `deployedAs: 'server'` and no auth plugin, `createNextCanopyContext` **throws at startup**, before any traffic is served, rather than allowing a silent misconfiguration.
 
-- Extract user identity from framework-specific request context (Next.js headers, Express req, etc.)
-- Apply framework-specific optimizations (React cache() for Next.js)
-- Provide unified API for both pages and API routes
+### Two Contexts, and the Guard Between Them
 
-**What stays in core**:
+`createNextCanopyContext` is called once in a central file (typically `app/lib/canopy.ts`) and returns both contexts plus the phase-selecting helpers, the API handler and the services.
 
-- All business logic (permissions, content reading, branch management)
-- Bootstrap admin group application
-- Static deployment and build mode detection
-- Content access control
+- **`getCanopy()`** is request-scoped: it calls `headers()` to authenticate the user and is wrapped in React `cache()` for per-request memoization. Use it in server components and route handlers.
+- **`getCanopyForBuild()`** is process-scoped: a synthetic admin with no auth, safe to call from `generateStaticParams`, `generateMetadata` and other non-request contexts where `headers()` is unavailable, and memoized for the process lifetime. **Security note:** it bypasses all branch and path ACLs, so it belongs only in build-time code paths.
 
-**Auth plugin is optional for static deployments**: When `deployedAs` is `'static'`, the adapter does not require an auth plugin. If `deployedAs` is `'server'` (the default) and no auth plugin is provided, `createNextCanopyContext` throws at startup — before any traffic is served — to prevent silent misconfiguration. A `console.warn` is emitted at startup when `deployedAs` is `'static'` as a safeguard against accidentally setting this flag in a server build. The API handler receives a stub auth plugin that rejects all requests with 401, since a static deployment should never serve API requests to real users.
-
-The Next.js adapter is ~10 lines of user extraction code. The pattern is designed so adapters for Express, Fastify, Hono, or other frameworks would be similarly minimal.
-
-### Developer Experience
-
-Setup is a one-time operation in a central file (e.g., `app/lib/canopy.ts`):
-
-```typescript
-// One-time setup
-const { getCanopy, getCanopyForBuild, read, readByUrlPath, handler, services } =
-  createNextCanopyContext({
-    config: canopyConfig,
-    authPlugin: clerkAuthPlugin,
-  })
-
-export { getCanopy, getCanopyForBuild, read, readByUrlPath, handler, services }
-```
-
-The returned `read`/`readByUrlPath` are the phase-selecting helpers (see [Phase-Selecting Read](#phase-selecting-read)); they are the recommended way to resolve a page by path or URL in routes that render in both the build and request phases.
-
-Then in pages and API routes:
-
-```typescript
-// In a page/component (request-scoped)
-const canopy = await getCanopy()
-const { data } = await canopy.read({
-  entryPath: 'content/posts',
-  slug: params.slug,
-})
-```
-
-No manual user management, no config imports, no auth logic. The context handles everything.
-
-**Two context functions serve different scopes:**
-
-- **`getCanopy()`** is request-scoped. It calls `headers()` to authenticate the current user and is wrapped with React `cache()` for per-request memoization. Use it in server components and route handlers.
-- **`getCanopyForBuild()`** is process-scoped. It uses a synthetic admin user with no auth, making it safe to call from `generateStaticParams`, `generateMetadata`, and other non-request-scoped contexts where `headers()` is unavailable. It is memoized for the process lifetime. Beyond `buildContentTree()` and `listEntries()`, it also exposes build-safe `read()` and `readByUrlPath()` so build-time page code can resolve a single entry by path or URL without scanning the whole collection. **Security note:** this context bypasses all branch and path ACLs (synthetic admin, unrestricted filesystem-direct reads) — only use it in build-time code paths that are not exposed to end users at request time. The request-time guard described below enforces this on production server deployments.
-
-This dual-context pattern replaces the need for `isBuildMode()` environment detection in most cases. Instead of the framework guessing whether auth is available, adopters explicitly choose the right context for each call site.
-
-### Build Context Request-Time Guard
-
-Because the build context bypasses all authorization, using it at request time on a deployment that has real users would leak ACL-protected content. The Next.js adapter wraps the build context so that every one of its operations (`read`, `readByUrlPath`, `buildContentTree`, `listEntries`) asserts it is running in a build phase before doing any work.
-
-The guard is scoped to **production server deployments** — it throws only when `mode === 'prod'`, `deployedAs === 'server'`, and the build phase is not active (`isBuildMode()` is false). This is exactly the spot where a real, authenticated user is on the other end and there is no legitimate use of the admin build context: content must instead be read through the request-scoped, ACL-enforcing `getCanopy()` (or the phase-selecting `read`/`readByUrlPath`, which route to it at request time). The guard fails closed, so the misuse surfaces as a thrown error rather than a silent content leak.
-
-The guard is deliberately **prod-only** rather than firing on all server deployments:
-
-- **In dev**, Next invokes legitimate static-generation hooks (`generateStaticParams`, `generateMetadata`) under `next dev` with the same not-build-phase signature as the footgun. There is no reliable way to distinguish those idiomatic calls from an accidental request-time use, so a dev guard would false-positive on correct code. Prod removes that ambiguity (`generateStaticParams` is build-only there), so the guard can be both strict and accurate.
-- **On `static` deployments**, ACLs are skipped everywhere by design, so there is nothing to leak and no guard is needed. (`CANOPY_BUILD_MODE=true` marks non-Next static generation as the build phase.)
+That dual pattern replaces environment guessing with an explicit choice per call site. Because the build context bypasses authorization, the adapter wraps it so every operation asserts it is running in a build phase first. The guard is scoped to **production server deployments** — `mode === 'prod'`, `deployedAs === 'server'`, and `isBuildMode()` false — which is exactly where a real authenticated user is on the other end and there is no legitimate use of an admin context; it fails closed, so misuse throws instead of leaking ACL-protected content. It is deliberately prod-only because `next dev` invokes legitimate static-generation hooks with the same not-build-phase signature, with no reliable way to tell those idiomatic calls from the footgun, while on `static` deployments ACLs are skipped everywhere by design and there is nothing to leak.
 
 ### Phase-Selecting Read
 
-A page in a `[...slug]`/`[slug]` route needs to resolve content correctly in two different phases: filesystem-direct (working tree) during the build, and branch-aware (the editor's branch-clone preview) at request time in dev. Hand-picking the right context at each call site is error-prone.
+A page in a `[...slug]`/`[slug]` route must resolve content in two phases: filesystem-direct during the build, branch-aware at request time in dev. Hand-picking a context per call site is error-prone, so the adapter also returns phase-selecting `read()`, `readByUrlPath()` and `listEntries()` that pick it automatically — the build context under `isBuildMode()`, the ACL-enforcing runtime context from `getCanopy()` otherwise. Page code calls one function and is correct in both phases without ever touching the admin build context.
 
-To remove that burden, the Next.js adapter also returns phase-selecting `read()`, `readByUrlPath()` and `listEntries()` functions. These pick the context automatically: at build time (`isBuildMode()`) they use the build context; at request time they use the branch-aware, ACL-enforced runtime context from `getCanopy()`. Page code calls one function and is correct in both phases by construction, without ever touching the admin build context directly.
-
-`listEntries()` is the batch counterpart: it returns every entry under `rootPath` in a single filesystem pass, each with its `urlPath`, `slug`, `entryType`, `data` and `schema`. It exists so adopters stop writing "enumerate the routable paths, then read each one" — an N+1 over the content tree whose hand-built URLs are a recurring source of silent misses on multi-segment slugs. The `urlPath` it returns round-trips through `readByUrlPath` by construction.
-
-Note it takes no `branch` option, unlike `read`/`readByUrlPath`: it always lists `defaultActiveBranch ?? defaultBaseBranch ?? 'main'`. In dev that tracks the git HEAD through `refreshActiveBranch()`; in prod that refresh is a no-op, so it always reads the base branch.
+`listEntries()` is the batch counterpart: one filesystem pass returning every entry under `rootPath` with its `urlPath`, `slug`, `entryType`, `data` and `schema`. It exists so adopters stop writing "enumerate the routable paths, then read each one" — an N+1 whose hand-built URLs silently miss on multi-segment slugs — and the `urlPath` it returns round-trips through `readByUrlPath` by construction. It takes no `branch` option, unlike `read`/`readByUrlPath`: it always lists `defaultActiveBranch ?? defaultBaseBranch ?? 'main'`, which in dev tracks git HEAD through `refreshActiveBranch()` and in prod is always the base branch.
 
 ### Batch Reads Enforce Path ACLs
 
-`listEntries()` and `buildContentTree()` are the two content reads that return **many** entries at once. On the request-scoped context they enforce path permissions per entry, the same `read` level the single-entry reader checks: entries the current user cannot read are omitted from the result, and — for the tree — from the `meta.indexEntry` passed to a collection's `extract` callback, which emits no node of its own. Collections left with no visible children are pruned. On the build context and on `static` deployments nothing is filtered, since both run as the synthetic admin.
+`listEntries()` and `buildContentTree()` return **many** entries at once, and on the request-scoped context they enforce path permissions per entry at the same `read` level the single-entry reader checks: entries the user cannot read are omitted from the result and from the `meta.indexEntry` passed to a collection's `extract` callback (which then emits no node), and collections left with no visible children are pruned. On the build context and on `static` deployments nothing is filtered, since both run as the synthetic admin. This matters because `getCanopy()` is the context adopters are told to use for request-time content and is documented as ACL-enforcing; a batch read that took no user could disclose full entry `data` for paths the same user could not fetch through `read()`.
 
-Enforcement reuses `createContentAccessChecker` (`authorization/content.ts`), the same batch primitive the entries API uses: it resolves the request-constant work — branch access, the settings/permissions root, and the rule set — exactly once per request and returns a **synchronous** per-path check, so the per-entry cost is an admin short-circuit or one glob match per configured rule, with no additional I/O. The checker is built lazily and skipped entirely at build time, where it would otherwise add a `getSettingsBranchRoot()` round trip (EFS, in prod) to every listing for a user who bypasses ACLs anyway.
-
-This matters because `getCanopy()` is the context adopters are told to use for request-time content, and it is documented as ACL-enforcing. Before this, its two batch reads took no user at all — so a listing could disclose full entry `data` for paths the same user could not have fetched through `read()`.
+Enforcement reuses `createContentAccessChecker` (`authorization/content.ts`), the same batch primitive the entries API uses, so the per-entry cost is an admin short-circuit or one glob match per configured rule with no extra I/O. The checker is built lazily and skipped entirely at build time, where it would add a `getSettingsBranchRoot()` round trip — EFS, in prod — to every listing for a user who bypasses ACLs anyway.
 
 ## The Permission Model
 
-Access control uses three layers that all must pass. These are implemented in the unified authorization module.
+Access control is three layers, all of which must pass, implemented in the unified `authorization/` module. They are defense in depth answering different questions — who can see a branch, what content they can edit within it, and the combined verdict any caller actually asks for — which is what lets a policy grant someone a branch while restricting them to certain paths in it.
 
 ### Layer 1: Branch Access
 
-Per-branch ACLs control who can access a branch. Branches can be restricted to specific users or groups. Admins and reviewers always have access. Implemented in the `branch.ts` submodule.
+Per-branch ACLs control who can access a branch; it can be restricted to specific users or groups. **Precedence**, highest first: admins and review-capable users → a `managerOrAdminAllowed` lockdown → an explicit user/group ACL → and, only when the branch has no ACL at all, the branch's creator, then `defaultBranchAccess`, then the protected base branch.
 
-**Precedence**, highest first: admins/reviewers → a `managerOrAdminAllowed` lockdown → an explicit user/group ACL → and, only when the branch has no ACL at all, the branch's creator, then `defaultBranchAccess`, then the protected base branch.
+**Two grants make a fail-closed `defaultBranchAccess: 'deny'` workable.** Without them `'deny'` is not a strict default but a broken one, because branch access is ANDed into every content check by `createContentAccessChecker` — a denial here makes a branch inert, not merely un-submittable:
 
-**Two grants make fail-closed `defaultBranchAccess: 'deny'` workable.** Without them `'deny'` is not a strict default but a broken one, because branch access is ANDed into every content check by `createContentAccessChecker` — so a denial at this layer makes a branch inert, not merely un-submittable:
+- **The creator of an un-ACL'd branch.** The create form sends no ACL, so without this every freshly created branch would be unusable by the person who created it. It also aligns this layer with the three places that already grant on creator-ownership, which would otherwise let a creator delete their branch and rewrite its ACL but not read a file on it.
+- **The protected base branch.** It takes no ACL by design (an entry there feeds `allowed_by_acl` and would confer Withdraw rights) and its `createdBy` is the system, so no other grant could reach it — yet it is where every user lands. It applies to anonymous users too, which is what lets a public-read `deployedAs: 'server'` site run `'deny'` with `defaultPathAccess: { read: 'allow' }` instead of opening branch access wholesale.
 
-- **Creator of an un-ACL'd branch.** The create form sends no ACL, so without this every freshly created branch would be unusable by the person who just created it. It also aligns this layer with the three places that already grant on creator-ownership independently (`listBranchesHandler`, `canDeleteBranch`, `canModifyBranchAccess`) — otherwise a creator could delete their branch and rewrite its ACL but not read a file on it.
-- **The protected base branch.** It takes no ACL by design (`updateBranchAccessHandler` rejects one, since an entry there feeds `allowed_by_acl` and would confer Withdraw rights), and its `createdBy` is the system, so no other grant could ever reach it — yet it is where every user lands. Applied for anonymous users too, which is what lets a public-read `deployedAs: 'server'` site run `'deny'` with `defaultPathAccess: { read: 'allow' }` instead of opening branch access wholesale.
+Both are scoped to branches with **no ACL**, so writing an explicit ACL still restricts the branch — including against its own creator, which is how an admin locks down someone else's branch. The base-branch grant is applied as a fallback where the bare default would otherwise decide, never as a short-circuit ahead of the ACL: short-circuiting would replace `allowed_by_acl` with `base_branch` and silently strip Withdraw rights from ACL-listed users.
 
-Both are scoped to branches with **no ACL**, so writing an explicit ACL still restricts the branch — including against its own creator, which is how an admin locks down a branch someone else created. The base-branch grant in particular is applied as a fallback where the bare default would otherwise decide, never as a short-circuit ahead of the ACL: short-circuiting would replace `allowed_by_acl` with `base_branch` and silently strip Withdraw rights from ACL-listed users.
-
-Neither grant widens anything separately gated: `canPerformWorkflowAction` disables its system-branch grant on the same `isProtectedBranch` flag (so the base branch stays unsubmittable), `getBranchWriteProtection().readOnly` still blocks prod writes to it, path permissions still decide what content is readable, and the HTTP handler 401s anonymous callers before authorization runs at all.
+Neither grant widens anything separately gated: `canPerformWorkflowAction` disables its system-branch grant on the same `isProtectedBranch` flag, `getBranchWriteProtection().readOnly` still blocks prod writes, path permissions still decide what content is readable, and the HTTP handler 401s anonymous callers before authorization runs at all.
 
 ### Layer 2: Path Permissions
 
-Glob patterns (e.g., `content/posts/**`) restrict who can edit specific content paths. First matching rule wins. Only admins bypass path rules. Implemented in the `path.ts` submodule.
+Glob patterns (e.g. `content/posts/**`) restrict who can edit which content paths. First matching rule wins, and only admins bypass path rules.
 
-**Level-scoped defaults**: `defaultPathAccess` (the fallback verdict when no rule matches a path) accepts either a single value applied to every permission level, or an object scoped per level, e.g. `{ read: 'allow' }`. This lets a `deployedAs: 'server'` site declare public read as its default while edit and review stay deny-by-default — the primary use case is a CMS-served site that is also publicly readable without auth. Any level left unspecified in the object form resolves to `deny`, so scoping read access can never accidentally loosen edit or review by omission.
+**Level-scoped defaults**: `defaultPathAccess` — the verdict when no rule matches — takes either a single value for every permission level or an object scoped per level, e.g. `{ read: 'allow' }`. That lets a `deployedAs: 'server'` site declare public read while edit and review stay deny-by-default, which is the primary case: a CMS-served site that is also publicly readable without auth. **Any level left unspecified in the object form resolves to `deny`**, so scoping read access can never loosen edit or review by omission.
 
 ### Layer 3: Content Access
 
-Combines branch and path checks into a single decision. Returns detailed denial reasons for debugging. The `checkContentAccess` function in `content.ts` is the main entry point for most authorization checks.
+`checkContentAccess` in `content.ts` combines the branch and path checks into one decision and returns detailed denial reasons. Its batch form, `createContentAccessChecker`, hoists the request-constant work — verifying branch access, resolving the settings-branch root, loading the rules — out of the loop and returns a **synchronous** per-path checker. **Use it, not a loop over `checkContentAccess`, anywhere one request evaluates more than a handful of paths**: an entry-listing endpoint that re-loaded permissions and re-resolved the settings root per entry took tens of seconds on a branch with many collections. Its callers are the entries API, reference resolution, and the request-scoped `listEntries`/`buildContentTree`; the single-call API delegates to the same primitive. It is deliberately **per-request rather than a process-global cache**: a global permissions cache would risk serving stale ACLs after a permissions edit, a security-sensitive failure needing explicit invalidation, while per-request scope sidesteps invalidation entirely and mirrors the prod Lambda model, which has no cross-request state to cache anyway.
 
-For listing endpoints that check many paths in one request, `createContentAccessChecker` in the same module is the batch form: it hoists the branch check, the permissions-root resolution and the rule load out of the loop and returns a synchronous per-path checker. Use it — not a loop over `checkContentAccess` — anywhere a single request evaluates more than a handful of paths. Its callers today are the entries API, reference resolution, and the request-scoped `listEntries`/`buildContentTree`.
+**Reserved groups** provide consistent roles: `admins` (full access to all operations) and `reviewers` (review branches, request changes, approve PRs). `isAdmin`, `isReviewer` and `isPrivileged` are the role-check helpers.
 
-**Per-request batch checking**: Resolving content access involves request-constant work — verifying branch access, resolving the settings-branch root, and loading the permission rules. When a single request authorizes many paths (for example, listing entries across dozens of collections), repeating that setup per path is wasteful: an entry-listing endpoint that re-loaded permissions and re-resolved the settings root once per entry took tens of seconds for a branch with many collections. The `createContentAccessChecker` factory (exposed on `CanopyServices`) does the request-constant work once and returns a synchronous per-path checker, so each authorization decision is a cheap in-memory rule match. The single-call `checkContentAccess` API is unchanged and now delegates to this batch primitive.
-
-**Why per-request scope rather than a process-global cache?** A global permissions cache would risk serving stale ACLs after a permissions edit — a security-sensitive failure that would require explicit invalidation. Per-request scope sidesteps invalidation entirely and mirrors the prod Lambda model, where there is no cross-request state to cache anyway.
-
-**Reserved groups** provide consistent roles:
-
-- **admins**: Full access to all operations
-- **reviewers**: Can review branches, request changes, approve PRs
-
-Helper functions (`isAdmin`, `isReviewer`, `isPrivileged`) provide convenient role checking.
-
-**Where permissions are stored:**
-
-- **Dev mode**: Settings on orphan branch `canopycms-settings-{deploymentName}`, workspace at `.canopy-dev/settings/` (gitignored, local development only)
-- **Prod mode**: Settings on orphan branch `canopycms-settings-{deploymentName}`, workspace at `{workspaceRoot}/settings/` (version-controlled, deployment-specific)
-- Branch ACLs are stored in each branch's metadata file (`.canopy-meta/branch.json`); saves to this file are protected by a server-enforced cross-host lock, so an ACL or status update can't be silently lost when two hosts write it at once (see [docs/concurrency.md](docs/concurrency.md))
-
-The `permissions/` and `groups/` subdirectories handle file schema definitions and loading logic for these configuration files.
+**Where permissions live**: on the orphan settings branch in both modes, with the workspace under `{workspaceRoot}/settings/` in prod and `.canopy-dev/settings/` in dev. Branch ACLs live in each branch's own `.canopy-meta/branch.json`, and saves to that file take a server-enforced cross-host lock so an ACL or status update cannot be silently lost when two hosts write at once (see [docs/concurrency.md](docs/concurrency.md)).
 
 ## Git Operations Architecture
 
-CanopyCMS uses a layered approach to Git operations, separating low-level primitives from high-level business logic.
+Git work is layered so that primitives stay testable and handlers stay readable:
 
-### Three-Layer Architecture
-
-**Layer 1: GitManager (Low-level primitives)**
-
-- Wraps simple-git library with basic git operations
-- Methods: `status()`, `add()`, `commit()`, `push()`, `checkout()`, etc.
-- No knowledge of CanopyCMS concepts (branches, authors, context)
-- Pure git operations that could be used outside of CanopyCMS
-
-**Layer 2: CanopyServices git methods (High-level operations)**
-
-- Provides context-aware git operations with automatic author handling
-- `commitFiles({ context, files, message })` - Commits files with automatic git author injection
-- `submitBranch({ context, message? })` - Full submission workflow (status check, commit, push)
-- Encapsulates common patterns: create GitManager, configure author, perform operations
-- Uses BranchContext which contains all necessary path information
-
-**Layer 3: API handlers (Business workflows)**
-
-- Call service methods to perform git operations
-- Focus on workflow logic (permissions, metadata updates, PR creation)
-- No direct git author configuration or path resolution needed
-
-### GitManager and Strategies
-
-GitManager provides low-level git primitives (status, add, commit, push, etc.). It uses operating mode strategies to get configuration values:
-
-```typescript
-// Strategy provides configuration
-const config = strategy.getRemoteUrlConfig()
-// Returns: { shouldAutoInitLocal: boolean, defaultRemotePath: string, envVarName: string }
-
-// GitManager owns the logic
-if (config.shouldAutoInitLocal) {
-  const gitRoot = await GitManager.findGitRoot()
-  const localRemotePath = path.join(gitRoot, config.defaultRemotePath)
-  await GitManager.ensureLocalSimulatedRemote({ remotePath: localRemotePath, ... })
-  return localRemotePath
-}
-```
-
-This separation ensures strategies remain simple value objects while GitManager handles complex git operations.
+1. **GitManager** wraps simple-git with plain primitives and knows nothing about CanopyCMS concepts, so it can be tested and reused independently. It reads configuration values from the operating mode strategy while owning the logic itself, so strategies stay simple value objects.
+2. **`CanopyServices` git methods** are context-aware: `commitFiles({ context, files, message })` and `submitBranch({ context, message? })` inject the git author from config automatically and take their paths from the `BranchContext` branch resolution already produced. Centralizing the author is the point — a forgotten `ensureAuthor()` produces a cryptic git error, and the pattern appeared in 18+ handlers.
+3. **API handlers** call those service methods and stay focused on workflow: permissions, metadata updates, PR creation.
 
 ### Workspace Safety
 
-CanopyCMS creates many independent git clones (one per branch workspace, plus settings workspaces). Because these clones live as subdirectories of the adopter's project, there is a critical safety concern: if a workspace's `.git` directory becomes corrupt or is accidentally deleted, git will traverse upward and silently find the host repository's `.git` directory. This could lead to CanopyCMS overwriting the host repo's remote configuration or committing with its bot identity to the wrong repository.
+Canopy's many git clones (one per branch workspace, plus settings workspaces) live as subdirectories of the adopter's project, so if a workspace's `.git` is corrupt or deleted, git traverses upward and silently finds the **host repository's** `.git` — which could mean overwriting the host repo's remote configuration or committing with the bot identity to the wrong repository. Three defenses overlap deliberately, because any one can fail in an edge case (an environment variable not propagated, a race during initialization):
 
-Three defense-in-depth mechanisms prevent this:
+- **Directory ceiling**: every GitManager instance sets `GIT_CEILING_DIRECTORIES` to the parent of its workspace path, so git stops traversing before it could reach a parent repository and fails loudly instead.
+- **Managed workspace marker**: before modifying sensitive git configuration (remotes, author identity), GitManager requires a `canopycms.managed` config flag, set when CanopyCMS creates or clones the workspace. Absent marker, the operation throws — catching a git that resolved to an unmanaged repository despite the ceiling.
+- **Corrupt workspace recovery**: during initialization a `.git` directory that is not a functional repository is cleaned up so a fresh clone can proceed, rather than leaving the workspace stuck after a crash.
 
-- **Directory ceiling**: Every GitManager instance sets `GIT_CEILING_DIRECTORIES` to the parent of its workspace path. This tells git to stop traversing before it could reach a parent repository. If the workspace's `.git` is missing or corrupt, git fails with an error instead of silently operating on the host repo.
+### Task Queue (Async GitHub Operations)
 
-- **Managed workspace marker**: Before modifying sensitive git configuration (remotes, author identity), GitManager checks for a `canopycms.managed` config flag. This marker is set when CanopyCMS creates or clones a workspace. If the marker is absent, the operation throws an error. This catches cases where git somehow resolved to an unmanaged repository despite the ceiling guard.
+When `githubService` is unavailable because the host has no internet, PR operations are queued as files on the shared filesystem, under `.tasks/` in four directories: `pending/` (written by the Lambda), `processing/` (the worker moves a task here while executing), `completed/`, and `failed/` (with error details). The shared `github-sync.ts` helpers (`syncSubmitPr()`, `syncConvertToDraft()`) use `githubService` directly when it exists and fall back to the queue when it does not, so API handlers never encode the deployment topology.
 
-- **Corrupt workspace recovery**: During workspace initialization, if a `.git` directory exists but is not a functional git repository, it is automatically cleaned up so a fresh clone can proceed. This prevents workspaces from getting stuck in a broken state after crashes or incomplete operations.
+Task actions cover pushing a branch to GitHub, pushing plus creating or updating a PR, converting a PR to draft (withdraw), closing a PR, and deleting a remote branch. **`push-and-create-or-update-pr` is the standard path** for both content submits and settings syncs: it pushes, updates any existing open PR for the branch in place, and creates one only if none exists — so either can be retried after a partial failure (the PR created on GitHub but its number never recorded) without hitting GitHub's duplicate-PR error. `createOrUpdatePullRequest` is the one implementation of that idempotency, shared by the worker task and the direct-API path; content submits additionally set `markReadyIfDraft`, which settings syncs omit since they are not review requests.
 
-**Why defense-in-depth?** Any single mechanism could fail in edge cases (environment variable not propagated, race condition during initialization). The combination of filesystem-level traversal prevention, application-level identity verification, and self-healing initialization makes accidental host repo modification extremely unlikely.
+Branch metadata carries a `syncStatus` (`synced`, `pending-sync`, `sync-failed`) so the editor can show progress, paired with a `syncFailureReason` recording why (see [Push Rejection](#push-rejection)). Settings commits return the same values for the permissions and groups UI.
 
-### Design Rationale
+**Orphaned-task recovery.** A task left in `processing/` — because the worker that dequeued it died before finishing — is moved back to `pending/` once the file's age exceeds a threshold (5 minutes by default). `recoverOrphanedTasks` runs on **every** poll cycle, not only at startup: instance replacement is routine here, a replacement boots well within that threshold, and a boot-only check would see the just-orphaned file as too fresh and never look again. Running every cycle is safe because the per-task execution timeout (60 seconds by default) is far below the threshold, so no task genuinely in flight can age enough to be misclassified.
 
-**Why separate primitives from business logic?**
+**Rate limits.** Every Octokit instance goes through one factory attaching `@octokit/plugin-throttling`, so the worker's and `GitHubService`'s clients both honor GitHub's retry-after guidance on primary and secondary limits. The worker keeps a manual classification of HTTP 403 as a safety net for what the plugin does not cover — retries it has exhausted, and errors it never sees — so a rate-limited task fails permanently only when it genuinely should.
 
-- GitManager can be tested independently of CanopyCMS concepts
-- Service methods centralize author configuration (no forgotten credentials)
-- API handlers stay focused on workflow, not git mechanics
+### Push Rejection
 
-**Why automatic author handling in service methods?**
+Two deployments sharing one GitHub repo can independently create a content branch with the same name, since content branches are not namespaced by `deploymentName`. The push then genuinely collides with the other deployment's history — the remote holds commits this side never fetched — so retrying the identical push can never succeed.
 
-- Eliminates boilerplate: reduces 8-12 lines to 1 line per operation
-- Prevents bugs from forgotten `ensureAuthor()` calls
-- Author credentials come from config, injected automatically
+A shared classifier recognizes that specific shape (git's `[rejected]` plus its `non-fast-forward`/`fetch first` wording or "Updates were rejected" hint) and deliberately nothing broader, so ordinary transient failures keep retrying with backoff. **Because the classifier depends on git's untranslated English, every git child process CanopyCMS spawns is forced to the `C` locale**, so a host's ambient language settings cannot silently turn it into a permanent no-op.
 
-**Why use named arguments?**
+Both hops of a content branch's push classify it:
 
-- Better API ergonomics: `commitFiles({ context, files, message })` is clearer than positional arguments
-- Extensible: can add optional parameters without breaking existing calls
-- Self-documenting: parameter names visible at call site
+- **Lambda → the local `remote.git`** (on submit): a rejection returns 409 rather than the generic 500. This hop targets the deployment's own local origin, which a foreign deployment cannot reach, so the message states only the observable fact — the branch diverged from the copy in this deployment's repository and needs reconciling — and names no cause. It never advises renaming the branch: a branch that reaches this push has usually been submitted before, and a rename can orphan an open PR. As with every error response, only the branch name and static guidance reach the client; full detail, redacted of credentials, goes to the server log.
+- **Worker → GitHub**: a rejection is a permanent failure, so the task fails immediately instead of burning its retry budget. This is the hop where a foreign deployment genuinely is a plausible cause, so the message says so; it too stops short of advising a rename.
 
-**Why BranchContext contains path information?**
+**A refused lease is a separate shape.** Force pushes of rewritten history use `--force-with-lease`, and git reports a refused lease as `[rejected] … (stale info)`, which shares none of the wording above and has its own predicate. A refusal is usually benign — an earlier attempt already landed, or the branch moved on — and git refuses a stale lease even when the update would be an ordinary fast-forward, so the push retries **plain**: a non-forced push succeeds only if it fast-forwards, so it can never destroy anything, and only a rejection of that retry is real divergence.
 
-- Context already has `branchRoot` and `baseRoot` from branch resolution
-- No need to re-derive paths or use intermediate `branchPaths` objects
-- Single source of truth for branch-related paths
-
-### Code Reduction Impact
-
-The refactoring eliminated the `branchMode` + `resolveBranchPaths` pattern across 18 API handler instances. Previously, handlers would:
-
-```
-const branchMode = ctx.services.config.mode ?? 'dev'
-const branchPaths = resolveBranchPaths(branchMode, context.branch.name)
-const git = ctx.services.createGitManagerFor(branchPaths.branchRoot)
-await git.ensureAuthor({
-  name: ctx.services.config.gitBotAuthorName,
-  email: ctx.services.config.gitBotAuthorEmail,
-})
-await git.add('.')
-await git.commit(message)
-await git.push(context.branch.name)
-```
-
-Now handlers simply:
-
-```
-await ctx.services.submitBranch({ context })
-```
-
-This reduces complexity, improves readability, and ensures consistent author handling across all git operations.
+The worker's own settings-branch push has no task to fail into, so it logs a warning on any failure, naming the collision when it is one.
 
 ### Settings-Specific Git Helpers
 
-Groups and permissions (collectively "settings") have unique git operation requirements that differ from content operations. The `settings-helpers.ts` module provides centralized, mode-aware logic for settings operations.
+Content operations always work on the current branch; settings operations must route to the settings branch, whose name depends on the mode and deployment. `settings-helpers.ts` holds that mode-aware logic in one place so the permissions and groups APIs cannot drift apart. `getSettingsBranchContext()` resolves which branch to use and **throws if the settings branch cannot be loaded**, in both modes, so permissions are never read from a content branch. `commitSettings()` commits and pushes with mode-specific behavior: in dev to the settings branch in the local bare remote with no PR, in prod through `commitToSettingsBranch()` with the dual-path PR creation above, under `autoCreateSettingsPR` (default true).
 
-**Why separate helpers for settings?**
-
-Settings files need different branch handling across modes:
-
-- **dev**: Settings on orphan branch `canopycms-settings-{deploymentName}` (default: `canopycms-settings-local`), commits to local bare remote, no PR created
-- **prod**: Settings on orphan branch `canopycms-settings-{deploymentName}` (default: `canopycms-settings-prod`), creates PR for review
-
-Content operations always work on the current branch. Settings operations need to route to the appropriate settings branch based on mode.
-
-**Two core helpers:**
-
-**`getSettingsBranchContext()`**: Determines which branch to use for settings
-
-- Returns appropriate branch context based on operating mode
-- In both `prod` and `dev` modes: Uses the branch name computed by the operating mode strategy (`canopycms-settings-{deploymentName}`)
-- Returns both the context and mode for downstream operations
-- **Security**: Throws error if settings branch cannot be loaded (both prod and dev modes)
-
-**`commitSettings()`**: Commits and pushes settings changes with mode-specific logic
-
-- **dev**: Commits to the settings branch in the local bare remote but does not create a PR
-- **prod**: Uses `commitToSettingsBranch()` with dual-path PR creation (direct via `githubService` or queued via task queue)
-- `autoCreateSettingsPR`: Whether to create PR automatically in prod (default: true)
-
-**Cross-process locking:**
-
-The `SettingsWorkspaceManager` uses two layers of locking to safely initialize the settings git workspace across concurrent processes (e.g., multiple Lambda instances sharing EFS):
-
-- **In-memory Promise lock**: Prevents redundant async calls within the same process (Lambda request lifecycle)
-- **File-based lock**: Uses atomic file creation (`O_CREAT|O_EXCL` / `wx` flag) for cross-process synchronization. The lock file is placed as a sibling of the settings root directory. Stale locks older than 30 seconds are automatically cleaned up, handling cases where a process crashed during initialization.
-
-This dual-layer approach is necessary because Lambda instances share an EFS filesystem but each instance has its own process memory. The file lock ensures only one instance initializes the workspace at a time, while the in-memory lock avoids redundant concurrent calls within a single instance. This same lock is also what makes the branch-identity guard below race-safe (see [Deployment Name Resolution](#deployment-name-resolution)).
-
-**Code reduction impact:**
-
-Before settings-helpers, both `permissions.ts` and `groups.ts` contained ~20 lines each of duplicate mode-checking logic. The helpers eliminate approximately 40 lines of duplicated code by extracting the common pattern.
-
-Handler code before:
-
-```
-const mode = ctx.services.config.mode ?? 'dev'
-const strategy = operatingStrategy(mode)
-let branchName: string
-if (strategy.usesSeparateSettingsBranch()) {
-  branchName = strategy.getSettingsBranchName(config)
-} else {
-  branchName = ctx.services.config.defaultBaseBranch ?? 'main'
-}
-const context = await ctx.getBranchContext(branchName)
-// ... then mode-specific commit logic
-```
-
-Handler code after:
-
-```
-const result = await getSettingsBranchContext(ctx)
-const { context, mode } = result
-// ... operate on settings
-await commitSettings(ctx, { context, branchRoot, fileName, message, mode })
-```
-
-**Why this design?**
-
-- **Single source of truth**: Mode-to-branch mapping logic exists in one place
-- **Consistent behavior**: Permissions and groups APIs use identical logic
-- **Testability**: Settings helpers can be tested independently of API handlers
-- **Extensibility**: Future settings (site config, workflow rules) can reuse the same helpers
-
-This pattern complements the general git service methods by addressing the unique branch routing requirements of settings files.
+**Cross-process locking.** `SettingsWorkspaceManager` initializes the settings git workspace under two lock layers, because Lambda instances share EFS but each has its own process memory: an in-memory promise lock against redundant async calls within one process, and a file-based lock using atomic creation (`O_CREAT|O_EXCL`) as a sibling of the settings root for cross-process exclusion, with locks older than 30 seconds cleaned up so a crash during initialization does not wedge it. That same lock is what makes the guard below race-safe. See [docs/concurrency.md](docs/concurrency.md).
 
 ### Deployment Name Resolution
 
-Every place that computes the settings branch name (`canopycms-settings-{deploymentName}`) needs to agree on `deploymentName`, and that value can come from three places: an environment variable, the adopter's config, or a mode-specific default. A single resolver settles this once and is used by both mode strategies' `getSettingsBranchName`, so the resolved name is the same everywhere it matters.
+Every place that computes the settings branch name must agree on `deploymentName`, so one resolver settles it, used by both mode strategies' `getSettingsBranchName`. Without it, three call sites could disagree — the strategy, the settings API helper, and the HTTP context builder — and the branch auto-provisioned on first settings access would not necessarily be the branch every other settings operation read and wrote.
 
-**Precedence: environment variable, then config, then mode default (`prod` for prod, `local` for dev).** The environment variable deliberately outranks config, which inverts what might seem like the more intuitive order. The reasoning: the env var is stamped per-stack by infrastructure (the CDK service construct's `deploymentName` prop, surfaced as `CANOPYCMS_DEPLOYMENT_NAME`), so it's the value guaranteed to _differ_ between two deployments that share a repo. `config.deploymentName` lives inside the shared repo checkout itself, so it's guaranteed to be _identical_ across both deployments' running processes. If config took precedence, an adopter who had already set `deploymentName` in their (shared) config would find the infrastructure-level override silently doing nothing — exactly the two-stacks-one-repo scenario this feature exists to solve. When both are set and disagree, a one-time warning names both values so a genuine misconfiguration isn't silent.
+**Precedence: environment variable, then config, then the mode default (`prod` for prod, `local` for dev).** The env var deliberately outranks config, inverting the intuitive order, because it is stamped per-stack by infrastructure and is therefore the value guaranteed to _differ_ between two deployments sharing a repo, while `config.deploymentName` lives in the shared checkout and is guaranteed to be _identical_ in both. If config won, an adopter who had already set `deploymentName` in that shared config would find the infrastructure-level override silently doing nothing — exactly the scenario the feature exists for. When both are set and disagree, a one-time warning names both values.
 
-**One resolver, everywhere it matters:** settings-branch-name computation used to have three independent call sites that could disagree — the mode strategy, the settings API helper (which forwarded only a hand-picked subset of config to the strategy, silently dropping `deploymentName`), and the HTTP context builder (which used its own hardcoded literal with no deployment suffix at all). All three now route through the same resolver, so the branch CanopyCMS auto-provisions on first settings access is guaranteed to be the same branch every other settings operation reads and writes.
-
-**Refusing to boot on a changed settings branch:** Initializing an _existing_ settings workspace never re-clones — it goes straight to checking out the resolved orphan branch. If that resolved name isn't already a local branch there, git orphan-checks-out, wipes the working tree, and commits empty. Orphan branches share no history with what came before, so this permanently destroys `permissions.json`/`groups.json` with nothing left to recover. To turn a `deploymentName`, `settingsBranch`, or `CANOPYCMS_DEPLOYMENT_NAME` change — on a deployment whose settings workspace already holds real data — into a loud failure instead of silent data loss, workspace initialization now checks whether a settings workspace already exists on disk and, if so, whether it's already checked out on the newly-resolved branch. A mismatch throws before any git operation runs, naming both branches so the operator can restore the previous value (or deliberately move the workspace aside to start fresh). No migration is attempted, since there is nothing to migrate from once an orphan checkout has happened. This check runs inside the same cross-process lock described above, so two hosts racing to initialize the workspace can't each independently decide it's safe and both destroy it.
+**Changing the resolved settings branch is refused at boot, loudly.** Initializing an _existing_ settings workspace never re-clones; it checks out the resolved orphan branch. If that name is not already a local branch there, git orphan-checks-out, wipes the working tree and commits empty — and because orphan branches share no history, that permanently destroys `permissions.json`/`groups.json` with nothing to recover from. So initialization checks whether a settings workspace already exists and whether it is already on the newly-resolved branch, and a mismatch throws before any git operation runs, naming both branches so the operator can restore the previous value or deliberately move the workspace aside. No migration is attempted, since there is nothing to migrate from once an orphan checkout has happened. The check runs inside the cross-process lock above, so two hosts racing to initialize cannot each decide independently that it is safe.
 
 ## Content Workflow
 
 ### Creating and Editing
 
-1. User opens or creates a branch
-2. System opens existing workspace or creates new clone (in prod modes)
-3. User makes edits through the editor UI
-4. Each save writes directly to files in the branch workspace
-5. Live preview shows changes immediately
+A user opens or creates a branch, the system resolves or clones its workspace, each save writes directly to files in that workspace, and live preview reflects them immediately.
 
 ### Save-Time Validation
 
 Saves run through server-side validation in the content write handler:
 
-- **Adopter validation hook**: The config can supply a `validateEntry` hook — an adopter-defined function that runs before the entry file is written. The hook returns issues at two severities: `error` issues reject the save (HTTP 422 carrying the hook's message, nothing written to disk), while `warning` issues let the save proceed and ride back on the write response, where the editor surfaces them as notifications. This gives adopters site-specific rules (cross-field constraints, content conventions, link policies) enforced for every write, not just well-behaved clients.
-- **Entry-link validation**: Alongside the write, body content and markdown fields are scanned for `entry:ID` links whose targets no longer exist. These produce warnings only — saves are never blocked by a broken inline link (see [Entry Links](#entry-links-inline-content-links)).
+- **Adopter validation hook**: the config can supply `validateEntry`, which runs before the entry file is written and returns issues at two severities. An `error` rejects the save (HTTP 422 carrying the hook's message, nothing written to disk); a `warning` lets it proceed and rides back on the write response, where the editor surfaces it. This gives adopters site-specific rules — cross-field constraints, content conventions, link policies — enforced for every write, not only for well-behaved clients.
+- **Entry-link validation**: body content and markdown fields are scanned for `entry:ID` links whose targets no longer exist. These are warnings only; a save is never blocked by a broken inline link (see [Entry Links](#entry-links-inline-content-links)).
 
-**Why a config hook rather than a new integration point?** Adopter touchpoints are deliberately limited to config + Editor + one API route. `validateEntry` lives inside the existing config touchpoint, so adopters gain a save-time extension point without any new wiring between their app and CanopyCMS.
+**Why a config hook rather than a new integration point?** Adopter touchpoints are deliberately limited to config + Editor + one API route, and `validateEntry` lives inside the existing config touchpoint, so adopters gain a save-time extension point with no new wiring.
 
 ### Submitting for Review
 
-1. User clicks "Submit"
-2. Service layer commits all changes and pushes to remote (via `submitBranch()`)
-3. GitHub PR is created (if GitHub integration configured)
-4. Branch status changes to "submitted"
+Submit commits all changes and pushes to the remote via `submitBranch()`, creates a GitHub PR when GitHub integration is configured, and moves the branch to `submitted`.
 
-**Important**: Clicking "Submit" requests publication—it does not actually publish. The content becomes live only after the PR is merged on GitHub and the site is rebuilt/deployed. This separation means CanopyCMS doesn't control the actual publication moment; that's handled by your CI/CD pipeline.
-
-This flow applies to editing branches. The base branch itself can never be submitted—see [Protected Base Branch](#protected-base-branch).
+**Clicking "Submit" requests publication — it does not publish.** Content goes live only once the PR is merged and the site is rebuilt and deployed, which means CanopyCMS does not control the publication moment: the CI/CD pipeline does. This flow applies to editing branches; the base branch can never be submitted (see [Protected Base Branch](#protected-base-branch)).
 
 ### Review Process
 
-1. Reviewers see submitted branches and can add comments
-2. Comments attach to specific fields, entries, or the whole branch
-3. Reviewers can approve or request changes
-4. Requesting changes returns branch to "editing" status
+A branch can be approved, or have changes requested — which returns it to `editing`.
 
-**Content is read-only while under review.** Once a branch leaves `editing` status (`submitted`, `approved`, or `archived`), the server write boundary rejects content saves, entry creation, and schema mutations with the same kind of 403 used for the protected base branch — a branch mid-review shouldn't have its content shift under the reviewer. The editor mirrors this on the client: Save is disabled, entry-tree mutations are hidden, and a status banner explains why. Comments are exempt from this lock by design, since they're the review mechanism itself and must stay writable while a branch is submitted. Withdrawing or requesting changes returns the branch to `editing` and immediately re-enables writes. Request-changes requires `submitted`; withdraw accepts `submitted` or `approved`, which makes it the general unlock — an approved branch's only non-destructive way back (whether `approved` should exist at all is still open; see [approved-status-dead-end.md](.claude/future-tasks/approved-status-dead-end.md)). A branch whose `status` cannot be read at all is also treated as locked: `branch.json` is parsed without schema validation, so the write guard fails closed rather than guessing.
+**Content is read-only while under review.** Once a branch leaves `editing` (`submitted`, `approved` or `archived`), the server write boundary rejects content saves, entry creation and schema mutations with the same kind of 403 used for the protected base branch: a branch mid-review must not have its content shift under the person reviewing it. The editor mirrors this — Save disabled, entry-tree mutations hidden, a banner explaining why. **Comments are exempt by design**, since they are the review mechanism itself and must stay writable while a branch is submitted. Withdrawing or requesting changes returns the branch to `editing` and immediately re-enables writes; request-changes requires `submitted`, while withdraw accepts `submitted` or `approved`, which makes it the general unlock and an approved branch's only non-destructive way back (whether `approved` should exist at all is open — see [approved-status-dead-end.md](.claude/future-tasks/approved-status-dead-end.md)). A branch whose `status` cannot be read is treated as locked, since `branch.json` is parsed without schema validation and the guard must fail closed rather than guess.
 
-**Submitting follows the same rule as writing.** Only an `editing` branch may be submitted, and an unreadable status fails closed exactly as it does for writes — submitting a branch you are not allowed to edit is incoherent, since its content cannot have changed since the last submit. This is enforced in the submit handler alongside the three sibling transitions (withdraw, approve, request-changes), each of which returns a 400 naming the offending status. The `submittableBranch` route guard answers a different question — whether this is the protected base branch — and reads no status at all. Without the handler check, a merged (`archived`) branch could be re-submitted: the working tree is clean so nothing would be committed, but the branch would be re-stamped `submitted` and the PR sync would either overwrite the merged PR's title and body or, in prod, fail permanently against a PR that can no longer be reopened.
+**Submitting follows the same rule as writing.** Only an `editing` branch may be submitted, and an unreadable status fails closed exactly as it does for writes — submitting a branch you may not edit is incoherent, since its content cannot have changed since the last submit. It is enforced in the submit handler alongside its three sibling transitions (withdraw, approve, request-changes), each returning a 400 naming the offending status, because the `submittableBranch` route guard answers a different question — whether this is the protected base branch — and reads no status at all. Without the handler check, an `archived` branch could be re-submitted: nothing would be committed, but the branch would be re-stamped `submitted` and the PR sync would either overwrite the merged PR's title and body or, in prod, fail permanently against a PR that can no longer be reopened.
 
 ### Merging and Archiving
 
-Merge detection is automatic. Once a branch is `submitted` or `approved` and has a recorded PR, the worker's sync cycle polls GitHub for that PR's resolution on every pass (see [Branch Synchronization and Conflict Detection](#branch-synchronization-and-conflict-detection)):
+Merge detection is automatic. Once a branch is `submitted` or `approved` and has a recorded PR, the worker's sync cycle polls GitHub for that PR's resolution on every pass: when the PR is merged, outside CanopyCMS by someone with merge permissions, the worker archives the branch itself — status `archived`, `pullRequestState` stamped `merged`, `mergedAt` recorded — and the site rebuild and deploy happen in other processes, typically CI/CD.
 
-1. PR is merged on GitHub (outside CanopyCMS, by someone with merge permissions)
-2. On its next sync cycle, the worker detects the merge via the GitHub API and archives the branch itself — status moves to "archived", `pullRequestState` is stamped `merged`, and `mergedAt` records when
-3. Site rebuild/deploy happens via other processes (e.g. CI/CD)
+If the PR is **closed without merging**, the worker records `pullRequestState: 'closed'` and leaves the branch's status untouched: a closed PR is not necessarily terminal, since it can be reopened, so an admin decides rather than the worker guessing. The editor shows a red "closed" badge and disables request-changes, which assumes an open, convertible-to-draft PR; withdraw stays available as the path back to `editing`.
 
-If the PR is closed on GitHub **without** merging, the worker records `pullRequestState: 'closed'` but leaves the branch's status untouched — a closed PR isn't necessarily terminal (it can be reopened), so an admin decides the next step rather than the worker guessing. The editor surfaces this as a red "closed" PR badge and disables request-changes (which assumes an open, convertible-to-draft PR); withdraw stays available as the recovery path back to `editing`.
-
-A `markAsMerged` API endpoint still exists, now as a manual/ops fallback rather than the primary path — useful when the worker isn't running or an admin wants to force-resolve a branch immediately instead of waiting for the next poll cycle. It accepts a branch in either `submitted` or `approved` status (matching the automatic path, which archives from either), so the manual fallback can reach anything the worker's poll could reach — including the case where the worker is down, or the PR was merged and then deleted from GitHub before a poll cycle ran. It verifies the merge via the GitHub API and builds its update through the same shared helper as the automatic path, so both produce identical archived-branch metadata.
+A `markAsMerged` endpoint remains as a manual fallback for when the worker isn't running, or an admin wants to force-resolve immediately. It accepts `submitted` or `approved`, matching the automatic path, so it can reach anything a poll could — including a PR merged and then deleted from GitHub before a cycle ran. It verifies the merge through the GitHub API and builds its update through the same shared helper, so both paths produce identical archived metadata.
 
 ### Publish State Is Branch-Only
 
-There is **no per-entry draft or published field**, and there will not be one. Publish state is a property of the _branch_, not the entry:
+There is **no per-entry draft or published field**, and there will not be one. Publish state is a property of the _branch_:
 
-| State                      | How it is expressed                              | Public?                                                                                                                   |
-| -------------------------- | ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------- |
-| Not published              | The entry lives on an unmerged branch            | No — not built, no URL                                                                                                    |
-| Published                  | The entry's branch has merged to the base branch | Yes                                                                                                                       |
-| Published but unadvertised | Merged, with the SEO `noindex` field set         | Yes — built and reachable by direct link, but absent from sitemap, RSS and index grids, and served with `robots: noindex` |
+| State                      | How it is expressed                              | Public?                                                         |
+| -------------------------- | ------------------------------------------------ | --------------------------------------------------------------- |
+| Not published              | The entry lives on an unmerged branch            | No — not built, no URL                                          |
+| Published                  | The entry's branch has merged to the base branch | Yes                                                             |
+| Published but unadvertised | Merged, with the SEO `noindex` field set         | Yes — built and linkable, but absent from every listing surface |
 
 Two consequences follow, and both are load-bearing:
 
-- **`noindex` is not a hiding mechanism.** It means "don't index", not "don't exist" — the page is built and its URL resolves for anyone holding the link. If content must not be publicly reachable at all, it must not be merged.
-- **Enumeration helpers must not invent a publish filter.** `collectStaticPaths` and `collectRoutableEntries` apply no publish filtering at all — not even on `noindex` — because everything they can enumerate is by definition already published, since it merged (see [Static-Export Helpers](#static-export-helpers) below). `noindex` exclusion happens only on the surfaces that _advertise_ an entry, namely the sitemap helper, not on enumeration itself.
+- **`noindex` is not a hiding mechanism.** It means "don't index", not "don't exist": the page is built and its URL resolves for anyone holding the link. Content that must not be publicly reachable must not be merged.
+- **Enumeration helpers must not invent a publish filter.** `collectStaticPaths` and `collectRoutableEntries` apply no publish filtering at all, not even on `noindex`, because everything they can enumerate is by definition published — it merged. `noindex` exclusion happens only on the surfaces that _advertise_ an entry, namely the sitemap helper, never on enumeration.
 
-**How to unpublish:** delete the entry on a branch and merge that branch. This is recoverable — `git revert` restores the file byte-for-byte including its content ID. Note that `validation/deletion-checker.ts` blocks deleting an entry that other entries still reference, so inbound links must be fixed first; that guard is the reason a soft "archived" state would save no work.
+**How to unpublish:** delete the entry on a branch and merge that branch. This is recoverable — `git revert` restores the file byte-for-byte including its content ID. Note that `validation/deletion-checker.ts` blocks deleting an entry other entries still reference, so inbound links must be fixed first; that guard is why a soft "archived" state would save no work.
 
-**The corollary:** don't merge unfinished content. Work in progress stays on its branch, which means content branches may legitimately be long-lived — see [content-lifecycle-scenarios.md](.claude/future-tasks/content-lifecycle-scenarios.md) for the staleness and recovery guardrails that implies.
-
-Decided 2026-08-14; rationale and the rejected alternatives are recorded in [draft-publish-lifecycle.md](.claude/future-tasks/draft-publish-lifecycle.md).
+**The corollary:** don't merge unfinished content. Work in progress stays on its branch, which means content branches may legitimately be long-lived — see [content-lifecycle-scenarios.md](.claude/future-tasks/content-lifecycle-scenarios.md) for the staleness guardrails that implies, and [draft-publish-lifecycle.md](.claude/future-tasks/draft-publish-lifecycle.md) for the rejected alternatives.
 
 ## Branch Synchronization and Conflict Detection
 
-When the base branch (typically `main`) receives new commits from merged PRs, active editing branches can fall behind. The worker daemon periodically rebases these branches to incorporate upstream changes, and surfaces conflicts to editors through a non-blocking notification system.
+When the base branch receives new commits from merged PRs, active editing branches fall behind. The worker daemon rebases them periodically and surfaces conflicts to editors through a non-blocking notification system.
 
 ### Rebase Behavior
 
-The worker's synchronization cycle fetches the latest base branch from GitHub into the local bare repo, fast-forwards the base branch's own workspace clone to match it, then iterates over all other active branch workspaces and rebases them. Previously that base-branch clone was refreshed only incidentally, by the same generic rebase loop that handles other branches: for a clone in `editing` status, rebasing onto `origin/<baseBranch>` degenerates to a fast-forward when the clone IS the base branch. But that loop's skip paths — a dirty tree, a missing `.git` — were silent, the suspected live failure mode behind a wedged base view with no diagnosable signal. A dedicated step now fast-forwards it (`merge --ff-only`) explicitly every cycle and invalidates its content caches when it advances. This clone must stay a linear mirror of the remote: an unprovisioned workspace is a quiet skip, but a dirty working tree or a non-fast-forward (diverged local history) state is a loud error left untouched, since nothing else would surface a silently wedged base view. (This is a different non-fast-forward condition from the cross-deployment push-rejection collision in [Push Rejection Classification](#push-rejection-classification): this one concerns the base-branch clone's own local history falling behind `origin/<baseBranch>` when fast-forwarding inward, not a push outward to GitHub.)
+The worker's cycle fetches the latest base branch from GitHub into the local bare repo, **fast-forwards the base branch's own workspace clone explicitly** (`merge --ff-only`, invalidating its content caches when it advances), then iterates over all other active branch workspaces and rebases them. That dedicated step exists because the base clone must stay a linear mirror of the remote while the generic rebase loop's skip paths are silent: here an unprovisioned workspace is a quiet skip, but a dirty working tree or diverged local history is a loud error left untouched, since nothing else would surface a silently wedged base view. (That non-fast-forward condition is about the base clone falling behind `origin/<baseBranch>` when fast-forwarding inward, not the push-outward collision in [Push Rejection](#push-rejection).)
 
-**Branches that are skipped by the rebase loop:**
+**Branches the rebase loop skips:**
 
-- **The base branch's own workspace**: Kept current by the fast-forward step above, not this loop — routing it through the `--theirs` conflict-resolution path below could rewrite its history.
-- **In review** (`submitted` or `approved` status): Rebasing would rewrite commit history under a PR that reviewers are actively looking at. These branches are left untouched until they return to `editing` status — but the same cycle polls GitHub for their PR's resolution (see [Merging and Archiving](#merging-and-archiving)), since nothing else tells the worker a merge or close happened.
-- **Archived**: Already merged branches have no reason to be rebased or polled — there's no open PR left to check.
-- **Dirty working tree**: If the branch has uncommitted changes (an editor is actively saving), rebasing would fail or destroy their work. The worker skips the branch and tries again on the next cycle.
+- **The base branch's own workspace**: kept current by the fast-forward step, since routing it through the `--theirs` resolution below could rewrite its history.
+- **In review** (`submitted` or `approved`): rebasing would rewrite commit history under a PR someone is actively reading. They are left alone until they return to `editing` — but the same cycle still polls their PR's resolution, since nothing else tells the worker a merge or close happened.
+- **Archived**: already merged, with no open PR left to poll.
+- **Dirty working tree**: an editor is actively saving, and rebasing would fail or destroy their work. The worker skips and retries next cycle.
 
-**Clean rebases**: When no files conflict, the rebase applies cleanly. The branch gets the base branch's latest changes, and any previous conflict state is cleared.
+When nothing conflicts, the rebase applies cleanly and any previous conflict state is cleared.
 
-**Recovering an interrupted rebase.** The worker's rebase for one branch — fetch, replay, any number of conflict-resolution rounds — spans several awaited git subprocesses and holds a cross-host lock against a concurrent editor save the whole time (see "Content writes vs. the rebase loop" in [docs/concurrency.md](docs/concurrency.md)). Instance replacement is routine in this topology (see above), so the worker can be killed mid-rebase and come back to a clone still sitting mid-rebase. Before doing anything else with that clone — and still inside the same lock — the worker detects and aborts a rebase left over from its own earlier, abandoned run. The abort is not lossless: while the worker was down nothing held the lock, so an editor could have saved into the wedged clone and gotten a normal success response, and the abort's hard reset discards that save (new files survive; edits to existing ones do not). The worker logs exactly what it discards, by path, rather than doing this silently — aborting is still correct, since the alternative is a branch permanently wedged serving conflict-marker content to editors. Full treatment, including the lock's writer-vs-worker asymmetry and why the abort must run inside the same critical section rather than after it, lives in [docs/concurrency.md](docs/concurrency.md).
+**Recovering an interrupted rebase.** One branch's rebase — fetch, replay, any number of conflict-resolution rounds — spans several awaited git subprocesses and holds a cross-host lock against concurrent editor saves the whole time. Instance replacement is routine in this topology, so the worker can be killed mid-rebase and come back to a clone still sitting mid-rebase; before doing anything else with that clone, and still inside the same lock, it detects and aborts a rebase left over from its own abandoned run. **The abort is not lossless**: while the worker was down nothing held the lock, so an editor could have saved into the wedged clone and received a normal success response, and the abort's hard reset discards that save (new files survive; edits to existing ones do not). The worker logs exactly what it discards, by path. Aborting is still correct, because the alternative is a branch permanently wedged serving conflict-marker content. See [docs/concurrency.md](docs/concurrency.md) for the lock's writer-vs-worker asymmetry and why the abort must run inside the same critical section.
 
 ### Publishing a Rewritten History
 
-A rebase rewrites commits. When the branch had already been submitted, its pre-rebase history is in `remote.git` and on GitHub, and the rewrite leaves the clone unable to push to either: the editor's next submit no longer contains `remote.git`'s tip and is rejected. This is reachable whenever a submitted branch returns to `editing` — request-changes, withdraw, or admin repair-metadata — and then falls behind base, so it typically strikes a branch with an open PR, where the old "rename the branch" advice would have orphaned it.
+A rebase rewrites commits. If the branch had already been submitted, its pre-rebase history is in `remote.git` and on GitHub, and the rewrite leaves the clone unable to push to either: the editor's next submit no longer contains `remote.git`'s tip and is rejected. This is reachable whenever a submitted branch returns to `editing` — request-changes, withdraw, or admin repair-metadata — and then falls behind base, so it typically strikes a branch with an open PR, which the old advice to rename the branch would have orphaned.
 
-The loop therefore publishes what it rewrites, on both hops, each under a lease keyed to the exact commit the rebase replaced (recorded on the branch as `historyRewrittenFrom`): a force-push into `remote.git`, then a queued `push-branch` task that carries it to GitHub so an open PR's head follows within a cycle. Ordering is **record the marker, push, then queue** — every crash window then leaves the marker set with the work unfinished, and a self-heal pass at the top of each branch's turn finishes it without waiting for another base-branch advance. The marker is cleared only once GitHub is confirmed to hold something other than the commit that was rewritten.
+The loop therefore publishes what it rewrites, on both hops, each under a lease keyed to the exact commit the rebase replaced (recorded on the branch as `historyRewrittenFrom`): a force-push into `remote.git`, then a queued `push-branch` task carrying it to GitHub so an open PR's head follows within a cycle. Ordering is **record the marker, push, then queue**, so every crash window leaves the marker set with the work unfinished and a self-heal pass at the top of each branch's turn finishes it without waiting for another base-branch advance. The marker clears only once GitHub is confirmed to hold something other than the commit that was rewritten.
 
-**The arming guard** is what makes the force safe, and it is not belt-and-braces. Branch clones are `--single-branch` and never fetch their own branch, while `reconcileTrackedBranches` fast-forwards `remote.git` to GitHub's tip — so after a reviewer pushes a fixup straight to the PR branch, `remote.git` legitimately holds a commit the clone has never seen. The loop therefore force-publishes **only when `remote.git` holds exactly the commit the clone is about to rebase away**. A lease keyed to "whatever `remote.git` currently holds" would have been satisfied in the reviewer-fixup case and would have deleted that fixup from `remote.git` and then from GitHub, silently. Anything else is left untouched and recorded as a rebase failure the editor can see.
+**The arming guard is what makes the force safe, and it is not belt-and-braces.** Branch clones are `--single-branch` and never fetch their own branch, while `reconcileTrackedBranches` fast-forwards `remote.git` to GitHub's tip — so after someone pushes a fixup straight to the PR branch, `remote.git` legitimately holds a commit the clone has never seen. **The loop force-publishes only when `remote.git` holds exactly the commit the clone is about to rebase away.** A lease keyed to "whatever `remote.git` currently holds" would be satisfied in that case and would silently delete the fixup from `remote.git` and then from GitHub. Anything else is left untouched and recorded as a rebase failure the editor can see.
 
-Between the local publish and the GitHub push landing, such a branch reads as diverged from GitHub. `reconcileTrackedBranches` recognizes the marker and reports these separately (`rewritten` rather than `diverged`) so the cross-deployment collision warning keeps meaning what it says.
+Between the local publish and the GitHub push landing, such a branch reads as diverged from GitHub, so `reconcileTrackedBranches` recognizes the marker and reports these as `rewritten` rather than `diverged`, keeping the cross-deployment collision warning meaning what it says.
 
 ### Conflict Resolution Strategy
 
-When a rebase encounters conflicting files (the same file was changed on both the base branch and the editing branch), the worker uses a resolve-and-continue strategy rather than aborting:
+When a rebase hits a conflicting file, the worker resolves and continues rather than aborting: non-conflicting files take the base branch's changes normally, and **conflicting files keep the editor's version**. For an ordinary conflict — the file exists on both sides with different content — that is `git checkout --theirs` during the rebase, since git reverses its `ours`/`theirs` semantics there: `--theirs` is the branch being replayed (the editor's work) and `--ours` is the rebase target.
 
-- **Non-conflicting files** receive the base branch's latest changes normally
-- **Conflicting files** keep the editor's version (the branch's content wins)
+A **modify/delete conflict** has no "their version" to check out, so it dispatches on which side deleted, read from git's own conflict-status codes rather than inferred: if the editing branch deleted the file while base modified it, keeping the editor's version means honoring the delete (`git rm`); if base deleted it while the editing branch modified it, it means keeping the file (`git add`). This matters beyond that one file, because `checkout --theirs` **throws** on a modify/delete conflict, and attempting it unconditionally let the throw escape the whole resolution loop and leave the clone wedged mid-rebase instead of being handled as a per-file resolution failure. [worker/AGENTS.md](packages/canopycms/src/worker/AGENTS.md) holds the abort-ownership rules that follow.
 
-For an ordinary conflict — the file exists on both sides with different content — this is implemented using `git checkout --theirs` during the rebase. Git reverses its `ours`/`theirs` semantics during rebase operations: `--theirs` refers to the branch being replayed (the editor's work), while `--ours` refers to the rebase target (the base branch). The worker uses `--theirs` to preserve the editor's content.
-
-A **modify/delete conflict** — the file was deleted on one side and changed on the other — has no "their version" for `checkout --theirs` to read, so it needs its own resolution. The worker dispatches on which side did the deleting, read directly from git's own conflict-status codes rather than inferred: if the editing branch deleted the file while the base branch modified it, keeping the editor's version means honoring the delete (`git rm`); if the base branch deleted it while the editing branch modified it, keeping the editor's version means keeping the file (`git add`). This matters beyond correctness on that one file — `checkout --theirs` throws on a modify/delete conflict, and an earlier version of the loop attempted it unconditionally, so the throw escaped the whole resolution loop and left the clone wedged mid-rebase rather than being handled as a normal per-file resolution failure.
-
-After resolving all conflicts in a rebase step, the worker continues the rebase. If a resolution produces an empty commit (no effective changes), the worker skips that commit. A safety limit prevents infinite loops in pathological cases.
+After resolving a step's conflicts the worker continues the rebase, skipping a commit whose resolution is empty, with a safety limit on rounds to prevent an infinite loop.
 
 ### Conflict Tracking
 
-After a rebase with conflicts, the worker records which items conflicted in the branch's metadata. Conflicting items are tracked by their ContentId (the immutable 12-character Base58 identifier embedded in every content filename and directory name) rather than by file path. This is important because:
-
-- ContentIds are stable across slug renames and file moves
-- They provide a reliable identifier that survives future rebases
-- Both entry files and collection metadata files are tracked
-
-**How ContentIds are resolved for conflicting files:**
-
-- **Entry files** (e.g., `post.hello.a1b2c3d4e5f6.mdx`): The ContentId is extracted directly from the filename
-- **Collection metadata** (`.collection.json` in a subcollection like `posts.cNbR5xFm2Kpd/`): The ContentId is extracted from the parent directory name
-- **Root collection metadata** (`content/.collection.json`): The root content directory has no embedded ID, so a sentinel value (`ROOT_COLLECTION_ID`) is used. This sentinel uses underscores, which can never collide with real Base58 IDs
-- **Non-content files** (e.g., `README.md`): Files with no embedded ContentId in either their filename or parent directory are excluded from conflict tracking
-
-The branch metadata stores:
-
-- **conflictStatus**: Either `clean` (no conflicts) or `conflicts-detected`
-- **conflictFiles**: Array of ContentIds for entries and collections where the editor's version was kept
-
-This state is cleared automatically when a subsequent rebase completes without conflicts.
+Conflicting items are recorded in the branch's metadata **by ContentId, not file path**, because ContentIds are stable across slug renames and file moves and therefore survive future rebases. Entry files carry the ID in the filename; a subcollection's `.collection.json` takes it from the parent directory; the root collection uses the `ROOT_COLLECTION_ID` sentinel, which uses underscores and so can never collide with a real Base58 ID; files with no embedded ID anywhere are excluded. The metadata stores `conflictStatus` (`clean` or `conflicts-detected`) and `conflictFiles` (the IDs where the editor's version was kept), cleared automatically by a later clean rebase.
 
 ### Rebase Failure Tracking
 
-Conflict resolution (above) is the expected, handled case: files differ, the editor's version wins, and the branch moves on. A rebase can also fail outright — an unexpected git error, or exhausting the safety limit on conflict-resolution rounds — which means the automatic recovery itself broke down and the branch is stuck behind the base branch until someone intervenes. The worker records this as a distinct, persistent `rebaseFailure` marker in the branch's metadata (a message plus first-seen and last-seen timestamps), separate from `conflictStatus`/`conflictFiles`.
+Conflict resolution above is the expected case. A rebase can also fail outright — an unexpected git error, or exhausting the safety limit on rounds — which means the automatic recovery itself broke down and the branch is stuck behind base until someone intervenes. The worker records that as a distinct, persistent `rebaseFailure` marker (a message plus first-seen and last-seen timestamps), separate from `conflictStatus`/`conflictFiles`, and surfaces it only in the admin System Health panel's branch list: a stuck rebase means the worker needs attention, which is not something an editor can act on.
 
-To avoid write amplification, a branch that fails every cycle is only re-recorded roughly once an hour rather than on every cycle — each metadata save eager-regenerates the branch registry, so recording unconditionally would multiply that cost across every stuck branch on every worker pass. The marker is cleared automatically once the branch catches up to the base branch cleanly, or when its editor submits it for review — the rebase loop skips submitted/approved branches, so without an explicit clear on submit a stale failure would otherwise persist through the entire review cycle.
-
-This is an operator-facing signal, not an editor-facing one: a stuck rebase means the worker needs attention, not something an editor can act on. It surfaces only in the admin System Health panel's branch list (see [Admin Observability and Recovery API](#admin-observability-and-recovery-api)), not in the editor's own conflict notices below.
+To avoid write amplification, a branch failing every cycle is re-recorded roughly once an hour: each metadata save eager-regenerates the branch registry, so recording unconditionally would multiply that cost across every stuck branch on every pass. The marker clears when the branch catches up cleanly, **or when its editor submits it** — the rebase loop skips submitted branches, so without an explicit clear on submit a stale failure would persist through the whole review cycle.
 
 ### Editor Conflict Notification
 
-Conflicts are surfaced to editors at three levels in the UI:
+Conflicts reach editors at three levels, all driven by matching each item's ContentId against the recorded `conflictFiles`: a non-blocking notice at the top of an affected entry's form, a badge on a collection whose `.collection.json` conflicted (its ordering or entry type configuration may need attention even when its entries are fine), and a conflict count in the branch picker alongside a sync-status badge whose tooltip shows the recorded `syncFailureReason`. Unlike the admin-only panel, the branch badges are visible to anyone who can see the branch — informational summaries of state every editor on it already needs, not a recovery surface.
 
-- **Entry-level notices**: When an editor opens an entry that has a content conflict, the editor form displays a non-blocking informational notice at the top of the form. The notice tells the editor that someone else recently changed the same content and that a reviewer will reconcile the changes during the review process.
-- **Collection-level badges**: When a collection's `.collection.json` conflicted during rebase, the sidebar navigation shows a conflict badge on that collection. This alerts editors that the collection structure (ordering, entry type configuration) may need review, even if individual entries within the collection are unaffected.
-- **Branch-list badges**: The branch picker itself shows a conflict-count badge alongside a sync-status badge (`pending-sync` / `sync-failed`, from the same metadata `syncStatus` field described in [Task Queue](#task-queue-async-github-operations)) next to each branch name. Unlike the admin-only System Health panel, these badges are visible to any user who can see the branch — they're informational summaries of state every editor on that branch already needs, not a recovery surface. A `sync-failed` badge's tooltip shows the recorded `syncFailureReason` when one is present (e.g. a push-rejection collision, see [Push Rejection Classification](#push-rejection-classification)), falling back to generic text otherwise.
-
-The entry- and collection-level notices use the same `conflictFiles` array from branch metadata, matching each item's ContentId against the recorded conflict IDs.
-
-**Design decisions behind this approach:**
-
-- **Conflicts are non-blocking**: Editors can continue editing and submitting normally. The conflict is informational, not a gate. This prevents editors from being stuck on merge conflicts they don't understand.
-- **Reviewer reconciliation**: The PR on GitHub will show the full diff, including the editor's version of conflicted files. Reviewers (who understand the content) can decide how to reconcile.
-- **No editor-facing git concepts**: The notice uses plain language about "recent changes" rather than exposing git terminology like "rebase conflict."
-- **Per-item granularity**: Notices appear only on the specific entries or collections that conflicted, not on the entire branch. This is possible because conflicts are tracked by ContentId.
+Conflicts are deliberately **non-blocking**, so editors keep editing and submitting rather than being stuck on a merge conflict they don't understand; the PR diff on GitHub shows both versions, so whoever reviews it — who understands the content — decides how to reconcile; the notices use plain language about recent changes rather than git terminology; and per-item granularity is possible precisely because conflicts are tracked by ContentId.
 
 ## Reference System
 
-The reference system allows content to link to other content entries using stable content IDs. This enables relationship modeling, cross-references, and maintains data integrity.
+Content links to other content by stable content ID, which is what makes relationship modelling and referential integrity possible.
 
 ### Reference Fields
 
-Reference fields are schema fields that can reference other entries by their content ID. Each reference field must specify at least one scoping constraint to control which entries are valid targets:
+A reference field must specify at least one scoping constraint, controlling which entries are valid targets:
 
-- **Collection scope** (`collections`): Limits references to entries within specified collections, including all subcollections. For example, scoping to a "data-catalog" collection also includes entries in "data-catalog/openstax" and any other nested subcollections. This uses tree traversal rather than exact collection matching.
+- **Collection scope** (`collections`) limits references to entries in the named collections **and all their subcollections** — tree traversal, not exact collection matching.
+- **Entry type scope** (`entryTypes`) limits references to entries of the named types regardless of collection, which is what you want when the same type appears in several collections.
 
-- **Entry type scope** (`entryTypes`): Limits references to entries of specific entry types by name (e.g., only "partner" entries), regardless of which collection they live in. This is useful when the same entry type appears in multiple collections or subcollections and you want to reference all instances.
+The two combine: collection scope narrows the search space first, then entry type filtering applies within it. With only `entryTypes`, the search covers every entry in the store through the ID index. A field can hold one reference or an array of them.
 
-These two scoping mechanisms can be combined. When both are specified, collection scope narrows the search space first, then entry type filtering is applied within those results. When only `entryTypes` is specified (no collection scope), the system searches all entries across the entire content store via the ID index.
+**Entry-type scope validation.** The type names in a field's `entryTypes` scope are checked against the entry types the branch's schema actually declares, and a misspelled or nonexistent name fails schema resolution outright with a "did you mean" suggestion, rather than silently resolving to an empty reference picker. This cannot happen when field schemas are first registered, because entry types are declared per-branch in on-disk collection metadata and the valid set does not exist until a branch's schema has been resolved. It therefore runs as part of that resolution, **before the resolved schema is cached**, so a bad scope fails on every load of that branch rather than only when the cache happens to be cold.
 
-**Entry-type scope validation**: The entry type names listed in a reference field's `entryTypes` scope are checked against the entry types actually declared in the branch's schema — a misspelled or nonexistent name fails schema resolution outright, with a "did you mean" suggestion, rather than silently resolving to an empty reference picker. This check cannot happen when field schemas are first registered: entry types are declared per-branch, in on-disk collection metadata, so the valid set doesn't exist until a branch's schema has actually been resolved. It runs as part of that resolution step, before the resolved schema is cached, so a bad scope fails consistently on every load of that branch rather than only when the cache happens to be cold.
+### Resolution, Validation and Integrity
 
-References can:
-
-- **Scope by collection tree**: Constrain references to entries in a collection and all its subcollections
-- **Scope by entry type**: Constrain references to entries of a specific type across all collections
-- **Combine both scopes**: Use collection and entry type constraints together for precise targeting
-- **Support both single and multiple references**: A field can reference one entry or an array of entries
-- **Be validated**: The system checks that referenced IDs exist and satisfy both collection and entry type constraints
-
-### Reference Resolution
-
-The `ReferenceResolver` class handles loading and displaying referenced content:
-
-- **Resolve single ID**: Convert a content ID to its display value (e.g., post title)
-- **Load reference options**: Dynamically fetch all available options for a reference field (used for dropdown/select UI). Supports collection-scoped queries (with subcollection tree traversal), entry-type-scoped queries, or both combined.
-- **Search and filter**: Find reference options by search term, collection constraints, and/or entry type constraints
-- **Batch resolution**: Resolve multiple IDs efficiently
-
-### Reference Validation
-
-The `ReferenceValidator` class ensures reference integrity:
-
-- **ID format validation**: Checks that ID strings are valid short UUIDs
-- **Existence validation**: Verifies that referenced entries actually exist
-- **Collection constraint validation**: Ensures referenced entries belong to allowed collections
-- **Entry type constraint validation**: Ensures referenced entries match allowed entry types (checked by extracting the entry type from the filename)
-- **Detailed error reporting**: Reports which reference field failed validation and why, including mismatched collection or entry type
-
-Validation can run on entire entries or individual references, supporting both batch checks during content saves and real-time validation in the editor.
-
-### Reference Integrity Checking
-
-Before deleting an entry, the system checks for broken references:
-
-- **Identify all references**: Find which entries reference the entry being deleted
-- **Report referrers**: Show users which content would be broken
-- **Prevent cascade deletes**: Entries with incoming references can be marked as "deletion blocked"
-
-This prevents orphaned references and keeps the content relationship graph intact.
-
-### API Endpoints
-
-**GET /:branch/reference-options**: Dynamically load reference options
-
-- Query parameters: `collections` (comma-separated, optional), `entryTypes` (comma-separated, optional), `displayField`, `search`. At least one of `collections` or `entryTypes` is required.
-- Returns: Array of options with ID, label, and collection
-- Used by editor to populate dropdowns with current available entries
-
-**POST /:branch/validate-references/:path\***: Validate references in an entry
-
-- Checks all reference fields in the entry data
-- Returns: Validation result with any errors found
-- Provides real-time feedback in the editor
+`ReferenceResolver` resolves an ID to its display value and loads, searches and batch-resolves a field's options; `ReferenceValidator` checks format, existence and both constraints, on whole entries during saves and on single references for live editor feedback. Before an entry is deleted the system reports every entry referencing it, so deletion is blocked rather than leaving orphaned references. See [validation/AGENTS.md](packages/canopycms/src/validation/AGENTS.md), which also holds the `normalizeReferenceValues` rule that keeps a resolved reference from being persisted as a frozen snapshot of its target.
 
 ### Entry Links (Inline Content Links)
 
-Reference fields work well for structured data (e.g., "this post's author is Alice"), but content authors also need to link to other entries from within prose. Entry links extend the reference-by-ID pattern from structured fields to inline links in markdown body content.
-
-**Syntax**: Entry links use a markdown link with the `entry:` protocol and a 12-character content ID:
+Reference fields suit structured data; authors also need to link to other entries from within prose. Entry links extend reference-by-ID to inline markdown links, using the `entry:` protocol with a 12-character content ID and an optional anchor fragment:
 
 ```markdown
 See the [Getting Started guide](entry:vh2WdhwAFiSL) for setup instructions.
 You can also jump to the [API section](entry:a1b2c3d4e5f6#authentication).
 ```
 
-This reuses the same immutable content IDs already used for reference fields, so entry links survive renames and moves just like reference fields do. The optional anchor fragment (`#section`) is preserved through resolution.
+**Why a custom protocol instead of file paths?** File paths break when content is renamed or reorganized, while content IDs are stable across slug changes, collection moves and restructuring. Reusing them means entry links inherit every rename-safety guarantee the reference system already has, with no parallel identification system.
 
-**Why a custom protocol instead of file paths?** File paths break when content is renamed or reorganized. Content IDs are stable identifiers embedded in filenames that persist across slug changes, collection moves, and restructuring. By using the `entry:` protocol, authors get links that never go stale as long as the target entry exists.
+**Resolution happens at read time**, in `ContentReader.read()`, parallel to reference resolution: the resolver scans body content for `entry:ID`, looks each ID up in the bidirectional index, computes the target's URL path from its place in the content tree, and substitutes it. Adopters therefore receive fully-resolved URLs with **no change to their rendering pipeline** — the zero-adoption-cost property that justified the design. It is on by default and can be disabled per read with `resolveEntryLinks`, and adopters whose URL structure does not match the content tree override the computation with an `entryLinkUrl` config callback.
 
-**Resolution at read time**: Entry links are resolved in `ContentReader.read()`, parallel to existing reference resolution. The resolver scans body content for `entry:ID` patterns, looks up each ID in the bidirectional content ID index, computes the URL path from the entry's location in the content tree, and replaces the `entry:ID` with the resolved URL. This happens server-side at read time, so adopters receive fully-resolved URLs without any changes to their rendering pipeline. Resolution is enabled by default and can be disabled per-read via the `resolveEntryLinks` option.
-
-**Code-block protection**: The resolver skips fenced code blocks and inline code spans to avoid corrupting code examples that mention the `entry:` syntax.
-
-**Missing targets**: If a referenced entry no longer exists, the link is replaced with `#` (a dead anchor) and a warning is logged. This graceful degradation ensures pages still render even with broken links.
-
-**Custom URL schemes**: Adopters can provide an `entryLinkUrl` callback in the config to override the default URL computation. This supports cases where the site's URL structure doesn't match the content tree layout (e.g., localized paths, custom routing).
-
-**Live preview**: The editor resolves entry links client-side for the live preview iframe. A React hook builds a lookup map from content IDs to URL paths using the editor's loaded entry list, then transforms body content before it reaches the preview frame. This is a lightweight, synchronous resolution that avoids API calls during preview updates.
-
-**Editor UI**: The markdown editor toolbar includes an "Insert Entry Link" button that opens a searchable modal. Entries are grouped by collection and filterable by name, slug, or collection. Selecting an entry inserts `[Entry Title](entry:CONTENT_ID)` into the editor at the cursor position.
-
-**Validation**: On save, the system scans body content and markdown/MDX fields for `entry:ID` patterns and checks that each referenced ID exists. Broken entry links produce warnings, not errors -- saves are never blocked by missing link targets. This parallels reference validation but uses a softer stance because inline links in prose are less structurally critical than typed reference fields.
-
-**AI content pipeline**: The AI content generation engine resolves entry links to URLs in its markdown output, ensuring AI consumers see clean, navigable links rather than internal `entry:` references.
-
-**Design rationale**: Entry links were designed to integrate with the existing content ID infrastructure rather than introducing a parallel identification system. By reusing content IDs, the feature inherits all the stability and rename-safety guarantees already built into the reference system. The read-time resolution approach means zero adoption cost -- no rendering pipeline changes, no new template helpers, no client-side resolution library needed by adopters.
+Around that core: the resolver skips fenced code blocks and inline code spans, so code examples mentioning the syntax are not corrupted; a missing target becomes `#` with a logged warning, so a page still renders with a dead anchor rather than failing; the editor resolves links client-side for the preview iframe from the already-loaded entry list, avoiding API calls during preview updates; saves report broken links as **warnings, never errors**, because inline prose links are less structurally critical than typed reference fields; and the AI content pipeline resolves them to URLs so AI consumers never see internal `entry:` references.
 
 ## Comments & Collaboration
 
-The comment system supports asynchronous review workflows.
+Comments support asynchronous review at three attachment levels — **field** comments on a specific form field, **entry** comments on a whole entry, and **branch** comments on the changeset — stored per branch in `.canopy-meta/comments.json`. Thread resolution is controlled by the thread author, users with review access, or admins.
 
-**Three attachment levels:**
+Comments are **not committed to git**, automatically excluded via git info/exclude: they are ephemeral discussion about a change rather than published content. Groups and permissions go the other way, onto a version-controlled settings branch, because who can edit what should be reviewable as a PR and revertible like anything else.
 
-- **Field comments**: Attached to specific form fields (e.g., title, description)
-- **Entry comments**: General feedback on an entire content entry
-- **Branch comments**: Discussion about the overall branch/changeset
-
-**Key characteristics:**
-
-- Comments are stored per-branch in `.canopy-meta/comments.json`
-- Comments are NOT committed to git—they're review artifacts, automatically excluded via git info/exclude
-- Thread resolution is controlled by the thread author, reviewers, or admins
-- Comment writes are safe under concurrent reviewers, including two different Lambda containers writing at the same moment: an in-process mutex, a server-enforced cross-host lock, and per-write version checks compose so a comment can't be silently lost to a concurrent write on another host (see [docs/concurrency.md](docs/concurrency.md))
+Comment writes are safe under concurrent authors, including two Lambda containers writing at the same moment: an in-process mutex, a server-enforced cross-host lock, and per-write version checks compose so a comment cannot be silently lost to a write on another host (see [docs/concurrency.md](docs/concurrency.md)).
 
 ## Editor Architecture
 
-The editor provides a rich editing experience with schema-driven forms, block-based page building, and live preview.
+The editor provides schema-driven forms, block-based page building and live preview. [editor/AGENTS.md](packages/canopycms/src/editor/AGENTS.md) maps the subsystem — the largest in the package — and [editor/hooks/README.md](packages/canopycms/src/editor/hooks/README.md) covers the data-loading architecture.
 
-**Bundle separation**: Public sites can be built without any editor code. The editor is exported from `canopycms/client` and can be imported only where needed. This means your production site visitors never download editor JavaScript. At the file level, CMS-only routes (API handlers, editor pages) use the `.server.ts`/`.server.tsx` extension convention. The `withCanopy()` config wrapper controls whether Next.js processes these files, so static builds exclude them entirely rather than relying on tree-shaking alone.
+**Bundle separation.** Public sites can be built with no editor code at all: the editor is exported from `canopycms/client` and imported only where needed, so site visitors never download editor JavaScript. At the file level, CMS-only routes use the `.server.ts`/`.server.tsx` convention and `withCanopy()` controls whether Next.js processes them, so a static build excludes them entirely rather than relying on tree-shaking. The editor can be embedded in the same Next.js app or run as a separate application.
 
-**Integration options:**
-
-- Embed editor in the same Next.js app (simpler setup)
-- Run editor as a separate application (stricter separation)
-- Public sites can optionally import and embed the editor, but they don't have to
-
-**Server imports**: Adopting apps also import from `canopycms/server` for content reading and API setup.
-
-**Live preview**: The editor can show a live preview of content changes. The preview is an iframe that loads your actual site pages, and the editor communicates with it via postMessage. When you edit a field, the preview updates immediately. Clicking on elements in the preview focuses the corresponding form field. This preview bridge enables real-time feedback without page reloads.
-
-**Deployment prefix**: When the host app is served under a deployment prefix, the editor's API base URL and the preview iframe's `src` both have to carry it — and the preview URL in particular must carry it exactly once, because the same string is also matched against the browser-reported location path to drive draft sync. See [Preview Path Identity](#preview-path-identity).
+**Live preview** is an iframe loading the real site pages, with the editor communicating over postMessage: editing a field updates the preview immediately, and clicking an element in the preview focuses the corresponding form field. When the host app is served under a deployment prefix, the editor's API base URL and the iframe's `src` both have to carry it — and the preview URL must carry it **exactly once**, because the same string is also matched against the browser-reported location path to drive draft sync. See [Preview Path Identity](#preview-path-identity).
 
 ### Preview Bridge Trust Model
 
-The preview bridge is a postMessage channel between two windows, and the site side of that channel feeds incoming draft data straight into the host site's renderer (often MDX evaluation). An unvalidated message listener would therefore let any window with a handle on a preview page (e.g. via `window.open`) execute arbitrary content in the site's origin. Trust is explicit on both sides of the bridge:
+The preview bridge is a postMessage channel between two windows, and the site side feeds incoming draft data straight into the host site's renderer, often MDX evaluation. An unvalidated listener would therefore let any window holding a handle on a preview page execute arbitrary content in the site's origin. Trust is explicit on both sides:
 
-- **Site-side preview hooks** (`useCanopyPreview` and the lower-level preview hooks) attach message listeners only when the page is actually framed, and accept a message only if it comes from the direct parent frame (`event.source === window.parent`) AND its origin matches the expected editor origin. The expected origin defaults to the page's own origin, so same-origin editor/preview setups need no configuration; deployments that serve the editor from a different origin pass an optional `editorOrigin` to the hooks.
-- **Editor-side listeners**: the preview frame's ready/error handler applies the same source-plus-origin validation (`event.source` must be the preview iframe's `contentWindow` and the origin must match the origin pinned from its `src`). The comment system's preview-focus handler validates origin only — it lives outside `PreviewFrame` and has no handle on the iframe, and the message can at most scroll/focus a form field.
-- **All outbound bridge messages** target a concrete origin — derived from the iframe `src` on the editor side, and the configured (or same-) editor origin on the site side — never the `'*'` wildcard. Draft content cannot be delivered to a frame that has navigated elsewhere. Opaque origins (sandboxed embeds, which serialize to the string `'null'`) are never trusted inbound and never posted to.
+- **Site-side hooks** (`useCanopyPreview` and the lower-level preview hooks) attach listeners only when the page is actually framed, and accept a message only if it comes from the direct parent frame (`event.source === window.parent`) **and** its origin matches the expected editor origin. That origin defaults to the page's own, so same-origin setups need no configuration; a deployment serving the editor from another origin passes `editorOrigin`.
+- **Editor-side listeners**: the preview frame's ready/error handler applies the same source-plus-origin validation (`event.source` must be the iframe's `contentWindow`, the origin must match the one pinned from its `src`). The comment system's preview-focus handler validates origin only — it lives outside `PreviewFrame` with no handle on the iframe, and its message can at most scroll or focus a form field.
+- **Every outbound message targets a concrete origin** — derived from the iframe `src` on the editor side, the configured or same origin on the site side — never the `'*'` wildcard, so draft content cannot be delivered to a frame that has navigated elsewhere. Opaque origins (sandboxed embeds, which serialize to the string `'null'`) are never trusted inbound and never posted to.
 
-### Preview Error Reporting
+The bridge also carries a preview-to-editor **error channel**: when a draft fails to compile or render, the preview page calls the `reportError` helper `useCanopyPreview` returns, optionally tagging the offending field, and calls it again with `null` once the draft renders cleanly. The editor shows the report over the preview pane — without it, a render error inside the iframe is invisible and the iframe simply stops updating.
 
-The bridge also carries a preview-to-editor error channel. When a draft fails to compile or render (e.g. malformed MDX), the preview page calls the `reportError` helper returned by `useCanopyPreview`, optionally tagging the offending field, and calls it again with `null` once the draft renders cleanly. The editor surfaces the report as an alert over the preview pane, so authors see why the preview is broken instead of a blank or stale frame. Without this channel, a render error inside the iframe is invisible to the editor — the iframe simply stops updating.
+### State and Data Loading
 
-### State Management
+Two React contexts provide dependency injection instead of module-level singletons — the API client and the editor-wide loading/modal/preview state — so components reach shared state without prop drilling and tests wrap them in providers with mocks. Complex logic lives in hooks rather than components, and three of those carry rules worth knowing here.
 
-The editor uses React Context for dependency injection and state management:
+**Drafts are optimistic-concurrency-checked.** `useDraftManager` persists a draft only where the user actually edited, since `effectiveValue` falls back to `loadedValues`; each branch's drafts live under `canopycms:drafts:<branch>` in a `{ v: 2, drafts, baseVersions }` envelope where `baseVersions[contentId]` is the server OCC version the draft was based on. **A save whose base no longer matches the currently held token surfaces the 409 conflict notification instead of writing**, including a draft restored from the pre-v2 format, which records no base.
 
-**ApiClientContext**: Provides the API client instance to all editor components. This replaces lazy singletons with explicit dependency injection, improving testability and eliminating global state.
+**Automatic loads are SWR-backed, imperative reloads are not.** The three fetch-on-load resources (branches list, a branch's entries plus schema, comment threads) go through `swr` with a shared cache whose deduping collapses concurrent requests for one key. An imperative reload instead issues an independent, un-deduped fetch — a caller that just wrote content must see its own change rather than be coalesced with an in-flight automatic load — then writes the result into the cache without revalidating. The commit rules that keep those two paths from showing a stale branch's entries are in [editor/hooks/README.md](packages/canopycms/src/editor/hooks/README.md).
 
-**EditorStateContext**: Consolidates editor-wide state including:
+**Preview reference resolution is synchronous**, because fetching a reference's full target asynchronously creates race conditions during state transitions such as discarding all drafts. A `useMemo` computes the resolved value from **form data plus cache** during render, substituting any ID the cache holds and leaving the rest as IDs, while a debounced effect fetches the missing ones. The resolved value is therefore computed, never stored as separate state, so there are no two state trees to synchronize; the cache is branch-scoped, so switching branches cannot show stale cross-branch data.
 
-- Loading states (which operations are in progress)
-- Modal states (which dialogs are open)
-- Preview data (current preview state)
-
-This context-based architecture allows components to access shared state without prop drilling while maintaining clear boundaries for testing and state isolation.
-
-### Custom Hooks
-
-Complex state management logic is extracted into custom hooks:
-
-- **useBranchManager**: Branch selection and lifecycle management
-- **useEntryManager**: Entry CRUD operations
-- **useDraftManager**: Draft state and localStorage persistence. Drafts exist only where the user actually edited — opening an entry seeds nothing, since `effectiveValue` falls back to `loadedValues`. Each draft is persisted under `canopycms:drafts:<branch>` in a `{ v: 2, drafts, baseVersions }` envelope; `baseVersions[contentId]` is the server OCC version the draft was based on (from `useEntryManager.getEntryVersion`), and a save whose base no longer matches the currently held token — including a draft restored from the pre-v2 format, which has no recorded base — surfaces the 409 conflict notification instead of writing. Both destructive actions ("Discard draft" and "Reload File") confirm first when the selected entry is dirty.
-- **useCommentSystem**: Comment threading and resolution
-- **useGroupManager**: Group administration
-- **usePermissionManager**: Permission rule management
-- **useReferenceResolution**: Async reference data loading with caching
-- **useEntryLinkResolution**: Client-side entry:ID link resolution for live preview
-
-This extraction keeps components focused on rendering while hooks encapsulate business logic and side effects.
-
-### Data Loading: SWR-Backed Fetch Hooks
-
-The editor's three fetch-on-load resources — the branches list, a branch's entries plus schema, and comment threads — each have a dedicated hook built on `swr`, a client-side data-fetching/caching library. Each hook exports a plain async fetcher, a cache-key function, and a thin wrapper around `useSWR(key, fetcher)`; the corresponding manager hook (`useBranchManager`, `useEntryManager`, `useCommentSystem`) mirrors the data hook's reactive `data`/`error`/`isValidating` onto its own state and busy flags.
-
-This replaced three independent `useEffect([branchName])` fetch effects, each of which fired twice under React Strict Mode's mount-cleanup-remount cycle — plus a fourth duplicate schema fetch that the editor shell ran separately on branch change, now eliminated by reading `availableSchemas` off `useEntryManager`'s return value instead of fetching it again. A shared SWR cache (configured with `revalidateOnFocus: false`, `shouldRetryOnError: false`, and a short deduping window) gives every automatic on-mount/on-branch-change fetch built-in request deduping, so concurrent requests to the same cache key collapse into one.
-
-**Automatic load vs. explicit reload**: only the automatic fetch goes through `useSWR`. Each manager hook's imperative reload function (branch reload, comment reload, entry refresh) intentionally does not use SWR's `mutate()` revalidate form — it issues an independent, un-deduped fetch instead, because a caller that just wrote content needs to see its own change reflected immediately rather than coalesced with a still-in-flight automatic load — and then writes the result into the SWR cache with `mutate(key, data, { revalidate: false })`, keeping the bound data hook's reactive state in sync without a second request. The entry-refresh path additionally guards every commit of fetched entries state with a PER-BRANCH "committed sequence" rule — commit anything at least as new as what that branch's view already shows, and never a tag for a branch other than the one currently displayed. Per-branch rather than a single global counter, deliberately: SWR replays a branch's cached (tagged) result when the user switches back to it, and under a global counter any intervening branch's load had already advanced the count, so the replayed cache hit was rejected — and inside the deduping window no revalidation followed, leaving the PREVIOUS branch's entries on screen under the new branch indefinitely. A response older than what its branch already displays is still rejected (and triggers a revalidation of that branch's now-stale cache slot), and a refresh settling after the user switched away commits nothing.
-
-### Live Preview Reference Resolution
-
-The live preview needs to display full referenced content (e.g., author names/data) instead of just reference IDs. This is accomplished through a synchronous resolution system with background caching.
-
-**The Challenge:**
-
-When a user selects a reference (e.g., choosing "Alice" as the post author), the form stores just the ID (`5NVkkrB1MJUvnLqEDqDkRN`). But the preview needs the full author object with `name`, `bio`, etc. to render properly. Naively fetching this data asynchronously creates race conditions during state transitions (like "Discard All Drafts").
-
-**The Solution: Synchronous Resolution with Background Caching**
-
-The system uses a two-phase approach:
-
-1. **Synchronous Transform (useMemo):**
-   - When form data changes, immediately compute a "resolved value" by applying cached reference data
-   - If a reference ID is in cache, substitute the full object; otherwise, keep the ID
-   - This happens synchronously during render, so there are no async gaps
-   - The preview always receives complete, valid data
-
-2. **Background Async Resolution (useEffect):**
-   - Identify which reference IDs aren't in cache yet
-   - After a 300ms debounce, fetch those IDs from the API endpoint
-   - Update the cache with resolved objects
-   - Trigger a re-computation of the synchronous transform
-   - The preview updates again, now with full data
-
-**Key Architectural Decisions:**
-
-- **Single source of truth**: The resolved value is computed from `form data + cache`, not maintained as separate state
-- **No race conditions**: The synchronous transform guarantees the preview never receives partial/empty data
-- **Progressive enhancement**: Preview shows IDs initially (loading state), then full objects after resolution
-- **Persistent cache**: Cache survives across edits, so subsequent renders are instant
-- **Branch-scoped cache**: Cache clears when switching branches to avoid stale cross-branch data
-
-**Implementation Files:**
-
-- `src/api/resolve-references.ts` - API endpoint that resolves reference IDs to full objects
-- `src/editor/client-reference-resolver.ts` - Client-side utility for incremental resolution
-- `src/editor/FormRenderer.tsx` - Synchronous resolution logic using useMemo + background caching
-
-**Example Flow:**
-
-1. User selects "Alice" as author → form stores ID `5NVkkrB1MJUvnLqEDqDkRN`
-2. useMemo runs: cache is empty, so resolvedValue has `author: "5NVkkrB1MJUvnLqEDqDkRN"` (ID)
-3. Preview renders with ID (AuthorCard shows loading state)
-4. After 300ms, useEffect fetches Alice's full data from API
-5. Cache updated with `{"5NVkkrB1MJUvnLqEDqDkRN": {id: "...", name: "Alice", bio: "..."}}`
-6. useMemo re-runs: now resolvedValue has full author object
-7. Preview updates, AuthorCard shows "Alice" with bio
-
-**Why This Approach:**
-
-Alternative approaches (async state, callbacks, separate resolution state) create synchronization problems between two state trees (form data + resolved data). By computing resolved data synchronously from a single source (form data + cache), we eliminate timing issues and race conditions entirely.
-
-### Admin: System Health Panel
-
-The editor has an admin-only "System Health" panel — the first UI surface in the editor gated to a single role rather than to branch/path permissions. It is a thin view over the [Admin Observability and Recovery API](#admin-observability-and-recovery-api): an Overview tab (task-queue stats, worker liveness, the worker's self-reported git-sync summary), a Tasks tab (list/retry/delete task files), and a Branches tab (branch-health classification plus purge/repair-metadata actions, and the manual "mark as merged" fallback).
-
-Visibility is the caller's responsibility, not the panel's own: the editor shell checks the current user's admin membership before rendering the button that opens the panel, the same pattern used for the group and permission managers. The real enforcement is server-side — every endpoint the panel calls carries the same `admin` guard as the rest of the API (see [Declarative Guard System](#declarative-guard-system)) — so the client-side check is purely a UX convenience (no admin-only menu item for a non-admin) rather than the security boundary.
+The editor's admin-only **System Health panel** is a thin view over the [Admin Observability and Recovery API](#admin-observability-and-recovery-api). The editor shell checks admin membership before rendering the button that opens it, but **the real enforcement is server-side** — every endpoint carries the `admin` guard — so the client-side check is a UX convenience, not the security boundary.
 
 ## Asset & Media System
 
-CanopyCMS manages binary media (images and PDFs) outside of git. Content references assets by immutable, content-addressed key; the bytes live in a separate object store, and images are resized/reformatted on demand at delivery time rather than at upload time.
-
-The full design record — including rationale, the AWS deploy mechanics, and the rejected upload-time-width-ladder alternative (Plan A) — lives at `.claude/future-tasks/resolved/assets-media-system.md`. This section covers the architecture; that record covers the "why we didn't do it the other way."
+CanopyCMS manages binary media (images and PDFs) outside of git. Content references an asset by immutable, content-addressed key; the bytes live in a separate object store; and images are resized and reformatted on demand at delivery time rather than at upload. [assets/AGENTS.md](packages/canopycms/src/assets/AGENTS.md) maps the module, and the design record at `.claude/future-tasks/resolved/assets-media-system.md` holds the rejected upload-time-width-ladder alternative.
 
 ### Content-Addressed Storage
 
-Assets are stored in a single bucket (in prod, new prefixes inside each site's existing content bucket) under a fixed set of prefixes, keyed by a content hash (sha-256 truncated to 128 bits) rather than by a path an editor chooses:
+Assets live in a single bucket — in prod, new prefixes inside each site's existing content bucket — under a fixed set of prefixes, keyed by a content hash (sha-256 truncated to 128 bits) rather than by a path an editor chooses:
 
 - `asset-originals/` — private, full-fidelity originals, kept forever
-- `asset-staging/` — short-lived presigned-upload target (expired by a lifecycle rule)
+- `asset-staging/` — short-lived presigned-upload target, expired by a lifecycle rule
 - `asset-meta/` — private per-asset sidecar (original filename, uploader, date, dimensions, mime)
-- `assets/` — public static delivery for sanitized SVGs and PDFs only
+- `assets/` — public static delivery, for sanitized SVGs and PDFs only
 - `assets/t/` — transform outputs, where the URL path _is_ the S3 key
 
-Keys are **immutable, content-addressed, and unguessable**. Nothing is overwritten or eagerly deleted, and identical bytes deduplicate (the first uploaded filename wins). This is what gives assets **branch-awareness without git storage**:
+Keys are **immutable, content-addressed and unguessable**. Nothing is overwritten or eagerly deleted, and identical bytes deduplicate. That is what gives assets **branch-awareness without git storage**: a draft branch's newly uploaded image is fetchable-but-unguessable immediately, so drafts and PR previews render it before the referencing content is published; publishing needs no asset-promotion step, because the reference already points at the final key; and rollback always resolves, because old keys are never deleted.
 
-- A draft branch's newly uploaded image is fetchable-but-unguessable immediately — "unlisted link" semantics — so drafts and PR previews render it before the referencing content is published.
-- Publishing needs no asset-promotion step, because the reference already points at the final key.
-- Rollback always resolves, because old keys are never deleted.
-
-**Unlisted is not private.** Key enumeration is an accepted trade-off (the meta listing that powers the media library is open to any authenticated user); confidential files do not belong in this store. Deleting an asset removes only its meta sidecar — blobs are immortal until a future garbage-collection task.
+**Unlisted is not private.** Key enumeration is an accepted trade-off — the meta listing that powers the media library is open to any authenticated user — so confidential files do not belong in this store. Deleting an asset removes only its meta sidecar; blobs are immortal until a future garbage-collection task.
 
 ### Upload and Finalize
 
-Uploads go **directly from the browser to S3** via a presigned POST (with a content-length cap and type conditions). The bytes never traverse the CMS's request path, so the serverless function's small request-body limit is irrelevant, and presign generation is local crypto that needs no outbound internet.
+Uploads go **directly from the browser to S3** via a presigned POST with a content-length cap and type conditions, so the bytes never traverse the CMS's request path — the serverless function's small request-body limit is irrelevant — and presign generation is local crypto needing no outbound internet.
 
-After the browser upload lands in staging, the editor calls a **finalize** step that runs synchronously in the CMS API process (the CMS Lambda in prod, the dev server in dev). Finalize sniffs the real file type from magic bytes, sanitizes SVGs (which cannot be type-sniffed and are explicitly parsed and stripped of scripts), extracts dimensions (honoring EXIF orientation), writes the original and meta sidecar (and a public copy for SVG/PDF), deletes the staging object, and returns the complete structured field value. The commit-point ordering is deliberate — dedup check, then original, then meta — so a crash never leaves a meta record pointing at bytes that were never written. Finalize stores no resized variants: in prod, on-demand transforms run in the separate transform Lambda. Its one use of sharp is decoding a raster upload into a tiny throwaway resize, which catches corrupt pixel data. sharp is loaded on first use, so a prod CMS Lambda where it cannot load keeps serving and only skips that check.
+Once the upload lands in staging, the editor calls a **finalize** step that runs synchronously in the CMS API process. It sniffs the real file type from magic bytes, **sanitizes SVGs** — which cannot be type-sniffed, and are explicitly parsed and stripped of scripts — extracts dimensions honoring EXIF orientation, writes the original and the meta sidecar (plus a public copy for SVG/PDF), deletes the staging object, and returns the structured field value. **The commit-point ordering is deliberate — dedup check, then original, then meta — so a crash never leaves a meta record pointing at bytes that were never written.** Finalize stores no resized variants; its one use of sharp decodes a raster upload into a throwaway resize to catch corrupt pixel data, loaded on first use so a Lambda where it cannot load keeps serving and only skips that check.
 
 ### On-Demand Image Transforms
 
-Raster images are always served through the transform layer, never as raw originals — this guarantees EXIF stripping and bounds the set of derivatives. A transform URL encodes an imgix-style directive set (allowlisted width, format, quality, and a normalized crop rectangle) as a path segment: `assets/t/{directives}/{hash}/{slug}`. Because the URL path is the S3 key, transform outputs are cacheable static objects once produced.
+Raster images are **always** served through the transform layer, never as raw originals, which guarantees EXIF stripping and bounds the set of derivatives. A transform URL encodes an imgix-style directive set — allowlisted width, format, quality, and a normalized crop rectangle — as a path segment: `assets/t/{directives}/{hash}/{slug}`. Because the URL path is the S3 key, outputs are cacheable static objects once produced.
 
-Delivery uses a **CloudFront origin group with failover**:
+Delivery uses a **CloudFront origin group with failover**: the signed S3 origin is tried first; on a 403/404 miss CloudFront fails over to a transform Lambda behind an OAC-locked Function URL, which reads the original, applies the directives, strips EXIF, **writes the canonical output key to S3 first** and then serves the bytes, so the next request for that URL hits the S3 object directly and the Lambda is a fill-on-miss path rather than a per-request resizer. For outputs too large for the Function URL's buffered response cap, and for the transform-failure fallback, it returns a `302` to the now-satisfiable S3 URL with `Cache-Control: no-store` — load-bearing, because caching the redirect instead of the image is a known trap.
 
-1. The signed S3 origin is tried first. On a cache/S3 miss (403 or 404), CloudFront fails over to a transform Lambda behind an OAC-locked Function URL.
-2. The Lambda reads the original, applies the directives, strips EXIF, and **writes the canonical output key to S3 first**, then serves the bytes. For outputs too large for the Function URL's buffered response cap (and for the transform-failure fallback), it returns a `302` redirect with `Cache-Control: no-store` to the now-satisfiable S3 URL — the `no-store` is load-bearing, because caching the redirect instead of the image is a known trap.
-3. The next request for that URL hits the S3 object directly; the Lambda is a fill-on-miss path, not a per-request resizer.
+**One transform engine, two runtimes.** The directive parser and the sharp-based transform live in the core package; the prod transform Lambda imports that engine verbatim, and dev mode emulates `/assets/t/*` with the same engine on the fly. Identical URLs resolve in every mode, and there is exactly one implementation of what a directive does to an image.
 
-The Function URL is locked to CloudFront (OAC / IAM) so the transform Lambda cannot be invoked directly to stuff the cache with arbitrary variants, and the directive allowlist bounds the variant space. Both behaviors are attached to the environment distribution and the PR-preview distribution, so previews of draft branches resolve newly uploaded images.
+**Bounding the anonymous-reachable path.** `/assets/t/*` needs no authentication — any anonymous viewer reaches it through CloudFront, and the hash in the URL is not a secret, since it appears in every published page's `<img src>`. What that exposes is not access to private content but an _amplifier_: each distinct URL that misses both CloudFront and S3 costs a sharp transform on a large Lambda plus a stored object. The blast radius is capped three ways. Width and quality are **allowlisted**, bounding how many distinct URLs one asset can have. The transform Lambda carries a **reserved concurrency**, capping how much of the account's concurrency pool it can draw and costing nothing when idle. And a request's slug is **validated against the asset's recorded slug**, in both the prod Lambda and the dev emulation, which removes the aliasing multiplier outright: otherwise any `[a-z0-9-]+` string mints a fresh cache key, invocation and stored object for one and the same image. Generated derivatives also carry a lifecycle expiry rather than living forever — they regenerate from the original on the next request, so expiry is self-healing, while unbounded retention lets anything minted this way accumulate permanently.
 
-**One transform engine, two runtimes.** The directive parser and the sharp-based transform live in the core package. The prod transform Lambda imports that engine verbatim; dev mode emulates `/assets/t/*` with the same engine on the fly (the dev route serves through the store abstraction, and `withCanopy` rewrites `/assets/*` to the CMS API route). Identical URLs resolve in every mode, and there is exactly one implementation of "what does this directive do to this image." This is a modernized redesign of OpenStax's `image-cdn`: S3-sourced instead of HTTP-pull, and sync-on-miss via origin-group failover instead of an S3-website-redirect + queue dance (which does not work under OAC anyway).
+Cost and unbounded storage are the real exposure here; the reservation is not there to stop the CMS Lambda being starved of concurrency, which has its own reservation and was never at risk. The one unbounded dimension left is the crop rectangle, whose key space no allowlist bounds; capping it needs signed directives and is tracked separately.
 
-**Bounding the anonymous-reachable path.** `/assets/t/*` needs no authentication — it's reachable by any anonymous viewer through CloudFront, and the `hash32` in the URL is not a secret, since it appears in every published page's `<img src>`. What that exposes is not access to private content but an _amplifier_: each distinct URL that misses both CloudFront and S3 costs a sharp transform on a large Lambda plus a stored object. Width and quality are allowlisted precisely to bound how many distinct URLs one asset can have; two dimensions escaped that bound, so the blast radius is now capped three ways. The transform Lambda carries a reserved concurrency — a cap on how much of the account's concurrency pool it can draw, which costs nothing when idle. A request's slug is validated against the asset's recorded slug in both the prod Lambda and the dev-mode emulation, which removes the aliasing multiplier outright: previously any `[a-z0-9-]+` string minted a fresh cache key, invocation and stored object for one and the same image. And generated derivatives under `assets/t/` carry a lifecycle expiry rather than living forever — they are regenerable from the original on the next request, so expiry is self-healing, while unbounded retention let anything minted this way accumulate permanently.
-
-Note what this does _not_ claim: the reservation does not exist to stop the CMS Lambda being starved of concurrency. That function carries its own reservation and was never at risk. The cost and unbounded-storage halves are the real exposure. The remaining unbounded dimension is the crop rectangle, a four-float value whose key space no allowlist bounds; capping it properly needs signed directives and is tracked separately.
+The Function URL is locked to CloudFront (OAC / IAM) so the transform Lambda cannot be invoked directly to stuff the cache with arbitrary variants, and both behaviors are attached to the PR-preview distribution as well, so previews of draft branches resolve newly uploaded images.
 
 ### Stored vs Rendered Asset URLs
 
-A stored asset reference is **always root-relative** (`/assets/…`), and this is structural rather than conventional: both write paths — finalize and the editor's own field writes — store the raw computed src, and nothing that writes content is allowed to bake a prefix into it. The reason is that content moves. The same entry is read from a draft branch workspace, a PR preview, a staging deployment, and production; a stored value that named an origin or a deployment prefix would be correct in exactly one of those places and quietly wrong in the rest, with no way to fix it short of rewriting content.
+A stored asset reference is **always root-relative** (`/assets/…`), and this is structural rather than conventional: both write paths — finalize and the editor's own field writes — store the raw computed src, and nothing that writes content may bake a prefix into it. The reason is that content moves: the same entry is read from a draft branch workspace, a PR preview, a staging deployment and production, so a stored value naming an origin or a deployment prefix would be correct in exactly one of those and quietly wrong in the rest.
 
-So a stored src names only the asset's **position in the `/assets` URL space** and nothing else. Putting a mount point in front of that space is strictly a **render-time** concern, applied in exactly one place — the `baseUrl` option on the URL builders (`assetUrl` / `assetSrcSet`) — and never written back. `media.publicBaseUrl` is one _source_ of that render-time value (the editor's own answer, for when the editor is served from a different origin than the site); it is display configuration, not a property of the asset.
-
-Where that mount point should point is a question about deployment topology, not about the site's route prefix — see [Render-Time URL Prefixes](#render-time-url-prefixes).
+A stored src therefore names only the asset's **position in the `/assets` URL space**. Putting a mount point in front of that space is strictly a **render-time** concern, applied in exactly one place — the `baseUrl` option on `assetUrl`/`assetSrcSet` — and never written back. `media.publicBaseUrl` is one _source_ of that value, the editor's own answer for when it is served from a different origin than the site; it is display configuration, not a property of the asset. See [Routes and Assets Are Two URL Spaces](#routes-and-assets-are-two-url-spaces).
 
 ### Structured Image Field
 
-The schema gains a first-class structured `image` field type whose value is `{ src, alt, width, height, crop? }` rather than a raw string path. The field definition can require a fixed aspect ratio (which triggers a crop step in the editor) and can make alt text optional. The stored value is validated at the authoritative server write boundary by the shared isomorphic entry validator, the same validator the editor uses, so a malformed image value cannot be saved.
+The schema has a first-class `image` field whose value is `{ src, alt, width, height, crop? }` rather than a raw string path, and whose definition can require a fixed aspect ratio (which triggers a crop step in the editor). The stored value is validated at the authoritative server write boundary by the shared isomorphic entry validator — the same one the editor uses — so a malformed image value cannot be saved.
 
-Crop is stored as a **normalized rectangle and applied as a URL directive**, not baked into a derived asset. An image can be re-cropped at any time by editing the rectangle, with no derived-asset bookkeeping and no re-upload. There is deliberately no `variants` array on the field — transform URLs are deterministic functions of the reference plus directives, so host apps build responsive `srcset`s with the exported `assetSrcSet` helper instead of the CMS tracking a fixed ladder.
+**Crop is a normalized rectangle applied as a URL directive**, never baked into a derived asset, so an image can be re-cropped at any time with no derived-asset bookkeeping and no re-upload. There is deliberately no `variants` array: transform URLs are deterministic functions of the reference plus directives, so host apps build responsive `srcset`s with `assetSrcSet` instead of the CMS tracking a fixed ladder.
 
 ### Editor Media UI
 
-The editor adds a **MediaLibrary** that operates in two modes from one component:
+One **MediaLibrary** component serves both a manage drawer and a picker modal, as a cursor-paginated grid over the meta prefix. Thumbnail URLs come from a configured public base URL, since the editor may be served from a different origin than the site, and the MDX body editor wires the same dialog into its image plugin so images in prose flow through the same store and transform layer as structured image fields.
 
-- **Manage mode** in a right-hand drawer (mounted from the editor sidebar's settings menu), for browsing, uploading, and deleting.
-- **Picker mode** in a modal, opened from the `image` field and from the MDX editor's custom image dialog.
+**Guards mirror the server exactly**: uploading and listing are open to any authenticated user, deleting requires admin. There is no per-asset ACL — assets are branch-agnostic and content-addressed, so the branch and path permission layers do not apply to them.
 
-The library is a cursor-paginated grid over the meta prefix with client-side filename filtering, a dropzone upload with XHR progress, and a crop step (react-easy-crop) when the field requires an aspect ratio. Thumbnail URLs are built from a configured public base URL because the editor may be served from a different origin than the site. The MDX body editor wires an upload/pick dialog into its image plugin, so images embedded in prose flow through the same store and transform layer as structured image fields.
+### Pluggable Store and Delivery Infrastructure
 
-**Guards mirror the server exactly**: uploading and listing are open to any authenticated user, and deleting requires admin. There is no finer-grained per-asset ACL — assets are branch-agnostic and content-addressed, so the branch and path permission layers do not apply to them.
+The store contract supports both direct-signed and proxied upload modes and lets a store own its own key and URL resolution. CanopyCMS ships S3 and local-filesystem implementations, and the contract is deliberately broad enough for a git-backed or third-party adapter later **without changing content references**, which stay vendor-neutral: a key plus directives.
 
-### Pluggable Store Contract
-
-The asset store is defined by a contract that supports both direct-signed and proxied upload modes and lets a store own its own key/URL resolution. CanopyCMS ships two implementations — S3 and local filesystem — but the contract is intentionally broad enough that a git-backed or third-party (e.g. Cloudinary/ImageKit) adapter could be added later without changing content references, which stay vendor-neutral. Because references are just keys plus directives, swapping the delivery layer (e.g. putting a third-party image CDN in front of the originals) stays cheap to revisit.
-
-### Delivery Infrastructure
-
-The delivery-side infrastructure is packaged as the `AssetSupport` CDK construct in `canopycms-cdk`, so each site provisions its own asset stack rather than depending on an org-wide shared deployment (the construct is the unit of reuse, so the common case needs no cross-account IAM at all — where a bucket genuinely does live in another account, see the caller-supplied execution role below). It supports both a standalone bucket and a bring-your-own existing content bucket, attaches the `/assets/*` and `/assets/t/*` CloudFront behaviors, and deploys the transform Lambda (bundled with sharp's platform-specific binaries, no Docker required).
-
-Those two behaviors are anchored at the **distribution root**, and the transform Lambda refuses any request outside the transform prefix. That is what makes the asset URL space independent of whatever prefix the app itself is served under on this topology — see [Routes and Assets Are Two URL Spaces](#routes-and-assets-are-two-url-spaces).
-
-Landing this construct also required fixing the CMS service construct: the isolated-VPC CMS Lambda previously had no route to S3 at all. It now reaches S3 through a gateway VPC endpoint (with a corresponding security-group egress rule), which is what makes networkless presign generation and finalize possible without a NAT gateway. See [Deployment Architecture](#deployment-architecture).
+The delivery side is packaged as the `AssetSupport` CDK construct, so each site provisions its own asset stack rather than depending on an org-wide shared deployment — the construct is the unit of reuse, so the common case needs no cross-account IAM at all (where a bucket genuinely lives in another account, see [Why do the CMS and transform Lambdas accept a caller-supplied execution role?](#why-do-the-cms-and-transform-lambdas-accept-a-caller-supplied-execution-role)). It supports a standalone or bring-your-own bucket, attaches the two CloudFront behaviors **anchored at the distribution root**, and deploys the transform Lambda bundled with sharp's platform-specific binaries, no Docker required.
 
 ## AI Content Generation
 
-CanopyCMS can export its content as clean, AI-consumable markdown with a structured manifest. This enables AI tools, LLMs, and external indexing services to discover and ingest site content without parsing CMS-specific file formats or navigating the internal content ID system.
+CanopyCMS can export its content as clean, AI-consumable markdown with a structured manifest, so AI tools and external indexers can ingest a site without parsing CMS file formats or navigating internal content IDs. [ai/AGENTS.md](packages/canopycms/src/ai/AGENTS.md) maps the module.
 
-### Design Goals
+Four design goals shape it. It is **read-only and public**, generated from the default branch with no authentication, representing the published state of the site rather than in-progress branch edits. Conversion is **schema-aware** rather than a raw JSON dump, so field labels, descriptions, select option labels, nested objects and block structures all render meaningfully — raw JSON would make consumers understand the CMS data model and would not carry the `description` metadata that gives them semantic context. **No internal identifiers are exposed**: embedded content IDs are stripped and `entry:ID` links resolved to clean URLs. And exclusion is **opt-out**: all content is included by default, and adopters configure exclusions rather than inclusions.
 
-- **Read-only, public access**: AI content is generated from the default branch (typically `main`) and requires no authentication. It represents the current published state of the site, not in-progress branch edits.
-- **Schema-aware conversion**: The generator uses schema field definitions to produce structured markdown rather than dumping raw JSON. Field labels, descriptions, select option labels, nested objects, and block structures are all rendered meaningfully.
-- **No internal identifiers exposed**: Embedded content IDs (the 12-character Base58 identifiers in filenames) are stripped from all output, and `entry:ID` inline links are resolved to clean URLs. AI consumers see clean paths and human-readable references only.
-- **Opt-out exclusion model**: All content is included by default. Adopters configure exclusions (by collection, entry type, or custom predicate) rather than inclusions.
+### Transforms
 
-### Content Transformation
+The engine walks the schema tree, reads each entry, and converts it: md/mdx entries render frontmatter as labeled metadata with the body appended verbatim, while json/yaml entries go through schema-driven conversion of every field. Four adopter extension points layer on top. **Field transforms** are per-entry-type, per-field markdown overrides for when the default conversion is insufficient. **Component transforms** rewrite individual MDX components and **body transforms** then operate on the whole body, both for md/mdx only. **Entry transforms** run once per entry and return markdown appended after its body or fields; unlike body transforms they fire for **every** format, including data-only entries, and the appended section is computed once and reused across the per-entry file, the collection rollup and any bundle containing the entry. A throwing entry transform is logged and skipped, and the entry still renders without the section.
 
-The generation engine walks the schema tree, reads each entry from the content store, and converts it to markdown:
+An entry transform receives the entry's stable content ID and a `readSibling` reader, which reads a file colocated in the entry's directory **by bare filename — no slashes, no `..`, not absolute** — and returns its contents or `null`, so an adopter can fold a machine-generated artifact named by content ID (invariant under slug edits) into the export. **Canopy performs the IO and the path-safety check internally, and the entry's absolute filesystem path is never exposed to the transform**, so it cannot leak into published output. The transform is deliberately per-entry-isolated: it sees one entry plus its colocated files, never other entries, so cross-entry context must be assembled adopter-side. See [Why is reading sibling artifacts a transform primitive, not a content-model concept?](#why-is-reading-sibling-artifacts-a-transform-primitive-not-a-content-model-concept).
 
-- **MD/MDX entries**: Frontmatter fields are rendered as labeled metadata, and the markdown body is appended verbatim.
-- **JSON/YAML entries**: All fields undergo schema-driven conversion. Each field type (string, boolean, image, code, select, reference, object, block) has a dedicated rendering strategy that produces idiomatic markdown.
-- **Field descriptions**: The `description` field on schema configs (collections, entry types, blocks, and fields) is included in the markdown output, giving AI consumers semantic context about each field's purpose.
+### Output and Delivery
 
-The engine also exposes several adopter extension points that customize or augment the conversion. They form a layered pipeline:
+The generator produces per-entry files (one markdown file per entry, with slug, collection and type in frontmatter), per-collection rollups (a collection and its subcollections concatenated, for feeding the lot to an LLM in one request), and bundles — named, filtered subsets defined by the adopter, AND'ing collection, entry type, path glob and predicate filters, which are additive views that remove nothing from the other outputs. A `manifest.json` describes the whole tree so AI tools can discover content without crawling.
 
-- **Field transforms**: Per-entry-type, per-field markdown override functions for cases where the default conversion is insufficient (e.g., rendering a complex data structure as a table).
-- **Component transforms** and **body transforms**: Applied to MD/MDX bodies only. Component transforms rewrite individual MDX components; body transforms then operate on the whole body after component rewriting.
-- **Entry transforms**: A per-entry-type function that runs once per entry and returns markdown to append after the entry's body/fields. Unlike body transforms, entry transforms fire for every format, including data-only JSON/YAML entries. The appended section is computed once and reused across the per-entry file, the collection rollup, and any bundle containing the entry (the same entry object carries the cached result through all three outputs). A throwing entry transform is logged and skipped; the entry still renders without the appended section.
+The manifest's two build-stamp fields are optional and come from the build environment. **Declaring a build id omits `generated` rather than pinning it**, because under build-once-promote the two are mutually exclusive claims: an artifact built once and promoted months later has a build clock describing the runner, not the content. The environment is read only at the build boundary; the runtime `/ai/*` route shares the generator but keeps a live clock, correct for a response generated on demand. See [build/AGENTS.md](packages/canopycms/src/build/AGENTS.md), which also covers the pruning of files earlier runs produced.
 
-#### Reading Colocated Sibling Artifacts
+One engine powers two delivery paths, both reading the default branch and sharing configuration and output format:
 
-An entry transform receives a context exposing the entry's stable content ID and a `readSibling` reader. `readSibling` reads a file colocated in the entry's directory by bare filename (no slashes, no `..`, not absolute) and returns its contents or `null` if missing. This lets an adopter fold a machine-generated artifact that lives next to an entry (named by content ID, which is invariant under slug edits) into the exported markdown.
+- **Route handler** (`canopycms/ai`): a Next.js-native catch-all GET handler at its own route, generating lazily on first request and caching in memory — generation walks the whole tree, which is far too expensive per request, while filesystem caching would add directory management, invalidation logic and I/O per request for no gain, and an in-memory cache regenerates on process restart, matching the invalidation cadence of published content. Dev bypasses the cache on every request so content changes show immediately; production sends a short `Cache-Control`. It returns standard `Response` objects and uses neither the `CanopyRequest`/`CanopyResponse` abstraction nor the guard system, because it has no authentication or branch resolution to do.
+- **Static build utility** (`canopycms/build`): writes every generated file to disk (e.g. `public/ai/`) during a build or via `npx canopycms generate-ai-content`, for pure static exports with no server at request time. Before writing anything it re-validates every entry against its schema and fails loudly if any are invalid (see [Build-Time Content Validity Guard](#build-time-content-validity-guard)).
 
-Canopy performs the IO and path-safety check internally; the entry's absolute filesystem path is never exposed to the transform, so it cannot leak into the published `/ai/` output. This makes the AI exporter symmetric with the page-render path, where a build context exposes a colocated artifact's location via `meta.physicalPath`.
+Mounting it separately from the editor API is deliberate: that API authenticates every request and resolves a branch, so routing public read-only content through it would mean either bypassing the pipeline or adding a no-auth mode to it, increasing the security surface either way. The caching models are also incompatible, and the AI handler depends only on `ContentStore` and the schema — importing neither the service container, the branch registry, nor the authorization module. Configuration goes through `defineAIContentConfig()` and is shared by both paths.
 
-The transform is intentionally per-entry-isolated: it sees one entry plus its colocated files, never other entries. Cross-entry context (e.g. an index of all entries) must be assembled adopter-side.
+## Content Tree and Entry Listing
 
-### Output Structure
+Two batch readers on the context give adopters their whole content set in one call, without knowing about schema flattening, filename conventions, collection directory naming or ordering semantics. The context object is the primary access path, since it handles branch resolution and schema setup.
 
-The generator produces three kinds of files:
+**`buildContentTree()`** produces a structured tree, for navigation menus, breadcrumbs, sitemaps and search indexes. It takes the already-flattened schema, groups collections by parent and traverses depth-first; for each collection it reads the directory, parses filenames for type, slug and content ID, and reads each entry's data. Child collections and entries are **interleaved** according to the collection's `order` array, with listed items first in their given order and the remainder alphabetical. Each node carries structural facts and leaves display concerns to the adopter.
 
-- **Per-entry files** (e.g., `posts/hello-world.md`): One markdown file per content entry, with YAML-style frontmatter containing slug, collection, and type metadata.
-- **Per-collection rollup files** (e.g., `posts/all.md`): A single markdown file concatenating all entries in a collection (including subcollections), separated by horizontal rules. Useful for feeding an entire collection to an LLM in one request.
-- **Bundle files** (e.g., `bundles/research-data.md`): Named, filtered subsets of content defined by the adopter. Bundles can filter by collection, entry type, path glob, or custom predicate. Multiple filters are AND'd together. Bundles are additive views -- they do not remove content from per-entry or per-collection files.
+**`listEntries()`** returns the same content as a flat array, which suits `generateStaticParams`, search indexing, sitemaps and RSS better than a tree does. Each item carries structural metadata (path segments, slug, logical path, content ID, collection path, entry type, format, URL path) plus the entry's data — with index-entry collapsing already applied to the URL path, so adopters use it directly for routing. For md/mdx the data includes frontmatter **and** the markdown body as `data.body`; for data-only formats, all parsed fields. Adopters therefore get full content with no additional reads.
 
-A **manifest** (`manifest.json`) describes the full content tree: collections with their entries and subcollections, root-level entries, and bundles. Each manifest entry includes a file path, entry count, and optional metadata (title, description, label). AI tools can read the manifest to discover available content without crawling the file tree.
+Both take the same shaping options — `extract` for typed custom fields off raw data, then `filter` and `sort`, in that order, so each can use what the previous produced, plus `rootPath` to scope to a subtree — and the tree adds `buildPath` and `maxDepth`. The generic `<T>` flows through so extracted fields stay type-safe. `buildPath`'s default collapses index entries to the parent collection path, matching `readByUrlPath` and `listEntries`.
 
-The manifest's two build-stamp fields are optional and set from the build environment: `buildId` from `CANOPY_BUILD_ID`, and `generated` from `SOURCE_DATE_EPOCH`. Declaring a build id **omits** `generated` rather than pinning it, because under build-once-promote the two are mutually exclusive claims — an artifact built once and promoted months later has a build clock that describes the runner, not the content. The environment is read only at the build boundary (`build/generate-ai-content.ts`); the runtime `/ai/*` route shares the same generator but keeps a live clock, which is correct for a response generated on demand.
-
-### Delivery Mechanisms
-
-The same generation engine powers two delivery paths. Both read from the default branch and share the same configuration and output format.
-
-**Route handler** (`canopycms/ai` entrypoint): A Next.js-native catch-all GET handler mounted at a separate route (e.g., `/ai/[...path]/route.ts`). It generates content lazily on first request and caches the result in memory. In dev mode, the cache is bypassed on every request so content changes are reflected immediately. In production, responses include a short `Cache-Control` header. The route handler returns standard `Response` objects directly -- it does not use the CanopyCMS `CanopyRequest`/`CanopyResponse` abstraction or the editor API's guard system, because it has no authentication or branch resolution requirements.
-
-**Static build utility** (`canopycms/build` entrypoint): Writes all generated files to a directory on disk (e.g., `public/ai/`). Used during the build step (e.g., `pnpm build`) or via the `npx canopycms generate-ai-content` CLI command. This path is appropriate for pure static exports where no Next.js server is running at request time. Before writing any files, it unconditionally re-validates every entry against its schema and fails loudly if any are schema-invalid (see [Build-Time Content Validity Guard](#build-time-content-validity-guard)).
-
-### Why a Separate Route Handler?
-
-The AI content handler is mounted at its own catch-all route rather than going through the existing editor API route. This is a deliberate separation:
-
-- **No authentication**: The editor API requires authentication for every request. AI content is public and read-only.
-- **No branch context**: The editor API resolves a branch for every request. AI content always reads from the default branch.
-- **Different caching model**: The editor API is stateless per-request. The AI handler uses a lazy singleton cache that persists across requests.
-- **Framework-native responses**: The handler returns `Response` objects directly, which is the natural API for Next.js route handlers. Wrapping this in `CanopyRequest`/`CanopyResponse` would add abstraction with no benefit.
-
-### Configuration
-
-AI content generation is configured via a `defineAIContentConfig()` helper that provides type-checked configuration. The configuration is shared between the route handler and the build utility and includes:
-
-- **Exclusions**: Collections to skip, entry types to skip globally, and a custom predicate for fine-grained filtering.
-- **Bundles**: Named filtered views with collection, entry type, path glob, and predicate filters.
-- **Transforms**: The layered transform pipeline -- field transforms, component transforms, body transforms, and entry transforms (see [Content Transformation](#content-transformation)).
-
-### Package Entrypoints
-
-This feature introduces two new package entrypoints:
-
-- **`canopycms/ai`**: Exports the route handler factory, the generation engine, config helpers, and all related types. This is a server-side entrypoint (uses Node.js APIs for content reading).
-- **`canopycms/build`**: Exports the static file writer. This is a build-time entrypoint (uses `node:fs` to write files to disk).
-
-These join the existing entrypoints (`canopycms/server`, `canopycms/client`).
-
-## Content Tree Builder
-
-CanopyCMS provides a build-time content tree builder that walks the schema and filesystem to produce a structured tree of content nodes. This gives adopters a single call to get their entire content hierarchy without understanding internal filesystem conventions, content ID encoding, or schema resolution.
-
-### Purpose
-
-Adopters frequently need a structured view of their content for navigation menus, sitemaps, breadcrumbs, search indexes, and similar build-time concerns. Without the content tree builder, they would need to understand CanopyCMS's internal schema flattening, filename conventions (type.slug.id.ext), collection directory naming, and ordering semantics. The builder encapsulates all of this behind a single `buildContentTree()` call on the context object.
-
-### How It Works
-
-The builder takes the flattened schema (already computed at service initialization) and walks the filesystem to discover entries in each collection:
-
-1. **Schema traversal**: Starting from the content root (or an optional `rootPath`), the builder groups collections by parent and traverses the hierarchy depth-first.
-2. **Entry discovery**: For each collection, it reads the directory to find entry files, parses their filenames to extract type, slug, and content ID, and reads their data (frontmatter for md/mdx, parsed JSON for json).
-3. **Interleaving**: Child collections and entries within a collection are interleaved according to the collection's `order` array. Items listed in the order array appear first in their specified order; remaining items are sorted alphabetically. Adopters can supply a custom `sort` comparator that fully replaces this default ordering.
-4. **Node construction**: Each node in the tree carries structural facts from CanopyCMS (logical path, content ID, collection metadata, entry metadata) but leaves display concerns to the adopter.
-
-### Adopter Customization
-
-The builder supports several options that let adopters shape the tree to their needs:
-
-- **extract**: A callback that receives each node's raw data and returns typed custom fields. This is how adopters pull specific frontmatter fields (like `title`, `description`, `publishDate`) into the tree without the builder needing to know about adopter-specific schemas.
-- **filter**: A callback that excludes nodes (and their descendants) from the tree. Runs after `extract`, so adopter-extracted fields are available for filtering decisions.
-- **sort**: A custom comparator that fully replaces the default child ordering (order array followed by alphabetical) at each level. Runs after `extract` and `filter`, so adopter-extracted fields are available for sorting decisions. This is useful when adopters need to sort by a frontmatter field like `publishDate` or `weight` rather than relying on the schema's order array.
-- **buildPath**: A callback that controls URL path generation. The default strips the content root prefix, joins segments with `/`, lowercases the result, and collapses index entries to their parent collection path (matching the index entry convention used by `readByUrlPath` and `listEntries`). Adopters can override this for custom URL structures.
-- **maxDepth**: Limits traversal depth for performance or to build shallow navigation trees.
-
-The generic `<T>` parameter flows through the entire tree, so adopters get full type safety on their extracted fields.
-
-### Shared Content Listing Layer
-
-The content tree builder, the flat entry listing, and the entries API endpoint all need to list entries in a collection directory. To avoid duplication, a shared content-listing module provides the common operations: filename parsing (extracting type, slug, and ID from the `type.slug.id.ext` pattern), entry data reading (frontmatter fields plus markdown body for md/mdx, or parsed JSON), and ordering by a collection's order array. This single source of truth ensures that entry-listing behavior is consistent across the API (editor UI), the tree builder (navigation/sitemaps), and the flat listing (static params/search indexes).
-
-### Export Strategy
-
-The `buildContentTree()` and `listEntries()` functions and their types are exported from `canopycms/server` for direct use. Types only (`ContentTreeNode`, `BuildContentTreeOptions`, `ListEntriesItem`, `ListEntriesOptions`) are also exported from the root `canopycms` entrypoint for use in adopter type definitions without importing server-side code.
-
-The primary access path for adopters is through the context object: `canopy.buildContentTree(options)` and `canopy.listEntries(options)`. These handle branch resolution (reading from the default branch) and schema setup automatically, so adopters do not need to manage branch contexts or flattened schemas themselves.
-
-### Design Rationale
-
-**Why both a tree and a flat list?** Content in CanopyCMS is inherently hierarchical (collections contain entries and subcollections). The tree preserves this structure for navigation, breadcrumbs, and sitemap generation. However, many common use cases (static params generation, search indexing, RSS feeds) naturally work with flat arrays. Rather than forcing adopters to flatten the tree themselves, `listEntries()` provides a purpose-built flat listing that is simpler and more efficient for those use cases.
-
-**Why separate from the AI content generator?** The AI content generator produces markdown files optimized for LLM consumption, with schema-aware field rendering and bundle rollups. The content tree builder returns structured data optimized for programmatic use (navigation, search indexes, routing). They serve different audiences and have different output formats, even though both walk the schema and filesystem.
-
-**Why on the context object?** Placing `buildContentTree()` on `CanopyContext` means adopters use the same `canopy` object for both content reading and tree building. The context handles branch resolution and schema access internally, keeping the adopter API surface minimal.
-
-## Content Entry Listing
-
-CanopyCMS provides a flat entry listing function (`listEntries()`) that returns all content entries as a flat array. While `buildContentTree()` produces a hierarchical tree suited for navigation and breadcrumbs, `listEntries()` is optimized for use cases where a flat collection of entries is more natural: `generateStaticParams`, search indexing, sitemaps, RSS feeds, and similar build-time concerns.
-
-### How It Works
-
-The listing function walks the flattened schema to discover all collections, reads entries from each in parallel, and returns a flat array of entry items. Each item includes structural metadata (path segments, slug, logical path, content ID, collection path, entry type, format, URL path) plus the entry's data. The URL path is computed with index entry collapsing applied, so adopters can use it directly for routing and linking.
-
-For md/mdx entries, the raw data includes both frontmatter fields and the markdown body content (as `data.body`). For data-only entries (JSON, YAML), it includes all parsed fields. This means adopters can access the full content of each entry without additional read calls.
-
-### Adopter Customization
-
-The listing supports the same customization pattern as the content tree builder:
-
-- **extract**: Transform raw entry data into typed custom fields. Receives the full raw data (including body for md/mdx) and entry metadata.
-- **filter**: Exclude entries from results. Runs after extract, so transformed fields are available for filtering.
-- **rootPath**: Scope the listing to a specific collection subtree for efficiency (skips loading entries outside the scope).
-- **sort**: Custom comparator for ordering results.
-
-The generic `<T>` parameter flows through, giving adopters type safety on extracted fields.
+Both readers and the entries API endpoint need to list a collection's entries, so one shared content-listing module owns filename parsing, entry data reading and order-array ordering — the single source of truth that keeps listing consistent across the editor API, navigation trees and static params. See [Why both a tree and a flat list?](#why-both-a-tree-and-a-flat-list).
 
 ### Opt-In Reference Resolution
 
-Both `listEntries()` and `buildContentTree()` accept a `resolveReferences` option that expands a reference field's stored ID(s) into the target entry's `id`/`slug`/`collection`/`urlPath`, and — per-field, via `includeBody` — its body. It defaults to `false` on both, unlike `read()`'s always-on resolution: `data` here is the caller's own generic and `extract` takes an untyped record, so flipping the default would silently reshape a reference from a bare ID string to an object under every existing call site with no compile error. Resolution runs after the batch ACL filter and before `extract`/`filter`, so a filtered-out target cannot leak through a sibling's resolved reference.
+Both `listEntries()` and `buildContentTree()` accept `resolveReferences`, which expands a reference field's stored ID(s) into the target's `id`/`slug`/`collection`/`urlPath` and, per field via `includeBody`, its body. **It defaults to `false` on both, unlike `read()`'s always-on resolution**: `data` here is the caller's own generic and `extract` takes an untyped record, so flipping the default would silently reshape a reference from a bare ID string into an object under every existing call site with no compile error. Resolution runs **after** the batch ACL filter and **before** `extract`/`filter`, so a filtered-out target cannot leak through a sibling's resolved reference.
 
-Two invariants hold the in-flight resolve cache safe as a pure performance optimization rather than a source of cross-entry bugs, both found and closed within this feature: every occurrence gets its own clone of a resolved reference, never a shared object instance, because an `extract` that mutates one (truncating a body for a search index, say) would otherwise silently rewrite it for every other entry pointing at the same target; and the reader that assembles an entry's own data must copy before merging in a body, never mutate in place, because gray-matter's parse result for md/mdx is cached process-globally and handed to every caller by reference — an in-place merge corrupts that shared cache for the rest of the process. See [docs/concurrency.md](docs/concurrency.md) for the cache's full contract (per-call lifetime, in-flight dedup, why it must never be hoisted).
-
-### Relationship to Content Tree Builder
-
-Both `listEntries()` and `buildContentTree()` share the same underlying content listing layer for entry discovery, filename parsing, and data reading. They differ in output shape: the tree builder produces a nested hierarchy preserving parent-child relationships, while `listEntries()` produces a flat array with path segments for adopters who need to reconstruct structure themselves or do not need hierarchy at all.
-
-Both are available on the `CanopyContext` object, using the same `canopy` instance that handles branch resolution and schema access.
+Two invariants keep the in-flight resolve cache a pure performance optimization rather than a source of cross-entry bugs: **every occurrence gets its own clone** of a resolved reference, never a shared instance, because an `extract` that mutates one (truncating a body for a search index, say) would otherwise rewrite it for every other entry pointing at the same target; and **the reader that assembles an entry's own data must copy before merging in a body**, never mutate in place, because gray-matter's parse result for md/mdx is cached process-globally and handed to every caller by reference, so an in-place merge corrupts that shared cache for the rest of the process. See [docs/concurrency.md](docs/concurrency.md) for the cache's full contract.
 
 ## Static-Export Helpers
 
-Statically generated sites need to enumerate every routable content entry to produce route parameters (and, eventually, sitemaps and SEO metadata). CanopyCMS provides this through a two-layer design that mirrors the package architecture: a framework-agnostic core and a thin per-framework adapter.
+Statically generated sites must enumerate every routable content entry to produce route parameters, sitemaps and SEO metadata. The design mirrors the package architecture: a framework-agnostic core plus a thin per-framework adapter.
 
-### Framework-Agnostic Core
+**The core** exposes `collectStaticPaths()`, which reads routable entries through the build context's `listEntries()` and reduces each to a neutral descriptor: a URL-ready `urlPath` (index entries collapsed, round-tripping with `readByUrlPath`), the URL `segments` array for catch-all routes, the entry `slug` for collection-scoped single-segment routes, and the entry type name. These carry **no framework-specific types** — plain data any adapter can map onto its own static-generation shape — and the helper supports scoping to a subtree and filtering by predicate.
 
-The core exposes `collectStaticPaths()`, which reads routable entries via the build context's `listEntries()` and reduces each to a neutral path descriptor. Each descriptor carries:
+It applies **no publish filtering**, deliberately: publish state is branch-only, so everything a build can enumerate has already merged and is by definition published (see [Publish State Is Branch-Only](#publish-state-is-branch-only)). The one per-entry exclusion any static helper applies is the SEO `noindex` field, and only on surfaces that _advertise_ an entry.
 
-- a URL-ready `urlPath` (index entries collapsed, round-trips with `readByUrlPath`),
-- the URL `segments` array (for catch-all `[...slug]` routes),
-- the entry `slug` (for collection-scoped single-segment `[slug]` routes), and
-- the entry type name.
+**The adapter** (`canopycms-next`) provides `collectStaticParams()`, mapping those descriptors into what `generateStaticParams` expects for both catch-all routes (the `segments` array) and single-segment routes (the `slug`, paired with a collection scope). Its `basePath` option supports a catch-all nested under a URL prefix (e.g. `app/docs/[[...slug]]`): entries are scoped to that prefix and `segments` made relative to it. **That option is a _route_ prefix inside the app and is not the deployment prefix of the same name** — it filters entries, so handing it a deployment prefix enumerates nothing (see [Render-Time URL Prefixes](#render-time-url-prefixes)).
 
-Crucially, these structures contain **no framework-specific types**. They are plain data that any framework adapter can map onto its own static-generation shape. The helper supports scoping to a collection subtree and filtering by predicate (for example, dropping the root index or keeping only one entry type).
+**The recommended adopter API is the bound method**, `generateContentStaticParams()` on the `createNextCanopyContext` result, which closes over the guarded build context so page modules never import or hold the admin build context just to enumerate paths. That is safe because `generateStaticParams` is build-only. It is also the least-privileged of three distinct capabilities: **enumeration** reads only the set of routable paths, never entry content; **content read** (the phase-selecting `read`/`readByUrlPath`) resolves a single entry and is ACL-correct at request time because it routes through the runtime context; and **`getCanopyForBuild`** is the unrestricted, ACL-bypassing escape hatch, prod-guarded against request-time misuse. Ordinary page code reaches for the first two.
 
-It applies **no publish filtering**, deliberately: publish state is branch-only, so everything a build can enumerate has already merged and is by definition published (see [Publish State Is Branch-Only](#publish-state-is-branch-only)). The one per-entry exclusion any static helper applies is the SEO `noindex` field, and only on surfaces that _advertise_ an entry — the sitemap, not path enumeration.
+**Sitemap generation and SEO metadata** follow the same core-plus-adapter pattern: the core's `collectRoutableEntries()` — the same enumeration with `data`/`updatedAt` carried through — backs the adapter's `generateContentSitemap()` and `entryToMetadata()`. Both read `noindex` through the same `isNoindexEntry` predicate `extractSeoFields` derives, so a page cannot be suppressed from one advertising surface while still appearing in the other.
 
-### Thin Framework Adapter
-
-The `canopycms-next` package provides `collectStaticParams()`, a framework-agnostic free helper built on the core's `collectStaticPaths()`. It maps the neutral descriptors into the array Next.js's `generateStaticParams` expects, supporting both catch-all routes (param value is the `segments` array) and single-segment routes (param value is the entry `slug`, paired with a collection scope). A `basePath` option supports catch-all routes nested under a URL prefix (e.g. `app/docs/[[...slug]]`): entries are scoped to that prefix and `segments` are made relative to it, so the params match the route. This option is a _route_ prefix inside the app and is not the deployment prefix of the same name — it filters entries, so handing it a deployment prefix silently enumerates nothing. See [Render-Time URL Prefixes](#render-time-url-prefixes).
-
-The adapter is deliberately minimal — it only knows the shape Next.js wants. A future `canopycms-<framework>` adapter would reuse the same `collectStaticPaths()` core and provide its own thin mapping, exactly as the auth-plugin and context adapters do.
-
-**Recommended adopter API — the bound method:** Rather than calling `collectStaticParams()` with a build context themselves, adopters use `generateContentStaticParams()`, a method on the `createNextCanopyContext` result that closes over the (guarded) build context. Page modules call it directly, so they never import or hold the admin build context just to enumerate paths. Because `generateStaticParams` is build-only, this is safe.
-
-**Capability split:** The static-export surface separates three distinct capabilities by least privilege:
-
-- **Enumeration** (`generateContentStaticParams` / `collectStaticParams` / `collectStaticPaths`): reads only the set of routable paths, never entry content. Build-only and inherently safe — it cannot serve a user request.
-- **Content read** (the phase-selecting `read` / `readByUrlPath`): resolves a single entry's content, ACL-correct at request time because it routes through the runtime context (see [Phase-Selecting Read](#phase-selecting-read)).
-- **Advanced admin** (`getCanopyForBuild`): the unrestricted, ACL-bypassing build context. It is the escape hatch, prod-guarded against request-time misuse (see [Build Context Request-Time Guard](#build-context-request-time-guard)).
-
-Ordinary page code reaches for enumeration or phase-selecting reads; only advanced build-time work uses `getCanopyForBuild` directly.
-
-**Sitemap generation and SEO metadata extraction** follow the same core-plus-adapter pattern: the core's `collectRoutableEntries()` (enumeration plus each entry's `data`/`updatedAt`) backs the Next adapter's `generateContentSitemap()` and `entryToMetadata()`. Both read `noindex` through the same `isNoindexEntry` predicate `extractSeoFields` derives, so a page cannot be suppressed from one advertising surface (the sitemap) while still appearing in the other (`robots: {index: false}`).
-
-`generateContentSitemap`'s `pathFor` override — for advertising an entry at a URL other than its own `urlPath` — is a seam in the "no two entries share a URL" invariant (see the index-entries discussion under [Schema-Driven Content Model](#schema-driven-content-model)), not an exception to it: `assertNoDuplicateUrlPaths` runs inside `collectRoutableEntries`, on the raw enumeration, before `pathFor` ever gets to rewrite anything — so a `pathFor` that maps two entries onto the same path is invisible to that guard. The only backstop for that specific case is `dedupeSitemapItems`'s warn-and-drop-the-rest, a console warning rather than a failed build. Treat a `pathFor` collision as caught by convention, not by the guarantee the base invariant has.
+`generateContentSitemap`'s `pathFor` override — for advertising an entry at a URL other than its own `urlPath` — is a **seam** in the "no two entries share a URL" invariant, not an exception to it: `assertNoDuplicateUrlPaths` runs inside `collectRoutableEntries` on the raw enumeration, before `pathFor` rewrites anything, so a `pathFor` mapping two entries onto one path is invisible to that guard. The only backstop is `dedupeSitemapItems`'s warn-and-drop-the-rest, a console warning rather than a failed build. Treat a `pathFor` collision as caught by convention, not by the guarantee the base invariant has.
 
 ### Build-Time Content Validity Guard
 
-Static builds enumerate and export content without going through the editor's save-time validation, so a schema-invalid entry that made it onto disk — most commonly an abandoned create-scaffold (an empty entry the editor's create flow writes before the user fills it in, then never finishes) — could otherwise ship silently into the static output: a page that quietly disappears from route generation, or malformed content in an AI export. Both `collectStaticPaths()` and the AI content build utility (see [AI Content Generation](#ai-content-generation)) re-validate every entry against its schema before proceeding, using the same pure validation logic as the editor's save boundary, and fail the build loudly with a list of every offending entry -- not just the first -- rather than silently dropping or mangling a page.
+Static builds enumerate and export content without passing through the editor's save-time validation, so a schema-invalid entry on disk — most often an abandoned create-scaffold, the empty entry the create flow writes before the user fills it in — could otherwise ship silently as a page that disappears from route generation or as malformed content in an AI export. Both `collectStaticPaths()` and the AI content build utility **re-validate every entry against its schema before proceeding**, using the same pure validation logic as the editor's save boundary, and fail the build loudly listing **every** offending entry rather than just the first.
 
-This guard is deliberately build-only, not runtime:
-
-- **`collectStaticPaths()`** only enforces this when a build-mode environment marker is set (`next build`'s production phase, or the generic `CANOPY_BUILD_MODE` flag for other frameworks). Skipping it in `next dev` matters because fresh create-scaffolds legitimately exist mid-edit during development -- failing the dev server on every unfinished draft would make routine editing unusable.
-- **The AI content build utility** enforces it unconditionally, since it is only ever invoked as an explicit build step (the CLI command or a build script), never incidentally by a dev server.
-
-Publishing and saving remain permissive by design -- this guard only runs at the point content is about to be exported for public consumption, not while an editor is still working on a branch.
+The guard is deliberately build-only. `collectStaticPaths()` enforces it only when a build-mode marker is set, because fresh create-scaffolds legitimately exist mid-edit in development and failing the dev server on every unfinished draft would make routine editing unusable; the AI content build utility enforces it unconditionally, since it only ever runs as an explicit build step. Saving stays permissive by design: this runs at the point content is about to be exported for public consumption. [static/AGENTS.md](packages/canopycms/src/static/AGENTS.md) covers all four build guards and the slug-enforcement invariant that pairs with the write boundary.
 
 ## Render-Time URL Prefixes
 
-A CanopyCMS site is not always served at an origin's root. It may live under a deployment prefix (per-branch preview builds are the common case), its assets may live on a separate CDN origin, or both. Everything CanopyCMS **stores** is written as though the site were at the root; a prefix is put on only at **render time**. This section covers where that join happens, and the two independent URL spaces it applies to.
+A CanopyCMS site is not always served at an origin's root: it may live under a deployment prefix (per-branch preview builds being the common case), its assets may live on a separate CDN origin, or both. **Everything CanopyCMS stores is written as though the site were at the root; a prefix is applied only at render time.**
 
 ### One Prefix Join, Shared
 
-Two surfaces need the identical operation: SEO URL resolution puts a site origin in front of an entry's URL path, and asset URL building puts an asset mount point in front of a stored `/assets/…` src. These had drifted into two implementations, and the asset copy was the weaker one — it checked neither the absoluteness of the path (so an off-site src became `/prefix/https://cdn.example.com/x.png`) nor the shape of the prefix (so a prefix without a leading slash produced a _document-relative_ URL that resolves somewhere different on every page — an intermittent failure that is harder to diagnose than the plain 404 it replaced). Both bugs had already been solved on the SEO side.
+Two surfaces need the identical operation — SEO URL resolution putting a site origin in front of an entry's URL path, and asset URL building putting a mount point in front of a stored `/assets/…` src — and they must share **one** prefix-join primitive, because two implementations drift towards the weaker one: an asset copy that checked neither the absoluteness of the path (so an off-site src became `/prefix/https://cdn.example.com/x.png`) nor the shape of the prefix (so a prefix without a leading slash produced a _document-relative_ URL resolving differently on every page, an intermittent failure much harder to diagnose than the plain 404 it replaced).
 
-There is now one prefix-join primitive, and both surfaces use it. Its rules:
+The primitive's rules:
 
 - **An already-absolute or protocol-relative path passes through untouched.** That value is a deliberate off-site pointer — a syndicated canonical, a partner-hosted copy, a CDN image — and prefixing it corrupts it.
 - **Order matters**: the absoluteness check runs _before_ prefix normalization. The reverse order is what rewrites an off-site canonical into a same-site path.
-- **An empty prefix, or one that is nothing but slashes, is a clean no-op**, so the unset case stays root-relative. This also rules out a bare `//` prefix, which browsers read as protocol-relative — i.e. a request to a host literally named `assets`.
+- **An empty prefix, or one that is nothing but slashes, is a clean no-op**, so the unset case stays root-relative. This also rules out a bare `//` prefix, which browsers read as protocol-relative — a request to a host literally named `assets`.
 - **Anything else is normalized** to either a declared off-origin prefix (used as-is) or a leading-slash same-origin path prefix.
 
-The primitive is deliberately pure and dependency-free, because asset URL building is reachable from the editor's client bundle; the client-bundle boundary check fails the build if a node built-in ever creeps into it. Sharing one function is what stops a third caller from inheriting the weaker half of the behavior again.
+The primitive is deliberately pure and dependency-free, because asset URL building is reachable from the editor's client bundle and `pnpm lint:bundle` fails the build if a node built-in creeps into it. Sharing one function is what stops a third caller inheriting the weaker half of the behavior. The scheme rule is deliberately **not** shared — see [utils/AGENTS.md](packages/canopycms/src/utils/AGENTS.md).
 
 ### Routes and Assets Are Two URL Spaces
 
-This is the part that resists a simple rule. A deployment prefix always moves the **route** space. Whether it also moves the **asset** space is a property of the deployment topology, not of the prefix:
+A deployment prefix always moves the **route** space. Whether it also moves the **asset** space is a property of the deployment topology, not of the prefix:
 
-- **On a CloudFront deployment** (the `AssetSupport` construct in `canopycms-cdk`), the app moves under the prefix but the asset space does **not**. The CDN's `/assets/*` and `/assets/t/*` behaviors are anchored at the distribution root, and the transform function rejects any request that is not under the transform prefix. Deriving the asset mount point from the deployment prefix here breaks URLs that were working.
-- **Where the framework itself serves `/assets`** — the local/LFS store adapter, `next dev`, or S3 with no distribution in front of it — the `/assets` rewrite belongs to `withCanopy()`, so Next.js auto-prefixes it and the deployment prefix _does_ apply.
+- **On a CloudFront deployment** (the `AssetSupport` construct), the app moves under the prefix but the asset space does **not**: the CDN's `/assets/*` and `/assets/t/*` behaviors are anchored at the distribution root, and the transform function rejects any request outside the transform prefix. Deriving the asset mount point from the deployment prefix here breaks URLs that were working.
+- **Where the framework itself serves `/assets`** — the local/LFS store adapter, `next dev`, or S3 with no distribution in front — the `/assets` rewrite belongs to `withCanopy()`, so Next.js auto-prefixes it and the deployment prefix _does_ apply.
 
-Two consequences follow. First, adopter guidance is a **mount table keyed on where assets are served**, not a rule keyed on whether a deployment prefix is set. Second, the asset mount point is a **per-render option rather than a config field**, because the editor and the public site can legitimately have different answers — the editor's answer is `media.publicBaseUrl`, and the public site's answer comes from the table.
+Two consequences follow. Adopter guidance is a **mount table keyed on where assets are served**, not a rule keyed on whether a deployment prefix is set. And the asset mount point is a **per-render option rather than a config field**, because the editor and the public site can legitimately have different answers: the editor's is `media.publicBaseUrl`, the public site's comes from the table.
 
-`media.uploadUrl` is **not** a third answer to that question, despite sitting next to `publicBaseUrl` on the same config object. It names the endpoint the browser POSTs a presigned upload to — a transport detail of the write path — and is never joined onto a stored `/assets/…` value, never rendered, and never written into content. The invariant above governs the read path's mount point only; the two fields are neighbours, not variants, which is why one is a prefix and the other replaces a URL outright.
+`media.uploadUrl` is **not** a third answer, despite sitting beside `publicBaseUrl` on the same config object: it names the endpoint the browser POSTs a presigned upload to, a transport detail of the write path, and is never joined onto a stored `/assets/…` value, never rendered, and never written into content. The two fields are neighbours, not variants, which is why one is a prefix and the other replaces a URL outright.
 
 ### The Deployment Prefix (`basePath`)
 
-The configuration carries a top-level deployment prefix naming where the host app is served (e.g. `/preview-123`). CanopyCMS cannot read the host framework's config at runtime, so this must be stated explicitly; it is threaded through to the client config and drives three things: the editor's API base URL, the preview iframe's `src`, and the preview↔editor path matching described below. Unset means the app is served at its origin's root, and every use site runs it through the shared join, so unset is a no-op everywhere.
+The configuration carries a top-level deployment prefix naming where the host app is served (e.g. `/preview-123`). CanopyCMS cannot read the host framework's config at runtime, so this must be stated explicitly. It is threaded through to the client config and drives three things: the editor's API base URL, the preview iframe's `src`, and the preview↔editor path matching below. Unset means the app is served at its origin's root, and every use site runs it through the shared join, so unset is a no-op everywhere.
 
 It is deliberately **not** the asset mount point, for the topology reason above.
 
-It is also deliberately **not** an argument to the static-params helper, even though that helper has an option of the same name. There, `basePath` means "the route prefix of a nested catch-all route" and it _filters_ enumerated entries down to that prefix. Passing a deployment prefix to it matches no content at all, which yields zero static params and a build that goes green having shipped an empty site. Because that failure is silent, the URL builders take no `basePath` argument at all — there is only the mount point — rather than offering a same-named option a reader could plausibly reach for.
+It is also deliberately **not** an argument to the static-params helper, even though that helper has an option of the same name. There, `basePath` means "the route prefix of a nested catch-all route" and it _filters_ enumerated entries down to that prefix, so passing a deployment prefix matches no content at all — zero static params, and a build that goes green having shipped an empty site. Because that failure is silent, **the URL builders take no `basePath` argument at all**: there is only the mount point, rather than a same-named option a reader could plausibly reach for.
 
 ### Preview Path Identity
 
-The preview URL an editor builds for an entry is used **twice**: as the iframe's `src`, and as the string compared against the browser-reported location path to decide which entry a framed page is showing, which is what drives draft sync and click-to-focus. Browsers report that path _with_ the deployment prefix included. So an unprefixed value 404s the iframe, and a value that is prefixed on some code paths but not others breaks draft sync even when the iframe itself happens to resolve.
+The preview URL the editor builds for an entry is used **twice**: as the iframe's `src`, and as the string compared against the browser-reported location path to decide which entry a framed page is showing, which drives draft sync and click-to-focus. Browsers report that path _with_ the deployment prefix included. So an unprefixed value 404s the iframe, and a value prefixed on some code paths but not others breaks draft sync even when the iframe itself resolves.
 
-The builder is therefore split into an unprefixed core plus a thin wrapper that applies the prefix exactly once, at the end, uniformly across every branch of the builder — including the fully-custom per-entry preview override, whose absolute form passes through untouched by the join's own rule. One prefix, applied in one place, is what keeps the two uses of that string in agreement. See [Editor Architecture](#editor-architecture) for the rest of the preview bridge.
+The builder is therefore split into an unprefixed core plus a thin wrapper applying the prefix **exactly once**, at the end, uniformly across every branch of the builder — including the fully-custom per-entry preview override, whose absolute form passes through untouched by the join's own rule. One prefix, applied in one place, is what keeps the two uses of that string in agreement.
 
 ## Extensibility Points
 
 ### Authentication
 
-Authentication is abstracted out and provided by separate packages. The core CanopyCMS package has no built-in auth provider—you must install an auth package.
+Authentication is provided by separate packages; the core has no built-in provider, so Clerk, Auth0, NextAuth, Supabase Auth or a custom solution all work (`canopycms-auth-clerk` is the reference implementation). Plugins implement the `AuthPlugin` interface — user identity extraction, group membership lookup, session validation — plus one optional method, **`verifyTokenOnly(context)`**: networkless JWT verification returning just a user ID. When it is implemented, framework adapters automatically enable file-based auth caching, which is the path for Lambda deployments with no internet access and makes dev mirror prod.
 
-Auth plugins implement the `AuthPlugin` interface, which provides:
-
-- User identity extraction from requests
-- Group membership lookup
-- Session validation
-
-The interface also has one optional method:
-
-- **`verifyTokenOnly(context)`**: Lightweight, networkless JWT verification that returns just a user ID (no metadata). When implemented, framework adapters automatically enable file-based auth caching in prod and dev modes. This is the recommended path for Lambda deployments that have no internet access, and ensures dev mode mirrors prod behavior.
-
-This abstraction means you can use Clerk, Auth0, NextAuth, Supabase Auth, or a custom solution. See `canopycms-auth-clerk` as a reference implementation. Creating a new auth plugin involves implementing the interface and publishing it as a package.
-
-**Production trust gate — `verifiesCredentials`**: The interface also carries an optional `verifiesCredentials` marker. Framework adapters check every configured auth plugin against the operating mode before using it: if `mode` is `'prod'` and the plugin does not affirm `verifiesCredentials: true`, the adapter throws at handler creation rather than serving traffic. This is an allowlist, not a denylist — a plugin must actively declare that it performs real cryptographic credential verification (e.g. Clerk's JWT verification) to be trusted in production. A plugin that omits the marker is rejected in prod, whether that plugin is `canopycms-auth-dev`'s dev plugin (which intentionally trusts request headers/cookies with no verification, for local development) or a third-party plugin that simply forgot to set it. `CachingAuthPlugin` forwards rather than declares this marker (see [Auth Caching](#auth-caching-cachingauthplugin) above), and the static-deployment stub plugin (which unconditionally denies every request) sets it too, since an always-deny plugin is trivially safe in any mode.
+**Production trust gate — `verifiesCredentials`.** Framework adapters check every configured auth plugin against the operating mode before using it: **if `mode` is `'prod'` and the plugin does not affirm `verifiesCredentials: true`, the adapter throws at handler creation rather than serving traffic.** This is an allowlist, not a denylist — a plugin must actively declare that it performs real cryptographic credential verification to be trusted in production, so one that omits the marker is rejected whether it is the dev plugin (which intentionally trusts request headers for local development) or a third-party plugin that simply forgot. `CachingAuthPlugin` forwards rather than declares it (see [Auth Caching](#auth-caching-cachingauthplugin)), and the static-deployment stub plugin sets it, since an always-deny plugin is trivially safe in any mode.
 
 ### Framework Adapters
 
-Framework adapters provide thin integration between the framework and CanopyCMS core. They handle two main concerns:
+Adapters handle two concerns: **user extraction** from the framework's request context, and **request/response adaptation** to the core `CanopyRequest`/`CanopyResponse` types. The response type is not limited to JSON — it also carries a binary/stream variant, and requests can expose raw unparsed bodies, both for the asset system, which serves bytes and accepts non-JSON uploads. The adapter's public API accepts standard `Request` and returns standard `Response` (see [Dependency Model](#dependency-model)), while internally still using Next.js APIs. A new adapter means implementing user extraction, wrapping core context creation with any framework-specific optimization, exposing one API that works in pages and route handlers, and optionally wrapping the core API handler for the framework's routing.
 
-1. **User extraction**: Extract user identity from framework-specific request context (Next.js headers, Express req, etc.)
-2. **Request/response adaptation**: Convert framework request/response objects to core `CanopyRequest`/`CanopyResponse` types for API handlers. The response type is not limited to JSON — it also carries a binary/stream variant, and requests can expose raw (unparsed) bodies. This was added for the asset system, which serves binary bytes and accepts non-JSON uploads (see [Asset & Media System](#asset--media-system)).
+**The `withCanopy()` Next.js config wrapper** handles the build-tooling concerns:
 
-The `canopycms-next` adapter is ~10 lines for user extraction plus the request/response wrapper. All business logic stays in core—adapters are purely integration code.
+- **Module transpilation**: Canopy packages export raw TypeScript, so `withCanopy()` auto-detects which Canopy packages are installed and adds only those to `transpilePackages`, avoiding Next.js build errors from listing uninstalled ones.
+- **React deduplication**: with `file:` references or linked packages, the bundler can follow symlinks into a linked package's `node_modules` and resolve a second copy of React, whose dual instances cause "Invalid hook call" crashes. `withCanopy()` resolves React from the consumer's project root through Webpack aliases **scoped to canopycms source files only**, so Next.js internals are untouched, and from npm the aliases are harmless. Turbopack does not support those absolute-path aliases, so `file:`-symlink development needs `next dev --webpack`.
+- **Dual-build page extensions**: the `staticBuild` option selects which per-build file variants Next.js includes — `server.ts`/`server.tsx` by default, `static.ts`/`static.tsx` when it is `true`, each build then ignoring the other's variants. The mechanism is **additive**: each build adds different extensions on top of Next's defaults and nothing is removed from a shared list, which is what lets an editor-only `layout.server.tsx` exist. This is how one codebase produces both a public static export and a CMS server build, with a build-time flag rather than runtime checks.
+- **Reproducible static exports**: with `staticBuild: true`, Next's build id is pinned to `CANOPY_BUILD_ID`, because Next defaults `generateBuildId` to `nanoid()` and two builds of one source tree would otherwise land under different `out/_next/static/<id>/` directories, breaking any deployment that content-addresses its artifacts. It is deliberately **not** applied to the CMS build: the two flavors have different `pageExtensions` and therefore different chunk sets, and one shared id naming both would leave nothing able to route between them if they share an origin.
+- **Standalone tracing of sharp's libvips**: sharp loads libvips through its native binding's rpath, which import-following tracers never see, so outside a static export `withCanopy()` locates each installed libvips package's real `lib/` directory and adds it to `outputFileTracingIncludes` under the key the installed Next reads, merging with the adopter's own includes and refusing directories outside the tracing root. A build that finds nothing warns with a manual config snippet rather than failing. This is temporary, and should go once a Next release traces the library itself; it fixes Turbopack builds and not a pnpm webpack build, which bundles sharp's JavaScript into a server chunk where it cannot reach its binding ([webpack-standalone-sharp-bundled.md](.claude/future-tasks/webpack-standalone-sharp-bundled.md)). [docs/deploying-to-aws.md](docs/deploying-to-aws.md#dual-build-support) has the adopter-facing version.
+- **Turbopack default guard**: Next 16 defaults both `next build` and `next dev` to Turbopack and exits if the exported config has a truthy `webpack` with no `turbopack` beside it. The React-dedup aliases above are exactly such a key, and they matter only to `file:` symlink installs, which already need `--webpack` — so on a detected Next 16 or later `withCanopy()` answers the guard with an empty `turbopack: {}`, but only when the adopter supplied neither a `webpack` of their own (where Next's guard is the correct outcome) nor their own `turbopack` (never overridden).
 
-**Standard type boundaries**: The adapter's public handler API accepts standard `Request` and returns standard `Response` rather than `NextRequest`/`NextResponse`. This avoids type duplication across package boundaries -- pnpm's strict isolation means each package resolves its own copy of framework libraries, and framework-specific types from different copies are incompatible. Standard Web API types are globally shared, so they work correctly across all packages. See [Dependency Model](#dependency-model) for details.
-
-**Next.js Config Wrapper (`withCanopy`)**:
-
-The `canopycms-next` package also provides a `withCanopy()` function that wraps the adopter's Next.js config to handle these build-tooling concerns:
-
-- **Module transpilation**: CanopyCMS packages export raw TypeScript. `withCanopy()` auto-detects which Canopy packages are installed (via `require.resolve`) and adds only those to `transpilePackages`. The core `canopycms` package is always included; optional packages like `canopycms-next`, `canopycms-auth-clerk`, `canopycms-auth-dev`, and `canopycms-cdk` are included only if found in the consumer's `node_modules`. This avoids Next.js build errors from listing uninstalled packages.
-- **React deduplication**: When consuming Canopy packages via `file:` references or linked packages during local development, the bundler can follow symlinks into the linked package's `node_modules` and resolve a second copy of React. Dual React instances cause "Invalid hook call" crashes. `withCanopy()` resolves React modules from the consumer's project root via scoped Webpack aliases (applied only to canopycms source files), ensuring a single React instance without interfering with Next.js internals.
-- **Dual-build page extensions**: `withCanopy()` supports a `staticBuild` option that controls which per-build file variants Next.js includes. By convention, CMS-only routes (API handlers, editor pages) use `.server.ts`/`.server.tsx` file extensions; a content route that needs to render differently per build additionally ships a `.static.ts`/`.static.tsx` variant (a prerendered `page.static.tsx` alongside a request-time `page.server.tsx`). In dev and CMS builds (default, `staticBuild: false`), `withCanopy()` adds `server.ts`/`server.tsx` to `pageExtensions`, so CMS-only files and `.server.tsx` route variants are processed while `.static.tsx` variants are ignored. When `staticBuild: true` is set, it adds `static.ts`/`static.tsx` instead, so the static-only variants are processed and every `.server.*` file — CMS-only routes and route variants alike — is ignored. This is the build-tooling mechanism that enables the two-deployment model described above -- a single codebase produces both a public static export (no editor code) and a CMS server build (with editor routes), controlled by a build-time flag rather than runtime checks. See [Why split a dual-build content route into static and server page variants?](#why-split-a-dual-build-content-route-into-static-and-server-page-variants) for why a shared page can't switch this behavior on its own.
-- **Reproducible static exports**: with `staticBuild: true`, `withCanopy()` pins Next's build id to `CANOPY_BUILD_ID`. Next defaults `generateBuildId` to `nanoid()`, so two builds of one source tree land under different `out/_next/static/<id>/` directories — which breaks any deployment that content-addresses its artifacts. It is deliberately NOT applied to the CMS/server build: the two dual-build flavors have different `pageExtensions` and therefore different chunk sets, and one shared id would name both, leaving nothing able to route between them if they share an origin.
-- **Standalone tracing of sharp's libvips**: sharp loads libvips via `dlopen` through its native binding's rpath, which import-following tracers never see. Next's JS tracer special-cases only sharp 0.34's `sharp/lib/index.js` entry (sharp 0.35 ships `dist/`), and a Next 16.1.7 Turbopack `output: 'standalone'` build was measured missing the library too, so every sharp load failed with `ERR_DLOPEN_FAILED` (vercel/next.js#97973). Outside a static export, `withCanopy()` walks the `node_modules` hierarchy to find each installed libvips package's real `lib/` directory, or a Windows binding's own `lib/`, which carries libvips itself. It never uses `require.resolve`, which exports maps defeat. It adds each directory to `outputFileTracingIncludes` under the key the installed Next reads: the top-level key on Next 15 and later, `experimental` on Next 13 and 14, or a legacy `experimental` spelling the adopter already set, which Next 15 and 16 copy over the top-level key. It merges with the adopter's own includes and refuses directories outside the tracing root Next will use. A standalone build warns instead of failing: with a manual `next.config` snippet when it finds nothing, and when it cannot read the Next version and so wrote the top-level key, which Next 13 and 14 ignore. The include fixes Turbopack builds. It does not fix a pnpm webpack build, which bundles sharp's JavaScript into a server chunk where it cannot reach its native binding (seen on Next 15.5.21; [webpack-standalone-sharp-bundled.md](.claude/future-tasks/webpack-standalone-sharp-bundled.md)). This is temporary and should be removed once a Next release traces the library itself.
-- **Turbopack default guard**: Next 16 defaults both `next build` and `next dev` to Turbopack, and exits if the exported config has a truthy `webpack` with no `turbopack` alongside it. `withCanopy()`'s own webpack function above (the React-dedup aliases) is exactly such a key, but those aliases matter only to `file:` symlink installs, which the note below already sends to `--webpack`. So on a detected Next 16 or later `withCanopy()` answers the guard by setting an empty `turbopack: {}`, but only when the adopter supplied neither a `webpack` of their own (for which Next's guard is the correct outcome) nor their own `turbopack` (never overridden). Next 15 only warns here, so it's left alone.
-
-When installed from npm (not symlinked), the React aliases are harmless -- they resolve to the same React the project already uses. Note that Turbopack does not currently support the absolute-path aliases used for React deduplication, so consumers using `file:` symlinks for local development must use `next dev --webpack`; Turbopack works fine when packages are installed from npm.
-
-**Why the `./config` export ships pre-built:** `withCanopy()` itself is imported from a dedicated `canopycms-next/config` subpath (`import { withCanopy } from 'canopycms-next/config'` in `next.config.mjs`), and that subpath is the one exception to "Canopy packages export raw TypeScript" (see [Why a Next.js config wrapper for React deduplication?](#why-a-nextjs-config-wrapper-for-react-deduplication)): it resolves to an esbuild-bundled `dist/config.{cjs,mjs}`, built ahead of time rather than transpiled by the consumer's Next.js pipeline. This isn't optional — Next.js loads `next.config.mjs` directly in Node before webpack/Turbopack initializes, so `transpilePackages` (a bundler-level mechanism) never gets a chance to run against the config file's own imports; whatever `next.config.mjs` imports must already be plain, executable JavaScript. Any future subpath export that a consumer's config file needs to import — not just `withCanopy()` — will face the same constraint and need the same ahead-of-time build step.
-
-**Creating a new adapter**:
-
-- Implement user extraction (read auth headers/cookies, call auth plugin)
-- Wrap core context creation with framework-specific optimizations (like React cache() for Next.js)
-- Provide unified API that works in both pages and API routes
-- Optionally wrap the core API handler for framework-specific routing
-
-See `canopycms-next` as a reference implementation. Creating adapters for Express, Fastify, Hono, or other frameworks follows the same minimal pattern.
+Canopy packages export raw TypeScript rather than pre-compiled output, because a build step would slow the development loop and push debugging through compiled artifacts. **The one exception is the `canopycms-next/config` subpath** `withCanopy()` itself is imported from, which resolves to an esbuild-bundled `dist/config.{cjs,mjs}`. That isn't optional: Next.js loads `next.config.mjs` directly in Node before any bundler initializes, so `transpilePackages` never gets a chance to run against the config file's own imports, and whatever it imports must already be executable JavaScript. Any future subpath a consumer's config file must import faces the same constraint.
 
 ### Save-Time Validation Hook
 
-The configuration accepts a `validateEntry` hook for adopter-defined, server-side validation of every editor save (see [Save-Time Validation](#save-time-validation)). Unlike auth plugins and framework adapters, this extension point requires no separate package: it is a deliberate config-surface extension that stays within the existing config touchpoint, preserving the config + Editor + one-API-route integration contract.
+The config accepts a `validateEntry` hook for adopter-defined server-side validation of every editor save (see [Save-Time Validation](#save-time-validation)). Unlike auth plugins and framework adapters it needs no separate package: it is a deliberate config-surface extension that stays inside the existing config touchpoint, preserving the config + Editor + one-API-route contract.
 
 ## Key Design Decisions
 
-### Why file system based (no external databases)?
-
-Simplifies deployment and operations. Git already provides versioning, and the file system provides persistence. No need to sync state between a database and git. Works well with serverless + attached storage (Lambda + EFS).
-
 ### Why are binary assets stored in object storage instead of git?
 
-Git history is append-only, so every replaced image version would live forever, and Canopy's clone-per-branch-on-EFS model would multiply that repo weight into every branch provision. Content-addressed keys in a separate object store sidestep both problems and give branch-awareness for free: a draft's asset is fetchable-but-unguessable immediately, publish needs no promotion step, and rollback always resolves. Content references stay vendor-neutral (a key plus directives), so a git-backed adapter remains possible later for tiny adopters. See [Asset & Media System](#asset--media-system) and the design record at `.claude/future-tasks/resolved/assets-media-system.md`.
+Git history is append-only, so every replaced image version would live forever, and the clone-per-branch-on-EFS model would multiply that weight into every branch provision. Content-addressed keys in a separate store sidestep both and give branch-awareness for free (see [Asset & Media System](#asset--media-system)). References stay vendor-neutral — a key plus directives — so a git-backed adapter remains possible for tiny adopters.
 
 ### Why transform images on demand instead of a fixed width ladder at upload?
 
-An upload-time width ladder (the rejected Plan A) was simpler to build but aged badly: it needed sharp in the CMS request path, per-field width hints for odd sizes, derived assets for cropping, and worker back-fill jobs whenever the ladder or quality changed. On-demand transforms move all of that behind a deterministic URL: any size is available, crop is a re-editable rectangle rather than a derived asset, and changing the pipeline just changes cache keys. The cost is one Lambda per site and a sub-second first-hit per new variant, both of which the origin-group cache absorbs. Full trade-off table in the design record.
-
-### Why is the asset mount point a render-time option instead of part of the stored URL?
-
-Because content outlives the place it is being rendered from. A stored src is read from a draft branch workspace, a PR preview, a staging deployment, and production, and increasingly from an editor served at a different origin than the site. A prefix baked in at write time is correct in exactly one of those and silently wrong in the rest, fixable only by rewriting content. Keeping the stored value root-relative makes the asset reference a pure statement of position in the `/assets` URL space, and pushes the "where is that space, as seen from here?" question to the one place that actually knows the answer: the renderer. It is an option rather than a config key for the same reason — the editor and the public site can legitimately disagree.
-
-### Why doesn't the deployment `basePath` move the asset URL space?
-
-Because it depends on who is serving `/assets`, and that varies by topology. On a CloudFront deployment the app moves under the prefix but the CDN's asset behaviors stay anchored at the distribution root (and the transform function rejects anything outside the transform prefix), so deriving the asset mount point from the deployment prefix breaks URLs that were working. Where the framework itself serves `/assets`, the rewrite is `withCanopy()`'s own and Next.js auto-prefixes it, so the prefix does apply. Since neither answer is universally right, CanopyCMS refuses to guess: the deployment prefix drives only the route space (editor API, preview frame), the asset mount point stays an explicit render-time value, and adopter guidance is a table keyed on where assets are served rather than a rule keyed on the prefix. Relatedly, the URL builders expose no `basePath` argument at all — the same word already means a _filtering_ route prefix on the static-params helper, where a deployment prefix would enumerate nothing and produce a green build with no pages. See [Render-Time URL Prefixes](#render-time-url-prefixes).
+An upload-time ladder was simpler to build but aged badly: sharp in the CMS request path, per-field width hints for odd sizes, derived assets for cropping, and worker back-fill jobs whenever the ladder or quality changed. On-demand transforms put all of that behind a deterministic URL — any size available, crop a re-editable rectangle, a pipeline change just a cache-key change — for one Lambda per site and a sub-second first hit per variant.
 
 ### Why do the CMS and transform Lambdas accept a caller-supplied execution role?
 
-Normally a CDK construct creates and owns its Lambda's execution role, and nothing outside the construct needs to know its name. That stops being true once a site's asset bucket can live in a different AWS account than its CMS compute — a real isolation boundary, not a hypothetical one. Granting the Lambda access requires the _bucket's_ stack to write a resource policy naming the Lambda's IAM principal, and a resource policy needs that principal as a plain ARN string, not a cross-stack object reference. Reading the role's ARN off a Lambda defined in another stack looks like it should work, but across an account boundary CDK can only resolve that through a CDK-CLI-only mechanism, evaluated at deploy time by assuming a publishing role and querying the other stack directly — invisible to CloudFormation itself, so it works under `cdk deploy` and nothing else, and unlike an ordinary same-account circular dependency it does not fail at synth. Letting the caller supply the role instead means both stacks compute the ARN from literals (account ID and role name), with no cross-stack reference needed at all.
+Because a site's asset bucket can live in a different AWS account than its compute, and granting access then requires the _bucket's_ stack to write a resource policy naming the Lambda's principal as a **plain ARN string**. Reading that ARN off a Lambda in another stack looks like it should work, but across an account boundary CDK resolves it only through a CDK-CLI-only mechanism evaluated at deploy time: invisible to CloudFormation, working under `cdk deploy` and nothing else, and — unlike an ordinary circular dependency — not failing at synth. A caller-supplied role lets both stacks compute the ARN from literals instead.
 
-That surfaced an unrelated gotcha the fix had to account for: CDK only attaches a Lambda's baseline execution policies — and, for a VPC-attached function, the permissions it needs to create network interfaces — to a role it creates itself. A caller-supplied role gets neither, so the VPC-attached CMS Lambda would deploy cleanly and then simply never start. Both constructs now re-attach those policies themselves whenever a caller supplies the role, through one small shared step, so the two can't drift and silently regress only one of them.
-
-The accepted prop is deliberately a concrete, mutable role object rather than a reference to an already-existing one: granting further permissions to an externally-referenced role is a silent no-op with nothing in that call path to raise an error, so the narrower type is what moves that failure to compile time instead of leaving it undetectable at runtime.
-
-### Why does the CMS Lambda build for arm64?
-
-CDK derives a `fromImageAsset` image's Docker build platform from the architecture the function binds it with, unless `platform` is set explicitly. `CanopyCmsService` used to bind none, so the function defaulted to x86_64 while Docker built for whatever the build host was — a mismatch that surfaces only at invoke, where an arm64 image on an x86_64 function fails with `Runtime.InvalidEntrypoint`. It now always resolves an architecture (default arm64), matching the EC2 worker and the asset transform Lambda, which were already arm64, and the scaffold sets no `platform`. See [Where the image is built](docs/deploying-to-aws.md#where-the-image-is-built) for the build-host mechanics.
-
-### Why branch-per-workspace?
-
-Each branch gets its own git clone to prevent conflicts. Editors can work simultaneously without stepping on each other. The workspace isolation also means a crash or bad edit on one branch can't affect others.
-
-### Why aren't comments committed to git?
-
-Comments are review artifacts, not content. They're ephemeral discussion about changes, not part of the final published content. Keeping them out of git prevents clutter and keeps the content repository clean.
-
-### Why are groups and permissions committed to git?
-
-Unlike comments, groups and permissions are configuration that should be version-controlled. Changes to who can edit what should be reviewable via PR, and you should be able to roll back permission changes if needed.
+Two consequences. CDK attaches baseline execution policies, and a VPC-attached function's ENI permissions, only to a role it creates itself, so both constructs re-attach them through one shared step when a caller supplies the role; otherwise the CMS Lambda deploys cleanly and never starts. And the prop takes a concrete, mutable role rather than a reference to an existing one, because granting permissions to an externally-referenced role is a silent no-op with nothing in that call path to raise an error. See [docs/deploying-to-aws.md](docs/deploying-to-aws.md#cross-account-asset-bucket).
 
 ### Why do settings use a separate branch?
 
-In both prod and dev modes, permission and group changes are stored on a dedicated orphan settings branch (named `canopycms-settings-{deploymentName}`) rather than on content branches. The branch name is deployment-specific so that multiple deployments sharing the same git repository can maintain independent settings — see [Deployment Name Resolution](#deployment-name-resolution) for how `deploymentName` itself is resolved. In dev mode, this branch lives in the local bare remote (`.canopy-dev/remote.git`) and is never pushed to GitHub. This design provides several benefits:
-
-**Isolation from content changes:**
-
-- Permission updates don't interfere with content editing workflows
-- Content PRs don't accidentally include permission changes
-- Settings changes can be reviewed independently
-
-**Controlled merge process:**
-
-- Settings PRs must be explicitly reviewed and merged
-- No automatic merging—requires deliberate action
-- Prevents accidental permission escalation or lockout
-
-**Audit trail:**
-
-- Dedicated settings branch provides clear history of permission changes
-- Easy to see who changed permissions and when
-- Can diff settings branch against main to see current vs proposed state
-
-**Dev mode uses local files:**
-
-- In `dev`, settings are stored in `.canopy-dev/` (not in git) for simplicity
-- No separate branch management needed for local development
-- Settings changes are immediate (no PR workflow needed)
-
-The `settings-helpers` pattern abstracts this branching logic so API handlers don't need mode-specific conditionals.
-
-### Why refuse to boot instead of migrating when the resolved settings branch changes?
-
-Because orphan branches share no history, there is no meaningful "migration" from one settings branch to another — the destination starts empty by construction. A deployment whose resolved settings branch changes (a new `deploymentName`, a hand-set `settingsBranch`, or a changed `CANOPYCMS_DEPLOYMENT_NAME`) while its settings workspace already holds real data has only two honest options: destroy the old data, or refuse. CanopyCMS refuses, at boot, before any git operation runs — a thrown error naming both the currently-checked-out and newly-resolved branch is recoverable (fix the config/env and redeploy); a silent orphan-checkout wiping `permissions.json` and `groups.json` is not. See [Deployment Name Resolution](#deployment-name-resolution).
-
-### Why are rebase conflicts non-blocking for editors?
-
-The alternative would be to block editing on conflicted entries until the conflict is resolved, but that would require editors to understand merge conflicts—a git concept that non-technical users shouldn't need to know. Instead, the system keeps the editor's version during rebase and surfaces a gentle notification. The PR diff on GitHub shows both versions, letting reviewers (who understand the content and context) reconcile during review. This keeps the editing experience simple while still surfacing that a conflict exists.
-
-### Why track conflicts by ContentId instead of file path?
-
-File paths can change when entries are renamed (slug changes). ContentIds are immutable identifiers embedded in every content filename and directory name that persist across renames and moves. Using ContentIds ensures that conflict tracking remains accurate even if the editor renames an entry or collection after a conflict is detected. For collection metadata files (`.collection.json`), the ContentId comes from the parent directory rather than the file itself. The root collection uses a sentinel value since the content root directory has no embedded ID.
-
-### Why three permission layers?
-
-Defense in depth. Branch access controls who can see a branch. Path permissions control what content they can edit. Combining them provides flexible policies: you might let someone access a branch but restrict them to certain content paths within it.
-
-### Why scope `defaultPathAccess` by permission level?
-
-Before this, `defaultPathAccess` applied a single verdict to every permission level, so a deployment that wanted public read either had to deny everything by default (forcing an explicit read-only rule for every public path) or allow everything by default (accidentally opening edit and review too). The object form (`{ read: 'allow' }`) lets a `deployedAs: 'server'` site express "public read, everything else still requires a rule" as one config value. Unspecified levels fail closed to `deny` rather than inheriting a specified sibling level, so scoping read access can never accidentally loosen edit or review by omission.
+So that permission updates never interfere with content editing and content PRs cannot accidentally carry permission changes. A settings PR must be explicitly merged, which is what prevents accidental permission escalation or lockout, and the branch's history is the audit trail for who changed access and when.
 
 ### Why does `canopycms init` scaffold `defaultBranchAccess: 'deny'`?
 
-Because the schema already defaulted to `'deny'` and the template said `'allow'`, so "secure by default" was true of the package and false of every project the CLI generated — the divergence was an accident of the template, not a decision.
+So that "secure by default" is true of a generated project and not only of the package's own schema default. `'deny'` is usable rather than merely strict because of the two grants under [Layer 1](#layer-1-branch-access) — without them a freshly created branch is inert for its own creator and the protected base branch unreachable for every non-admin — and with them the default means what an adopter would want: "branches you neither created nor were invited to."
 
-The flip was blocked on `'deny'` being unusable rather than merely strict: it made a freshly created branch inert for its own creator, and made the protected base branch — which takes no ACL and has no creator — unreachable for every non-admin, with no way to configure around it. The two grants documented under [Layer 1](#layer-1-branch-access) fix that, and only then does the default mean something an adopter would actually want: "branches you neither created nor were invited to."
-
-The frictionless first run that `'allow'` appeared to provide was never coming from `'allow'`. The template does not set `defaultPathAccess` at all, so scaffolded projects were already fail-closed on the path layer; what makes a fresh `canopycms init` project work is `canopycms-auth-dev` auto-setting `CANOPY_BOOTSTRAP_ADMIN_IDS`, and admins bypass both layers. `'allow'` therefore only ever took effect for non-admin editors — precisely the multi-editor case it should not have covered. The template now states both defaults explicitly rather than leaving the path layer invisible.
+The frictionless first run `'allow'` appears to provide does not come from `'allow'`. The template sets no `defaultPathAccess` at all, so a scaffolded project is already fail-closed on the path layer; what makes a fresh project work is `canopycms-auth-dev` auto-setting `CANOPY_BOOTSTRAP_ADMIN_IDS`, and admins bypass both layers. `'allow'` therefore only ever takes effect for non-admin editors — precisely the multi-editor case it should not cover.
 
 ### Why is `mode` required, and why an allowlist (not a denylist) for auth plugin trust?
 
-Two related changes close the same gap: a prod deployment silently running insecure, header-trusting auth semantics because of a missing or forgotten config value.
+Two rules close one gap: a prod deployment silently running header-trusting auth because of a missing config value.
 
-- **`mode` has no default.** Earlier, an unconfigured `mode` fell back to `'dev'`, so a prod deploy that omitted the field by mistake would silently authenticate every request by trusting whatever identity a caller claimed — no error, no warning, just an open door. Making `mode` a required config field turns that mistake into a loud validation failure at startup instead of a silent security hole in production traffic.
-- **`verifiesCredentials` is an allowlist, not a denylist.** An earlier version of this guard asked plugins to opt themselves _out_ of production use by setting a marker. The problem with a denylist is the failure direction: a third-party or hand-rolled plugin that simply doesn't know about the marker is trusted by default, which is backwards for a check whose entire purpose is preventing header-spoofing impersonation. Flipping it to `verifiesCredentials: true` — a marker a plugin must affirmatively set to claim real cryptographic verification — makes the safe default rejection: an unrecognized or incomplete plugin fails closed in prod rather than silently granting every caller admin-equivalent access.
-
-### Why modularize into focused subdirectories?
-
-The codebase underwent a major refactoring to decompose large files (600-1100+ lines) into focused modules. This provides several benefits:
-
-**Improved navigation**: Instead of scrolling through a 1000-line file looking for a function, developers can navigate to a specific module with a clear name. The module index file serves as documentation of what the module provides.
-
-**Explicit dependencies**: When a module imports from another module, the dependency is visible. This makes the architecture easier to understand and helps prevent circular dependencies.
-
-**Testability**: Smaller modules with well-defined interfaces are easier to test in isolation. Mock boundaries become clearer.
-
-**Code ownership**: Different modules can have different owners or expertise requirements. Authorization logic can be reviewed by security-focused developers while UI components can be reviewed by frontend specialists.
-
-**Bundle optimization**: Client-safe code is separated from server-only code (e.g., `normalize.ts` vs `normalize-server.ts` in paths module). This prevents accidental inclusion of Node.js APIs in browser bundles.
-
-**Examples of decomposition**:
-
-- Authorization: Branch access, path permissions, and content access separated into focused files with a unified entry point
-- Configuration: Zod schemas organized by concern (field, collection, permissions, media)
-- Paths: Branded types, normalization, validation, and branch resolution in separate files
-- Editor hooks: Each major feature (branch, entry, draft, comments, etc.) has its own hook
-
-The tradeoff is slightly more complex import paths, but the improved maintainability is worth it for a codebase of this size.
+- **`mode` has no default.** A fallback to `'dev'` would let a prod deploy that omitted the field authenticate every request by trusting whatever identity a caller claims — no error, no warning. Requiring it turns that mistake into a loud validation failure at startup.
+- **`verifiesCredentials` is an allowlist.** Asking plugins to opt _out_ of production use fails in the wrong direction: a third-party or hand-rolled plugin that doesn't know about the marker would be trusted by default, which is backwards for a check whose purpose is preventing header-spoofing impersonation. A marker a plugin must affirmatively set makes rejection the safe default.
 
 ### Why is the worker daemon split into free functions over a context?
 
-The worker grew into a single ~3,000-line class whose one entry point fanned out into four call trees that shared almost nothing except the object they hung off. Splitting it raised the usual question of what the pieces should be, and the conventional answer — collaborator objects, each constructed at startup with the dependencies it needs — was rejected for a specific reason.
+The daemon's one entry point fans out into four call trees sharing almost nothing but the object they hang off, so they wanted splitting — and the conventional answer, collaborator objects each constructed at startup with the dependencies they need, was rejected for a specific reason.
 
-The worker's contract with its own tests is that it is reachable **through the live instance**: tests aim a push at a local fixture repo by replacing the URL builder on a running worker, substitute a mock GitHub client, stub out task execution, and subclass to override protected hooks. Any collaborator constructed once at startup captures whichever of those it needs at construction time, and then hands the extracted code the pre-test value — which for the URL builder means a test pushing at GitHub for real. That is a test suite quietly losing its grip on the code, and it fails in the most expensive direction.
+The worker's contract with its own tests is that it is reachable **through the live instance**: tests aim a push at a local fixture repo by replacing the URL builder on a running worker, substitute a mock GitHub client, stub out task execution, and subclass to override protected hooks. A collaborator constructed at startup captures whichever of those it needs and then hands the extracted code the pre-test value — which for the URL builder means a test pushing at GitHub for real. That is a test suite quietly losing its grip on the code, and it fails in the most expensive direction.
 
-So the daemon class stays a thin lifecycle shell with one delegating method per duty cycle, and each duty cycle is a module of free functions taking a context. Two properties of that context are load-bearing rather than stylistic: every instance-backed member is a **function**, and the shell builds a **fresh context per call**. Together they mean a replacement made on the instance after construction is still honored, and the seam between shell and clusters is a plain object rather than a mocking framework. The cost is one rule the clusters must follow — always call through the context, never a same-named module function sitting next to the caller — and that is where mistakes land.
+So the class stays a thin lifecycle shell with one delegating method per duty cycle, and each duty cycle is a module of free functions taking a context. Two properties of that context are load-bearing rather than stylistic: **every instance-backed member is a function**, and the shell builds a **fresh context per call**. Together they mean a replacement made on the instance after construction is still honored, and the seam is a plain object rather than a mocking framework. The cost is one rule the clusters must follow — always call through the context, never a same-named module function sitting next to the caller.
 
-Because the pieces are functions rather than mutually-aware objects, the import graph is a DAG by construction, and a lint rule fails the build on a cycle instead of trusting review to spot one.
-
-**What deliberately did not change: the worker's configuration object.** It is a flat bag mixing GitHub credentials, three independent poll intervals, task-retry policy and a lock TTL, and grouping it would read better. But it is public API — the CDK package re-exports and constructs it, and adopters can too — so restructuring it would be a breaking change dressed up as a refactor. Each module instead narrows the shared context to the subset it actually uses at the type level, which buys the same "what does this cluster depend on" clarity with none of the blast radius.
-
-### Why separate packages for auth and framework adapters?
-
-Keeps the core framework-agnostic. Adopters only install what they need. Testing is simpler because the core doesn't depend on Next.js or Clerk. New frameworks and auth providers can be supported without modifying core code.
+**The worker's configuration object deliberately stays as it is**, a flat bag mixing credentials, poll intervals, retry policy and a lock TTL: it is public API, constructed by the CDK package and available to adopters, so restructuring it would be a breaking change dressed up as a refactor. Each module narrows the shared context to the subset it uses at the type level instead.
 
 ### Why does ClerkAuthPlugin resolve its secret lazily?
 
-`ClerkAuthPlugin` resolves `CLERK_SECRET_KEY` and constructs the underlying Clerk client on first authenticated use, memoized afterward, rather than at construction time. This supports the two-deployment model (see [Static Deployment and Build Mode](#static-deployment-and-build-mode)): a zero-editor public build can import the same `canopy.ts` module — configured with `mode: 'prod'` and a real `ClerkAuthPlugin` — without the secret needing to be present in that build's environment, because the plugin is instantiated but never actually authenticates anything there. At run time, only code that calls Clerk's backend API needs the secret: the auth-cache refresh (the worker in prod, the dev server's lazy refresh in dev), or a plugin used unwrapped, whose `authenticate()` and Clerk-client lookups call that API. A CMS Lambda needs it for neither, because `createNextCanopyContext` wraps the plugin in `CachingAuthPlugin`, which authenticates through `verifyTokenOnly()` with the JWT key alone. An adopter's `clerkMiddleware` is what would bring the secret back onto the Lambda (see [deploying-to-aws.md's Security Model](docs/deploying-to-aws.md#security-model)).
-
-### Why pnpm with strict workspace isolation?
-
-The monorepo uses pnpm, which provides strict dependency isolation by default. Unlike npm's hoisted `node_modules`, pnpm's content-addressable store means each package can only import dependencies it explicitly declares. This catches phantom dependency bugs during development rather than after publishing.
-
-The monorepo previously used npm with `install-strategy=nested` to achieve the same correctness guarantee, but pnpm provides this natively with better performance and lower disk usage (a shared store instead of duplicated `node_modules` trees). Inter-package references use the `workspace:` protocol, which pnpm resolves to real version ranges at publish time.
-
-This strict isolation motivates two related design choices:
-
-- **Peer dependencies for plugins**: Auth plugins and adapters use `peerDependencies` for their upstream framework and UI dependencies (React, Mantine, Clerk, etc.). This prevents duplicate instances of libraries that require singleton semantics. The same deps are listed as `devDependencies` (using `workspace:*` for internal packages) for local building and testing.
-
-- **Standard types at package boundaries**: The Next.js adapter accepts `Request`/`Response` (standard Web API types) rather than `NextRequest`/`NextResponse`. Framework-specific types can cause cross-package type mismatches when packages resolve their own copies of framework libraries. Standard types are globally shared and avoid this entirely.
-
-### Why standard Request/Response types at adapter boundaries?
-
-When packages resolve their own copies of a framework library (which can happen with pnpm's isolated `node_modules` or any strict package manager), framework-specific types like `NextRequest` become different types across packages even though they are structurally identical. TypeScript's nominal type checking for class instances means the adopter's `NextRequest` and the adapter's `NextRequest` are incompatible at the type level.
-
-Standard Web API types (`Request`, `Response`) are defined in the global TypeScript lib and shared across all packages. Using them at the adapter's public API boundary eliminates cross-package type mismatches entirely. Internally, the adapter still uses framework-specific APIs (like `NextResponse.json()`) for its own implementation.
-
-This principle generalizes: any type that appears in a cross-package API should be either a standard global type or a type exported from a shared package, never a type from a framework-specific package that might be duplicated.
-
-### Why git operations in the request cycle, with optional worker?
-
-Local git operations (clone, commit, push to `remote.git`) happen synchronously during API requests — they're fast because they operate on local filesystems. This avoids the complexity of job queues for the common case.
-
-The worker daemon handles **internet-requiring** operations that can't happen in the request cycle when the web server has no internet access (Lambda with no NAT):
-
-- Pushing from `remote.git` to GitHub
-- Creating/updating PRs via the GitHub API
-- Fetching upstream changes from GitHub
-- Refreshing auth provider metadata cache
-
-On a single server with internet access, no worker is needed — `githubService` handles PR operations synchronously and the auth plugin calls the provider API directly. The worker architecture is additive, not required.
+So that a zero-editor public build can import the same `canopy.ts` module — configured with `mode: 'prod'` and a real plugin — without the secret in that build's environment: the plugin is instantiated but never authenticates anything there. Only code calling Clerk's backend API needs the secret (the auth-cache refresh, or an unwrapped plugin), and a CMS Lambda needs it for neither, because `CachingAuthPlugin` authenticates through `verifyTokenOnly()` with the JWT key alone. An adopter's `clerkMiddleware` is what would bring the secret back onto the Lambda (see [Security Model](docs/deploying-to-aws.md#security-model)).
 
 ### Why one GitHub App per site, not one shared across an organisation?
 
-The worker can authenticate to GitHub as a registered GitHub App instead of a personal access token, and CanopyCMS registers one App **per site**, never a single App installed across every repository an organisation owns. That runs against the obvious economy — one App, installed everywhere, is less to set up — because of where the App's key actually lives: a GitHub App's private key is scoped to the App itself, not to any one installation. Restricting a token to a single repository is a choice the key-holder makes when minting it, not a boundary GitHub enforces against whoever holds the key — anyone holding it can enumerate every installation the App has and mint a token for any of them. CanopyCMS's key can't be kept in one guarded place: each site's worker reads it at runtime from that site's own secret store, on that site's own host. A single App with write access to repository contents would therefore mean that compromising one site's secret store grants write access to every other site's repository. The cost is accepted rather than hidden: one App per site means one key per site, and one more credential to rotate for every site added.
-
-### Why layer git operations (GitManager vs service methods)?
-
-The three-layer architecture separates concerns and improves maintainability:
-
-**GitManager (primitives):**
-
-- Pure git operations without CanopyCMS knowledge
-- Can be tested independently
-- Reusable in contexts outside CanopyCMS
-
-**Service methods (business logic):**
-
-- Encapsulate common patterns: author configuration, context handling
-- Provide single-line operations for complex workflows
-- Centralize author credential management (prevents forgotten `ensureAuthor()` calls)
-- Use BranchContext which already contains all necessary path information
-
-**API handlers (workflows):**
-
-- Focus on business logic: permissions, metadata, PR creation
-- No direct git mechanics or path resolution needed
-- Cleaner, more readable code (8-12 lines reduced to 1)
-
-**Why automatic author injection in service methods?**
-
-Git commits require author information. Without centralization, each handler would need:
-
-```
-const git = createGitManagerFor(...)
-await git.ensureAuthor({
-  name: config.gitBotAuthorName,
-  email: config.gitBotAuthorEmail,
-})
-```
-
-This pattern appeared in 18+ handlers. Forgetting it causes cryptic git errors. Service methods like `commitFiles()` and `submitBranch()` handle this automatically, pulling credentials from config. This is a form of dependency injection—handlers declare what operation they want, the service layer provides the dependencies.
-
-**Why named arguments in service methods?**
-
-Compare positional vs named:
-
-```
-// Positional (unclear, rigid)
-await commitFiles(context, ['file.json'], 'Save content')
-
-// Named (self-documenting, extensible)
-await commitFiles({ context, files: ['file.json'], message: 'Save content' })
-```
-
-Named arguments:
-
-- Make call sites self-documenting (no need to check parameter order)
-- Allow adding optional parameters without breaking existing calls
-- Prevent argument order mistakes
-- Align with modern JavaScript/TypeScript patterns
+The worker can authenticate as a registered GitHub App instead of a personal access token, and CanopyCMS registers one App **per site**, against the obvious economy of one App installed everywhere, because of where the key lives: a GitHub App's private key is scoped to the App, not to an installation. Restricting a token to one repository is a choice the key-holder makes when minting it, not a boundary GitHub enforces against whoever holds the key, so anyone holding it can enumerate every installation and mint a token for any of them. Canopy's key cannot be kept in one guarded place — each site's worker reads it at runtime from that site's own secret store — so one App with write access to repository contents would mean compromising one site's secret store grants write access to every other site's repository. The cost is accepted rather than hidden: one more key per site to rotate.
 
 ### Why "Publish Branch" doesn't actually publish?
 
-Separation of concerns. CanopyCMS handles content editing and PR creation. The actual publication (merging the PR and deploying the site) is handled by GitHub and your CI/CD pipeline. This makes the system more flexible—you can have any merge/deploy workflow you want, and CanopyCMS doesn't need credentials to actually push to production.
+Separation of concerns. CanopyCMS handles content editing and PR creation; merging the PR and deploying the site belong to GitHub and the adopter's CI/CD. That keeps any merge and deploy workflow possible, and means CanopyCMS never needs credentials that could push to production.
 
 ### Why is the branch registry a cache, not a source of truth?
 
-The branch registry (`branches.json`) is a **read-only cache** for fast branch listing. Individual `branch.json` files in each branch workspace are the source of truth.
+`branches.json` is a **read-only cache** for fast branch listing; each branch workspace's own `branch.json` is the source of truth. That eliminates the synchronization bugs a second writable copy invites, and the cache is only ever regenerated, never updated in place, so there are no write conflicts.
 
-**Design:**
+A state change bumps a cross-process generation marker and eagerly regenerates the snapshot on the mutating host; each snapshot embeds the token it was built against, and `list()` regenerates only when that token differs from the live marker. So a bump is observed by every process sharing the root, scanning is amortized across reads, and a corrupted or resurrected snapshot is fixed by the next read's comparison. `get()` forces one throttled regeneration when a looked-up branch is missing, bounding the "branch exists but the snapshot predates it" window.
 
-- When branch state changes, `invalidate()` bumps a cross-process generation marker (see `resource-generation.ts`) under `.canopy-meta/branch-registry.generation`, then eagerly regenerates the snapshot on the mutating host
-- Each `branches.json` snapshot embeds the generation token it was built against; `list()` compares that token to the live marker and only regenerates when they differ
-- Concurrent regeneration within one process is deduped to a single scan; across processes, regeneration is still safe—all processes produce identical output from the same `branch.json` files
-- No write conflicts because the cache is never directly updated, only regenerated
-- `get()` forces one throttled fresh regeneration when a looked-up branch is missing from the cached snapshot, bounding staleness for the "branch exists but snapshot predates it" case
-- A single branch directory with a corrupt or unreadable `branch.json` is quarantined out of the scan rather than propagated as a scan failure — one bad file must not turn every branch listing into an outage. The branch stays on disk, invisible to the registry but reported (and repairable) through the admin branch-health surface (see [Admin Observability and Recovery API](#admin-observability-and-recovery-api))
-
-**Why this design:**
-
-- **Single source of truth**: Eliminates synchronization bugs between `branch.json` and `branches.json`
-- **Cross-process invalidation**: A marker bump is observed by every process sharing the root (warm Lambda containers + the EC2 worker on EFS), not just the process that mutated
-- **Lazy regeneration**: Amortizes the cost of directory scanning across reads
-- **Self-healing**: If the cache becomes corrupted, stale, or resurrects an old snapshot (see the generation-token protocol in `resource-generation.ts`), the next read's marker comparison fixes it
-
-### Why framework-agnostic context creation?
-
-The context architecture centralizes business logic in core while keeping framework adapters minimal.
-
-**Benefits:**
-
-- **Consistency**: Bootstrap admin groups, static deployment detection, and permission checks work identically across all frameworks
-- **Testability**: Core context can be tested without Next.js, Express, or any framework installed
-- **Maintainability**: Bug fixes and features only need to be implemented once in core
-- **Extensibility**: New frameworks require ~10 lines of user extraction code, not reimplementing business logic
-
-The `getUser` function pattern inverts the dependency—core doesn't know about frameworks, frameworks provide core with what it needs.
-
-### Why automatic bootstrap admin group application?
-
-Bootstrap admins are designated in config (e.g., by email or user ID). These users should always have the Admins group, regardless of what the auth provider returns.
-
-Handling this in core context creation ensures:
-
-- **Single application point**: Can't be forgotten or applied inconsistently
-- **Framework-agnostic**: Works the same in Next.js, Express, or any other framework
-- **Early in request lifecycle**: Applied before any content reading or permission checks
-- **Transparent to pages**: Page code doesn't need to know about bootstrap admins
-
-Without this, every page would need to manually apply bootstrap groups or risk inconsistent permissions.
+**One bad file must not become an outage**: a branch directory whose `branch.json` is corrupt or unreadable is quarantined out of the scan rather than failing it. The branch stays on disk, invisible to the registry but reported and repairable through the admin branch-health surface.
 
 ### Why separate `deployedAs` from build mode detection?
 
-The old approach used `isBuildMode()` and a `BUILD_USER` to detect and handle static generation. But the real question is not "are we building?" — it is "is this deployed as a static site?" A static deployment means no users, no request context, and no auth, whether during `next build` or `next dev`.
-
-**The `deployedAs: 'static'` config field** makes this explicit. It is a stable, config-driven declaration that applies across the entire lifecycle of a static deployment. This is the primary mechanism for static sites.
-
-**`isBuildMode()` remains as a safety net** for server deployments. During `next build` of a server-deployed site, functions like `generateStaticParams` run without a request context. The preferred solution is for adopters to use `getCanopyForBuild()` instead of `getCanopy()` in these contexts, which explicitly provides a non-request-scoped context with a synthetic admin user. Build mode detection remains as a fallback for cases where `getCanopy()` is called without a request context.
-
-**Why two checks instead of one?**
-
-- `deployedAs` is a static declaration: "this deployment never has users." It works in build and dev.
-- `isBuildMode()` is a dynamic detection: "auth is unavailable right now, even though this is normally a server deployment." It only applies during build.
-- Combining them (`isDeployedStatic(config) || isBuildMode()`) covers all cases where permissions should be bypassed.
-
-**Why rename BUILD_USER to STATIC_DEPLOY_USER?**
-
-The synthetic admin user is used in both static deployments and build phases. The name `STATIC_DEPLOY_USER` reflects the primary concept (static deployment) rather than the secondary use case (build phase). This makes the code's intent clearer.
-
-**Why is authPlugin optional for static deployments?**
-
-Static sites have no users and no request context. Requiring an auth plugin for a static deployment would force adopters to install and configure an auth package they will never use. Making it optional reduces adopter friction. The framework adapter provides a clear error if `authPlugin` is omitted but `deployedAs` is not `'static'`, preventing silent misconfiguration.
+The real question is not "are we building?" but "is this deployed as a static site?" — a static deployment has no users, no request context and no auth, during `next build` and `next dev` alike, and `deployedAs: 'static'` is a config-driven declaration covering that whole lifecycle. Two checks rather than one, because they are different claims: `deployedAs` is static ("this deployment never has users"), while `isBuildMode()` is dynamic ("auth is unavailable right now, though this is normally a server deployment"). Their union covers every case where permissions should be bypassed.
 
 ### Why does a build read the working tree instead of a branch clone?
 
-A build ships the checkout it runs in — CI building a commit, or a developer building locally — so that checkout is the only honest source. Resolving a branch clone instead made a local build silently render whatever the clone held (seeded from git-committed state, so an uncommitted edit or rename was invisible to a green build), and made an image build depend on git state it had no reason to have: a builder whose synthesized repo lacked the configured base branch failed outright. `readsFromCheckout(config)` (`isDeployedStatic(config) || isBuildMode()`) makes this unconditional: every build, in every mode and deployment type, reads `process.cwd()` directly and never touches git, a branch workspace, or `.canopy-dev` — exactly as a static export always has. Only request-time reads on a running server deployment resolve a branch workspace.
-
-### Why React Context for editor state management?
-
-The editor previously used module-level singletons for shared state like the API client. This approach has several problems:
-
-- Hard to test (global state persists between tests)
-- No isolation between editor instances (if you had multiple)
-- Hidden dependencies (imports don't show the dependency)
-
-React Context provides explicit dependency injection:
-
-- **ApiClientContext**: Provides the API client to all editor components
-- **EditorStateContext**: Provides shared loading/modal/preview state
-
-**Benefits:**
-
-- Testable: Wrap components in test providers with mock implementations
-- Explicit: Dependencies are visible in the component tree
-- Isolated: Each provider instance has its own state
-- Standard: Uses React's built-in patterns
-
-**Custom hooks for complex logic**: State management logic is extracted from components into custom hooks (useBranchManager, useEntryManager, etc.). This keeps components focused on rendering while hooks encapsulate side effects and business logic.
-
-### Why minimal framework adapters?
-
-Keeping adapters thin (like the ~10 line Next.js user extraction) provides several benefits:
-
-**For core maintainers:**
-
-- Features and fixes only need to be implemented once in core
-- Core can be tested without installing every framework
-- API surface area is small and stable
-
-**For framework adapter authors:**
-
-- Less code to write and maintain
-- Less that can go wrong (minimal surface area for bugs)
-- Easy to understand reference implementations
-
-**For adopters:**
-
-- Consistent behavior across frameworks
-- Easier to switch frameworks (just change the adapter)
-- Confidence that adapters are just thin wrappers, not reimplementations
-
-If adapters contained business logic, we'd risk behavior divergence, duplicate maintenance, and harder-to-debug issues.
-
-### Why a Next.js config wrapper for React deduplication?
-
-CanopyCMS packages export raw TypeScript (no pre-compilation step). This means the Next.js bundler must transpile them, which requires adding each package to `transpilePackages`. Additionally, during local development the monorepo's `workspace:` references are resolved by pnpm as symlinks.
-
-Symlinks create a subtle problem: when the bundler follows a symlink into the linked package's directory, it can resolve React from that package's `node_modules` instead of from the consumer's `node_modules`. Two React instances in the same bundle cause "Invalid hook call" crashes that are notoriously difficult to debug.
-
-The `withCanopy()` wrapper in `canopycms-next` solves both problems in one call:
-
-- Auto-detects installed Canopy packages (via `require.resolve`) and adds only those to `transpilePackages`, avoiding build errors from uninstalled optional packages
-- Resolves React (and react-dom) from the consumer's project root via `createRequire()`, using scoped Webpack aliases that apply only to canopycms source files so they don't interfere with Next.js internals
-
-**Why solve this in the adapter package?** The dual-React problem is specific to how Next.js resolves modules through symlinks. It is a build-tooling concern, not business logic. Placing it in the adapter keeps the core package clean and makes the fix discoverable for Next.js adopters in the package they already import. Other framework adapters would handle their bundler's equivalent quirks in their own way.
-
-**Why not require pre-compilation?** Pre-compiling Canopy packages would eliminate the `transpilePackages` requirement but would add a build step to the development workflow, slow down iteration, and make debugging harder (source maps through compiled output). Exporting raw TypeScript keeps the development loop fast and debuggable. The one exception is the `canopycms-next/config` subpath that `withCanopy()` itself is imported from — see [Framework Adapters](#framework-adapters) for why that specific export has no choice but to ship pre-built.
+A build ships the checkout it runs in — CI building a commit, or a developer building locally — so that checkout is the only honest source. Resolving a branch clone instead renders whatever the clone holds, seeded from git-committed state, so an uncommitted edit or rename is invisible to a green build; and it makes an image build depend on git state it has no reason to have, failing outright when the builder's synthesized repo lacks the configured base branch. `readsFromCheckout(config)` makes it unconditional (see [Static Deployment and Build Mode](#static-deployment-and-build-mode)).
 
 ### Why split a dual-build content route into static and server page variants?
 
-A content route in a dual-build site (e.g. a catch-all `[slug]` page) needs to behave differently per build: the static export must prerender every known path (`dynamicParams = false`, required by `output: 'export'`), while the CMS server build must render every request live so runtime path ACLs apply and unknown slugs 404 correctly. Two single-page approaches were tried and rejected, empirically, before landing on a per-build file split:
+A content route in a dual-build site must behave differently per build: the static export must prerender every known path (`dynamicParams = false`, required by `output: 'export'`), while the CMS server build must render every request live so runtime path ACLs apply and unknown slugs 404 correctly. Two single-page approaches were tried and rejected empirically:
 
-- **A route-segment config value computed from an env var** (e.g. `export const dynamicParams = process.env.CANOPY_BUILD === 'static'`) fails at build time: Next.js statically parses route-segment config and requires literal values, so a computed expression is a hard build error, not a runtime branch.
-- **A single page with `dynamicParams = true` plus `generateStaticParams`** builds and avoids the config-parsing error, but on the CMS server an unknown slug is then served via on-demand static generation rather than an ordinary request — and the request-scoped read's `headers()` call throws `DYNAMIC_SERVER_USAGE`, still surfacing as a 500. Worse, prerendering on the CMS build means build-time content gets served to anonymous visitors, bypassing runtime path ACLs entirely.
+- **A route-segment config value computed from an env var** fails at build time: Next.js statically parses route-segment config and requires literal values, so a computed expression is a hard build error, not a runtime branch.
+- **A single page with `dynamicParams = true` plus `generateStaticParams`** builds, but on the CMS server an unknown slug is then served via on-demand static generation rather than an ordinary request, and the request-scoped read's `headers()` call throws `DYNAMIC_SERVER_USAGE` — still a 500. Worse, prerendering on the CMS build serves build-time content to anonymous visitors, bypassing runtime path ACLs entirely.
 
-The shipped design instead gives each build its own thin page file re-exporting a shared implementation: the static variant re-exports `generateStaticParams` and sets `dynamicParams = false` (prerendered, matching `output: 'export'`); the server variant sets `dynamic = 'force-dynamic'` and has no `generateStaticParams` (every request renders live, ACL-enforced, and unknown slugs reach the page's own `notFound()`). The server variant deliberately prerenders nothing, so it can never serve build-time content to a request-time visitor. `withCanopy()`'s `staticBuild` option ensures each build's `pageExtensions` only pick up its own variant (see [Framework Adapters](#framework-adapters)), so no runtime branching is needed in the page code at all.
+So each build gets its own thin page file re-exporting a shared implementation: the static variant re-exports `generateStaticParams` and sets `dynamicParams = false`; the server variant sets `dynamic = 'force-dynamic'` with no `generateStaticParams`, so every request renders live and ACL-enforced, unknown slugs reach the page's own `notFound()`, and it **prerenders nothing**. `withCanopy()`'s `staticBuild` option picks up only the matching variant per build, so the page needs no runtime branching.
 
 ### Why branded types for paths?
 
-Path handling is notoriously error-prone because different contexts need different path representations. A "logical" content path like `posts/hello` means something different from a "physical" filesystem path like `/var/data/branches/feature-1/content/posts/hello.json`.
-
-The paths module uses TypeScript branded types to distinguish between:
-
-- **LogicalPath**: Content-relative paths used in URLs and APIs
-- **PhysicalPath**: Absolute filesystem paths
-- **CollectionPath**: Paths that identify collections
-- **SanitizedBranchName**: Branch names that have passed security validation
-
-These are nominal types (string with a brand) that the compiler tracks separately. Passing a `LogicalPath` where a `PhysicalPath` is expected causes a compile error.
-
-**Benefits:**
-
-- Catch path misuse at compile time, not runtime
-- Self-documenting function signatures
-- Prevents accidental path concatenation errors
-- Makes security-sensitive code more reviewable
-
-**Tradeoffs:**
-
-- Requires explicit conversion between path types
-- Slightly more verbose at boundaries
-- Need to maintain type guards and conversion functions
-
-The safety benefits outweigh the verbosity cost, especially for security-sensitive path operations where a bug could lead to path traversal vulnerabilities.
+A "logical" content path like `posts/hello` and a physical path like `/var/data/branches/feature-1/content/posts/hello.json` are different kinds of value, so the paths module makes them different **types** the compiler tracks separately, and passing one where another is expected is a compile error. The cost is explicit conversion at boundaries and type guards to maintain; the benefit is that security-sensitive path code is reviewable and hard to misuse, which matters most where a bug would be a traversal vulnerability.
 
 ### Why a URL sanitization utility in core?
 
-CMS content is user-authored, so URLs entered in link fields, CTAs, and rich text blocks are untrusted input. A malicious or accidental `javascript:` or `data:` URL rendered into an `href` attribute creates a cross-site scripting vector, and an unchecked redirect URL can be used for phishing.
-
-Rather than expecting every adopter to independently solve this, the core package provides a `sanitizeHref` utility that parses a URL with the standard `URL` constructor and only allows `http:` and `https:` protocols. The function returns a new string derived from the parsed URL object rather than the original input, which breaks static-analysis taint chains (CodeQL, Semgrep, etc.) and gives adopters a single, auditable point for URL safety.
-
-**Why protocol allowlisting instead of denylisting?** Blocking known-bad schemes (`javascript:`, `vbscript:`, `data:`) is fragile because new schemes or parser quirks can bypass the list. Allowlisting only `http:` and `https:` is a closed set that cannot be bypassed by novel scheme names.
-
-**Why in core rather than in a separate security package?** URL sanitization is needed wherever CMS content is rendered, which is the adopter's site. Shipping it in the core package means adopters get it as a zero-cost import with no extra dependency, and the utility evolves alongside the content model it protects.
+CMS content is user-authored, so URLs in link fields, CTAs and rich text are untrusted input: a `javascript:` or `data:` URL rendered into an `href` is an XSS vector, and an unchecked redirect URL is a phishing vector. Core therefore ships `sanitizeHref`, which parses with the standard `URL` constructor and **allowlists only `http:` and `https:`** — a closed set, where denylisting known-bad schemes stays fragile against new schemes and parser quirks. It returns a new string derived from the parsed URL object rather than the original input, which breaks static-analysis taint chains and gives adopters one auditable point for URL safety.
 
 ### Why filename-embedded content IDs?
 
-A robust reference system requires stable, globally unique identifiers that survive file renames and moves. The decision to embed IDs directly in filenames provides several advantages over alternatives:
-
-**Alternative approaches considered:**
-
-- **Database IDs**: Would add external dependency, complicating deployment and git synchronization
-- **File-based registry** (e.g., JSON mapping): Requires synchronization logic and introduces write conflicts in concurrent environments
-- **Git objects** (blob hashes): Not stable across file edits; changes whenever content changes
-- **Symlink directory** (previous approach): Required separate `_ids_/` directory; added filesystem overhead and complexity
-
-**Why filename-embedded IDs?**
-
-- **Self-contained**: No separate database, registry, or symlink directory needed
-- **Atomic operations**: File renames are atomic on all filesystems; no partial state possible
-- **Git-friendly**: IDs visible in diffs and preserved through `git mv`
-- **Human-readable**: Filenames show both slug (human-friendly) and ID (unique)
-- **Process-agnostic**: Multiple processes can safely read the same filenames without synchronization
-- **Zero overhead**: No extra files or symlinks; IDs are part of the natural filename structure
-
-The filename-embedded approach provides the same stability and uniqueness guarantees as symlinks, but with simpler filesystem structure and better human readability.
-
-### Why lazy index loading for Lambda cold starts?
-
-Scanning thousands of files during every request would be expensive. The lazy loading approach defers index building until first access:
-
-- **First access** (cold start): Recursively scan filenames in content directory and build in-memory maps. ~10-50ms for 1000 entries.
-- **Subsequent accesses** (warm): Index already in memory. Lookups are 0ms.
-- **Cross-request**: In serverless functions, subsequent requests reuse the same Lambda execution context, so the index stays warm.
-
-This optimization is critical for serverless deployments where cold starts are inevitable. The 10-50ms cost is paid once per container lifecycle, not per request.
-
-### Why in-memory index over filesystem queries?
-
-Once built, the index enables O(1) lookups instead of filesystem syscalls:
-
-- **Filesystem queries**: Each lookup would require directory scans and filename parsing. Much slower.
-- **In-memory maps**: Two hashmap lookups (forward and reverse). Microsecond-level latency.
-- **Memory cost**: ~1KB per entry. For 10,000 entries, ~10MB. Acceptable for serverless budgets.
-
-The tradeoff favors speed over raw memory usage, which is the right choice for request-path latency.
+A reference system needs identifiers that survive renames and moves, and every alternative costs more: database IDs add an external dependency and a git synchronization problem; a JSON registry needs synchronization logic and introduces write conflicts across processes; git blob hashes are not stable across edits; a symlink directory adds a parallel tree to keep consistent. Filenames need none of that — renames are atomic, IDs survive `git mv` and show up in diffs, and several processes can read the same names with no coordination.
 
 ### Why eventual consistency for the index?
 
-The index is per-process, not globally synchronized. This design choice accepts eventual consistency for robustness, but bounds the staleness window with an on-disk generation marker (see [Multi-Process Consistency](#multi-process-consistency)):
+The content ID index is per-process rather than globally synchronized, trading a bounded staleness window for robustness: no distributed locking or deadlock risk, no write conflicts, and self-healing on a suspicious lookup. For a system that autoscales to many concurrent requests, process-local indexes coordinated through the shared filesystem are simpler and scale better than a shared synchronized one — and editors work at human speeds, so second-scale windows do not materialize as conflicts. See [Multi-Process Consistency](#multi-process-consistency).
 
-- **No locking**: Avoids distributed lock complexity and deadlock risks—the marker bump is a single atomic write of a random token, never a read-modify-write
-- **No write conflicts**: Each process independently rebuilds by scanning filenames; rebuilds swap in a fresh index rather than clearing in place, so readers never see a partial index
-- **Bounded staleness**: A completed mutation becomes visible to other stores at their next marker probe—typically within the probe interval (about a second), stretched across hosts by NFS attribute caching (roughly 3-60 seconds on default EFS mounts)
-- **Self-healing**: Suspicious lookups (an ID miss, or an index hit whose file is gone) force an immediate rebuild rather than waiting for the next probe
-- **Suitable for CMS workflows**: Editors work at human speeds; second-scale staleness windows don't materialize as conflicts in practice
+### Why entry types with cardinality instead of a singleton model?
 
-For a system handling hundreds of concurrent API requests (serverless autoscaling), process-local indexes coordinated through the shared filesystem are simpler and more scalable than a shared, synchronized index.
+Modelling all content as typed entries inside collections, with `maxItems` as a constraint, eliminates the special cases a separate singleton concept forced: no "is this path root-level?" heuristics, no separate flattening path, no singleton-first fallback in path resolution, and no navigation logic telling singleton nodes from collection nodes. Treating the content root as a normal collection with `parentPath: undefined` is the other half — every collection has identical structure regardless of nesting, and the root is the one without a parent. `FlatSchemaItem` is then a discriminated union on `type`, so the compiler enforces correct field access. What remains is a clean split: collections are structure, entry types are schema, cardinality is a constraint — and entry types stay out of navigation, because the tree shows structure rather than schema.
 
-### Why entry types model instead of singletons?
+Flattening that model into a `Map` is what makes it cheap: path resolution is a single lookup rather than a tree traversal, full paths are computed once at initialization rather than re-joined per request, and invalid structure is caught at startup. The memory cost is a few KB per collection, shared across all requests.
 
-The entry types model treats all content as typed entries within collections, with cardinality constraints (like `maxItems: 1`) providing singleton-like behavior. This design provides several advantages:
+### Why use the entry type name for `maxItems: 1` filenames?
 
-**Eliminates special cases:**
+A singleton's file is stored at the collection root as `{collectionPath}/{entryTypeName}.{id}.{ext}`, so its location is predictable and it carries the same ID-in-filename pattern, rename handling and `read(path, slug)` API as any other entry, with no collisions in a collection that mixes cardinality-constrained and unlimited types.
 
-- No separate "singleton" concept—just entry types with `maxItems: 1`
-- Root and nested collections have identical structure
-- No need for heuristic detection of root-level singletons
-- Recursive traversal becomes straightforward
-
-**Content root as normal collection:**
-
-- The content root (`content/`) is a collection with `type: 'collection'`, `logicalPath: 'content'`, `parentPath: undefined`
-- Root-level collections are children of the content root with `parentPath: 'content'`
-- No special-casing for root vs. nested collections
-- Eliminates all "is this root-level?" checks
-
-**Entry types are schema metadata:**
-
-- Entry types define what can be created in a collection
-- They don't appear as navigable nodes in the tree
-- Collections are navigable; entry types are schema configuration
-- Clearer separation between structure (collections) and entry types
-
-**Type safety:**
-
-- `FlatSchemaItem` is a discriminated union with `type: 'collection' | 'entry-type'`
-- TypeScript enforces correct access to fields based on type
-- Compile-time detection of invalid schema operations
-
-### Why flatten schema into a Map?
-
-The flattening process converts the hierarchical schema into `Map<path, FlatSchemaItem>` for performance:
-
-**O(1) lookups:**
-
-- Path resolution is a single Map lookup, not tree traversal
-- Critical for request-path latency in serverless environments
-- Scales to thousands of collections without performance degradation
-
-**Precomputed paths:**
-
-- Full paths are computed once at initialization
-- No repeated path joining or normalization during requests
-- Eliminates path traversal vulnerability checks from hot path
-
-**Validation at init time:**
-
-- Invalid paths or structure detected during startup
-- Fast failure instead of runtime errors
-- All collections verified reachable and non-conflicting
-
-**Memory tradeoff:**
-
-- Small memory overhead (few KB per collection)
-- Flat map is much faster than hierarchical tree traversal
-- Index is shared across all requests (not duplicated per-request)
-
-The alternative (traversing the tree on every request) would add milliseconds to every content access, making serverless deployments impractical.
-
-### Why flatten content root as a normal collection?
-
-The content root is included in the flattened schema as a normal collection with `type: 'collection'`, `logicalPath: 'content'`, and `parentPath: undefined`:
-
-**Eliminates special cases:**
-
-- No separate code path for "is this root-level?" checks
-- Root-level collections simply have `parentPath: 'content'`
-- Entry types at root level have `parentPath: 'content'`, just like nested entry types
-- Collection traversal logic works uniformly
-
-**Simpler parent-child relationships:**
-
-- Every collection except content root has a parent
-- Content root is the only collection with `parentPath: undefined`
-- Clear tree structure with a single root node
-- No ambiguity about where root-level items belong
-
-**Consistent API:**
-
-- `buildEditorCollections()` can start with `parentPath: undefined` and find the content root
-- All collections use the same lookup and traversal patterns
-- No special handling for root vs. nested items
-
-**Performance:**
-
-- Same O(1) lookup performance
-- One additional item in the flat schema (negligible)
-- Eliminates conditional logic in hot paths
-
-This design change removed extensive heuristic detection code that tried to determine if an entry type was "root-level" based on path prefixes and special cases.
-
-### Why use entry type name for maxItems: 1 filenames?
-
-Entry types with `maxItems: 1` store their files using the entry type name as part of the filename pattern:
-
-**Predictable file locations:**
-
-- File is stored at the collection root: `{collectionPath}/{entryTypeName}.{id}.{ext}`
-- For root-level: `content/settings.abc123.json`
-- For nested: `content/blog/config.def456.json`
-- No ambiguity about where the file lives
-
-**Consistent ID system:**
-
-- Same ID-in-filename pattern as regular entries
-- Same stable reference system
-- Same rename and move handling
-
-**Multi-type collection support:**
-
-- A collection can have both `maxItems: 1` types and unlimited types
-- Each type's files are clearly identified by type name in the filename
-- No conflicts or special-casing needed
-
-**API uniformity:**
-
-- Same `read(path, slug)` API
-- Entry type name can be used as a predictable slug
-- No separate code paths for cardinality-constrained types
-
-This approach treats `maxItems: 1` as a schema constraint, not a fundamentally different content model.
-
-**Open footgun in the same corner:** `read({ entryPath })` called with no `slug` at all falls back to the entry TYPE's name as the effective slug, for every entry type, not only `maxItems: 1` ones — it happens to resolve for a singleton only because that entry's on-disk slug was itself set to the type name. Rename that entry's slug (exactly what the index-entry modelling recommendation above asks adopters to do to a singleton being turned into a collection's landing page) and the read silently stops finding it — no thrown error, no type error, and a static build can still go green having prerendered a 404. Not yet fixed; see [`.claude/future-tasks/entrypath-read-resolves-by-entry-type-name.md`](.claude/future-tasks/entrypath-read-resolves-by-entry-type-name.md).
+**Open footgun in the same corner:** `read({ entryPath })` with no `slug` falls back to the entry TYPE's name as the effective slug, for every entry type, not only `maxItems: 1` ones — it happens to resolve for a singleton only because that entry's on-disk slug was itself set to the type name. Rename that slug, which is exactly what modelling a singleton as a collection's landing page requires, and the read silently stops resolving it: no thrown error, no type error, and a static build can still go green having prerendered a 404. See [entrypath-read-resolves-by-entry-type-name.md](.claude/future-tasks/entrypath-read-resolves-by-entry-type-name.md).
 
 ### Why async service initialization?
 
-The introduction of schema meta files requires async initialization of CanopyCMS services. This architectural change has implications across the system:
-
-**The problem:**
-
-- Loading `.collection.json` files from disk is an async operation (file I/O)
-- Schema resolution depends on these files
-- Services need a fully resolved schema before they can operate
-- Synchronous initialization is no longer possible
-
-**The solution: Async initialization with promise caching**
-
-Services are created once at module load time, with the promise cached:
-
-```typescript
-// Create once (async)
-const canopyContextPromise = createNextCanopyContext({
-  config,
-  authPlugin,
-  entrySchemaRegistry,
-})
-
-// Request-scoped: uses headers() + React cache()
-export const getCanopy = async () => {
-  const context = await canopyContextPromise
-  return context.getCanopy()
-}
-
-// Build-scoped: no request context needed (generateStaticParams, etc.)
-export const getCanopyForBuild = async () => {
-  const context = await canopyContextPromise
-  return context.getCanopyForBuild()
-}
-```
-
-**Benefits:**
-
-- **One-time cost**: File scanning happens once per server/container lifecycle
-- **Shared services**: All requests await the same promise, get the same services instance
-- **Lambda optimization**: In serverless, the promise resolves once per container and is reused
-- **Error handling**: Initialization errors are thrown once, not on every request
-- **Type safety**: TypeScript enforces await at call sites
-- **Explicit scope**: Adopters choose request-scoped or build-scoped context at each call site, avoiding implicit environment detection
-
-**Performance characteristics:**
-
-- **Cold start**: ~10-50ms to scan and parse meta files (small projects)
-- **Warm requests**: 0ms (promise already resolved, services cached)
-- **Memory overhead**: Minimal (one services instance per process)
-
-**Alternatives considered:**
-
-**Synchronous initialization with lazy loading:**
-
-- Would require reading meta files on first access (blocking request)
-- Race conditions if multiple requests trigger loading simultaneously
-- Complex locking/memoization logic needed
-- Rejected: Async upfront is simpler and more predictable
-
-**Callback pattern:**
-
-```typescript
-createCanopyServices(config, (services) => {
-  // Use services
-})
-```
-
-- Non-standard pattern in modern JavaScript/TypeScript
-- Difficult to integrate with framework request handlers
-- Rejected: Promises are standard, better error handling
-
-**Synchronous config with runtime meta file loading:**
-
-- Services initialize synchronously from config
-- Meta files loaded lazily per-request
-- Would eliminate async initialization but lose caching benefits
-- Rejected: Per-request file I/O is too slow
-
-**Why the promise caching pattern works:**
-
-In Node.js and serverless environments, module-level variables persist across requests within the same process/container. The cached promise ensures:
-
-1. First request (cold): Promise resolves, reads meta files, creates services
-2. Subsequent requests (warm): Promise is already resolved, returns immediately
-3. All requests: Use the same services instance with shared schema cache
-
-This pattern is common in Next.js and other frameworks for expensive initialization (database connections, external API clients, etc.).
-
-**Developer experience:**
-
-The async pattern is explicit at usage sites:
-
-```typescript
-// Clear that initialization is async
-const canopy = await getCanopy()
-const data = await canopy.read(...)
-```
-
-TypeScript enforces the await, preventing accidental usage before initialization completes. The pattern is consistent with async/await conventions throughout the modern JavaScript ecosystem.
-
-### Why don't entry types appear in navigation?
-
-Entry types are schema metadata, not navigable tree nodes. The `buildEditorCollections()` function returns only collections:
-
-**Clear mental model:**
-
-- Collections = navigable containers (folders)
-- Entry types = schema definitions for entries
-- Navigation tree shows structure, not schema
-
-**Prevents confusion:**
-
-- Without this separation, users might think entry types are special folders
-- Entry types like "post" would appear as nodes alongside their parent collection "posts"
-- The tree would conflate structure (where things are) with schema (what can be created)
-
-**Simpler UI:**
-
-- Collections have child collections (nesting)
-- Entry types appear in "Add" buttons and type selectors
-- Clear separation between browsing (collections) and creating (entry types)
-
-**Consistent with filesystem:**
-
-- Collections map to directories
-- Entry types map to file types (like .md vs .json)
-- You navigate directories, not file types
-
-**Cardinality is a constraint:**
-
-- `maxItems: 1` is a validation rule, not a structural distinction
-- Entry types with `maxItems: 1` aren't fundamentally different from unlimited types
-- Both are entry types; the only difference is how many instances are allowed
-
-This design emerged from removing the old singleton concept, which conflated schema constraints with navigable structure.
-
-### Why is this architecture simpler than the old singleton model?
-
-The transition from singletons to entry types with cardinality constraints eliminated significant complexity:
-
-**Before (singleton model):**
-
-- Separate `SingletonConfig` type alongside `CollectionConfig`
-- Root-level singletons needed special detection ("is this path root-level?")
-- Flattening logic had separate code paths for singletons vs. collections
-- Navigation logic needed to distinguish between singleton nodes and collection nodes
-- API layer exposed both `type: 'collection'` and `type: 'entry'` (confusing naming)
-- Path resolution had singleton-first fallback logic
-
-**After (entry types model):**
-
-- Single `EntryTypeConfig` type used uniformly
-- Content root is just a collection with `parentPath: undefined`
-- All collections have identical structure regardless of nesting level
-- Entry types are schema metadata, not navigable nodes
-- `buildEditorCollections()` returns only collections
-- No special detection or fallback needed
-
-**Code reduction:**
-
-- Eliminated extensive "is root-level?" heuristics throughout the codebase
-- Removed separate singleton handling in navigation tree building
-- Simplified path resolution (no singleton-first logic)
-- Unified API responses (collections only, with entry types as configuration)
-
-**Conceptual simplification:**
-
-- Collections are structure (navigable containers)
-- Entry types are schema (what can be created)
-- Cardinality is a constraint (how many instances allowed)
-- No conflation of these three concepts
-
-The key insight: treating the content root as a normal collection eliminates the need to special-case root-level items. Every collection except the root has a parent, and the root is just the one collection with `parentPath: undefined`.
-
-### Benefits of the schema meta file pattern
-
-The schema meta file system offers several architectural benefits:
-
-**Co-location with content:**
-
-- Collection structure lives alongside content files, not in a separate config file
-- Easier to understand content organization when browsing the content directory
-- Adding a new collection is as simple as creating a folder with a `.collection.json`
-- Git diffs show collection structure changes in the same commits as content changes
-
-**Separation of concerns:**
-
-- Content structure (which collections exist, where they live) is separate from field definitions (what fields those collections have)
-- Content editors can understand collection hierarchy without reading TypeScript
-- Developers own the schema registry (TypeScript field definitions)
-- Content architects can modify collection structure and entry types without touching code
-
-**Reduced config file size:**
-
-- Config file can focus on operational settings (git, auth, branches)
-- Large nested schema trees can make config files unwieldy
-- Meta files distribute schema definition across the content directory
-
-**Flexibility:**
-
-- Different teams can manage different parts of the schema
-
-**Registry pattern enables reuse:**
-
-- Field definitions (like `postSchema`) are defined once and referenced multiple times
-- If multiple entry types share the same structure, they reference the same schema
-- Changing a schema definition updates all entry types that reference it
-- Type safety maintained because registry is TypeScript
-
-**Limitations:**
-
-- Requires async initialization (file I/O)
-- Schema registry must be maintained separately from meta files
-- References are validated at runtime, not TypeScript compile time
-
-### Why is AI content served from a separate route, not the editor API?
-
-The AI content handler uses a fundamentally different request model than the editor API:
-
-**No authentication or branch resolution**: The editor API authenticates every request and resolves a branch context. AI content is public, read-only, and always reads from the default branch. Routing through the editor API would require either bypassing the authentication pipeline (fragile, special-cased) or adding a no-auth mode to the pipeline (risky, increases security surface).
-
-**Different caching semantics**: The editor API is stateless per request -- each call resolves fresh branch state. The AI handler uses a lazy singleton cache that generates all content on first request and serves it from memory thereafter. These models are incompatible within a single handler.
-
-**Framework-native responses**: The AI handler returns standard `Response` objects, which is the natural API for Next.js route handlers. The editor API uses `CanopyRequest`/`CanopyResponse` abstractions for framework portability. Since AI content delivery is simpler and does not need framework-agnostic abstraction, the `Response` API is the better fit.
-
-**Minimal surface area**: The AI handler depends only on `ContentStore` and the schema -- it does not import the full service container, branch registry, authorization module, or any editor infrastructure. This keeps the dependency graph small and makes the feature easy to reason about in isolation.
-
-### Why in-memory caching for the AI route handler?
-
-The AI handler generates all content lazily on first request and caches the result as a singleton `Map<string, string>` in memory. In dev mode, the cache is invalidated on every request.
-
-**Why not per-request generation?** Generating AI content walks the entire content tree, reads every entry, and converts each to markdown. This is too expensive to repeat on every request (potentially hundreds of milliseconds for large sites).
-
-**Why not filesystem caching?** Filesystem caching would add complexity (cache directory management, invalidation logic, file I/O on every request). In-memory caching is simpler and faster. The AI content is regenerated on deploy (when the Lambda container restarts or the server process restarts), which matches the expected invalidation cadence for published content.
-
-**Why no cache in dev mode?** Developers edit content and expect to see changes immediately. Always regenerating in dev mode ensures the AI output reflects the latest content without requiring a manual cache clear.
-
-### Why two delivery mechanisms (route handler and static build)?
-
-Different deployment models need different content delivery strategies:
-
-**Route handler for server deployments**: When a Next.js server is running, the route handler serves AI content dynamically. This is simpler to set up (mount one route) and always reflects the latest published content.
-
-**Static build for static exports**: Pure static sites (e.g., `next export`) have no server at request time. The build utility writes files to `public/ai/` during the build step, and the hosting platform serves them as static assets. The CLI command (`npx canopycms generate-ai-content`) can also be used in CI/CD pipelines or as a standalone generation step.
-
-Both share the same generation engine and configuration, so the output is identical regardless of delivery mechanism. The separation is purely about how and when the content reaches consumers.
-
-### Why schema-driven markdown conversion instead of raw JSON export?
-
-The AI content generator uses schema field definitions to produce structured markdown rather than exposing the raw JSON data store:
-
-**Meaningful structure**: Schema-aware conversion renders field labels, descriptions, select option labels, and nested object/block structures as readable markdown sections. Raw JSON would require consumers to understand the CMS data model.
-
-**No internal identifiers**: The raw content store uses embedded IDs in filenames and stores reference fields as opaque ID strings. The markdown output strips these, producing clean paths and human-readable references.
-
-**Field description propagation**: The `description` field on schema configs gives AI consumers semantic context about each field's purpose. This metadata exists in the schema but not in the raw content files.
-
-**Custom transforms**: The field transform system lets adopters override the default conversion for specific fields (e.g., rendering a complex data structure as a markdown table). This extensibility point would not exist with a raw JSON export.
+Loading `.collection.json` files is file I/O and services need a fully resolved schema before they can operate, so initialization is async and its promise is created once at module load and cached: file scanning happens once per process or container lifecycle, every request awaits the same promise and gets the same services instance with its schema cache, and an initialization error is thrown once rather than per request. The alternatives are worse — synchronous initialization with lazy loading blocks a request on first access and needs locking to survive concurrent triggers, and per-request meta loading trades the cache for file I/O on the hot path.
 
 ### Why is reading sibling artifacts a transform primitive, not a content-model concept?
 
-Entry transforms can read files colocated with an entry via a directory-bound `readSibling` reader, rather than CanopyCMS modeling "sibling artifacts" as a first-class part of the content model.
+The page-render path already lets adopters read a colocated artifact through a build context's `meta.physicalPath`, and `readSibling` gives the AI exporter the same capability with the smallest possible primitive. Modelling sibling artifacts in the content model itself was deliberately deferred: it is premature for a single adopter and raises unresolved questions about how such artifacts interact with the editor UI, schema validation and the branch workflow, which a transform primitive answers by committing to none of them.
 
-**Parity with the render path, minimally**: The page-render path already lets adopters read a colocated artifact via a build context's `meta.physicalPath`. `readSibling` gives the AI exporter the same capability with the smallest possible primitive -- Canopy owns the IO and path-safety, and the entry's absolute path is never exposed (so it cannot leak into published `/ai/` output).
+### Why both a tree and a flat list?
 
-**Why not a first-class sibling-artifact concept?** Modeling sibling artifacts in the content model itself was considered and deliberately deferred. It is premature for a single adopter and raises unresolved questions about how such artifacts interact with the editor UI, schema validation, and the branch workflow. The transform primitive solves the immediate need without committing the content model to those answers.
+Content is inherently hierarchical, and the tree preserves that for navigation, breadcrumbs and sitemaps — but many common uses (static params, search indexes, RSS) naturally want a flat array, and making adopters flatten a tree themselves is both awkward and slower than a purpose-built listing. Both are separate from the AI content generator, which serves a different audience in a different format though all three walk the schema and filesystem.
