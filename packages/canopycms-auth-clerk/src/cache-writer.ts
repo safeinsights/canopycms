@@ -37,7 +37,6 @@ function unwrapClerkResponse<T>(response: ClerkResponse<T>): T[] {
 }
 
 export interface RefreshClerkCacheOptions {
-  /** Clerk Secret Key (CLERK_SECRET_KEY) */
   secretKey: string
   /** Directory to write cache files to (e.g., /mnt/efs/workspace/.cache) */
   cachePath: string
@@ -116,7 +115,6 @@ export async function refreshClerkCache(
   const memberships: Record<string, string[]> = {}
 
   if (useOrganizationsAsGroups) {
-    // Fetch all organizations (paginate)
     const clerkOrgs: ClerkOrganization[] = []
     let orgOffset = 0
     const orgPageSize = 100
@@ -137,7 +135,6 @@ export async function refreshClerkCache(
       memberCount: o.membersCount ?? o.members_count,
     }))
 
-    // Fetch memberships per user
     for (const user of clerkUsers) {
       try {
         const membershipResponse = (await clerkClient.users.getOrganizationMembershipList({
@@ -156,7 +153,6 @@ export async function refreshClerkCache(
     }
   }
 
-  // Write cache files atomically via snapshot directory + symlink swap
   await writeAuthCacheSnapshot(cachePath, {
     'users.json': { users },
     'orgs.json': { groups },

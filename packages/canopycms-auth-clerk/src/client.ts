@@ -6,7 +6,6 @@ import type { CanopyClientConfig } from 'canopycms/client'
 
 /**
  * Hook that provides Clerk-specific auth handlers and components for CanopyCMS editor.
- * Use this in your edit page to integrate Clerk authentication with CanopyCMS.
  *
  * @example
  * ```tsx

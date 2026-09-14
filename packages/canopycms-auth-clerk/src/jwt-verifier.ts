@@ -21,13 +21,9 @@ export interface ClerkJwtVerifierConfig {
 }
 
 /**
- * Creates a token verifier function that uses Clerk's JWT verification.
- *
  * When jwtKey (PEM public key) is provided, verification is **networkless** —
  * no Clerk API calls are made. This is used in Lambda environments
  * with no internet access.
- *
- * Returns a TokenVerifier compatible with CachingAuthPlugin.
  *
  * @deprecated Use `ClerkAuthPlugin.verifyTokenOnly()` instead. The plugin's method is
  * automatically wired into CachingAuthPlugin by `createNextCanopyContext()` in prod/dev.

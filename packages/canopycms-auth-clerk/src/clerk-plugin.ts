@@ -5,7 +5,6 @@ import { extractHeaders, type HeadersLike } from 'canopycms/auth'
 
 export interface ClerkAuthConfig {
   /**
-   * Use organizations as groups
    * @default true
    */
   useOrganizationsAsGroups?: boolean
@@ -28,7 +27,6 @@ export interface ClerkAuthConfig {
   authorizedParties?: string[]
 }
 
-// Clerk API Response Types
 // These handle both camelCase and snake_case variants from different Clerk SDK versions
 
 interface ClerkUserData {
@@ -68,10 +66,6 @@ function unwrapClerkResponse<T>(response: ClerkResponse<T>): T[] {
   return Array.isArray(response) ? response : response.data
 }
 
-/**
- * Map Clerk user data to Canopy user metadata.
- * Handles both camelCase and snake_case property variants.
- */
 function mapClerkUserData(clerkUser: ClerkUserData): {
   email?: string
   name: string
@@ -86,25 +80,19 @@ function mapClerkUserData(clerkUser: ClerkUserData): {
   }
 }
 
-/**
- * Get member count from organization, handling property name variants.
- */
 function getOrgMemberCount(org: ClerkOrganization): number | undefined {
   return org.membersCount ?? org.members_count
 }
 
 /**
- * Extract token from headers.
  * Looks for Bearer token in Authorization header or __session cookie.
  */
 export const extractToken = (headers: HeadersLike): string | null => {
-  // Try Authorization header first
   const authHeader = headers.get('Authorization')
   if (authHeader?.startsWith('Bearer ')) {
     return authHeader.slice(7)
   }
 
-  // Try __session cookie
   const cookie = headers.get('Cookie')
   if (cookie) {
     const match = cookie.match(/__session=([^;]+)/)
@@ -117,7 +105,6 @@ export const extractToken = (headers: HeadersLike): string | null => {
 }
 
 /**
- * Clerk authentication plugin implementation for CanopyCMS.
  * Uses @clerk/backend for framework-agnostic JWT verification.
  */
 export class ClerkAuthPlugin implements AuthPlugin {
@@ -199,7 +186,6 @@ export class ClerkAuthPlugin implements AuthPlugin {
     const secretKey = this.getSecretKey()
     const clerkClient = this.getClerkClient()
     try {
-      // Extract headers from context (supports CanopyRequest and Headers)
       const headers = extractHeaders(context)
       if (!headers) {
         return {
@@ -208,13 +194,11 @@ export class ClerkAuthPlugin implements AuthPlugin {
         }
       }
 
-      // Extract token from headers
       const token = extractToken(headers)
       if (!token) {
         return { success: false, error: 'No authentication token found' }
       }
 
-      // Verify the token
       const verifyOptions: Parameters<typeof clerkVerifyToken>[1] = {
         secretKey,
       }
@@ -235,10 +219,8 @@ export class ClerkAuthPlugin implements AuthPlugin {
 
       const userId = payload.sub
 
-      // Get user details from Clerk
       const clerkUser = (await clerkClient.users.getUser(userId)) as ClerkUserData
 
-      // Get organizations as external groups
       let externalGroups: string[] | undefined
       if (this.config.useOrganizationsAsGroups) {
         const orgs = (await clerkClient.users.getOrganizationMembershipList({
@@ -251,7 +233,6 @@ export class ClerkAuthPlugin implements AuthPlugin {
 
       const userData = mapClerkUserData(clerkUser)
 
-      // Return identity only - core will apply bootstrap admins
       return {
         success: true,
         user: {
@@ -364,9 +345,6 @@ export class ClerkAuthPlugin implements AuthPlugin {
   }
 }
 
-/**
- * Factory function to create a Clerk auth plugin instance
- */
 export const createClerkAuthPlugin: AuthPluginFactory<ClerkAuthConfig> = (config) => {
   return new ClerkAuthPlugin(config)
 }
