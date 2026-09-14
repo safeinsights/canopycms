@@ -13,7 +13,6 @@ export interface GroupCardProps {
   onAddMember: (groupId: CanopyGroupId, userId: CanopyUserId) => void
   onRemoveMember: (groupId: CanopyGroupId, userId: CanopyUserId) => void
   onGetUserMetadata?: (userId: string) => Promise<UserSearchResult | null>
-  // User search state
   showUserSearch: boolean
   searchQuery: string
   searchResults: UserSearchResult[]

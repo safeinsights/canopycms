@@ -24,7 +24,6 @@ export const ExternalGroupsTab: React.FC<ExternalGroupsTabProps> = ({
   onSearchQueryChange,
   canSearch,
 }) => {
-  // Read-only view (when !canEdit)
   if (!canEdit) {
     return (
       <div

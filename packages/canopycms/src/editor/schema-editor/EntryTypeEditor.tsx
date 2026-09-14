@@ -3,13 +3,9 @@
 /**
  * EntryTypeEditor - Modal for creating/editing entry types within a collection.
  *
- * Entry types define the structure of content items:
- * - name: Machine-readable identifier (e.g., "post", "page")
- * - label: Human-readable display name
- * - format: Content format (md, mdx, json, yaml)
- * - fields: Schema registry key for field definitions
- * - default: Whether this is the default type for new items
- * - maxItems: Optional limit on number of items (1 = singleton-like)
+ * An entry type has a name (machine-readable id), label, format (md/mdx/json/
+ * yaml), schema (registry key for field definitions), a default flag, and an
+ * optional maxItems limit (1 behaves like a singleton).
  */
 
 import { useState, useCallback, useEffect } from 'react'
@@ -41,7 +37,6 @@ export interface EntryTypeFormData {
 }
 
 export interface EntryTypeEditorProps {
-  /** Whether the modal is open */
   isOpen: boolean
   /** Entry type being edited (null for create mode) */
   editingEntryType: {
@@ -57,13 +52,9 @@ export interface EntryTypeEditorProps {
   availableSchemas: string[]
   /** Existing entry type names in the collection (for duplicate validation) */
   existingEntryTypeNames?: string[]
-  /** Called when save is clicked */
   onSave: (data: CreateEntryTypeInput | UpdateEntryTypeInput, isNew: boolean) => void
-  /** Called when modal is closed */
   onClose: () => void
-  /** Whether a save operation is in progress */
   isSaving?: boolean
-  /** Error message to display */
   error?: string | null
 }
 

@@ -6,13 +6,10 @@ import { Alert, Button, Group, Modal, Progress, Stack, Tabs, Text, TextInput } f
 import { Dropzone, type FileRejection } from '@mantine/dropzone'
 import { IconAlertCircle, IconUpload } from '@tabler/icons-react'
 
-// Type-only: erased at compile time, so this file carries no runtime
-// dependency on `@mdxeditor/editor` and can be unit-tested (and statically
-// imported by MarkdownField.tsx) without pulling in the mdxeditor bundle -
-// the realm-cell wiring (`useCellValues`/`usePublisher`/`saveImage$`/
-// `closeImageDialog$`) lives in a small bridge component defined inline
-// inside MarkdownField's lazy dynamic-import factory, which passes this
-// component's props down as plain values.
+// Type-only: erased at compile time, so this file has no runtime dependency on
+// `@mdxeditor/editor` and can be unit-tested without pulling in the mdxeditor
+// bundle. The realm-cell wiring lives in a bridge component inside
+// MarkdownField.tsx's lazy import factory, which passes these down as plain props.
 import type {
   EditingImageDialogState,
   InactiveImageDialogState,

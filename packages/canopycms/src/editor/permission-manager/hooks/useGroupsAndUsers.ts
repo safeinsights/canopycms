@@ -8,7 +8,6 @@ export interface UseGroupsAndUsersOptions {
 }
 
 export interface UseGroupsAndUsersResult {
-  // Groups
   groups: PermissionGroupOption[]
   groupSelectData: GroupSelectItem[]
   filteredGroups: GroupSelectItem[]
@@ -20,7 +19,6 @@ export interface UseGroupsAndUsersResult {
   setShowGroupSearch: (show: boolean) => void
   clearGroupLoadError: () => void
 
-  // Users
   userSearchResults: UserSearchResult[]
   isSearchingUsers: boolean
   userSearchQuery: string
@@ -35,14 +33,12 @@ export function useGroupsAndUsers({
   onSearchUsers,
   canEdit,
 }: UseGroupsAndUsersOptions): UseGroupsAndUsersResult {
-  // Groups state
   const [groups, setGroups] = useState<PermissionGroupOption[]>([])
   const [isLoadingGroups, setIsLoadingGroups] = useState(false)
   const [groupLoadError, setGroupLoadError] = useState<string | null>(null)
   const [groupSearchQuery, setGroupSearchQuery] = useState('')
   const [showGroupSearch, setShowGroupSearch] = useState(false)
 
-  // User search state
   const [userSearchResults, setUserSearchResults] = useState<UserSearchResult[]>([])
   const [isSearchingUsers, setIsSearchingUsers] = useState(false)
   const [userSearchQuery, setUserSearchQuery] = useState('')
@@ -123,7 +119,6 @@ export function useGroupsAndUsers({
   }, [])
 
   return {
-    // Groups
     groups,
     groupSelectData,
     filteredGroups,
@@ -135,7 +130,6 @@ export function useGroupsAndUsers({
     setShowGroupSearch,
     clearGroupLoadError,
 
-    // Users
     userSearchResults,
     isSearchingUsers,
     userSearchQuery,

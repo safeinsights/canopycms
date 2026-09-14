@@ -3,13 +3,10 @@
 /**
  * CollectionEditor - Modal for creating/editing collections.
  *
- * Collections are containers for content items with:
- * - name: Machine-readable identifier (e.g., "posts", "pages")
- * - label: Human-readable display name
- * - entries: Array of entry types defining what content can be created
- *
- * When creating a collection, at least one entry type is required.
- * When editing, only name and label can be changed (entry types are managed separately).
+ * A collection has a name (machine-readable id), label (display name), and
+ * entries (entry types defining what content can be created). Create mode
+ * requires at least one entry type; edit mode only allows changing name and
+ * label (entry types are managed separately).
  */
 
 import { useState, useCallback, useEffect } from 'react'
@@ -75,7 +72,6 @@ export interface ExistingCollection {
 }
 
 export interface CollectionEditorProps {
-  /** Whether the modal is open */
   isOpen: boolean
   /** Collection being edited (null for create mode) */
   editingCollection: ExistingCollection | null
@@ -101,11 +97,8 @@ export interface CollectionEditorProps {
     collectionPath: LogicalPath,
     entryTypeName: string,
   ) => Promise<SchemaOpResult> | void
-  /** Called when modal is closed */
   onClose: () => void
-  /** Whether a save operation is in progress */
   isSaving?: boolean
-  /** Error message to display */
   error?: string | null
 }
 
@@ -155,7 +148,7 @@ export function CollectionEditor({
           label: editingCollection.label || '',
           entries: [], // Entry types are managed separately in edit mode
         })
-        // Extract slug from logical path (e.g., "content/posts.abc123" -> "posts")
+        // Slug is the logical path's last segment before its embedded id (e.g. "posts.abc123" -> "posts").
         const pathParts = editingCollection.logicalPath.split('/')
         const lastPart = pathParts[pathParts.length - 1]
         const slugPart = lastPart?.split('.')[0] || ''
@@ -185,8 +178,8 @@ export function CollectionEditor({
       setValidationError('Name is required')
       return false
     }
-    // Enforced in both create and edit mode (UI-M3): the server rejects
-    // unsafe names, but validate here for immediate feedback.
+    // Enforced in both create and edit mode: the server rejects unsafe
+    // names too, but this validates for immediate feedback.
     if (!/^[a-z][a-z0-9-]*$/.test(formData.name)) {
       setValidationError(
         'Name must start with a letter and contain only lowercase letters, numbers, and hyphens',
@@ -223,7 +216,6 @@ export function CollectionEditor({
       }
       onSave(updates, false)
     } else {
-      // Create new collection
       const createData: CreateCollectionInput = {
         name: formData.name.trim(),
         entries: formData.entries,
@@ -274,9 +266,8 @@ export function CollectionEditor({
             return
           }
         } catch (err) {
-          // Genuine last resort: onAddEntryType/onUpdateEntryType return result
-          // objects by contract and are not expected to throw, but guard here
-          // in case a caller violates that contract.
+          // Last resort: onAddEntryType/onUpdateEntryType return result objects
+          // by contract and aren't expected to throw; guards a caller violating it.
           setEntryTypeError(getErrorMessage(err))
           return
         } finally {
@@ -365,7 +356,7 @@ export function CollectionEditor({
             </Alert>
           )}
 
-          {/* Name - metadata field in .collection.json, independent of directory slug */}
+          {/* Name is metadata in .collection.json, independent of the directory slug */}
           <TextInput
             label="Name"
             description="Machine-readable identifier (e.g., posts, pages, articles)"
@@ -479,7 +470,6 @@ export function CollectionEditor({
             Add Entry Type
           </Button>
 
-          {/* Actions */}
           <Group justify="flex-end" gap="sm" mt="md">
             <Button variant="subtle" onClick={onClose} disabled={isSaving}>
               Cancel

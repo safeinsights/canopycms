@@ -26,7 +26,6 @@ export const PermissionManager: React.FC<PermissionManagerProps> = ({
   const [error, setError] = useState<string | null>(null)
   const [activeLevel, setActiveLevel] = useState<PermissionLevel>('read')
 
-  // Tree state management
   const {
     annotatedTree,
     expandedNodes,
@@ -47,7 +46,6 @@ export const PermissionManager: React.FC<PermissionManagerProps> = ({
     contentTree,
   })
 
-  // Groups and user search
   const {
     groupSelectData,
     filteredGroups,
@@ -70,7 +68,6 @@ export const PermissionManager: React.FC<PermissionManagerProps> = ({
     canEdit,
   })
 
-  // Save handler
   const handleSave = useCallback(async () => {
     if (!onSave) return
 
@@ -86,13 +83,11 @@ export const PermissionManager: React.FC<PermissionManagerProps> = ({
     }
   }, [onSave, localPermissions, setIsDirty])
 
-  // Discard handler
   const handleDiscard = useCallback(() => {
     resetPermissions()
     setError(null)
   }, [resetPermissions])
 
-  // User add handler with search state cleanup
   const handleAddUser = useCallback(
     (nodePath: string, level: PermissionLevel, userId: string) => {
       const treeNode = findTreeNode(annotatedTree, nodePath)
@@ -108,14 +103,12 @@ export const PermissionManager: React.FC<PermissionManagerProps> = ({
         })
       }
 
-      // Clear search state
       setUserSearchQuery('')
       toggleUserSearch(false)
     },
     [annotatedTree, localPermissions, updateNodePermission, setUserSearchQuery, toggleUserSearch],
   )
 
-  // User remove handler
   const handleRemoveUser = useCallback(
     (nodePath: string, level: PermissionLevel, userId: string) => {
       const treeNode = findTreeNode(annotatedTree, nodePath)
@@ -132,7 +125,6 @@ export const PermissionManager: React.FC<PermissionManagerProps> = ({
     [annotatedTree, localPermissions, updateNodePermission],
   )
 
-  // Group add handler
   const handleAddGroup = useCallback(
     (nodePath: string, level: PermissionLevel, groupId: string) => {
       const treeNode = findTreeNode(annotatedTree, nodePath)
@@ -160,7 +152,6 @@ export const PermissionManager: React.FC<PermissionManagerProps> = ({
     ],
   )
 
-  // Group remove handler
   const handleRemoveGroup = useCallback(
     (nodePath: string, level: PermissionLevel, groupId: string) => {
       const treeNode = findTreeNode(annotatedTree, nodePath)

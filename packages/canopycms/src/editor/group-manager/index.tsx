@@ -21,7 +21,6 @@ export const GroupManager: React.FC<GroupManagerProps> = ({
   onSearchExternalGroups,
   onClose: _,
 }) => {
-  // Group state management
   const {
     groups,
     isDirty,
@@ -40,13 +39,9 @@ export const GroupManager: React.FC<GroupManagerProps> = ({
     onSave,
   })
 
-  // User search for adding members
   const userSearch = useUserSearch({ onSearchUsers })
-
-  // External group search
   const externalGroupSearch = useExternalGroupSearch({ onSearchExternalGroups })
 
-  // Modal state for creating/editing groups
   const [isModalOpen, setIsModalOpen] = useState(false)
   const [editingGroup, setEditingGroup] = useState<InternalGroup | null>(null)
   const [formData, setFormData] = useState<GroupFormData>({

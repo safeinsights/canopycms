@@ -60,9 +60,9 @@ const MDXEditorLazy = React.lazy(async () => {
   }
 
   /**
-   * Bridges mdxeditor's realm cells (only reachable once this lazy chunk has
+   * Bridges mdxeditor's realm cells (reachable only once this lazy chunk has
    * loaded) into MdxImageDialog's plain-props interface, so that component
-   * itself never imports `@mdxeditor/editor` at runtime. Same pattern as
+   * never imports `@mdxeditor/editor` at runtime — same pattern as
    * `EntryLinkToolbarButton` above.
    */
   const MdxImageDialogBridge: React.FC = () => {
@@ -206,12 +206,10 @@ export const MarkdownField: React.FC<MarkdownFieldProps> = ({
   const lastExternalValue = useRef(value)
   const apiClient = useApiClient()
 
-  // Drives both MDXEditor's own drag/drop/paste upload flow and the Upload
-  // tab in our custom image dialog (MdxImageDialog) via the SAME presign/
-  // finalize-or-proxied pipeline used everywhere else in the editor (see
-  // media/upload-asset.ts). Stable across renders (memoized on the API
-  // client, which ApiClientProvider itself memoizes) so MDXEditor's plugin
-  // list doesn't churn on every keystroke.
+  // Drives both MDXEditor's drag/drop/paste upload and the custom image
+  // dialog's Upload tab via the same presign/finalize-or-proxied pipeline
+  // (media/upload-asset.ts). Memoized on the API client (itself memoized by
+  // ApiClientProvider) so MDXEditor's plugin list doesn't churn per keystroke.
   const imageUploadHandler = useCallback(
     async (file: File) => {
       const asset = await uploadAsset(apiClient, file)

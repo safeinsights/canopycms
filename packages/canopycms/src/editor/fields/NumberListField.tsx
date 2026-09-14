@@ -27,16 +27,14 @@ const parseTag = (tag: string): number | undefined => {
 /**
  * Editor for `type: 'number', list: true` fields.
  *
- * Mirrors `StringListField`'s approach (Mantine's `TagsInput`: type + Enter
- * adds an item, Backspace on an empty input removes the last one) since
- * there is no numeric equivalent in Mantine. Tags are parsed to numbers on
- * change; a tag that doesn't parse to a finite number is not stored (it
- * would be `NaN`, or a spurious `0` for a blank one).
+ * Mirrors `StringListField`'s `TagsInput` approach (type + Enter adds an
+ * item, Backspace on empty removes the last) since Mantine has no numeric
+ * equivalent. A tag that doesn't parse to a finite number is dropped rather
+ * than stored as `NaN`.
  *
- * A rejected tag is REPORTED, not silently swallowed. Dropping it quietly
- * looked identical to accepting it - the tag vanished on Enter with no
- * error, no value, and nothing distinguishing "typo" from "the field
- * doesn't work" - so the rejected text is named in the field's error slot.
+ * A dropped tag is reported, not silently swallowed — otherwise it vanished
+ * on Enter indistinguishably from being accepted, with nothing to tell a
+ * typo from a broken field — so rejected text is named in the error slot.
  */
 export const NumberListField: React.FC<NumberListFieldProps> = ({
   id,

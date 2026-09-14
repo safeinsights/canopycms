@@ -11,10 +11,6 @@ export interface PermissionLevelBadgeProps {
   inherited?: PermissionTarget
 }
 
-/**
- * Displays a badge for a permission level.
- * Shows filled badge for direct permissions, outlined for inherited.
- */
 export const PermissionLevelBadge: React.FC<PermissionLevelBadgeProps> = ({
   level,
   target,

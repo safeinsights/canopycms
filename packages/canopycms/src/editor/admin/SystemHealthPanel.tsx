@@ -1,14 +1,13 @@
 'use client'
 
 /**
- * SystemHealthPanel - Admin-only modal surfacing the observability
- * endpoints from PR-A1..A4: task-queue/worker liveness (Overview), task
- * recovery (Tasks), and branch-directory recovery (Branches).
+ * SystemHealthPanel - Admin-only modal surfacing observability endpoints:
+ * task-queue/worker liveness (Overview), task recovery (Tasks), and
+ * branch-directory recovery (Branches).
  *
- * Visibility is entirely the caller's responsibility -- Editor.tsx only
- * renders/opens this for admins (see isAdmin(userContext?.groups) there).
- * This component does not re-check that itself, same as GroupManager and
- * PermissionManager rely on their callers for that gate.
+ * Visibility is the caller's responsibility: Editor.tsx renders/opens this
+ * only for admins (see isAdmin(userContext?.groups)); this component does not
+ * re-check that itself, same as GroupManager and PermissionManager.
  */
 
 import {
@@ -67,20 +66,16 @@ function formatAgeMs(ms: number): string {
 }
 
 /**
- * Whether the Purge button should be disabled for a corrupt-metadata
- * or orphan row, and the tooltip explaining why.
- * - Base branch: never purgeable -- the server already 400s
- *   ('The base branch directory can never be purged', see
- *   purgeBranchDirHandler in api/admin-branch-health.ts); this is UX
- *   honesty, not a new rail.
- * - Fresh provisioning lock: provisioning may genuinely be in progress
- *   (mirrors the server's [H1] freshness rail) -- applies to BOTH kinds,
- *   not just orphans.
+ * Whether the Purge button should be disabled for this row, and why (tooltip).
+ * - Base branch: never purgeable — the server already 400s this (UX
+ *   consistency, not a new rail); see purgeBranchDirHandler in
+ *   api/admin-branch-health.ts.
+ * - Fresh provisioning lock ([H1] freshness rail): provisioning may
+ *   genuinely be in progress, for either row kind.
  * - Orphan-only youth rail: a directory younger than
- *   ORPHAN_YOUTH_THRESHOLD_MS may still be a clone in progress that hasn't
- *   written branch.json yet. Corrupt-metadata dirs are exempt from this
- *   server-side (a parseable-then-corrupted file isn't a mid-clone
- *   signature), so they're exempt here too.
+ *   ORPHAN_YOUTH_THRESHOLD_MS may still be mid-clone, before branch.json is
+ *   written. Corrupt-metadata dirs are exempt server-side too (a
+ *   parseable-then-corrupted file isn't a mid-clone signature).
  */
 function purgeGateFor(entry: BranchHealthEntry): { disabled: boolean; tooltip?: string } {
   if (entry.isBaseBranch) {
@@ -592,12 +587,11 @@ function BranchHealthRow({
 }) {
   if (entry.kind === 'healthy' && entry.branch) {
     const b = entry.branch
-    // Mirror the rebase loop's skip logic (worker/rebase.ts):
-    // the worker rebases every branch except 'submitted'/'approved' (under an
-    // active PR) and 'archived' (already merged). Stated as an exclusion list
-    // rather than `status === 'editing'` so that a status added later shows its
-    // rebase failures by default instead of silently hiding them -- the bug
-    // this replaced.
+    // Mirrors the rebase loop's skip logic (worker/rebase.ts): the worker
+    // rebases every branch except 'submitted'/'approved' (under an active PR)
+    // and 'archived' (already merged). An exclusion list, not `status ===
+    // 'editing'`, so a status added later still shows its rebase failures by
+    // default instead of silently hiding them.
     const showRebaseFailure =
       !['submitted', 'approved', 'archived'].includes(b.status) && !!b.rebaseFailure
     const canMarkMerged =
@@ -686,13 +680,12 @@ function BranchHealthRow({
               </Tooltip>
             )}
             {/*
-              DIAGNOSIS ONLY, DELIBERATELY NO BUTTON. Editors hitting a
-              duplicate get a 409 saying an administrator must resolve it;
-              without this, that administrator had no way to see which branch
-              was even affected. The repair endpoint exists, but putting its
-              trigger in this row would sit it beside Purge (which trashes the
-              whole branch directory) -- a misroute this row cannot afford.
-              The action UI is tracked in
+              Diagnosis only, deliberately no button: a duplicate-hitting editor
+              sees a 409 saying an admin must resolve it, with no way to see
+              which branch was affected without this. The repair endpoint
+              exists, but putting its trigger here would sit it beside Purge
+              (which trashes the whole branch directory) — a misroute this row
+              cannot afford. Action UI tracked in
               .claude/future-tasks/duplicate-content-id-repair-ui.md.
             */}
             {!!entry.duplicateContentIds?.length && (

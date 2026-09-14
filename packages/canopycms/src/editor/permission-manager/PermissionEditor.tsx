@@ -23,7 +23,6 @@ export interface PermissionEditorProps {
   groups: GroupSelectItem[]
   /** Whether this node is selected (used for search panel visibility) */
   isSelected: boolean
-  // User search
   userSearchResults: UserSearchResult[]
   isSearchingUsers: boolean
   showUserSearch: boolean
@@ -34,7 +33,6 @@ export interface PermissionEditorProps {
   onToggleUserSearch: (show: boolean) => void
   onAddUser: (path: string, level: PermissionLevel, userId: string) => void
   onRemoveUser: (path: string, level: PermissionLevel, userId: string) => void
-  // Group search
   showGroupSearch: boolean
   groupSearchQuery: string
   filteredGroups: GroupSelectItem[]
@@ -88,7 +86,7 @@ export const PermissionEditor: React.FC<PermissionEditorProps> = ({
           {node.type === 'folder' ? '/**' : ''}
         </Text>
 
-        {/* Level tabs - keepMounted={false} ensures only active panel is in DOM */}
+        {/* keepMounted={false} ensures only the active panel is in the DOM */}
         <Tabs
           value={activeLevel}
           onChange={(v) => onSetActiveLevel(v as PermissionLevel)}

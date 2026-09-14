@@ -51,7 +51,6 @@ export interface GroupSelectItem {
   source: GroupSource
 }
 
-/** Re-export for convenience */
 export type {
   PathPermission,
   PermissionLevel,

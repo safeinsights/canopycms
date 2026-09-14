@@ -1,7 +1,4 @@
-/**
- * Detect if we're running in a test environment.
- * Playwright and other E2E frameworks often set specific globals.
- */
+/** True when running in a test environment (Playwright, Cypress, or an E2E flag sets these globals). */
 export function isTestEnvironment(): boolean {
   if (typeof window === 'undefined') return false
 
@@ -14,11 +11,10 @@ export function isTestEnvironment(): boolean {
 }
 
 /**
- * Get notification duration based on environment.
- * Tests get longer durations to be more reliable.
+ * Notification duration, longer in tests for reliability.
  *
- * @param defaultMs - Default duration in milliseconds for production (default: 4000)
- * @returns Duration in milliseconds (15000ms for tests, defaultMs for production)
+ * @param defaultMs - Default in milliseconds for production (default: 4000)
+ * @returns 15000ms in tests, defaultMs otherwise
  */
 export function getNotificationDuration(defaultMs = 4000): number {
   return isTestEnvironment() ? 15000 : defaultMs

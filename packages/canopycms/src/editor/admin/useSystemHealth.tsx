@@ -3,11 +3,10 @@
 /**
  * useSystemHealth - Data + actions for the admin System Health panel.
  *
- * Mirrors useGroupManager's shape: loads on open, exposes typed action
- * helpers that each notify then refresh(). Unlike useGroupManager, this also
- * polls every 30s while the panel stays open (cleared on close/unmount) --
- * queue depth and worker liveness go stale quickly, and the panel has no
- * other way to catch a worker coming back up or a task finishing.
+ * Mirrors useGroupManager's shape (load on open, typed actions that notify
+ * then refresh()), but also polls every 30s while open (cleared on
+ * close/unmount) since queue depth and worker liveness go stale quickly and
+ * the panel has no other way to catch a worker recovering or a task finishing.
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react'
@@ -25,9 +24,9 @@ const POLL_INTERVAL_MS = 30_000
 
 /**
  * Crash-loop rider window: a worker that fatally exits and restarts
- * repeatedly can flap between 'absent' and 'alive' liveness and never sit
- * still long enough to read 'stale' -- surfacing a recent lastFatalError
- * regardless of liveness state is the only way the panel catches that.
+ * repeatedly can flap between 'absent' and 'alive' and never sit still long
+ * enough to read 'stale' — surfacing a recent lastFatalError regardless of
+ * liveness state is the only way the panel catches that.
  */
 const CRASH_LOOP_WINDOW_MS = 30 * 60_000
 
@@ -47,9 +46,8 @@ export interface UseSystemHealthReturn {
   statusLoading: boolean
   /**
    * True when workerStatus.lastFatalError exists and is < 30 min old, as of
-   * the last fetch. Computed at fetch time (not in the component's render)
-   * so the panel never calls Date.now() during render -- see the
-   * react-hooks/purity rule this sidesteps.
+   * the last fetch. Computed at fetch time, not in the component's render, so
+   * the panel never calls Date.now() during render (react-hooks/purity).
    */
   isRecentFatalError: boolean
   tasks: AdminTasksData | null
@@ -83,9 +81,8 @@ export function useSystemHealth(options: UseSystemHealthOptions): UseSystemHealt
   const [error, setError] = useState<string | null>(null)
 
   // refresh() has no status argument, so it needs the CURRENT taskStatus
-  // without taking a dependency on it (that would tear down/rebuild the
-  // polling interval below every time the Tasks tab's segmented control
-  // changes). A ref sidesteps the stale-closure problem cleanly.
+  // without depending on it (that would tear down/rebuild the poll interval
+  // below on every Tasks-tab status change) — a ref sidesteps the stale closure.
   const taskStatusRef = useRef(taskStatus)
   taskStatusRef.current = taskStatus
 

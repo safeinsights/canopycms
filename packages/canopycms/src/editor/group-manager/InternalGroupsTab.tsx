@@ -46,7 +46,6 @@ export const InternalGroupsTab: React.FC<InternalGroupsTabProps> = ({
   onHideSearch,
   canSearch,
 }) => {
-  // Read-only view
   if (!canEdit) {
     return (
       <div
@@ -90,7 +89,6 @@ export const InternalGroupsTab: React.FC<InternalGroupsTabProps> = ({
     )
   }
 
-  // Editable view
   return (
     <ScrollArea style={{ height: '100%' }} pt="md">
       <Stack gap="sm" pb="md">

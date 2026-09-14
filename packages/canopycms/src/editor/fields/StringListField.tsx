@@ -33,11 +33,10 @@ export const StringListField: React.FC<StringListFieldProps> = ({
       value={value}
       size="sm"
       onChange={onChange}
-      // Faithful generic-list semantics, not tag ergonomics: no comma
-      // splitting ("New York, NY" stays one item — TagsInput's default
-      // splitChars would break it in two) and duplicates are legitimate
-      // list data (the default silently drops them, so existing file data
-      // couldn't round-trip).
+      // Faithful generic-list semantics, not tag ergonomics: no comma-splitting
+      // ("New York, NY" stays one item) and duplicates are legitimate list
+      // data — TagsInput's defaults would break both, so existing file data
+      // couldn't round-trip.
       splitChars={[]}
       allowDuplicates
       data-canopy-field={dataCanopyField}

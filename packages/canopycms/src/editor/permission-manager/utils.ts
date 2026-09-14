@@ -20,9 +20,9 @@ export function findTreeNode(node: TreeNode, path: string): TreeNode | null {
 /**
  * Transforms API/editor collections into permission tree nodes.
  *
- * Handles the case where buildEditorCollections returns a structure with the content root
- * as a top-level collection. Avoids double-wrapping by detecting when a collection IS the
- * content root itself and processing its children directly.
+ * Skips wrapping when `collections` is a single item that IS the content root
+ * itself (as `buildEditorCollections` returns), processing its children
+ * directly instead of double-nesting.
  *
  * @param collections - Array of EditorCollection from API or buildEditorCollections
  * @param contentRoot - The content root path (e.g., "content")
@@ -66,11 +66,11 @@ export function convertCollectionsToTreeNodes(
 }
 
 /**
- * Merges filesystem content into schema tree for files not defined in the schema.
+ * Merges filesystem content into the schema tree.
  *
- * Used to add files that exist in the filesystem but aren't explicitly defined in
- * the schema (e.g., entries created manually via the filesystem). Only adds files,
- * not folders - folders are expected to come from the schema.
+ * Adds files that exist in the filesystem but aren't defined in the schema
+ * (e.g., entries created manually), never folders — folders are expected to
+ * come from the schema.
  *
  * @param schemaNode - TreeNode from schema to merge into (mutated)
  * @param contentNode - Actual filesystem content tree from API
