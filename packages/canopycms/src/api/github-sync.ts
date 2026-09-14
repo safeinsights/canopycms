@@ -140,8 +140,8 @@ export async function syncSubmitPr(
 }
 
 /**
- * Convert a PR to draft (used by withdraw and request-changes).
- * Uses githubService directly if available, otherwise queues a task.
+ * Used by withdraw and request-changes. Uses githubService directly if
+ * available, otherwise queues a task.
  */
 export async function syncConvertToDraft(ctx: ApiContext, context: BranchContext): Promise<void> {
   if (!context.branch.pullRequestNumber) return

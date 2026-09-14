@@ -39,13 +39,13 @@ export type {
 } from './admin-branch-health'
 
 /**
- * 60_000 = DEFAULT_LOCK_STALE_MS in worker/cms-worker.ts, hardcoded here
- * rather than imported/threaded through config: an adopter overriding
- * `lockStaleMs` on their worker will skew this classification (documented
- * limitation — the observability endpoint doesn't know the worker's actual
- * config). +90_000 absorbs the EFS/NFS attribute-cache staleness window: a
- * freshly-refreshed heartbeat can still appear up to ~60s old to a reader on
- * a different host, since NFS clients cache file attributes.
+ * 60_000 = DEFAULT_LOCK_STALE_MS in worker/cms-worker.ts, hardcoded rather
+ * than threaded through config: an adopter who overrides `lockStaleMs` skews
+ * this classification (the endpoint doesn't know the worker's actual
+ * config). +90_000 absorbs the EFS/NFS attribute-cache staleness window (see
+ * docs/concurrency.md's "Residual staleness windows" (A)), large enough that
+ * a freshly-refreshed heartbeat won't misreport as stale to a reader on a
+ * different host.
  */
 const LIVENESS_THRESHOLD_MS = 60_000 + 90_000
 

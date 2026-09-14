@@ -319,50 +319,29 @@ const purgeBranchDirHandler = async (
 
 /**
  * Repair a corrupt branch.json by archiving it (forensics preserved as
- * `branch.json.corrupt-{STAMP}`, ignored by future scans since it doesn't
- * match the exact `branch.json` name) and recreating defaults via the
- * normal save() path. Unlike purge, the base branch IS a valid target here
- * -- a corrupt BASE branch.json is exactly the degraded-service scenario
- * this handler exists to fix.
+ * `branch.json.corrupt-{STAMP}`) and recreating defaults via save(). Unlike
+ * purge, the base branch IS a valid target -- a corrupt BASE branch.json is
+ * exactly the degraded-service scenario this handler exists to fix.
  *
- * [M4] Lock sequence: withOccFileLock is NOT reentrant, and save() takes it
- * internally, so the rename must happen and the lock must be RELEASED
- * (exiting the withOccFileLock callback) before save() runs -- calling
- * save() while still holding the lock would deadlock against itself.
+ * Lock sequence: withOccFileLock is NOT reentrant and save() takes its own
+ * hold, so the archive rename must complete and the lock must be RELEASED
+ * before save() runs, or save() would deadlock against itself. The
+ * provisioning lock stays held across the whole archive+save sequence, same
+ * order as purge (provisioning -> branch.json) so the two operations can
+ * never deadlock each other; without that hold, a concurrent purge could
+ * trash the directory mid-sequence and have save() resurrect a
+ * metadata-only ghost of it.
  *
- * The provisioning lock is held across the ENTIRE archive+save
- * sequence (acquired before withOccFileLock, released only after save()
- * completes), same lock order as purge (provisioning -> branch.json) so the
- * two can never deadlock against each other. Without this, a concurrent
- * purge could trash the directory in the window between this handler
- * releasing withOccFileLock (required before save(), per [M4] above) and
- * save() actually running -- save() would then resurrect a metadata-only
- * ghost of a directory purge just moved to trash.
- *
- * ## Reset, not recovered -- and why
- *
- * save()'s defaults-merge sees no existing record once branch.json is
- * archived out of the way, so a `submitted` (write-locked) branch comes back
- * `editing` (unlocked), `access` ACLs are dropped to `{}`, and `createdBy`
- * becomes the ADMIN RUNNING THIS REPAIR, not the branch's real creator. This
- * handler deliberately does NOT attempt to recover those three fields from
- * the corrupt file, even though it is sometimes technically "partially
- * parseable" (e.g. valid JSON with a truncated tail, or a stray character
- * breaking otherwise-valid JSON): branch.json is written via
- * `writeOccJsonFile`, which is atomic (temp-file + rename/link, see
- * utils/occ-json-write.ts), so a genuinely corrupt file on disk is not
- * ordinary truncated-write debris -- it got that way some other, less
- * predictable way. `status`/`access` are security-adjacent (branch
- * protection and per-path ACLs); silently reinstating a best-effort guess
- * parsed out of a file that failed strict JSON.parse risks resurrecting
- * WRONG security state with no human review, which is worse than a clean,
- * clearly-reported reset. The archived file (`archivedAs`) is preserved
- * precisely so a human CAN recover the real values with full context (open
- * it, cross-check the GitHub PR, ask the editor) -- that is the safe
- * recovery path, not automation. What was missing before this fix was any
- * signal that a reset happened at all; the `reset` field on the response
- * closes that gap by always reporting the (new, defaulted) values for these
- * three fields, so the admin knows to re-apply the ACL and re-submit.
+ * Reset, not recovered: save()'s defaults-merge sees no existing record once
+ * branch.json is archived, so `status`/`access`/`createdBy` reset to
+ * `editing`/`{}`/the admin running this repair, even when the corrupt file
+ * is partially parseable. `status`/`access` are security-adjacent, and a
+ * genuinely corrupt branch.json (writes are atomic, so it didn't get that
+ * way from an ordinary truncated write) is not safe to best-effort-parse: a
+ * wrong guess with no human review is worse than a clean reset. The archived
+ * file lets a human recover the real values with full context instead. The
+ * response's `reset` field reports that a reset happened, so an admin never
+ * mistakes the new defaults for recovered data.
  */
 const repairBranchDirHandler = async (
   _gc: Record<string, never>,
