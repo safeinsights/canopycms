@@ -131,30 +131,20 @@ function unpinnedConsequence(buildId: string | undefined): string {
 /**
  * Resolve the manifest's build stamp from the environment.
  *
- * This lives at the BUILD boundary, not inside `generateAIContent`, because the same generator
- * also serves the runtime route — where a live clock is the correct answer and a
- * `SOURCE_DATE_EPOCH` that happens to be exported in a server environment must not freeze a
- * response's timestamp.
+ * Lives at the BUILD boundary, not inside `generateAIContent`: the same generator also serves
+ * the runtime route, where a live clock is correct and a `SOURCE_DATE_EPOCH` exported in a
+ * server environment must not freeze a response's timestamp.
  *
- * `SOURCE_DATE_EPOCH` is the Reproducible Builds convention (decimal seconds since the epoch),
- * kept under its standard name so a harness that already exports it for tar/gzip/rpm gets this
- * for free. `CANOPY_BUILD_ID` is ours: Next has no such variable of its own.
+ * `SOURCE_DATE_EPOCH` is the Reproducible Builds convention (decimal seconds since the epoch).
+ * `CANOPY_BUILD_ID` is validated against the same rule as `SAFE_BUILD_ID` above, since the
+ * manifest's `buildId` and Next's build id must name the SAME artifact.
  *
- * That id is validated here against a rule justified by Next's `_next/static/<id>/` layout, even
- * though this module is framework-agnostic. Deliberate: the variable's whole purpose is that the
- * manifest's `buildId` and the framework's build id name the SAME artifact, so a value one reader
- * would reject is not useful to the other. The cost is that a non-Next adopter cannot use, say, an
- * ISO timestamp as a build id — revisit this rule, in both copies, when a second framework lands.
+ * Both variables warn and are ignored when set but unusable, rather than failing the build —
+ * same stance as `readGeneratedRecord` above; "unset" is a deliberate opt-out and warns nothing.
  *
- * Every rejection warns and is ignored rather than failing the build — same stance as
- * `readGeneratedRecord` above. Both variables treat "set but unusable" as a broken pipeline
- * (`SOURCE_DATE_EPOCH=$(git log -1 --format=%ct)` with a failing command) and say so, while
- * "unset" is a deliberate opt-out and says nothing.
- *
- * Note what ignoring a bad `SOURCE_DATE_EPOCH` means when a build id IS set: `generatedAt` stays
- * undefined, so `generated` is omitted rather than falling back to a live clock. A bad value must
- * not resurrect a field the adopter's configuration says is meaningless — which is also why that
- * case warns rather than failing silently, since the field simply disappears.
+ * When `SOURCE_DATE_EPOCH` is bad and a build id IS set, `generatedAt` stays undefined so
+ * `generated` is omitted rather than falling back to a live clock — a bad value must not
+ * resurrect a field the adopter's configuration says is meaningless.
  */
 function resolveBuildStamp(): { generatedAt?: string; buildId?: string } {
   // Trimmed and shape-checked with the same rule `withCanopy` applies, so that when an adopter

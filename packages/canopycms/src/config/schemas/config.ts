@@ -69,14 +69,12 @@ export const editorConfigSchema = z.object({
 export const CanopyConfigSchema = z
   .object({
     media: mediaSchema.optional(),
-    // No outer .optional() here: defaultBranchAccessSchema/defaultPathAccessSchema already
-    // have .default('deny'), so the field is optional on input but always resolves to
-    // 'allow'/'deny' (never undefined) on output. An outer .optional() would short-circuit
-    // before the inner default runs, defeating the fail-closed default (SCH-M1).
-    // defaultPathAccessSchema's union keeps the same rule: the .default('deny') sits on the
-    // OUTER union, not inside defaultPathAccessLevelsSchema, so an omitted top-level field
-    // still resolves to 'deny' and an omitted level inside the object form stays undefined
-    // (resolved to 'deny' at read time by resolveDefaultPathAccess).
+    // No outer .optional(): both schemas already .default('deny'), so the field is optional on
+    // input but always resolves to 'allow'/'deny' (never undefined) on output — an outer
+    // .optional() would short-circuit before the inner default runs, defeating the fail-closed
+    // default (SCH-M1). defaultPathAccessSchema's .default('deny') sits on the OUTER union, not
+    // inside defaultPathAccessLevelsSchema, so an omitted level in the object form stays
+    // undefined (resolved to 'deny' at read time by resolveDefaultPathAccess).
     defaultBranchAccess: defaultBranchAccessSchema,
     defaultPathAccess: defaultPathAccessSchema,
     // .optional() deliberately defeats defaultBaseBranchSchema's .default('main'):
@@ -99,16 +97,11 @@ export const CanopyConfigSchema = z
     allowNetworkRemoteInProd: z.boolean().optional(),
     settingsBranch: z.string().optional(),
     autoCreateSettingsPR: z.boolean().optional(),
-    // Deliberately `deploymentNameSchema.optional()`, NOT `deploymentNameSchema` alone.
-    // deploymentNameSchema.default('prod') would make `parse(undefined)` resolve to
-    // the literal 'prod' instead of staying `undefined` — collapsing the
-    // env > config > modeDefault precedence chain that resolveDeploymentName
-    // (operating-mode/deployment-name.ts) implements: config would then always
-    // "win" over modeDefault (masking dev's real default of 'local'), and the env
-    // var would just be racing config's baked-in 'prod' instead of a true absence.
-    // `.optional()` here is what keeps an omitted deploymentName reaching
-    // resolveDeploymentName as `undefined`, so it can fall through to modeDefault.
-    // Do not "fix" this by removing `.optional()`.
+    // `.optional()`, NOT bare `deploymentNameSchema`: its own `.default('prod')` would make
+    // `parse(undefined)` resolve to 'prod' instead of staying `undefined`, collapsing the
+    // env > config > modeDefault precedence chain `resolveDeploymentName`
+    // (operating-mode/deployment-name.ts) implements — config would always "win" over
+    // modeDefault, masking dev's real default of 'local'. Do not remove `.optional()`.
     deploymentName: deploymentNameSchema.optional(),
     contentRoot: contentRootSchema.default('content'),
     sourceRoot: sourceRootSchema.optional(),
@@ -136,16 +129,12 @@ export const DEFAULT_PROD_WORKSPACE = '/mnt/efs/workspace'
 // Note: `mode` has no default by design (SEC-C1) and is intentionally omitted here —
 // operatingModeSchema.parse(undefined) would throw.
 //
-// `deploymentName` is ALSO deliberately omitted here (checked every caller,
-// only packages/canopycms/src/services.ts reads from this return
-// value, and only `.remoteName`; nothing ever read `.deploymentName`). Unlike
-// the defaults below, deploymentName's real default is mode-dependent — 'prod'
-// for ProdStrategy, 'local' for DevStrategy (see
-// operating-mode/client-unsafe-strategy.ts's getSettingsBranchName, which
-// resolves it via resolveDeploymentName) — and this accessor has no mode to
-// select between them. Emitting `deploymentNameSchema.parse(undefined)`
-// ('prod') here would silently lie for dev mode; better to have no caller of
-// this than a mode-blind one.
+// `deploymentName` is ALSO omitted: no caller reads `.deploymentName` off this return value
+// (only `services.ts` reads `.remoteName`), and its real default is mode-dependent — 'prod' for
+// ProdStrategy, 'local' for DevStrategy (see resolveDeploymentName, used by
+// operating-mode/client-unsafe-strategy.ts's getSettingsBranchName) — so this accessor has no
+// mode to pick between them. Emitting `deploymentNameSchema.parse(undefined)` ('prod') here
+// would silently lie for dev mode.
 export const getConfigDefaults = () => ({
   baseBranch: defaultBaseBranchSchema.parse(undefined),
   remoteName: defaultRemoteNameSchema.parse(undefined),

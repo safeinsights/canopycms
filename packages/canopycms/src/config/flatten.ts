@@ -86,7 +86,8 @@ export const flattenSchema = (root: RootCollectionConfig, basePath = ''): FlatSc
     }
   }
 
-  // This makes content root behave exactly like any other collection, just without a parent
+  // The root collection is pushed here so content root behaves exactly like any other
+  // collection, just without a parent.
   if (base) {
     flat.push({
       type: 'collection',
