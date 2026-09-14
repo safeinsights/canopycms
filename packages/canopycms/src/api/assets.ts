@@ -71,7 +71,7 @@ const listAssetsParamsSchema = z.object({
   cursor: z.string().optional(),
   limit: z.coerce.number().int().positive().max(100).optional(),
 })
-export type ListAssetsParams = z.infer<typeof listAssetsParamsSchema>
+type ListAssetsParams = z.infer<typeof listAssetsParamsSchema>
 
 /** hash32 is a sha-256 truncated to 32 hex chars (keys.ts's `hashBytes`) - never any other shape. */
 const hash32Schema = z
@@ -79,7 +79,7 @@ const hash32Schema = z
   .regex(/^[a-f0-9]{32}$/, 'key must be a 32-character lowercase hex string')
 
 const deleteAssetParamsSchema = z.object({ key: hash32Schema })
-export type DeleteAssetParams = z.infer<typeof deleteAssetParamsSchema>
+type DeleteAssetParams = z.infer<typeof deleteAssetParamsSchema>
 
 /**
  * Presign a direct (or proxied) upload target. Any authenticated user - there

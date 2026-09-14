@@ -517,5 +517,3 @@ export function CollectionEditor({
     </>
   )
 }
-
-export default CollectionEditor

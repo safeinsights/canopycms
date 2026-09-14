@@ -15,7 +15,7 @@ export { resolveDeploymentName, isValidDeploymentName } from './deployment-name'
 
 // Single resolution point for `mode` — isomorphic, applied inside
 // validateCanopyConfig so every config-authoring path gets it.
-export { resolveOperatingMode, SERVER_MODE_ENV_VAR, BROWSER_MODE_ENV_VAR } from './mode-env'
+export { resolveOperatingMode } from './mode-env'
 
 export type OperatingMode = 'prod' | 'dev'
 

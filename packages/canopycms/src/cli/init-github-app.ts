@@ -52,7 +52,10 @@ const CALLBACK_TIMEOUT_MS = 10 * 60 * 1000
 /** How long any single call to api.github.com may take. */
 const REQUEST_TIMEOUT_MS = 30_000
 
-/** The repository an App is being registered for. */
+/**
+ * The repository an App is being registered for.
+ * @internal Exported for tests.
+ */
 export type AppTarget = {
   owner: string
   repo: string
@@ -61,13 +64,12 @@ export type AppTarget = {
 }
 
 /** Where `create` should send the captured private key, chosen by the operator BEFORE the App exists. */
-export type KeyDestination =
-  | { kind: 'command'; argv: string[] }
-  | { kind: 'file'; filePath: string }
+type KeyDestination = { kind: 'command'; argv: string[] } | { kind: 'file'; filePath: string }
 
 /**
  * Where the manifest form posts: user-owned and organisation repositories use
  * different URLs, and posting the wrong one fails at the form.
+ * @internal Exported for tests.
  */
 export function manifestPostUrl(target: AppTarget, state: string): string {
   const base = target.isOrganization
@@ -83,6 +85,7 @@ export function manifestPostUrl(target: AppTarget, state: string): string {
  * The App as GitHub's manifest flow takes it. `default_permissions` is the
  * entire security surface, defined in `CANOPY_APP_PERMISSIONS`. The webhook is
  * declared but inactive: nothing is ever delivered to this App.
+ * @internal Exported for tests.
  */
 export function appManifest(
   target: AppTarget,
@@ -115,6 +118,7 @@ function escapeHtml(value: string): string {
  * The auto-submitting form that carries the manifest to GitHub — a manifest
  * can only be delivered as a browser form POST. Both interpolations are
  * escaped: this embeds adopter-supplied names into a file a browser executes.
+ * @internal Exported for tests.
  */
 export function creationForm(target: string, manifest: Record<string, unknown>): string {
   return `<!doctype html><meta charset="utf-8"><title>Create the CanopyCMS App</title>
@@ -132,6 +136,7 @@ export function creationForm(target: string, manifest: Record<string, unknown>):
  * 60s because GitHub rejects a JWT whose `iat` is in its own future, and a
  * second of clock skew is ordinary; `exp` leaves headroom rather than sitting
  * on GitHub's stated ten-minute maximum for no benefit.
+ * @internal Exported for tests.
  */
 export function appJwt(
   issuer: string,
@@ -149,7 +154,7 @@ export function appJwt(
   return `${body}.${signer.sign(privateKey).toString('base64url')}`
 }
 
-export type GitHubResponse<T> = {
+type GitHubResponse<T> = {
   ok: boolean
   status: number
   body: T | null
@@ -218,13 +223,13 @@ async function githubRequest<T>(
   return { ok: response.ok, status: response.status, body, message }
 }
 
-export type HandOffResult = { stored: boolean; detail: string }
+type HandOffResult = { stored: boolean; detail: string }
 
 /**
  * Injectable so `handOffKey` is testable without spawning anything real. Everywhere but Windows
  * the child carries the bridge's status channel at `stdio[3]`, without which nothing is stored.
  */
-export type SpawnFn = (command: string, args: string[]) => ChildProcess
+type SpawnFn = (command: string, args: string[]) => ChildProcess
 
 /** Whether a destination command is fed through `KEY_INPUT_BRIDGE`: everywhere but Windows. */
 const BRIDGE_KEY_INPUT = process.platform !== 'win32'
@@ -296,6 +301,7 @@ function destinationExitDetail(command: string, code: number | null): string {
  * a command leaving more unread than the buffer holds, which fails loudly as
  * `cat` exiting on SIGPIPE — so the exit code is still the contract, and
  * naming a command that fails loudly is the operator's job.
+ * @internal Exported for tests.
  */
 export async function handOffKey(
   pem: string,
@@ -436,7 +442,7 @@ export async function handOffKey(
   })
 }
 
-export type CallbackServer = {
+type CallbackServer = {
   port: number
   code: Promise<string>
   close: () => void
@@ -450,6 +456,7 @@ export type CallbackServer = {
  * is the CSRF guard the manifest flow provides, but rejecting the promise on
  * a mismatch would end the run on a stray loopback request, possibly before
  * GitHub's real redirect, leaving an App nobody holds a key for.
+ * @internal Exported for tests.
  */
 export function startCallbackServer(
   state: string,
@@ -612,6 +619,7 @@ async function checkNameAvailable(slug: string): Promise<boolean | null> {
  * or stop. No command here — see `parseKeyRetryAnswer`. `reprompt` carries
  * WHY, so `handOffWithRetry` can tell the operator what was wrong instead of
  * silently asking again.
+ * @internal Exported for tests.
  */
 export type KeyRetryChoice =
   | { kind: 'give-up' }
@@ -641,6 +649,7 @@ export type KeyRetryChoice =
  *   the current directory while the operator believes it reached the command.
  * - Anything else is a path: `handOffKey` creates it with mode 0600 and
  *   refuses to write if something already exists there.
+ * @internal Exported for tests.
  */
 export function parseKeyRetryAnswer(answer: string | null): KeyRetryChoice {
   if (answer === null) return { kind: 'give-up' }
@@ -689,6 +698,7 @@ export function parseKeyRetryAnswer(answer: string | null): KeyRetryChoice {
  * a failure asks for a file path instead, while the key is still in memory —
  * a path only, never a command, per `parseKeyRetryAnswer`'s rules. Only a
  * closed stdin or "give up" ends the loop without a destination.
+ * @internal Exported for tests.
  */
 export async function handOffWithRetry(pem: string, destination: KeyDestination): Promise<boolean> {
   let attempt = destination

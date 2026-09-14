@@ -46,17 +46,26 @@ export function setCanopyLogger(logger: CanopyLogger): void {
   active = logger
 }
 
-/** Restore the default (`console`). Exists for tests; production installs once and never reverts. */
+/**
+ * Restore the default (`console`). Exists for tests; production installs once and never reverts.
+ * @internal Exported for tests.
+ */
 export function resetCanopyLogger(): void {
   active = console
 }
 
-/** The logger currently installed. Exported for assertions; prefer the helpers below. */
+/**
+ * The logger currently installed. Exported for assertions; prefer the helpers below.
+ * @internal Exported for tests.
+ */
 export function getCanopyLogger(): CanopyLogger {
   return active
 }
 
-/** Informational. Routes to stdout (or the worker's timestamped stdout). */
+/**
+ * Informational. Routes to stdout (or the worker's timestamped stdout).
+ * @internal Exported for tests.
+ */
 export function canopyLog(...args: unknown[]): void {
   active.log(...args)
 }

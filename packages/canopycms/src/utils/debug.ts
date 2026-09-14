@@ -111,7 +111,10 @@ export function createDebugLogger(options?: DebugOptions): DebugLogger {
   return new DebugLogger(options)
 }
 
-/** Default logger for E2E test infrastructure. */
+/**
+ * Default logger for E2E test infrastructure.
+ * @internal No importer.
+ */
 export const testLogger = createDebugLogger({
   enabled: process.env.E2E_DEBUG === 'true',
   prefix: 'E2E',

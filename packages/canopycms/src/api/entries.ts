@@ -29,13 +29,13 @@ import type { ContentAccessChecker } from '../authorization'
 
 // Re-export pagination constants from the dependency-free module so they remain
 // part of the entries API surface without pulling server deps into client bundles.
-export { MAX_ENTRIES_PER_PAGE, DEFAULT_ENTRIES_LIMIT } from './entries-constants'
 
 const log = createDebugLogger({ prefix: 'EntriesAPI' })
 
 /**
  * Summary of an entry type for client display.
  * Simplified from EntryTypeConfig - doesn't include full field definitions.
+ * @internal No importer.
  */
 export interface EntryTypeSummary {
   name: string
@@ -60,6 +60,7 @@ export interface CollectionItem {
   canEdit?: boolean
 }
 
+/** @internal No importer. */
 export interface ListEntriesParams {
   branch: string
   collection?: LogicalPath
@@ -288,6 +289,7 @@ const listEntriesHandler = async (
 /**
  * List entries for a branch
  * GET /:branch/entries
+ * @internal Exported for tests.
  */
 export const listEntries = defineEndpoint({
   namespace: 'entries',
@@ -498,6 +500,7 @@ const deleteEntryHandler = async (
   }
 }
 
+/** @internal Exported for tests. */
 export const deleteEntry = defineEndpoint({
   namespace: 'entries',
   name: 'delete',

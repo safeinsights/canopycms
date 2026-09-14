@@ -170,6 +170,7 @@ export interface GitManagerOptions {
 
 export type GitStatus = Pick<StatusResult, 'files' | 'ahead' | 'behind' | 'current' | 'tracking'>
 
+/** @internal Exported for tests. */
 export class GitConflictError extends Error {
   constructor(public readonly conflictedFiles: string[]) {
     super(`Git conflict in ${conflictedFiles.length} file(s): ${conflictedFiles.join(', ')}`)

@@ -24,10 +24,7 @@ const toFieldErrorMap = (errors: EntryFieldError[]): Record<string, string> => {
  * when a recompute produces an equal-but-newly-allocated map, so consumers
  * that memo on `fieldErrors` identity don't churn.
  */
-export const shallowEqualRecord = (
-  a: Record<string, string>,
-  b: Record<string, string>,
-): boolean => {
+const shallowEqualRecord = (a: Record<string, string>, b: Record<string, string>): boolean => {
   const aKeys = Object.keys(a)
   const bKeys = Object.keys(b)
   if (aKeys.length !== bKeys.length) return false

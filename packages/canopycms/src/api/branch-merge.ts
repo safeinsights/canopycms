@@ -9,6 +9,7 @@ const markAsMergedParamsSchema = z.object({
   branch: branchNameSchema,
 })
 
+/** @internal No importer. */
 export interface MarkAsMergedParams {
   branch: string
 }

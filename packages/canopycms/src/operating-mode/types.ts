@@ -5,6 +5,7 @@ import type { CanopyConfig } from '../config'
 
 export type OperatingMode = OM
 
+/** @internal No importer. */
 export interface ResolveRemoteUrlOptions {
   mode: OperatingMode
   remoteUrl?: string

@@ -83,6 +83,7 @@ export async function mutatePermissionsFile(
 /**
  * Create the permissions file if it doesn't exist; a no-op when it is already
  * present (the mutator returns `null`, so no write happens).
+ * @internal Exported for tests.
  */
 export async function ensurePermissionsFile(
   repoRoot: string,

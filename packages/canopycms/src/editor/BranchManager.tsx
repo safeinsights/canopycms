@@ -26,6 +26,7 @@ import { isAdmin, isReviewer } from '../authorization/helpers'
 import { clientOperatingStrategy } from '../operating-mode/client'
 import { formatRelativeTime } from './relative-time'
 
+/** @internal Exported for tests. */
 export interface BranchSummary {
   name: string
   status: string
@@ -72,6 +73,7 @@ export interface UserContext {
  * - Users in branch ACL can submit/withdraw
  * - System branches can be submitted/withdrawn by anyone with access
  * - Admins/Reviewers always have access
+ * @internal Exported for tests.
  */
 export const getBranchPermissions = (
   branch: BranchSummary,

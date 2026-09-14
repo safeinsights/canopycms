@@ -21,7 +21,7 @@ import { isRebaseInProgress } from './utils/git'
  * non-directories and dot-prefixed names) so the two never disagree about what
  * counts as missing.
  */
-export type BranchHealthKind = 'healthy' | 'corrupt-metadata' | 'orphan'
+type BranchHealthKind = 'healthy' | 'corrupt-metadata' | 'orphan'
 
 export interface BranchHealthEntry {
   dirName: string
@@ -84,7 +84,7 @@ export interface BranchHealthEntry {
  * proper-lockfile's default `${target}.lock`, so the marker (a mkdir-based
  * directory) sits at exactly this path — no extra `.lock` suffix.
  */
-export function provisioningLockPath(baseRoot: string, dirName: string): string {
+function provisioningLockPath(baseRoot: string, dirName: string): string {
   return path.join(baseRoot, `.${dirName}.init.lock`)
 }
 

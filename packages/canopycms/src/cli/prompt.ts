@@ -63,7 +63,10 @@ export async function askLine(prompt: string): Promise<string | null> {
   return line === null ? null : line.trim()
 }
 
-/** Reset between tests. Not used by the command itself. */
+/**
+ * Reset between tests. Not used by the command itself.
+ * @internal Exported for tests.
+ */
 export function resetStdinStateForTesting(): void {
   stdinEnded = false
 }

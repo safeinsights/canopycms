@@ -225,7 +225,7 @@ async function gitRaw(projectDir: string, args: string[]): Promise<string | null
 type PackageJson = Record<string, unknown>
 
 /** Read the adopter's package.json, or null when absent/unparseable. */
-export async function readPackageJson(projectDir: string): Promise<PackageJson | null> {
+async function readPackageJson(projectDir: string): Promise<PackageJson | null> {
   try {
     const raw = await fs.readFile(path.join(projectDir, 'package.json'), 'utf-8')
     const parsed: unknown = JSON.parse(raw)

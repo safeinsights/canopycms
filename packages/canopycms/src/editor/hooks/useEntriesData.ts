@@ -47,6 +47,7 @@ export interface FetchEntriesParams {
  * repeat across pages if content changes between requests.
  *
  * Exported for direct unit testing.
+ * @internal Exported for tests.
  */
 export async function listAllEntries(
   apiClient: { entries: Pick<ApiClient['entries'], 'list'> },

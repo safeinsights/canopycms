@@ -6,7 +6,7 @@ import type { CanopyUser } from '../user'
 import type { BranchAccessResult } from './types'
 
 /** Options narrowing {@link checkBranchAccessWithDefault} to a specific branch's nature. */
-export interface BranchAccessOptions {
+interface BranchAccessOptions {
   /**
    * Whether this is the protected base branch -- pass
    * `getBranchProtection(...).isProtected`. When true the branch passes this
@@ -41,6 +41,7 @@ export interface BranchAccessOptions {
  * 4. With no ACL: the branch creator, then `defaultAccess`, and only where that
  *    would deny, the protected base branch grant
  *    (see {@link BranchAccessOptions.isProtectedBranch})
+ * @internal Exported for tests.
  */
 export function checkBranchAccessWithDefault(
   context: BranchContext,

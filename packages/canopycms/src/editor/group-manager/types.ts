@@ -1,9 +1,9 @@
-import type { UserSearchResult, GroupMetadata } from '../../auth/types'
+import type { UserSearchResult } from '../../auth/types'
 import type { CanopyGroupId, CanopyUserId } from '../../types'
 import type { InternalGroup } from '../../authorization'
 import type { ExternalGroup } from '../../api/groups'
 
-export type { UserSearchResult, GroupMetadata, InternalGroup, ExternalGroup }
+export type { UserSearchResult, InternalGroup, ExternalGroup }
 export type { CanopyGroupId, CanopyUserId }
 
 export interface GroupManagerProps {

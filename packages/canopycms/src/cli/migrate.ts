@@ -28,7 +28,7 @@ import { withOccFileLock, OccWriteConflictError } from '../utils/occ-json-write'
 import { BranchMetadataFileManager } from '../branch-metadata'
 import { invalidateBranchContentCaches } from '../content-index-generation'
 
-export const MIGRATE_FORMATS = ['md', 'mdx', 'json', 'yaml'] as const
+const MIGRATE_FORMATS = ['md', 'mdx', 'json', 'yaml'] as const
 export type MigrateFormat = (typeof MIGRATE_FORMATS)[number]
 
 export interface MigrateOptions {
@@ -46,7 +46,10 @@ export interface MigrateOptions {
   force?: boolean
 }
 
-/** Migration precondition failure — thrown so the CLI exits non-zero. */
+/**
+ * Migration precondition failure — thrown so the CLI exits non-zero.
+ * @internal Exported for tests.
+ */
 export class MigrateError extends Error {
   constructor(message: string) {
     super(message)
@@ -65,6 +68,7 @@ type MigrateOp =
  * production build (static/index.ts's assertRoutableSlugs). Migration writes
  * files directly, bypassing the write API's [SLUG] create guard, so this
  * normalization is the only thing that keeps the migrated tree buildable.
+ * @internal Exported for tests.
  */
 export function slugifyName(name: string): string {
   const slug = name

@@ -8,6 +8,7 @@ import { normalizeCollectionPath } from '../paths/normalize'
 import { isIndexSlug } from '../utils/entry-url'
 import { isDataOnlyFormat } from '../utils/format'
 import { joinUrlPrefix } from '../utils/url-prefix'
+/** @internal Exported for tests. */
 export { normalizeCollectionPath }
 
 export interface PreviewContext {
@@ -28,7 +29,7 @@ export interface PreviewContext {
  */
 const encodePreviewSlug = (slug?: string): string => (isIndexSlug(slug) ? '' : encodeSlug(slug))
 
-export const encodeSlug = (value?: string): string =>
+const encodeSlug = (value?: string): string =>
   (value ?? '')
     .split('/')
     .filter(Boolean)

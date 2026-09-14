@@ -15,6 +15,7 @@ const ThrottledOctokit = Octokit.plugin(throttling)
  * Retry primary rate limits at most twice and only for short waits; beyond
  * that, task-level retry/backoff (worker) or the caller's error path takes
  * over, since the worker's task timeout would abort a longer in-request wait.
+ * @internal Exported for tests.
  */
 export const shouldRetryRateLimit = (retryAfter: number, retryCount: number): boolean =>
   retryCount < 2 && retryAfter <= 60
@@ -23,6 +24,7 @@ export const shouldRetryRateLimit = (retryAfter: number, retryCount: number): bo
  * Secondary (abuse-detection) rate limits are stricter to trip and usually
  * signal we're hammering the API too fast — retry at most once, and only for
  * a short wait.
+ * @internal Exported for tests.
  */
 export const shouldRetrySecondaryRateLimit = (retryAfter: number, retryCount: number): boolean =>
   retryCount < 1 && retryAfter <= 60

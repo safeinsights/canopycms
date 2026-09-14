@@ -121,6 +121,7 @@ import { operatingStrategy } from '../operating-mode'
  * - User is Admin or Reviewer (privileged)
  * - User has edit access to at least one path via pathPermissions rules
  * - No path permissions are defined (open access)
+ * @internal Exported for tests.
  */
 export const canCreateBranch = (
   user: CanopyUser,
@@ -194,6 +195,7 @@ const resolveReadOnlyMirrorPath = (
   )
 }
 
+/** @internal Exported for tests. */
 export const createBranchHandler = async (
   ctx: ApiContext,
   req: ApiRequest,
@@ -458,6 +460,7 @@ export const createBranchHandler = async (
   })
 }
 
+/** @internal Exported for tests. */
 export const listBranchesHandler = async (
   ctx: ApiContext,
   req: ApiRequest,
@@ -543,6 +546,7 @@ export const listBranchesHandler = async (
   }
 }
 
+/** @internal Exported for tests. */
 export const canDeleteBranch = (
   user: CanopyUser,
   branchContext: BranchContext,
@@ -558,6 +562,7 @@ export const canDeleteBranch = (
   return { allowed: false, reason: 'not_authorized' }
 }
 
+/** @internal Exported for tests. */
 export const deleteBranchHandler = async (
   ctx: ApiContext,
   req: ApiRequest,
@@ -751,6 +756,7 @@ export interface UpdateBranchAccessBody {
   allowedGroups?: string[]
 }
 
+/** @internal Exported for tests. */
 export const canModifyBranchAccess = (
   user: CanopyUser,
   branchContext: BranchContext,
@@ -766,6 +772,7 @@ export const canModifyBranchAccess = (
   return { allowed: false, reason: 'not_authorized' }
 }
 
+/** @internal Exported for tests. */
 export const updateBranchAccessHandler = async (
   ctx: ApiContext,
   req: ApiRequest,

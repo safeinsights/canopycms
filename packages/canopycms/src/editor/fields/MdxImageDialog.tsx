@@ -22,6 +22,7 @@ import { MediaLibraryBody } from '../media/MediaLibraryBody'
 import { useAssetUpload } from '../media/useAssetUpload'
 import { ACCEPTED_IMAGE_MIME_TYPES, MAX_UPLOAD_BYTES } from '../media/upload-constants'
 
+/** @internal Exported for tests. */
 export type MdxImageDialogState =
   | InactiveImageDialogState
   | NewImageDialogState
@@ -202,5 +203,3 @@ export const MdxImageDialog: React.FC<MdxImageDialogProps> = ({ state, onSave, o
     </Modal>
   )
 }
-
-export default MdxImageDialog

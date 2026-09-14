@@ -61,7 +61,9 @@ const getUserMetadataParamsSchema = z.object({
 })
 
 export type UpdatePermissionsBody = z.infer<typeof updatePermissionsBodySchema>
+/** @internal No importer. */
 export type SearchUsersParams = z.infer<typeof searchUsersParamsSchema>
+/** @internal No importer. */
 export type GetUserMetadataParams = z.infer<typeof getUserMetadataParamsSchema>
 
 const getPermissionsHandler = async (

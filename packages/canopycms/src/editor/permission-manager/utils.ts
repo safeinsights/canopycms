@@ -29,7 +29,7 @@ export function findTreeNode(node: TreeNode, path: string): TreeNode | null {
  * @param parentPath - Optional parent path for recursive calls
  * @returns Array of TreeNode for the permission tree
  */
-export function convertCollectionsToTreeNodes(
+function convertCollectionsToTreeNodes(
   collections: EditorCollection[],
   contentRoot: string,
   parentPath?: string,
@@ -75,7 +75,7 @@ export function convertCollectionsToTreeNodes(
  * @param schemaNode - TreeNode from schema to merge into (mutated)
  * @param contentNode - Actual filesystem content tree from API
  */
-export function mergeContentTree(schemaNode: TreeNode, contentNode: ContentNode): void {
+function mergeContentTree(schemaNode: TreeNode, contentNode: ContentNode): void {
   contentNode.children?.forEach((child) => {
     const existing = schemaNode.children.find((n) => n.name === child.name)
     if (existing) {

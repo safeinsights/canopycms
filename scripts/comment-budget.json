@@ -5,19 +5,19 @@
       "directories": {
         "packages/canopycms/src": {
           "maxRun": 30,
-          "ratio": 0.588
+          "ratio": 0.591
         },
         "packages/canopycms/src/ai": {
           "maxRun": 30,
-          "ratio": 0.465
+          "ratio": 0.466
         },
         "packages/canopycms/src/api": {
           "maxRun": 30,
-          "ratio": 0.288
+          "ratio": 0.294
         },
         "packages/canopycms/src/assets": {
           "maxRun": 30,
-          "ratio": 0.455
+          "ratio": 0.46
         },
         "packages/canopycms/src/auth": {
           "maxRun": 30,
@@ -25,39 +25,39 @@
         },
         "packages/canopycms/src/authorization": {
           "maxRun": 30,
-          "ratio": 0.496
+          "ratio": 0.508
         },
         "packages/canopycms/src/build": {
           "maxRun": 30,
-          "ratio": 0.685
+          "ratio": 0.691
         },
         "packages/canopycms/src/cli": {
           "maxRun": 30,
-          "ratio": 0.313
+          "ratio": 0.321
         },
         "packages/canopycms/src/config": {
           "maxRun": 30,
-          "ratio": 0.576
+          "ratio": 0.577
         },
         "packages/canopycms/src/editor": {
           "maxRun": 30,
-          "ratio": 0.155
+          "ratio": 0.156
         },
         "packages/canopycms/src/http": {
           "maxRun": 30,
-          "ratio": 0.41
+          "ratio": 0.413
         },
         "packages/canopycms/src/operating-mode": {
           "maxRun": 30,
-          "ratio": 0.509
+          "ratio": 0.542
         },
         "packages/canopycms/src/paths": {
           "maxRun": 30,
-          "ratio": 0.411
+          "ratio": 0.464
         },
         "packages/canopycms/src/schema": {
           "maxRun": 30,
-          "ratio": 0.413
+          "ratio": 0.414
         },
         "packages/canopycms/src/static": {
           "maxRun": 30,
@@ -69,19 +69,19 @@
         },
         "packages/canopycms/src/utils": {
           "maxRun": 43,
-          "ratio": 1.018
+          "ratio": 1.033
         },
         "packages/canopycms/src/validation": {
           "maxRun": 30,
-          "ratio": 0.28
+          "ratio": 0.282
         },
         "packages/canopycms/src/worker": {
           "maxRun": 31,
-          "ratio": 0.999
+          "ratio": 0.996
         }
       },
       "historyMarkers": 0,
-      "ratio": 0.379
+      "ratio": 0.383
     },
     "canopycms-auth-clerk": {
       "directories": {
@@ -137,11 +137,11 @@
       "directories": {
         "packages/canopycms-next/src": {
           "maxRun": 30,
-          "ratio": 0.814
+          "ratio": 0.817
         }
       },
       "historyMarkers": 0,
-      "ratio": 0.814
+      "ratio": 0.817
     },
     "scripts": {
       "directories": {

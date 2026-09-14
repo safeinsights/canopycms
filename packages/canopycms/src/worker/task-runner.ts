@@ -268,7 +268,7 @@ export async function processTaskQueue(ctx: TaskRunnerContext): Promise<void> {
  * and are not bounded by taskTimeoutMs at all. pushBranchToGitHub additionally
  * kills stalled git processes via simple-git's block timeout.
  */
-export async function executeTaskWithTimeout(
+async function executeTaskWithTimeout(
   ctx: TaskRunnerContext,
   task: Task,
 ): Promise<Record<string, unknown>> {
@@ -480,7 +480,7 @@ export async function updateBranchMetadata(
  * redacted by the caller (see [REDACT] in processTaskQueue) and is recorded as
  * syncFailureReason so the editor can show WHY, not just that it failed.
  */
-export async function updateBranchMetadataOnFailure(
+async function updateBranchMetadataOnFailure(
   ctx: TaskRunnerContext,
   task: Task,
   error: string,

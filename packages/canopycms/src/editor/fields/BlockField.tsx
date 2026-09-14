@@ -30,7 +30,7 @@ export interface BlockInstance {
   value: Record<string, unknown>
 }
 
-export type RenderField = (
+type RenderField = (
   field: FieldConfig,
   value: unknown,
   onChange: (v: unknown) => void,
@@ -265,5 +265,3 @@ export const BlockField: React.FC<BlockFieldProps> = ({
     </Paper>
   )
 }
-
-export default BlockField

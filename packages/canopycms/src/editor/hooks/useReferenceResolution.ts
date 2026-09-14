@@ -4,7 +4,7 @@ import { resolveChangedReferences } from '../client-reference-resolver'
 import { flattenGroupFields } from '../../utils/flatten-group-fields'
 import { useOptionalApiClient } from '../context'
 
-export type FormValue = Record<string, unknown>
+type FormValue = Record<string, unknown>
 
 export interface UseReferenceResolutionOptions {
   value: FormValue

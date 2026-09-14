@@ -8,13 +8,13 @@
 import React, { createContext, useContext, useCallback, useState, useMemo } from 'react'
 import type { FormValue } from '../FormRenderer'
 
-export interface LoadingState {
+interface LoadingState {
   branches: boolean
   entries: boolean
   comments: boolean
 }
 
-export interface ModalState {
+interface ModalState {
   navigator: boolean
   branchManager: boolean
   groupManager: boolean
@@ -22,12 +22,12 @@ export interface ModalState {
   commentsPanel: boolean
 }
 
-export interface PreviewState {
+interface PreviewState {
   data: FormValue
   loading: FormValue
 }
 
-export interface EditorState {
+interface EditorState {
   loading: LoadingState
   modals: ModalState
   preview: PreviewState
@@ -35,7 +35,7 @@ export interface EditorState {
   busy: boolean
 }
 
-export interface EditorStateActions {
+interface EditorStateActions {
   setLoading: (key: keyof LoadingState, value: boolean) => void
   openModal: (key: keyof ModalState) => void
   closeModal: (key: keyof ModalState) => void
@@ -44,19 +44,20 @@ export interface EditorStateActions {
   setPreviewLoading: (loading: FormValue) => void
 }
 
-export interface EditorStateContextValue {
+interface EditorStateContextValue {
   state: EditorState
   actions: EditorStateActions
 }
 
 const EditorStateContext = createContext<EditorStateContextValue | null>(null)
 
-export interface EditorStateProviderProps {
+interface EditorStateProviderProps {
   children: React.ReactNode
   /** Initial modal states (useful for deep linking) */
   initialModals?: Partial<ModalState>
 }
 
+/** @internal No importer. */
 export function EditorStateProvider({ children, initialModals }: EditorStateProviderProps) {
   const [loading, setLoadingState] = useState<LoadingState>({
     branches: false,
@@ -144,7 +145,7 @@ export function EditorStateProvider({ children, initialModals }: EditorStateProv
  * Access the full editor state context.
  * Must be used within an EditorStateProvider.
  */
-export function useEditorState(): EditorStateContextValue {
+function useEditorState(): EditorStateContextValue {
   const context = useContext(EditorStateContext)
   if (!context) {
     throw new Error('useEditorState must be used within an EditorStateProvider')
@@ -154,6 +155,7 @@ export function useEditorState(): EditorStateContextValue {
 
 /**
  * Convenience hook for loading states only.
+ * @internal No importer.
  */
 export function useEditorLoading() {
   const { state, actions } = useEditorState()
@@ -166,6 +168,7 @@ export function useEditorLoading() {
 
 /**
  * Convenience hook for modal states only.
+ * @internal No importer.
  */
 export function useEditorModals() {
   const { state, actions } = useEditorState()
@@ -179,6 +182,7 @@ export function useEditorModals() {
 
 /**
  * Convenience hook for preview state only.
+ * @internal No importer.
  */
 export function useEditorPreview() {
   const { state, actions } = useEditorState()

@@ -1,10 +1,5 @@
 import type { PathPermission, PermissionLevel, PermissionTarget } from '../../config'
-import type {
-  UserSearchResult,
-  GroupMetadata,
-  GroupSource,
-  PermissionGroupOption,
-} from '../../auth/types'
+import type { UserSearchResult, GroupSource, PermissionGroupOption } from '../../auth/types'
 import type { EditorCollection } from '../Editor'
 
 export interface PermissionManagerProps {
@@ -56,7 +51,6 @@ export type {
   PermissionLevel,
   PermissionTarget,
   UserSearchResult,
-  GroupMetadata,
   GroupSource,
   PermissionGroupOption,
 }

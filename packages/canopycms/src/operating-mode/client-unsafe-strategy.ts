@@ -6,7 +6,7 @@
 import path from 'node:path'
 import { ProdClientSafeStrategy, DevClientSafeStrategy } from './client-safe-strategy'
 import { resolveDeploymentName } from './deployment-name'
-import type { OperatingMode, ClientUnsafeStrategy } from './types'
+import type { OperatingMode, ClientUnsafeStrategy, RemoteUrlConfig } from './types'
 import type { CanopyConfig } from '../config'
 import { DEFAULT_PROD_WORKSPACE } from '../config'
 
@@ -41,7 +41,7 @@ class ProdStrategy extends ProdClientSafeStrategy implements ClientUnsafeStrateg
     return path.join(root, this.getGroupsFileName())
   }
 
-  getRemoteUrlConfig(): import('./types').RemoteUrlConfig {
+  getRemoteUrlConfig(): RemoteUrlConfig {
     return {
       shouldAutoInitLocal: false,
       defaultRemotePath: '',
@@ -111,7 +111,7 @@ class DevStrategy extends DevClientSafeStrategy implements ClientUnsafeStrategy 
     return path.join(root, this.getGroupsFileName())
   }
 
-  getRemoteUrlConfig(): import('./types').RemoteUrlConfig {
+  getRemoteUrlConfig(): RemoteUrlConfig {
     return {
       shouldAutoInitLocal: true,
       defaultRemotePath: '.canopy-dev/remote.git',
@@ -178,7 +178,10 @@ export function operatingStrategy(mode: OperatingMode): ClientUnsafeStrategy {
   return strategy
 }
 
-/** Mainly for testing. */
+/**
+ * Mainly for testing.
+ * @internal Exported for tests.
+ */
 export function clearStrategyCache(): void {
   strategyCache.clear()
 }

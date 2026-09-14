@@ -36,12 +36,12 @@ export interface CropRect {
 }
 
 /** Identity ('orig'): EXIF-strip only, no resize/format/quality change. */
-export interface IdentityDirectives {
+interface IdentityDirectives {
   readonly identity: true
 }
 
 /** Non-identity directive set - every field optional, but at least one is present. */
-export interface ResizeDirectives {
+interface ResizeDirectives {
   readonly identity: false
   readonly width?: number
   readonly format?: OutputFormat
@@ -144,7 +144,7 @@ function parseWidth(value: string): number | null {
 }
 
 /** True if `quality` is on the allowlist: a multiple of 5 in [30, 95]. */
-export function isAllowedTransformQuality(quality: number): boolean {
+function isAllowedTransformQuality(quality: number): boolean {
   return (
     Number.isInteger(quality) &&
     quality >= MIN_QUALITY &&

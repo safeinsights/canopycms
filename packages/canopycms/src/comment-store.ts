@@ -11,7 +11,7 @@ import {
 } from './utils/occ-json-write'
 
 /** A concurrent modification that survived every OCC retry. */
-export class CommentStoreConflictError extends Error {
+class CommentStoreConflictError extends Error {
   constructor() {
     super('Concurrent modification detected')
     this.name = 'CommentStoreConflictError'
@@ -20,7 +20,7 @@ export class CommentStoreConflictError extends Error {
 
 export type CommentType = 'field' | 'entry' | 'branch'
 
-export interface Comment {
+interface Comment {
   id: string
   threadId: string
   userId: string

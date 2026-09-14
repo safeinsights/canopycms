@@ -10,7 +10,7 @@ import type { FieldConfig } from '../config'
 import { extractEntryLinkIds } from '../entry-link-resolver'
 import { findFieldsByType } from './field-traversal'
 
-export interface EntryLinkWarning {
+interface EntryLinkWarning {
   field: string
   fieldPath: string
   id: string

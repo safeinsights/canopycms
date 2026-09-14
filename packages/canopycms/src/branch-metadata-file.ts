@@ -49,7 +49,7 @@ export class BranchMetadataCorruptError extends Error {
 }
 
 /** Absolute path to a branch workspace's `branch.json`. */
-export const branchMetadataFilePath = (branchRoot: string): string =>
+const branchMetadataFilePath = (branchRoot: string): string =>
   path.join(path.resolve(branchRoot), BRANCH_META_DIR, BRANCH_META_FILE)
 
 /**

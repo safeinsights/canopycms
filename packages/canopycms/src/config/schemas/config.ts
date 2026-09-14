@@ -10,51 +10,51 @@ import type { ValidateEntryHook } from '../types'
 import { relativePathSchema } from './collection'
 import { mediaSchema } from './media'
 
-export const defaultBranchAccessSchema = z.enum(['allow', 'deny']).default('deny')
-export const defaultPathAccessLevelSchema = z.enum(['allow', 'deny'])
+const defaultBranchAccessSchema = z.enum(['allow', 'deny']).default('deny')
+const defaultPathAccessLevelSchema = z.enum(['allow', 'deny'])
 // Per-level object form: an omitted level stays undefined after parse (no per-field
 // defaults here) so the runtime resolver (resolveDefaultPathAccess) can fail closed to
 // 'deny' for any level the config author didn't explicitly scope.
-export const defaultPathAccessLevelsSchema = z
+const defaultPathAccessLevelsSchema = z
   .object({
     read: defaultPathAccessLevelSchema.optional(),
     edit: defaultPathAccessLevelSchema.optional(),
     review: defaultPathAccessLevelSchema.optional(),
   })
   .strict()
-export const defaultPathAccessSchema = z
+const defaultPathAccessSchema = z
   .union([defaultPathAccessLevelSchema, defaultPathAccessLevelsSchema])
   .default('deny')
-export const defaultBaseBranchSchema = z.string().default('main')
-export const defaultRemoteNameSchema = z.string().default('origin')
-export const defaultRemoteUrlSchema = z.string().min(1)
-export const gitBotAuthorNameSchema = z.string().min(1)
-export const gitBotAuthorEmailSchema = z.string().email()
-export const githubTokenEnvVarSchema = z.string().default('GITHUB_BOT_TOKEN')
-export const operatingModeSchema = z.enum(['prod', 'dev'])
-export const deployedAsSchema = z.enum(['static', 'server']).default('server')
-export const contentRootSchema = relativePathSchema.default('content')
-export const sourceRootSchema = z.string().min(1).optional()
+const defaultBaseBranchSchema = z.string().default('main')
+const defaultRemoteNameSchema = z.string().default('origin')
+const defaultRemoteUrlSchema = z.string().min(1)
+const gitBotAuthorNameSchema = z.string().min(1)
+const gitBotAuthorEmailSchema = z.string().email()
+const githubTokenEnvVarSchema = z.string().default('GITHUB_BOT_TOKEN')
+const operatingModeSchema = z.enum(['prod', 'dev'])
+const deployedAsSchema = z.enum(['static', 'server']).default('server')
+const contentRootSchema = relativePathSchema.default('content')
+const sourceRootSchema = z.string().min(1).optional()
 // Lenient on shape (leading/trailing slashes, absolute-URL prefixes) -- `joinUrlPrefix`
 // normalizes all of that at every use site. Only reject a value that is nothing but
 // whitespace, since that can never be a meaningful deployment prefix and most likely
 // indicates a copy-paste/templating mistake in the adopter's config.
-export const basePathSchema = z
+const basePathSchema = z
   .string()
   .transform((value) => value.trim())
   .refine((value) => value.length > 0, {
     message: 'basePath must not be empty or only whitespace',
   })
   .optional()
-export const deploymentNameSchema = z.string().default('prod')
-export const devContentSyncSchema = z.enum(['off', 'warn']).default('warn')
+const deploymentNameSchema = z.string().default('prod')
+const devContentSyncSchema = z.enum(['off', 'warn']).default('warn')
 
 // Dev-mode-only behavior. Ignored when mode !== 'dev'.
-export const devConfigSchema = z.object({
+const devConfigSchema = z.object({
   contentSync: devContentSyncSchema.optional(),
 })
 
-export const editorConfigSchema = z.object({
+const editorConfigSchema = z.object({
   title: z.string().optional(),
   subtitle: z.string().optional(),
   theme: z.unknown().optional(),

@@ -43,6 +43,7 @@ function isAllowedByTarget(target: PermissionTarget, user: CanopyUser): boolean 
  * level. String form applies to every level; object form looks up the level,
  * and an absent level resolves to 'deny' (fail-closed) so `{ read: 'allow' }`
  * cannot accidentally open edit/review.
+ * @internal Exported for tests.
  */
 export function resolveDefaultPathAccess(
   defaultAccess: DefaultPathAccess,
@@ -55,6 +56,7 @@ export function resolveDefaultPathAccess(
 /**
  * Evaluate access for a relative path against config-defined rules.
  * Uses defaultAccess when no rule matches. First matching rule wins.
+ * @internal Exported for tests.
  */
 export function checkPathAccess({
   rules,

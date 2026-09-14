@@ -118,6 +118,7 @@ function validateImageValue(
  * as an id string or as a resolved object `{ id, slug, collection, ... }`
  * (content reads resolve references by default). Returns undefined for any
  * other shape.
+ * @internal Exported for tests.
  */
 export function referenceValueId(value: unknown): string | undefined {
   if (typeof value === 'string') return value

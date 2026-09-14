@@ -328,5 +328,3 @@ export function EntryTypeEditor({
     </Modal>
   )
 }
-
-export default EntryTypeEditor

@@ -57,7 +57,7 @@ const normalizePath = (root: string, target: string): string => {
  * `bodyFieldName` (defaults to `'body'`); for json/yaml, the parsed object. Returns an empty
  * object on read/parse failure.
  */
-export const readEntryData = async (
+const readEntryData = async (
   filePath: string,
   format: ContentFormat,
   bodyFieldName = 'body',

@@ -5,8 +5,8 @@
  */
 
 /** Permission levels GitHub uses for App repository permissions, weakest first. */
-export const PERMISSION_LEVELS = ['read', 'write', 'admin'] as const
-export type PermissionLevel = (typeof PERMISSION_LEVELS)[number]
+const PERMISSION_LEVELS = ['read', 'write', 'admin'] as const
+type PermissionLevel = (typeof PERMISSION_LEVELS)[number]
 export type PermissionSet = Readonly<Record<string, PermissionLevel>>
 
 /**
@@ -50,6 +50,7 @@ export const APP_NAME_MAX_LENGTH = 34
  * organisation-wide. Lets th…" was cut at 37 characters, by CHARACTER not
  * line — hence `appDescription`'s shape: a summary inside this budget, then
  * the detail only the App's own page shows.
+ * @internal Exported for tests.
  */
 export const APP_SUMMARY_MAX_LENGTH = 37
 

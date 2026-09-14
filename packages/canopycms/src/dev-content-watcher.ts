@@ -88,7 +88,10 @@ function watcherRegistry(): Map<string, DevWatcherState> {
   return created
 }
 
-/** Test-only: dispose every armed watcher and drop all cross-module dedupe state. */
+/**
+ * Test-only: dispose every armed watcher and drop all cross-module dedupe state.
+ * @internal Exported for tests.
+ */
 export function resetDevContentWatchersForTests(): void {
   const registry = watcherRegistry()
   for (const state of registry.values()) state.dispose?.()

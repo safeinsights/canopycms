@@ -150,6 +150,7 @@ const compareSpecificity = (a: readonly string[], b: readonly string[]): number 
  * differently-guarded static one (`assets`) registered later. Exported
  * standalone so that precedence rule can be unit-tested against synthetic route
  * tables, independent of the real API surface.
+ * @internal Exported for tests.
  */
 export function matchRoute(
   routes: readonly RouteDefinition[],

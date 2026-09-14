@@ -107,7 +107,10 @@ export function clientOperatingStrategy(mode: OperatingMode): ClientSafeStrategy
   return strategy
 }
 
-/** Mainly for testing. */
+/**
+ * Mainly for testing.
+ * @internal Exported for tests.
+ */
 export function clearClientStrategyCache(): void {
   clientStrategyCache.clear()
 }

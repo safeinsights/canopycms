@@ -73,6 +73,7 @@ const forEachEntryType = (
  * a reference field's `entryTypes` matches entries across ALL collections, since
  * the same type name may legitimately appear in more than one (see
  * reference-resolver.ts, which filters by type name regardless of collection).
+ * @internal Exported for tests.
  */
 export const collectEntryTypeNames = (schema: RootCollectionConfig): Set<string> => {
   const names = new Set<string>()

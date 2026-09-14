@@ -80,5 +80,3 @@ export const InlineGroupField: React.FC<InlineGroupFieldProps> = ({
     </Paper>
   )
 }
-
-export default InlineGroupField

@@ -9,6 +9,7 @@ import { createApiClient } from '../../api/client'
 import { useOptionalApiClient } from '../context'
 import { getErrorMessage } from '../../utils/error'
 
+/** @internal Exported for tests. */
 export interface ReferenceOption {
   value: string
   label: string
@@ -214,5 +215,3 @@ export const ReferenceField: React.FC<ReferenceFieldProps> = ({
     </Stack>
   )
 }
-
-export default ReferenceField

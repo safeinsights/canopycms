@@ -37,7 +37,7 @@ import { type LogicalPath, type ContentId } from '../paths'
 // Wire Types — API response shapes with schemaRef instead of resolved schema
 
 /** Entry type in wire format: schemaRef instead of resolved schema */
-export interface WireEntryType {
+interface WireEntryType {
   readonly name: string
   readonly format: ContentFormat
   readonly schemaRef: string
@@ -47,7 +47,7 @@ export interface WireEntryType {
 }
 
 /** Collection in wire format (entry types carry schemaRef, not resolved schema) */
-export interface WireCollectionConfig {
+interface WireCollectionConfig {
   readonly name: string
   readonly path: string
   readonly label?: string
@@ -63,7 +63,7 @@ export interface WireCollectionConfig {
  * collections appear as their own flat items, linked via `parentPath`.
  * Embedding subtrees would re-serialize every collection once per ancestor.
  */
-export type WireFlatSchemaItem =
+type WireFlatSchemaItem =
   | {
       type: 'collection'
       logicalPath: LogicalPath
@@ -188,13 +188,13 @@ function toWireFlatSchema(items: FlatSchemaItem[], registry: Registry): WireFlat
   })
 }
 
-export interface SchemaResponse {
+interface SchemaResponse {
   flatSchema: WireFlatSchemaItem[]
   /** Entry schema definitions keyed by registry name */
   entrySchemas: Record<string, EntrySchema>
 }
 
-export interface EntryTypeWithUsage {
+interface EntryTypeWithUsage {
   name: string
   label?: string
   format: ContentFormat
@@ -205,44 +205,44 @@ export interface EntryTypeWithUsage {
   usageCount: number
 }
 
-export interface CollectionResponse {
+interface CollectionResponse {
   collection: WireCollectionConfig | null
   /** Entry types with usage counts (only present when collection exists) */
   entryTypesWithUsage?: EntryTypeWithUsage[]
 }
 
-export interface CreateCollectionResponse {
+interface CreateCollectionResponse {
   /** The logical path to the created collection (e.g., "posts" or "blog/posts") */
   collectionPath: LogicalPath
   /** The unique 12-character content ID for the collection */
   contentId: ContentId
 }
 
-export interface UpdateCollectionResponse {
+interface UpdateCollectionResponse {
   success: boolean
 }
 
-export interface DeleteCollectionResponse {
+interface DeleteCollectionResponse {
   success: boolean
 }
 
-export interface AddEntryTypeResponse {
+interface AddEntryTypeResponse {
   success: boolean
 }
 
-export interface UpdateEntryTypeResponse {
+interface UpdateEntryTypeResponse {
   success: boolean
 }
 
-export interface RemoveEntryTypeResponse {
+interface RemoveEntryTypeResponse {
   success: boolean
 }
 
-export interface UpdateOrderResponse {
+interface UpdateOrderResponse {
   success: boolean
 }
 
-export interface InvalidateSchemaCacheResponse {
+interface InvalidateSchemaCacheResponse {
   success: boolean
   message: string
 }
@@ -706,6 +706,7 @@ const invalidateSchemaCacheHandler = async (
 
 /**
  * GET /:branch/schema - Get full schema
+ * @internal Exported for tests.
  */
 export const getSchema = defineEndpoint({
   namespace: 'schema',
@@ -723,6 +724,7 @@ export const getSchema = defineEndpoint({
 /**
  * GET /:branch/schema/collection/...collectionPath - Get single collection
  * Note: Uses 'collection' (singular) with catch-all to support paths with slashes
+ * @internal Exported for tests.
  */
 export const getCollection = defineEndpoint({
   namespace: 'schema',
@@ -739,6 +741,7 @@ export const getCollection = defineEndpoint({
 
 /**
  * POST /:branch/schema/collections - Create collection
+ * @internal Exported for tests.
  */
 export const createCollection = defineEndpoint({
   namespace: 'schema',
@@ -762,6 +765,7 @@ export const createCollection = defineEndpoint({
 /**
  * PATCH /:branch/schema/collection/...collectionPath - Update collection
  * Note: Uses 'collection' (singular) with catch-all to support paths with slashes
+ * @internal Exported for tests.
  */
 export const updateCollection = defineEndpoint({
   namespace: 'schema',
@@ -781,6 +785,7 @@ export const updateCollection = defineEndpoint({
 /**
  * DELETE /:branch/schema/collection/...collectionPath - Delete collection
  * Note: Uses 'collection' (singular) with catch-all to support paths with slashes
+ * @internal Exported for tests.
  */
 export const deleteCollection = defineEndpoint({
   namespace: 'schema',
@@ -798,6 +803,7 @@ export const deleteCollection = defineEndpoint({
 /**
  * POST /:branch/schema/entry-types/...collectionPath - Add entry type
  * Note: Restructured URL with catch-all at end to support paths with slashes
+ * @internal Exported for tests.
  */
 export const addEntryType = defineEndpoint({
   namespace: 'schema',
@@ -817,6 +823,7 @@ export const addEntryType = defineEndpoint({
 /**
  * PATCH /:branch/schema/entry-types/:entryTypeName/...collectionPath - Update entry type
  * Note: Restructured URL with entry type name before catch-all path
+ * @internal Exported for tests.
  */
 export const updateEntryType = defineEndpoint({
   namespace: 'schema',
@@ -836,6 +843,7 @@ export const updateEntryType = defineEndpoint({
 /**
  * DELETE /:branch/schema/entry-types/:entryTypeName/...collectionPath - Remove entry type
  * Note: Restructured URL with entry type name before catch-all path
+ * @internal Exported for tests.
  */
 export const removeEntryType = defineEndpoint({
   namespace: 'schema',
@@ -853,6 +861,7 @@ export const removeEntryType = defineEndpoint({
 /**
  * PATCH /:branch/schema/order/...collectionPath - Update item order
  * Note: Restructured URL with catch-all at end to support paths with slashes
+ * @internal Exported for tests.
  */
 export const updateOrder = defineEndpoint({
   namespace: 'schema',
@@ -872,7 +881,7 @@ export const updateOrder = defineEndpoint({
 /**
  * POST /:branch/schema/invalidate-cache - Invalidate schema cache
  */
-export const invalidateSchemaCache = defineEndpoint({
+const invalidateSchemaCache = defineEndpoint({
   namespace: 'schema',
   name: 'invalidateSchemaCache',
   method: 'POST',

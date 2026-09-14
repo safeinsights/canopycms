@@ -16,6 +16,7 @@ import type { ComponentProps, ComponentTransforms } from './types'
  * Parse JSX attribute string into a props object.
  *
  * Handles: `key="value"`, `key='value'`, `key={expr}`, and boolean `key` (→ "true").
+ * @internal Exported for tests.
  */
 export function parseComponentProps(attrString: string): ComponentProps {
   const props: ComponentProps = {}

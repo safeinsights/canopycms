@@ -100,5 +100,7 @@ export function createKeyBuilders(prefixes: AssetPrefixes = ASSET_PREFIXES) {
   }
 }
 
-export const { originalKey, originalPrefix, stagingKey, metaKey, metaPrefix, publicKey } =
-  createKeyBuilders()
+const keyBuilders = createKeyBuilders()
+export const { originalKey, stagingKey, metaKey, publicKey } = keyBuilders
+/** @internal Exported for tests. */
+export const { originalPrefix, metaPrefix } = keyBuilders

@@ -17,7 +17,7 @@ import { computeEntryUrl } from './utils/entry-url'
 const log = createDebugLogger({ prefix: 'EntryLinks' })
 
 /** Base58 alphabet character class (excludes ambiguous: 0, O, I, l). */
-export const BASE58_CHAR = '[123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz]'
+const BASE58_CHAR = '[123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz]'
 
 /**
  * Pattern matching `entry:CONTENT_ID` with optional anchor fragment.

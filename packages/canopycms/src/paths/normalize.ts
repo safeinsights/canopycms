@@ -60,6 +60,7 @@ export function createLogicalPath(...segments: string[]): LogicalPath {
 /**
  * Join segments into a PhysicalPath (segments may carry embedded content IDs,
  * e.g. `my-post.ABC123.mdx`), throwing on a traversal sequence.
+ * @internal Exported for tests.
  */
 export function createPhysicalPath(...segments: string[]): PhysicalPath {
   const normalized = segments
@@ -92,6 +93,7 @@ export function trimSlashes(path: string): string {
 /**
  * Join path segments with forward slashes. Does NOT check for traversal --
  * use createLogicalPath/createPhysicalPath where the result is used as a path.
+ * @internal Exported for tests.
  */
 export function joinPath(...segments: string[]): string {
   return segments

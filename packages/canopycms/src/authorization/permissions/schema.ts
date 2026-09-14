@@ -51,6 +51,7 @@ export type PermissionsFile = z.infer<typeof PermissionsFileSchema>
 /**
  * Default permissions file. Omits `version`/`writeId` — the writer
  * (mutateSettingsJsonFile via writeOccJsonFile) manages those.
+ * @internal Exported for tests.
  */
 export function createDefaultPermissionsFile(userId: CanopyUserId): PermissionsFile {
   return {

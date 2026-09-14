@@ -56,7 +56,7 @@ export interface PathPermission {
 export type SelectOption = string | { label: string; value: string }
 export type ReferenceOption = string | { label: string; value: string }
 
-export interface BaseFieldConfig {
+interface BaseFieldConfig {
   name: string
   label?: string
   description?: string
@@ -73,7 +73,7 @@ export interface BaseFieldConfig {
   isBody?: boolean
 }
 
-export interface PrimitiveFieldConfig extends BaseFieldConfig {
+interface PrimitiveFieldConfig extends BaseFieldConfig {
   type: PrimitiveFieldType
 }
 
@@ -320,7 +320,7 @@ export type GithubTokenEnvVar = string
 export type CanopyOperatingMode = OperatingMode
 export type ContentRoot = string
 export type SourceRoot = string | undefined
-export type DeployedAs = 'static' | 'server'
+type DeployedAs = 'static' | 'server'
 
 /**
  * How the dev server surfaces working-tree content edits that diverge from the branch clone it serves.
@@ -335,7 +335,7 @@ export type DeployedAs = 'static' | 'server'
 export type DevContentSyncMode = 'off' | 'warn'
 
 /** Dev-mode-only behavior. Ignored when `mode !== 'dev'`. */
-export interface DevConfig {
+interface DevConfig {
   contentSync?: DevContentSyncMode
 }
 

@@ -52,7 +52,7 @@ const LIVENESS_THRESHOLD_MS = 60_000 + 90_000
 const DEFAULT_ADMIN_TASKS_LIMIT = 50
 const MAX_ADMIN_TASKS_LIMIT = 200
 
-export type WorkerLivenessState = 'alive' | 'stale' | 'absent'
+type WorkerLivenessState = 'alive' | 'stale' | 'absent'
 
 export interface WorkerLiveness {
   /**
@@ -159,14 +159,14 @@ export interface AdminTasksData {
 /** Response type for GET /admin/tasks/:status */
 export type AdminTasksResponse = ApiResponse<AdminTasksData>
 
-export interface AdminRetryTaskData {
+interface AdminRetryTaskData {
   newTaskId: string
 }
 
 /** Response type for POST /admin/tasks/:taskId/retry */
 export type AdminRetryTaskResponse = ApiResponse<AdminRetryTaskData>
 
-export interface AdminDeleteTaskData {
+interface AdminDeleteTaskData {
   deleted: true
 }
 
@@ -188,7 +188,7 @@ export type ListAdminTasksParams = z.infer<typeof listAdminTasksParamsSchema>
 const retryTaskParamsSchema = z.object({
   taskId: z.string().regex(/^[A-Za-z0-9-]{1,80}$/),
 })
-export type RetryTaskParams = z.infer<typeof retryTaskParamsSchema>
+type RetryTaskParams = z.infer<typeof retryTaskParamsSchema>
 
 // processing/ and completed/ are deliberately excluded: processing/ is
 // worker-owned (deleting there races completeTask's read-then-unlink), and

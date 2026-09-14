@@ -166,7 +166,7 @@ export async function pollMergeState(
  * outer per-branch catch with no further catch around it, so the WHOLE method
  * is wrapped, not just the load.
  */
-export async function recordRebaseFailure(
+async function recordRebaseFailure(
   ctx: RebaseContext,
   branchPath: string,
   branchDir: string,
@@ -383,7 +383,7 @@ async function runRebaseRounds(
  *
  * Pure -- the one piece of this loop testable without a git repo.
  */
-export function conflictFilesToContentIds(
+function conflictFilesToContentIds(
   conflictedFiles: readonly string[],
   contentRoot: string,
 ): ContentId[] {
@@ -490,7 +490,7 @@ async function carryForwardRewrittenHistory(
  * a push to one of four arrays in scope, so the compiler checks that each of
  * {@link rebaseOneBranch}'s many exits produces exactly one outcome.
  */
-export type BranchRebaseOutcome =
+type BranchRebaseOutcome =
   /** Nothing to do: a skipped status, or already up to date. Not reported. */
   | { kind: 'none' }
   /** Was behind and completed a rebase, with or without conflict resolution. */

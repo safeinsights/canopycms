@@ -1,5 +1,5 @@
 /** True when running in a test environment (Playwright, Cypress, or an E2E flag sets these globals). */
-export function isTestEnvironment(): boolean {
+function isTestEnvironment(): boolean {
   if (typeof window === 'undefined') return false
 
   return (

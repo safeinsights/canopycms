@@ -134,5 +134,3 @@ export const AssetCard: React.FC<AssetCardProps> = ({ asset, baseUrl, onSelect, 
     </Card>
   )
 }
-
-export default AssetCard

@@ -20,6 +20,7 @@ export async function computeContentSha256Hex(body: string): Promise<string | un
  * Hash a raw-bytes request body (e.g. an ArrayBuffer or Blob upload). Not usable for `FormData`
  * bodies — the multipart boundary is generated at send time, after the request would already
  * need to be signed.
+ * @internal Exported for tests.
  */
 export async function computeContentSha256HexFromBytes(
   bytes: BufferSource,
