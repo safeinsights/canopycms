@@ -192,6 +192,12 @@ jobs:
       - name: Lint comment budget
         run: pnpm lint:comments
 
+      # Unused exports in canopycms and canopycms-next (knip, production mode, so
+      # an export only tests import must carry an @internal tag). knip.json holds
+      # the entries and the ignored workspaces.
+      - name: Lint unused exports (knip)
+        run: pnpm lint:exports
+
       # Root-level node tooling. `pnpm lint` is `pnpm -r`, which recurses over
       # workspace PACKAGES only -- scripts/ is not one, so until 2026-08-22
       # nothing linted the seven scripts here, four of which gate CI or
