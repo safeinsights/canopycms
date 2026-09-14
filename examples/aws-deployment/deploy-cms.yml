@@ -38,6 +38,9 @@
 #      infrastructure.
 #   3. Install the CDK dependencies the app entry point needs:
 #      `npm install --save-dev canopycms-cdk aws-cdk-lib constructs tsx aws-cdk`
+#      The "Type-check the CDK app" step also needs typescript and @types/node,
+#      which a Next.js TypeScript app normally has already:
+#      `npm install --save-dev typescript @types/node`
 #   4. Set these repository secrets (Settings -> Secrets and variables ->
 #      Actions -> Secrets). All but AWS_DEPLOY_ROLE_ARN are read by `required()`
 #      in infrastructure/bin/app.ts, so a missing value fails the deploy at

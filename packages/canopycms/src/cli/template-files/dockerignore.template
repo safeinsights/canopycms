@@ -12,6 +12,8 @@ infrastructure
 
 # Secrets must never enter the image build context.
 .env*
+# Private keys (e.g. init-github-app --key-out), at any depth: a bare *.pem matches only the root.
+**/*.pem
 
 # Do NOT ignore vendor/ -- file: dependencies (vendored tarballs) must reach
 # the Docker build context, or the install step in Dockerfile.cms will fail to

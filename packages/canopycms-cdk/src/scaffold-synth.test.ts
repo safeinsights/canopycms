@@ -389,7 +389,7 @@ describe('canopycms init-deploy aws produces a synthesizable CDK app', () => {
   })
 
   /**
-   * The scaffold half of adopter request #46. Four files carry this wiring --
+   * The scaffold half of adopter request #46. Four places in three files carry this wiring --
    * `bin/app.ts`, `lib/cms-stack.ts`'s props, that file's pass-through to
    * `CanopyCmsService`, and the workflow's `env:` block -- and a break in any
    * one of them produces a deployment where the prop is simply inert: the

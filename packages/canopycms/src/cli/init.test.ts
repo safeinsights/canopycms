@@ -549,6 +549,9 @@ describe('canopycms init-deploy aws', () => {
     // infrastructure/ is the CDK app, which the image never runs. In the build context
     // `next build` would type-check it, and fail wherever aws-cdk-lib is not installed.
     expect(ignoreLines).toContain('infrastructure')
+    // A private key `init-github-app create --key-out` wrote inside the project would otherwise
+    // land in the builder layer. `**/`, because a bare `*.pem` matches only the context root.
+    expect(ignoreLines).toContain('**/*.pem')
   })
 
   it('skips existing .dockerignore in non-interactive mode', async () => {

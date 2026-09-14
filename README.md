@@ -3315,7 +3315,7 @@ Scaffolds a complete, deployable CDK app for the recommended AWS architecture (L
 | `infrastructure/tsconfig.json`     | compiler settings for the workflow's `tsc --noEmit -p infrastructure`. `cdk.json` runs the CDK app through tsx, which doesn't check types, and the `tsconfig.json` edit below excludes `infrastructure/` from `next build`, so without this step a misspelled construct prop is dropped silently. It extends your `tsconfig.json`                                  |
 | `tsconfig.json`                    | adds `infrastructure` to `exclude` so `next build` doesn't type-check the CDK app; warns instead, and leaves the file alone, if it has comments or inherits `exclude` through `extends` with no list of its own; also warns if there is no `tsconfig.json`                                                                                                         |
 
-Install the CDK dependencies it needs — the CLI, and the generated workflow, both warn if any are missing:
+Install the CDK dependencies it needs — the CLI warns if any are missing, and the generated workflow fails before deploying:
 
 ```bash
 npm install --save-dev canopycms canopycms-cdk aws-cdk-lib constructs tsx aws-cdk
