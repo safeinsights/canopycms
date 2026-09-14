@@ -84,9 +84,9 @@ export class ReferenceResolver {
   ): Promise<ReferenceOption[]> {
     const options: ReferenceOption[] = []
 
-    // Gather candidate entries. Use getCollectionEntryPaths for collection-based queries
-    // (it handles path normalization and schema index lookups). Use the ID index directly
-    // for entryTypes-only queries (no collection scope).
+    // Collection-scoped queries go through getCollectionEntryPaths (it normalizes paths -- e.g.
+    // 'authors' -> 'content/authors' -- and consults the schema index); an entryTypes-only query
+    // has no collection scope, so it reads the ID index directly.
     type Candidate = { relativePath: PhysicalPath; collection: LogicalPath; slug: Slug }
     let candidates: Candidate[]
     if (collections && collections.length > 0) {

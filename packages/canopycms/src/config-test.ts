@@ -11,10 +11,8 @@ const FALLBACK_AUTHOR = {
   gitBotAuthorEmail: 'canopycms-test@example.com',
 }
 
-// mode has no default on the real schema (SEC-C1: a prod deploy that omits it must fail
-// validation loudly). This test-only fallback keeps existing test configs terse by
-// defaulting to 'dev'; production config authoring goes through defineCanopyConfig, which
-// has no such fallback.
+// `mode` has no default on the real schema (SEC-C1: a prod deploy that omits it must fail
+// validation loudly). This test-only fallback defaults it to 'dev' so test configs stay terse.
 const FALLBACK_MODE = 'dev' as const
 
 type TestConfigInput = Omit<
@@ -25,10 +23,8 @@ type TestConfigInput = Omit<
 } & Partial<Pick<CanopyConfigInput, 'gitBotAuthorName' | 'gitBotAuthorEmail' | 'mode'>>
 
 /**
- * Test-only helper that fills required author fields (and defaults `mode` to 'dev') for
- * convenience. The real schema requires `mode` with no default (SEC-C1); this helper
- * intentionally defaults it so existing test configs don't all need `mode: 'dev'` added.
- * Do not use in production code; prefer defineCanopyConfig.
+ * Test-only: fills the required author fields and defaults `mode` (see `FALLBACK_MODE`).
+ * Production config authoring goes through `defineCanopyConfig`, which has no such fallback.
  */
 export const defineCanopyTestConfig = (
   config: TestConfigInput,
@@ -44,9 +40,9 @@ export const defineCanopyTestConfig = (
 }
 
 /**
- * Test-only helper that creates CanopyServices with inline schema.
- * Creates a mock branchSchemaCache that returns the test schema without requiring .collection.json files.
- * Do not use in production code; use createCanopyServices with entrySchemaRegistry.
+ * Test-only: `CanopyServices` from an inline schema, via a mock `branchSchemaCache` that serves it
+ * without any `.collection.json` files. Production code uses `createCanopyServices` with an
+ * `entrySchemaRegistry`.
  */
 export const createTestServices = async (
   config: TestConfigInput,

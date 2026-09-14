@@ -2,22 +2,18 @@
  * The one-URL-per-entry invariant, as a reusable probe + report.
  *
  * `listEntries` assigns every entry exactly one `urlPath` and documents the round trip through
- * `readByUrlPath` as safe. The reverse direction has repeatedly been the looser of the two: it
- * has answered at URLs no forward surface emits, and those extra URLs were found one at a time,
- * a release apart, by adopters (see
- * `.claude/future-tasks/resolved/url-resolver-index-entry-extra-url.md`, then
- * `resolved/readbyurlpath-entry-type-candidate-phantom-url.md`). This module exists so the whole
- * invariant is asserted at once instead: enumerate, then probe every ADJACENT URL the resolver
- * would try and require it to be a miss.
+ * `readByUrlPath` as safe. The reverse direction is the looser of the two and can answer at URLs
+ * no forward surface emits, so this module asserts the whole invariant at once: enumerate, then
+ * probe every ADJACENT URL the resolver would try and require it to be a miss.
  *
- * Deliberately free of `vitest` -- this is a plain `src` module in the shape of
+ * Deliberately free of `vitest` -- a plain `src` module in the shape of
  * `operating-mode/deployment-name-fixtures.ts`, so more than one test file can import it without
  * dragging that file's `vi.mock` calls and `describe` blocks along. It therefore ASSERTS NOTHING:
  * it returns a report and the caller does the expecting, which also puts the offending URLs in
  * the assertion message rather than behind a boolean.
  *
  * Scope of the invariant it checks: entries written in the `{type}.{slug}.{id}.{ext}` grammar
- * with a type their collection declares -- i.e. exactly the set `listEntries` can see. A legacy
+ * with a type their collection declares -- exactly the set `listEntries` can see. A legacy
  * untyped file (`overview.json`) is invisible to enumeration and is deliberately NOT probed here;
  * see `.claude/future-tasks/legacy-untyped-files-url-addressable.md`.
  */
@@ -33,9 +29,8 @@ const joinUrl = (base: string, ...segments: string[]): string =>
   (base === '/' ? '' : base) + segments.map((s) => `/${s}`).join('')
 
 /**
- * Every URL adjacent to the published set that the resolver would actually attempt.
- *
- * Three families, each one a shape that HAS resolved at some point in this package's history:
+ * Every URL adjacent to the published set that the resolver would actually attempt, in three
+ * families:
  *
  * 1. `/<collection>/<entryTypeName>` -- `resolveUrlPathCandidates`' index-fallback candidate lands
  *    on a registered entry-TYPE schema item, which `ContentStore.buildPaths` delegates to the
@@ -47,10 +42,10 @@ const joinUrl = (base: string, ...segments: string[]): string =>
  *    spelling its collapsed URL replaced.
  *
  * Entry-type names are appended VERBATIM, after `computeEntryUrl` has lowercased the collection
- * part. That asymmetry is real, not sloppiness: `flattenSchema` puts `entryType.name` into the
- * logical path unchanged and `normalizeFilesystemPath` does not lowercase, so only the declared
- * spelling can reach the entry-type schema item at all. A lowercased probe would miss the schema
- * item, return null for the wrong reason, and pass vacuously.
+ * part. That asymmetry is real: `flattenSchema` puts `entryType.name` into the logical path
+ * unchanged and `normalizeFilesystemPath` does not lowercase, so only the declared spelling can
+ * reach the entry-type schema item at all. A lowercased probe would miss the schema item, return
+ * null for the wrong reason, and pass vacuously.
  */
 export const buildProbeUrls = (
   schema: RootCollectionConfig,
@@ -88,7 +83,7 @@ export const buildProbeUrls = (
 export interface UrlExclusivityReport {
   /** Every `urlPath` the listing published, sorted. */
   published: string[]
-  /** URLs claimed by more than one entry. A precondition failure, not a resolver finding. */
+  /** URLs claimed by more than one entry. A precondition failure, not a resolver result. */
   duplicates: DuplicateUrlPath[]
   /** Published URLs `readByUrlPath` did NOT resolve -- the round trip broken going forward. */
   unresolved: string[]
@@ -101,13 +96,13 @@ export interface UrlExclusivityReport {
 }
 
 /**
- * Enumerate, round-trip, then probe. See `UrlExclusivityReport` for what each field means and
+ * Enumerate, round-trip, then probe. See `UrlExclusivityReport` for the fields and
  * `buildProbeUrls` for which URLs are probed.
  *
  * A probe whose LOWERCASED form is published is skipped rather than asserted on: a collection
  * literally named `index` publishes `/docs/index`, which family 3 also generates, and whether
- * `/docs/Index` should resolve is a separate, pre-existing question about collection-path case
- * sensitivity that this invariant does not speak to.
+ * `/docs/Index` should resolve is a separate question about collection-path case sensitivity that
+ * this invariant does not speak to.
  */
 export const collectUrlExclusivityReport = async (
   ctx: Pick<CanopyContext, 'listEntries' | 'readByUrlPath'>,

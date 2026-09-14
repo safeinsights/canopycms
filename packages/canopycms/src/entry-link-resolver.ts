@@ -1,16 +1,13 @@
 /**
- * Entry link resolution for body content.
+ * Entry link resolution for body content: `entry:CONTENT_ID` tokens in markdown/MDX
+ * text resolve to URL paths, extending the reference-by-ID pattern from structured
+ * reference fields to inline body links.
  *
- * Resolves `entry:CONTENT_ID` patterns in markdown/MDX body text to actual URL paths.
- * This extends the reference-by-ID pattern (already used for structured reference fields)
- * to inline links in content bodies.
- *
- * Syntax:
  *   [Link text](entry:vh2WdhwAFiSL)
  *   [Link text](entry:vh2WdhwAFiSL#section-heading)
  *
- * Resolution skips fenced code blocks and inline code spans to avoid
- * corrupting code examples.
+ * Fenced code blocks and inline code spans are skipped, so code examples are never
+ * rewritten.
  */
 
 import type { ContentIdIndex, IdLocation } from './content-id-index'
@@ -35,10 +32,7 @@ export type EntryLinkUrlResolver = (entry: {
   id: string
 }) => string
 
-/**
- * Compute a URL path from an entry's location in the content tree.
- * Delegates to the shared `computeEntryUrl` utility.
- */
+/** URL path for an entry's location in the content tree; delegates to `computeEntryUrl`. */
 export function resolveEntryUrl(
   location: Pick<IdLocation, 'collection' | 'slug'>,
   contentRoot: string,
@@ -47,13 +41,9 @@ export function resolveEntryUrl(
 }
 
 /**
- * Replace `entry:CONTENT_ID` patterns in text with resolved URL paths.
- *
- * Skips code blocks (fenced ``` and inline `code`) to avoid corrupting
- * code examples that mention the entry: syntax.
- *
- * Missing IDs are replaced with "#" (dead link) and logged as warnings.
- * Anchor fragments are preserved: entry:ID#heading => /path#heading
+ * Replace `entry:CONTENT_ID` tokens with resolved URL paths, skipping code blocks and
+ * spans so examples mentioning the syntax survive. A missing ID becomes "#" (dead link)
+ * plus a warning; an anchor fragment is preserved (`entry:ID#heading` => `/path#heading`).
  */
 export function resolveEntryLinksInText(
   text: string,
@@ -96,12 +86,9 @@ export const ENTRY_LINK_QUICK_CHECK =
   /entry:[123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz]{12}/
 
 /**
- * Recursively resolve entry:ID patterns in all string values of a data object.
- *
- * This handles nested objects, arrays, and mixed structures — important for
- * JSON entries where markdown fields live inside nested objects (e.g., hero.body).
- *
- * Returns the same object reference if nothing changed (structural sharing).
+ * Recursively resolve `entry:ID` tokens in every string of a data structure — nested
+ * objects and arrays included, since JSON entries keep markdown fields inside nested
+ * objects (e.g. hero.body). Returns the same reference when nothing changed.
  */
 export function resolveEntryLinksInData(
   data: unknown,
@@ -138,20 +125,16 @@ export function resolveEntryLinksInData(
   return data
 }
 
-/**
- * Extract all entry link IDs from text (for validation, not resolution).
- * Returns IDs found in entry:ID patterns, skipping code blocks.
- */
+/** Every entry link ID in text, skipping code blocks — for validation, not resolution. */
 export function extractEntryLinkIds(text: string): Array<{ id: string; anchor?: string }> {
   const parts = splitByCodeRegions(text)
   const results: Array<{ id: string; anchor?: string }> = []
 
   for (const part of parts) {
     if (part.isCode) continue
-    // Source is ENTRY_LINK_PATTERN.source, a fixed compile-time pattern (see
-    // line 33), not attacker-controlled input. A fresh instance is created per
-    // part so the stateful `lastIndex` from the shared `g`-flagged
-    // ENTRY_LINK_PATTERN isn't mutated by this exec() loop.
+    // `ENTRY_LINK_PATTERN.source` is a fixed compile-time pattern, not attacker-controlled
+    // input. A fresh instance per part keeps this exec() loop from mutating the shared
+    // `g`-flagged pattern's `lastIndex`.
     // eslint-disable-next-line security/detect-non-literal-regexp
     const regex = new RegExp(ENTRY_LINK_PATTERN.source, 'g')
     let match
@@ -172,13 +155,9 @@ interface TextPart {
 }
 
 /**
- * Split text into alternating code/non-code regions.
- *
- * Handles:
- * - Fenced code blocks (``` or ~~~), including with language tags
- * - Inline code spans (`code` and ``code``)
- *
- * This ensures entry:ID inside code is never resolved.
+ * Split text into alternating code/non-code regions — fenced blocks (``` or ~~~, language
+ * tags included) and inline spans (`code`, ``code``) — so `entry:ID` inside code is never
+ * resolved.
  */
 function splitByCodeRegions(text: string): TextPart[] {
   const parts: TextPart[] = []
