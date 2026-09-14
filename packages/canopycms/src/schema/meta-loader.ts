@@ -116,7 +116,6 @@ export type RootCollectionMeta = {
  * e.g., "home.index.agfzDt2RLpSn.json" -> "index"
  */
 function stripEmbeddedIdFromName(name: string): string {
-  // Use extractSlugFromFilename which handles the ID extraction logic
   return extractSlugFromFilename(name)
 }
 
@@ -133,8 +132,6 @@ async function scanForCollectionMeta(
       if (!entry.isDirectory()) continue
 
       const folderName = entry.name
-      // Strip embedded ID from folder name for logical path
-      // e.g., "docs.bChqT78gcaLd" -> "docs"
       const logicalName = stripEmbeddedIdFromName(folderName)
       // Extract embedded ContentId from directory name (e.g., "posts.a1b2c3d4e5f6" → "a1b2c3d4e5f6")
       const collectionContentId = extractIdFromFilename(folderName) ?? undefined
@@ -142,22 +139,19 @@ async function scanForCollectionMeta(
       const absolutePath = join(baseDir, folderName)
       const metaPath = join(absolutePath, '.collection.json')
 
-      // Try to load collection meta file
       try {
         await fs.access(metaPath)
         const content = await fs.readFile(metaPath, 'utf-8')
         const parsed = JSON.parse(content)
 
-        // Validate with Zod
         const meta = collectionMetaSchema.parse(parsed) as CollectionMeta
 
         collections.push({
           ...meta,
-          path: folderPath, // Path derived from folder name
+          path: folderPath,
           contentId: collectionContentId,
         })
 
-        // Recursively scan for nested collection folders (they'll have their own .collection.json files)
         const nestedCollections = await scanForCollectionMeta(absolutePath, folderPath)
         collections.push(...nestedCollections)
       } catch (err) {
@@ -184,11 +178,6 @@ async function scanForCollectionMeta(
 /**
  * Loads all .collection.json meta files from contentRoot, including root.
  *
- * This function orchestrates the complete discovery process:
- * 1. Attempts to load the root .collection.json (contentRoot/.collection.json) - optional
- * 2. Recursively scans all subdirectories for .collection.json files
- * 3. Returns both root configuration and nested collections
- *
  * Meta File Structure:
  * - Root: contentRoot/.collection.json (optional, defines root-level entry types)
  * - Collections: contentRoot/[path]/.collection.json (defines collection in that directory)
@@ -201,14 +190,12 @@ export async function loadCollectionMetaFiles(contentRoot: string): Promise<{
   root: RootCollectionMeta | null
   collections: Array<CollectionMeta & { path: string; contentId?: ContentId }>
 }> {
-  // Load root .collection.json (optional)
   let root: RootCollectionMeta | null = null
   const rootMetaPath = join(contentRoot, '.collection.json')
 
   try {
     await fs.access(rootMetaPath)
   } catch (err) {
-    // No root .collection.json - that's okay
     if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
       // File doesn't exist, that's fine
     } else {
@@ -216,7 +203,6 @@ export async function loadCollectionMetaFiles(contentRoot: string): Promise<{
     }
   }
 
-  // If file exists, try to read and parse it
   try {
     const content = await fs.readFile(rootMetaPath, 'utf-8')
     const parsed = JSON.parse(content)
@@ -229,15 +215,11 @@ export async function loadCollectionMetaFiles(contentRoot: string): Promise<{
     }
   }
 
-  // Scan for collection folders
   const collections = await scanForCollectionMeta(contentRoot)
 
   return { root, collections }
 }
 
-/**
- * Resolve schema references for entry types
- */
 function resolveEntryTypes(
   entryTypes: EntryTypeMeta[],
   entrySchemaRegistry: EntrySchemaRegistry,
@@ -268,15 +250,11 @@ function resolveEntryTypes(
   })
 }
 
-/**
- * Resolve schema references for a single collection
- */
 function resolveCollectionMeta(
   meta: CollectionMeta & { path: string; contentId?: ContentId },
   entrySchemaRegistry: EntrySchemaRegistry,
   allCollections: Array<CollectionMeta & { path: string; contentId?: ContentId }>,
 ): CollectionConfig {
-  // Resolve entry types
   const entries =
     meta.entries && meta.entries.length > 0
       ? resolveEntryTypes(meta.entries, entrySchemaRegistry, `collection "${meta.name}"`)
@@ -314,11 +292,6 @@ function resolveCollectionMeta(
  * This function takes the loaded meta files (which contain string references like "postSchema")
  * and resolves them to actual EntrySchema arrays from the entry schema registry.
  *
- * Resolution Process:
- * 1. Root entry types: Resolve "schema" string to entry schema registry lookup
- * 2. Top-level collections: Resolve recursively, building nested tree structure
- * 3. Nested collections: Automatically grouped under their parent collections
- *
  * @param metaFiles - Loaded meta files from loadCollectionMetaFiles()
  * @param entrySchemaRegistry - Map of schema names to EntrySchema arrays
  * @returns Fully resolved root collection config ready for use by CanopyCMS
@@ -334,12 +307,10 @@ export function resolveCollectionReferences(
   // Build result object dynamically to avoid readonly conflicts
   const result: Record<string, unknown> = {}
 
-  // Pass through root label if present
   if (metaFiles.root?.label) {
     result.label = metaFiles.root.label
   }
 
-  // Resolve root entry types
   if (metaFiles.root?.entries && metaFiles.root.entries.length > 0) {
     result.entries = resolveEntryTypes(
       metaFiles.root.entries,
@@ -348,7 +319,6 @@ export function resolveCollectionReferences(
     )
   }
 
-  // Pass through root order array (embedded IDs for sorting)
   if (metaFiles.root?.order) {
     result.order = metaFiles.root.order
   }
@@ -365,9 +335,6 @@ export function resolveCollectionReferences(
   return result as RootCollectionConfig
 }
 
-/**
- * Watch for changes to .collection.json files
- */
 export function watchCollectionMetaFiles(contentRoot: string, onChange: () => void): () => void {
   const watcher = chokidar.watch(`${contentRoot}/**/.collection.json`, {
     ignoreInitial: true,
@@ -381,6 +348,5 @@ export function watchCollectionMetaFiles(contentRoot: string, onChange: () => vo
     canopyLogWarn(`CanopyCMS: .collection.json watcher error: ${getErrorMessage(err)}`),
   )
 
-  // Return cleanup function
   return () => watcher.close()
 }

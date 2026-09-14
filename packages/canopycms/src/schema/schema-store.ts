@@ -1,11 +1,6 @@
 /**
  * Schema Store - handles reading and writing .collection.json files.
  *
- * This module provides CRUD operations for collection schema metadata:
- * - Create/update/delete collections
- * - Add/update/remove entry types
- * - Update ordering of items within collections
- *
  * All mutations are branch-specific (like content edits).
  *
  * ## Concurrency
@@ -117,13 +112,8 @@ interface RootCollectionMetaFile {
   order?: string[]
 }
 
-// ============================================================================
-// Zod Schemas for Validation
-// ============================================================================
-
 /** Max length for names and slugs (filesystem path safety) */
 const MAX_NAME_LENGTH = 64
-/** Max length for labels */
 const MAX_LABEL_LENGTH = 128
 
 /**
@@ -185,10 +175,6 @@ const updateEntryTypeInputSchema = z.object({
   maxItems: z.number().int().positive().optional(),
 })
 
-// ============================================================================
-// SchemaOps Class
-// ============================================================================
-
 const log = createDebugLogger({ prefix: 'SchemaOps' })
 
 /**
@@ -241,10 +227,6 @@ export class SchemaOps {
       .join('/')
     this.schemaLockPath = path.join(this.branchRoot, '.canopy-meta', 'schema')
   }
-
-  // --------------------------------------------------------------------------
-  // Schema Lock
-  // --------------------------------------------------------------------------
 
   /**
    * Serialize an entire read-modify-write schema mutation behind the coarse
@@ -300,10 +282,6 @@ export class SchemaOps {
       throw err
     }
   }
-
-  // --------------------------------------------------------------------------
-  // Cache Invalidation
-  // --------------------------------------------------------------------------
 
   /**
    * Invalidate schema cache for this branch after mutations, then eagerly
@@ -365,10 +343,6 @@ export class SchemaOps {
     await invalidateBranchContentCaches(this.branchRoot)
   }
 
-  // --------------------------------------------------------------------------
-  // Path Normalization
-  // --------------------------------------------------------------------------
-
   /**
    * The single normalisation boundary for logical collection paths entering
    * this class. Every public method that accepts a logical collection path
@@ -382,9 +356,7 @@ export class SchemaOps {
    * but `resolveCollectionPath(this.contentRoot, ...)` treats its second
    * argument as relative to `this.contentRoot` — which already embeds the
    * content-root segment(s). A prefixed path therefore resolved one level
-   * too deep and was reported as not found. `updateCollectionInner` used to
-   * strip the prefix itself (the only mutator that did); that bespoke strip
-   * is gone now that every entry point normalises here instead.
+   * too deep and was reported as not found.
    *
    * Prefix-only: strips ONE leading `"{contentRootName}/"` if present (exact
    * string match against the full, possibly multi-segment, `contentRootName`
@@ -397,9 +369,9 @@ export class SchemaOps {
    * through unchanged and the `=== this.contentRootName` checks in
    * `updateCollectionInner`/`updateOrderInner` keep working.
    *
-   * CALL EXACTLY ONCE PER ENTRY POINT — it is NOT idempotent, and an earlier
-   * version of this comment claimed it was. A sub-collection literally named
-   * after the content root defeats the "already normalised" reasoning: with
+   * CALL EXACTLY ONCE PER ENTRY POINT — it is NOT idempotent. A sub-collection
+   * literally named after the content root defeats the "already normalised"
+   * reasoning: with
    * `contentRoot: 'content'`, "content/content/x" normalises to "content/x"
    * and again to "x", and "content/content" normalises to "content", which
    * the `=== this.contentRootName` checks above then treat as the ROOT
@@ -417,20 +389,10 @@ export class SchemaOps {
     return createLogicalPath(stripContentRootPrefix(collectionPath, this.contentRootName))
   }
 
-  // --------------------------------------------------------------------------
-  // Validation Helpers
-  // --------------------------------------------------------------------------
-
-  /**
-   * Validate that a schema reference exists in the registry
-   */
   validateSchemaReference(schemaKey: string): boolean {
     return schemaKey in this.entrySchemaRegistry
   }
 
-  /**
-   * Validate all schema references in entry types
-   */
   private validateEntryTypeSchemas(entryTypes: CreateEntryTypeInput[]): {
     valid: boolean
     error?: string
@@ -462,16 +424,8 @@ export class SchemaOps {
     return { valid: true, normalizedPath: result.normalizedPath }
   }
 
-  // --------------------------------------------------------------------------
-  // Read Operations
-  // --------------------------------------------------------------------------
-
-  /**
-   * Read a collection's .collection.json file
-   */
   async readCollectionMeta(collectionPath: LogicalPath): Promise<CollectionMetaFile | null> {
     const normalizedPath = this.normalizeCollectionPath(collectionPath)
-    // Resolve logical path to physical path with embedded IDs
     const physicalPath = await resolveCollectionPath(this.contentRoot, normalizedPath)
     if (!physicalPath) {
       return null
@@ -489,9 +443,6 @@ export class SchemaOps {
     }
   }
 
-  /**
-   * Read root collection meta (content/.collection.json)
-   */
   async readRootCollectionMeta(): Promise<RootCollectionMetaFile | null> {
     const metaPath = path.join(this.contentRoot, '.collection.json')
     try {
@@ -519,11 +470,9 @@ export class SchemaOps {
     try {
       const entries = await fs.readdir(physicalPath, { withFileTypes: true })
       for (const entry of entries) {
-        // Content files mean not empty
         if (entry.isFile() && entry.name !== '.collection.json') {
           return false
         }
-        // Child collection directories mean not empty
         if (entry.isDirectory()) {
           try {
             await fs.access(path.join(physicalPath, entry.name, '.collection.json'))
@@ -542,52 +491,33 @@ export class SchemaOps {
     }
   }
 
-  // --------------------------------------------------------------------------
-  // Write Operations
-  //
   // These are plain atomic writes with NO locking of their own: every caller
   // reaches them from inside a public mutator's `withSchemaLock` critical
   // section (see the module doc comment), which is what actually protects
   // against concurrent writers. Locking here too would be redundant and
   // would mislead a reader into thinking THIS is where the safety comes
   // from.
-  // --------------------------------------------------------------------------
 
-  /**
-   * Write a collection's .collection.json file
-   */
   private async writeCollectionMeta(physicalPath: string, meta: CollectionMetaFile): Promise<void> {
     const metaPath = path.join(physicalPath, '.collection.json')
     const content = JSON.stringify(meta, null, 2) + '\n'
     await atomicWriteFile(metaPath, content)
   }
 
-  /**
-   * Write root collection meta
-   */
   private async writeRootCollectionMeta(meta: RootCollectionMetaFile): Promise<void> {
     const metaPath = path.join(this.contentRoot, '.collection.json')
     const content = JSON.stringify(meta, null, 2) + '\n'
     await atomicWriteFile(metaPath, content)
   }
 
-  // --------------------------------------------------------------------------
-  // Collection Operations
-  // --------------------------------------------------------------------------
-
-  /**
-   * Create a new collection
-   */
   async createCollection(
     input: CreateCollectionInput,
   ): Promise<{ collectionPath: LogicalPath; contentId: ContentId }> {
-    // Validate input
     const parseResult = createCollectionInputSchema.safeParse(input)
     if (!parseResult.success) {
       throw new Error(`Invalid input: ${parseResult.error.message}`)
     }
 
-    // Validate schema references
     const schemaValidation = this.validateEntryTypeSchemas(input.entries)
     if (!schemaValidation.valid) {
       throw new Error(schemaValidation.error)
@@ -611,7 +541,6 @@ export class SchemaOps {
   private async createCollectionInner(
     input: CreateCollectionInput,
   ): Promise<{ collectionPath: LogicalPath; contentId: ContentId }> {
-    // Determine parent directory
     let parentPhysicalPath: string
     if (input.parentPath) {
       const resolved = await resolveCollectionPath(this.contentRoot, input.parentPath)
@@ -623,12 +552,11 @@ export class SchemaOps {
       parentPhysicalPath = this.contentRoot
     }
 
-    // Generate embedded ID for new collection
     const contentId = generateId()
     const dirName = `${input.name}.${contentId}`
     const physicalPath = path.join(parentPhysicalPath, dirName)
 
-    // Defense-in-depth (SCH-C1): the name pattern above already prevents
+    // Defense-in-depth: the name pattern above already prevents
     // traversal, but independently assert the resolved path stays within the
     // content root before any filesystem write.
     const containment = this.validatePath(physicalPath)
@@ -636,7 +564,6 @@ export class SchemaOps {
       throw new Error(`Invalid collection path: ${containment.error}`)
     }
 
-    // Create directory
     await fs.mkdir(physicalPath, { recursive: true })
     await this.invalidateContentIdIndexes()
 
@@ -652,26 +579,22 @@ export class SchemaOps {
         default: et.default,
         maxItems: et.maxItems,
       })),
-      order: [], // Initialize with empty order array
+      order: [],
     }
 
-    // Write .collection.json
     await this.writeCollectionMeta(physicalPath, meta)
 
-    // Add new collection's contentId to parent's order array
     // For root-level collections (empty parentPath), we don't update parent order
     const parentLogicalPath = input.parentPath
       ? createLogicalPath(input.parentPath)
       : createLogicalPath('')
     const parentMeta = input.parentPath ? await this.readCollectionMeta(parentLogicalPath) : null
     if (parentMeta) {
-      // Initialize parent's order array if it doesn't exist
       const existingOrder = parentMeta.order ?? []
       parentMeta.order = [...existingOrder, contentId]
       await this.writeCollectionMeta(parentPhysicalPath, parentMeta)
     }
 
-    // Build logical path
     const logicalPath = input.parentPath
       ? createLogicalPath(`${input.parentPath}/${input.name}`)
       : createLogicalPath(input.name)
@@ -679,14 +602,10 @@ export class SchemaOps {
     return { collectionPath: logicalPath, contentId }
   }
 
-  /**
-   * Update a collection's metadata
-   */
   async updateCollection(
     collectionPath: LogicalPath,
     updates: UpdateCollectionInput,
   ): Promise<void> {
-    // Validate input
     const parseResult = updateCollectionInputSchema.safeParse(updates)
     if (!parseResult.success) {
       throw new Error(`Invalid input: ${parseResult.error.message}`)
@@ -694,7 +613,6 @@ export class SchemaOps {
 
     const normalizedPath = this.normalizeCollectionPath(collectionPath)
     await this.withSchemaLock(() => this.updateCollectionInner(normalizedPath, updates))
-    // Invalidate schema cache after mutation (outside the lock — see withSchemaLock's doc comment)
     await this.invalidateSchemaCache()
   }
 
@@ -714,10 +632,7 @@ export class SchemaOps {
     collectionPath: LogicalPath,
     updates: UpdateCollectionInput,
   ): Promise<void> {
-    // Check if this is the root collection (path equals the configured content
-    // root, e.g. "content" or "cms/content")
     if (collectionPath === this.contentRootName) {
-      // Update root collection meta
       let meta = await this.readRootCollectionMeta()
       if (!meta) {
         meta = {}
@@ -733,24 +648,18 @@ export class SchemaOps {
       return
     }
 
-    // Resolve path for regular collection. collectionPath is already
-    // normalized (no content-root prefix) by the caller — see this method's
-    // doc comment.
     const physicalPath = await resolveCollectionPath(this.contentRoot, collectionPath)
     if (!physicalPath) {
       throw new Error(`Collection not found: ${collectionPath}`)
     }
 
-    // Read existing meta
     const meta = await this.readCollectionMeta(collectionPath)
     if (!meta) {
       throw new Error(`Collection meta not found: ${collectionPath}`)
     }
 
-    // Handle slug change (directory rename) if provided
     let finalPhysicalPath = physicalPath
     if (updates.slug !== undefined) {
-      // Extract current slug and ID from physical path
       // Format: /path/to/{slug}.{12-char-id}
       const dirName = path.basename(physicalPath)
       const parts = dirName.split('.')
@@ -762,19 +671,15 @@ export class SchemaOps {
       const currentSlug = parts[0]
       const contentId = parts[1]
 
-      // Only rename if slug is actually different
       if (updates.slug !== currentSlug) {
-        // Validate new slug (alphanumeric + hyphens, lowercase)
         if (!SAFE_NAME_PATTERN.test(updates.slug)) {
           throw new Error(`Slug ${SAFE_NAME_MESSAGE}`)
         }
 
-        // Build new path with new slug + same ID
         const parentDir = path.dirname(physicalPath)
         const newDirName = `${updates.slug}.${contentId}`
         const newPhysicalPath = path.join(parentDir, newDirName)
 
-        // Check if any collection with this slug already exists
         // Need to check for any directory matching {slug}.{any-id}
         try {
           const entries = await fs.readdir(parentDir, { withFileTypes: true })
@@ -787,7 +692,6 @@ export class SchemaOps {
             }
           }
         } catch (err) {
-          // Re-throw "already exists" errors
           if ((err as Error).message.includes('already exists')) {
             throw err
           }
@@ -837,7 +741,6 @@ export class SchemaOps {
       }
     }
 
-    // Apply metadata updates
     if (updates.name !== undefined) {
       meta.name = updates.name
     }
@@ -858,7 +761,6 @@ export class SchemaOps {
   async deleteCollection(collectionPath: LogicalPath): Promise<void> {
     const normalizedPath = this.normalizeCollectionPath(collectionPath)
     await this.withSchemaLock(() => this.deleteCollectionInner(normalizedPath))
-    // Invalidate schema cache after mutation (outside the lock — see withSchemaLock's doc comment)
     await this.invalidateSchemaCache()
   }
 
@@ -870,32 +772,21 @@ export class SchemaOps {
       throw new Error('Collection must be empty before deletion. Delete all entries first.')
     }
 
-    // Resolve path
     const physicalPath = await resolveCollectionPath(this.contentRoot, collectionPath)
     if (!physicalPath) {
       throw new Error(`Collection not found: ${collectionPath}`)
     }
 
-    // Delete the directory (including .collection.json)
     await fs.rm(physicalPath, { recursive: true })
     await this.invalidateContentIdIndexes()
   }
 
-  // --------------------------------------------------------------------------
-  // Entry Type Operations
-  // --------------------------------------------------------------------------
-
-  /**
-   * Add an entry type to a collection
-   */
   async addEntryType(collectionPath: LogicalPath, entryType: CreateEntryTypeInput): Promise<void> {
-    // Validate input
     const parseResult = entryTypeInputSchema.safeParse(entryType)
     if (!parseResult.success) {
       throw new Error(`Invalid input: ${parseResult.error.message}`)
     }
 
-    // Validate schema reference
     if (!this.validateSchemaReference(entryType.schema)) {
       const available = Object.keys(this.entrySchemaRegistry).join(', ')
       throw new Error(`Schema reference "${entryType.schema}" not found. Available: ${available}`)
@@ -903,7 +794,6 @@ export class SchemaOps {
 
     const normalizedPath = this.normalizeCollectionPath(collectionPath)
     await this.withSchemaLock(() => this.addEntryTypeInner(normalizedPath, entryType))
-    // Invalidate schema cache after mutation (outside the lock — see withSchemaLock's doc comment)
     await this.invalidateSchemaCache()
   }
 
@@ -911,24 +801,20 @@ export class SchemaOps {
     collectionPath: LogicalPath,
     entryType: CreateEntryTypeInput,
   ): Promise<void> {
-    // Resolve path
     const physicalPath = await resolveCollectionPath(this.contentRoot, collectionPath)
     if (!physicalPath) {
       throw new Error(`Collection not found: ${collectionPath}`)
     }
 
-    // Read existing meta
     const meta = await this.readCollectionMeta(collectionPath)
     if (!meta) {
       throw new Error(`Collection meta not found: ${collectionPath}`)
     }
 
-    // Check for duplicate name
     if (meta.entries?.some((et) => et.name === entryType.name)) {
       throw new Error(`Entry type "${entryType.name}" already exists in this collection`)
     }
 
-    // Add entry type
     meta.entries = meta.entries || []
     meta.entries.push({
       name: entryType.name,
@@ -939,25 +825,19 @@ export class SchemaOps {
       maxItems: entryType.maxItems,
     })
 
-    // Write back
     await this.writeCollectionMeta(physicalPath, meta)
   }
 
-  /**
-   * Update an entry type in a collection
-   */
   async updateEntryType(
     collectionPath: LogicalPath,
     entryTypeName: string,
     updates: UpdateEntryTypeInput,
   ): Promise<void> {
-    // Validate input
     const parseResult = updateEntryTypeInputSchema.safeParse(updates)
     if (!parseResult.success) {
       throw new Error(`Invalid input: ${parseResult.error.message}`)
     }
 
-    // Validate schema reference if provided
     if (updates.schema && !this.validateSchemaReference(updates.schema)) {
       const available = Object.keys(this.entrySchemaRegistry).join(', ')
       throw new Error(`Schema reference "${updates.schema}" not found. Available: ${available}`)
@@ -967,7 +847,6 @@ export class SchemaOps {
     await this.withSchemaLock(() =>
       this.updateEntryTypeInner(normalizedPath, entryTypeName, updates),
     )
-    // Invalidate schema cache after mutation (outside the lock — see withSchemaLock's doc comment)
     await this.invalidateSchemaCache()
   }
 
@@ -976,12 +855,10 @@ export class SchemaOps {
     entryTypeName: string,
     updates: UpdateEntryTypeInput,
   ): Promise<void> {
-    // Breaking-change usage guard — moved here from api/schema.ts's
-    // updateEntryTypeHandler, which used to count usages BEFORE calling this
-    // method: a concurrent write could land an entry between that count and
-    // this write (TOCTOU). Running the count under the same lock that guards
-    // the write closes that window. Error message preserved exactly — the
-    // handler's catch surfaces it verbatim as a 400.
+    // Breaking-change usage guard: a concurrent write could land an entry
+    // between that count and this write (TOCTOU). Running the count under
+    // the same lock that guards the write closes that window. Error message
+    // preserved exactly — the handler's catch surfaces it verbatim as a 400.
     const isBreakingChange = updates.format !== undefined || updates.schema !== undefined
     if (isBreakingChange) {
       const usageCount = await this.countEntriesUsingType(collectionPath, entryTypeName)
@@ -993,25 +870,21 @@ export class SchemaOps {
       }
     }
 
-    // Resolve path
     const physicalPath = await resolveCollectionPath(this.contentRoot, collectionPath)
     if (!physicalPath) {
       throw new Error(`Collection not found: ${collectionPath}`)
     }
 
-    // Read existing meta
     const meta = await this.readCollectionMeta(collectionPath)
     if (!meta) {
       throw new Error(`Collection meta not found: ${collectionPath}`)
     }
 
-    // Find entry type
     const entryType = meta.entries?.find((et) => et.name === entryTypeName)
     if (!entryType) {
       throw new Error(`Entry type "${entryTypeName}" not found in collection`)
     }
 
-    // Apply updates
     if (updates.label !== undefined) {
       entryType.label = updates.label
     }
@@ -1028,17 +901,12 @@ export class SchemaOps {
       entryType.maxItems = updates.maxItems
     }
 
-    // Write back
     await this.writeCollectionMeta(physicalPath, meta)
   }
 
-  /**
-   * Remove an entry type from a collection
-   */
   async removeEntryType(collectionPath: LogicalPath, entryTypeName: string): Promise<void> {
     const normalizedPath = this.normalizeCollectionPath(collectionPath)
     await this.withSchemaLock(() => this.removeEntryTypeInner(normalizedPath, entryTypeName))
-    // Invalidate schema cache after mutation (outside the lock — see withSchemaLock's doc comment)
     await this.invalidateSchemaCache()
   }
 
@@ -1046,32 +914,27 @@ export class SchemaOps {
     collectionPath: LogicalPath,
     entryTypeName: string,
   ): Promise<void> {
-    // Resolve path
     const physicalPath = await resolveCollectionPath(this.contentRoot, collectionPath)
     if (!physicalPath) {
       throw new Error(`Collection not found: ${collectionPath}`)
     }
 
-    // Read existing meta
     const meta = await this.readCollectionMeta(collectionPath)
     if (!meta) {
       throw new Error(`Collection meta not found: ${collectionPath}`)
     }
 
-    // Check entry type exists
     const index = meta.entries?.findIndex((et) => et.name === entryTypeName) ?? -1
     if (index === -1) {
       throw new Error(`Entry type "${entryTypeName}" not found in collection`)
     }
 
-    // Ensure at least one entry type remains
     if (meta.entries!.length === 1) {
       throw new Error(
         'Cannot remove last entry type. Collection must have at least one entry type.',
       )
     }
 
-    // Check for entries still using this type
     const usageCount = await this.countEntriesUsingType(collectionPath, entryTypeName)
     if (usageCount > 0) {
       throw new Error(
@@ -1080,16 +943,10 @@ export class SchemaOps {
       )
     }
 
-    // Remove entry type
     meta.entries!.splice(index, 1)
 
-    // Write back
     await this.writeCollectionMeta(physicalPath, meta)
   }
-
-  // --------------------------------------------------------------------------
-  // Usage Counting
-  // --------------------------------------------------------------------------
 
   /**
    * Count the number of entries using a specific entry type in a collection.
@@ -1109,34 +966,27 @@ export class SchemaOps {
    */
   async countEntriesUsingType(collectionPath: LogicalPath, entryTypeName: string): Promise<number> {
     const normalizedPath = this.normalizeCollectionPath(collectionPath)
-    // Resolve collection physical path
     const physicalPath = await resolveCollectionPath(this.contentRoot, normalizedPath)
     if (!physicalPath) {
-      // Collection doesn't exist yet - return 0
       return 0
     }
 
     try {
-      // Read directory entries
       const entries = await fs.readdir(physicalPath, { withFileTypes: true })
 
       // Count files matching pattern: {entryTypeName}.{slug}.{id}.{ext}
       let count = 0
       for (const entry of entries) {
-        // Skip directories and hidden files
         if (entry.isDirectory() || entry.name.startsWith('.')) {
           continue
         }
 
-        // Parse filename: type.slug.id.ext
         const parts = entry.name.split('.')
 
-        // Need at least 4 parts: type, slug, id, ext
         if (parts.length < 4) {
           continue
         }
 
-        // Check if first part matches entry type name
         if (parts[0] !== entryTypeName) {
           continue
         }
@@ -1158,25 +1008,14 @@ export class SchemaOps {
     }
   }
 
-  // --------------------------------------------------------------------------
-  // Order Operations
-  // --------------------------------------------------------------------------
-
-  /**
-   * Update the order of items in a collection
-   */
   async updateOrder(collectionPath: LogicalPath, order: string[]): Promise<void> {
     const normalizedPath = this.normalizeCollectionPath(collectionPath)
     await this.withSchemaLock(() => this.updateOrderInner(normalizedPath, order))
-    // Invalidate schema cache after mutation (outside the lock — see withSchemaLock's doc comment)
     await this.invalidateSchemaCache()
   }
 
   private async updateOrderInner(collectionPath: LogicalPath, order: string[]): Promise<void> {
-    // Check if this is the root collection (path equals the configured content
-    // root, e.g. "content" or "cms/content")
     if (collectionPath === this.contentRootName) {
-      // Update root collection meta
       let meta = await this.readRootCollectionMeta()
       if (!meta) {
         meta = {}
@@ -1186,19 +1025,9 @@ export class SchemaOps {
       return
     }
 
-    // Update regular collection. collectionPath is already normalized (no
-    // content-root prefix) by the public updateOrder above. Calls
-    // updateCollectionInner DIRECTLY, never the public updateCollection:
-    // we're already inside withSchemaLock's critical section here, and
-    // withLock is not re-entrant — going through updateCollection would call
-    // withSchemaLock again and deadlock waiting on the lock it itself holds.
     await this.updateCollectionInner(collectionPath, { order })
   }
 }
-
-// ============================================================================
-// Exports
-// ============================================================================
 
 export {
   createCollectionInputSchema,
