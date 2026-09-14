@@ -26,14 +26,12 @@ export function stripMdxImports(body: string): string {
   for (const line of lines) {
     const trimmed = line.trim()
 
-    // Track fenced code blocks (``` or ~~~)
     if (trimmed.startsWith('```') || trimmed.startsWith('~~~')) {
       inCodeBlock = !inCodeBlock
       result.push(line)
       continue
     }
 
-    // Inside code blocks: keep everything
     if (inCodeBlock) {
       result.push(line)
       continue
@@ -52,9 +50,7 @@ export function stripMdxImports(body: string): string {
       continue
     }
 
-    // Detect top-level import/export statements
     if (/^import\s/.test(trimmed) || /^export\s/.test(trimmed)) {
-      // Count open/close braces to detect multi-line statements
       depth = 0
       for (const ch of line) {
         if (ch === '{' || ch === '(') depth++

@@ -34,10 +34,6 @@ import type {
   EntryTransformContext,
 } from './types'
 
-// ---------------------------------------------------------------------------
-// Public API
-// ---------------------------------------------------------------------------
-
 export interface GenerateOptions {
   store: ContentStore
   flatSchema: FlatSchemaItem[]
@@ -78,10 +74,8 @@ export async function generateAIContent(options: GenerateOptions): Promise<Gener
   const { store, flatSchema, contentRoot, config, entryLinkUrl, generatedAt, buildId } = options
   const files = new Map<string, string>()
 
-  // Build content ID index for entry link resolution
   const idIndex = await store.idIndex()
 
-  // Build lookup maps from flat schema
   const collections = flatSchema.filter(
     (item): item is FlatSchemaItem & { type: 'collection' } => item.type === 'collection',
   )
@@ -93,12 +87,10 @@ export async function generateAIContent(options: GenerateOptions): Promise<Gener
   // Track root-level entries (entries in the content root, not in a subcollection)
   const rootEntries: AIManifestEntry[] = []
 
-  // Process each collection
   for (const collection of collections) {
     // Skip the content root itself — we process its children
     if (collection.logicalPath === contentRoot) continue
 
-    // Check exclusion
     if (isCollectionExcluded(collection.logicalPath, contentRoot, config)) continue
 
     // Only process top-level collections and direct subcollections here
@@ -140,7 +132,6 @@ export async function generateAIContent(options: GenerateOptions): Promise<Gener
     rootEntries.push(...rootResult.manifestEntries)
   }
 
-  // Process bundles
   const manifestBundles: AIManifestBundle[] = []
   if (config?.bundles) {
     for (const bundle of config.bundles) {
@@ -167,8 +158,6 @@ export async function generateAIContent(options: GenerateOptions): Promise<Gener
     }
   }
 
-  // Build manifest.
-  //
   // `generated` is emitted unless the caller named an artifact but no timestamp: a build id says
   // "this content is identified by an artifact, not by when a runner happened to build it", and a
   // wall clock alongside it would be a claim the artifact cannot support months later. Key order
@@ -185,10 +174,6 @@ export async function generateAIContent(options: GenerateOptions): Promise<Gener
 
   return { manifest, files }
 }
-
-// ---------------------------------------------------------------------------
-// Collection processing
-// ---------------------------------------------------------------------------
 
 interface CollectionProcessResult {
   entries: AIEntry[]
@@ -210,7 +195,6 @@ async function processCollection(
   const cleanPath = stripContentRoot(collection.logicalPath, contentRoot)
   const manifestEntries: AIManifestEntry[] = []
 
-  // Read entries directly in this collection (not subcollections)
   const listed = await store.getCollectionEntryPaths(collection.logicalPath)
 
   // Filter to only entries in this exact collection (not subcollections)
@@ -220,10 +204,8 @@ async function processCollection(
     const entryTypeName = extractEntryTypeFromFilename(path.basename(listEntry.relativePath))
     if (!entryTypeName) continue
 
-    // Check entry type exclusion
     if (config?.exclude?.entryTypes?.includes(entryTypeName)) continue
 
-    // Find the entry type config to get schema fields
     const entryTypeConfig = findEntryType(collection, entryTypeName)
     if (!entryTypeConfig) continue
 
@@ -234,12 +216,10 @@ async function processCollection(
 
       const aiEntry = docToAIEntry(doc, listEntry.slug, entryTypeName, entryTypeConfig, cleanPath)
 
-      // Resolve entry:ID links in body content
       if (aiEntry.body && idIndex) {
         aiEntry.body = resolveEntryLinksInText(aiEntry.body, idIndex, contentRoot, entryLinkUrl)
       }
 
-      // Check predicate exclusion
       if (config?.exclude?.where?.(aiEntry)) continue
 
       // Fold in adopter-supplied markdown (e.g. a colocated sibling artifact), once per entry
@@ -252,7 +232,6 @@ async function processCollection(
 
       entries.push(aiEntry)
 
-      // Write individual entry file
       const entryFilePath = `${cleanPath}/${listEntry.slug}.md`
       const entryMarkdown = entryToMarkdown(aiEntry, config)
       files.set(entryFilePath, entryMarkdown)
@@ -271,7 +250,6 @@ async function processCollection(
     }
   }
 
-  // Process subcollections
   const subcollections = flatSchema.filter(
     (item): item is FlatSchemaItem & { type: 'collection' } =>
       item.type === 'collection' && item.parentPath === collection.logicalPath,
@@ -318,10 +296,6 @@ async function processCollection(
   return { entries, files, manifestCollection }
 }
 
-// ---------------------------------------------------------------------------
-// Root entry processing
-// ---------------------------------------------------------------------------
-
 interface RootEntryResult {
   entries: AIEntry[]
   files: Map<string, string>
@@ -360,7 +334,6 @@ async function processRootEntries(
 
       const aiEntry = docToAIEntry(doc, listEntry.slug, entryTypeName, entryTypeConfig, '')
 
-      // Resolve entry:ID links in body content
       if (aiEntry.body && idIndex) {
         aiEntry.body = resolveEntryLinksInText(aiEntry.body, idIndex, contentRoot, entryLinkUrl)
       }
@@ -395,11 +368,6 @@ async function processRootEntries(
   return { entries, files, manifestEntries }
 }
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-/** Strip contentRoot prefix from a logical path */
 function stripContentRoot(logicalPath: string, contentRoot: string): string {
   if (logicalPath.startsWith(contentRoot + '/')) {
     return logicalPath.slice(contentRoot.length + 1)
@@ -407,7 +375,6 @@ function stripContentRoot(logicalPath: string, contentRoot: string): string {
   return logicalPath
 }
 
-/** Check if a collection is excluded by path */
 function isCollectionExcluded(
   logicalPath: string,
   contentRoot: string,
@@ -422,7 +389,6 @@ function isCollectionExcluded(
   )
 }
 
-/** Find an entry type config by name within a collection */
 function findEntryType(
   collection: FlatSchemaItem & { type: 'collection' },
   entryTypeName: string,
@@ -430,7 +396,6 @@ function findEntryType(
   return collection.entries?.find((e) => e.name === entryTypeName)
 }
 
-/** Convert a ContentDocument to an AIEntry */
 function docToAIEntry(
   doc: ContentDocument,
   slug: string,
@@ -521,7 +486,6 @@ function matchesBundleFilter(
   filter: NonNullable<AIContentConfig['bundles']>[number]['filter'],
   contentRoot: string,
 ): boolean {
-  // Collections filter
   if (filter.collections) {
     const matches = filter.collections.some((pattern) => {
       const cleanPattern = stripContentRoot(pattern, contentRoot)
@@ -534,19 +498,16 @@ function matchesBundleFilter(
     if (!matches) return false
   }
 
-  // Entry types filter
   if (filter.entryTypes) {
     if (!filter.entryTypes.includes(entry.entryType)) return false
   }
 
-  // Path glob filter
   if (filter.paths) {
     const entryPath = entry.collection ? `${entry.collection}/${entry.slug}` : entry.slug
     const matches = filter.paths.some((pattern) => minimatch(entryPath, pattern))
     if (!matches) return false
   }
 
-  // Predicate filter
   if (filter.where) {
     if (!filter.where(entry)) return false
   }

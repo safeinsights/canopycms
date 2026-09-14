@@ -20,7 +20,6 @@ import type { AIEntry, AIContentConfig } from './types'
 export function entryToMarkdown(entry: AIEntry, config?: AIContentConfig): string {
   const parts: string[] = []
 
-  // Entry header with YAML-style frontmatter
   parts.push('---')
   if (entry.data.title) {
     parts.push(`title: ${yamlValue(String(entry.data.title))}`)
@@ -36,10 +35,8 @@ export function entryToMarkdown(entry: AIEntry, config?: AIContentConfig): strin
   if (entry.data.title) skipFields.add('title')
 
   if (entry.format === 'md' || entry.format === 'mdx') {
-    // For MD/MDX: render non-body fields as metadata, then body verbatim
     parts.push(...renderMarkdownEntry(entry, config, skipFields))
   } else {
-    // For data-only formats (JSON/YAML): full schema-driven conversion
     parts.push(...renderJsonEntry(entry, config, skipFields))
   }
 
@@ -73,7 +70,6 @@ function renderMarkdownEntry(
     const value = entry.data[field.name]
     if (value === undefined || value === null) continue
 
-    // Check for field transform
     const transformed = applyFieldTransform(entry, field, value, config)
     if (transformed !== undefined) {
       parts.push(transformed)
@@ -81,7 +77,6 @@ function renderMarkdownEntry(
       continue
     }
 
-    // Simple inline rendering for metadata
     const label = field.label || field.name
     parts.push(`**${label}:** ${formatInlineValue(field, value)}`)
   }
@@ -90,7 +85,6 @@ function renderMarkdownEntry(
     parts.push('')
   }
 
-  // Append body — pipeline: stripMdxImports → componentTransforms → bodyTransforms
   if (entry.body) {
     let body = entry.format === 'mdx' ? stripMdxImports(entry.body) : entry.body
 
@@ -138,11 +132,7 @@ function renderJsonEntry(
 /**
  * Render a single field to markdown.
  *
- * @param field - Field configuration from schema
- * @param value - The field's value
  * @param depth - Heading depth (2 = ##, 3 = ###, etc.)
- * @param entry - The parent entry (for transform lookups)
- * @param config - AI content config (for field transforms)
  */
 function renderField(
   field: FieldConfig,
@@ -151,7 +141,6 @@ function renderField(
   entry: AIEntry,
   config?: AIContentConfig,
 ): string {
-  // Check for field transform override
   const transformed = applyFieldTransform(entry, field, value, config)
   if (transformed !== undefined) {
     return transformed
@@ -166,7 +155,6 @@ function renderField(
   const descriptionLine =
     'description' in field && field.description ? `\n\n_${field.description}_` : ''
 
-  // Handle list fields
   if ('list' in field && field.list && Array.isArray(value)) {
     return renderListField(field, value, depth, label, heading, descriptionLine, entry, config)
   }
@@ -221,7 +209,6 @@ function renderField(
       )
 
     default:
-      // Custom or unknown field type — render as string
       return `${heading} ${label}${descriptionLine}\n\n${String(value)}`
   }
 }
@@ -252,7 +239,6 @@ function renderListField(
   const isComplex = field.type === 'object' || field.type === 'block'
 
   if (isComplex) {
-    // For complex types, render each item as a subsection
     const items = values
       .map((item, i) => {
         const itemLabel = `${label} ${i + 1}`
@@ -274,7 +260,6 @@ function renderListField(
     return `${heading} ${label}${descriptionLine}\n\n${items.join('\n\n')}`
   }
 
-  // For primitive types, render as markdown list
   const items = values.map((v) => `- ${formatInlineValue(field, v)}`).join('\n')
   return `${heading} ${label}${descriptionLine}\n\n${items}`
 }
@@ -364,9 +349,6 @@ function escapeTableCell(value: string): string {
     .trim()
 }
 
-/**
- * Render a select field.
- */
 function renderSelectField(
   field: SelectFieldConfig,
   value: unknown,
@@ -395,9 +377,6 @@ function resolveSelectLabel(field: SelectFieldConfig, value: unknown): string {
   return strValue
 }
 
-/**
- * Render a reference field.
- */
 function renderReferenceField(
   value: unknown,
   heading: string,
@@ -411,7 +390,6 @@ function renderReferenceField(
   return `${heading} ${label}${descriptionLine}\n\n${formatReference(value)}`
 }
 
-/** True for a plain object (not null, not an array) with a string `src`. */
 function isImageValueLike(value: unknown): value is { src: string; alt?: unknown } {
   return (
     typeof value === 'object' &&
@@ -479,7 +457,6 @@ function formatImageMarkdown(value: unknown, altFallback: string): string {
 }
 
 /**
- * Format a single reference value.
  * References may be resolved (objects with data) or unresolved (string IDs).
  */
 function formatReference(value: unknown): string {
@@ -493,9 +470,6 @@ function formatReference(value: unknown): string {
   return String(value)
 }
 
-/**
- * Render an object field with nested fields.
- */
 function renderObjectField(
   field: ObjectFieldConfig,
   value: unknown,
@@ -569,10 +543,6 @@ function renderBlockField(
   return `${heading} ${label}${descriptionLine}\n\n${items.join('\n\n')}`
 }
 
-/**
- * Apply a field transform if one exists for this entry type + field name.
- * Returns undefined if no transform applies.
- */
 function applyFieldTransform(
   entry: AIEntry,
   field: FieldConfig,
@@ -604,7 +574,6 @@ function formatInlineValue(field: FieldConfig, value: unknown): string {
 }
 
 /**
- * Escape a value for YAML frontmatter.
  * Wraps in quotes if value contains special characters.
  */
 function yamlValue(value: string): string {

@@ -4,39 +4,29 @@
  *
  * This is deliberately a *different* transform from `stripMdxImports`
  * (strip-mdx.ts): that one is tuned for AI/RAG consumption and intentionally
- * leaves JSX components intact, because their props often carry semantic
- * data a model can use. `toPlainText` has the opposite goal — it removes ALL
- * markup (JSX tags, JSX expressions, markdown syntax) and keeps only the
- * prose, so **paired custom components lose their tags but keep their
- * children's text**. That distinction is the whole reason this function
- * exists: a hand-rolled plaintext stripper that treats a paired component
- * like `<Callout>...</Callout>` as one opaque unit and deletes it wholesale
- * silently drops every word inside it from the search index. `toPlainText`
- * strips the `<Callout>`/`</Callout>` delimiters but keeps the sentence
- * between them.
+ * leaves JSX components intact. `toPlainText` has the opposite goal — it
+ * removes ALL markup (JSX tags, JSX expressions, markdown syntax) and keeps
+ * only the prose, so **paired custom components lose their tags but keep
+ * their children's text**.
  *
  * Pipeline (each step operates on the previous step's output):
  * 1. Strip YAML frontmatter (via `gray-matter`, the same parser
  *    `content-store.ts` uses for `.md`/`.mdx` bodies).
  * 2. Strip `import`/`export` statements (via `stripMdxImports`), which also
  *    protects fenced code blocks from every later step.
- * 3. Mask fenced code blocks and inline code spans, capturing their content
- *    (fence markers / backticks are discarded, the code text is kept).
+ * 3. Mask fenced code blocks and inline code spans, capturing their content.
  * 4. Strip JSX/HTML tags — opening, closing, and self-closing — leaving
  *    whatever text sits between them in place. This is a single global
  *    replace, not a matched-pair walk: because we never need the tag name or
- *    the children as a unit (unlike `applyComponentTransforms`, which calls
- *    an adopter transform per component), deleting every tag occurrence and
- *    leaving the surrounding text untouched handles nesting for free.
+ *    the children as a unit, deleting every tag occurrence and leaving the
+ *    surrounding text untouched handles nesting for free.
  * 5. Strip JSX expressions (`{...}`, including nested braces) — these are
  *    code, not prose.
- * 6. Strip common Markdown syntax: headings, emphasis/strikethrough, links
- *    (keep the link text, drop the URL), images (keep alt text), blockquote
- *    markers, list markers, and thematic breaks.
+ * 6. Strip common Markdown syntax: headings, emphasis/strikethrough, links,
+ *    images, blockquote markers, list markers, and thematic breaks.
  * 7. Restore the masked code from step 3 as plain text.
  * 8. Collapse whitespace: trim each line, collapse runs of blank lines,
- *    trim the result. Paragraph breaks (single blank lines) are preserved —
- *    this does not flatten the output to one line.
+ *    trim the result. Paragraph breaks (single blank lines) are preserved.
  */
 
 import matter from 'gray-matter'
@@ -295,11 +285,7 @@ function collapseWhitespace(text: string): string {
  * Convert MDX/Markdown body content to plain prose text.
  *
  * See the module doc above for the full pipeline and why this exists as a
- * distinct transform from `stripMdxImports`. In short: frontmatter, code
- * fences, inline code, JSX tags/expressions, and Markdown syntax are all
- * stripped down to their human-readable text — code content and link/image
- * text are kept, everything else is discarded. Paired custom components
- * lose only their tags; the prose between them survives.
+ * distinct transform from `stripMdxImports`.
  *
  * HTML/MDX comments (`<!-- ... -->`) are removed along with their contents:
  * an authoring note is text the author marked as not-for-readers, so it does

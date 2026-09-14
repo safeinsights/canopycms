@@ -7,10 +7,6 @@
 
 import type { FieldConfig } from '../config'
 
-// ---------------------------------------------------------------------------
-// Configuration types
-// ---------------------------------------------------------------------------
-
 /**
  * Metadata about an entry, provided to filter/predicate functions.
  * Does not include the full data payload — use `where` predicates for
@@ -215,10 +211,6 @@ export function defineAIContentConfig(config: AIContentConfig): AIContentConfig 
   return config
 }
 
-// ---------------------------------------------------------------------------
-// Output / manifest types
-// ---------------------------------------------------------------------------
-
 /** Manifest entry metadata */
 export interface AIManifestEntry {
   slug: string
@@ -274,10 +266,6 @@ export interface AIManifest {
   collections: AIManifestCollection[]
   bundles: AIManifestBundle[]
 }
-
-// ---------------------------------------------------------------------------
-// Internal generation types
-// ---------------------------------------------------------------------------
 
 /** A fully-loaded entry ready for markdown conversion */
 export interface AIEntry extends AIEntryMeta {

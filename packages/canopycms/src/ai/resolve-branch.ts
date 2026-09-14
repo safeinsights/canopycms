@@ -20,7 +20,6 @@ import { detectHeadBranch } from '../utils/git'
  * 3. Fall back to `defaultBaseBranch` or 'main'
  */
 export async function resolveBranchRoot(config: CanopyConfig): Promise<string> {
-  // Static deployments and builds read content directly from the checkout — no branch workspace needed
   if (readsFromCheckout(config)) {
     return process.cwd()
   }
