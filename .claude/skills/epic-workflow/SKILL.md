@@ -84,12 +84,11 @@ at each step instead.
 - Success criteria from the epic file are hard gates (e.g. "flaky tests pass with
   retries REMOVED"), not aspirations — demonstrate them (repeat-run loops, regression
   tests verified against pre-fix code).
-- Execution tiering is the orchestrator's call, made per unit of work. Opus 5
-  orchestrates, and implements anything with real design content. Sonnet is the right
-  tool whenever the work is clear and the spec is detailed — that covers most
-  implementation PRs. Fable is often a good choice for the adversarial design review
-  and the final full-diff review, where a genuinely independent perspective catches
-  what continuity misses. It is not the automatic answer for hard *implementation*
-  work — there it costs more than Opus 5 without always being better. At most one
-  heavy agent at a time — unchanged.
+- Execution tiering follows the global rule, decided per unit of work: Sonnet for
+  clear, well-specified PRs (most of them), Opus 5 for real design content, Fable for
+  the adversarial design review and the final full-diff review, where an independent
+  perspective catches what continuity misses. Heavy-agent concurrency follows the
+  global cap.
+- A wrong claim in a comment or doc is fixed by a shorter correct claim, never by an
+  added justification; reviewers do not request comments.
 - Never let a subagent commit; the main loop owns git state.
