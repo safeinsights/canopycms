@@ -22,8 +22,8 @@ Measured 2026-09-13 at `c25035d2`, the tip of `int-202609-a`. Non-test TypeScrip
   "used to", review references). `canopycms-cdk` sits at 1.58, `canopycms-next` at 0.93.
   Roughly 35% of comment lines can go with no rule lost: re-explained shared mechanisms,
   bug archaeology, essays where two lines fit, and transcribed code.
-- Encapsulation: no true layering inversion. The queue contract (`task-queue/cms-task-queue.ts`, under `worker/` as `task-queue.ts` when measured,
-  `task-queue-config.ts`, `worker-status.ts`) is misfiled under `worker/`;
+- Encapsulation: no true layering inversion. The queue contract (`worker/task-queue.ts`, `task-queue-config.ts`, `worker-status.ts`) is
+  misfiled under `worker/`, moved to `task-queue/` in PR #349;
   `cli/init-github-app.ts` has 37 exports, 21 test-only; `editor/hooks/index.ts` re-exports
   21 names for 2 importers; `.dependency-cruiser.mjs` has no module-boundary rule and
   nothing checks for unused exports. The flat `src/` namespace is a recorded decision and
