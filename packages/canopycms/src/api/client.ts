@@ -23,6 +23,7 @@ import type { AddEntryTypeApiResponse, CreateCollectionApiResponse, DeleteCollec
 import type { CreateCollectionInput, CreateEntryTypeInput, UpdateCollectionInput, UpdateEntryTypeInput } from './../schema/schema-store-types'
 import type { AdminDeleteTaskResponse, AdminRetryTaskResponse, AdminStatusResponse, AdminTasksResponse, BranchHealthResponse, PurgeBranchDirResponse, RepairBranchDirResponse, RepairContentDuplicatesResponse } from './admin'
 
+/** Options for {@link createApiClient}. */
 export interface ApiClientOptions {
   /** Base URL for API requests. Defaults to '/api/canopycms'. */
   baseUrl?: string
@@ -31,6 +32,9 @@ export interface ApiClientOptions {
 }
 
 /**
+ * Typed client for the CanopyCMS API: one method per endpoint, grouped by namespace, each
+ * returning that endpoint's ApiResponse.
+ *
  * @example
  * ```ts
  * const branches = await createApiClient().branches.list()
@@ -423,6 +427,7 @@ export class CanopyApiClient {
   }
 }
 
+/** Create a {@link CanopyApiClient}; pass a custom fetch for tests. */
 export function createApiClient(options?: ApiClientOptions): CanopyApiClient {
   return new CanopyApiClient(options)
 }

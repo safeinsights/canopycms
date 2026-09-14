@@ -261,6 +261,7 @@ import { computeContentSha256Hex } from './request-body-hash'
 
 ${responseTypeImports}
 
+/** Options for {@link createApiClient}. */
 export interface ApiClientOptions {
   /** Base URL for API requests. Defaults to '/api/canopycms'. */
   baseUrl?: string
@@ -269,6 +270,9 @@ export interface ApiClientOptions {
 }
 
 /**
+ * Typed client for the CanopyCMS API: one method per endpoint, grouped by namespace, each
+ * returning that endpoint's ApiResponse.
+ *
  * @example
  * \`\`\`ts
  * const branches = await createApiClient().branches.list()
@@ -371,6 +375,7 @@ ${namespacesCode}
   }
 }
 
+/** Create a {@link CanopyApiClient}; pass a custom fetch for tests. */
 export function createApiClient(options?: ApiClientOptions): CanopyApiClient {
   return new CanopyApiClient(options)
 }
