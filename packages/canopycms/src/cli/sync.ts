@@ -72,9 +72,9 @@ async function selectBranch(
   let branches: string[] = []
   if (await filePathExists(branchesDir)) {
     const entries = await fs.readdir(branchesDir, { withFileTypes: true })
-    // Dot-prefixed dirs are never branch workspaces (.canopy-meta, and now
+    // Dot-prefixed dirs are never branch workspaces (.canopy-meta, plus
     // .trash-*/.{dirName}.init.lock from the admin branch-health recovery
-    // surface) -- same skip rule as BranchRegistry.scanBranchDirectories.
+    // surface) — same skip rule as BranchRegistry.scanBranchDirectories.
     branches = entries.filter((e) => e.isDirectory() && !e.name.startsWith('.')).map((e) => e.name)
   }
 
@@ -122,12 +122,11 @@ async function selectBranch(
       await wsGit.init()
       await wsGit.checkoutLocalBranch(branchName)
       await wsGit.raw(['commit', '--allow-empty', '-m', 'init: workspace created by sync'])
-      // Runtime metadata (.canopy-meta/: branch metadata, comments, the
-      // content-index generation marker) must never be staged by sync's
-      // `add -A`. Fully provisioned workspaces get this exclude from
-      // GitManager.initializeWorkspace; this minimal one needs it too. Sync is
-      // dev-mode-only (see branchesDir), so ask the dev strategy for the
-      // pattern rather than hardcoding it.
+      // Runtime metadata (.canopy-meta/: branch metadata, comments, content-index
+      // marker) must never be staged by sync's `add -A`. Fully provisioned workspaces
+      // get this exclude from GitManager.initializeWorkspace; this minimal one needs it
+      // too. Sync is dev-mode-only (see branchesDir), so this asks the dev strategy for
+      // the pattern rather than hardcoding it.
       await ensureGitExcludePattern(branchPath, operatingStrategy('dev').getGitExcludePattern())
       p.log.info(`Created branch workspace: ${branchName}`)
     } else {

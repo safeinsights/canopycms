@@ -39,19 +39,14 @@ export function parseArgs(rawArgs: string[]) {
       'key-out',
       'key-file',
     ],
-    // `init-github-app create -- <command> [args…]` hands everything after the
-    // `--` to spawn() as the destination for the App's private key. Without
-    // this option minimist folds those words straight into `argv._`, where they
-    // are indistinguishable from the command's own positionals and the `--`
-    // itself is discarded — so there would be no way to recover a clean argv.
-    // Additive for every other command: nothing else passes a literal `--`.
+    // Preserves `-- <command> [args…]` as init-github-app's private-key destination:
+    // without it, minimist folds those words into `argv._` and discards the `--`,
+    // indistinguishable from the command's own positionals. No other command uses `--`.
     '--': true,
-    // --dual-build is intentionally NOT declared boolean here: minimist defaults
-    // declared-boolean flags to `false` when absent, which would make "not passed"
-    // indistinguishable from "explicitly disabled". Left undeclared, it parses to
-    // `true` when passed bare, `false` via the standard `--no-dual-build` negation,
-    // and stays `undefined` when omitted entirely — exactly the tri-state init()
-    // needs to decide whether to honor a preset or fall through to prompt/default.
+    // --dual-build stays undeclared (not in `boolean:`): a declared boolean flag
+    // defaults to `false` when absent, collapsing "not passed" into "explicitly
+    // disabled". Undeclared, it parses to true/false/undefined — the tri-state
+    // init() needs to choose between a preset and its own prompt/default.
     alias: { f: 'force' },
   })
   const flags = argv as Record<string, string | boolean>
@@ -60,13 +55,10 @@ export function parseArgs(rawArgs: string[]) {
 }
 
 /**
- * The argv after a literal `--`, as a real string array.
- *
- * minimist types its parsed object with an `any` index signature, so reading
- * `argv['--']` directly would hand an `any` straight to spawn(). Narrowed here
- * through `unknown` instead, and returned as `[]` when absent so callers can
- * treat "no passthrough" and "empty passthrough" the same way. Exported for
- * testing.
+ * The argv after a literal `--`, as a real string array. minimist types its
+ * parsed object with an `any` index signature, so this narrows through
+ * `unknown` and returns `[]` when absent, letting callers treat "no
+ * passthrough" and "empty passthrough" alike. Exported for testing.
  */
 export function passthroughArgs(argv: Record<string, unknown>): string[] {
   const raw: unknown = argv['--']
@@ -77,9 +69,8 @@ export function passthroughArgs(argv: Record<string, unknown>): string[] {
 const AUTH_PROVIDERS = ['clerk', 'dev'] as const
 
 /**
- * Validate the --auth flag value for `init`. Returns undefined when the flag
- * was not provided (caller should fall through to interactive prompt / default).
- * Throws when a value was provided but isn't a recognized auth provider.
+ * Validates --auth for `init`. Undefined means "not passed" (caller falls
+ * through to prompt/default); throws if a value is given but unrecognized.
  * Exported for testing.
  */
 export function parseAuthFlag(value: string | boolean | undefined): AuthProvider | undefined {
@@ -91,14 +82,12 @@ export function parseAuthFlag(value: string | boolean | undefined): AuthProvider
 }
 
 /**
- * Validate/coerce the --dual-build flag value for `init`. Returns undefined
- * when the flag was not provided (caller should fall through to init()'s own
- * prompt-or-default logic). minimist leaves `dual-build` undeclared (see
+ * Validates/coerces --dual-build for `init`. minimist leaves it undeclared (see
  * parseArgs above), so `--dual-build=true` / `--dual-build true` parse as the
- * STRINGS "true"/"false" rather than real booleans — coerce those explicitly
- * so they don't silently fall through to `undefined` (then `false` by
- * default in non-interactive mode), the opposite of what the user asked.
- * Throws when a value was provided but isn't a real boolean or "true"/"false".
+ * STRINGS "true"/"false" rather than booleans — coerced explicitly so they don't
+ * fall through to `undefined` (then `false` in non-interactive mode), the
+ * opposite of what was asked. Undefined means "not passed" (falls through to
+ * init()'s own prompt/default); throws on any other non-boolean value.
  * Exported for testing.
  */
 export function parseDualBuildFlag(value: unknown): boolean | undefined {
@@ -113,9 +102,8 @@ const SYNC_SUBCOMMANDS = ['push', 'pull', 'both', 'abort'] as const
 type SyncSubcommand = (typeof SYNC_SUBCOMMANDS)[number]
 
 /**
- * Resolve the project root for commands that need an existing CanopyCMS
- * project, walking up from cwd to the nearest canopycms.config.ts.
- * Exits with an error when not inside a project.
+ * Resolves the project root via findProjectRoot (./project-root), or exits
+ * with an error when cwd is not inside a CanopyCMS project.
  */
 async function requireProjectRoot(command: string): Promise<string> {
   const { findProjectRoot, PROJECT_MARKER } = await import('./project-root')
@@ -141,15 +129,10 @@ export type KnownAuthMode = (typeof KNOWN_AUTH_MODES)[number]
 /**
  * Whether `CANOPY_AUTH_MODE` names a provider the CLI can actually construct.
  *
- * Pure and exported so it is testable: the dispatch below branches on 'clerk'
- * and 'dev' only, and the catch around plugin loading fires solely on an
- * IMPORT failure -- so before this guard existed, any other value (a typo,
- * wrong casing like 'Clerk', a stale value from another system) selected no
- * plugin, skipped the auth refresh entirely, and let the command run to "Done"
- * with exit code 0. A cron'd `CANOPY_AUTH_MODE=clerk canopycms worker
- * run-once` that became `Clerk` refreshed nothing for as long as the typo
- * survived, while the cache aged and a user removed from the Clerk org kept
- * editor access.
+ * The dispatch below recognizes only 'clerk' and 'dev', and the plugin-load
+ * catch fires only on an import failure — so an unrecognized mode MUST be
+ * refused here, or it silently selects no plugin, skips the auth refresh,
+ * and exits 0.
  */
 export function isKnownAuthMode(value: string): value is KnownAuthMode {
   return (KNOWN_AUTH_MODES as readonly string[]).includes(value)
@@ -273,12 +256,11 @@ async function main() {
         ? ({ kind: 'command', argv: passthrough } as const)
         : undefined
 
-    // Both key INPUTS belong to `verify`; `create` produces the key rather than
-    // being given one. Gated on the mode because `create --key-stdin` would
-    // otherwise consume stdin here — blocking until Ctrl-D on a terminal, and
-    // then leaving `create`'s "press Enter once installed" prompt reading an
-    // already-ended stream, so it returns instantly and reads the installation
-    // back before the operator has installed anything.
+    // Key INPUTS (--key-file/--key-stdin) belong to `verify` only; `create` produces
+    // the key rather than being given one. Gated on mode because `create --key-stdin`
+    // would consume stdin here, leaving `create`'s "press Enter once installed" prompt
+    // reading an already-ended stream — it would return instantly, before the App is
+    // actually installed.
     let privateKey: string | undefined
     const keyFile = typeof flags['key-file'] === 'string' ? flags['key-file'] : undefined
     if (mode === 'verify') {

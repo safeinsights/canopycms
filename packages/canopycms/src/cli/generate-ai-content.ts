@@ -100,8 +100,8 @@ export async function generateAIContentCLI(options: GenerateAIContentCLIOptions)
 
   console.log(`\n  Generated ${result.fileCount} files`)
   if (result.removedCount > 0) {
-    // Worth a line of its own: a removal is the visible half of a rename or a re-modelled entry,
-    // and silence here is what let stale files accumulate before this existed.
+    // Logged separately: a removal is the visible half of a rename or re-modelled
+    // entry, and silence here would let stale files accumulate unnoticed.
     console.log(`  Removed ${result.removedCount} stale files from the previous run`)
   }
   console.log(`  Output: ${result.outputDir}\n`)
