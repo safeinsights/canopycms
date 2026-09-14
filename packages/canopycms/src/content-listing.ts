@@ -1,7 +1,5 @@
 /**
  * Shared content-listing utilities used by both the entries API and the content tree builder.
- *
- * Extracted from api/entries.ts to avoid duplication.
  */
 
 import fs from 'node:fs/promises'
@@ -30,10 +28,7 @@ import { isBuildMode } from './build-mode'
 
 const log = createDebugLogger({ prefix: 'ContentListing' })
 
-/**
- * An entry listing item with raw data from the filesystem.
- * Does not include API-specific fields like canEdit.
- */
+/** An entry listing item with raw filesystem data; no API-specific fields like canEdit. */
 export interface CollectionListItem {
   logicalPath: LogicalPath
   contentId: ContentId
@@ -48,10 +43,7 @@ export interface CollectionListItem {
   updatedAt?: string
 }
 
-/**
- * Validate and normalize a path relative to root.
- * Throws ContentStoreError on traversal attempt.
- */
+/** Validate and normalize `target` under `root`; throws ContentStoreError on a traversal. */
 const normalizePath = (root: string, target: string): string => {
   const result = validateAndNormalizePath(root, target)
   if (!result.valid) {
@@ -61,11 +53,9 @@ const normalizePath = (root: string, target: string): string => {
 }
 
 /**
- * Read entry data from a file.
- * For md/mdx: returns frontmatter fields plus the body content (mapped to the
- * field name specified by `bodyFieldName`, which defaults to `'body'`).
- * For json: returns the parsed JSON object.
- * Returns an empty object on read/parse failure.
+ * Read entry data from a file. For md/mdx: frontmatter fields plus the body content under
+ * `bodyFieldName` (defaults to `'body'`); for json/yaml, the parsed object. Returns an empty
+ * object on read/parse failure.
  */
 export const readEntryData = async (
   filePath: string,
@@ -87,13 +77,10 @@ export const readEntryData = async (
     // Copy before writing the body in. gray-matter keeps a PROCESS-GLOBAL cache keyed by file
     // content and hands every caller the same `data` object instance, so mutating it in place
     // wrote the body into a shared object that later, unrelated `matter()` calls then saw as
-    // frontmatter. Concretely, before this copy: listing a collection that contains an md entry
-    // poisoned the cache, and a subsequent reference resolution to that same entry — which goes
-    // through `ContentStore.read()`, whose md branch calls `matter()` again — returned the body
-    // as a frontmatter field. So a resolved md snippet came back WITH `body` on a whole-site
-    // listing and WITHOUT it on one scoped past its own collection: the same entry, two shapes,
-    // decided by unrelated scoping. Regression coverage lives with the reference-resolution
-    // tests in content-listing.test.ts.
+    // frontmatter: listing a collection containing an md entry poisoned the cache, and a
+    // reference resolution to that same entry (through `ContentStore.read()`, whose md branch
+    // calls `matter()` again) returned the body as a frontmatter field -- one entry with two
+    // shapes, decided by unrelated listing scope.
     const data = { ...((parsed.data as Record<string, unknown>) ?? {}) }
     if (parsed.content) {
       data[bodyFieldName] = parsed.content
@@ -106,15 +93,11 @@ export const readEntryData = async (
   }
 }
 
-// `parseTypedFilename` now lives in utils/typed-filename.ts so dependency-light modules can
-// use it without importing this one (which pulls in ContentStore). Re-exported here because
-// this is where callers -- and `canopycms/server` -- have always imported it from.
+// `parseTypedFilename` lives in utils/typed-filename.ts so dependency-light modules can use it
+// without importing this one (which pulls in ContentStore). Re-exported here because callers --
+// and `canopycms/server` -- import it from here.
 export { parseTypedFilename } from './utils/typed-filename'
 import { parseTypedFilename } from './utils/typed-filename'
-
-// ---------------------------------------------------------------------------
-// Batch listing types and function
-// ---------------------------------------------------------------------------
 
 /**
  * A flat entry item from listEntries.
@@ -124,17 +107,15 @@ export interface ListEntriesItem<T = Record<string, unknown>> {
   /** URL path segments, e.g., ['researchers', 'guides', 'glossary-of-terms'] */
   pathSegments: string[]
   /**
-   * URL-ready path with index entries collapsed to their parent collection path.
-   * For index entries: '/guides' instead of '/guides/index'.
-   * For regular entries: '/guides/glossary-of-terms'.
-   * For a root index entry: '/'.
+   * URL-ready path with index entries collapsed to their parent collection path: '/guides'
+   * for the index entry of guides, '/guides/glossary-of-terms' for a regular entry, '/' for a
+   * root index entry.
    *
-   * Round-trip safe: `readByUrlPath(item.urlPath)` resolves to the same entry. That guarantee
-   * depends on `slug` passing `parseSlug` — the filename grammar (`utils/typed-filename.ts`)
-   * allows a slug to contain characters `parseSlug` rejects (a dot, most commonly), and an entry
-   * whose slug does is listed here same as any other but can never be read back by URL.
-   * `static/index.ts`'s `assertRoutableSlugs` is the build-time guard that catches this outside
-   * this doc comment's promise.
+   * Round-trip safe: `readByUrlPath(item.urlPath)` resolves to the same entry -- but only
+   * while `slug` passes `parseSlug`. The filename grammar (`utils/typed-filename.ts`) allows
+   * slugs `parseSlug` rejects (a dot, most commonly), and such an entry is listed here like
+   * any other yet can never be read back by URL. `static/index.ts`'s `assertRoutableSlugs` is
+   * the build-time guard that catches it.
    */
   urlPath: string
   /** Entry slug within its collection */
@@ -159,21 +140,18 @@ export interface ListEntriesItem<T = Record<string, unknown>> {
   /** Field definitions for this entry's type, when resolvable. */
   schema?: EntrySchema
   /**
-   * Filesystem mtime (ISO 8601) of the entry file, from an unconditional `fs.stat`
-   * done while listing. Caveat: this is a checkout-time timestamp, not an editorial
-   * one — a fresh CI clone resets every file's mtime to checkout time, so treat this
-   * as "changed since last build" at best, not an authoritative last-edited date for
-   * a public-facing `<lastmod>`. Sourcing mtime from git commit history is a
-   * separate, not-yet-built improvement.
+   * Filesystem mtime (ISO 8601) of the entry file, from an unconditional `fs.stat` done while
+   * listing. Caveat: a checkout-time timestamp, not an editorial one — a fresh CI clone resets
+   * every file's mtime — so treat it as "changed since last build" at best, never as an
+   * authoritative last-edited date for a public-facing `<lastmod>`.
    */
   updatedAt?: string
 }
 
 export interface ListEntriesOptions<T = Record<string, unknown>> {
   /**
-   * Transform raw entry data. Controls what ends up in `data` on each result.
-   * Raw data includes all frontmatter fields; for md/mdx, raw.body is the markdown content.
-   * Without extract, data is the full raw object.
+   * Transform raw entry data; controls what ends up in `data` on each result. Raw data
+   * includes all frontmatter fields, and for md/mdx `raw.body` is the markdown content.
    */
   extract?: (
     raw: Record<string, unknown>,
@@ -191,45 +169,39 @@ export interface ListEntriesOptions<T = Record<string, unknown>> {
   sort?: (a: ListEntriesItem<T>, b: ListEntriesItem<T>) => number
   /**
    * Resolve `reference` fields to the referenced entry's data, the way
-   * `read()`/`readByUrlPath()` do — including references nested inside `object` fields,
-   * inline `group`s and block templates (so a shared/referenced block finally carries its
-   * snippet's content here). Off leaves them as the bare id string, or `null`.
+   * `read()`/`readByUrlPath()` do — including references nested inside `object` fields, inline
+   * `group`s and block templates. Off leaves them as the bare id string, or `null`.
    *
-   * **Defaults to `false`, unlike `read()`, which defaults to `true`.** The asymmetry is
-   * deliberate rather than an oversight. `data` is `T` and `extract` receives an untyped
-   * `Record<string, unknown>`, so turning this on changes a reference from `'a1b2c3d4e5f6'`
-   * to `{ ...data, id, slug, collection, urlPath }` with no compile error anywhere to catch it — an
-   * `/authors/${data.author}` template silently becomes `/authors/[object Object]`. Opting
-   * in is a decision you make per call site, next to the code that reads the field. It also
-   * keeps the common batch uses free: `collectStaticPaths` discards `data` outright, and
-   * `build/generate-ai-content.ts` lists purely to validate entry shapes.
+   * **Defaults to `false`, unlike `read()`, which defaults to `true`.** Deliberate: `data` is
+   * `T` and `extract` receives an untyped `Record<string, unknown>`, so turning this on
+   * changes a reference from `'a1b2c3d4e5f6'` to `{ ...data, id, slug, collection, urlPath }`
+   * with no compile error anywhere to catch it — an `/authors/${data.author}` template
+   * silently becomes `/authors/[object Object]`. Opting in is a decision per call site, next
+   * to the code that reads the field. It also keeps the common batch uses free:
+   * `collectStaticPaths` discards `data` outright.
    *
    * **Cost, and why it is bounded.** Resolution needs a `ContentStore` and its ContentId
-   * index, so turning it on adds one index scan per call plus one read per DISTINCT
-   * referenced entry — not per referencing entry. A single {@link ReferenceResolveCache}
-   * spans the whole call, so a shared block referenced by 40 pages is read once, not 40
-   * times. Nothing is constructed and nothing is scanned when this is off.
+   * index, so this adds one index scan per call plus one read per DISTINCT referenced entry —
+   * not per referencing entry, since a single {@link ReferenceResolveCache} spans the whole
+   * call. Nothing is constructed and nothing is scanned when this is off.
    *
    * **Path ACLs are not applied to the resolved targets**, matching `read()` exactly: a
-   * reference can resolve to an entry the user could not `read()` directly. The entries
-   * being LISTED are still ACL-filtered as always, and a filtered-out entry is never
-   * resolved at all.
+   * reference can resolve to an entry the user could not `read()` directly. The entries being
+   * LISTED are still ACL-filtered, and a filtered-out entry is never resolved at all.
    */
   resolveReferences?: boolean
 }
 
 /**
- * Server-only path-ACL predicate, applied to raw entries before any of their data
- * reaches a caller.
+ * Server-only path-ACL predicate, applied to raw entries before any of their data reaches a
+ * caller.
  *
  * Deliberately NOT part of `ListEntriesOptions`/`BuildContentTreeOptions`: those are
- * adopter-facing, and adopter code must not be able to supply, widen, or override the
- * access check. `context.ts` is the only intended producer — it builds the predicate
- * from `services.createContentAccessChecker` for the request-scoped user, and omits it
- * entirely at build time / on static deployments (synthetic admin, no ACLs).
- *
- * Omitting it preserves the pre-existing unfiltered behavior exactly, which is what
- * build-time callers want.
+ * adopter-facing, and adopter code must not be able to supply, widen or override the access
+ * check. `context.ts` is the only intended producer — it builds the predicate from
+ * `services.createContentAccessChecker` for the request-scoped user, and omits it entirely at
+ * build time / on static deployments (synthetic admin, no ACLs), leaving the listing
+ * unfiltered exactly as build-time callers want.
  */
 export interface ContentVisibilityOptions {
   /** Return false to drop an entry. Receives the entry's branch-root-relative physical path. */
@@ -239,26 +211,20 @@ export interface ContentVisibilityOptions {
 /** A collection node from the flattened schema. */
 export type CollectionSchemaItem = Extract<FlatSchemaItem, { type: 'collection' }>
 
-// ---------------------------------------------------------------------------
-// Reference resolution for batch listings
-// ---------------------------------------------------------------------------
-
 /**
  * Build the `ContentStore` + shared cache that a batch listing resolves references through.
  *
  * Unrelated to the `ReferenceResolver` class in reference-resolver.ts despite the adjacent
- * name — that one resolves an id to a human-readable *display label* for the editor UI. This
- * resolves a reference to the referenced entry's *data* for server-side listings.
+ * name — that one resolves an id to a human-readable display label for the editor UI.
  *
- * Constructed lazily by each listing surface, and ONLY when the caller opted in — a store
+ * Constructed lazily by each listing surface, and ONLY when the caller opted in: a store
  * builds a ContentId index on first use, which is a full scan of the content tree, and the
  * default (`resolveReferences` off) must stay a pure filesystem walk with no index at all.
  *
- * One store and one cache per listing call, not per collection: the cache is the reason a
+ * One store and one cache per listing CALL, not per collection: the cache is the reason a
  * shared block referenced from 40 pages costs one read instead of 40, so it has to span the
- * whole batch. Per-call construction is the established shape here — content-reader.ts's
- * `resolveStore` builds a store per read, and content-index-registry.ts holds stores through
- * `WeakRef` + a `FinalizationRegistry` precisely so short-lived instances stay collectable.
+ * whole batch. content-index-registry.ts holds stores through `WeakRef` + a
+ * `FinalizationRegistry`, so these short-lived instances stay collectable.
  */
 export const createReferenceResolver = (
   branchRoot: string,
@@ -294,33 +260,22 @@ export const resolveCollectionItemReferences = async (
   )
 
 /**
- * List all content entries as a flat array.
+ * List all content entries as a flat array: walks the schema to discover collections, reads
+ * entries from each, and returns a flat list suitable for generateStaticParams, search
+ * indexing, sitemaps, etc.
  *
- * Walks the schema to discover collections, reads entries from each,
- * and returns a flat list suitable for generateStaticParams, search indexing, sitemaps, etc.
+ * Build-time-only failure: a file with a recognized content extension sitting in a collection
+ * directory that *looks like an attempted entry* (see `looksLikeMalformedEntry`) but does not
+ * match `{type}.{slug}.{id}.{ext}` is silently dropped by default. That is exactly the
+ * silent-page-loss static generation must not have -- a schema rename without a matching file
+ * rename, or an entry type declared in one collection but not another, would vanish a page with
+ * zero build output -- so when `isBuildMode()` is true any such file throws instead
+ * (`static/index.ts`'s `assertBuildEntriesValid` is the sibling schema-validity guard).
+ * Outside build mode (admin UI, content tree, `next dev`) it is still skipped, since a fresh
+ * scaffold or mid-rename file legitimately exists there.
  *
- * Build-time-only failure: a file with a recognized content extension (`.md`/`.mdx`/`.json`/
- * `.yaml`) sitting in a collection directory that *looks like an attempted entry* (see
- * `looksLikeMalformedEntry` below) but doesn't match `{type}.{slug}.{id}.{ext}` is, by default,
- * silently dropped (see `listCollectionEntries`'s debug-gated warning). That is exactly the
- * silent-page-loss failure mode static generation must not have — a schema rename without a
- * matching file rename, or an entry type declared in one collection but not another, would
- * otherwise vanish a page with zero build output. So when `isBuildMode()` is true, any such file
- * turns the listing into a thrown error instead (see `findInvalidEntries`/`assertBuildEntriesValid`
- * in `static/index.ts` for the sibling schema-validity guard this mirrors). Outside build mode
- * (admin UI, content tree, `next dev`) the file is still just skipped, since a fresh scaffold or
- * mid-rename file legitimately exists there.
- *
- * A file that was never entry-shaped to begin with — a `README.md`, or a colocated sibling
- * artifact named `{contentId}.suffix.ext` per the `entryTransforms`/`readSibling` convention
- * documented in the README — is not this guard's failure mode and never throws, in or out of
- * build mode. See `looksLikeMalformedEntry` for the exact shape test.
- *
- * @param branchRoot - Absolute path to the branch workspace root
- * @param flatSchema - Flattened schema items (from flattenSchema)
- * @param contentRootName - The content root name (e.g. "content")
- * @param options - Listing options (extract, filter, rootPath, sort, resolveReferences)
- * @param visibility - Internal path-ACL predicate; see `ContentVisibilityOptions`
+ * A file that was never entry-shaped -- a `README.md`, or a colocated sibling artifact named
+ * `{contentId}.suffix.ext` per the `entryTransforms`/`readSibling` convention -- never throws.
  */
 export async function listEntries<T = Record<string, unknown>>(
   branchRoot: string,
@@ -334,7 +289,6 @@ export async function listEntries<T = Record<string, unknown>>(
   const filter = options?.filter
   const customSort = options?.sort
 
-  // Find all collections under rootPath
   const collections = flatSchema.filter(
     (item): item is CollectionSchemaItem =>
       item.type === 'collection' &&
@@ -342,9 +296,8 @@ export async function listEntries<T = Record<string, unknown>>(
       (item.logicalPath === rootPath || item.logicalPath.startsWith(`${rootPath}/`)),
   )
 
-  // List entries from all collections in parallel.
-  // The visibility predicate is applied here, before the map below, so a denied entry's
-  // data never reaches `extract` (let alone the returned items).
+  // List entries from all collections in parallel. The visibility predicate is applied here,
+  // before the map below, so a denied entry's data never reaches `extract`.
   const shouldInclude = visibility?.shouldInclude
   const skippedFiles: SkippedListingFile[] = []
   // One store + cache for the whole call, or nothing at all when the caller did not opt in.
@@ -368,10 +321,9 @@ export async function listEntries<T = Record<string, unknown>>(
     }),
   )
 
-  // Build-time only: fail loudly rather than silently shipping a build with a page missing. See
-  // the build-time-only-failure note in this function's own doc comment above. Only files that
-  // structurally look like a malformed entry reach `skippedFiles` at all -- see
-  // `looksLikeMalformedEntry` and `listCollectionEntries`.
+  // Build-time only: fail loudly rather than silently shipping a build with a page missing --
+  // see this function's doc comment. Only files that structurally look like a malformed entry
+  // reach `skippedFiles` (see `looksLikeMalformedEntry`).
   if (isBuildMode() && skippedFiles.length > 0) {
     const lines = skippedFiles.map(
       ({ filename, collectionPath }) => `  - ${collectionPath}/${filename}`,
@@ -390,28 +342,24 @@ export async function listEntries<T = Record<string, unknown>>(
     )
   }
 
-  // Flatten and map to ListEntriesItem
   const contentPrefix = contentRootName ? `${contentRootName}/` : ''
   const items: ListEntriesItem<T>[] = []
 
   for (const results of collectionResults) {
     for (const { entry, collection } of results) {
-      // Compute pathSegments: strip content root prefix, split on /
       const pathWithoutRoot = entry.logicalPath.startsWith(contentPrefix)
         ? entry.logicalPath.slice(contentPrefix.length)
         : entry.logicalPath
       const pathSegments = pathWithoutRoot.split('/').filter(Boolean)
 
-      // Compute urlPath (collapses an `index` entry to its parent collection path) through
-      // the SHARED rule rather than a local copy of it. A resolved reference now carries a
-      // `urlPath` too, and the whole point of that field is that it addresses the same entry
-      // this listing does, so the two must not be free to drift apart.
+      // Compute urlPath (collapsing an `index` entry to its parent collection path) through
+      // the SHARED rule rather than a local copy: a resolved reference carries a `urlPath`
+      // that must address the same entry this listing does, so the two must not drift apart.
       //
-      // One deliberate copy of this rule remains: `content-tree.ts`'s `defaultBuildPath`,
-      // which is exported for adopters to extend and also handles the collection case
-      // `computeEntryUrl` does not model. It agrees today; folding it in is tracked in
+      // One deliberate copy of the rule remains: `content-tree.ts`'s `defaultBuildPath`,
+      // exported for adopters to extend and also handling the collection case
+      // `computeEntryUrl` does not model. Folding it in is tracked in
       // `.claude/future-tasks/default-build-path-url-rule-copy.md`.
-      // `content-listing.test.ts` pins the listing-vs-resolved-reference agreement.
       const urlPath = computeEntryUrl(entry.collectionPath, entry.slug, contentRootName)
 
       const raw = entry.data
@@ -452,16 +400,9 @@ export async function listEntries<T = Record<string, unknown>>(
   return items
 }
 
-// ---------------------------------------------------------------------------
-// Shared utilities
-// ---------------------------------------------------------------------------
-
 /**
- * Sort items by a content ID order array.
- * Items in the order array come first (in order), items not in the array come at the end
- * sorted by the provided fallback key.
- *
- * Note: sorts the array in-place and returns it.
+ * Sort items by a content ID order array: items in `order` come first, in that order, then
+ * the rest sorted by `fallbackKey`. Sorts the array in place and returns it.
  */
 export const sortByOrder = <T extends { contentId?: ContentId }>(
   items: T[],
@@ -496,32 +437,26 @@ export interface SkippedListingFile {
 }
 
 /**
- * True when a content-extension filename structurally resembles an attempted entry — as opposed
- * to a file that was never entry-shaped to begin with.
+ * True when a content-extension filename structurally resembles an attempted entry — as
+ * opposed to a file that was never entry-shaped to begin with.
  *
- * A successfully-parsed entry always has at least 4 dot-separated segments: `type` (1+),
- * `slug` (1+, since `parseTypedFilename` always takes at least the one segment between type and
- * id), `id` (1), `ext` (1). So a file with 4+ segments that still failed to parse is malformed
- * on its face — a wrong-length or invalid-Base58 ID, most often (`post.hello-world.BADID.md`).
+ * A successfully-parsed entry always has at least 4 dot-separated segments (type, slug, id,
+ * ext), so a 4+-segment file that still failed to parse is malformed on its face -- usually a
+ * wrong-length or invalid-Base58 ID (`post.hello-world.BADID.md`).
  *
- * That segment-count test alone missed the MORE common accident: losing the ID segment
- * entirely. `post.hello-world.md` (3 segments) fails `parseTypedFilename` exactly like the
- * 4-segment case does, but a bare 3-or-fewer-segment cutoff would treat it as never having been
- * entry-shaped and drop it silently — the page just vanishes with a green build. So a 3-segment
- * file whose FIRST segment matches a real entry type name in this collection is ALSO treated as
- * malformed: `parseTypedFilename` requires type+slug+id (3 segments) after stripping the
- * extension, so a 3-total-segment filename already has only 2 left over — it could only have
- * been attempting `type.slug` with no id, or `type.id` with no slug, either way a lost segment,
- * not a coincidence. This still leaves the two motivating "was never an entry" cases alone: a
- * bare `README.md` (2 segments, and "README" is essentially never a configured entry type name)
- * and an entry's colocated sibling artifact named `{contentId}.suffix.ext` per the
- * `entryTransforms`/`readSibling` convention documented in the README (3 segments, e.g.
- * `5NVkkrB1MJUv.profile.json` — a content ID is never itself an entry type name, so the same
- * "first segment matches a known type" test correctly leaves it unflagged).
+ * A 3-segment file whose FIRST segment matches a real entry type name in this collection
+ * counts too, which catches the more common accident of losing the ID segment entirely
+ * (`post.hello-world.md`): `parseTypedFilename` needs type+slug+id after the extension, so 3
+ * total segments leave only 2 -- `type.slug` with no id, or `type.id` with no slug, a lost
+ * segment rather than a coincidence. That leaves the two "never an entry" cases alone: a bare
+ * `README.md` (2 segments, and "README" is essentially never a configured entry type name) and
+ * an entry's colocated sibling artifact `{contentId}.suffix.ext` per the
+ * `entryTransforms`/`readSibling` convention (3 segments, but a content ID is never a type
+ * name).
  *
- * Dot-prefixed (hidden files, editor swap/backup files) and underscore-prefixed (a common
- * adopter convention for "not an entry") names are excluded outright regardless of segment
- * count, matching `parseTypedFilename`'s own dotfile rejection.
+ * Dot-prefixed (hidden files, editor swap/backup files) and underscore-prefixed (an adopter
+ * convention for "not an entry") names are excluded outright at any segment count, matching
+ * `parseTypedFilename`'s own dotfile rejection.
  */
 const looksLikeMalformedEntry = (
   filename: string,
@@ -534,17 +469,14 @@ const looksLikeMalformedEntry = (
 }
 
 /**
- * List all entries in a collection directory.
- * Reads each entry's data (frontmatter or JSON).
+ * List all entries in a collection directory, reading each entry's data.
  *
- * @param onSkip - Called for every file that has a recognized content extension, doesn't match
- *   the `{type}.{slug}.{id}.{ext}` grammar (see `parseTypedFilename`), AND structurally looks
- *   like an attempted entry (see `looksLikeMalformedEntry`). A file that was never entry-shaped
- *   (too few dot-separated segments to ever be a valid entry — a `README.md`, a colocated
- *   sibling artifact) is always silently dropped with a debug-gated `log.warn`, never passed to
- *   `onSkip`. Optional and purely a diagnostic hook — existing callers that omit it keep the
- *   exact prior behavior. `listEntries` below uses this to turn the skip into a hard build-time
- *   failure instead of a silent one.
+ * `onSkip` is called for every file that has a recognized content extension, does NOT match
+ * the `{type}.{slug}.{id}.{ext}` grammar (see `parseTypedFilename`), AND structurally looks
+ * like an attempted entry (see `looksLikeMalformedEntry`). A file that was never entry-shaped
+ * -- a `README.md`, a colocated sibling artifact -- is always dropped with a debug-gated
+ * `log.warn` and never passed to `onSkip`. Optional and purely diagnostic: `listEntries` uses
+ * it to turn the skip into a hard build-time failure instead of a silent one.
  */
 export const listCollectionEntries = async (
   root: string,
@@ -557,7 +489,6 @@ export const listCollectionEntries = async (
 
   const entryTypes = collection.entries as readonly EntryTypeConfig[]
 
-  // Build a map of extension to entry types for efficient lookup
   const extToTypes = new Map<string, EntryTypeConfig[]>()
   for (const entryType of entryTypes) {
     const ext = getFormatExtension(entryType.format)
@@ -568,7 +499,6 @@ export const listCollectionEntries = async (
 
   const validExts = Array.from(extToTypes.keys())
 
-  // Resolve the full collection path with embedded IDs
   const collectionRoot = await resolveCollectionPath(root, collection.logicalPath)
   if (!collectionRoot) {
     return []

@@ -545,25 +545,18 @@ function getHttpStatus(err: unknown): number | null {
  * is configured, naming the key — rather than surfacing later as an opaque
  * JWT signing failure.
  *
- * The PKCS#1 → PKCS#8 conversion is INSURANCE, not a fix for a current
- * failure. GitHub issues App keys as PKCS#1 (`-----BEGIN RSA PRIVATE KEY-----`),
- * and whether that is accepted depends on which build of
- * `universal-github-app-jwt` a bundler resolves, never on the key:
- * - At the pin we install (`@octokit/auth-app@6` → `universal-github-app-jwt@1.2.0`,
- *   which has no `exports` field) the worker's own flags,
- *   `esbuild --platform=node --format=esm`, resolve `main` → the `dist-node`
- *   build, which signs via `jsonwebtoken` and takes PKCS#1 happily. Measured
- *   by bundling with exactly those flags: an unconverted key works.
- * - That same package's `module`/`browser` entry is a WebCrypto build that
- *   throws "Private Key is in PKCS#1 format, but only PKCS#8 is supported".
- *   Any resolver preferring `module` reaches it.
- * - Per their published package.json files (neither is installed here),
- *   `@octokit/auth-app@7` moves to `universal-github-app-jwt@2`, which is
- *   WebCrypto-only and converts PKCS#1 solely under the **`node` condition of
- *   its `imports` map** (`"#crypto"` → `lib/crypto-node.js`); the `default`
- *   sibling's `convertPrivateKey` is a literal no-op, and the key throws.
- *
- * So a bundler flag or a dependency bump can turn a working key into a boot
+ * The PKCS#1 → PKCS#8 conversion is INSURANCE, not a fix for a current failure.
+ * GitHub issues App keys as PKCS#1 (`-----BEGIN RSA PRIVATE KEY-----`), and
+ * whether that is accepted depends on which build of `universal-github-app-jwt`
+ * a bundler resolves, never on the key: at the pin we install
+ * (`@octokit/auth-app@6` → `universal-github-app-jwt@1.2.0`, no `exports`
+ * field) the worker's `esbuild --platform=node --format=esm` reaches `main` →
+ * the `dist-node` build, which signs via `jsonwebtoken` and takes PKCS#1; that
+ * same package's `module`/`browser` entry is a WebCrypto build that rejects it;
+ * and `universal-github-app-jwt@2` (what `@octokit/auth-app@7` pulls in) is
+ * WebCrypto-only, converting PKCS#1 solely under the `node` condition of its
+ * `imports` map, its `default` sibling's `convertPrivateKey` being a no-op. So
+ * a bundler flag or a dependency bump can turn a working key into a boot
  * failure without the key changing. Three lines here remove that coupling.
  */
 export function normalizeGitHubAppPrivateKey(privateKey: string): string {

@@ -32,13 +32,11 @@ import { type LogicalPath, type PhysicalPath, type Slug, type ContentId } from '
 const EMPTY_LOGICAL_PATH = '' as LogicalPath
 
 /**
- * Strips embedded IDs from each physical path segment to produce a logical path.
- * e.g. "content/posts.a1b2c3d4e5f6" → "content/posts"
- * This is a module-private helper for internal path conversion only.
+ * Strips the embedded ID from each physical segment to produce a logical path:
+ * "content/posts.a1b2c3d4e5f6" → "content/posts".
  */
 function toLogicalCollectionPath(physicalPath: string): LogicalPath {
   if (physicalPath === '.') return EMPTY_LOGICAL_PATH
-  // extractSlugFromFilename strips the ID (and extension) from each segment
   return physicalPath
     .split('/')
     .map((seg) => extractSlugFromFilename(seg))
@@ -54,10 +52,9 @@ export interface IdLocation {
 }
 
 /**
- * A group of on-disk filenames whose names embed the same content ID,
- * discovered by {@link ContentIdIndex.buildFromFilenames}. See the class doc
- * comment's "Duplicate-ID quarantine" section for how `keptPath` is chosen
- * and why it is deterministic across hosts.
+ * A group of on-disk filenames embedding the same content ID, discovered by
+ * {@link ContentIdIndex.buildFromFilenames}. Its doc comment covers how
+ * `keptPath` is chosen and why every host chooses the same one.
  */
 export interface DuplicateContentId {
   id: ContentId
@@ -68,102 +65,42 @@ export interface DuplicateContentId {
 }
 
 /**
- * ContentIdIndex manages the bidirectional mapping between content IDs and file paths.
+ * Bidirectional ContentId <-> path index over `{type}.{slug}.{12-char-id}.{ext}`
+ * files and `{slug}.{12-char-id}/` directories, scanned lazily on first access
+ * into per-process memory. Filenames on disk are the source of truth; the class
+ * is not thread-safe and takes no locks. Staleness is bounded as the module
+ * header describes, plus ContentStore's suspicious-lookup rebuild.
  *
- * IDs are embedded in filenames using the patterns:
- * - Entries: `{type}.{slug}.{12-char-id}.{ext}` (e.g., `post.dune.a1b2c3d4e5f6.json`)
- * - Collection directories: `{slug}.{12-char-id}/` (e.g., `posts.a1b2c3d4e5f6/`)
+ * A duplicate embedded ID always predates the scan: concurrent creates each
+ * generate a unique ID, and ContentStore.write() refuses to recreate an entry
+ * file whose ID the directory listing places at a different slug. A crash does
+ * produce one — renameEntry()'s `fs.link()` then `fs.unlink()` is not atomic.
  *
- * This class builds an in-memory index by scanning filenames recursively, providing O(1) lookups
- * in both directions (ID→path and path→ID).
+ * `buildFromFilenames()` quarantines such a collision rather than throwing,
+ * which would propagate out of every caller and brick read-by-id, reference
+ * resolution, listing and every write on the branch. The winner is the
+ * lexicographically-SMALLEST relativePath, compared as strings and never by
+ * visit order, so hosts scanning in different `readdir()` orders converge on
+ * the same one. Losers leave `idToLocation`/`pathToId`/`byCollection` entirely
+ * and are recorded in {@link getDuplicateIds} for branch-health.ts and the
+ * repair action in api/admin-branch-health.ts: degraded, not dead.
  *
- * The index is built lazily on first access to optimize Lambda cold starts.
- *
- * ## Multi-Process Consistency
- *
- * This class is NOT thread-safe. In multi-process environments (e.g., multiple Lambda
- * instances or server processes), each process maintains its own in-memory index.
- *
- * **Consistency guarantees:**
- * - Filenames on the filesystem are the source of truth
- * - Each process discovers the same filenames when building its index
- * - Write operations that change filenames are atomic (rename is atomic)
- * - Read operations always reflect current filesystem state after index rebuild
- *
- * **How staleness is bounded:**
- * - Same process: mutation sites invalidate registered ContentStores directly
- *   (content-index-registry.ts); the next access rebuilds.
- * - Other processes: mutation sites bump an on-disk generation marker
- *   (content-index-generation.ts) that ContentStore probes on access, so
- *   stale indexes converge within the probe interval plus NFS caching delay.
- * - Residual windows self-heal via ContentStore's suspicious-lookup rebuild
- *   (ID miss or index hit whose file is gone).
- *
- * **Race condition handling:**
- * - Multiple processes creating entries simultaneously: each generates a unique ID,
- *   so this cannot itself manufacture a duplicate-ID pair.
- * - ContentStore.write() refuses to recreate an entry file whose ID the
- *   directory listing places at a different slug (existence guard), so stale
- *   indexes cannot manufacture duplicate-ID files either. Together these two
- *   guarantees mean buildFromFilenames() can only ever encounter a duplicate
- *   ID that ALREADY existed on disk before the scan started (see below).
- *
- * ## Duplicate-ID quarantine (not fail-fast)
- *
- * A duplicate embedded ID can still land on disk from an external crash --
- * e.g. ContentStore.renameEntry()'s `fs.link()` then `fs.unlink()` is not
- * atomic, and a crash between the two steps leaves two filenames sharing one
- * ID. Earlier versions of this class threw on the first such collision,
- * which propagated out of every caller and (since ContentStore's rebuild has
- * no catch around it) permanently bricked read-by-id, reference resolution,
- * collection listing, and every write on the branch -- one bad pair took the
- * whole branch down.
- *
- * `buildFromFilenames()` now quarantines a collision instead of throwing:
- * the two (or more) candidates sharing an ID are resolved to a single
- * deterministic winner -- the lexicographically-**smallest** relativePath,
- * chosen purely by comparing the candidate strings, never by which one the
- * scan happened to visit first. This is what makes the choice agree across
- * hosts: two Lambdas (or a Lambda and the EC2 worker) scanning the same
- * directory can observe entries in different `readdir()` orders, but the
- * MIN of a fixed set of strings does not depend on visitation order, so
- * every host converges on the same winner. The loser(s) are excluded from
- * `idToLocation`/`pathToId`/`byCollection` entirely (as if not indexed) and
- * recorded in {@link getDuplicateIds} for admin-facing health reporting
- * (branch-health.ts) and repair (api/admin-branch-health.ts). A branch with a
- * quarantined duplicate is degraded (that one ID pair is invisible to
- * ID-based lookups) but not dead.
- *
- * ### What quarantine does NOT promise
- *
- * Quarantining is an INDEX decision: this scan never touches the filesystem,
- * so nothing here moves or deletes the dropped file. It does not follow that
- * the dropped file is inert until an admin repairs it, and an earlier version
- * of this comment wrongly claimed exactly that ("left untouched on disk until
- * a human or the repair action moves them"). Slugs are resolved by directory
- * scan (`ContentStore.buildPaths()`), which knows nothing about this
- * quarantine, so the dropped file stays fully addressable by
- * collection+slug: a stale editor tab can still save, delete or rename it.
- *
- * The dangerous case was the save. `ContentStore.write()`'s index-repair step
- * reads "the index says this ID lives somewhere else" as "the slug changed"
- * and unlinks that other file -- which, with a duplicate, is a DIFFERENT
- * document (the kept one). It silently deleted the winner while reporting
- * success. `write()` now refuses such a save with `DuplicateContentIdError`
- * instead (see its "[F1] duplicate-ID guard"). `delete()`/`renameEntry()`
- * were never affected: they only ever touch the file the caller addressed,
- * and are deliberately still allowed, so removing or moving the dropped file
- * by hand remains possible without an admin.
+ * Quarantine is an INDEX decision only: this scan never touches the filesystem,
+ * and slugs resolve by directory scan (`ContentStore.buildPaths()`), which
+ * knows nothing about it, so the dropped file stays addressable by
+ * collection+slug. Hence `write()` refuses such a save with
+ * `DuplicateContentIdError` — its index-repair step reads "this ID lives
+ * elsewhere" as "the slug changed" and would unlink the kept file, a different
+ * document. `delete()`/`renameEntry()` stay allowed, each touching only the
+ * file the caller addressed, so the dropped file can be removed by hand.
  */
 export class ContentIdIndex {
   private idToLocation: Map<string, IdLocation> = new Map()
   private pathToId: Map<string, string> = new Map()
   private byCollection: Map<string, Set<string>> = new Map()
   /**
-   * IDs discovered on more than one file during buildFromFilenames, keyed by
-   * id, mapping to every quarantined (losing) path seen for that id. Never
-   * populated by add()/remove()/updatePath(), which still throw on collision
-   * -- see those methods' doc comments.
+   * Quarantined (losing) paths per duplicated id, populated by
+   * buildFromFilenames only: add()/remove()/updatePath() throw on collision.
    */
   private duplicateIds: Map<string, Set<string>> = new Map()
   private root: string
@@ -173,9 +110,9 @@ export class ContentIdIndex {
   }
 
   /**
-   * Build index by scanning filenames recursively. Duplicate embedded IDs
-   * are quarantined, not thrown on -- see the class doc comment's
-   * "Duplicate-ID quarantine" section and {@link getDuplicateIds}.
+   * Build the index by scanning filenames recursively. Duplicate embedded IDs
+   * are quarantined, not thrown on — see the class doc and
+   * {@link getDuplicateIds}.
    */
   async buildFromFilenames(startPath: string = ''): Promise<void> {
     await this.scanDirectory(startPath)
@@ -193,7 +130,7 @@ export class ContentIdIndex {
     }
   }
 
-  /** Remove a location from all three indexes -- used when a lexicographically-earlier duplicate displaces it. */
+  /** Remove a location from all three indexes, when an earlier duplicate displaces it. */
   private evictLocation(location: IdLocation): void {
     this.idToLocation.delete(location.id)
     this.pathToId.delete(location.relativePath)
@@ -206,7 +143,7 @@ export class ContentIdIndex {
     }
   }
 
-  /** Record a quarantined duplicate path for admin-facing health reporting (see getDuplicateIds). */
+  /** Record a quarantined duplicate path for health reporting (see getDuplicateIds). */
   private recordDuplicate(id: string, droppedPath: string): void {
     let dropped = this.duplicateIds.get(id)
     if (!dropped) {
@@ -223,7 +160,6 @@ export class ContentIdIndex {
       const entries = await fs.readdir(absoluteDir, { withFileTypes: true })
 
       for (const entry of entries) {
-        // Skip hidden files and directories (including _ids_)
         if (entry.name.startsWith('.') || entry.name === '_ids_') {
           continue
         }
@@ -238,11 +174,8 @@ export class ContentIdIndex {
             relativePath: fullRelativePath as PhysicalPath, // filesystem path with embedded IDs
           }
 
-          // Extract slug and collection for entries
           if (!entry.isDirectory()) {
             const slug = extractSlugFromFilename(entry.name)
-            // Convert physical collection path to logical by stripping embedded IDs from each segment
-            // e.g., "content/posts.a1b2c3d4e5f6" → "content/posts"
             const physicalCollection = path.dirname(fullRelativePath)
             const collectionPath = toLogicalCollectionPath(physicalCollection)
             location.slug = slug
@@ -251,11 +184,9 @@ export class ContentIdIndex {
 
           const existing = this.idToLocation.get(id)
           if (existing) {
-            // Duplicate embedded ID -- quarantine instead of throwing (see
-            // class doc comment). Deterministic winner: the
-            // lexicographically-smaller relativePath, decided purely by
-            // comparing the two strings so every host scanning the same
-            // directory picks the same winner regardless of readdir order.
+            // Quarantine, don't throw (class doc). The winner is the
+            // lexicographically-smaller relativePath, so every host picks the
+            // same one whatever order readdir handed them to it in.
             const newWins = fullRelativePath < existing.relativePath
             const kept = newWins ? fullRelativePath : existing.relativePath
             const dropped = newWins ? existing.relativePath : fullRelativePath
@@ -266,10 +197,6 @@ export class ContentIdIndex {
             } else {
               this.recordDuplicate(id, fullRelativePath)
             }
-            // Written for an operator who has never seen this code: name
-            // both files, say explicitly that the dropped one still exists
-            // (quarantine, not deletion), and point at the concrete recovery
-            // action rather than an internal method name.
             canopyLogWarn(
               `[ContentIdIndex] Duplicate content ID ${id}: "${kept}" and "${dropped}" both ` +
                 `embed this ID. Keeping "${kept}" for ID-based lookups (reads, references, ` +
@@ -285,7 +212,6 @@ export class ContentIdIndex {
           }
         }
 
-        // Recurse into directories
         if (entry.isDirectory()) {
           await this.scanDirectory(fullRelativePath)
         }
@@ -299,11 +225,9 @@ export class ContentIdIndex {
   }
 
   /**
-   * IDs discovered on more than one file during the last buildFromFilenames
-   * scan. Empty unless the content tree currently has a duplicate-ID pair
-   * (see the class doc comment). Consumed by branch-health.ts's admin scan
-   * and by the repair-content-duplicates admin action
-   * (api/admin-branch-health.ts).
+   * IDs the last buildFromFilenames scan found on more than one file; empty
+   * otherwise. Consumed by branch-health.ts's admin scan and by the
+   * repair-content-duplicates action (api/admin-branch-health.ts).
    */
   getDuplicateIds(): DuplicateContentId[] {
     const result: DuplicateContentId[] = []
@@ -315,21 +239,17 @@ export class ContentIdIndex {
   }
 
   /**
-   * The quarantine record for ONE id, or null when that id is not
-   * duplicated. The O(1) counterpart to {@link getDuplicateIds} for the
-   * write path, which has to ask this question on every save whose resolved
-   * path disagrees with the index (ContentStore.write()'s duplicate-ID
-   * guard) and must not pay for materializing the whole list.
+   * The quarantine record for ONE id, or null when that id is not duplicated.
+   * The O(1) counterpart to {@link getDuplicateIds}, for ContentStore.write()'s
+   * duplicate-ID guard: it asks on every save whose resolved path disagrees
+   * with the index, so it must not pay to materialize the whole list.
    */
   getDuplicateFor(id: string): DuplicateContentId | null {
     const dropped = this.duplicateIds.get(id)
     if (!dropped) return null
     const kept = this.idToLocation.get(id)
-    // Defensive: unreachable in practice -- recordDuplicate() only ever
-    // runs alongside an insertLocation() for the same id (either just
-    // before, on the winner-displaced branch, or already present, on the
-    // loser branch), so a winner always exists once a duplicate is
-    // recorded.
+    // Defensive, unreachable: recordDuplicate() always runs alongside an
+    // insertLocation() for the same id, so a winner exists once one is recorded.
     if (!kept) return null
     return {
       id: id as ContentId,
@@ -338,36 +258,22 @@ export class ContentIdIndex {
     }
   }
 
-  /**
-   * Forward lookup: ID → location (O(1))
-   */
+  /** Forward lookup: ID → location (O(1)). */
   findById(id: string): IdLocation | null {
     return this.idToLocation.get(id) || null
   }
 
-  /**
-   * Reverse lookup: path → ID (O(1))
-   */
+  /** Reverse lookup: path → ID (O(1)). */
   findByPath(relativePath: PhysicalPath): ContentId | null {
     return (this.pathToId.get(relativePath) as ContentId | undefined) || null
   }
 
-  /**
-   * Get all ID locations in the index.
-   * Useful for validation and checking references.
-   */
+  /** Every ID location in the index, for validation and reference checking. */
   getAllLocations(): IdLocation[] {
     return Array.from(this.idToLocation.values())
   }
 
-  /**
-   * Get all entries in a collection by collection path.
-   *
-   * Performance: O(1) + O(m) where m is the number of entries in the collection.
-   *
-   * @param collectionPath - The collection path (e.g., "content/posts")
-   * @returns Array of IdLocation objects for entries in the collection
-   */
+  /** Entries in one collection: O(1) + O(entries in it). */
   getEntriesInCollection(collectionPath: LogicalPath): IdLocation[] {
     const idSet = this.byCollection.get(collectionPath)
     if (!idSet) {
@@ -386,14 +292,9 @@ export class ContentIdIndex {
   }
 
   /**
-   * Get all entries in a collection and its subcollections (tree traversal).
-   * For example, getEntriesInCollectionTree("content/data-catalog") returns entries
-   * in "content/data-catalog", "content/data-catalog/openstax", etc.
-   *
-   * Performance: O(k * m) where k is number of matching collections and m is avg entries per collection.
-   *
-   * @param collectionPath - The root collection path to search
-   * @returns Array of IdLocation objects for entries in the collection tree
+   * Entries in a collection and every subcollection: "content/docs" returns
+   * "content/docs", "content/docs/api", and so on. O(matching collections ×
+   * entries each).
    */
   getEntriesInCollectionTree(collectionPath: LogicalPath): IdLocation[] {
     const locations: IdLocation[] = []
@@ -419,7 +320,6 @@ export class ContentIdIndex {
    *
    * Performance: O(n) where n is total number of entries.
    *
-   * @returns Array of all IdLocation objects that are entries
    */
   getAllEntryLocations(): IdLocation[] {
     const locations: IdLocation[] = []
@@ -437,9 +337,8 @@ export class ContentIdIndex {
   }
 
   /**
-   * Add a new entry or collection to the index.
-   * Note: This only updates the in-memory index. The file with embedded ID
-   * must already exist on disk (created by ContentStore).
+   * Add an entry or collection. In-memory only: the file with the embedded ID
+   * must already exist on disk, created by ContentStore. Throws on collision.
    */
   add(location: Omit<IdLocation, 'id'>): void {
     const id = extractIdFromFilename(path.basename(location.relativePath))
@@ -447,7 +346,6 @@ export class ContentIdIndex {
       throw new Error(`Cannot add location without ID in filename: ${location.relativePath}`)
     }
 
-    // Collision detection
     if (this.idToLocation.has(id)) {
       const existing = this.idToLocation.get(id)!
       throw new Error(
@@ -464,7 +362,6 @@ export class ContentIdIndex {
     this.idToLocation.set(id, fullLocation)
     this.pathToId.set(location.relativePath, id)
 
-    // Add to collection index if it's an entry
     if (fullLocation.type === 'entry' && fullLocation.collection) {
       if (!this.byCollection.has(fullLocation.collection)) {
         this.byCollection.set(fullLocation.collection, new Set())
@@ -474,19 +371,18 @@ export class ContentIdIndex {
   }
 
   /**
-   * Remove an entry or collection from the index by ID.
-   * Note: This only updates the in-memory index. The file must be deleted separately.
+   * Remove an entry or collection by ID. In-memory only: the caller deletes the
+   * file separately.
    */
   remove(id: ContentId): void {
     const location = this.idToLocation.get(id)
     if (!location) return
 
-    // Remove from collection index if it's an entry
     if (location.type === 'entry' && location.collection) {
       const idSet = this.byCollection.get(location.collection)
       if (idSet) {
         idSet.delete(id)
-        // Clean up empty Sets to prevent memory leaks
+        // Drop empty Sets so the collection map cannot grow without bound.
         if (idSet.size === 0) {
           this.byCollection.delete(location.collection)
         }
@@ -498,8 +394,8 @@ export class ContentIdIndex {
   }
 
   /**
-   * Update the path for an existing ID (e.g., after file rename/move).
-   * This is used to keep the index in sync when files are renamed.
+   * Repoint an existing ID at a new path; keeps the index in step with a
+   * rename or move. Throws when the ID is unknown.
    */
   updatePath(id: ContentId, newRelativePath: PhysicalPath): void {
     const location = this.idToLocation.get(id)
@@ -507,22 +403,17 @@ export class ContentIdIndex {
       throw new Error(`Cannot update path for unknown ID: ${id}`)
     }
 
-    // Remove old path mapping
     this.pathToId.delete(location.relativePath)
 
-    // Update location
     location.relativePath = newRelativePath
 
-    // Update slug and collection for entries
     if (location.type === 'entry') {
       const oldCollection = location.collection
       location.slug = extractSlugFromFilename(path.basename(newRelativePath))
       const physicalCollection = path.dirname(newRelativePath)
       location.collection = toLogicalCollectionPath(physicalCollection)
 
-      // Update collection index if collection changed
       if (oldCollection !== location.collection) {
-        // Remove from old collection
         if (oldCollection) {
           const oldSet = this.byCollection.get(oldCollection)
           if (oldSet) {
@@ -533,7 +424,6 @@ export class ContentIdIndex {
           }
         }
 
-        // Add to new collection
         if (location.collection) {
           if (!this.byCollection.has(location.collection)) {
             this.byCollection.set(location.collection, new Set())
@@ -543,42 +433,31 @@ export class ContentIdIndex {
       }
     }
 
-    // Add new path mapping
     this.pathToId.set(newRelativePath, id)
   }
 }
 
 /**
- * Extract ID from filename.
- * Returns null if filename doesn't contain an ID or is a metadata file.
+ * The ID embedded in a filename, or null when there is none.
  *
- * Pattern:
- * - Collection entry files: type.slug.id.ext → ID is parts[parts.length - 2] (e.g., "post.dune.a1b2c3d4e5f6.json")
- * - Collection directories: slug.id → ID is parts[1] (e.g., "posts.a1b2c3d4e5f6")
- * - Metadata files: .collection.json, .gitignore, etc. → null
- *
- * Edge cases:
- * - Slugs with dots: "post.my.page.a1b2c3d4e5f6.json" → extracts "a1b2c3d4e5f6"
- * - Hidden files with IDs: ".hidden.a1b2c3d4e5f6.json" → returns null (metadata)
- * - No ID present: "file.json" → returns null
+ * - entry file `type.slug.id.ext` → the second-to-last part; a dotted slug
+ *   ("post.my.page.a1b2c3d4e5f6.json") still resolves, since only position
+ *   from the end matters
+ * - collection directory `slug.id` → the last part
+ * - anything dot-prefixed → null, metadata, even `.hidden.a1b2c3d4e5f6.json`
  */
 export function extractIdFromFilename(filename: string): ContentId | null {
-  // Skip metadata files (no IDs) - anything starting with dot is metadata
-  // This includes .collection.json, .gitignore, and even .hidden.id.json
   if (filename.startsWith('.')) {
     return null
   }
 
   const parts = filename.split('.')
 
-  // Files: type.slug.id.ext → need at least 3 parts
-  // The ID is always the second-to-last part before the extension
   if (parts.length >= 3) {
     const candidate = parts[parts.length - 2]
     if (isValidId(candidate)) return candidate as ContentId
   }
 
-  // Directories: slug.id → exactly 2 parts (slug and ID, no extension)
   if (parts.length === 2) {
     const candidate = parts[parts.length - 1]
     if (isValidId(candidate)) return candidate as ContentId
@@ -588,16 +467,9 @@ export function extractIdFromFilename(filename: string): ContentId | null {
 }
 
 /**
- * Resolve a logical collection path to its actual filesystem path with embedded IDs.
- * Recursively resolves each path segment to handle nested collections.
- *
- * Example:
- *   Input: resolveCollectionPath(root, "content/docs/api")
- *   Output: "/abs/path/to/content/docs.bChqT78gcaLd/api.meiuwxTSo7UN"
- *
- * @param root - Absolute path to the workspace root
- * @param logicalPath - Logical path from schema (e.g., "content/docs/api")
- * @returns Absolute filesystem path with embedded IDs, or null if path doesn't exist
+ * Resolve a logical collection path to the filesystem path with embedded IDs,
+ * one segment at a time so nested collections work: "content/docs/api" →
+ * "<root>/content/docs.bChqT78gcaLd/api.meiuwxTSo7UN". Null if it is not there.
  */
 export async function resolveCollectionPath(
   root: string,
@@ -615,7 +487,6 @@ export async function resolveCollectionPath(
       const entries = await fs.readdir(currentPath, { withFileTypes: true })
       const matchingDir = entries.find((entry) => {
         if (!entry.isDirectory()) return false
-        // Extract logical name from directory (strips embedded ID)
         const logicalName = extractSlugFromFilename(entry.name)
         return logicalName === segment.toLowerCase()
       })
@@ -623,7 +494,6 @@ export async function resolveCollectionPath(
       if (matchingDir) {
         currentPath = path.join(currentPath, matchingDir.name)
       } else {
-        // Directory not found - might not exist yet
         return null
       }
     } catch (err: unknown) {
@@ -636,23 +506,15 @@ export async function resolveCollectionPath(
 }
 
 /**
- * Extract entry type name from filename.
- * For collection entry files with pattern type.slug.id.ext, returns the type (first part).
- *
- * Examples:
- * - "post.my-slug.a1b2c3d4e5f6.json" → "post"
- * - "article.test.a1b2c3d4e5f6.md" → "article"
- * - "posts.a1b2c3d4e5f6" → null (directory, not an entry file)
- *
- * @param filename - The filename to parse
- * @returns Entry type name or null if not a valid entry file
+ * The entry type of an entry file: the first part of `type.slug.id.ext`, so
+ * "post.my-slug.a1b2c3d4e5f6.json" → "post". Null for anything else, including
+ * a collection directory ("posts.a1b2c3d4e5f6").
  */
 export function extractEntryTypeFromFilename(filename: string): string | null {
   if (filename.startsWith('.')) return null
 
   const parts = filename.split('.')
 
-  // Need at least 4 parts for type.slug.id.ext
   if (parts.length >= 4) {
     const possibleId = parts[parts.length - 2]
     if (isValidId(possibleId)) {
@@ -664,39 +526,27 @@ export function extractEntryTypeFromFilename(filename: string): string | null {
 }
 
 /**
- * Extract slug from filename.
+ * The slug in a filename, lowercased: everything between the type and the ID in
+ * `type.slug.id.ext`, or the part before the ID in a `slug.id` directory. A
+ * dotted slug survives ("post.my.page.a1b2c3d4e5f6.json" → "my.page"). Falls
+ * back to the extensionless filename when there is no ID.
  *
- * Collection entries: type.slug.id.ext → slug is parts[1...-2] (between type and ID)
- * Directories: slug.id → slug is parts[0] (before ID)
- *
- * For collection entry files (4+ parts), automatically strips the first part (type) to extract just the slug.
- *
- * Examples:
- * - "post.my-slug.a1b2c3d4e5f6.json" → "my-slug" (4 parts)
- * - "post.my.page.a1b2c3d4e5f6.json" → "my.page" (dotted slug, 5 parts)
- * - "posts.a1b2c3d4e5f6" → "posts" (directory, 2 parts)
- *
- * @param filename - The filename to parse
- * @param entryTypeName - Optional entry type name for explicit type matching (e.g., "post")
- *                        If provided and matches first part, strips it from slug
+ * `entryTypeName`, when it matches the first part, strips that part explicitly
+ * instead of relying on the 4-part auto-detection.
  */
 export function extractSlugFromFilename(filename: string, entryTypeName?: string): Slug {
   const parts = filename.split('.')
 
-  // Files: type.slug.id.ext (at least 3 parts)
   if (parts.length >= 3) {
     const possibleId = parts[parts.length - 2]
     if (isValidId(possibleId)) {
-      // Get all parts before ID (excluding extension)
       let slugParts = parts.slice(0, parts.length - 2)
 
-      // If entryTypeName is provided and matches the first part, strip it
       if (entryTypeName && slugParts.length > 1 && slugParts[0] === entryTypeName) {
         slugParts = slugParts.slice(1)
       }
-      // Auto-detect: 4+ parts means type.slug.id.ext format
+      // Auto-detected: 4+ parts is type.slug.id.ext, so the first part is the type.
       else if (parts.length >= 4 && slugParts.length > 1) {
-        // Strip first part (the type) to get just the slug
         slugParts = slugParts.slice(1)
       }
 
@@ -704,7 +554,6 @@ export function extractSlugFromFilename(filename: string, entryTypeName?: string
     }
   }
 
-  // Directories: slug.id (exactly 2 parts)
   if (parts.length === 2) {
     const possibleId = parts[parts.length - 1]
     if (isValidId(possibleId)) {
@@ -712,7 +561,6 @@ export function extractSlugFromFilename(filename: string, entryTypeName?: string
     }
   }
 
-  // No ID found, remove extension and return filename without extension
   if (parts.length > 1) {
     return parts.slice(0, -1).join('.').toLowerCase() as Slug
   }
