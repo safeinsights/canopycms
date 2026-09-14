@@ -587,7 +587,8 @@ function buildUploadBehavior(
   // because OAC is a property of the ORIGIN, not the behavior. CloudFront
   // signs origin requests but never hashes the body, so an OAC-signed origin
   // rejects every multipart POST whatever the viewer sent: S3 answers `400
-  // InvalidArgument` naming `x-amz-content-sha256`. It fails CLOSED, but as an
+  // InvalidArgument` - `x-amz-content-sha256 must be UNSIGNED-PAYLOAD, ... or
+  // a valid sha256 value`. It fails CLOSED, but as an
   // argument-validation error, NOT the 403 a Lambda Function URL origin gives
   // in the same situation (docs/deploying-to-aws.md, "CloudFront OAC and
   // request body signing") - there Lambda verifies a SIGNATURE over that

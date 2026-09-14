@@ -5,11 +5,14 @@
  * that follows imports never sees it. Next's JS tracer has a sharp-specific handler, but it only
  * fires on sharp 0.34's entry point `sharp/lib/index.js`; sharp 0.35 ships `dist/index.{cjs,mjs}`
  * instead, so it's missed — on a Next 16.1.7 Turbopack standalone build this leaves
- * `lib/libvips-cpp.so.*` untraced, and the built server fails to load sharp with ERR_DLOPEN_FAILED.
- * A webpack build under pnpm fails differently: Next 15.5.21's webpack bundles sharp's JS into a
- * server chunk, so the bundled copy cannot reach its native binding regardless of this include.
- * Where the JS tracer does trace the library itself, this include merges into one Set rather than
- * duplicating it (upstream: next.js#97973, sharp #4567/#4543 — fixed there, this module goes).
+ * `lib/libvips-cpp.so.*` untraced, and the built server fails to load sharp with ERR_DLOPEN_FAILED
+ * (`.claude/future-tasks/cms-image-build-epic.md`, "The tracer misses the `.so`"). A webpack build
+ * under pnpm fails differently: Next 15.5.21's webpack bundles sharp's JS into a server chunk, so
+ * the bundled copy cannot reach its native binding regardless of this include (root cause in
+ * `.claude/future-tasks/webpack-standalone-sharp-bundled.md`). An npm install and Next 16's
+ * `next build --webpack` have not been checked. Where the JS tracer does trace the library itself,
+ * this include merges into one Set rather than duplicating it (upstream: next.js#97973, sharp
+ * #4567/#4543 — fixed there, this module goes).
  *
  * **Locating the directory.** Walk up the `node_modules` hierarchy the way a bundler resolves a
  * bare specifier, never glob one package manager's layout: from the `canopycms` the project
@@ -22,10 +25,6 @@
  * 16.1.7's Turbopack already traces (the standalone build recreates it). If a future Next stops
  * tracing that symlink, the library stays present but unreachable — only a smoke test that loads
  * sharp inside the built image would notice.
- *
- * **Cost.** Turbopack matches includes in unanchored "contains" mode and follows symlinked
- * directories rather than confining its walk to the include's own directory, adding roughly 5 s of
- * compile time on one measured build.
  */
 import { readFileSync, realpathSync, statSync } from 'node:fs'
 import path from 'node:path'
@@ -49,7 +48,12 @@ export interface SharpTracingInput {
 }
 
 export interface SharpTracingResult {
-  /** Project-relative POSIX globs, one per native-library `lib/` directory found. */
+  /**
+   * Project-relative POSIX globs, one per native-library `lib/` directory found. Turbopack matches
+   * includes in unanchored "contains" mode and follows symlinked directories rather than confining
+   * its walk to the include's own directory, so this costs roughly 5 s of compile time on one
+   * measured build.
+   */
   includes: string[]
   /** Why nothing was found. Set exactly when `includes` is empty. */
   problem?: string

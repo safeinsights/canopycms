@@ -52,6 +52,8 @@ export interface GenerateContentStaticParamsOptions extends CollectStaticPathsOp
 }
 
 /**
+ * Shape CanopyCMS content paths into the array Next's `generateStaticParams` expects.
+ *
  * This is an **enumeration-only** capability: it reads only the set of routable paths (via the build
  * context's `listEntries`), never entry content, and `generateStaticParams` is build-only — so it
  * cannot serve a user request. It takes a build context directly; prefer the bound
@@ -179,24 +181,26 @@ export interface GenerateContentSitemapOptions {
    * quietly-short sitemap this module exists to prevent. Dropping stays `exclude`'s job.
    *
    * Because the entry stays in the walk, it keeps the `isNoindexEntry` gate and the `updatedAt`
-   * `lastModified`/`priority` defaults automatically, where `extraUrls` forces you to re-derive all
-   * three by hand and risks getting them wrong independently (see {@link SitemapExtraUrl}). This
-   * changes what is ADVERTISED, not what is BUILT: `generateContentStaticParams` still enumerates
-   * the entry at its structural path, so the URL returned here must be one your app actually
-   * routes, or you have advertised a 404.
+   * `lastModified`/`priority` defaults that `extraUrls` makes you re-derive by hand (see
+   * {@link SitemapExtraUrl}). It changes what is ADVERTISED, not what is BUILT:
+   * `generateContentStaticParams` still enumerates the entry at its structural path, so the URL
+   * returned here must be one your app actually routes, or you have advertised a 404.
    *
-   * Return a **site-relative path**; it is trimmed. An empty or off-site return (an absolute
-   * `https://…` or a protocol-relative `//host/…`) throws rather than being emitted, whatever the
-   * origin — an empty string would silently claim `/`, and a protocol-relative value lands in the
-   * sitemap as a non-absolute `<loc>`, invalidating the whole file (use `extraUrls` for a URL on
-   * another origin). Reach for this option only when the URL is fixed by something OUTSIDE the
-   * content tree; otherwise model the entry so its natural `urlPath` is already the URL you serve.
+   * Return a **site-relative path**; it is trimmed. An empty or off-site return (absolute
+   * `https://…` or protocol-relative `//host/…`) throws: an empty string would silently claim `/`,
+   * and a protocol-relative value lands as a non-absolute `<loc>` that invalidates the whole file
+   * (`extraUrls` is where an off-origin URL belongs). Use this only when the URL is fixed by
+   * something OUTSIDE the content tree; otherwise model the entry so its `urlPath` is that URL.
    *
-   * Runs AFTER the `noindex`/`exclude` gates. `exclude`, `lastModified` and `priority` see the
-   * entry as ENUMERATED — `entry.urlPath` there is always structural, never your override, so
-   * branch on the entry, not the URL. A collision this creates is NOT caught by the build's
-   * `assertNoDuplicateUrlPaths` guard (which runs before this rewrite); `dedupeSitemapItems` warns
-   * and keeps the first instead.
+   * Runs AFTER the `noindex`/`exclude` gates; `exclude`, `lastModified` and `priority` see the
+   * entry as ENUMERATED, so branch on the entry, not on `entry.urlPath` (always structural there).
+   * A collision this creates is NOT caught by the build's `assertNoDuplicateUrlPaths` guard, which
+   * runs before this rewrite; `dedupeSitemapItems` warns and keeps the first instead.
+   *
+   * @example
+   * // Content lives under content/articles/*, but this site has always published /blog/*.
+   * pathFor: (entry) =>
+   *   entry.entryType === 'article' ? entry.urlPath.replace(/^\/articles\//, '/blog/') : null,
    */
   pathFor?: (entry: RoutableEntry) => string | null | undefined
   /**
@@ -210,6 +214,8 @@ export interface GenerateContentSitemapOptions {
 }
 
 /**
+ * Build Next's `MetadataRoute.Sitemap` from CanopyCMS content.
+ *
  * **Every routable entry type is included by default.** There is no list of "sitemap-able" entry
  * types to keep in sync, and that is the whole design: a hand-rolled sitemap that enumerates a
  * remembered list of entry types omits whichever type nobody added, ships green, and takes the
@@ -389,6 +395,8 @@ export interface EntryToMetadataOptions extends ExtractSeoFieldsOptions {
 }
 
 /**
+ * Map an entry's SEO fields onto a Next `Metadata` object.
+ *
  * Title and description follow ONE convention everywhere: the entry's meta field, else the
  * fallback you pass, else unset (so the root layout's default applies). An empty CMS field counts
  * as unset — see `extractSeoFields`.

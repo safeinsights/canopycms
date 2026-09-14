@@ -258,8 +258,9 @@ export interface NextCanopyContextResult {
 }
 
 /**
- * This function is async because it needs to load .collection.json meta files (see the authPlugin
- * auto-wrap below for how prod/dev sets up networkless auth).
+ * Create the Next.js-specific wrapper around the core context: React `cache()` per-request
+ * memoization plus the API handler. Async because it loads .collection.json meta files (see the
+ * authPlugin auto-wrap below for how prod/dev sets up networkless auth).
  */
 export async function createNextCanopyContext(
   options: NextCanopyOptions,

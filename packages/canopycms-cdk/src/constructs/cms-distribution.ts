@@ -291,6 +291,7 @@ export interface CanopyCmsDistributionProps {
  *   order, when the `assetSupport` prop is passed
  */
 export class CanopyCmsDistribution extends Construct {
+  /** The CloudFront distribution */
   public readonly distribution: cloudfront.Distribution
 
   constructor(scope: Construct, id: string, props: CanopyCmsDistributionProps) {

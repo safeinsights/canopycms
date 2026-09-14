@@ -5,6 +5,7 @@ import { extractHeaders, type HeadersLike } from 'canopycms/auth'
 
 export interface ClerkAuthConfig {
   /**
+   * Map the user's Clerk organizations onto CanopyCMS external groups.
    * @default true
    */
   useOrganizationsAsGroups?: boolean
