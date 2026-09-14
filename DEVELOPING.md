@@ -1144,10 +1144,12 @@ pnpm test
 `canopycms-next` (`knip.json`; the other workspaces are ignored). An export nothing in
 production code imports fails the check. An export a test needs carries a one-line
 `/** @internal Exported for tests. */` tag, which the `--tags=-internal` flag excludes; an
-export nothing imports at all carries `@internal No importer.` until it is deleted or wired
-up. Barrel `index.ts` files and the two editor re-export shims are excluded from the report,
-so unused-ness is judged at the declaration. Package `exports` maps, `bin`, stories,
-`.storybook/`, the config barrel and the groups barrel are the entries.
+export nothing imports at all carries `@internal No importer; deletion candidate in <task file>.`
+and a `.claude/future-tasks/` entry that owns its deletion. The guard covers declaration sites
+only: barrel `index.ts` files and the two editor re-export shims are excluded from the report,
+so a dead re-export line in a barrel is not detected
+([knip-scope-gaps.md](.claude/future-tasks/knip-scope-gaps.md)). Package `exports` maps, `bin`,
+stories, `.storybook/`, the config barrel and the groups barrel are the entries.
 
 ### Client-Bundle Boundary Check
 

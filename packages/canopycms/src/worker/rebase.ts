@@ -381,7 +381,7 @@ async function runRebaseRounds(
  * immutable: a later slug rename must not orphan a conflict marker. Paths that
  * carry no recoverable ID are dropped rather than guessed at.
  *
- * Pure -- the one piece of this loop testable without a git repo.
+ * Pure.
  */
 function conflictFilesToContentIds(
   conflictedFiles: readonly string[],

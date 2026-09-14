@@ -27,7 +27,7 @@ const RESOURCE = 'content-index'
 
 /**
  * Absolute path of the generation marker for a branch-clone root.
- * @internal No importer.
+ * @internal No importer; deletion candidate in knip-no-importer-deletion-candidates.md.
  */
 export function contentIndexGenerationPath(root: string): string {
   return resourceGenerationPath(root, RESOURCE)

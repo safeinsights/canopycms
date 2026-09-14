@@ -57,7 +57,7 @@ interface EditorStateProviderProps {
   initialModals?: Partial<ModalState>
 }
 
-/** @internal No importer. */
+/** @internal No importer; deletion candidate in editor-state-context-migration.md. */
 export function EditorStateProvider({ children, initialModals }: EditorStateProviderProps) {
   const [loading, setLoadingState] = useState<LoadingState>({
     branches: false,
@@ -155,7 +155,7 @@ function useEditorState(): EditorStateContextValue {
 
 /**
  * Convenience hook for loading states only.
- * @internal No importer.
+ * @internal No importer; deletion candidate in editor-state-context-migration.md.
  */
 export function useEditorLoading() {
   const { state, actions } = useEditorState()
@@ -168,7 +168,7 @@ export function useEditorLoading() {
 
 /**
  * Convenience hook for modal states only.
- * @internal No importer.
+ * @internal No importer; deletion candidate in editor-state-context-migration.md.
  */
 export function useEditorModals() {
   const { state, actions } = useEditorState()
@@ -182,7 +182,7 @@ export function useEditorModals() {
 
 /**
  * Convenience hook for preview state only.
- * @internal No importer.
+ * @internal No importer; deletion candidate in editor-state-context-migration.md.
  */
 export function useEditorPreview() {
   const { state, actions } = useEditorState()
