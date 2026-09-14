@@ -2,7 +2,7 @@
 
 **Priority:** P3. Each item was rated LOW, and none breaks a build or a deploy that works today.
 **Found:** 2026-09-12, by the code review of PR 5 of
-[cms-image-build-epic.md](cms-image-build-epic.md) (the `standalone-image` smoke test and its
+[cms-image-build-epic.md](resolved/cms-image-build-epic.md) (the `standalone-image` smoke test and its
 scaffold fixes): items 1-3 in round 1, item 4 in round 2. All four were left out of that PR.
 Item 5 was found on 2026-09-13 by the first review round of the epic's integration PR, #331.
 Item 6 was noted, unrated, on 2026-09-13 by the code review of the base merge into the epic branch,

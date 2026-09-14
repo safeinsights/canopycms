@@ -2,7 +2,7 @@
 
 **Priority:** P2 — a dev-only warning never fires for monorepo adopters; no data risk
 **Found:** 2026-09-12, by the adversarial design review for
-[cms-image-build-epic.md](cms-image-build-epic.md) PR 1. Verified by reading the code; not yet
+[cms-image-build-epic.md](resolved/cms-image-build-epic.md) PR 1. Verified by reading the code; not yet
 reproduced against a running dev server.
 
 ## Problem

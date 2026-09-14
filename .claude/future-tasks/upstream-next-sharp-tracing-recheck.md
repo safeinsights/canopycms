@@ -1,6 +1,6 @@
 # [P3] Re-check Next's libvips tracing on each Next upgrade, and remove `withCanopy`'s include once upstream fixes it
 
-Filed 2026-09-12 by PR 3 of the CMS editor image epic ([cms-image-build-epic.md](cms-image-build-epic.md)),
+Filed 2026-09-12 by PR 3 of the CMS editor image epic ([cms-image-build-epic.md](resolved/cms-image-build-epic.md)),
 which added `packages/canopycms-next/src/sharp-tracing.ts`.
 
 ## Why the include exists

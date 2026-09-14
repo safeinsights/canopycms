@@ -1,6 +1,6 @@
 # [P3] Two lockfile edge cases in `withCanopy`'s tracing-root lookup
 
-Filed 2026-09-12 by PR 3 of the CMS editor image epic ([cms-image-build-epic.md](cms-image-build-epic.md)).
+Filed 2026-09-12 by PR 3 of the CMS editor image epic ([cms-image-build-epic.md](resolved/cms-image-build-epic.md)).
 The final code review of that PR found both and rated them LOW, and they were deferred rather than
 fixed there. One needs a setup that is already broken for other reasons; the other only happens when
 the working directory is not a physical path, as with a Windows junction.
