@@ -43,19 +43,17 @@ export interface RefreshClerkCacheOptions {
   /** Whether to treat Clerk organizations as groups (default: true) */
   useOrganizationsAsGroups?: boolean
   /**
-   * Where a recoverable warning goes. Defaults to `console.warn`.
+   * Where a recoverable warning goes. Defaults to `console.warn`; the EC2
+   * worker passes `workerLogWarn` (see canopycms's `worker/log.ts`).
    *
-   * The EC2 worker passes `workerLogWarn` here: everything it writes lands in
-   * `/var/log/canopy-worker/worker.log`, where the CloudWatch agent's
-   * `multi_line_start_pattern` treats a line WITHOUT an ISO-8601 prefix as a
-   * continuation of the previous event rather than a new one - so an
-   * unprefixed warning inherits a stale timestamp and loses its severity tag
-   * (see `canopycms`'s `worker/log.ts`).
+   * Every warning here must start with an ISO-8601 timestamp: an unprefixed
+   * line inherits the previous line's timestamp under CloudWatch's
+   * `multi_line_start_pattern`, merging into that event and losing its own
+   * severity tag.
    *
-   * Injected as a callback rather than imported: `canopycms` is only a PEER
-   * dependency here, and reaching into its process-scoped logger would couple
-   * this package to canopycms internals for one warning. The worker entrypoint
-   * that already imports both is the natural place to join them.
+   * Injected as a callback rather than imported: `canopycms` is only a peer
+   * dependency here, so this package doesn't reach into its process-scoped
+   * logger for one warning.
    */
   warn?: (...args: unknown[]) => void
 }
@@ -67,10 +65,9 @@ export interface RefreshClerkCacheResult {
 }
 
 /**
- * Fetches all user/org metadata from Clerk API and writes to JSON cache files.
- *
- * Used by the EC2 worker to populate the cache that FileBasedAuthCache reads.
- * Writes atomically (write to temp file, then rename) to avoid partial reads.
+ * Fetches all user/org metadata from Clerk API and writes it to JSON cache
+ * files for the EC2 worker; FileBasedAuthCache reads them back. Writes
+ * atomically via writeAuthCacheSnapshot (see canopycms/auth/cache).
  *
  * Output files:
  * - {cachePath}/users.json    — { users: UserSearchResult[] }

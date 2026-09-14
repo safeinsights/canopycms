@@ -59,7 +59,6 @@ interface ClerkPaginatedResponse<T> {
 type ClerkResponse<T> = T[] | ClerkPaginatedResponse<T>
 
 /**
- * Unwrap Clerk paginated response to array.
  * Clerk SDK sometimes returns arrays directly, sometimes paginated objects.
  */
 function unwrapClerkResponse<T>(response: ClerkResponse<T>): T[] {
@@ -137,10 +136,10 @@ export class ClerkAuthPlugin implements AuthPlugin {
   }
 
   /**
-   * Resolves (and memoizes) the Clerk secret key at first use. Fail-closed: throws the
-   * same CLERK_SECRET_KEY error the constructor used to throw, now at the first
-   * authenticated call, so a zero-editor static build can import canopy.ts without the
-   * secret.
+   * Resolves (and memoizes) the Clerk secret key at first use, not at
+   * construction: the CLERK_SECRET_KEY error throws only when the first
+   * authenticated call needs it, so a zero-editor static build can import
+   * canopy.ts without the secret being set.
    */
   private getSecretKey(): string {
     if (this.resolvedSecretKey) return this.resolvedSecretKey
