@@ -11,8 +11,6 @@ export interface UseUserMetadataResult {
 /**
  * Fetches user metadata using the provided getter function.
  *
- * @param userId - User ID to fetch metadata for
- * @param getUserMetadata - Function to fetch user metadata
  * @param cachedUser - Optional: if provided, returns immediately without fetching
  */
 export function useUserMetadata(
@@ -25,7 +23,6 @@ export function useUserMetadata(
   const [error, setError] = useState<Error | null>(null)
 
   useEffect(() => {
-    // Skip fetch if cachedUser provided
     if (cachedUser) return
 
     // Special case: anonymous user

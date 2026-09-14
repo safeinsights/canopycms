@@ -148,32 +148,6 @@ export interface UseDraftManagerReturn {
 
 /**
  * Custom hook for managing draft state (localStorage persistence, save/discard).
- *
- * Handles:
- * - Draft state management
- * - localStorage persistence (restore on mount, persist on change)
- * - Save/discard operations
- * - Reload from server
- * - Computed values (selectedValue, effectiveValue, modifiedCount, editedFiles)
- *
- * @example
- * ```tsx
- * const {
- *   drafts,
- *   effectiveValue,
- *   modifiedCount,
- *   handleSave,
- *   handleDiscardDrafts
- * } = useDraftManager({
- *   branchName,
- *   selectedPath,
- *   currentEntry,
- *   entries,
- *   loadEntry,
- *   saveEntry,
- *   setBusy
- * })
- * ```
  */
 export function useDraftManager(options: UseDraftManagerOptions): UseDraftManagerReturn {
   const [drafts, setDrafts] = useState<Record<string, FormValue>>(() => options.initialValues ?? {})
@@ -384,8 +358,7 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
   // different entry are simply not visible (see the `fieldErrors` derivation
   // above), so this effect only needs to keep `errorState` itself correct.
   //
-  // Three things here are load-bearing against render loops/churn — see
-  // PR #106 review follow-up item 9:
+  // Three things here are load-bearing against render loops/churn:
   //
   // 1. `options.currentEntry?.schema`/`.format` are in the deps (not just
   //    `effectiveValue`/`currentId`) so a schema change while the same entry
@@ -464,13 +437,6 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
   /**
    * One-time upgrade prompt for a draft carried across the pre-v2 -> v2
    * storage change.
-   *
-   * `null` (unknown base) used to be treated exactly like a known-stale
-   * draft: blocked, with Reload and Discard the only exits -- both of which
-   * destroy the draft. And nothing ever re-stamped it, because the reconcile
-   * effect only fills ids NOT already in `bases` and `null` is present. So a
-   * legacy draft was visible, permanently unsaveable, and the only advice
-   * offered destroyed it: "kept" meant "kept and unusable".
    *
    * A bounded, one-time population deserves a decision, not a dead end. On
    * confirm the base is re-stamped to the version currently held, so the
@@ -764,9 +730,7 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
     })
   }
 
-  // Compute dirty state for a given entry
   const isDirtyForEntry = (entryPath: string): boolean => {
-    // Find entry by path to get its content ID
     const entry = options.entries.find((e) => e.path === entryPath)
     if (!entry) return false
 
@@ -775,7 +739,6 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
     return !loadedValues[id] || !equal(drafts[id], loadedValues[id])
   }
 
-  // Convenience helper for checking current selection
   const isSelectedDirty = (): boolean => {
     if (!currentId) return false
     if (!drafts[currentId]) return false

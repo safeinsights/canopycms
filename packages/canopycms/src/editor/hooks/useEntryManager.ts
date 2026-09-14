@@ -91,7 +91,7 @@ export interface UseEntryManagerReturn {
    * Slugs already taken in `createModalCollection`, derived from the
    * already-loaded `entries` list. Lets the create modal reject an obvious
    * collision client-side with a clear message, before ever hitting the
-   * server's authoritative 409 guard (August 2026 baseline review).
+   * server's authoritative 409 guard.
    */
   createModalExistingSlugs: Set<string>
   handleCreateModalSubmit: (slug: string, entryTypeName: string) => Promise<void>
@@ -120,32 +120,6 @@ const EMPTY_SCHEMAS: string[] = []
 
 /**
  * Custom hook for managing editor entries (CRUD operations).
- *
- * Handles:
- * - Entry selection and navigation
- * - Loading and saving entry data
- * - Refreshing entry list from API
- * - Creating new entries
- * - URL synchronization for selected entry
- *
- * @example
- * ```tsx
- * const {
- *   selectedPath,
- *   entries,
- *   currentEntry,
- *   refreshEntries,
- *   handleCreateEntry,
- *   loadEntry,
- *   saveEntry
- * } = useEntryManager({
- *   initialEntries: entries,
- *   branchName,
- *   collections,
- *   resolvePreviewSrc,
- *   setBusy
- * })
- * ```
  */
 export function useEntryManager(options: UseEntryManagerOptions): UseEntryManagerReturn {
   const apiClient = useApiClient()
@@ -218,12 +192,11 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
   //
   // 1. SWR replays a branch's CACHED tagged result when the user switches
   //    back to it, and the cached tag necessarily carries the seq claimed
-  //    when that data was originally fetched. Under a newest-attempt rule
-  //    (or a single GLOBAL counter, as originally shipped), any newer claim
-  //    -- another branch's load with a global counter, or the switch-back's
-  //    own revalidation with a per-branch one -- made the replayed,
-  //    perfectly valid cache hit fail the check and never commit; when the
-  //    switch back also landed inside SWR's dedupingInterval, no
+  //    when that data was originally fetched. Under a newest-attempt rule,
+  //    any newer claim -- another branch's load with a global counter, or
+  //    the switch-back's own revalidation with a per-branch one -- made the
+  //    replayed, perfectly valid cache hit fail the check and never commit;
+  //    when the switch back also landed inside SWR's dedupingInterval, no
   //    revalidation followed either, so the editor kept showing the
   //    PREVIOUS branch's entries under the new branch indefinitely. A
   //    replayed tag always passes the committed-seq rule (it was committed
@@ -430,9 +403,6 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
     return fetched.entries
   }
 
-  /**
-   * Open the create entry modal for the specified collection
-   */
   const handleCreateEntry = async (collectionPath: LogicalPath, _?: string) => {
     const col = collectionByPath.get(collectionPath)
     if (!col || col.type === 'entry') {
@@ -444,9 +414,6 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
     setCreateModalOpen(true)
   }
 
-  /**
-   * Handle entry creation from the modal
-   */
   const handleCreateModalSubmit = async (slug: string, entryTypeName: string) => {
     if (!createModalCollection) return
 
@@ -462,7 +429,7 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
       // and api/content.ts's writeContentHandler) -- "this slug must not
       // already exist yet". Without it a create is indistinguishable from a
       // blind update, which used to let a same-slug create silently
-      // overwrite existing content (August 2026 baseline review).
+      // overwrite existing content.
       const payload = isDataOnlyFormat(format)
         ? { format: format as 'json' | 'yaml', data: {}, expectedVersion: null }
         : { format, data: {}, body: '', expectedVersion: null }
@@ -512,9 +479,6 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
     }
   }
 
-  /**
-   * Close the create entry modal
-   */
   const closeCreateModal = () => {
     setCreateModalOpen(false)
     setCreateModalCollection(null)
@@ -522,9 +486,6 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
     setCreateModalCreating(false)
   }
 
-  /**
-   * Rename an entry's slug
-   */
   const renameEntry = async (path: string, newSlug: string): Promise<void> => {
     options.setBusy(true)
     try {

@@ -66,26 +66,7 @@ export interface UseSchemaManagerReturn {
 /**
  * Hook for managing schema operations (collections, entry types, ordering).
  *
- * Provides methods to create, update, and delete collections and entry types.
  * All operations require admin permissions on the server.
- *
- * @example
- * ```tsx
- * const {
- *   createCollection,
- *   deleteCollection,
- *   addEntryType,
- *   updateOrder,
- *   isLoading
- * } = useSchemaManager({ branchName: 'main', onSchemaChange: refreshEntries })
- *
- * // Create a new collection
- * await createCollection({
- *   name: 'posts',
- *   label: 'Blog Posts',
- *   entries: [{ name: 'post', format: 'mdx', schema: 'postSchema' }]
- * })
- * ```
  */
 export function useSchemaManager(options: UseSchemaManagerOptions): UseSchemaManagerReturn {
   const apiClient = useApiClient()

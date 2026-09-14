@@ -1,5 +1,3 @@
-// Barrel export for all custom hooks
-// Export hooks as they are created
 // Note: resetApiClient functions are not exported - they're test-only utilities
 
 export * from './useEditorLayout'

@@ -6,7 +6,6 @@ import { useApiClient } from '../context'
 
 export interface UsePermissionManagerOptions {
   /**
-   * Whether the permission manager is currently open.
    * Permissions are loaded when this becomes true.
    */
   isOpen: boolean
@@ -22,25 +21,6 @@ export interface UsePermissionManagerReturn {
 
 /**
  * Custom hook for managing path permissions (CRUD operations).
- *
- * Handles:
- * - Loading permissions from API
- * - Saving permissions to API
- * - Listing groups for permission assignment
- *
- * @example
- * ```tsx
- * const { permissionsData, permissionsLoading, handleSavePermissions, handleListGroups } = usePermissionManager({
- *   isOpen: permissionManagerOpen
- * })
- *
- * // Permissions are automatically loaded when isOpen becomes true
- * // Save permissions
- * await handleSavePermissions(updatedPermissions)
- *
- * // List groups
- * const groups = await handleListGroups()
- * ```
  */
 export function usePermissionManager(
   options: UsePermissionManagerOptions,
@@ -111,7 +91,6 @@ export function usePermissionManager(
     return result.data?.groups ?? []
   }
 
-  // Load permissions when permission manager opens
   useEffect(() => {
     if (options.isOpen) {
       loadPermissions()

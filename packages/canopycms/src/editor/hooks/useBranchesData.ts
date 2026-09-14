@@ -56,7 +56,7 @@ export const IN_FLIGHT_POLL_MS = 15_000
  * `pending-sync` -> `synced` | `sync-failed` happens asynchronously on the
  * EC2 worker when it drains the task queue, with nothing pushed to the
  * browser. Before SWR, the branches list happened to refetch on every
- * branch switch, so these badges (PR #160) converged incidentally as the
+ * branch switch, so these badges converged incidentally as the
  * user moved around. That effect is gone now -- correctly, since the list
  * isn't branch-scoped -- so without this a user who submits a branch would
  * watch "Pending sync" forever until they reloaded the page or performed
