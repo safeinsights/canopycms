@@ -116,8 +116,7 @@ const STALE_LEASE_REASON = 'stale info'
  * guaranteed-to-fail force attempts -- instead of surfacing as the permanent,
  * human-actionable state it is.
  *
- * Same locale caveat as above: the reason text is gettext-translated, so
- * callers MUST pin the locale (`gitChildEnv`/`gitNetworkChildEnv`).
+ * Same locale caveat as above.
  */
 export function isStaleLeaseRejection(message: string): boolean {
   return message.includes(REJECTED_MARKER) && message.includes(STALE_LEASE_REASON)
@@ -140,8 +139,7 @@ const MISSING_REMOTE_REF_REASONS = ["couldn't find remote ref", "Couldn't find r
  * and proceeded past. Anything this does not recognize must reach the caller
  * as the genuine error it is.
  *
- * Same locale caveat as the predicates above: the text is gettext-translated,
- * so callers MUST run git with a locale-pinning env (`gitChildEnv`).
+ * Same locale caveat as the predicates above.
  */
 export function isMissingRemoteRefFailure(message: string): boolean {
   return MISSING_REMOTE_REF_REASONS.some((reason) => message.includes(reason))
@@ -186,8 +184,7 @@ async function resolveGitDir(repoPath: string): Promise<string | null> {
  * This state is invisible to every other check the worker makes: a clone left
  * mid-rebase reports uncommitted changes, so the sync loop's dirty check skips
  * it as `skippedDirty` on every cycle forever, and `branch-health` sees valid
- * branch.json and scans it as healthy. Nothing self-heals, and recovery
- * previously meant an operator running `git rebase --abort` on EFS by hand.
+ * branch.json and scans it as healthy. Nothing self-heals without this check.
  *
  * Never throws — a missing or unreadable repo is reported as "no rebase",
  * which is the safe direction for both callers (the worker only ever uses a

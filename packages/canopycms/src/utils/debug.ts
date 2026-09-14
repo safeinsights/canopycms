@@ -84,16 +84,10 @@ export class DebugLogger {
     }
   }
 
-  /**
-   * Start timing an operation
-   */
   time(label: string) {
     this.timers.set(label, Date.now())
   }
 
-  /**
-   * End timing an operation and log the duration
-   */
   timeEnd(category: string, label: string) {
     const start = this.timers.get(label)
     if (start === undefined) {
@@ -107,9 +101,6 @@ export class DebugLogger {
     return duration
   }
 
-  /**
-   * Wrap an async function with automatic timing
-   */
   async timed<T>(category: string, label: string, fn: () => Promise<T>): Promise<T> {
     this.time(label)
     try {
@@ -120,16 +111,12 @@ export class DebugLogger {
   }
 }
 
-/**
- * Create a debug logger instance
- */
 export function createDebugLogger(options?: DebugOptions): DebugLogger {
   return new DebugLogger(options)
 }
 
 /**
  * Default logger for test infrastructure (E2E tests)
- * Enabled via E2E_DEBUG=true
  */
 export const testLogger = createDebugLogger({
   enabled: process.env.E2E_DEBUG === 'true',

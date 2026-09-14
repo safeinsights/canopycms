@@ -8,13 +8,6 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
 
-/**
- * Atomically write content to a file via temp-file + rename.
- * Ensures the target file is never partially written.
- *
- * @param filePath - Absolute path to the target file
- * @param content - String or binary content to write
- */
 export async function atomicWriteFile(
   filePath: string,
   content: string | Buffer | Uint8Array,

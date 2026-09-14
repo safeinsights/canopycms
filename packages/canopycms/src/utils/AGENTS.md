@@ -2,13 +2,8 @@
 
 Cross-cutting helpers. Several exist specifically because two call sites had drifted into disagreeing implementations.
 
-Split out of the root [AGENTS.md](../../../../AGENTS.md) on 2026-08-23, where this had grown to
-601 words inside a single bullet. The **code comment at the point of the rule is
-authoritative**; this file is the map to where those rules live.
-
-## Overview
-
-Shared utilities (error handling, debug, atomic file writes, `content-serialize.ts` - `serializeYaml`/`serializeFrontmatter`, the comment-preserving write path: `ContentStore.write` re-serialises onto the file's OWN parsed `yaml` document rather than a fresh one, so unchanged nodes keep their comments (writing a fresh object silently deleted every comment in a content file on every editor save). It stays schema-blind — the document's key set is made to match `input.data` exactly, so data authority stays with the payload and comments are the only thing inherited from disk. Sequences align by VALUE then position, so a reorder carries each comment with its content. Position alone never pairs two records: `looksLikeSameItem` demands a surviving field value, and that search is deliberately discriminator-BLIND and record-DEEP (via `validation/block-structural-keys.ts`) — shallow-and-discriminator-counting is what let a save that deleted one block and edited its successor migrate the deleted block's comment onto the survivor, the module's own stated worst outcome. Both halves are required together: excluding `template` without descending into `value` would instead drop every block comment on every edit. Two more rules that are load-bearing: every fallback (new file, unparseable bytes, no frontmatter) must emit the exact pre-fix output, and the md/mdx split must call `matter(raw, {})` WITH an options object — gray-matter's no-options path uses a process-global content-keyed cache whose hit returns an object with `.matter` missing, which made this a preserve-on-first-save/drop-on-every-save-after bug; title-field: `resolveEntryTitle` — client-safe (type-only dependency), exported from both `canopycms/server` and the root `canopycms` entry — plus `findInvalidTitleFields`, `findTitleFieldsInLists`)
+The **code comment at the point of the rule is authoritative**; this file is the map to where
+those rules live.
 
 ## `git.ts`
 

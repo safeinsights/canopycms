@@ -1,12 +1,6 @@
 /**
  * Comment-preserving serialisation for YAML content files and md/mdx frontmatter.
  *
- * ContentStore used to write a content file by stringifying a fresh plain object
- * (`yamlStringify(data)` / `matter.stringify(body, data)`). Comments live in neither the object
- * nor that round trip, so **every editor save silently deleted every comment in the file** —
- * invisible to a dev team (`canopycms sync` copies files byte-for-byte) and certain for an
- * editorial team. See `.claude/future-tasks/resolved/content-comment-loss-on-editor-save.md`.
- *
  * The fix re-serialises onto the file's OWN parsed document instead of a fresh one: nodes whose
  * value did not change are left untouched, and an untouched node keeps its attached comments
  * (and its original quoting/block style). Only what actually changed is rewritten.
@@ -73,8 +67,7 @@ function isPlainRecord(value: unknown): value is Record<string, unknown> {
  *
  * `String(...)` mirrors how parsing into a plain object projects non-string scalar keys
  * (`1: x` reads back as `{ '1': x }`). A non-scalar (complex) key — `? [a, b] : v` — has no
- * record counterpart at all; those pairs are dropped, which is what the old
- * stringify-a-fresh-object write did to them too.
+ * record counterpart at all; those pairs are dropped.
  */
 function recordKeyOf(keyNode: unknown): string | undefined {
   if (!isScalar(keyNode)) return undefined
@@ -211,13 +204,11 @@ function sharesFieldEvidence(
  *
  * Records carry usable evidence: an edit changes some fields and leaves others alone, so one
  * surviving field value means "same item, edited". The evidence has to be a real FIELD, though.
- * An earlier version of this rule accepted any shared key/value pair on the reasoning that "a
- * wholesale replacement shares nothing" — true of arbitrary records, false of this CMS's block
- * shape, where `template: <name>` is a category label every block of that kind carries. A save
+ * In this CMS's block
+ * shape, `template: <name>` is a category label every block of that kind carries. A save
  * that deleted one `hero` and edited the next shifted the survivor onto the deleted item's
  * index, and the discriminator alone was enough to pair them: the deleted block's "keep this
- * verbatim" comment silently migrated onto unrelated content. So the module was failing in the
- * exact direction it declared unacceptable, through the case it assumed could not arise.
+ * verbatim" comment silently migrated onto unrelated content.
  * {@link sharesFieldEvidence} is therefore discriminator-blind and record-deep.
  *
  * Scalars carry no evidence at all, so they keep the plain same-index rule — an edited string in
@@ -232,9 +223,8 @@ function sharesFieldEvidence(
  * making one pair meaningless, and it is now excluded.
  *
  * The residuals, deliberately accepted: a record whose every field changed shares nothing, so
- * its comment is dropped rather than risked (this now includes a block edited in ALL its fields,
- * which previously kept its comment via the discriminator — a deliberate move toward the losing
- * side of the trade-off); and a genuine schema field NAMED `template` or `_type` is not counted
+ * its comment is dropped rather than risked; and a genuine schema field NAMED `template` or
+ * `_type` is not counted
  * as evidence, which can only ever drop a comment, never move one.
  */
 function looksLikeSameItem(node: unknown, value: unknown): boolean {
@@ -401,14 +391,14 @@ export function serializeYaml(data: Record<string, unknown>, existingRaw?: strin
 /**
  * Split a file into its raw frontmatter string, or undefined when there is nothing usable.
  *
- * Two gray-matter hazards are handled here, both of which cost a real bug when discovered:
+ * Two gray-matter hazards are handled here:
  *
  * 1. **The options argument is load-bearing.** `matter(str)` with no options reads and writes a
  *    process-global content-keyed cache, and the object it hands back on a HIT has lost
  *    `.matter` — so the second save of the same file would silently see no frontmatter and drop
  *    every comment. Passing an options object skips the cache on both sides (see the `if
  *    (!options)` guard in gray-matter's index.js), which also keeps the write path from
- *    polluting that cache for everyone else — the same class of problem as `42aede48`.
+ *    polluting that cache for everyone else.
  * 2. **It throws on malformed frontmatter.** js-yaml raises rather than returning an error list,
  *    so a file whose bytes do not parse must not be allowed to fail the save.
  *

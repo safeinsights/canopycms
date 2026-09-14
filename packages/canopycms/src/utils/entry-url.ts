@@ -30,11 +30,6 @@ export function isIndexSlug(slug: string | undefined): boolean {
 /**
  * Compute a URL path from an entry's collection path and slug.
  *
- * Logic:
- * - Strip the contentRoot prefix (e.g., "content/") from the collection path
- * - Append the slug (unless it's "index", which collapses to the parent path)
- * - Always returns a path starting with "/"
- *
  * Examples:
  *   ("content/posts", "hello-world", "content") => "/posts/hello-world"
  *   ("content/docs/api", "index", "content")    => "/docs/api"
@@ -43,7 +38,6 @@ export function isIndexSlug(slug: string | undefined): boolean {
 export function computeEntryUrl(collection: string, slug: string, contentRoot: string): string {
   const root = trimSlashes(contentRoot)
 
-  // Strip contentRoot prefix
   let stripped = collection
   if (root && collection.startsWith(`${root}/`)) {
     stripped = collection.slice(root.length + 1)
@@ -51,10 +45,8 @@ export function computeEntryUrl(collection: string, slug: string, contentRoot: s
     stripped = ''
   }
 
-  // Build URL segments
   const segments = stripped.split('/').filter(Boolean)
 
-  // Append slug unless it's an index slug (index entries collapse to parent)
   if (slug && !isIndexSlug(slug)) {
     segments.push(slug)
   }

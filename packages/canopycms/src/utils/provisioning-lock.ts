@@ -129,8 +129,6 @@ function releaseIgnoringAlreadyReleased(
  *
  * Returns a release function — always call it in a `finally`.
  *
- * @param lockTargetDir directory the lock marker lives in (created if missing)
- * @param lockName name of the on-disk lock marker, created inside lockTargetDir
  * @param onCompromised see {@link OnLockCompromised}; defaults to log-and-continue
  */
 export async function acquireProvisioningLock(

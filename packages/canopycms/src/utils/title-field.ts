@@ -1,6 +1,5 @@
 import type { FieldConfig, InlineGroupFieldConfig } from '../config'
 
-/** Type guard: true if field is an inline group (type === 'group'). */
 function isGroupField(field: FieldConfig): field is InlineGroupFieldConfig {
   return field.type === 'group'
 }
@@ -65,17 +64,13 @@ export function resolveEntryTitle(
     slug?: string
   },
 ): string {
-  // 1. Schema-marked isTitle field
   if (options?.schema) {
     const schemaTitle = extractTitleFromSchema(options.schema, data)
     if (schemaTitle) return schemaTitle
   }
-  // 2. Convention: data.title or data.name
   const title = data.title ?? data.name
   if (typeof title === 'string') return title
-  // 3. Entry type label
   if (options?.entryTypeLabel) return options.entryTypeLabel
-  // 4. Humanized slug
   return options?.slug ? humanizeSlug(options.slug) : 'Untitled'
 }
 
@@ -141,7 +136,6 @@ export function findTitleFieldsInLists(
       const fieldPath = parentPath ? `${parentPath}.${field.name}` : field.name
       if (field.type === 'object' && 'fields' in field && field.fields) {
         if (field.list) {
-          // Any isTitle inside a list object is invalid — collect them
           found.push(...collectAllTitleFields(field.fields, fieldPath))
         } else {
           found.push(...findTitleFieldsInLists(field.fields, fieldPath))

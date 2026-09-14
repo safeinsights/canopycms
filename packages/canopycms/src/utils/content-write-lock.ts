@@ -29,12 +29,9 @@
  *
  * ## Why the lock marker lives under `{branchRoot}/.canopy-meta`
  *
- * proper-lockfile keys its module-level `locks{}` bookkeeping (refresh timer,
- * release function) by the **target path** passed to `lock()`, NOT by
- * `lockfilePath`. `provisioning-lock.ts` now anchors every lock on its own
- * marker path, so the registry key equals the on-disk lock identity and two
- * live locks can no longer share a key -- aliasing is structurally impossible
- * rather than merely avoided by convention. Keeping the content lock under
+ * Every lock anchors on its own marker path (see provisioning-lock.ts), so the
+ * registry key equals the on-disk lock identity and two live locks can never
+ * share a key. Keeping the content lock under
  * `{branchRoot}/.canopy-meta` still buys:
  *
  * - a per-branch marker, so one branch's content lock is independent of every
@@ -101,8 +98,8 @@ export const DEFAULT_CONTENT_WRITE_LOCK_WAIT_MS = 2000
  * The message says "syncing OR another save" because BOTH produce it. The
  * lock is taken by `write`/`delete`/`renameEntry` and by the admin
  * repair-content-duplicates action as well as by the worker's rebase, so a
- * message naming only the rebase was a confident claim about something that
- * may not be happening. `api/content.ts` routes this error ahead of the
+ * message naming only the rebase would claim more than is known.
+ * `api/content.ts` routes this error ahead of the
  * generic conflict specifically so the editor sees this wording, which makes
  * the wording load-bearing rather than cosmetic.
  */

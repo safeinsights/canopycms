@@ -72,18 +72,14 @@ export const parseTypedFilename = (
   // otherwise misparse -- e.g. '.hidden.file.aB3cD4eF5gH6.md' -> potentialType ''.
   if (filename.startsWith('.')) return null
 
-  // Remove extension
   const lastDot = filename.lastIndexOf('.')
   if (lastDot === -1) return null
   const nameWithoutExt = filename.slice(0, lastDot)
 
-  // Parse: {type}.{slug}.{id}
   const parts = nameWithoutExt.split('.')
   if (parts.length < 3) return null
 
   const potentialType = parts[0]
-  // When a known-types list is supplied, the first segment must match one of
-  // them. Without it, any non-empty first segment is accepted as the type.
   if (entryTypes && !entryTypes.some((e) => e.name === potentialType)) {
     return null
   }
