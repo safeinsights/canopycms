@@ -4,7 +4,6 @@ import type { AuthenticatedUser } from 'canopycms'
 const ADMINS = 'Admins'
 
 /**
- * Create a mock AuthPlugin for testing.
  * Returns a valid user by default (as Admin), or can be configured to return specific users.
  */
 export const createMockAuthPlugin = (
@@ -30,9 +29,6 @@ export const createMockAuthPlugin = (
   listGroups: async () => [],
 })
 
-/**
- * Create a mock AuthPlugin that rejects all authentication.
- */
 export const createRejectingAuthPlugin = (error = 'Unauthorized'): AuthPlugin => ({
   authenticate: async () => ({ success: false, error }),
   searchUsers: async () => [],

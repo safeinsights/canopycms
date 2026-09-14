@@ -66,7 +66,6 @@ export function mergeSeoFieldLocation(
 let warnedStaticMode = false
 
 /**
- * Stub auth plugin for static deployments where no real auth is needed.
  * Returns unauthenticated for all requests — API routes will return 401.
  *
  * `verifiesCredentials: true` is set here even though this plugin verifies nothing: it is an
@@ -100,13 +99,11 @@ export interface NextCanopyOptions {
   authPlugin?: AuthPlugin
   entrySchemaRegistry: Record<string, readonly FieldConfig[]>
   /**
-   * Where the SEO fields live (`fields` name overrides, and/or a nested `group`). Set once here
-   * and it is shared by BOTH the returned `generateContentSitemap`'s `noindex` exclusion and the
-   * returned `entryToMetadata`'s field extraction, so the two surfaces cannot independently forget
-   * or mis-set it and drift apart — see `mergeSeoFieldLocation`. Omit for the flat (inline-group)
-   * convention, which is the default on both the schema side (`defineSeoFieldGroup()`) and here.
-   * A per-call `seo`/`fields`/`group` option on either helper still overrides this default for
-   * that one call.
+   * Where the SEO fields live (`fields` name overrides, and/or a nested `group`) — shared by both
+   * `generateContentSitemap`'s `noindex` exclusion and `entryToMetadata`'s field extraction; see
+   * `mergeSeoFieldLocation` for why one shared default matters. Omit for the flat (inline-group)
+   * convention, the default on both the schema side (`defineSeoFieldGroup()`) and here. A per-call
+   * `seo`/`fields`/`group` option on either helper overrides this default for that one call.
    */
   seo?: SeoFieldLocation
 }
@@ -156,8 +153,8 @@ export function guardBuildContext(
       assertBuildPhase('listEntries')
       return buildCtx.listEntries<T>(options)
     },
-    // Return types inferred from the core build context (which now carries
-    // meta.physicalPath); the returned object is validated against CanopyBuildContext.
+    // Return types inferred from the core build context, which carries meta.physicalPath;
+    // the returned object is validated against CanopyBuildContext.
     read: <T = unknown>(input: {
       entryPath: string
       slug?: string
@@ -247,13 +244,11 @@ export interface NextCanopyContextResult {
   generateContentSitemap: (options: GenerateContentSitemapOptions) => Promise<MetadataRoute.Sitemap>
   /**
    * Map an entry's SEO fields onto a Next `Metadata` for `generateMetadata`. Re-exposed here so a
-   * page module has one CanopyCMS import (your `lib/canopy.ts`) rather than two.
+   * page module has one CanopyCMS import (your `lib/canopy.ts`) rather than two. Pure mapping —
+   * touches no context.
    *
-   * Reads the SAME SEO field location as `generateContentSitemap` above by default (the
-   * `createNextCanopyContext({ seo })` value); the two are bound from one context-wide default so
-   * they cannot silently disagree about where `noindex` (or a renamed field) lives. Pass
-   * `fields`/`group` on a given call to override just that call. This is a pure
-   * mapping and touches no context.
+   * Shares its SEO field location with `generateContentSitemap` above via `mergeSeoFieldLocation`
+   * (see that function's doc); pass `fields`/`group` on a given call to override just that call.
    */
   entryToMetadata: (entryData: unknown, options?: EntryToMetadataOptions) => Metadata
   /** API catch-all route handler */
@@ -263,18 +258,13 @@ export interface NextCanopyContextResult {
 }
 
 /**
- * Create Next.js-specific wrapper around core context.
- * Adds React cache() for per-request memoization and API handler.
- * This function is async because it needs to load .collection.json meta files.
- *
- * In prod/dev mode, if the provided authPlugin implements verifyTokenOnly(),
- * it is automatically wrapped with CachingAuthPlugin + FileBasedAuthCache so that
- * auth works without network access (Lambda in prod, local in dev). The cache is populated by the worker daemon.
+ * Create the Next.js-specific wrapper around the core context: React `cache()` per-request
+ * memoization plus the API handler. Async because it loads .collection.json meta files (see the
+ * authPlugin auto-wrap below for how prod/dev sets up networkless auth).
  */
 export async function createNextCanopyContext(
   options: NextCanopyOptions,
 ): Promise<NextCanopyContextResult> {
-  // Fail fast: authPlugin is required for server deployments
   if (options.config.deployedAs !== 'static' && !options.authPlugin) {
     throw new Error(
       'CanopyCMS: authPlugin is required when deployedAs is "server". ' +
@@ -297,10 +287,10 @@ export async function createNextCanopyContext(
     warnedStaticMode = true
   }
 
-  // Resolve the auth plugin: auto-wrap with CachingAuthPlugin for prod/dev when
-  // the plugin supports token-only verification. This keeps auth networkless (required for
-  // Lambda in prod, consistent in dev) without exposing caching internals to adopters.
-  // For static deployments, use the stub that returns 401 for all requests.
+  // Auto-wrap with CachingAuthPlugin + FileBasedAuthCache in prod/dev when the plugin implements
+  // verifyTokenOnly(), so auth stays networkless (required for Lambda in prod, consistent in dev)
+  // without exposing caching internals to adopters; the cache is populated by the worker daemon.
+  // Static deployments use the stub above, which always returns 401.
   const { mode } = options.config
   const authPlugin: AuthPlugin = (() => {
     if (!options.authPlugin) return staticDeployAuthPlugin
@@ -324,7 +314,6 @@ export async function createNextCanopyContext(
     return options.authPlugin
   })()
 
-  // Create services ONCE at initialization
   const services = await createCanopyServices(options.config, {
     entrySchemaRegistry: options.entrySchemaRegistry,
   })
@@ -344,22 +333,16 @@ export async function createNextCanopyContext(
     startDevContentWatcher(services, { mode: options.config.dev?.contentSync })
   }
 
-  // User extractor: passes Next.js headers to auth plugin, resolves internal
-  // groups, applies authorization. Delegates to the shared
-  // "authenticate -> load internal groups -> merge" pipeline
-  // (resolveCanopyUser, in canopycms core) so this stays in lockstep with
-  // http/handler.ts's API-layer equivalent rather than re-implementing it —
-  // a previous copy here loaded groups from the base branch content clone
-  // (via loadBranchContext), which nothing in the product ever writes
-  // groups.json into, so group-based privileges never took effect.
+  // Passes Next.js headers to the auth plugin, then resolves internal groups and authorization
+  // through the shared "authenticate -> load internal groups -> merge" pipeline (resolveCanopyUser,
+  // in canopycms core), keeping this in lockstep with http/handler.ts's API-layer equivalent rather
+  // than re-implementing it. Must not source groups from a base-branch content clone — nothing in
+  // the product writes groups.json there, so group-based privileges depend on this shared pipeline.
   //
-  // No base-branch context resolution here (unlike the previous copy):
-  // that call existed only to source groups.json from the (wrong) content
-  // branch. Actual request-time content reads (buildContentTree/listEntries/
-  // read) already provision the base/active branch themselves via
-  // loadOrCreateBranchContext (see context.ts's resolveSchemaContext; build-time
-  // reads never provision, they read the checkout), so dropping it here removes
-  // a redundant per-request EFS round-trip rather than losing provisioning.
+  // No base-branch context resolution needed here: request-time content reads
+  // (buildContentTree/listEntries/read) already provision the base/active branch via
+  // loadOrCreateBranchContext (see context.ts's resolveSchemaContext); build-time reads never
+  // provision, they read the checkout.
   const extractUser = async (): Promise<CanopyUser> => {
     const headersList = await headers()
     const authResult = await authPlugin.authenticate(headersList)
@@ -371,13 +354,11 @@ export async function createNextCanopyContext(
     })
   }
 
-  // Create core context with pre-created services (framework-agnostic)
   const coreContext = createCanopyContext({
     services,
     extractUser,
   })
 
-  // Wrap with React cache() for per-request caching
   const getCanopy = cache((): Promise<CanopyContext> => {
     return coreContext.getContext()
   })
@@ -411,7 +392,7 @@ export async function createNextCanopyContext(
   }
 
   // Phase-selecting helpers: build context during static generation, branch-aware runtime at request
-  // time. Lets page code resolve content without hand-picking the admin build context (see item #5).
+  // time. Lets page code resolve content without hand-picking the admin build context.
   const readByUrlPath: CanopyContext['readByUrlPath'] = async <T = unknown>(
     urlPath: string,
     opts?: { branch?: string; resolveReferences?: boolean },
@@ -446,9 +427,7 @@ export async function createNextCanopyContext(
   // static export, and on a prod `server` deployment guardBuildContext throws if it is reached at
   // request time. Binding it here keeps the admin context out of the route module either way.
   //
-  // Both this and boundEntryToMetadata below feed options.seo (the context-wide default set on
-  // createNextCanopyContext) through the SAME mergeSeoFieldLocation call, so the noindex exclusion
-  // here and entryToMetadata's noindex/field read cannot independently drift out of sync.
+  // SEO field location is shared with boundEntryToMetadata via mergeSeoFieldLocation — see its doc.
   const boundGenerateContentSitemap = async (callOptions: GenerateContentSitemapOptions) => {
     return generateContentSitemap(await getCanopyForBuild(), {
       ...callOptions,
@@ -467,7 +446,6 @@ export async function createNextCanopyContext(
     return entryToMetadataCore(entryData, { ...callOptions, ...seoLocation })
   }
 
-  // Create API handler using same services
   const handler = createCanopyCatchAllHandler({
     ...options,
     authPlugin,

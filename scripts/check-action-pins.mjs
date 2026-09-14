@@ -2,15 +2,9 @@
 
 /**
  * Fail when any third-party GitHub Action is referenced by a MUTABLE tag
- * rather than a full 40-character commit SHA.
- *
- * Why this exists rather than a comment asking nicely: pinning was done once as
- * a sweep, and a sweep only covers the tree it ran on. A job added on a sibling
- * branch and merged in afterwards arrived unpinned, and nothing noticed --
- * `ci.yml`'s own `example1-build` job sat on five floating tags while the epic
- * that pinned everything else was still open, claiming in its PR body that all
- * actions were pinned. That claim was true when written and false by the time
- * it merged.
+ * rather than a full 40-character commit SHA. Enforced as a check rather than
+ * a convention because a manual sweep only covers the tree it ran on: a job
+ * merged in later from a sibling branch arrives unpinned and nothing notices.
  *
  * What a mutable tag costs, specifically: a tag is repointable by whoever owns
  * the action repo, so a maintainer-account compromise (the tj-actions/

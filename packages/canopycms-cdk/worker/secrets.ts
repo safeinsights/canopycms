@@ -41,8 +41,7 @@ import { workerLog, workerLogWarn } from 'canopycms/worker/cms-worker'
  *   (`DEFAULT_ATTEMPT_TIMEOUT_MS`) bounds the call, by destroying the socket.
  *
  * Worst case for one `getSecret` with the defaults (4 attempts × 20s, plus
- * 1s + 2s + 4s of backoff): 87s. Before `maxAttempts: 1`, the SDK's own three
- * attempts made that up to 4 × 3 = 12 requests.
+ * 1s + 2s + 4s of backoff): 87s.
  */
 export function secretsManagerClientConfig(
   timeouts: { connectionTimeout?: number; requestTimeout?: number } = {},
@@ -84,11 +83,11 @@ const MAX_ATTEMPT_TIMEOUT_MS = 2_147_483_647
  * "Secrets Manager unavailable". Anything about the VALUE we got back is decided
  * after the loop, where it costs one call and fails immediately.
  *
- * That split is the point of this function's existence. When the value check sat
- * inside the `try` — as `if (!response.SecretString) throw` did — a secret that
- * was simply the wrong shape was re-fetched four times with 1s/2s/4s backoff and
- * then reported as a failure on "attempt 4", turning a deterministic
- * misconfiguration into a seven-second boot stall that reads like an outage.
+ * That split is the point of this function. A value check inside the `try` makes
+ * a secret that is simply the wrong shape get re-fetched four times with
+ * 1s/2s/4s backoff and then reported as a failure on "attempt 4", turning a
+ * deterministic misconfiguration into a seven-second boot stall that reads like
+ * an outage.
  *
  * @param retries number of retries AFTER the first call, so the default 3 means
  *   up to 4 `GetSecretValue` calls.
@@ -107,16 +106,13 @@ async function fetchSecretString(
   const client = new SecretsManagerClient(secretsManagerClientConfig())
 
   // Normalized so the loop ALWAYS terminates through `break` or `throw`, never
-  // by falling out of the condition, and never without bound. Three shapes,
-  // measured against the pre-normalization `Math.max(0, retries)`:
-  //   NaN      — `0 <= NaN` is false, so the loop body never ran AT ALL, and it
-  //              then reported "has no string value" for a secret never fetched;
-  //   1.5      — `attempt === lastAttempt` was never true, so the real SDK error
-  //              was never rethrown; it slept 1s+2s and reported the same
-  //              value-shaped error for a transport failure;
-  //   Infinity — retried forever, with the delay doubling each time.
-  // Every finite non-negative integer, and every negative value, is unaffected:
-  // the default (3) is 4 calls at 1s/2s/4s before and after.
+  // by falling out of the condition and never without bound. With a plain
+  // `Math.max(0, retries)` three shapes break it: NaN makes `0 <= NaN` false so
+  // the body never runs at all and "has no string value" is reported for a
+  // secret never fetched; 1.5 never satisfies `attempt === lastAttempt`, so the
+  // real SDK error is never rethrown and a transport failure is reported as that
+  // same value-shaped error; Infinity retries forever with the delay doubling.
+  // Every finite non-negative integer and every negative value is unaffected.
   const lastAttempt = Number.isFinite(retries) ? Math.max(0, Math.floor(retries)) : 0
 
   let secretString: string | undefined
@@ -240,12 +236,10 @@ function extractJsonField(secretArn: string, secretString: string, jsonField: st
   }
 
   // An empty credential is rejected here for the same reason `fetchSecretString`
-  // rejects an empty `SecretString`: it is not a credential, and every caller
-  // downstream treats it as absent — silently. `main()` would report
-  // "CANOPYCMS_GITHUB_TOKEN or ..._SECRET_ARN is required" while the ARN plainly
-  // is set, and an empty Clerk key leaves `refreshAuthCache` undefined, which
-  // disables auth-cache refresh with no log line at all. Both are exactly the
-  // class of silent failure this change exists to end.
+  // rejects an empty `SecretString`: every caller downstream treats it as absent,
+  // silently. `main()` would report "CANOPYCMS_GITHUB_TOKEN or ..._SECRET_ARN is
+  // required" while the ARN plainly is set, and an empty Clerk key leaves
+  // `refreshAuthCache` undefined, disabling auth-cache refresh with no log line.
   if (value === '') {
     throw new Error(
       `Secret ${secretArn} field "${jsonField}" is an empty string. Set a value for it, or point at a different field.`,
@@ -256,21 +250,17 @@ function extractJsonField(secretArn: string, secretString: string, jsonField: st
 
 /**
  * Warns when a secret holds a JSON document but nothing asked for a field of it.
- *
- * This is the half of adopter request #46 that helps the adopter who has not yet
- * read the docs, and it is the actual complaint: not "there is no field option"
- * but "nothing told me". Without it, the whole document silently becomes the
- * credential and the first symptom is Clerk rejecting a key, or git rejecting a
- * URL, a long way from the cause.
+ * Without this the whole document silently becomes the credential, and the first
+ * symptom is Clerk rejecting a key or git rejecting a URL, a long way from the
+ * cause.
  *
  * It does not fire on any credential this worker reads: a GitHub PAT (`ghp_…`),
  * an installation token (`ghs_…`), a Clerk secret key (`sk_live_…`/`sk_test_…`)
  * and a PEM private key are none of them valid JSON, so the parse fails and
- * nothing is logged. The object check also excludes scalars — a secret whose
- * value is `42` or `"x"` parses fine but is not a credential document and gets
- * no warning. A credential that WAS a bare JSON object would warn, which is the
- * intended behaviour rather than a false positive: the whole document is in fact
- * being used as the credential at that point.
+ * nothing is logged. The object check also excludes scalars — `42` or `"x"`
+ * parses fine but is not a credential document. A credential that IS a bare JSON
+ * object does warn, which is intended rather than a false positive: the whole
+ * document is in fact being used as the credential at that point.
  */
 function warnIfUnreadJsonDocument(
   secretArn: string,
@@ -327,9 +317,9 @@ export interface GetSecretOptions {
 /**
  * Fetches the secret at `secretArn` and returns the credential it carries.
  *
- * With no `jsonField`, this is byte-for-byte what it has always been: the
- * secret's whole string value. That path is pinned by a regression test, because
- * every adopter who exists today is on it.
+ * With no `jsonField` the result is the secret's whole string value, byte for
+ * byte - the path nearly every deployment is on, and pinned by a regression
+ * test.
  */
 export async function getSecret(
   secretArn: string,
@@ -341,12 +331,11 @@ export async function getSecret(
     retries = 3,
     attemptTimeoutMs = DEFAULT_ATTEMPT_TIMEOUT_MS,
   } = options
-  // Checked here, before any network call, rather than left to
-  // `AbortSignal.timeout` inside `fetchSecretString`'s try: there NaN,
-  // Infinity, a fraction, a negative or anything above 2**32-1 throws a
-  // RangeError, and 0 or 2**31…2**32-1 aborts every attempt at once. The catch
-  // reads either as a transport failure, so it was retried with backoff and
-  // logged as "Secrets Manager unavailable" before failing -- the same
+  // Checked before any network call, not left to `AbortSignal.timeout` inside
+  // `fetchSecretString`'s try: there NaN, Infinity, a fraction, a negative or
+  // anything above 2**32-1 throws a RangeError, and 0 or 2**31…2**32-1 aborts
+  // every attempt at once. The catch reads either as a transport failure, so it
+  // retries with backoff and logs "Secrets Manager unavailable" -- the exact
   // misdiagnosis `fetchSecretString` exists to prevent. Same bounds as
   // `gitTokenMintTimeoutMs` in canopycms core (github-auth.ts).
   if (

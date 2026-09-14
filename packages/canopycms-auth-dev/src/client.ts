@@ -25,7 +25,6 @@ export function useDevAuthConfig(): Pick<CanopyClientConfig, 'editor'> {
     editor: {
       AccountComponent: UserSwitcherButton,
       onLogoutClick: () => {
-        // Reset to default user
         clearDevUserCookie()
         window.location.reload()
       },

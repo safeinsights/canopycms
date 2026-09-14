@@ -7,46 +7,22 @@
  * Reuses the SAME transform engine as the dev-mode `/assets/t/*` emulation
  * (`packages/canopycms/src/api/assets.ts`'s `serveLazyTransform`) via
  * `canopycms/server`'s `parseTransformPath`/`formatDirectives`/`applyTransform`
- * re-exports - this file must never reimplement directive parsing or the
- * sharp pipeline, only the S3/Lambda-specific plumbing around them.
+ * re-exports - this file must NEVER reimplement directive parsing or the sharp
+ * pipeline, only the S3/Lambda-specific plumbing around them. See
+ * `serveLazyTransform` for the shared flow's rationale.
  *
- * Flow, mirroring `serveLazyTransform` (see its doc comment for the full
- * rationale) with prod-specific handling for the Function URL's response
- * size cap:
- *   1. Parse `event.rawPath` (`/assets/t/{directives}/{hash32}/{slug}.{ext}`).
- *   2. Read `asset-meta/{hash32}.json` - 404 if absent, 400 if not `raster`
- *      (svg/pdf are served statically via `/assets/*`, never reach here).
- *   3. Read the original: direct `GetObject` by the meta-recorded extension
- *      first (the common case - one round trip), falling back to a
- *      `ListObjectsV2` prefix scan only on a miss.
- *   4. `applyTransform` - a typed rejection (undecodable input, encoder
- *      failure, oversized output) becomes a 422 JSON response.
- *   5. Write the output to S3 under the CANONICAL key
- *      (`assets/t/{formatDirectives(...)}/{hash32}/{slug}.{ext}`) FIRST, so
- *      the object exists before CloudFront's next request for it - even if
- *      this response never reaches the viewer.
- *   6. Return the bytes inline (base64, Function URL payload v2) when small
- *      enough to fit the Function URL's ~6 MiB buffered-response cap;
- *      otherwise 302 to the CANONICAL key's own path (NOT `rawPath` - see
- *      below) with `Cache-Control: no-store` (CloudFront re-fetches from S3,
- *      now a hit - the `no-store` is required so the REDIRECT itself is
- *      never cached at the CloudFront layer, which is the "cached-redirect
- *      trap" documented in the design record at
- *      .claude/future-tasks/assets-media-system.md; the CloudFront-layer
- *      side of that trap is additionally closed by the custom, minTtl-0
- *      cache policy `AssetSupport` attaches to this behavior instead of the
- *      managed CACHING_OPTIMIZED policy, whose 1s min TTL would otherwise
- *      cache this `no-store` response anyway).
+ * Two orderings here are prod-specific and load-bearing:
  *
- * Note: URLs `canopycms` itself generates always carry canonically-ordered
- * directives (`assets/asset-url.ts`'s `assetUrl()` formats through the same
- * `formatDirectives`), so `rawPath` and the canonical key are the same
- * string in every URL this system produces. A hand-crafted request with a
- * non-canonical directive order gets an oversized-output redirect to the
- * CANONICAL key (not back to `rawPath`) precisely so that redirect lands on
- * the object this Lambda just wrote - redirecting to `rawPath` instead would
- * have CloudFront miss the same non-canonical path forever, re-invoking this
- * Lambda (and re-paying its cost) on every single hit for that path.
+ * - The transformed bytes are written to S3 under the CANONICAL key BEFORE the
+ *   response is built, so the object exists for CloudFront's next request even
+ *   if this response never reaches the viewer.
+ * - An output too large for the Function URL's ~6 MiB buffered-response cap is
+ *   answered with a 302 carrying `Cache-Control: no-store`, so the REDIRECT
+ *   itself is never cached at the CloudFront layer - the "cached-redirect trap"
+ *   in the design record (.claude/future-tasks/resolved/assets-media-system.md). The
+ *   other half of that trap is closed by the custom minTtl-0 cache policy
+ *   `AssetSupport` attaches to this behavior instead of the managed
+ *   CACHING_OPTIMIZED, whose 1s min TTL would cache the `no-store` anyway.
  */
 
 import {
@@ -70,16 +46,12 @@ const TRANSFORM_URL_PREFIX = `/${ASSET_PREFIXES.transform}/`
 const TRANSFORM_CACHE_CONTROL = 'public, max-age=31536000, immutable'
 
 /**
- * Function URLs buffer the response and base64-encode it for payload v2;
- * AWS documents a ~6 MiB cap on that buffered response. Base64 inflates
- * bytes by exactly 4/3, so 4 MiB of raw output becomes ~5.33 MiB after
- * encoding - leaving real headroom under the 6 MiB cap for the JSON-envelope
- * overhead this response doesn't actually have (the body IS the raw base64,
- * not JSON-wrapped - see `inlineImageResponse`) plus the response headers
- * Lambda's own invoke-result framing adds on top of the payload itself.
- * (A previous 4.5 MiB threshold based its headroom claim on 4.5 MiB * 4/3
- * landing EXACTLY at 6 MiB, i.e. zero headroom - any framing overhead at all
- * pushed it over, 502-ing the first request for an output near the cap.)
+ * Function URLs buffer the response and base64-encode it for payload v2, with a
+ * documented ~6 MiB cap on that buffered response. Base64 inflates bytes by
+ * exactly 4/3, so 4 MiB of raw output becomes ~5.33 MiB encoded - real headroom
+ * under the cap for the framing Lambda's own invoke result adds. A threshold
+ * whose 4/3 lands exactly ON 6 MiB has zero headroom and 502s the first request
+ * for an output near the cap.
  */
 const INLINE_BODY_LIMIT_BYTES = 4 * 1024 * 1024
 
@@ -268,13 +240,14 @@ async function handleTransformRequest(
     return inlineImageResponse(transformed.data, transformed.contentType)
   }
 
-  // Redirect to the CANONICAL key just written above, not `rawPath` - for a
-  // non-canonically-ordered directive request the two differ, and
-  // redirecting back to `rawPath` would have CloudFront re-miss the same
-  // non-canonical path forever (the canonical key is what actually exists in
-  // S3), re-invoking this Lambda on every hit instead of ever landing a
-  // cache hit. See the module doc comment's "Note" for why canopycms' own
-  // URLs never hit this case (they're always canonically ordered already).
+  // Redirect to the CANONICAL key just written above, NOT `rawPath`. For a
+  // non-canonically-ordered directive request the two differ, and the canonical
+  // key is what actually exists in S3 - redirecting back to `rawPath` would have
+  // CloudFront re-miss that path forever, re-invoking this Lambda on every hit
+  // instead of ever landing a cache hit. URLs canopycms itself generates are
+  // always canonically ordered (`assets/asset-url.ts`'s `assetUrl()` formats
+  // through the same `formatDirectives`), so only a hand-crafted request
+  // reaches this case at all.
   return redirectNoStore(`/${canonicalKey}`)
 }
 
