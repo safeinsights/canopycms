@@ -41,28 +41,6 @@ import { createDebugLogger } from './utils/debug'
  *   mid-rebuild therefore leaves the recorded token older than the file,
  *   forcing another rebuild on the next probe.
  *
- * ## Consistency guarantees and residual staleness windows (EFS/NFSv4)
- *
- * Guaranteed: any completed mutation that bumps the marker is observed by
- * every consumer on that root at its next freshness probe. Residual windows
- * (bounded in practice by per-request lifetimes and, where implemented, a
- * suspicious-lookup backstop):
- *
- * - (A) NFS attribute caching (benign direction): another host may not see a
- *   new marker for up to the attribute-cache timeout (~3-60s on default EFS
- *   mounts; `noac` cannot be assumed). The reader acts on a stale token and
- *   keeps a stale snapshot until the cache expires.
- * - (B) Probe throttle: however long the consumer debounces freshness checks.
- * - (C) Self-adoption: after its own mutation a consumer adopts the token it
- *   wrote; if a concurrent foreign bump landed just before ours, we miss that
- *   one notification (window: from our last token observation to our rename).
- * - (E) Fresh-token/stale-scan (malignant direction, cross-host only): NFS
- *   revalidates the marker file on open, but a rebuild's reads may be served
- *   from dentry/attribute caches — a rebuild can record a NEW token against
- *   PRE-mutation data, leaving that consumer confidently stale until the next
- *   bump. Structurally unfixable with a filesystem marker; bounded by
- *   per-request lifetimes and any backstop the consumer implements.
- *
  * ## Guarantee delta for DURABLE snapshot consumers (registry / schema-cache)
  *
  * The in-memory ContentIdIndex tolerates window (E) because a stale index is

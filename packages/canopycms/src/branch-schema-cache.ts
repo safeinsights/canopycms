@@ -98,17 +98,6 @@ async function isStaleByMtime(dir: string, cachedAt: Date): Promise<boolean> {
  * memory. `loadFromCacheOrResolve` mitigates this the same way
  * BranchRegistry does:
  *
- * - The marker is captured strictly BEFORE `resolveFresh()` runs, and the
- *   captured token (not one read after resolving) is what gets embedded in
- *   the persisted snapshot. A bump landing mid-resolve therefore leaves the
- *   embedded token older than the live marker, forcing a re-resolve on the
- *   next read instead of silently resurrecting stale schema.
- * - A snapshot is only persisted when the marker read itself succeeded
- *   (`{ ok: true }`). If the read fails for a reason other than "never
- *   bumped", we cannot attribute a token to this resolve, and stamping the
- *   snapshot with an unattributable token would make it indistinguishable
- *   from a correctly-attributed one to every future reader. The fresh result
- *   is still served to this caller; it just isn't written durably.
  * - invalidate() bumps the marker with `mustSucceed: true`: an explicit
  *   invalidation (e.g. after a schema mutation) must not silently fail and
  *   leave every reader confidently stale with no bounding backstop.
@@ -119,32 +108,15 @@ async function isStaleByMtime(dir: string, cachedAt: Date): Promise<boolean> {
  *   (schema/schema-store.ts), which has those arguments and calls
  *   {@link resolveAndPersist} (NOT getSchema()) right after invalidating -
  *   so every SchemaOps mutation re-resolves on the mutating host via a scan
- *   that is GUARANTEED to run, not merely likely to run. getSchema() would
- *   be the wrong call here: its cache-read fast path can short-circuit
- *   through a snapshot a DIFFERENT concurrent host just wrote (see
- *   resolveAndPersist()'s doc comment for the exact race), silently
- *   skipping the one scan this eager re-resolve exists to guarantee. (The
- *   editor's follow-up schema GET is a separate Lambda invocation with no
- *   container affinity, so it could not serve this purpose either.)
+ *   that is GUARANTEED to run, not merely likely to run.
  *   Callers of invalidate() that bypass SchemaOps (api/schema.ts's explicit
  *   invalidate endpoint; the bulk-mutation bump in
  *   invalidateBranchContentCaches) accept the lazy next-read regen.
- *
- * This is also why prod needs no mtime walk: the dev-only mtime check below
- * exists solely to catch hand edits to .collection.json made outside the CMS
- * (which bypass SchemaOps and therefore never bump the marker). Every
- * mutation path that matters in prod - SchemaOps writes, git working-tree
- * rewrites (checkout/merge/rebase/sync/migrate) - bumps the marker via
- * SchemaOps.invalidateSchemaCache() or the combined
- * invalidateBranchContentCaches() helper in content-index-generation.ts, so
- * the marker alone is a sufficient prod backstop.
  *
  * Caching Strategy:
  * - File-based cache at {branchRoot}/.canopy-meta/schema-cache.json (no
  *   in-memory layer - intentional: matches prod behavior and keeps cache
  *   coherent across Lambda invocations)
- * - Invalidation: invalidate() bumps the cross-process generation marker;
- *   every reader sharing this branchRoot re-resolves at its next access.
  */
 export class BranchSchemaCache {
   /** Tracks when we last checked mtimes per contentRoot, to debounce rapid requests */

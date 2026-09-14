@@ -48,9 +48,6 @@ export class BranchMetadataConflictError extends Error {
  * save() is protected by three layers, outermost to innermost (identical
  * structure to {@link CommentStore}'s withMutation, see comment-store.ts):
  *
- * 1. {@link withLock} - an in-process FIFO mutex keyed by the resolved file
- *    path. Serializes concurrent mutators on the SAME process/host
- *    deterministically.
  * 2. {@link withOccFileLock} - a server-enforced, cross-process/cross-host
  *    lock (proper-lockfile, mkdir-based). This is the actual fix for lost
  *    branch-status/ACL updates across two warm Lambda containers (or a
@@ -62,9 +59,6 @@ export class BranchMetadataConflictError extends Error {
  *    dwarfs any sleep worth paying — only server-enforced mutual exclusion
  *    does. Given branch.json carries status + ACLs, silently losing an
  *    update here is a correctness/security issue, not just a UX glitch.
- * 3. {@link withOccRetry} around {@link writeOccJsonFile} - version/writeId
- *    based optimistic concurrency control. With layers 1-2 in place this is
- *    now a defense-in-depth backstop only, not the primary safety mechanism.
  *
  * See `utils/occ-json-write.ts` for full guarantee documentation of layers 2-3.
  */

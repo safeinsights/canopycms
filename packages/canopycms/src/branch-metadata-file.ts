@@ -10,11 +10,6 @@
  * were a runtime import cycle (`branch-metadata` -> `branch-registry` ->
  * `branch-metadata`), with value imports on both edges — the only cycle in the
  * package when `no-circular` was first turned on, 2026-08-23.
- *
- * Hoisting the READ here breaks it without changing either module's behavior:
- * the registry gets its reader from a leaf, and the metadata manager keeps its
- * invalidation edge. `BranchMetadataFileManager.loadOnly` stays as a thin
- * delegate so its ~16 existing call sites are untouched.
  */
 
 import fs from 'node:fs/promises'

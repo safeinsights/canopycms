@@ -195,7 +195,6 @@ export class CommentStore {
       }
 
       if (!data.threads[threadId]) {
-        // Create new thread
         data.threads[threadId] = {
           id: threadId,
           comments: [comment],
@@ -207,7 +206,6 @@ export class CommentStore {
           canopyPath: options.canopyPath,
         }
       } else {
-        // Add to existing thread
         data.threads[threadId].comments.push(comment)
       }
 

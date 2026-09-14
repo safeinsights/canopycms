@@ -138,10 +138,8 @@ export interface DuplicateContentId {
  *
  * Quarantining is an INDEX decision: this scan never touches the filesystem,
  * so nothing here moves or deletes the dropped file. It does not follow that
- * the dropped file is inert until an admin repairs it, and an earlier version
- * of this comment wrongly claimed exactly that ("left untouched on disk until
- * a human or the repair action moves them"). Slugs are resolved by directory
- * scan (`ContentStore.buildPaths()`), which knows nothing about this
+ * the dropped file is inert until an admin repairs it. Slugs are resolved by
+ * directory scan (`ContentStore.buildPaths()`), which knows nothing about this
  * quarantine, so the dropped file stays fully addressable by
  * collection+slug: a stale editor tab can still save, delete or rename it.
  *
@@ -223,7 +221,6 @@ export class ContentIdIndex {
       const entries = await fs.readdir(absoluteDir, { withFileTypes: true })
 
       for (const entry of entries) {
-        // Skip hidden files and directories (including _ids_)
         if (entry.name.startsWith('.') || entry.name === '_ids_') {
           continue
         }
@@ -238,11 +235,8 @@ export class ContentIdIndex {
             relativePath: fullRelativePath as PhysicalPath, // filesystem path with embedded IDs
           }
 
-          // Extract slug and collection for entries
           if (!entry.isDirectory()) {
             const slug = extractSlugFromFilename(entry.name)
-            // Convert physical collection path to logical by stripping embedded IDs from each segment
-            // e.g., "content/posts.a1b2c3d4e5f6" → "content/posts"
             const physicalCollection = path.dirname(fullRelativePath)
             const collectionPath = toLogicalCollectionPath(physicalCollection)
             location.slug = slug
@@ -266,10 +260,6 @@ export class ContentIdIndex {
             } else {
               this.recordDuplicate(id, fullRelativePath)
             }
-            // Written for an operator who has never seen this code: name
-            // both files, say explicitly that the dropped one still exists
-            // (quarantine, not deletion), and point at the concrete recovery
-            // action rather than an internal method name.
             canopyLogWarn(
               `[ContentIdIndex] Duplicate content ID ${id}: "${kept}" and "${dropped}" both ` +
                 `embed this ID. Keeping "${kept}" for ID-based lookups (reads, references, ` +
@@ -285,7 +275,6 @@ export class ContentIdIndex {
           }
         }
 
-        // Recurse into directories
         if (entry.isDirectory()) {
           await this.scanDirectory(fullRelativePath)
         }
@@ -365,8 +354,6 @@ export class ContentIdIndex {
    *
    * Performance: O(1) + O(m) where m is the number of entries in the collection.
    *
-   * @param collectionPath - The collection path (e.g., "content/posts")
-   * @returns Array of IdLocation objects for entries in the collection
    */
   getEntriesInCollection(collectionPath: LogicalPath): IdLocation[] {
     const idSet = this.byCollection.get(collectionPath)
@@ -392,8 +379,6 @@ export class ContentIdIndex {
    *
    * Performance: O(k * m) where k is number of matching collections and m is avg entries per collection.
    *
-   * @param collectionPath - The root collection path to search
-   * @returns Array of IdLocation objects for entries in the collection tree
    */
   getEntriesInCollectionTree(collectionPath: LogicalPath): IdLocation[] {
     const locations: IdLocation[] = []
@@ -419,7 +404,6 @@ export class ContentIdIndex {
    *
    * Performance: O(n) where n is total number of entries.
    *
-   * @returns Array of all IdLocation objects that are entries
    */
   getAllEntryLocations(): IdLocation[] {
     const locations: IdLocation[] = []
@@ -447,7 +431,6 @@ export class ContentIdIndex {
       throw new Error(`Cannot add location without ID in filename: ${location.relativePath}`)
     }
 
-    // Collision detection
     if (this.idToLocation.has(id)) {
       const existing = this.idToLocation.get(id)!
       throw new Error(
@@ -464,7 +447,6 @@ export class ContentIdIndex {
     this.idToLocation.set(id, fullLocation)
     this.pathToId.set(location.relativePath, id)
 
-    // Add to collection index if it's an entry
     if (fullLocation.type === 'entry' && fullLocation.collection) {
       if (!this.byCollection.has(fullLocation.collection)) {
         this.byCollection.set(fullLocation.collection, new Set())
@@ -481,7 +463,6 @@ export class ContentIdIndex {
     const location = this.idToLocation.get(id)
     if (!location) return
 
-    // Remove from collection index if it's an entry
     if (location.type === 'entry' && location.collection) {
       const idSet = this.byCollection.get(location.collection)
       if (idSet) {
@@ -507,22 +488,17 @@ export class ContentIdIndex {
       throw new Error(`Cannot update path for unknown ID: ${id}`)
     }
 
-    // Remove old path mapping
     this.pathToId.delete(location.relativePath)
 
-    // Update location
     location.relativePath = newRelativePath
 
-    // Update slug and collection for entries
     if (location.type === 'entry') {
       const oldCollection = location.collection
       location.slug = extractSlugFromFilename(path.basename(newRelativePath))
       const physicalCollection = path.dirname(newRelativePath)
       location.collection = toLogicalCollectionPath(physicalCollection)
 
-      // Update collection index if collection changed
       if (oldCollection !== location.collection) {
-        // Remove from old collection
         if (oldCollection) {
           const oldSet = this.byCollection.get(oldCollection)
           if (oldSet) {
@@ -533,7 +509,6 @@ export class ContentIdIndex {
           }
         }
 
-        // Add to new collection
         if (location.collection) {
           if (!this.byCollection.has(location.collection)) {
             this.byCollection.set(location.collection, new Set())
@@ -543,7 +518,6 @@ export class ContentIdIndex {
       }
     }
 
-    // Add new path mapping
     this.pathToId.set(newRelativePath, id)
   }
 }
@@ -571,14 +545,11 @@ export function extractIdFromFilename(filename: string): ContentId | null {
 
   const parts = filename.split('.')
 
-  // Files: type.slug.id.ext → need at least 3 parts
-  // The ID is always the second-to-last part before the extension
   if (parts.length >= 3) {
     const candidate = parts[parts.length - 2]
     if (isValidId(candidate)) return candidate as ContentId
   }
 
-  // Directories: slug.id → exactly 2 parts (slug and ID, no extension)
   if (parts.length === 2) {
     const candidate = parts[parts.length - 1]
     if (isValidId(candidate)) return candidate as ContentId
@@ -595,9 +566,6 @@ export function extractIdFromFilename(filename: string): ContentId | null {
  *   Input: resolveCollectionPath(root, "content/docs/api")
  *   Output: "/abs/path/to/content/docs.bChqT78gcaLd/api.meiuwxTSo7UN"
  *
- * @param root - Absolute path to the workspace root
- * @param logicalPath - Logical path from schema (e.g., "content/docs/api")
- * @returns Absolute filesystem path with embedded IDs, or null if path doesn't exist
  */
 export async function resolveCollectionPath(
   root: string,
@@ -615,7 +583,6 @@ export async function resolveCollectionPath(
       const entries = await fs.readdir(currentPath, { withFileTypes: true })
       const matchingDir = entries.find((entry) => {
         if (!entry.isDirectory()) return false
-        // Extract logical name from directory (strips embedded ID)
         const logicalName = extractSlugFromFilename(entry.name)
         return logicalName === segment.toLowerCase()
       })
@@ -644,15 +611,12 @@ export async function resolveCollectionPath(
  * - "article.test.a1b2c3d4e5f6.md" → "article"
  * - "posts.a1b2c3d4e5f6" → null (directory, not an entry file)
  *
- * @param filename - The filename to parse
- * @returns Entry type name or null if not a valid entry file
  */
 export function extractEntryTypeFromFilename(filename: string): string | null {
   if (filename.startsWith('.')) return null
 
   const parts = filename.split('.')
 
-  // Need at least 4 parts for type.slug.id.ext
   if (parts.length >= 4) {
     const possibleId = parts[parts.length - 2]
     if (isValidId(possibleId)) {
@@ -683,20 +647,15 @@ export function extractEntryTypeFromFilename(filename: string): string | null {
 export function extractSlugFromFilename(filename: string, entryTypeName?: string): Slug {
   const parts = filename.split('.')
 
-  // Files: type.slug.id.ext (at least 3 parts)
   if (parts.length >= 3) {
     const possibleId = parts[parts.length - 2]
     if (isValidId(possibleId)) {
-      // Get all parts before ID (excluding extension)
       let slugParts = parts.slice(0, parts.length - 2)
 
       // If entryTypeName is provided and matches the first part, strip it
       if (entryTypeName && slugParts.length > 1 && slugParts[0] === entryTypeName) {
         slugParts = slugParts.slice(1)
-      }
-      // Auto-detect: 4+ parts means type.slug.id.ext format
-      else if (parts.length >= 4 && slugParts.length > 1) {
-        // Strip first part (the type) to get just the slug
+      } else if (parts.length >= 4 && slugParts.length > 1) {
         slugParts = slugParts.slice(1)
       }
 
@@ -704,7 +663,6 @@ export function extractSlugFromFilename(filename: string, entryTypeName?: string
     }
   }
 
-  // Directories: slug.id (exactly 2 parts)
   if (parts.length === 2) {
     const possibleId = parts[parts.length - 1]
     if (isValidId(possibleId)) {
@@ -712,7 +670,6 @@ export function extractSlugFromFilename(filename: string, entryTypeName?: string
     }
   }
 
-  // No ID found, remove extension and return filename without extension
   if (parts.length > 1) {
     return parts.slice(0, -1).join('.').toLowerCase() as Slug
   }

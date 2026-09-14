@@ -245,10 +245,8 @@ async function _createCanopyServicesInternal(
       : 'main')
   config = { ...config, defaultActiveBranch, defaultBaseBranch }
 
-  // Load bootstrap admin IDs from environment
   const bootstrapAdminIds = getBootstrapAdminIds()
 
-  // Create per-branch schema cache (or use provided one for testing)
   const branchSchemaCache = options.branchSchemaCache ?? new BranchSchemaCache(config.mode)
 
   const checkBranchAccess = createCheckBranchAccess(config.defaultBranchAccess ?? 'deny', config)
@@ -361,7 +359,6 @@ async function _createCanopyServicesInternal(
     }
   }
 
-  // Create GitHub service if applicable (only for modes that support pull requests)
   // Must be initialized before closures that reference it (commitToSettingsBranch)
   let githubService: GitHubService | undefined
   if (operatingStrategy(config.mode).supportsPullRequests()) {
@@ -413,11 +410,6 @@ async function _createCanopyServicesInternal(
         // pushed, so the remote has no ref to pull. Anything else — a
         // GitConflictError, a merge that cannot proceed, a broken workspace —
         // must surface (the outer catch turns it into an error result).
-        // A blanket catch here previously logged every failure as "normal for
-        // first commit", which is how pullCurrentBranch could stay broken on
-        // every call without anyone noticing: the settings branch then silently
-        // never converged with the remote, and each save reported
-        // `committed: true, pushed: false` from the push below, forever.
         if (!(err instanceof GitRemoteRefMissingError)) throw err
         console.info(
           'CanopyCMS: settings branch has no remote ref yet, nothing to pull ' +
@@ -425,7 +417,6 @@ async function _createCanopyServicesInternal(
         )
       }
 
-      // Commit
       await git.ensureAuthor({
         name: config.gitBotAuthorName,
         email: config.gitBotAuthorEmail,
@@ -451,11 +442,7 @@ async function _createCanopyServicesInternal(
         // branch — so the change already took effect the moment it was
         // committed and pushed above, before this PR even exists. Merging
         // does not (re-)activate anything; it only records the change on
-        // `base` for review/audit history. Previously worded as "will be
-        // persisted when this PR is merged", which implied merging was what
-        // made the change durable/live — false for both settings files, and
-        // for groups specifically the read side didn't even look at this
-        // branch until that bug was fixed (see resolve-canopy-user.ts).
+        // `base` for review/audit history.
         const settingsPRBody =
           'Automated PR for permission and group changes. These changes already took ' +
           'effect in the CMS when they were saved — merging this PR does not change ' +
@@ -514,8 +501,6 @@ async function _createCanopyServicesInternal(
   const operatingMode = config.mode
   const modeStrategy = operatingStrategy(operatingMode)
 
-  // Create branch registry only in branching modes
-  // Settings are now in separate directory, no filtering needed
   const registry = modeStrategy.supportsBranching()
     ? new BranchRegistry(getDefaultBranchBase(operatingMode))
     : undefined

@@ -54,7 +54,6 @@ export class BranchWorkspaceManager {
         return
       }
 
-      // Create new lock promise
       const lockPromise = (async () => {
         // The in-memory lock above only serializes within one process. Separate
         // processes can provision the same branch workspace at once -- several
@@ -77,7 +76,6 @@ export class BranchWorkspaceManager {
             `.${path.basename(options.branchRoot)}.init.lock`,
           )
 
-          // Delegate git initialization to GitManager
           await GitManager.initializeWorkspace({
             workspacePath: options.branchRoot,
             branchName: options.branchName,
@@ -106,10 +104,8 @@ export class BranchWorkspaceManager {
         }
       })()
 
-      // Store the lock promise
       workspaceInitLocks.set(options.branchRoot, lockPromise)
 
-      // Wait for initialization to complete
       await lockPromise
     })
   }

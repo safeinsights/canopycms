@@ -147,12 +147,8 @@ export interface CanopyBuildContext {
    * Root path '/' resolves to the content root's index entry.
    *
    * Resolves ONLY what `listEntries` publishes — `readByUrlPath(item.urlPath)` reaches the entry,
-   * and no other spelling does. Three shapes that used to resolve are therefore null now:
-   * `/x/index` (the literal spelling of an index entry's collapsed URL, in any case),
-   * `/<collection>/<entryTypeName>` and `/<collection>/<entryTypeName>/<slug>` (an entry-type
-   * path is not a collection, so it is not part of any published URL), and an entry whose
-   * on-disk type token its collection does not declare (`listEntries` skips those too). A
-   * collection literally named `index` is unaffected — the index fallback resolves it.
+   * and no other spelling does. A collection literally named `index` is unaffected — the index
+   * fallback resolves it.
    *
    * `read({ entryPath: 'content/home' })` is deliberately NOT narrowed: addressing an entry
    * structurally, by its schema path, is a different question from addressing it by its

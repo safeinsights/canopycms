@@ -16,28 +16,10 @@ import { SCHEMA_GENERATION_RESOURCE } from './branch-schema-cache'
  * documents only what is specific to the in-memory ContentIdIndex.
  *
  * The ContentIdIndex is an in-memory map per ContentStore instance. Within one
- * process, content-index-registry.ts invalidates stale indexes directly. Across
- * processes (several warm Lambda containers + the EC2 worker sharing branch
- * clones on EFS) there is no shared memory and no cross-host file watching, so
- * the shared filesystem itself is the coordination medium: every operation that
- * mutates indexed files under a branch-clone root also rewrites a small marker
- * file with a fresh random token, and every ContentStore cheaply re-reads that
- * marker (throttled) to decide whether its in-memory index is still current.
+ * process, content-index-registry.ts invalidates stale indexes directly.
  *
  * The marker lives at {root}/.canopy-meta/content-index.generation.
  *
- * ## Residual staleness windows, as they apply here
- *
- * All bounded in practice by per-request ContentStore lifetimes and self-healed
- * by the suspicious-lookup backstop in ContentStore:
- *
- * - (A) NFS attribute caching: another host may not see a new marker for up to
- *   the attribute-cache timeout (~3-60s on default EFS mounts). The reader acts
- *   on a stale token and keeps a stale index until the cache expires.
- * - (B) Probe throttle: up to ContentStore's indexFreshnessIntervalMs (1s).
- * - (C) Self-adoption: after its own mutation a store adopts the token it
- *   wrote; if a concurrent foreign bump landed just before ours, we miss that
- *   one notification (window: from our last token observation to our rename).
  * - (E) Fresh-token/stale-scan (cross-host only): a rebuild's readdir calls may
  *   be served from stale dentry/attribute caches, recording a NEW token against
  *   PRE-mutation directory listings. Unlike a durable-snapshot consumer (see
@@ -115,14 +97,6 @@ export async function invalidateContentIndexesDurable(root: string): Promise<voi
  * the whole content directory), so both durable, cross-process caches rooted
  * at `root` need to be told: the ContentId index (content-index-registry.ts)
  * AND the resolved-schema cache (branch-schema-cache.ts).
- *
- * `invalidateContentIndexesDurable` is the designated entry point for a
- * future call site that only ever touches content files, never schema, and
- * needs the durable-invalidation shape but not the extra schema bump.
- * `ContentStore`'s own write/delete/rename paths don't call it either — they
- * bump the content-index marker directly via `recordOwnMutation()` (see
- * content-store.ts), since they already know exactly which mutation just
- * happened and don't need a generic "some indexed files changed" entry point.
  *
  * Both marker bumps are "hint" flavor (bumpResourceGeneration's default,
  * `mustSucceed` not set): callers of this function are typically `finally`

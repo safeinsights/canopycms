@@ -88,14 +88,7 @@ export interface BranchHealthEntry {
 /**
  * The on-disk path of the cross-process provisioning lock marker for a
  * given branch directory, matching `branch-workspace.ts`'s
- * `ensureGitWorkspace()` exactly:
- *
- * ```ts
- * acquireProvisioningLock(
- *   path.dirname(branchRoot),         // === baseRoot
- *   `.${path.basename(branchRoot)}.init.lock`,
- * )
- * ```
+ * `ensureGitWorkspace()` exactly.
  *
  * `acquireProvisioningLock` passes this name as `lockfilePath`, which
  * overrides proper-lockfile's default `${target}.lock` naming, so the lock

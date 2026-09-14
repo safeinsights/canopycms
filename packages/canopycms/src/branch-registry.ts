@@ -77,20 +77,9 @@ export interface BranchRegistrySnapshot {
  *   but is absent from the cached snapshot forces one fresh regeneration
  *   (throttled), bounding how long a bad snapshot can hide a real branch.
  *
- * regenerate() also skips persisting a snapshot when the marker read itself
- * fails (`{ ok: false }`, e.g. unreadable for a non-ENOENT reason): a snapshot
- * embedding a token we cannot attribute to "matches this scan" would be
- * indistinguishable from a correctly-attributed one to every future reader, so
- * the safer behavior is to serve the fresh scan without writing it durably and
- * let the next read retry the marker.
- *
- * Design:
- * - list() returns the cached snapshot if its embedded generation token still
- *   matches the live marker, regenerates from branch.json files otherwise
- * - invalidate() bumps the marker (durable, cross-process) and eager-regenerates
- * - Concurrent regeneration within one process is deduped to a single scan
- *   (regenInFlight); across processes, regeneration is still safe since all
- *   processes produce identical output from the same branch.json files
+ * Concurrent regeneration within one process is deduped to a single scan
+ * (regenInFlight); across processes, regeneration is still safe since all
+ * processes produce identical output from the same branch.json files.
  */
 export class BranchRegistry {
   private readonly root: string

@@ -172,7 +172,6 @@ export class SettingsWorkspaceManager {
         return
       }
 
-      // Create new in-memory lock promise
       settingsInitLock = (async () => {
         try {
           log.debug('workspace', 'Ensuring settings git workspace', {
@@ -193,12 +192,6 @@ export class SettingsWorkspaceManager {
           // (proper-lockfile: heartbeat-refreshed while the holder lives, so a
           // slow EFS clone is not mistaken for a crash, and patient retries so a
           // loser WAITS instead of racing into a concurrent clone).
-          //
-          // This replaced a bespoke O_CREAT|O_EXCL + 30s-mtime scheme whose
-          // return value was only ever used to decide whether to release: the
-          // loser proceeded into initializeWorkspace anyway, concurrently with
-          // the holder, where it could see a half-written .git, classify it
-          // corrupt, and `rm -rf` it out from under the in-flight clone.
           const releaseLock = await acquireProvisioningLock(
             settingsInitLockTarget(options.settingsRoot),
             SETTINGS_INIT_LOCK_NAME,
@@ -243,7 +236,6 @@ export class SettingsWorkspaceManager {
         }
       })()
 
-      // Wait for initialization to complete
       await settingsInitLock
     })
   }
