@@ -170,10 +170,7 @@ export function orphanRecoveryMaxAgeMs(ctx: Pick<TaskRunnerContext, 'taskTimeout
 }
 
 /**
- * Process queued tasks from Lambda.
- * Polls .tasks/pending/ directory and executes each task.
- * Processes up to maxTasksPerCycle tasks per invocation.
- * Retries transient failures with exponential backoff.
+ * Process queued tasks from Lambda, up to maxTasksPerCycle per invocation.
  */
 export async function processTaskQueue(ctx: TaskRunnerContext): Promise<void> {
   if (!ctx.isRunning()) return
@@ -448,7 +445,6 @@ export async function executeTask(
 
 /**
  * Update branch metadata after successful task completion.
- * Writes PR URL/number and sets syncStatus to 'synced'.
  */
 export async function updateBranchMetadata(
   ctx: TaskRunnerContext,

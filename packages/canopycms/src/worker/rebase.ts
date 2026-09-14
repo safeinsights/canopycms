@@ -293,8 +293,6 @@ async function runRebaseRounds(
   fetchedBaseTip: string,
   isLockCompromised: () => boolean,
 ): Promise<RebaseRoundsResult> {
-  // Resolve-and-continue loop: keep branch version for conflicting files, then continue
-  // Non-conflicting files get main's changes; conflicting files keep branch version.
   const conflictedFiles: string[] = []
   let nextAction: 'start' | 'continue' | 'skip' = 'start'
   let completed = false
@@ -590,9 +588,6 @@ export type BranchRebaseOutcome =
  * subprocesses against a shared filesystem.
  */
 export async function runRebaseCycle(ctx: RebaseContext): Promise<RebaseSummary> {
-  // PR-W1: collected across the loop below and returned as a summary
-  // (folded into worker-status.json by syncGit()). Purely additive
-  // bookkeeping -- doesn't change any control flow or existing logging.
   const rebased: string[] = []
   const skippedDirty: string[] = []
   const skippedLocked: string[] = []
@@ -676,7 +671,6 @@ async function rebaseOneBranch(
   let didRebase = false
 
   try {
-    // Load metadata before any git ops to check branch status
     const metaFile = await BranchMetadataFileManager.loadOnly(branchPath)
     const branchStatus = metaFile?.branch.status
 
@@ -1030,10 +1024,6 @@ async function rebaseOneBranch(
           rebaseFailure: undefined,
         },
       })
-      // PR-W1: the branch was behind and the rebase completed (with or
-      // without --theirs conflict resolution) -- it moved, so it belongs
-      // in the summary. Branches already up to date `continue`d above and
-      // are deliberately not listed here.
       didRebase = true
 
       await carryForwardRewrittenHistory(ctx, {

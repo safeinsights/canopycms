@@ -143,9 +143,6 @@ export async function pushSettingsBranches(
   trackedNames: ReadonlySet<string>,
 ): Promise<void> {
   try {
-    // Resolved once here rather than at each use below: ensureSettingsBranch()
-    // is idempotent, but a local reads better and keeps the eight references
-    // in this method obviously talking about one value.
     const settingsBranch = ctx.ensureSettingsBranch()
     const branches = await git.branch()
     const settingsBranches = branches.all.filter((b) =>
@@ -464,9 +461,6 @@ export async function syncGit(ctx: GitSyncContext): Promise<void> {
     ])
     workerLog('Fetched from GitHub')
 
-    // Bring refs/heads/* toward what was just fetched, WITHOUT ever
-    // force-rewinding or deleting a local head -- see
-    // reconcileTrackedBranches()'s doc comment.
     const { summary: trackedSummary, trackedNames } = await reconcileTrackedBranches(ctx, git)
 
     // Push settings branches to GitHub (belt-and-suspenders for task queue).
@@ -480,7 +474,6 @@ export async function syncGit(ctx: GitSyncContext): Promise<void> {
 
     const rebaseSummary = await runRebaseCycle(ctx)
 
-    // Periodically clean up old completed/failed tasks
     await cleanupOldTasks(ctx.taskDir, undefined, ctx.log)
 
     // [C1] Sweep branch directories the admin purge action trashed more

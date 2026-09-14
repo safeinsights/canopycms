@@ -309,7 +309,6 @@ export class CmsWorker {
     workerLog('CMS Worker starting...')
     this.ensureStatusReport()
 
-    // Acquire lock to prevent concurrent workers
     await this.acquireLock()
 
     // Everything below runs while holding the cross-host worker lock. A
@@ -342,7 +341,6 @@ export class CmsWorker {
       // credential. See preflightGitHubAppAuth().
       await this.preflightGitHubAppAuth()
 
-      // Ensure remote.git exists (init bare repo if first run)
       await this.ensureRemoteGit()
 
       // Recover any orphaned tasks from a previous crash, immediately rather
@@ -361,7 +359,6 @@ export class CmsWorker {
         workerLog(`Recovered ${recovered} orphaned task(s)`)
       }
 
-      // Run initial sync + cache refresh immediately
       const initialTasks: Promise<void>[] = [this.syncGit()]
       if (this.config.refreshAuthCache) {
         initialTasks.push(this.refreshAuthCache())
@@ -393,8 +390,6 @@ export class CmsWorker {
       throw err
     }
 
-    // Start recurring task loops using setTimeout chaining
-    // (avoids setInterval overlap when tasks take longer than the interval)
     const taskInterval = this.config.taskPollInterval ?? 5_000
     const gitInterval = this.config.gitSyncInterval ?? 5 * 60_000
 
@@ -422,7 +417,6 @@ export class CmsWorker {
       clearTimeout(t)
     }
     this.activeTimeouts.clear()
-    // Wait for all in-flight operations to complete (up to taskTimeoutMs)
     let drainTimer: NodeJS.Timeout | undefined
     await Promise.race([
       Promise.allSettled([...this.activeOperations]),

@@ -24,10 +24,6 @@ import type { WorkerContext } from './worker-context'
  * - git-sync.ts READS it in `reconcileTrackedBranches`, to tell this worker's
  *   own in-flight rewrite apart from a genuine cross-deployment collision.
  *
- * Leaving these on the class would have made every cluster's module import
- * every other one. They share no state beyond four resolved paths, so they
- * belong here.
- *
  * THE INVARIANT, since it is spread across those three callers: every force
  * push leases on a SPECIFIC commit this worker knows its own rebase replaced
  * -- the marker, or the pre-rebase tip -- never on "whatever remote.git holds

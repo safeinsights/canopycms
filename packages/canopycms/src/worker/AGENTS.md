@@ -2,14 +2,12 @@
 
 The CmsWorker daemon, its task queue, and the git sync/rebase loop.
 
-Split out of the root [AGENTS.md](../../../../AGENTS.md) on 2026-08-23, where this had grown to
-287 words inside a single bullet. The **code comment at the point of the rule is
-authoritative**; this file is the map to where those rules live.
+The **code comment at the point of the rule is authoritative**; this file is the map to
+where those rules live.
 
 ## Module map
 
-`cms-worker.ts` was 2,949 lines holding four **disjoint** call trees under one entry point
-(`start()`). Split 2026-08-23; each cluster is now its own module, reached through a
+Each of the four disjoint call trees under `start()` is its own module, reached through a
 `WorkerContext`.
 
 | File                 | What it owns                                                                                                                                                                                                                                                               |
