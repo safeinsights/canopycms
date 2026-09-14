@@ -7,16 +7,6 @@
  * of server-only imports (node:fs, ContentStore, ContentIdIndex, ...) — it may
  * only depend on config types and other pure modules.
  *
- * What it checks (pure rules — no filesystem access):
- * - required fields are present and non-empty
- * - values match their field type (string/number/boolean/datetime/select/...)
- * - `list` fields hold arrays; non-list fields hold single values
- * - select values are one of the configured options
- * - reference values are well-formed (id string or resolved `{ id }` object)
- *   and non-empty when required
- * - block items resolve to a known template (via the shared `resolveBlockItem`
- *   from field-traversal, so `{ template, value }`-nested fields are validated)
- *
  * Reference EXISTENCE is intentionally NOT checked here: it requires the
  * content ID index (filesystem) and is enforced server-side only, by running
  * `ReferenceValidator` at the write boundary.
@@ -81,10 +71,7 @@ function isValidImageCropValue(value: unknown): boolean {
 
 /**
  * Validate a structured `image` field value: `{ src, alt, width?, height?, crop? }`
- * (see `ImageFieldValue` in config/types.ts). `src` and `alt` are required
- * whenever a value is present; `alt` may be an empty string only when the
- * field config sets `altOptional: true`. `width`/`height` must be positive
- * integers when present; `crop` must satisfy the same normalized-rect
+ * (see `ImageFieldValue` in config/types.ts). `crop` must satisfy the same normalized-rect
  * constraints as the transform directive parser (assets/transform-directives.ts).
  */
 function validateImageValue(
@@ -225,7 +212,7 @@ export function validateEntryData(
   const errors: EntryFieldError[] = []
 
   for (const field of fields) {
-    // Inline groups are transparent to the data — children live at this level.
+    // Inline groups are transparent (walkFields, ./field-traversal) — children live at this level.
     if (field.type === 'group') {
       errors.push(...validateEntryData((field as InlineGroupFieldConfig).fields, data, pathPrefix))
       continue
@@ -243,7 +230,6 @@ export function validateEntryData(
       continue
     }
 
-    // Optional and absent: nothing further to check.
     if (value === undefined || value === null) continue
 
     if (field.type === 'block') {
@@ -297,7 +283,6 @@ export function validateEntryData(
       continue
     }
 
-    // Scalar (and list-of-scalar) fields.
     if ('list' in field && field.list) {
       if (!Array.isArray(value)) {
         errors.push({ fieldPath: path, message: 'Expected a list of values' })
@@ -342,24 +327,21 @@ export function validateEntryFormValue(
 
 /**
  * Find data keys that have no counterpart in the schema, as canonical field paths
- * (`author.nickname`, `blocks[2].headline`).
+ * (`author.nickname`, `blocks[2].headline`). `validateEntryData` iterates the SCHEMA
+ * so it can't report the inverse: rename or reshape a field and the old key persists
+ * on disk forever, since the editor's form state is the whole record verbatim and
+ * every save posts it back — the only symptom is a component quietly receiving
+ * `undefined`.
  *
- * `validateEntryData` iterates the SCHEMA, so it can only ever report fields the schema knows
- * about. Nothing reported the inverse: rename or reshape a field and the old key persists on
- * disk forever, because the editor's form state is the whole record verbatim and every save
- * posts it back. The only symptom is a component quietly receiving `undefined`.
- *
- * Pure — safe in the browser. Reports rather than rejects: a save carrying a stale key still
- * succeeds (and now the write path even preserves the key and its comments), so this feeds the
+ * Pure — safe in the browser. Reports rather than rejects (a stale key doesn't fail
+ * a save, and the write path now preserves it and its comments), so this feeds the
  * non-blocking `validationWarnings` channel, not the 422 path.
  *
- * Two things it deliberately does not report:
- *
- * - **A container with no fields at all.** `api/content.ts` falls back to `[]` for a collection
- *   with no configured entry type; "no schema" is not "every key is unknown".
- * - **Anything inside a `reference` value.** Reads resolve references by default, so a reference
- *   field's value is `{ ...target data, id, slug, collection, urlPath }`. The traversal only
- *   descends into `object` and `block`, so it never looks inside one.
+ * Deliberately not reported: a container with no fields at all (`api/content.ts`
+ * falls back to `[]` for a collection with no configured entry type — "no schema"
+ * isn't "every key is unknown"), and anything inside a `reference` value (a resolved
+ * reference's value is `{ ...target data, id, slug, collection, urlPath }`; the
+ * traversal only descends into `object` and `block`, so it never looks inside one).
  */
 export function findUnknownKeys(fields: EntrySchema, data: Record<string, unknown>): string[] {
   return traverseFields<string>(

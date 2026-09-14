@@ -1,93 +1,27 @@
 /**
- * `canopycms init-github-app <create|verify>` — registers the GitHub App the CMS
- * worker authenticates as, and reads its grant back.
- *
- * WHY THIS EXISTS: THE PERMISSIONS ARE CODE HERE
- *
- * The worker can authenticate as a GitHub App instead of a personal access token
- * (adopter request #45). What did not ship with it was any machine-checkable
- * statement of which permissions that App needs — the answer lived only as prose
- * in `docs/deploying-to-aws.md`, which nothing derives and nothing verifies.
- *
- * A PAT's scope only ever exists as checkboxes somebody ticked, so "is this
- * credential wider than intended?" is unanswerable from the repository. The
- * manifest flow takes the permission set as JSON, so `CANOPY_APP_PERMISSIONS`
- * below is reviewable, diffable, and a desired state a program can check —
- * against the call sites that force each entry (see the constant) and against
- * what an installation actually holds (see `verify`).
- *
- * And guessing too narrow does not fail loudly. `task-runner.ts`'s
- * `convert-to-draft` runs a GraphQL mutation, and a GraphQL failure answers HTTP
- * 200 with a body-level error carrying NO numeric status — so
- * `isPermanentTaskFailure` reads a permission denial as transient, retries to the
- * cap, and wedges the branch in `sync-failed` with nothing naming a permission.
- * `createOrUpdatePullRequest` swallows a failed `markPullRequestReadyForReview`
- * into a warning by design (`github-service.ts`), leaving the PR stuck as a
- * draft. Both surface hours after setup. `verify` moves that discovery to setup
- * time, which is the only cheap place to find it.
- *
- * ONE APP PER SITE. NOT ONE APP PER ORGANISATION.
- *
- * Worth stating at length because the obvious economy is to register one App and
- * install it on every repository that needs it, and for a READ-ONLY App whose key
- * never leaves GitHub that is right. It is wrong here, and the reason is
- * structural rather than a matter of taste:
- *
- * **A GitHub App's private key is App-level. Installation scoping is not a
- * boundary GitHub enforces against whoever holds the key — it is a choice the
- * key-holder makes at mint time.** Anyone with the key can sign a JWT, call
- * `GET /app/installations` to enumerate every installation, and mint an access
- * token for any of them.
- *
- * Our key does not stay in one place: each site's worker reads it at runtime,
- * from that site's own secret store, on that site's own host. So one shared App
- * with `contents: write` would mean that reading the marketing site's secret
- * store hands you write access to the documentation site's repository. One App
- * per site, one installation each, one key each — blast radius contained to the
- * site that leaked.
- *
- * The cost is real and is not pretended away: N sites means N Apps, N keys and N
- * things to rotate. That is affordable only because creating one is cheap, which
- * is most of why this command exists.
- *
- * WHAT THE MANIFEST FLOW BUYS, WHICH IS MORE THAN IT LOOKS
- *
- * `redirect_url` is the point of it. GitHub redirects there with a one-hour code,
- * and `POST /app-manifests/{code}/conversions` exchanges that code for the App's
- * id, client id and **the private key itself**. So `create` runs a one-shot
- * loopback server, captures the key in memory, and hands it straight to a
- * destination the operator named. Sent to a command's stdin — the recommended
- * route — **the key never touches disk**, and nobody has to find a downloaded
- * `.pem`. `--key-out` deliberately does write it to a file, for an operator with
- * no such command; that is the trade, not an oversight.
- *
- * MEASURED (2026-09-05, in a sibling project) and it contradicts the
- * documentation: GitHub's REST docs list `redirect_url` as OPTIONAL, and the
- * organisation App-creation form refuses a manifest without it — "Invalid GitHub
- * App configuration ... Error 'redirect_url' wasn't supplied."
- *
- * THIS FILE TALKS TO GITHUB WITH `fetch`, NOT OCTOKIT, DELIBERATELY
- *
- * Two reasons. An App JWT requires `Authorization: Bearer <jwt>`, and a client
- * that sends `token <value>` is answered with `401 A JSON web token could not be
- * decoded` — measured in the sibling project, where it presented as "no
- * installation found" and sent the operator to check a page that was correct.
- * And Octokit here would add `octokit.apps.*` call sites to this package, which
- * the guard in `github-app-permission-drift.test.ts` would then have to carve an
- * exception for — an exception being exactly how a guard goes blind.
- *
- * The JWT is hand-rolled over `node:crypto` for a third reason that is not
- * optional: `.dependency-cruiser.mjs`'s `core-no-github-app-auth` rule scopes to
- * every package's own `src/`, so importing `@octokit/auth-app` here is a lint
- * error, same as anywhere else in this package.
- *
- * THE KEY'S DESTINATION IS NOT THIS TOOL'S BUSINESS
- *
- * `create` takes either a command to pipe the PEM into (`-- <cmd>`) or a file to
- * write (`--key-out`), and asks for a file path if that first one fails. It
- * knows nothing about AWS, or any other secret store: an adopter may not deploy
- * to AWS at all, and a setup tool that hardcodes one cloud is a setup tool for
- * one adopter. `docs/deploying-to-aws.md` carries the worked invocation.
+ * `canopycms init-github-app <create|verify>` — registers the GitHub App the
+ * CMS worker authenticates as, and reads its grant back. A PAT's scope is
+ * unauditable — checkboxes somebody ticked, nowhere recorded.
+ * `CANOPY_APP_PERMISSIONS` below is the machine-checkable statement of what
+ * this App needs instead, checked against the call sites that force each
+ * entry (see the constant) and what an installation holds (see `verify`). A
+ * missing permission fails silently — a GraphQL denial answers HTTP 200 with
+ * no numeric status — so `verify` exists to catch that at setup time.
+ * One App per site, never shared across an organisation: a GitHub App's
+ * private key is App-level — GitHub does not enforce per-installation
+ * scoping against the key-holder — so anyone holding it can mint a token for
+ * every installation. Each site's worker reads its own key from its own
+ * secret store, so sharing one App would let one leaked store reach every
+ * other site's repository.
+ * `create` runs a one-shot loopback server, exchanges GitHub's redirect code
+ * for the App's credentials including the private key, then hands it to the
+ * destination the operator named — over a command's stdin so it never
+ * touches disk, or to a file with `--key-out`. That destination is not this
+ * tool's business: it knows nothing about AWS or any other secret store.
+ * This file talks to GitHub with `fetch`, not Octokit: an App JWT needs
+ * `Authorization: Bearer <jwt>` (sent as `token <value>` it gets a misleading
+ * 401), and `.dependency-cruiser.mjs` forbids importing `@octokit/auth-app`
+ * from this package's `src/` anyway.
  */
 
 import { spawn } from 'node:child_process'
@@ -109,49 +43,25 @@ export type PermissionLevel = (typeof PERMISSION_LEVELS)[number]
 export type PermissionSet = Readonly<Record<string, PermissionLevel>>
 
 /**
- * The App's entire security surface, and the derivation behind it.
- *
- * Every entry names the call site that forces it, because a permission whose
- * justification lives only in a commit message cannot be re-checked. Enumerated
- * from the only two modules in this package that issue GitHub calls —
- * `github-service.ts` and `worker/{task-runner,rebase}.ts` — plus every git
- * operation that reaches github.com. `canopycms-cdk` makes no REST calls at all.
- *
- * - `contents: write`
- *     - git over HTTPS: the first-boot bare clone (`worker/cms-worker.ts`), the
- *       per-cycle fetch of all branches (`worker/git-sync.ts`), and the branch
- *       pushes including `--force-with-lease` (`worker/task-runner.ts`).
- *     - `octokit.git.deleteRef` (`github-service.ts`, `worker/task-runner.ts`).
- *       GitHub's permissions reference puts `DELETE /repos/{o}/{r}/git/refs/{ref}`
- *       under Contents/write — NOT `administration`, which is the plausible wrong
- *       guess. It is also dead code today: nothing enqueues `delete-remote-branch`
- *       and `GitHubService.deleteBranch`'s only call site is commented out, so it
- *       forces nothing that pushing does not already force. Declared anyway
- *       because the handler is live the moment a producer appears.
- *
- * - `pull_requests: write`
- *     - `pulls.create` and `pulls.update` (`github-service.ts`,
- *       `worker/task-runner.ts`). GitHub's reference: Create and Update a pull
- *       request are Pull requests/write. `pulls.list` and `pulls.get` are
- *       Pull requests/read, subsumed by this.
- *     - the GraphQL mutations `markPullRequestReadyForReview` and
- *       `convertPullRequestToDraft`. **This is the one entry with no
- *       documentation line behind it** — GitHub's permissions reference
- *       enumerates REST endpoints only — so it is derived by analogy with the
- *       REST PR mutations. A live run is the oracle, and until one has happened
- *       this comment is the honest state of it.
- *
- * - `metadata: read` — implied: GitHub grants it alongside any repository
- *   permission. Declared explicitly so this object states the whole surface
- *   rather than the part that is not automatic.
- *
- * Nothing else. No `issues` (there are no `issues.*` calls — nothing sets labels
- * or assignees, which is the usual reason a PR bot needs it), no `administration`,
- * no `actions`, and no organisation permissions. No `workflows`: nothing in the
- * worker edits `.github/workflows/`, but GitHub may still refuse to push rebased
- * history that carries a base-branch change to it — see
- * .claude/future-tasks/worker-push-refused-when-base-changes-workflows.md, an
- * open P1.
+ * The App's entire security surface. Every entry names the call site that
+ * forces it — a permission justified only in a commit message can't be
+ * re-checked. Enumerated from `github-service.ts`,
+ * `worker/{task-runner,rebase}.ts`, and every git call reaching github.com;
+ * `canopycms-cdk` makes no REST calls at all.
+ * - `contents: write` — git over HTTPS (first-boot clone, per-cycle branch
+ *   fetch, pushes) and `octokit.git.deleteRef`. GitHub's reference puts ref
+ *   deletion under Contents/write, not `administration` (the plausible wrong
+ *   guess). Declared even though its only call site is currently commented
+ *   out, since the handler goes live the moment a producer appears.
+ * - `pull_requests: write` — `pulls.create`/`pulls.update`, and the GraphQL
+ *   mutations `markPullRequestReadyForReview`/`convertPullRequestToDraft`,
+ *   derived by analogy since GitHub's reference has no line for them.
+ * - `metadata: read` — implied by any repository permission; declared so
+ *   this object states the whole surface, not just the non-automatic part.
+ * Nothing else: no `issues`, `administration`, `actions`, or organisation
+ * permissions. No `workflows` either, though GitHub may refuse to push
+ * rebased history touching `.github/workflows/` — see
+ * .claude/future-tasks/worker-push-refused-when-base-changes-workflows.md.
  */
 export const CANOPY_APP_PERMISSIONS: PermissionSet = {
   contents: 'write',
@@ -160,27 +70,19 @@ export const CANOPY_APP_PERMISSIONS: PermissionSet = {
 }
 
 /**
- * GitHub's limit on an App's display name.
- *
- * MEASURED 2026-09-06 in a sibling project, by having a 39-character name
- * refused while a 33-character one was accepted; the documentation states no
- * limit at all. So the true bound is somewhere in 33..38 and 34 is the safe
- * direction: a wrongly-refused name costs the operator one `--name` flag, while a
- * wrongly-accepted one costs a browser round trip to find out. Re-measure when a
- * real App is created from this file.
+ * GitHub's limit on an App's display name: documented as unlimited, but a
+ * 39-character name was refused while 33 was accepted, so the true bound is
+ * 33..38, and 34 is the safe direction — a wrongly-refused name costs one
+ * `--name` flag, a wrongly-accepted one a browser round trip to find out.
  */
 export const APP_NAME_MAX_LENGTH = 34
 
 /**
- * How much of a description the account's App LIST renders before truncating —
- * mid-word, with an ellipsis.
- *
- * MEASURED 2026-09-06 in the same project: a description opening "Read-only,
- * organisation-wide. Lets th…" was cut at 37 characters. The list appears to
- * truncate by CHARACTER rather than by line, so a newline does not rescue a long
- * opening sentence. Hence the shape of `appDescription`: a standalone summary
- * inside this budget, a blank line, then the detail only the App's own page
- * shows.
+ * How much of a description the account's App LIST renders before
+ * truncating, mid-word with an ellipsis: an opening "Read-only,
+ * organisation-wide. Lets th…" was cut at 37 characters, by CHARACTER not
+ * line — hence `appDescription`'s shape: a summary inside this budget, then
+ * the detail only the App's own page shows.
  */
 export const APP_SUMMARY_MAX_LENGTH = 37
 
@@ -198,36 +100,24 @@ export type AppTarget = {
   isOrganization: boolean
 }
 
-/**
- * Where `create` should send the captured private key. Exactly one, chosen by
- * the operator BEFORE the App exists — see `requireDestination`.
- */
+/** Where `create` should send the captured private key, chosen by the operator BEFORE the App exists. */
 export type KeyDestination =
   | { kind: 'command'; argv: string[] }
   | { kind: 'file'; filePath: string }
 
 /**
- * The App's display name, and the slug GitHub derives from it.
- *
- * Named after the REPOSITORY, because the App is per-site (see the file header):
- * an App named after the organisation would suggest it is shared, which is the
- * arrangement this file exists to avoid.
- *
- * GitHub App names are unique across the WHOLE of GitHub, not merely within an
- * account, so a short generic name is plausibly already taken by somebody else.
- * `create` pre-checks what it can and `--name` overrides; see
- * `checkNameAvailable`.
+ * The App's display name, named after the REPOSITORY (per-site — see the file
+ * header). Names are unique across all of GitHub, not just the account, so
+ * `create` pre-checks with `checkNameAvailable` and `--name` overrides.
  */
 export function appName(repo: string): string {
   return `${repo} CanopyCMS`
 }
 
 /**
- * GitHub's slug derivation, as far as this needs it: lowercase, and runs of
- * anything that is not alphanumeric collapse to single hyphens.
- *
- * Pinned by a test. If GitHub ever derives differently the name pre-check goes
- * blind rather than loud, so this is not something to assume.
+ * GitHub's slug derivation, as far as this needs it: lowercase, runs of
+ * non-alphanumeric characters collapse to single hyphens. Pinned by a test —
+ * if GitHub ever derives differently, the name pre-check goes blind, not loud.
  */
 export function appSlug(name: string): string {
   return name
@@ -237,13 +127,9 @@ export function appSlug(name: string): string {
 }
 
 /**
- * A short summary that survives the App list's truncation, then the detail.
- *
- * Two audiences, two parts. Deliberately generic in both: this text is stored ON
- * GITHUB rather than here, so anything in it that can go stale goes stale
- * silently, with nothing in this repository able to detect or fix it. It
- * therefore says only what stays true of the App itself — what it does, that it
- * is installed on one repository, and that it is registered per site.
+ * A short summary that survives the App list's truncation, then the detail —
+ * deliberately generic, since this text lives ON GITHUB and goes stale
+ * silently with no way to detect it here.
  */
 export function appDescription(): string {
   return [
@@ -256,10 +142,8 @@ export function appDescription(): string {
 }
 
 /**
- * Where the manifest form posts, which differs by account type.
- *
- * A solo adopter who owns the content repository personally needs the user-level
- * URL; posting an organisation manifest to it (or the reverse) fails at the form.
+ * Where the manifest form posts: user-owned and organisation repositories use
+ * different URLs, and posting the wrong one fails at the form.
  */
 export function manifestPostUrl(target: AppTarget, state: string): string {
   const base = target.isOrganization
@@ -272,12 +156,9 @@ export function manifestPostUrl(target: AppTarget, state: string): string {
 }
 
 /**
- * The App as GitHub's manifest flow takes it.
- *
- * `default_permissions` is the entire security surface and lives in
- * `CANOPY_APP_PERMISSIONS`, where each entry carries the call site that forces
- * it. `default_events` is empty and the webhook is inactive: nothing is ever
- * delivered to this App — it is only ever assumed outward by the worker.
+ * The App as GitHub's manifest flow takes it. `default_permissions` is the
+ * entire security surface, defined in `CANOPY_APP_PERMISSIONS`. The webhook is
+ * declared but inactive: nothing is ever delivered to this App.
  */
 export function appManifest(
   target: AppTarget,
@@ -307,12 +188,9 @@ function escapeHtml(value: string): string {
 }
 
 /**
- * The auto-submitting form that carries the manifest to GitHub.
- *
- * A manifest can only be delivered as a form POST from a browser, which is why
- * this exists at all. Both interpolations are escaped: the manifest embeds
- * adopter-supplied owner and repository names, and this string is written to a
- * file that a browser then executes.
+ * The auto-submitting form that carries the manifest to GitHub — a manifest
+ * can only be delivered as a browser form POST. Both interpolations are
+ * escaped: this embeds adopter-supplied names into a file a browser executes.
  */
 export function creationForm(target: string, manifest: Record<string, unknown>): string {
   return `<!doctype html><meta charset="utf-8"><title>Create the CanopyCMS App</title>
@@ -326,12 +204,10 @@ export function creationForm(target: string, manifest: Record<string, unknown>):
 }
 
 /**
- * A short-lived App JWT, signed RS256 with `node:crypto`.
- *
- * `iat` is backdated 60s because GitHub rejects a JWT whose `iat` is in its own
- * future, and a second of clock skew between here and GitHub is entirely
- * ordinary. `exp` leaves headroom rather than sitting on GitHub's stated
- * ten-minute maximum for no benefit.
+ * A short-lived App JWT, signed RS256 with `node:crypto`. `iat` is backdated
+ * 60s because GitHub rejects a JWT whose `iat` is in its own future, and a
+ * second of clock skew is ordinary; `exp` leaves headroom rather than sitting
+ * on GitHub's stated ten-minute maximum for no benefit.
  */
 export function appJwt(
   issuer: string,
@@ -354,23 +230,18 @@ export type GitHubResponse<T> = {
   status: number
   body: T | null
   /**
-   * On a FAILURE: GitHub's own `message`, a redacted prefix of the response text,
-   * or — when `status` is 0, meaning the request or the body read never completed
-   * — the redacted client-side error, since there is no response to quote. Empty
-   * string on success: a success body here is App credentials, and a prefix of one
-   * is not worth handing to a caller that might print it.
+   * On a FAILURE: GitHub's `message`, a redacted response prefix, or (status
+   * 0: the request/body read never completed) the redacted client error.
+   * Empty on success — a success body here is App credentials, not for print.
    */
   message: string
 }
 
 /**
- * One call to api.github.com.
- *
- * Returns the status and body rather than collapsing failure to `null`, because
- * the two failures a caller has to tell apart here — "this credential cannot
- * authenticate" and "this App is not installed on that repository" — send an
- * operator to entirely different pages. Collapsing them is measured to have sent
- * a real run's operator to check a page that was correct.
+ * One call to api.github.com. Returns the status and body rather than
+ * collapsing failure to `null`: "cannot authenticate" and "not installed"
+ * send an operator to different pages, and collapsing them has sent an
+ * operator to check a page that was correct.
  */
 export async function githubRequest<T>(
   apiPath: string,
@@ -396,11 +267,10 @@ export async function githubRequest<T>(
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       ...(init.body === undefined ? {} : { body: JSON.stringify(init.body) }),
     })
-    // Reading the BODY is inside the try as well, not just the fetch. It is a
-    // second chance to reject — a connection reset after the headers, or the
-    // timeout above firing mid-read — and a rejection escaping here would
-    // propagate out of `create` past the point where the private key is still
-    // held. Every failure this function can have is a returned value.
+    // Reading the BODY is inside the try too, not just the fetch: a connection
+    // reset or the timeout above can still reject here, and letting that escape
+    // would propagate past the point in `create` where the key is still held.
+    // Every failure this function can have is a returned value, not a throw.
     text = await response.text()
   } catch (err) {
     return { ok: false, status: 0, body: null, message: redactCredentials(getErrorMessage(err)) }
@@ -412,10 +282,9 @@ export async function githubRequest<T>(
   } catch {
     body = null
   }
-  // Computed only for a FAILURE. On success the body is the App's credentials,
-  // and a 200-character prefix of it is not something to hand a caller that
-  // might print it — `redactCredentials` covers a PEM and a `ghs_` token but
-  // would not save a truncated `client_secret`.
+  // Computed only for a FAILURE: on success the body is App credentials, not
+  // something to hand a caller that might print it. `redactCredentials` covers
+  // a PEM and a `ghs_` token but would not save a truncated `client_secret`.
   const asRecord = body as { message?: unknown } | null
   const message = response.ok
     ? ''
@@ -448,16 +317,9 @@ function rank(level: PermissionLevel): number {
 }
 
 /**
- * Compare what an installation actually holds against what this package needs.
- *
- * Pure, so the whole judgement is testable without a live App — which matters,
- * because everything around it can only ever be exercised by hand.
- *
- * Reports in BOTH directions. A credential does not usually fail by being
- * unusable; that gets noticed immediately. It fails by being one permission too
- * wide, which works perfectly and is never noticed. So an extra permission, or
- * an installation scoped to every repository in the account, is an error here
- * and not a shrug.
+ * Compare what an installation holds against what this package needs. Pure,
+ * so testable without a live App — reports in BOTH directions, since an
+ * extra or over-wide permission works perfectly and goes unnoticed.
  */
 export function readbackVerdict(
   installation: InstallationSummary,
@@ -476,9 +338,8 @@ export function readbackVerdict(
     })
   }
 
-  // `undefined` is NOT treated as `selected`. An absent field means "GitHub did
-  // not tell us", and reporting an unknown scope as the narrow one would be the
-  // check quietly passing itself.
+  // `undefined` is NOT `selected`: an absent field means GitHub didn't say, and
+  // treating that as the narrow case would be the check quietly passing itself.
   if (installation.repository_selection !== 'selected') {
     findings.push({
       severity: 'error',
@@ -499,10 +360,8 @@ export function readbackVerdict(
       continue
     }
     if (actual === level) continue
-    // An exact match is the only pass. A level GitHub adds later is reported
-    // rather than ranked against levels this code happens to know, because
-    // guessing where an unknown level sits is exactly how a check quietly
-    // starts passing things it was written to catch.
+    // Exact match is the only pass: an unknown level is reported, not ranked,
+    // since guessing where it sits is how a check goes blind.
     if (!isPermissionLevel(actual)) {
       findings.push({
         severity: 'error',
@@ -519,9 +378,8 @@ export function readbackVerdict(
       })
       continue
     }
-    // Stronger than required is still wider than intended, and is reported for
-    // the same reason an extra permission is: it works perfectly, so nothing
-    // else will ever notice it.
+    // Stronger than required is still wider than intended: it works perfectly,
+    // so nothing else will ever notice it.
     findings.push({
       severity: 'error',
       message:
@@ -547,11 +405,8 @@ export function readbackVerdict(
 export type HandOffResult = { stored: boolean; detail: string }
 
 /**
- * Injectable so `handOffKey` is testable without spawning anything real.
- *
- * Everywhere but Windows the child must carry the bridge's status channel at
- * `stdio[3]`, as `spawnKeyDestination` does: `handOffKey` reads `cat`'s exit
- * status from it, and without a `0` there nothing is reported as stored.
+ * Injectable so `handOffKey` is testable without spawning anything real. Everywhere but Windows
+ * the child carries the bridge's status channel at `stdio[3]`, without which nothing is stored.
  */
 export type SpawnFn = (command: string, args: string[]) => ChildProcess
 
@@ -559,43 +414,22 @@ export type SpawnFn = (command: string, args: string[]) => ChildProcess
 const BRIDGE_KEY_INPUT = process.platform !== 'win32'
 
 /**
- * The script `/bin/sh` runs to give a destination command the key on a REAL pipe.
+ * The script `/bin/sh` runs to give a destination command the key on a REAL
+ * pipe. Node's `stdio: 'pipe'` is a SOCKET pair on Unix, not a real pipe:
+ * `cat` reads it like anything else and writes into a real one. On Linux a
+ * socket can't even be opened as `/dev/stdin`, which would break
+ * `--secret-string file:///dev/stdin`. No shell parses the operator's argv:
+ * `sh -c SCRIPT sh <argv…>` makes argv the positional parameters, and `"$@"`
+ * hands them on quoted with no word-splitting or globbing. It is
+ * `exec env -- "$@"` rather than a bare `"$@"` so the first word is always
+ * looked up on PATH, not interpreted as a shell built-in.
  *
- * WHY A BRIDGE AT ALL. Node's `stdio: 'pipe'` is not a pipe on Unix: libuv
- * gives the child one end of a SOCKET pair. MEASURED on macOS through the
- * previous direct spawn: `sh -c '[ -S /dev/stdin ] && echo SOCKET; [ -p
- * /dev/stdin ] && echo PIPE'` printed SOCKET, and `cp /dev/stdin <out>` printed
- * "/dev/stdin is a socket (not copied)", exited 0, and was reported stored with
- * no file written. On Linux, opening `/dev/stdin` on a socket fails with ENXIO —
- * reasoned, not run — which breaks `--secret-string file:///dev/stdin`. `cat`
- * reads a socket like anything else, and what it writes into is a real pipe.
- *
- * NO SHELL PARSES THE OPERATOR'S ARGV. `sh -c SCRIPT sh <argv…>` makes argv the
- * positional parameters, and `"$@"` hands them on quoted: no word splitting, no
- * globbing. The script itself is this constant. The key travels only on stdin, so
- * nothing `sh`, `env` or `cat` prints about a failure can contain it. It is
- * `exec env -- "$@"` rather than a bare `"$@"` so the first word is always a
- * program looked up on PATH, as the direct spawn did. MEASURED in macOS
- * `/bin/sh` (bash 3.2) and `/bin/dash`: with a bare `exec "$@"`, bash took a
- * first word of `-c` as `exec`'s own option, ran nothing and exited 0; without
- * `exec`, a first word of `eval` would run the rest as shell code. Through
- * `env --`, both shells report `-c`, `eval` and `set` as "No such file or
- * directory", exit 127. `--` goes to `env` because dash's `exec` rejects it
- * ("exec: --: not found").
- *
- * WHY `cat`'S STATUS COMES BACK ON fd 3. A pipeline's exit status is its LAST
- * command's, so `cat | cmd` alone reports only `cmd` — and hides `cat` dying of
- * SIGPIPE because `cmd` closed its input before the whole key was written. The
- * direct spawn could see that case only as a write error on the child's stdin;
- * through the bridge, `sh` itself holds that socket open until it exits, so
- * `cat` is the witness left. `set -o pipefail` would expose it but is not something every
- * `/bin/sh` has: macOS `/bin/dash` rejects it ("set: Illegal option -o
- * pipefail"), and dash is `/bin/sh` on Debian and Ubuntu. So the left side
- * writes `cat`'s own status to fd 3, a channel back to Node, and the verdict in
- * `handOffKey` requires it to read `0`. A status that never arrives is not a
- * `0`. `3>&-` closes fd 3 in the destination — MEASURED closed there in both
- * shells — so nothing it leaves running can hold that channel open, or write a
- * status into it.
+ * A pipeline's exit status is its LAST command's, so `cat | cmd` alone would
+ * hide `cat` dying of SIGPIPE if `cmd` closed its input early, and `set -o
+ * pipefail` isn't available in every `/bin/sh` (`/bin/dash`, `/bin/sh` on
+ * Debian/Ubuntu, rejects it). So the left side writes `cat`'s own status to
+ * fd 3, a channel `handOffKey` requires to read `0`; `3>&-` closes fd 3 in
+ * the destination so nothing it leaves running can hold that channel open.
  */
 const KEY_INPUT_BRIDGE = '{ cat; echo "$?" >&3; } | exec env -- "$@" 3>&-'
 
@@ -608,11 +442,9 @@ function spawnKeyDestination(command: string, args: string[]): ChildProcess {
 }
 
 /**
- * The detail for a destination command that exited non-zero. Through the bridge,
- * `env` reports a program it cannot find as 127 and one it cannot execute as 126,
- * where the direct spawn raised ENOENT or EACCES. A command may also exit with
- * either code on its own account, so these say how the code is reported rather
- * than asserting which happened.
+ * The detail for a destination command that exited non-zero. Through the
+ * bridge, `env` reports "not found" as 127 and "not executable" as 126 — but
+ * a command may exit either code on its own, so this states how it's reported.
  */
 function destinationExitDetail(command: string, code: number | null): string {
   if (BRIDGE_KEY_INPUT && code === 127) {
@@ -631,41 +463,23 @@ function destinationExitDetail(command: string, code: number | null): string {
 }
 
 /**
- * Send the captured private key to the destination the operator named.
- *
- * For a command: no shell parses the operator's argv (see `KEY_INPUT_BRIDGE`
- * for how `sh` is used without doing so). The PEM goes over **stdin**, never
- * argv — an argument is visible in `ps` and lands in shell history. The
- * child's stdout and stderr are INHERITED rather than captured, and that is
- * load-bearing rather than lazy: `aws secretsmanager create-secret` prints the
- * ARN, and CDK's `Secret.fromSecretCompleteArn` needs the full ARN including its
- * six-character suffix. Swallowing the child's output would leave the operator
- * holding a stored secret with no way to learn the one string that wires it up.
- *
- * The `'error'` listener on `child.stdin` is not optional. A child that exits or
- * closes stdin early can make the write fail with EPIPE, and an unhandled error
- * on a stream takes the process down — carrying with it the only copy of a
- * private key for an App that already exists.
- *
- * WHAT `stored: true` DOES AND DOES NOT MEAN. Everywhere but Windows it means
- * three things: the command exited 0, the `cat` feeding it exited 0, and nothing
- * went wrong writing to it. `cat` exiting 0 means every byte of the key went into
- * the pipe. It still does NOT prove the command READ them, and cannot: a pipe
- * write lands in the kernel's buffer, and a key this size fits in one write, so a
- * command that exits without reading races `cat`'s write and can lose or win.
- * MEASURED on macOS with a real 1.7KB key, 100 runs each through this function,
- * with the same result before the bridge and after it: `true`, `head -c 10`,
- * `sh -c 'exec 0<&-; exit 0'` and `sh -c 'head -c 5 >/dev/null; exit 0'` were
- * each reported stored 100 times of 100. What IS caught, whatever the timing,
- * is a command that leaves more unread than a pipe buffer holds: ~100KB into
- * `true` was reported not stored 20 times of 20, by `cat` exiting 141 — the
- * same case the direct spawn caught as a write EPIPE.
- *
- * So the command's EXIT CODE is still the contract, and the operator is still
- * responsible for naming a command that fails loudly. That is stated here rather
- * than papered over, because the tempting fix — waiting for the stream to flush
- * — measures the kernel buffer rather than the command, and would look like a
- * check while being one.
+ * Send the captured private key to the destination the operator named. For a
+ * command, the PEM goes over **stdin**, never argv — an argument is visible
+ * in `ps` and lands in shell history (see `KEY_INPUT_BRIDGE` for how `sh`
+ * runs it without parsing that argv itself). Stdout/stderr are INHERITED,
+ * not captured: `aws secretsmanager create-secret` prints the ARN the
+ * operator needs, which this function must not swallow. The `'error'`
+ * listener on `child.stdin` is not optional: a child that exits or closes
+ * stdin early can fail the write with EPIPE, an unhandled stream error that
+ * would take the process — and the key — down with it.
+ * Everywhere but Windows, `stored: true` means the command exited 0, `cat`
+ * exited 0, and nothing went wrong writing — every byte reached the pipe. It
+ * does NOT prove the command read them: a write lands in the kernel buffer,
+ * and a key this size fits in one write, so a command that exits without
+ * reading races `cat`'s write and can win or lose silently. What IS caught is
+ * a command leaving more unread than the buffer holds, which fails loudly as
+ * `cat` exiting on SIGPIPE — so the exit code is still the contract, and
+ * naming a command that fails loudly is the operator's job.
  */
 export async function handOffKey(
   pem: string,
@@ -674,9 +488,8 @@ export async function handOffKey(
 ): Promise<HandOffResult> {
   if (destination.kind === 'file') {
     try {
-      // `wx` so an existing file is never clobbered: the operator may well be
-      // pointing at a directory that already holds a key, and overwriting one
-      // credential with another is not a recoverable mistake.
+      // `wx` so an existing file is never clobbered: overwriting one credential
+      // with another, at a path that may already hold a key, is not recoverable.
       await writeFile(destination.filePath, pem, { mode: 0o600, flag: 'wx' })
       return { stored: true, detail: `written to ${destination.filePath} (mode 0600)` }
     } catch (err) {
@@ -697,11 +510,9 @@ export async function handOffKey(
   if (destination.argv.length === 0) {
     return { stored: false, detail: 'no command was given to send the key to' }
   }
-  // Refused before spawning, for parity with the direct spawn this replaced:
-  // `env` reads a leading word containing `=` as a variable assignment, not a
-  // command, so `-- FOO=bar` (or a whole command mis-quoted into one word) made
-  // it print the environment and exit 0 -- the key reported stored, and gone.
-  // A direct spawn of such a word always failed with ENOENT instead.
+  // Refused before spawning: `env` reads a leading word containing `=` as a
+  // variable assignment, not a command, so `-- FOO=bar` (or a mis-quoted whole
+  // command) would print the environment, exit 0, and report the key stored.
   if (destination.argv[0].includes('=')) {
     return {
       stored: false,
@@ -730,18 +541,16 @@ export async function handOffKey(
     }
 
     // Recorded rather than settled on, so the child's EXIT CODE stays the
-    // authority on whether the key was stored. A child that consumed the key,
-    // stored it and exited 0 must not be reported as a failure because its
-    // pipe errored on the way down — the operator would generate a new key for
-    // nothing. It does veto a zero exit, though: a write that did not complete
-    // means the child cannot have received the whole PEM, whatever it claims.
+    // authority: a child that stored the key and exited 0 must not be reported
+    // failed because its pipe errored on the way down. It does veto a zero
+    // exit, though — an incomplete write means the child cannot have received
+    // the whole PEM, whatever it claims.
     let writeError: Error | undefined
 
     // `cat`'s exit status as the bridge reports it on fd 3 (see
-    // `KEY_INPUT_BRIDGE`). Recorded, like `writeError`, for the verdict on
-    // 'close' — by which time this channel has closed too, because a child's
-    // 'close' waits for every stdio stream after stdin. Left empty if the
-    // channel is missing, which the verdict counts as no `0`.
+    // `KEY_INPUT_BRIDGE`), read for the verdict on 'close' — by then this
+    // channel has closed too, since 'close' waits for every stdio stream after
+    // stdin. Left empty (counted as no `0`) if the channel is missing.
     let catStatus = ''
     if (BRIDGE_KEY_INPUT) {
       const channel = child.stdio?.[3]
@@ -750,8 +559,8 @@ export async function handOffKey(
         channel.on('data', (chunk: string) => {
           catStatus += chunk
         })
-        // Not optional, for the same reason as the listener on stdin below. An
-        // error cannot fake a status: at worst it leaves this short of a `0`.
+        // Not optional, same reason as the stdin listener below: an error
+        // cannot fake a status, at worst leaving this short of a `0`.
         channel.on('error', () => {})
       }
     }
@@ -761,11 +570,10 @@ export async function handOffKey(
       settle({ stored: false, detail: `could not run \`${command}\`: ${getErrorMessage(err)}` })
     })
     child.on('close', (code) => {
-      // Deferred one turn of the event loop so a stdin error that is already
-      // pending is recorded BEFORE the verdict is taken. A broken pipe and the
-      // child's exit are two independent events and `close` can win the race,
-      // which would report a key as stored on the strength of an exit code
-      // while the write that carried it had failed.
+      // Deferred one turn of the event loop so a pending stdin error is
+      // recorded BEFORE the verdict: a broken pipe and the child's exit are
+      // independent events, and `close` can win that race and report success
+      // on an exit code whose write actually failed.
       setImmediate(() => {
         if (writeError) {
           settle({
@@ -803,9 +611,8 @@ export async function handOffKey(
       settle({ stored: false, detail: `\`${command}\` has no stdin to write the key to` })
       return
     }
-    // This listener is not optional. Without it an EPIPE from an early-closing
-    // child is an unhandled stream error, which takes the process down — and
-    // with it the only copy of a private key for an App that already exists.
+    // Not optional: without it an EPIPE from an early-closing child is an
+    // unhandled stream error that takes the process down, and the key with it.
     stdin.on('error', (err) => {
       writeError = err
     })
@@ -820,26 +627,19 @@ export type CallbackServer = {
 }
 
 /**
- * One request, then closed — closed by the handler itself, as soon as it has the
- * code. Bound to loopback only.
- *
- * The standard CLI pattern (`gh auth login` does the same): it exists solely so
- * the private key can arrive over the redirect rather than through a downloads
- * folder.
- *
- * A REJECTED REQUEST IS ANSWERED AND IGNORED, never fatal. The `state` check is
- * the CSRF guard the manifest flow provides, but rejecting the promise on a
- * mismatch ends the run on the first stray loopback request — a browser
- * prefetch, an extension, a retried tab — possibly seconds before GitHub's real
- * redirect arrives, and AFTER the App has been created. Aborting there leaves an
- * App nobody holds a key for, over a request that was never GitHub's.
+ * One request, then closed by the handler itself, bound to loopback only —
+ * the standard CLI pattern (`gh auth login` does the same) so the key
+ * arrives over the redirect, not a downloads folder. A rejected request is
+ * answered and ignored, never fatal: the `state` check
+ * is the CSRF guard the manifest flow provides, but rejecting the promise on
+ * a mismatch would end the run on a stray loopback request, possibly before
+ * GitHub's real redirect, leaving an App nobody holds a key for.
  */
 export function startCallbackServer(
   state: string,
   timeoutMs = CALLBACK_TIMEOUT_MS,
   // Injectable ONLY so the bind-failure path is testable. The host stays
-  // hardcoded to 127.0.0.1 below, so this seam cannot be used to bind
-  // somewhere reachable.
+  // hardcoded to 127.0.0.1 below, so this seam cannot bind somewhere reachable.
   createServerFn: typeof createServer = createServer,
 ): Promise<CallbackServer> {
   let settle: (value: string) => void = () => {}
@@ -849,10 +649,9 @@ export function startCallbackServer(
     fail = reject
   })
   // Marks `code` as handled without consuming it: `.catch()` returns a NEW
-  // promise and leaves this one rejectable for the real caller. Needed because
-  // the bind below can fail before anyone has awaited `code`, and an
-  // unhandled rejection there would be reported as a crash in a flow whose
-  // actual problem is "the port could not be bound".
+  // promise, leaving this one rejectable for the real caller. Needed because
+  // the bind below can fail before anyone has awaited `code`, which would
+  // otherwise report as an unhandled rejection instead of a bind failure.
   code.catch(() => {})
 
   const page = (title: string, detail: string) =>
@@ -860,21 +659,15 @@ export function startCallbackServer(
     `<body style="font:16px system-ui;padding:3rem"><h1>${escapeHtml(title)}</h1>` +
     `<p>${escapeHtml(detail)}</p></body>`
 
-  // Assigned once the socket is listening, and CALLED by the request handler as
-  // soon as it has the code — so the listener closes itself rather than waiting
-  // for the caller's `finally`. Declared out here only so both can reach it.
+  // Assigned once listening, and CALLED by the handler once it has the code, so
+  // the listener closes itself rather than waiting on the caller's `finally`.
   let stopListening = () => {}
 
   const server = createServerFn((req, res) => {
-    // EVERY path through this handler is inside the try. A throw in a
-    // 'request' listener is an uncaught exception that kills the process, and
-    // by the time this server matters the process is the only thing holding a
-    // private key for an App that already exists.
-    //
-    // `new URL` is the specific hazard, and it is not hypothetical: Node's HTTP
-    // parser accepts request targets `new URL` rejects, so `GET //[x HTTP/1.1`
-    // arrives as `req.url === '//[x'` and throws ERR_INVALID_URL. Verified
-    // directly — `//` alone throws too.
+    // EVERY path through this handler is inside the try, since a throw in a
+    // 'request' listener would kill the process while it holds the App's
+    // private key — including `new URL`, which rejects some request targets
+    // Node's HTTP parser accepts (e.g. `GET //[x HTTP/1.1`).
     try {
       const url = new URL(req.url ?? '/', 'http://127.0.0.1')
       if (url.pathname !== '/callback') {
@@ -900,11 +693,9 @@ export function startCallbackServer(
         .writeHead(200, { 'content-type': 'text/html', connection: 'close' })
         .end(page('App created', 'The private key was captured. Return to the terminal.'))
       settle(received)
-      // Closed HERE, not in the caller's `finally`. The caller's window spans
-      // the conversion, a human install step of unbounded length and the
-      // readback, and for all of that the port would keep accepting
-      // connections — loopback is not per-user, so on a shared host another
-      // UID can reach it.
+      // Closed HERE, not in the caller's `finally`: that window spans a human
+      // install step of unbounded length, during which loopback — not
+      // per-user — would keep accepting connections another UID could reach.
       stopListening()
     } catch {
       // A malformed request is not this flow's business. Answer it and keep
@@ -919,10 +710,9 @@ export function startCallbackServer(
 
   return new Promise<CallbackServer>((resolve, reject) => {
     let listening = false
-    // Without this the bind failing is an unhandled 'error' event — which takes
-    // the process down — and the promise below never settles either way, so
-    // `create` hangs instead of saying the port could not be bound. Both were
-    // measured: a sandbox that denies listen() produced exactly that.
+    // Without this, a bind failure is an unhandled 'error' event that crashes
+    // the process, and the promise below never settles — `create` would hang
+    // instead of reporting that the port could not be bound.
     server.on('error', (err) => {
       if (listening) {
         fail(err)
@@ -955,15 +745,11 @@ export function startCallbackServer(
 type CreatedApp = { id: number; slug: string; clientId: string; pem: string }
 
 /**
- * The exchange. Unauthenticated by design: the one-hour code IS the credential.
- *
- * Only the four fields this tool needs are lifted out. The response also carries
- * `client_secret` and `webhook_secret`, which this App never uses — so the body
- * is never logged, never returned whole, and never reaches an error message.
- * Failures collapse to `null` and nothing from the response is surfaced, for
- * the same reason: the code itself is exchangeable for the private key for a
- * full hour. That also drops the HTTP status, which the caller does not report
- * (.claude/future-tasks/init-github-app-review-round-1-lows.md, item 2).
+ * The exchange. Unauthenticated by design: the one-hour code IS the
+ * credential. Only the four fields this tool needs are lifted out — the
+ * response also carries `client_secret`/`webhook_secret`, never logged or
+ * surfaced. Failures collapse to `null` for the same reason: the code itself
+ * is exchangeable for the private key for a full hour.
  */
 export async function convertManifest(code: string): Promise<CreatedApp | null> {
   const response = await githubRequest<{
@@ -979,12 +765,10 @@ export async function convertManifest(code: string): Promise<CreatedApp | null> 
 }
 
 /**
- * Whether the account is an organisation, which decides where the manifest posts.
- *
- * Unauthenticated, so it needs no credential at a point in the flow where we have
- * none. `null` means "could not tell" and the caller says so rather than
- * guessing — guessing wrong sends the operator to a form that refuses the
- * manifest with no useful explanation.
+ * Whether the account is an organisation, which decides where the manifest
+ * posts. Unauthenticated, since nothing has a credential yet. `null` means
+ * "could not tell", and the caller says so rather than guessing — a wrong
+ * guess sends the operator to a form that refuses the manifest silently.
  */
 export async function detectAccountType(owner: string): Promise<boolean | null> {
   const response = await githubRequest<{ type?: string }>(`/users/${encodeURIComponent(owner)}`)
@@ -993,15 +777,12 @@ export async function detectAccountType(owner: string): Promise<boolean | null> 
 }
 
 /**
- * Best-effort check that the App name is not already taken.
- *
- * `true` = available as far as we can tell, `false` = definitely taken, `null` =
- * could not check. The three are kept apart deliberately: a PRIVATE App with
- * this slug also answers 404, so a 404 is not proof of availability, and
- * reporting "could not check" as "checked, it is free" is how a guard goes
- * blind. This exists because name collisions can otherwise only be discovered by
- * the creation form — with the CLI already sitting on a loopback server waiting
- * for a redirect that will never arrive.
+ * Best-effort check that the App name is not already taken. `true`/`false`/
+ * `null` (could not check) are kept apart: a PRIVATE App with this slug also
+ * answers 404, so 404 isn't proof of availability, and reporting "could not
+ * check" as "free" is how a guard goes blind. Exists because a name collision
+ * would otherwise surface only at the creation form, with the CLI already on
+ * a loopback server waiting for a redirect that will never arrive.
  */
 export async function checkNameAvailable(slug: string): Promise<boolean | null> {
   const response = await githubRequest<unknown>(`/apps/${encodeURIComponent(slug)}`)
@@ -1012,48 +793,20 @@ export async function checkNameAvailable(slug: string): Promise<boolean | null> 
 
 /**
  * Whether stdin has already delivered end-of-input to an earlier prompt.
- *
- * `process.stdin` can only end ONCE, and a `readline` interface created after it
- * has ended never emits `'line'` or `'close'` — the stream is already
- * `endEmitted` and the constructor's `resume()` cannot re-deliver it. So a
- * per-prompt interface is a footgun the moment a command has two prompts: the
- * second one waits forever.
- *
- * Measured, on a real pty as well as a pipe: with `--key-out` pointing at a bad
- * path, an operator who answers the retry prompt with Ctrl-D (the other reflex
- * to "leave blank to give up") ended stdin in `askLine`, and the later
- * `pressEnter` never resolved. `createCommand` never returned, so
- * `process.exitCode` was never assigned and node exited **0** — on the one
- * outcome where the App exists and its only key was just discarded — while the
- * `finally` that removes the temp directory never ran and the block printing the
- * App id, the operator's only handle for generating a replacement key, was never
- * reached.
- *
- * A SECOND, subtler way to reach the same hole: EOF landing on a line that DID
- * get answered. Node's readline flushes a pending partial line as a final
- * `'line'` event BEFORE `'close'` when the input ends, so "text then EOF" (a
- * pipe like `printf 'abc'` with no trailing newline, or a TTY operator typing
- * text and pressing Ctrl-D twice) answers the prompt normally — `answered` is
- * true when `'close'` fires. The stream having also ended in that same moment
- * used to go unrecorded, because the `'close'` handler only ever set this flag
- * on the `!answered` branch. The next prompt then created a readline interface
- * on an already-ended stream that never emits, and — with nothing else keeping
- * it alive — the event loop emptied and node exited 0 silently: no "Giving up",
- * no "Stopping here … GITHUB_APP_ID" block, no readback, no `finally`.
- * MEASURED with a scratch driver: `printf 'abc' | node --import tsx <driver>`
- * resolved the first prompt to `"abc"` and left the second prompt printed but
- * never resolved, node exiting 0 with nothing after it.
- *
- * So the flag must be set from whether the STREAM ended, not from whether THIS
- * prompt got an answer — the two are independent. `readableEnded` is checked
- * unconditionally in the `'close'` handler below, before the `answered` branch,
- * so it applies whether or not a line came back. This still tells apart the
- * ordinary case from this one: our OWN `rl.close()` call after a line, by
- * itself, fires `'close'` while stdin usually remains open and `readableEnded`
- * stays false — only an input stream that has actually finished sets it.
- *
- * Every prompt below consults this first. Nothing else may create a readline
- * interface on `process.stdin` in this file.
+ * `process.stdin` can only end ONCE, and a `readline` interface created after
+ * it has ended never emits `'line'` or `'close'`, so a per-prompt interface
+ * is a footgun once a command has two prompts — even when the first WAS
+ * answered, since readline flushes a pending partial line as a final `'line'`
+ * event before `'close'`, so "text then EOF" answers normally while the
+ * stream also ends in that same moment. The flag records whether the STREAM
+ * ended, not whether THIS prompt got an answer.
+ * `readableEnded` is checked unconditionally in the `'close'` handler
+ * below, before the `answered` branch: gating it on `!answered` would miss
+ * the case above and leave the next prompt's readline on an already-ended
+ * stream that never emits, so node would exit 0 silently with no cleanup. Our
+ * OWN `rl.close()` also fires `'close'` but leaves `readableEnded` false,
+ * keeping the two cases apart. Every prompt below consults this first; no
+ * other readline interface on `process.stdin` may exist in this file.
  */
 let stdinEnded = false
 
@@ -1074,15 +827,10 @@ function readLineOnce(prompt: string): Promise<string | null> {
       resolve(line)
     })
     rl.once('close', () => {
-      // Checked FIRST and unconditionally: `'close'` fires both when WE call
-      // `rl.close()` after a line (stdin can still be open) and when the
-      // stream itself ends — including the case where a final partial line was
-      // just flushed as `'line'`, so `answered` is true but the stream is
-      // ALSO finished. `readableEnded` is the one signal that distinguishes
-      // "we closed the interface" from "the stream is actually done", and by
-      // the time readline's own `'close'` fires, the input stream has already
-      // finished emitting `'end'` (readline listens for it internally before
-      // closing itself), so the flag is reliable here.
+      // Checked FIRST and unconditionally (see `stdinEnded` above): `'close'`
+      // fires both for our own `rl.close()` and for the stream actually
+      // ending, and by the time it fires here the input has already finished
+      // emitting `'end'`, so `readableEnded` is reliable to read now.
       if (process.stdin.readableEnded) {
         stdinEnded = true
       }
@@ -1110,12 +858,10 @@ export function resetStdinStateForTesting(): void {
 }
 
 /**
- * What to do with one answer to the retry prompt: write the key to a file, ask
- * again, or stop asking. There is deliberately no command here — see
- * `parseKeyRetryAnswer`.
- *
- * `reprompt` carries WHY, so `handOffWithRetry` can tell the operator what was
- * wrong with what they typed instead of silently asking again.
+ * What to do with one answer to the retry prompt: write to a file, ask again,
+ * or stop. No command here — see `parseKeyRetryAnswer`. `reprompt` carries
+ * WHY, so `handOffWithRetry` can tell the operator what was wrong instead of
+ * silently asking again.
  */
 export type KeyRetryChoice =
   | { kind: 'give-up' }
@@ -1123,52 +869,27 @@ export type KeyRetryChoice =
   | { kind: 'file'; filePath: string }
 
 /**
- * Route one line of operator input at the retry prompt, which accepts a FILE
- * PATH and nothing else. Exported and pure so every rule below is a table test
- * rather than something only reachable by driving a live prompt end to end.
- *
- * WHY NO COMMANDS. The first destination can be a command because the
- * operator's own shell parsed `-- <command…>` into argv. A typed line here has
- * no such parser, and three consecutive review rounds each found splitting it on
- * whitespace sending the key somewhere unintended: a one-word answer written as
- * a file in the working directory; a `|` inside the argv becoming a file name;
- * then `>`, `;`, `&&` and quotes each becoming literal argv words, so
- * `tee key.pem > /dev/null` wrote 0644 copies of the key into the repository
- * root and reported it stored. Each fix closed one spelling. Accepting a path
- * only closes the class: an operator who wants a command writes the file, runs
- * the command against it, and deletes the file.
- *
- * The rules, in order:
- *
- * - `null` (stdin has already ended — see `stdinEnded` above) gives up: there
- *   is nobody left who could answer.
- * - A blank or whitespace-only line MUST NOT give up. Nothing reads stdin
- *   until a readline interface exists, so an Enter pressed during the long
- *   wait for GitHub's redirect — or while the FIRST destination's command was
- *   running — sits in the terminal's line buffer. When that first hand-off
- *   then fails, `askLine` reads the buffered blank line immediately, before
- *   the operator has even seen this prompt. Treating that as "give up"
- *   discarded the only copy of the key without anyone actually answering.
- *   Re-prompting instead costs nothing when the blank line really was
- *   intentional, because the very next prompt still offers "give up" as
- *   something the operator has to type.
- * - The words "give up", case-insensitively and with whitespace normalised, is
- *   the one deliberate way to give up once stdin is live.
- * - Any whitespace inside the answer, or a leading `|`, is re-prompted with
- *   "commands are not accepted here" and the write-run-delete route. Every
- *   command-shaped answer above was spelled with whitespace, and nothing about
- *   a typed line tells a command apart from a path that contains spaces — so
- *   the cost, stated in the reason, is that such a path cannot be entered here.
- * - A leading `~` is re-prompted: nothing here expands it, so `~/key.pem`
- *   would name a directory literally called `~` under the working directory.
- * - A single token with NO `/` or `\` — `pbcopy`, `wl-copy`, any script on
- *   PATH — is re-prompted, suggesting `./<token>`. A "one word is a path" rule
- *   once let `writeFile('pbcopy', pem, { flag: 'wx' })` succeed in
- *   `process.cwd()` — normally the git repository root — leaving a
- *   `contents: write` private key sitting untracked on disk, while the
- *   operator read "written to pbcopy (mode 0600)" and believed it had gone
- *   into the command they meant.
- * - Anything else is a path, which `handOffKey` creates with mode 0600 and
+ * Route one line of operator input at the retry prompt, accepting a FILE
+ * PATH and nothing else (exported and pure, so every rule is table-tested
+ * directly). The first destination can be a command because the operator's
+ * shell parses `-- <command…>` into argv; a typed line has no such parser,
+ * and splitting on whitespace sends the key somewhere unintended (a stray
+ * `|`, `>`, `;`, `&&` or quote becomes a literal argv word). Accepting only a
+ * path closes that class — a command means write, run, then delete. Rules,
+ * in order:
+ * - `null` (stdin has already ended — see `stdinEnded` above) gives up.
+ * - A blank or whitespace-only line MUST NOT give up — a stray Enter pressed
+ *   earlier sits buffered and is read back before the operator has seen this
+ *   prompt — but the words "give up", case-insensitively and
+ *   whitespace-normalised, deliberately do once stdin is live.
+ * - Whitespace inside the answer, or a leading `|`, is re-prompted: nothing
+ *   tells a command apart from a path containing spaces, so such paths
+ *   aren't accepted either.
+ * - A leading `~` is re-prompted (unexpanded, `~/key.pem` would name a
+ *   directory literally called `~`), as is a single token with no `/` or `\`
+ *   (`pbcopy`, any PATH script): as a bare word it would write the key into
+ *   the current directory while the operator believes it reached the command.
+ * - Anything else is a path: `handOffKey` creates it with mode 0600 and
  *   refuses to write if something already exists there.
  */
 export function parseKeyRetryAnswer(answer: string | null): KeyRetryChoice {
@@ -1212,21 +933,12 @@ export function parseKeyRetryAnswer(answer: string | null): KeyRetryChoice {
 
 /**
  * Hand the key over, and keep asking while the operator still has a chance.
- *
- * The pre-flight can only refuse a MISSING destination — it cannot know whether
- * a command exists, whether a path is writable, or whether a secret store will
- * accept the call. Measured: `--key-out` at a directory, `--key-out` under a
- * parent that does not exist, and a command not on PATH all pass the pre-flight
- * and fail here. Exiting at that point destroys the only copy of a private key
- * for an App that already exists, over a typo.
- *
- * So a failure asks for a file path instead, while the key is still in memory —
- * a path only, never a command, for the reasons on `parseKeyRetryAnswer`.
- * `create` already requires a TTY, so there is someone there to answer. Only a
- * closed stdin (nobody left to answer) or the operator typing "give up" ends the
- * loop without a destination — a blank line re-prompts instead, since that is
- * exactly what a stray Enter pressed before this prompt existed leaves buffered.
- * See `parseKeyRetryAnswer` for the exact rules.
+ * The pre-flight can only refuse a MISSING destination — a bad path or a
+ * command not on PATH fails only here, and exiting on that would destroy the
+ * only copy of a private key for an App that already exists, over a typo. So
+ * a failure asks for a file path instead, while the key is still in memory —
+ * a path only, never a command, per `parseKeyRetryAnswer`'s rules. Only a
+ * closed stdin or "give up" ends the loop without a destination.
  */
 export async function handOffWithRetry(pem: string, destination: KeyDestination): Promise<boolean> {
   let attempt = destination
@@ -1274,16 +986,11 @@ function describeDestination(destination: KeyDestination): string {
 }
 
 /**
- * How many accounts this App is installed on, or `null` when it cannot be read.
- *
- * The one-App-per-site rule (see the file header) is only worth stating if
- * something checks it, and `repository_selection: 'selected'` does not: it is
- * equally true of an installation scoped to this repository and one scoped to
- * this repository plus nine others. This is the check that actually observes
- * the invariant, and it costs one call with the JWT already in hand.
- *
- * `null` and a number are kept apart: "could not read the installation list" must
- * never be reported as "checked, there is exactly one".
+ * How many accounts this App is installed on, or `null` when it cannot be
+ * read — the one-App-per-site rule (see the file header) is only worth
+ * stating if something checks it, and `repository_selection: 'selected'`
+ * doesn't (equally true scoped here plus nine others). `null` and a number
+ * are kept apart: "could not read" must never report as "exactly one".
  */
 async function installationCount(jwt: string): Promise<number | null> {
   const listed = await githubRequest<{ id: number }[]>('/app/installations?per_page=100', { jwt })
@@ -1293,19 +1000,12 @@ async function installationCount(jwt: string): Promise<number | null> {
 
 /**
  * Mint an installation token narrowed to this repository and the declared
- * permissions, then revoke it.
- *
- * This is NOT a second reading of the grant — `readbackVerdict` already has that
- * from the installation object. It is the end-to-end proof that the key signs,
- * that the App is not suspended, and that a token can actually be issued: the
- * same thing the worker does at boot. It also catches a GitHub behaviour that
- * surfaces nowhere else — **adding a permission to an App does not apply to
- * existing installations until an account owner ACCEPTS the new request**, so an
- * App whose settings page looks correct can hold a stale grant, and the mint
- * fails with a 422 that sounds like the App is misconfigured.
- *
- * The token is revoked immediately. Leaving a live `contents: write` credential
- * valid for an hour after a read-only check exits would be careless for no gain.
+ * permissions, then revoke it — proof the key signs, the App isn't
+ * suspended, and a token issues. Also catches a GitHub quirk found nowhere
+ * else: a new permission doesn't apply to existing installations until an
+ * owner ACCEPTS it, so a correct-looking App can still fail with a
+ * misleading 422. Revoked at once — no reason to leave `contents: write`
+ * live for an hour after a read-only check.
  */
 async function proveTokenMint(
   jwt: string,
@@ -1317,10 +1017,9 @@ async function proveTokenMint(
     {
       jwt,
       method: 'POST',
-      // Scoped by repository NAME. The access-token endpoint accepts names and
-      // applies the same narrowing as ids — and resolving a name to an id would
-      // need `GET /repos/{o}/{r}`, which an App JWT cannot reach (measured: it
-      // answers a JWT with 401).
+      // Scoped by repository NAME: the endpoint applies the same narrowing as
+      // ids, and resolving a name to an id would need `GET /repos/{o}/{r}`,
+      // which an App JWT cannot reach (401).
       body: { repositories: [repo], permissions: { ...CANOPY_APP_PERMISSIONS } },
     },
   )
@@ -1335,35 +1034,27 @@ async function proveTokenMint(
   return { ok: true, detail: `minted and ${note}` }
 }
 
-/**
- * Read an installation back and report on it. Shared by `create` (right after
- * the operator installs the App) and `verify` (any time afterwards).
- */
+/** Read an installation back and report on it. Shared by `create` (after install) and `verify`. */
 async function readBackInstallation(
   appId: string,
   privateKey: string,
   target: AppTarget,
 ): Promise<{ ok: boolean; installationId: number | null }> {
   // Normalised the same way the worker normalises its own key
-  // (`normalizeGitHubAppPrivateKey`, `worker/github-auth.ts`) BEFORE it is ever
-  // used to sign — trims it, unescapes a literal `\n`, unwraps a base64-wrapped
-  // PEM, and re-exports PKCS#8. `cli.ts` reads `--key-file`/`--key-stdin`
-  // verbatim, and `docs/deploying-to-aws.md` tells operators to pipe that exact
-  // secret — `\n`-escaped or base64-wrapped, however it left Secrets Manager —
-  // into `verify --key-stdin`. Without this, `verify` failed with "could not
-  // sign a JWT" on a key the worker boots on fine. Called here rather than in
-  // `cli.ts` so `create` goes through it too: GitHub's own freshly-minted PEM is
-  // PKCS#1, so this re-exports it as PKCS#8 — the same key, differently encoded.
+  // (`normalizeGitHubAppPrivateKey`, `worker/github-auth.ts`) before it signs:
+  // trims it, unescapes a literal `\n`, unwraps a base64-wrapped PEM, and
+  // re-exports PKCS#8. `docs/deploying-to-aws.md` has operators pipe that
+  // exact secret, however it left Secrets Manager, into `verify --key-stdin`,
+  // which would otherwise fail to sign on a key the worker boots on fine.
+  // Called here too so `create` re-exports GitHub's PKCS#1 PEM as PKCS#8.
   let normalizedKey: string
   try {
     normalizedKey = normalizeGitHubAppPrivateKey(privateKey)
   } catch (err) {
     // Distinct from the "could not sign a JWT" failure below: this key does not
-    // even parse as a PEM once the common manglings are undone, so signing was
-    // never reached. `getErrorMessage` here is `createPrivateKey`'s own parse
-    // error, which names a PEM format problem, never key material — redacted
-    // anyway, on the same belt-and-braces basis as every other error surfaced
-    // in this file.
+    // even parse as a PEM once the common manglings are undone. `getErrorMessage`
+    // here names a PEM format problem, never key material, but is redacted
+    // anyway for consistency with every other error surfaced in this file.
     console.error(
       `\nThe private key could not be normalised: ${redactCredentials(getErrorMessage(err))}\n` +
         '  If you supplied this key, check that it is the App private key (the downloaded\n' +
@@ -1398,12 +1089,9 @@ async function readBackInstallation(
     // Say WHICH of the two it is. Reporting "not installed" for an auth failure
     // sends the operator to check a page that is correct.
     if (found.status === 0) {
-      // THREE cases, not two. `githubRequest` reports a transport failure as
-      // status 0 with the real cause in `message`, and folding that into the
-      // else below produced a confident "not installed on this repository" for
-      // a DNS failure, a proxy refusal or a timeout — with the actual error
-      // discarded. Reading the body inside the try made this strictly more
-      // reachable, since a reset mid-body now lands here instead of throwing.
+      // THREE cases, not two: `githubRequest` reports a transport failure as
+      // status 0 with the cause in `message`, which the else below would
+      // otherwise misreport as a confident "not installed".
       console.error(
         `\nCould not reach api.github.com: ${found.message}\n` +
           '  This says nothing about the App or its installation. Check network access and\n' +
@@ -1441,16 +1129,9 @@ async function readBackInstallation(
     }
   }
 
-  // The one-App-per-site invariant, observed rather than asserted. A second
-  // installation means this App's key reaches a second account's repositories,
-  // which is the arrangement the whole design exists to avoid.
-  // EXACTLY one is the pass, and everything else fails — including "could not
-  // check". The looser first version printed a ✓ for a count of 0 (a state that
-  // should not occur, but a tick for an unobserved fact is the failure these
-  // comments exist to prevent) and let `null` leave the overall verdict at
-  // "All checks passed", which is a check that did not run reported as one that
-  // did. `repository_selection` is strict about `undefined` for the same
-  // reason, and these two now agree.
+  // The one-App-per-site invariant, observed not asserted: EXACTLY one
+  // installation is the pass and everything else fails, including "could not
+  // check", matching how `repository_selection` treats `undefined`.
   let installationsOk = false
   const installations = await installationCount(jwt)
   if (installations === null) {
@@ -1529,13 +1210,10 @@ async function resolveTarget(options: InitGitHubAppOptions): Promise<AppTarget |
     return null
   }
 
-  // Only `create` needs the account type, and only to choose which URL the
-  // manifest form posts to. `verify` never reaches `manifestPostUrl`, so making
-  // it depend on an unauthenticated lookup gave the read-only, non-interactive,
-  // CI-safe command a way to hard-fail that had nothing to do with the App —
-  // unauthenticated requests are rate-limited at 60/hour per IP, which a shared
-  // egress address reaches without anyone doing anything wrong. `verify`
-  // validates the owner far better anyway, by looking the installation up.
+  // Only `create` needs the account type, to pick the manifest form's URL.
+  // Making `verify` depend on this unauthenticated (60/hour per IP) lookup
+  // would give the read-only, non-interactive command a failure unrelated to
+  // the App — it validates the owner far better anyway, via the installation.
   if (options.mode !== 'create') {
     return { owner, repo, isOrganization: false }
   }
@@ -1568,9 +1246,8 @@ async function createCommand(options: InitGitHubAppOptions): Promise<number> {
     return 1
   }
 
-  // Refuse rather than hang. This flow stops twice for a human, and in CI it
-  // would block forever at "press Enter" with a live App already created and the
-  // only copy of its key about to die with the job.
+  // Refuse rather than hang: in CI this would block forever at "press Enter"
+  // with a live App already created and its only key about to die with the job.
   if (!process.stdin.isTTY) {
     console.error(
       '`init-github-app create` needs an interactive terminal: it waits while you create the\n' +
@@ -1612,11 +1289,9 @@ async function createCommand(options: InitGitHubAppOptions): Promise<number> {
     )
   }
 
-  // PRINTED BEFORE THE BROWSER OPENS, not on failure, because the failure mode is
-  // asymmetric: if the redirect never arrives -- browser closed, timeout, state
-  // mismatch, code expired -- the App HAS been created and we hold no key.
-  // Printing the recovery only when that happens would put it in a terminal that
-  // may already be gone.
+  // PRINTED BEFORE THE BROWSER OPENS, not on failure: if the redirect never
+  // arrives, the App HAS still been created with no key held, and printing
+  // the recovery only then could target a terminal that is already gone.
   console.log(
     'IF THIS GOES WRONG AFTER YOU CLICK CREATE, read this first:\n' +
       '  The App will exist and this command will not have its private key. That is\n' +
@@ -1634,9 +1309,9 @@ async function createCommand(options: InitGitHubAppOptions): Promise<number> {
   try {
     callback = await startCallbackServer(state)
   } catch (err) {
-    // Nothing has been created yet, so this is the cheap failure. Said plainly
-    // rather than as a raw errno, because a denied bind is usually a sandbox or
-    // a host firewall rather than anything about GitHub.
+    // Nothing has been created yet, so this is the cheap failure — said plainly
+    // rather than as a raw errno, since a denied bind is usually a sandbox or
+    // host firewall, not GitHub.
     console.error(
       `Could not open the local callback server: ${getErrorMessage(err)}\n\n` +
         "  This command needs to listen on 127.0.0.1 to receive GitHub's redirect, which is\n" +
@@ -1651,13 +1326,10 @@ async function createCommand(options: InitGitHubAppOptions): Promise<number> {
     const redirectUrl = `http://127.0.0.1:${callback.port}/callback`
     const manifest = appManifest(target, redirectUrl, name)
     const postUrl = manifestPostUrl(target, state)
-    // A private directory rather than a predictable name in a shared one. On
-    // Linux `tmpdir()` is `/tmp` for every user and the slug derives from a
-    // public repository name, so `create-<slug>.html` is guessable — and
-    // `writeFile`'s default `w` follows an existing symlink and truncates its
-    // target, while `mode` only applies when it creates the file. The form is
-    // not secret (manifest, state, port), but it is what the operator's browser
-    // is about to POST to GitHub.
+    // A private directory, not a predictable name in a shared one: on Linux
+    // `tmpdir()` is `/tmp` for every user and the slug derives from a public
+    // repo name, so `create-<slug>.html` is guessable, and `writeFile`'s
+    // default `w` follows an existing symlink and truncates its target.
     formDir = await mkdtemp(path.join(tmpdir(), 'canopycms-app-'))
     const formFile = path.join(formDir, `create-${slug}.html`)
     await writeFile(formFile, creationForm(postUrl, manifest), { mode: 0o600, flag: 'wx' })
@@ -1714,25 +1386,14 @@ async function createCommand(options: InitGitHubAppOptions): Promise<number> {
     )
 
     // THE KEY IS HANDED OFF FIRST, before the install prompt and the readback,
-    // and the ordering is the whole point.
-    //
-    // From here until the hand-off returns, this process holds the ONLY copy of
-    // a private key for an App that already exists. Everything between the
-    // conversion and the hand-off is therefore a window in which losing the
-    // process loses the key: the install step waits on a human for an unbounded
-    // time (one Ctrl-C and it is gone), and the readback makes two network
-    // calls that can reject rather than return — a stalled response body or the
-    // request timeout firing mid-read would unwind straight past the hand-off.
-    //
-    // Nothing in the hand-off depends on the readback, so there is no reason to
-    // carry the key across either. Doing it here reduces the window to the
-    // conversion call itself.
+    // because until it returns this process holds the ONLY copy of the key
+    // while the install step waits on a human indefinitely and the readback
+    // makes network calls that can reject instead of return.
     const stored = await handOffWithRetry(created.pem, destination)
 
     if (!stored) {
-      // No point asking anyone to install an App whose key was just discarded:
-      // the installation could not be used. Say what IS still actionable — the
-      // App id, which is the handle for generating a replacement key — and stop.
+      // No point installing an App whose key was just discarded. Say what IS
+      // still actionable — the App id, the handle for a replacement key.
       console.error(
         `\nStopping here: the App exists but its key was not stored, so installing it now\n` +
           '  would achieve nothing. To recover, open the App and generate a private key from\n' +
@@ -1751,9 +1412,9 @@ async function createCommand(options: InitGitHubAppOptions): Promise<number> {
     )
     await pressEnter('   Press Enter once it is installed.')
 
-    // Wrapped because a rejection here must not be able to change what was
-    // already reported about the key. By this point the key is stored (or
-    // deliberately not), and a readback failure is only ever advisory.
+    // Wrapped so a rejection here cannot change what was already reported about
+    // the key: by this point it is stored (or deliberately not), and a
+    // readback failure is only ever advisory.
     let readback: { ok: boolean; installationId: number | null }
     try {
       readback = await readBackInstallation(String(created.id), created.pem, target)

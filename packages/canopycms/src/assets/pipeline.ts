@@ -167,67 +167,33 @@ const UNDECODABLE_RASTER_ERROR =
   'This image could not be decoded - it may be corrupt or truncated. Try re-exporting it and uploading again.'
 
 /**
- * Force a REAL pixel decode of a raster upload, catching the defect
- * `computeDimensions` above (header-only, explicitly non-fatal) cannot: a
- * corrupt PNG IDAT / truncated JPEG scan / etc. still carries a perfectly
- * valid IHDR/SOF, so `file-type`/`image-size` both accept bytes that the
- * transform engine's real sharp/libvips decoder (transform.ts's
- * `applyTransform`) later refuses - with a raw "vipspng: libpng read error"
- * - by which point the asset has already "uploaded successfully" and renders
- * broken everywhere it's shown. This makes finalize use the same decoder
- * transform.ts does, before the bytes are ever persisted, instead of only
- * discovering the mismatch at render time.
+ * Force a real pixel decode of a raster upload: `computeDimensions` above is header-only, so
+ * a corrupt PNG IDAT / truncated JPEG scan with a valid IHDR/SOF passes it, then fails at
+ * transform.ts's real sharp/libvips decode later - "uploads fine, renders broken". This runs
+ * the same decoder before the bytes are ever persisted, not just at render time.
  *
- * `.resize()` to a tiny output - NOT `.metadata()` - is what makes this a
- * real test: `metadata()` only reads header fields, exactly what
- * `computeDimensions` above already does and exactly what fails to catch
- * this class of bug. libvips cannot compute a resized pixel buffer without
- * fully decoding the source, so a corrupt IDAT/scan still throws here even
- * though it would not throw from a header-only read. The output itself is
- * immediately discarded - decode is the expensive, unavoidable part of this
- * check; encoding an 8x8 buffer is not.
+ * `.resize()` to a tiny output, not `.metadata()`: libvips cannot compute a resized pixel
+ * buffer without fully decoding the source, so a corrupt IDAT/scan throws here even though a
+ * header-only read would not. The 8x8 output is discarded; decode is the expensive part.
  *
- * ANIMATION: sharp defaults to `pages: 1`, i.e. frame 0 only. That is not
- * enough to mirror `applyTransform`, which reads
- * `min(totalPages, MAX_ANIMATED_FRAMES)` frames - a GIF/WebP whose frame 0 is
- * clean but whose frame 3 is corrupt passed this check and then threw
- * `gifload_buffer: Invalid frame data` at transform time, which is the very
- * "accepted at upload, unrenderable at render" state this function exists to
- * prevent, just moved from single-frame to animated sources. So the page
- * count is probed and passed through, with the SAME cap constant transform.ts
- * uses (both import it from transform-directives.ts) - which also means the
- * two sides ignore the same frames past the cap, so a many-hundred-frame
- * source cannot produce a disagreement either.
+ * ANIMATION: sharp defaults to `pages: 1` (frame 0 only), which is not enough to mirror
+ * `applyTransform`, so the real page count is probed first and read as
+ * `min(totalPages, MAX_ANIMATED_FRAMES)` - the SAME cap constant transform.ts uses (both
+ * import it from transform-directives.ts), so the two decoders never disagree on which
+ * frames past the cap they ignore. The probe is required, not optional: `pages` is a fixed
+ * request, not an upper bound, and a value exceeding the source's real page count makes sharp
+ * throw "bad page number" (transform.ts documents the same constraint at its call site).
  *
- * The probe is a separate, deliberate step rather than a guess: sharp's
- * `pages` is a fixed request, not an upper bound, so a value EXCEEDING the
- * source's real page count makes it throw "bad page number" (transform.ts
- * documents the same constraint at its own call site). A metadata-only probe
- * costs effectively nothing - it is a header read, not a decode.
- *
- * `limitInputPixels: MAX_INPUT_PIXELS` reuses transform.ts's own
- * decompression-bomb cap (imported above, not redefined) so this validation
- * step cannot itself become a bomb vector on a header that lied about its
- * dimensions - in practice the pixel-count check in the caller below already
- * rejects those before this function is ever reached, but the cap is cheap
- * insurance against relying on that ordering. Note the caller's check reads
- * single-frame dimensions from `image-size`, so for animated sources it is
- * `limitInputPixels` here (which sees the full multi-page strip) that bounds
- * total decoded pixels - exactly as it does in transform.ts.
+ * `limitInputPixels: MAX_INPUT_PIXELS` reuses transform.ts's own decompression-bomb cap so
+ * this validation step cannot itself become a bomb vector. The caller's own pixel-count check
+ * (below) already rejects oversized single-frame dims from `image-size` before this runs, but
+ * for animated sources only this multi-page `limitInputPixels` bounds total decoded pixels.
  *
  * Fails OPEN vs. fails CLOSED, deliberately different failure modes:
- * - sharp itself cannot be loaded (native binary missing for this
- *   platform/architecture, e.g. a cross-arch build) - there is no decoder
- *   available in this environment at all, which is an environment problem,
- *   not a fact about the uploaded file. Log it and let the upload through
- *   unvalidated (the pre-fix behavior) rather than failing every raster
- *   upload because of a deployment issue.
- * - sharp loads fine but its decoder REJECTS the bytes - that IS a fact
- *   about this specific file, and an actionable one. Return false so the
- *   caller rejects the upload. A throw from the page-count probe counts as
- *   this case, not the one above: the module loaded, so an unreadable header
- *   is again a fact about the file, and `applyTransform` would reject the
- *   same bytes from its own probe with the same 422.
+ * - sharp cannot be loaded at all (missing/wrong-arch native binary) - an environment
+ *   problem, not a fact about the file. Log it and let the upload through unvalidated.
+ * - sharp loads but its decoder REJECTS the bytes (including a page-count-probe throw) -
+ *   that IS a fact about this file. Return false so the caller rejects the upload.
  */
 async function rasterIsDecodable(data: Uint8Array): Promise<boolean> {
   // `loadSharp()` has already logged the load failure once for the process;

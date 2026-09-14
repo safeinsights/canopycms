@@ -37,7 +37,6 @@ export interface MigrateOptions {
   contentRoot?: string
   /** Entry type name written into .collection.json and file names (e.g. 'doc') */
   entryType?: string
-  /** File format to migrate */
   format?: MigrateFormat
   /** Entry schema registry key written into .collection.json (e.g. 'docSchema') */
   schema?: string
@@ -60,13 +59,12 @@ type MigrateOp =
   | { kind: 'write'; filePath: string; content: string }
 
 /**
- * Normalize a file/directory base name into a slug the whole CMS accepts.
- * Must satisfy parseSlug (/^[a-z0-9][a-z0-9-]*$/) — underscores are NOT allowed:
- * the public read path (readByUrlPath/read) rejects them, so a migrated page
- * carrying one is unreachable and now fails the production build outright
- * (static/index.ts's assertRoutableSlugs). Migration writes files directly
- * rather than through the write API, so its [SLUG] create guard does not cover
- * this — normalizing here is what keeps the migrated tree buildable.
+ * Normalizes a file/directory base name into a slug parseSlug accepts
+ * (/^[a-z0-9][a-z0-9-]*$/) — underscores are NOT allowed: the public read path
+ * rejects them, so a migrated page carrying one is unreachable and fails the
+ * production build (static/index.ts's assertRoutableSlugs). Migration writes
+ * files directly, bypassing the write API's [SLUG] create guard, so this
+ * normalization is the only thing that keeps the migrated tree buildable.
  */
 export function slugifyName(name: string): string {
   const slug = name
@@ -197,7 +195,6 @@ export async function migrate(options: MigrateOptions): Promise<{ opCount: numbe
     )
   }
 
-  // Resolve entry type / format / schema from flags, prompting for what's missing
   let entryType = options.entryType
   if (!entryType) {
     const result = await p.text({
@@ -282,27 +279,18 @@ export async function migrate(options: MigrateOptions): Promise<{ opCount: numbe
     }
   }
 
-  // migrate's target (`projectDir`, resolved by walking up from cwd to the
-  // nearest canopycms.config.ts — see cli/project-root.ts) is USUALLY the
-  // developer's live source repo, not a branch clone: migrate is meant to run
-  // once, before any branch workspace has ever been created, converting a
-  // plain content tree into CanopyCMS conventions. In that (common) case
-  // there is no cached schema/content-index to invalidate, and bumping the
-  // markers there would be a no-op nobody reads — no consumer treats the
-  // live project root as a cached branchRoot outside build/static mode, which
-  // skips the disk cache entirely — and would risk violating the
-  // never-write-.canopy-meta-at-the-project-root invariant documented on
+  // `projectDir` (resolved by cli/project-root.ts) is usually the live source repo,
+  // not a branch clone — migrate typically runs before any branch workspace exists.
+  // The live root has no cached schema/content-index to invalidate, and touching one
+  // would risk the never-write-.canopy-meta-at-the-project-root invariant owned by
   // BranchSchemaCache.
   //
-  // But projectDir CAN resolve to an actual branch clone workspace if the CLI
-  // happens to be invoked with cwd inside one: branch clones are full git
-  // clones (see GitManager.cloneRepo), so they carry their own
-  // canopycms.config.ts and satisfy findProjectRoot just as well as the true
-  // project root. Guard on that directly — a branch clone always has
-  // .canopy-meta/branch.json (BranchMetadataFileManager), the live project
-  // root never does — rather than assuming based on how migrate is "usually"
-  // invoked. Computed BEFORE applying ops so the same check gates both the
-  // surrogate schema lock below and the post-migration cache invalidation.
+  // But `projectDir` CAN be an actual branch clone if cwd is inside one (clones are
+  // full git checkouts, see GitManager.cloneRepo, with their own canopycms.config.ts).
+  // Guard on that directly: a branch clone always has .canopy-meta/branch.json, the
+  // live project root never does. Computed before applying ops so this one check
+  // gates both the surrogate schema lock below and the post-migration cache
+  // invalidation.
   const isBranchClone = Boolean(await BranchMetadataFileManager.loadOnly(projectDir))
 
   const applyOps = async (): Promise<void> => {
@@ -341,7 +329,6 @@ export async function migrate(options: MigrateOptions): Promise<{ opCount: numbe
     await invalidateBranchContentCaches(projectDir)
   }
 
-  // Sanity-check the result: all .collection.json files must parse
   try {
     const result = await loadCollectionMetaFiles(contentDir)
     p.log.success(

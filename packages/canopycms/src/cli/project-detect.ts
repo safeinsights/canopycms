@@ -4,9 +4,8 @@
  *
  * Everything here is best-effort by design: `init-deploy aws` must never fail
  * because a project has no git remote, no lockfile, or no git binary at all.
- * Each detector falls back to the value the templates used before detection
- * existed, so an npm project in a `main`-default repo gets byte-identical
- * output to what shipped previously.
+ * Each detector falls back to a fixed default (e.g. 'npm', 'main') it cannot
+ * verify, keeping the output deterministic instead of failing the command.
  */
 
 import fs from 'node:fs/promises'
@@ -17,13 +16,10 @@ import { filePathExists } from '../utils/fs'
 export type PackageManager = 'npm' | 'pnpm' | 'yarn' | 'yarn-berry'
 
 /**
- * The package-manager-specific command and file strings the deployment
- * templates need.
- *
- * These reach two very different places -- a GitHub Actions step and a
- * Dockerfile layer -- so they are kept together: a `Dockerfile.cms` that
- * installs with npm while the workflow installs with pnpm is exactly the
- * half-fix that moves a failure rather than removing it.
+ * Package-manager-specific command and file strings the deployment templates
+ * need, kept together because they reach two different places (a GitHub
+ * Actions step and a Dockerfile layer): a `Dockerfile.cms` using npm while
+ * the workflow uses pnpm would just move the failure, not remove it.
  */
 export interface PackageManagerCommands {
   /** Lockfile that identifies this manager, for the workflow's `paths:` filter. */
@@ -52,14 +48,13 @@ const COMMANDS: Record<PackageManager, PackageManagerCommands> = {
   pnpm: {
     lockfile: 'pnpm-lock.yaml',
     ciInstall: 'corepack enable && pnpm install --frozen-lockfile',
-    // pnpm-workspace.yaml holds settings the install obeys even in a single-package app: pnpm
-    // 11's `allowBuilds` decisions, `overrides`, `patchedDependencies`. pnpm 11 fails the
-    // install on any dependency build script without a decision, and an app with the editor has
-    // several (es5-ext through the editor, sharp through Next). The `[l]` glob keeps the file
-    // optional: COPY rejects a missing literal source, but accepts a pattern that matches
-    // nothing when another source matches. Measured 2026-09-13 on Docker Engine 29.6.2 (BuildKit
-    // v0.31.2): `COPY package.json pnpm-workspace.yam[l] ./` builds with no pnpm-workspace.yaml
-    // in the context, and the same line with the literal name fails with "not found".
+    // pnpm-workspace.yaml holds settings the install obeys even in a single-package app
+    // (pnpm 11's `allowBuilds` decisions, `overrides`, `patchedDependencies`); pnpm 11 fails
+    // the install on any dependency build script without a decision, and an app with the
+    // editor has several (es5-ext, sharp). The `[l]` glob keeps the file optional: on Docker
+    // Engine 29.6.2 (BuildKit v0.31.2), `COPY package.json pnpm-workspace.yam[l] ./` builds
+    // with no pnpm-workspace.yaml in the context, while the same line with the literal name
+    // fails with "not found".
     dockerCopy: 'COPY package.json pnpm-lock.yaml pnpm-workspace.yam[l] ./',
     dockerInstall: 'RUN corepack enable && pnpm install --frozen-lockfile',
     build: 'pnpm run build',
@@ -88,15 +83,13 @@ export function commandsFor(manager: PackageManager): PackageManagerCommands {
 }
 
 /**
- * Identify the adopter's package manager.
+ * Identifies the adopter's package manager. `packageManager` (the corepack
+ * field) wins when present — it's the declared intent; otherwise the lockfile
+ * decides; with neither, this returns 'npm'.
  *
- * `packageManager` (the corepack field) wins when present -- it is the
- * declared intent. Otherwise the lockfile decides. With neither, we return
- * 'npm', which is what every template hardcoded before this existed.
- *
- * Yarn is split into classic vs Berry because the two need different install
- * flags and a different Docker build context, and `yarn.lock`'s *name* cannot
- * tell them apart -- only its first lines can.
+ * Yarn splits into classic vs Berry because the two need different install
+ * flags and Docker build contexts, and `yarn.lock`'s name alone can't tell
+ * them apart — only its first lines can.
  */
 export async function detectPackageManager(projectDir: string): Promise<PackageManager> {
   for (const dir of await workspaceSearchPath(projectDir)) {
@@ -117,20 +110,17 @@ const MAX_WORKSPACE_DEPTH = 8
 /**
  * Directories to consult for package-manager evidence, nearest first.
  *
- * Normally just `projectDir`. The exception is a monorepo: in a pnpm/npm/yarn
- * workspace the lockfile and `packageManager` field live at the repo root,
- * while the Next.js app -- the directory an adopter naturally runs
- * `init-deploy aws` in, because that is where `canopycms init` told them to
- * run -- is `apps/site` and has neither. Looking only at `projectDir` there
- * returns 'npm' for a pnpm repo and writes `npm ci` into both the workflow and
- * Dockerfile.cms: silently wrong, and the exact failure this detection exists
- * to prevent.
+ * Normally just `projectDir`. In a pnpm/npm/yarn monorepo the lockfile and
+ * `packageManager` field live at the repo root, while the Next.js app —
+ * where `canopycms init` told the adopter to run `init-deploy aws` — is a
+ * subdirectory (e.g. `apps/site`) with neither. Looking only at `projectDir`
+ * there would return 'npm' for a pnpm repo and silently write `npm ci` into
+ * both the workflow and Dockerfile.cms.
  *
- * The walk starts only when `projectDir` has a package.json but no evidence of
- * its own -- the signal of a workspace member -- and stops at the directory
- * holding `.git`. Both bounds matter: without them a project with no lockfile
- * anywhere would keep climbing into unrelated directories and adopt a
- * stranger's package manager.
+ * The walk starts only when `projectDir` has a package.json but no evidence
+ * of its own (the signal of a workspace member), and stops at the directory
+ * holding `.git` — otherwise a project with no lockfile anywhere would climb
+ * into unrelated directories and adopt a stranger's package manager.
  */
 async function workspaceSearchPath(projectDir: string): Promise<string[]> {
   const start = path.resolve(projectDir)
@@ -180,15 +170,11 @@ async function isYarnBerryLockfile(projectDir: string): Promise<boolean> {
 }
 
 /**
- * The branch the deploy workflow should trigger on.
- *
- * Only `origin/HEAD` counts. The obvious-looking fallback -- "use the branch
- * that's checked out" -- would be worse than the hardcoded `main` it replaces:
- * an adopter scaffolding from a setup branch would get
- * `branches: [add-cms]` baked into the workflow, so the deploy would go quiet
- * the moment that branch merged. That silent-trigger failure is the exact LOW
- * this detection exists to fix, so we do not reintroduce it in a
- * harder-to-predict form.
+ * The branch the deploy workflow should trigger on. Only `origin/HEAD` counts —
+ * "use the currently checked-out branch" looks like a better fallback than the
+ * hardcoded `main` it replaces, but scaffolding from a setup branch would bake
+ * `branches: [add-cms]` into the workflow, so the deploy would silently go
+ * quiet the moment that branch merges.
  */
 export async function detectDefaultBranch(projectDir: string): Promise<string> {
   const head = await gitRaw(projectDir, ['symbolic-ref', '--short', 'refs/remotes/origin/HEAD'])

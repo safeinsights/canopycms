@@ -17,13 +17,12 @@ export interface UseSchemaManagerOptions {
 
 /**
  * Result of a schema mutation that has no success payload. Callers branch on
- * `ok` to get a real error message instead of a bare `false`/`null` — see
- * PR #106 review follow-up item 7: `useSchemaManager` used to swallow every
- * failure into a toast, leaving catch blocks in `Editor`/`CollectionEditor`
- * with nothing but a hardcoded generic message (or no inline error at all).
- * Result objects (rather than rethrowing) keep fire-and-forget call sites
- * (e.g. `updateOrder` from a reorder click) compiling without turning them
- * into unhandled rejections.
+ * `ok` to get a real error message instead of a bare `false`/`null`: every
+ * operation returns a result object rather than throwing, so a failure is
+ * surfaced per call site instead of collapsing into one generic toast.
+ * Result objects (rather than rethrowing) also keep fire-and-forget call
+ * sites (e.g. `updateOrder` from a reorder click) compiling without turning
+ * them into unhandled rejections.
  */
 export type SchemaOpResult = { ok: true } | { ok: false; error: string }
 
@@ -66,26 +65,7 @@ export interface UseSchemaManagerReturn {
 /**
  * Hook for managing schema operations (collections, entry types, ordering).
  *
- * Provides methods to create, update, and delete collections and entry types.
  * All operations require admin permissions on the server.
- *
- * @example
- * ```tsx
- * const {
- *   createCollection,
- *   deleteCollection,
- *   addEntryType,
- *   updateOrder,
- *   isLoading
- * } = useSchemaManager({ branchName: 'main', onSchemaChange: refreshEntries })
- *
- * // Create a new collection
- * await createCollection({
- *   name: 'posts',
- *   label: 'Blog Posts',
- *   entries: [{ name: 'post', format: 'mdx', schema: 'postSchema' }]
- * })
- * ```
  */
 export function useSchemaManager(options: UseSchemaManagerOptions): UseSchemaManagerReturn {
   const apiClient = useApiClient()

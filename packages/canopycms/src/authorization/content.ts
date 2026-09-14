@@ -1,18 +1,6 @@
 /**
- * Content access authorization
- *
- * This is the main entry point for authorization checks. It combines
- * branch-level and path-level access checks into a single API.
- *
- * Usage:
- * ```ts
- * import { checkContentAccess } from './authorization'
- *
- * const result = await checkContentAccess(deps, context, branchRoot, 'content/posts/my-post.mdx', user, 'edit')
- * if (result.allowed) {
- *   // User can edit the file
- * }
- * ```
+ * Main entry point for authorization checks: combines branch-level and
+ * path-level access into a single API.
  */
 
 import type { BranchContext } from '../types'
@@ -33,20 +21,13 @@ export type ContentAccessChecker = (
 ) => ContentAccessResult
 
 /**
- * Create a content-access checker that resolves the request-constant work once
- * (branch access, the settings/permissions root, and the path-permission rules)
- * and returns a synchronous per-path checker.
- *
- * Branch access, the resolved permissions root, and the loaded rules are identical
- * for a fixed `(context, branchRoot, user)`, so hoisting them out of the per-path
- * check avoids re-reading the permissions file (and, in modes with a separate
- * settings branch, re-ensuring the settings workspace) for every entry. This is
- * the batch primitive used by listing endpoints that check many paths per request.
- *
- * @param deps - Dependencies including branch access checker and path permissions loader
- * @param context - Branch context containing branch metadata
- * @param branchRoot - Root directory of the branch
- * @param user - User to check access for
+ * Resolve the request-constant work once -- branch access, the
+ * settings/permissions root and the path-permission rules, all identical for a
+ * fixed `(context, branchRoot, user)` -- and return a synchronous per-path
+ * checker. Hoisting it avoids re-reading the permissions file (and, in modes
+ * with a separate settings branch, re-ensuring the settings workspace) for
+ * every entry. This is the batch primitive for listing endpoints that check
+ * many paths per request.
  */
 export async function createContentAccessChecker(
   deps: ContentAccessDeps,
@@ -56,9 +37,6 @@ export async function createContentAccessChecker(
 ): Promise<ContentAccessChecker> {
   const branch = deps.checkBranchAccess(context, user)
 
-  // Load permissions from appropriate location based on operating mode
-  // Modes with separate settings branch: load from settings branch
-  // Other modes: load from the current branch
   let permissionsRoot = branchRoot
   const mode = deps.mode
   const strategy = operatingStrategy(mode)
@@ -69,8 +47,8 @@ export async function createContentAccessChecker(
         'getSettingsBranchRoot is required for modes that use separate settings branch',
       )
     }
-    // getSettingsBranchRoot must throw if it cannot load the settings branch
-    // This ensures we never fall back to reading permissions from the current branch
+    // getSettingsBranchRoot must throw if it cannot load the settings branch:
+    // falling back would read permissions from the branch being edited.
     permissionsRoot = await deps.getSettingsBranchRoot()
   }
 
@@ -92,17 +70,7 @@ export async function createContentAccessChecker(
   }
 }
 
-/**
- * Check content access by evaluating both branch and path permissions.
- * Path permissions are loaded dynamically from the branch root.
- *
- * @param deps - Dependencies including branch access checker and path permissions loader
- * @param context - Branch context containing branch metadata
- * @param branchRoot - Root directory of the branch
- * @param relativePath - Physical path relative to branch root (with embedded IDs)
- * @param user - User to check access for
- * @param level - Permission level to check ('read', 'edit', or 'review')
- */
+/** Single-path check; loads the path permissions from the branch root per call. */
 export async function checkContentAccess(
   deps: ContentAccessDeps,
   context: BranchContext,
@@ -115,9 +83,6 @@ export async function checkContentAccess(
   return check(relativePath, level)
 }
 
-/**
- * Create a content access checker with bound dependencies.
- */
 export function createCheckContentAccess(deps: ContentAccessDeps) {
   return (
     context: BranchContext,

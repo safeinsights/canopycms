@@ -47,18 +47,14 @@ export const BranchComments: React.FC<BranchCommentsProps> = ({
 }) => {
   const [showCarousel, setShowCarousel] = useState(false)
 
-  // Filter for branch-level threads
   const branchThreads = useMemo(() => comments.filter((t) => t.type === 'branch'), [comments])
 
-  // Show carousel if threads exist or if auto-focused
   const shouldShowCarousel = branchThreads.length > 0 || showCarousel || autoFocus
 
-  // Wrapper to add branch context to comment handler
   const handleAddComment = async (text: string, threadId?: string) => {
     await onAddComment(text, 'branch', undefined, undefined, threadId)
   }
 
-  // Show "New branch comment" button when no threads
   if (!shouldShowCarousel) {
     return (
       <Box>

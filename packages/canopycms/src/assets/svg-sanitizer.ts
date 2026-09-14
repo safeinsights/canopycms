@@ -1,20 +1,12 @@
 /**
  * SVG sanitization. Server-only - never import from client/editor code.
  *
- * Sanitizer choice: the design record (.claude/future-tasks/assets-media-system.md)
- * suggested `dompurify` + a lightweight DOM shim (e.g. `linkedom`) in place of the
- * heavier `jsdom`. In practice that pairing is unsafe: DOMPurify's own README warns
- * that immature DOM shims can cause it to fail in ways that produce an XSS hole even
- * when DOMPurify itself behaves correctly, and that is exactly what was reproduced
- * here - `createDOMPurify(linkedomWindow).sanitize(dirtySvg)` returned the INPUT
- * UNCHANGED (a `<script>`, `onload=`, and `<foreignObject>` all survived), because
- * linkedom's window has no `NodeFilter` global and DOMPurify silently no-ops when it
- * doesn't recognize the environment as supported. That is a dangerous failure mode
- * for a security boundary, so this module uses `sanitize-html` instead: it works
- * directly on the parser tree (htmlparser2, no DOM shim to be incomplete), is
- * actively maintained, and - verified empirically - correctly strips scripts, event
- * handler attributes, and `foreignObject` while preserving a valid, still-parseable
- * SVG document.
+ * Sanitizer choice: `dompurify` + a DOM shim (e.g. `linkedom`) is unsafe here - DOMPurify
+ * silently returns its input unchanged when the DOM shim lacks globals it expects (linkedom
+ * has no `NodeFilter`), producing an XSS hole with no error raised. This module uses
+ * `sanitize-html` instead: it works directly on the parser tree (htmlparser2, no DOM shim to
+ * be incomplete) and strips scripts, event handler attributes, and `foreignObject` while
+ * preserving a valid, still-parseable SVG document.
  *
  * Allowlist-based (not blocklist): only elements/attributes known to be safe survive.
  * `href`/`xlink:href` are further restricted to local fragment references (`#...`) so

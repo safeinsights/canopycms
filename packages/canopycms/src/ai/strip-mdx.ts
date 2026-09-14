@@ -1,20 +1,11 @@
 /**
  * Strip MDX-specific syntax from body content for AI consumption.
  *
- * Removes import/export statements (pure code, no content value).
- * Leaves JSX components intact — many carry semantic data in props
- * (e.g., <MatrixRow label="..." matches="1, 3" />) that would be lost
- * if stripped. AI models handle JSX props well for RAG.
- *
- * Handles:
- * - Single-line and multi-line import/export statements (brace tracking)
- * - Fenced code blocks (``` / ~~~) are preserved — imports/exports inside
- *   code blocks are not stripped
- */
-
-/**
- * Remove import/export statements and collapse resulting blank lines.
- * Preserves content inside fenced code blocks.
+ * Removes import/export statements (pure code, no content value) and collapses the blank
+ * lines left behind. Leaves JSX components intact — many carry semantic data in props (e.g.,
+ * <MatrixRow label="..." matches="1, 3" />) that would be lost if stripped; AI models handle
+ * JSX props well for RAG. Handles both single-line and multi-line (brace-tracked) statements;
+ * fenced code blocks (``` / ~~~) are preserved untouched.
  */
 export function stripMdxImports(body: string): string {
   const lines = body.split('\n')
@@ -26,14 +17,12 @@ export function stripMdxImports(body: string): string {
   for (const line of lines) {
     const trimmed = line.trim()
 
-    // Track fenced code blocks (``` or ~~~)
     if (trimmed.startsWith('```') || trimmed.startsWith('~~~')) {
       inCodeBlock = !inCodeBlock
       result.push(line)
       continue
     }
 
-    // Inside code blocks: keep everything
     if (inCodeBlock) {
       result.push(line)
       continue
@@ -52,9 +41,7 @@ export function stripMdxImports(body: string): string {
       continue
     }
 
-    // Detect top-level import/export statements
     if (/^import\s/.test(trimmed) || /^export\s/.test(trimmed)) {
-      // Count open/close braces to detect multi-line statements
       depth = 0
       for (const ch of line) {
         if (ch === '{' || ch === '(') depth++

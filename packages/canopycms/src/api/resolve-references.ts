@@ -13,20 +13,14 @@ export interface ResolveReferencesBody {
   ids: string[] // ContentId strings at runtime
 }
 
-/** Response type for resolved references */
 export type ResolveReferencesResponse = ApiResponse<{
   resolved: Record<string, unknown>
 }>
 
-// ============================================================================
-// Zod Schemas for Validation
-// ============================================================================
-
 /**
- * Resolution does sequential per-ID file I/O (see the loop below), so the
- * request body caps how much filesystem work a single authenticated caller
- * can force. 100 is a generous bound for real UI usage (a page's worth of
- * reference fields) while keeping worst-case latency/IO bounded (API-M1).
+ * Resolution does sequential per-ID file I/O, so the request body caps how much filesystem work
+ * a single caller can force. 100 is generous for real UI usage (a page's worth of reference
+ * fields) while keeping worst-case latency/IO bounded (API-M1).
  */
 const MAX_RESOLVE_REFERENCE_IDS = 100
 
@@ -61,10 +55,9 @@ const resolveReferencesHandler = async (
   // Resolve each ID to full document
   const resolver = new ReferenceResolver(store, idIndex)
 
-  // Build the access checker once: permissions are loaded a single time and reused
-  // for every id, instead of re-loading per id inside the loop. A failure here
-  // (e.g. settings workspace unavailable) surfaces as a handler error rather than
-  // being silently swallowed per id.
+  // Build the access checker once, reused for every id instead of re-loading per id in the loop.
+  // A failure here (e.g. settings workspace unavailable) surfaces as a handler error, not
+  // swallowed silently per id.
   const checkAccess = await ctx.services.createContentAccessChecker(
     branchContext,
     branchContext.branchRoot,
@@ -82,22 +75,15 @@ const resolveReferencesHandler = async (
         const access = checkAccess(resolvedPath.relativePath, 'read')
         if (!access.allowed) continue
 
-        // `resolveReferences: false` matches what the server-side resolver does
-        // (content-store.ts's resolveSingleReferenceOnce reads its targets the same way).
-        // Without it this endpoint resolved one level DEEPER than production, so a nested
-        // reference inside a target rendered as an object in live preview and as a bare ID
-        // string on the published site.
+        // `resolveReferences: false` matches the server-side resolver (content-store.ts's
+        // resolveSingleReferenceOnce), so a nested reference inside a target renders the same way
+        // in live preview as on the published site, instead of resolving one level deeper.
         const doc = await store.read(result.collection, result.slug, { resolveReferences: false })
         if (doc && doc.data) {
-          // Same shape the server-side resolver produces (content-store.ts's
-          // resolveSingleReferenceOnce): the target's data first, then the reserved keys.
-          //
-          // Both halves matter. The ORDER is the corruption guard -- a target modelling `id`
-          // as content must not shadow the real content ID. The extra KEYS are what stops the
-          // editor's live preview disagreeing with production: this endpoint feeds
-          // client-reference-resolver.ts, so without `urlPath` a component rendering
-          // `<a href={ref.urlPath}>` showed `undefined` while previewing and a real URL once
-          // published -- exactly the class of divergence live preview exists to rule out.
+          // Same shape as the server-side resolver: target data first, then the reserved keys.
+          // Order is the corruption guard (a target modelling `id` as content must not shadow the
+          // real content ID); the extra keys (incl. `urlPath`) keep live preview and production
+          // in sync for consumers like client-reference-resolver.ts.
           resolved[id] = buildResolvedReference(doc.data, {
             id,
             slug: result.slug,
@@ -118,10 +104,6 @@ const resolveReferencesHandler = async (
     data: { resolved },
   }
 }
-
-// ============================================================================
-// Route Definitions
-// ============================================================================
 
 /**
  * Resolve reference IDs to full document objects

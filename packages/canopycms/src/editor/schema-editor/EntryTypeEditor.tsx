@@ -3,13 +3,9 @@
 /**
  * EntryTypeEditor - Modal for creating/editing entry types within a collection.
  *
- * Entry types define the structure of content items:
- * - name: Machine-readable identifier (e.g., "post", "page")
- * - label: Human-readable display name
- * - format: Content format (md, mdx, json, yaml)
- * - fields: Schema registry key for field definitions
- * - default: Whether this is the default type for new items
- * - maxItems: Optional limit on number of items (1 = singleton-like)
+ * An entry type has a name (machine-readable id), label, format (md/mdx/json/
+ * yaml), schema (registry key for field definitions), a default flag, and an
+ * optional maxItems limit (1 behaves like a singleton).
  */
 
 import { useState, useCallback, useEffect } from 'react'
@@ -31,10 +27,6 @@ import { IconAlertCircle, IconLock } from '@tabler/icons-react'
 import type { ContentFormat } from '../../config'
 import type { CreateEntryTypeInput, UpdateEntryTypeInput } from '../../schema/schema-store-types'
 
-// ============================================================================
-// Types
-// ============================================================================
-
 export interface EntryTypeFormData {
   name: string
   label: string
@@ -45,7 +37,6 @@ export interface EntryTypeFormData {
 }
 
 export interface EntryTypeEditorProps {
-  /** Whether the modal is open */
   isOpen: boolean
   /** Entry type being edited (null for create mode) */
   editingEntryType: {
@@ -61,19 +52,11 @@ export interface EntryTypeEditorProps {
   availableSchemas: string[]
   /** Existing entry type names in the collection (for duplicate validation) */
   existingEntryTypeNames?: string[]
-  /** Called when save is clicked */
   onSave: (data: CreateEntryTypeInput | UpdateEntryTypeInput, isNew: boolean) => void
-  /** Called when modal is closed */
   onClose: () => void
-  /** Whether a save operation is in progress */
   isSaving?: boolean
-  /** Error message to display */
   error?: string | null
 }
-
-// ============================================================================
-// Constants
-// ============================================================================
 
 const FORMAT_OPTIONS: { value: ContentFormat; label: string }[] = [
   { value: 'json', label: 'JSON' },
@@ -81,10 +64,6 @@ const FORMAT_OPTIONS: { value: ContentFormat; label: string }[] = [
   { value: 'md', label: 'Markdown' },
   { value: 'mdx', label: 'MDX' },
 ]
-
-// ============================================================================
-// Component
-// ============================================================================
 
 export function EntryTypeEditor({
   isOpen,
@@ -100,7 +79,6 @@ export function EntryTypeEditor({
   const usageCount = editingEntryType?.usageCount ?? 0
   const isLocked = isEditMode && usageCount > 0
 
-  // Form state
   const [formData, setFormData] = useState<EntryTypeFormData>({
     name: '',
     label: '',
@@ -110,10 +88,8 @@ export function EntryTypeEditor({
     maxItems: undefined,
   })
 
-  // Local validation error
   const [validationError, setValidationError] = useState<string | null>(null)
 
-  // Reset form when modal opens or editing item changes
   /* eslint-disable react-hooks/set-state-in-effect -- intentional: sync form state from props on open */
   useEffect(() => {
     if (isOpen) {
@@ -141,7 +117,6 @@ export function EntryTypeEditor({
   }, [isOpen, editingEntryType, availableSchemas])
   /* eslint-enable react-hooks/set-state-in-effect */
 
-  // Update a form field
   const updateField = useCallback(
     <K extends keyof EntryTypeFormData>(field: K, value: EntryTypeFormData[K]) => {
       setFormData((prev) => ({ ...prev, [field]: value }))
@@ -150,7 +125,6 @@ export function EntryTypeEditor({
     [],
   )
 
-  // Validate form
   const validate = useCallback((): boolean => {
     if (!isEditMode && !formData.name.trim()) {
       setValidationError('Name is required')
@@ -166,7 +140,6 @@ export function EntryTypeEditor({
       setValidationError('Name must be 64 characters or less')
       return false
     }
-    // Check for duplicate names (only in create mode)
     if (!isEditMode && existingEntryTypeNames.includes(formData.name.trim())) {
       setValidationError('Entry type with this name already exists in this collection')
       return false
@@ -178,12 +151,10 @@ export function EntryTypeEditor({
     return true
   }, [formData, isEditMode, existingEntryTypeNames])
 
-  // Handle save
   const handleSave = useCallback(() => {
     if (!validate()) return
 
     if (isEditMode) {
-      // Only include changed fields for update
       const updates: UpdateEntryTypeInput = {}
       if (formData.label !== (editingEntryType?.label || '')) {
         updates.label = formData.label || undefined
@@ -202,7 +173,6 @@ export function EntryTypeEditor({
       }
       onSave(updates, false)
     } else {
-      // Create new entry type
       const createData: CreateEntryTypeInput = {
         name: formData.name.trim(),
         format: formData.format,
@@ -221,7 +191,6 @@ export function EntryTypeEditor({
     }
   }, [formData, isEditMode, editingEntryType, validate, onSave])
 
-  // Schema options for select
   const schemaOptions = availableSchemas.map((key) => ({
     value: key,
     label: key,
@@ -249,7 +218,6 @@ export function EntryTypeEditor({
           </Alert>
         )}
 
-        {/* Name - only editable in create mode */}
         <TextInput
           label="Name"
           description="Machine-readable identifier (e.g., post, page, article)"
@@ -260,7 +228,6 @@ export function EntryTypeEditor({
           required={!isEditMode}
         />
 
-        {/* Label */}
         <TextInput
           label="Label"
           description="Human-readable display name"
@@ -323,7 +290,6 @@ export function EntryTypeEditor({
           />
         </Tooltip>
 
-        {/* Default toggle */}
         <Switch
           label="Default entry type"
           description="Use this type when adding new items to the collection"
@@ -331,7 +297,6 @@ export function EntryTypeEditor({
           onChange={(e) => updateField('default', e.currentTarget.checked)}
         />
 
-        {/* Max items */}
         <NumberInput
           label="Max Items"
           description="Limit number of items (leave empty for unlimited, use 1 for singleton-like behavior)"
@@ -351,7 +316,6 @@ export function EntryTypeEditor({
           </Text>
         )}
 
-        {/* Actions */}
         <Group justify="flex-end" gap="sm" mt="md">
           <Button variant="subtle" onClick={onClose} disabled={isSaving}>
             Cancel

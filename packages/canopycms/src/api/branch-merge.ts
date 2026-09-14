@@ -48,7 +48,6 @@ const markAsMergedHandler = async (
     }
   }
 
-  // Optionally verify PR is actually merged via GitHub API
   if (ctx.services.githubService) {
     try {
       const pr = await ctx.services.githubService.getPullRequest(
@@ -97,7 +96,6 @@ const markAsMergedHandler = async (
 
 /**
  * Mark a branch as merged and archived after PR is merged on GitHub
- * POST /:branch/mark-merged
  *
  * Deliberately no 'submittableBranch' guard: needs no new guard because the
  * handler above already requires status === 'submitted' AND a recorded

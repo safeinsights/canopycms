@@ -58,8 +58,7 @@ export const ImageField: React.FC<ImageFieldProps> = ({
   const [pickerOpen, setPickerOpen] = useState(false)
   const [cropRequest, setCropRequest] = useState<CropRequest | null>(null)
   // Dropzone-level rejections (wrong type/too large) never reach useAssetUpload
-  // (Dropzone filters them out before onDrop fires), so they need their own
-  // error slot rather than piggybacking on upload.error.
+  // (filtered before onDrop fires), so they need their own error slot.
   const [dropError, setDropError] = useState<string | null>(null)
   const altInputRef = useRef<HTMLInputElement>(null)
   const justCommittedRef = useRef(false)
@@ -70,11 +69,9 @@ export const ImageField: React.FC<ImageFieldProps> = ({
   const previewSrc = value
     ? assetUrl({ src: value.src }, { width: PREVIEW_WIDTH, crop: value.crop, baseUrl })
     : undefined
-  // Broken-preview fallback, consistent with AssetCard's thumbnail fallback
-  // (same icon/copy, same "adjust state during render" reset pattern rather
-  // than a useEffect - see AssetCard.tsx for the rationale). This covers
-  // both an asset that was broken at upload time (pre-existing content) and
-  // a transform that fails for some other reason at render time.
+  // Broken-preview fallback, mirroring AssetCard.tsx's thumbnail fallback (same
+  // icon/copy, same reset-during-render pattern). Covers both an asset broken
+  // at upload time and a transform failing at render time.
   const [previewFailed, setPreviewFailed] = useState(false)
   const [prevPreviewSrc, setPrevPreviewSrc] = useState(previewSrc)
   if (previewSrc !== prevPreviewSrc) {
@@ -82,9 +79,8 @@ export const ImageField: React.FC<ImageFieldProps> = ({
     setPreviewFailed(false)
   }
 
-  // Focus the alt input right after a new image commits (pick or upload),
-  // so the editor's next keystroke goes straight into the field most likely
-  // to need attention.
+  // Focuses the alt input right after a new image commits (pick or upload),
+  // so the next keystroke lands in the field most likely to need attention.
   useEffect(() => {
     if (justCommittedRef.current) {
       justCommittedRef.current = false
@@ -96,9 +92,8 @@ export const ImageField: React.FC<ImageFieldProps> = ({
     justCommittedRef.current = true
     onChange({
       src: asset.src,
-      // Preserve the current alt text on replace - it often still describes
-      // the new image (e.g. "hero photo"), and the editor can always edit it.
-      // Selecting into an empty field has no prior alt, so it stays ''.
+      // Preserves the current alt text on replace (it often still fits); an
+      // empty field has no prior alt, so it stays ''.
       alt: value?.alt ?? '',
       ...(asset.width !== undefined ? { width: asset.width } : {}),
       ...(asset.height !== undefined ? { height: asset.height } : {}),

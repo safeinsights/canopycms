@@ -9,7 +9,6 @@
  * ```
  */
 
-// Re-export all types
 export type {
   // Field types
   PrimitiveFieldType,
@@ -69,10 +68,8 @@ export type {
   ValidateEntryHook,
 } from './types'
 
-// Re-export type constants
 export { primitiveFieldTypes, fieldTypes } from './types'
 
-// Re-export schemas (for advanced use cases)
 export { CanopyConfigSchema, getConfigDefaults, DEFAULT_PROD_WORKSPACE } from './schemas/config'
 export {
   fieldSchema,
@@ -85,7 +82,6 @@ export { collectionSchema, entryTypeSchema, relativePathSchema } from './schemas
 export { permissionTargetSchema, pathPermissionSchema } from './schemas/permissions'
 export { mediaSchema } from './schemas/media'
 
-// Re-export utilities
 export { flattenSchema, normalizePathValue } from './flatten'
 export { validateCanopyConfig, ensureSelectFieldsHaveOptions } from './validation'
 export { defineCanopyConfig, composeCanopyConfig, type CanopyConfigAuthoring } from './helpers'

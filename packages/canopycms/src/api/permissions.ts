@@ -31,10 +31,6 @@ export type GetUserMetadataResponse = ApiResponse<{
   user: UserSearchResult | null
 }>
 
-// ============================================================================
-// Zod Schemas for Validation
-// ============================================================================
-
 const permissionTargetSchema = z.object({
   allowedUsers: z.array(z.string()).optional(),
   allowedGroups: z.array(z.string()).optional(),
@@ -54,10 +50,9 @@ const updatePermissionsBodySchema = z.object({
 
 const searchUsersParamsSchema = z.object({
   q: z.string(),
-  // Coerced + range-checked (consistent with api/entries.ts's listEntriesParamsSchema)
-  // rather than z.string() + an unchecked parseInt(), which silently produced NaN
-  // for a non-numeric limit (API-M2). Capped like listEntries so a caller cannot
-  // request an unbounded page from the auth provider.
+  // Coerced + range-checked, not z.string() + an unchecked parseInt() (which silently produced
+  // NaN for a non-numeric limit): capped like entries.ts's listEntriesParamsSchema so a caller
+  // can't request an unbounded page from the auth provider.
   limit: z.coerce.number().int().min(1).max(MAX_ENTRIES_PER_PAGE).optional(),
 })
 
@@ -69,9 +64,6 @@ export type UpdatePermissionsBody = z.infer<typeof updatePermissionsBodySchema>
 export type SearchUsersParams = z.infer<typeof searchUsersParamsSchema>
 export type GetUserMetadataParams = z.infer<typeof getUserMetadataParamsSchema>
 
-/**
- * Get current permissions (admin only)
- */
 const getPermissionsHandler = async (
   _gc: Record<string, never>,
   ctx: ApiContext,
@@ -100,9 +92,6 @@ const getPermissionsHandler = async (
   }
 }
 
-/**
- * Update permissions (admin only)
- */
 const updatePermissionsHandler = async (
   _gc: Record<string, never>,
   ctx: ApiContext,
@@ -139,9 +128,8 @@ const updatePermissionsHandler = async (
       }
     })
 
-    // Commit and push (mode-aware). A push failure means the change is saved
-    // to the branch working tree but NOT durably persisted (API-H1) - surface
-    // that to the client instead of reporting a bare 200.
+    // Commit and push (mode-aware): a push failure means the change is saved to the branch
+    // working tree but NOT durably persisted — surface that to the client, not a bare 200.
     const commitResult = await commitSettings(ctx, {
       context,
       branchRoot: context.branchRoot,
@@ -204,18 +192,13 @@ const searchUsersHandler = async (
 }
 
 /**
- * List groups (for permission UI)
+ * List groups (for permission UI). Merges BOTH group universes — the auth provider's and
+ * Canopy's own internal groups from groups.json (see PermissionGroupOption in auth/types.ts) —
+ * since both are valid `allowedGroups` targets.
  *
- * Merges BOTH group universes, because both are valid `allowedGroups` targets:
- * the auth provider's groups and Canopy's own internal groups from groups.json
- * (see PermissionGroupOption in auth/types.ts). Feeding this endpoint from the
- * auth plugin alone made internally-created groups unreachable from the
- * Permission Manager's picker -- they could only be granted a path permission
- * by hand-editing permissions.json.
- *
- * Internal entries are name-only (no members, no memberCount): this endpoint is
- * `privileged` (admin or reviewer) whereas `groups.getInternal` is admin-only,
- * so member identities and counts must not leak through here.
+ * Internal entries are name-only (no members, no memberCount): this endpoint is `privileged`
+ * (admin or reviewer) whereas `groups.getInternal` is admin-only, so member identities and
+ * counts must not leak through here.
  */
 const listGroupsHandler = async (
   _gc: Record<string, never>,
@@ -239,13 +222,11 @@ const listGroupsHandler = async (
     const file = await loadGroupsFile(context.branchRoot, mode)
     const internalGroups = deriveInternalGroups(file?.groups ?? [], ctx.services.bootstrapAdminIds)
 
-    // Deduplicate by ID, internal first so it wins a collision. The two ID
-    // spaces are not namespaced against each other, but `checkPathPermission`
-    // matches `allowedGroups` by ID string against one flattened `user.groups`
-    // list -- so two same-ID groups ARE a single permission target, and
-    // emitting both would misrepresent what enforcement actually does.
-    // (Reserved IDs can never arrive from the provider: stripReservedGroups in
-    // user.ts removes them before they reach `user.groups`.)
+    // Deduplicate by ID, internal first so it wins a collision: the two ID spaces aren't
+    // namespaced against each other, but `checkPathPermission` matches `allowedGroups` by ID
+    // string against one flattened `user.groups` list, so two same-ID groups ARE a single
+    // permission target — emitting both would misrepresent enforcement. (Reserved IDs never
+    // arrive from the provider: stripReservedGroups in user.ts removes them first.)
     const byId = new Map<string, PermissionGroupOption>()
 
     for (const group of internalGroups) {
@@ -260,9 +241,8 @@ const listGroupsHandler = async (
     for (const group of externalGroups) {
       const collision = byId.get(group.id)
       if (collision) {
-        // Keep the internal entry, but record that granting this ID ALSO
-        // reaches the provider group's membership -- the picker surfaces that
-        // so an admin isn't shown a name-and-members set narrower than the
+        // Keep the internal entry, but record that granting this ID ALSO reaches the provider
+        // group's membership, so the picker doesn't show an admin a narrower set than the
         // grant's real reach.
         collision.source = 'both'
         continue
@@ -307,10 +287,6 @@ const getUserMetadataHandler = async (
     }
   }
 }
-
-// ============================================================================
-// Route Definitions with defineEndpoint
-// ============================================================================
 
 /**
  * Get current permissions (admin only)

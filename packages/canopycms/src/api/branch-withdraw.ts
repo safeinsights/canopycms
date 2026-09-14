@@ -38,8 +38,6 @@ const withdrawBranchHandler = async (
     }
   }
 
-  // Verify branch is in a withdrawable status.
-  //
   // 'approved' is accepted alongside 'submitted' because withdraw is its only
   // non-destructive exit. Every non-'editing' status blocks content writes, and
   // request-changes requires 'submitted' -- so before this, an approved branch
@@ -58,17 +56,17 @@ const withdrawBranchHandler = async (
     }
   }
 
-  // Convert PR to draft (sync via githubService, or async via task queue) --
-  // but a PR closed on GitHub without merging can't be converted to draft.
-  // Withdraw (back to 'editing') is the deliberate recovery path for a
-  // closed-unmerged PR, and a later resubmit opens a fresh PR via
-  // createOrUpdatePullRequest, so skip the conversion in that case.
+  // syncConvertToDraft converts the PR to draft, but a PR closed on GitHub
+  // without merging can't be converted. Withdraw (back to 'editing') is the
+  // deliberate recovery path for a closed-unmerged PR; a later resubmit
+  // opens a fresh PR via createOrUpdatePullRequest, so skip the conversion
+  // in that case.
   const wasClosed = branchContext.branch.pullRequestState === 'closed'
   if (!wasClosed) {
     await syncConvertToDraft(ctx, branchContext)
   }
 
-  // Update branch status to 'editing'. A closed PR is dead after withdraw
+  // A closed PR is dead after withdraw
   // (resubmit opens a fresh one), so drop its metadata rather than leaving a
   // stale PR chip on an editing branch; a drafted PR is still live, so keep it.
   const meta = getBranchMetadataFileManager(branchContext.branchRoot, branchContext.baseRoot)
@@ -88,7 +86,6 @@ const withdrawBranchHandler = async (
 
 /**
  * Withdraw a submitted branch, converting the PR to draft and unlocking editing
- * POST /:branch/withdraw
  *
  * Deliberately no 'submittableBranch' guard: withdraw is the only self-serve
  * recovery path for a base branch wrongly stuck in 'submitted' (e.g. a failed

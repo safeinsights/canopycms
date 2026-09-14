@@ -8,7 +8,6 @@ import { getErrorMessage } from '../utils/error'
 import { sanitizeBranchName } from '../paths/branch-name'
 
 /**
- * Result of a GitHub sync operation.
  * The caller uses this to update branch metadata.
  */
 export interface GitHubSyncResult {
@@ -18,7 +17,6 @@ export interface GitHubSyncResult {
 }
 
 /**
- * Submit a branch: create or update a PR.
  * Uses githubService directly if available, otherwise queues a task for the worker.
  */
 export async function syncSubmitPr(
@@ -142,8 +140,8 @@ export async function syncSubmitPr(
 }
 
 /**
- * Convert a PR to draft (used by withdraw and request-changes).
- * Uses githubService directly if available, otherwise queues a task.
+ * Used by withdraw and request-changes. Uses githubService directly if
+ * available, otherwise queues a task.
  */
 export async function syncConvertToDraft(ctx: ApiContext, context: BranchContext): Promise<void> {
   if (!context.branch.pullRequestNumber) return
@@ -173,9 +171,6 @@ export async function syncConvertToDraft(ctx: ApiContext, context: BranchContext
   }
 }
 
-/**
- * Enqueue a GitHub task for the EC2 worker.
- */
 async function enqueueGitHubTask(
   ctx: ApiContext,
   context: BranchContext,

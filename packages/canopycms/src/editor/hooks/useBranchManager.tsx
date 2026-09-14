@@ -51,9 +51,6 @@ const confirmModalHandlers = (onConfirm: () => Promise<void>, onDismiss: () => v
   }
 }
 
-/**
- * Helper function to show confirmation modal for branch submit action.
- */
 const showSubmitConfirmation = (
   branchName: string,
   onConfirm: () => Promise<void>,
@@ -72,9 +69,6 @@ const showSubmitConfirmation = (
   })
 }
 
-/**
- * Helper function to show confirmation modal for branch withdraw action.
- */
 const showWithdrawConfirmation = (
   branchName: string,
   onConfirm: () => Promise<void>,
@@ -94,8 +88,6 @@ const showWithdrawConfirmation = (
 }
 
 /**
- * Helper function to show confirmation modal for branch delete action.
- *
  * Unlike submit/withdraw (both reversible), delete is irreversible -- it
  * unlinks branch.json, removes the clone, and removes the branch head from
  * the local git mirror. Before this, `handleDelete` below called
@@ -123,16 +115,12 @@ const showDeleteConfirmation = (
     // (apps/test-app/e2e/fixtures/branch-page.ts's deleteBranch) already
     // anticipated a delete confirmation and clicks
     // [data-testid="confirm-delete-branch"] when it appears. Without this the
-    // modal opens, nothing dismisses it, and the branch never disappears --
-    // which is exactly how the e2e suite caught this confirmation being added.
+    // modal opens, nothing dismisses it, and the branch never disappears.
     confirmProps: { color: 'red', 'data-testid': 'confirm-delete-branch' },
     ...confirmModalHandlers(onConfirm, onDismiss),
   })
 }
 
-/**
- * Branch summary for display in BranchManager component.
- */
 export interface BranchSummary {
   name: string
   status: string
@@ -179,24 +167,12 @@ export interface BranchSummary {
 }
 
 export interface UseBranchManagerOptions {
-  /**
-   * Initial branch name.
-   */
   initialBranch: string
 
-  /**
-   * Operating mode (dev, etc.).
-   */
   operatingMode: OperatingMode
 
-  /**
-   * Callback to set busy state.
-   */
   setBusy: (busy: boolean) => void
 
-  /**
-   * Current comments (for computing comment counts per branch).
-   */
   comments: CommentThread[]
 }
 
@@ -216,46 +192,11 @@ export interface UseBranchManagerReturn {
 
 /**
  * Custom hook for managing git branches.
- *
- * Handles:
- * - Loading branches from API
- * - Branch switching with unsaved changes confirmation
- * - Creating new branches
- * - Branch workflow (submit, withdraw, request changes)
- * - URL synchronization for branch parameter
- *
- * @example
- * ```tsx
- * const {
- *   branchName,
- *   branches,
- *   currentBranch,
- *   handleBranchChange,
- *   handleCreateBranch,
- *   handleSubmit
- * } = useBranchManager({
- *   initialBranch: 'main',
- *   operatingMode: 'collaboration',
- *   selectedPath,
- *   drafts,
- *   loadedValues,
- *   setDrafts,
- *   setLoadedValues,
- *   setSelectedId,
- *   setEntries,
- *   onEntriesRefresh: refreshEntries,
- *   onCommentsLoad: loadComments,
- *   setBusy
- * })
- * ```
  */
 export function useBranchManager(options: UseBranchManagerOptions): UseBranchManagerReturn {
   const apiClient = useApiClient()
   const { mutate: globalMutate } = useSWRConfig()
   const [branchName, setBranchName] = useState<string>(options.initialBranch)
-  // Automatic load, deduped by SWR (e.g. React Strict Mode's double effect
-  // invoke collapses to a single request). Not keyed by branchName -- the
-  // endpoint returns every branch regardless of which one is selected.
   const {
     data: branchesData,
     error: branchesError,
@@ -270,7 +211,7 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
     }
   }, [branchesData, branchName])
 
-  // Surface/clear the sticky error toast the same way loadBranches() used to.
+  // Surfaces/clears the sticky error toast the same way loadBranches() does.
   useEffect(() => {
     if (branchesError) {
       console.error(branchesError)
@@ -306,7 +247,6 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
     branches.find((b) => b.name === branchName) ??
     branches.find((b) => b.name === sanitizeBranchName(branchName))
 
-  // Compute branch summaries with comment counts
   const branchSummaries = useMemo(() => {
     return branches.map((b) => {
       const branchComments = b.name === branchName ? options.comments : []
@@ -367,8 +307,6 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
     } catch (err) {
       console.error(err)
       const message = err instanceof Error ? err.message : 'Failed to load branches'
-      // Fixed id: retries update the existing toast instead of stacking; sticky
-      // because the editor cannot function without the branch list.
       notifications.show({
         id: 'canopy-branches-load-failed',
         message,
@@ -441,11 +379,6 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
             options.setBusy(false)
           }
         },
-        // Dismissal is not an error. Rejecting here meant clicking Cancel
-        // logged a console error at the only call site (Editor.tsx catches
-        // these into console.error), which is both noise and a trip hazard
-        // for the CI=1 stray-console gate. Settled once, by onCancel OR
-        // onClose, so an Escape/overlay dismissal can't leave this pending.
         () => resolve(),
       )
     })
@@ -494,11 +427,6 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
             resolve()
           }
         },
-        // Dismissal is not an error. Rejecting here meant clicking Cancel
-        // logged a console error at the only call site (Editor.tsx catches
-        // these into console.error), which is both noise and a trip hazard
-        // for the CI=1 stray-console gate. Settled once, by onCancel OR
-        // onClose, so an Escape/overlay dismissal can't leave this pending.
         () => resolve(),
       )
     })
@@ -508,7 +436,6 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
     await loadBranches()
   }
 
-  // Sync branch to URL parameter
   useEffect(() => {
     if (typeof window === 'undefined') return
     if (!branchName) return

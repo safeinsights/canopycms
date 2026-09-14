@@ -1,7 +1,3 @@
-/**
- * Types for PermissionManager component
- */
-
 import type { PathPermission, PermissionLevel, PermissionTarget } from '../../config'
 import type {
   UserSearchResult,
@@ -16,21 +12,15 @@ export interface PermissionManagerProps {
   collections?: EditorCollection[]
   /** Content root path (default: 'content') */
   contentRoot?: string
-  /** Current permissions */
   permissions: PathPermission[]
   /** Whether user can edit permissions (admin only) */
   canEdit: boolean
-  /** Handler to save updated permissions */
   onSave?: (permissions: PathPermission[]) => Promise<void>
-  /** Handler to search users */
   onSearchUsers?: (query: string, limit?: number) => Promise<UserSearchResult[]>
-  /** Handler to get user metadata by ID */
   onGetUserMetadata?: (userId: string) => Promise<UserSearchResult | null>
   /** Handler to list groups (internal + external, tagged by `source`) */
   onListGroups?: () => Promise<PermissionGroupOption[]>
-  /** Close handler */
   onClose?: () => void
-  /** Loading state */
   loading?: boolean
   /** Optional: actual filesystem content tree (for entries not in schema) */
   contentTree?: ContentNode
@@ -61,7 +51,6 @@ export interface GroupSelectItem {
   source: GroupSource
 }
 
-/** Re-export for convenience */
 export type {
   PathPermission,
   PermissionLevel,

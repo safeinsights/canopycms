@@ -32,7 +32,7 @@ export const AssetCard: React.FC<AssetCardProps> = ({ asset, baseUrl, onSelect, 
   const thumbnailSrc = assetUrl(asset, { width: THUMBNAIL_WIDTH, baseUrl })
   const [thumbnailFailed, setThumbnailFailed] = useState(false)
   // Reset the error state if the underlying asset/src changes, so a
-  // previously-broken thumbnail gets another chance to load. Adjusting state
+  // thumbnail that failed earlier gets another chance to load. Adjusting state
   // during render (rather than in a useEffect) avoids an extra render pass -
   // see https://react.dev/learn/you-might-not-need-an-effect#adjusting-some-state-when-a-prop-changes
   const [prevThumbnailSrc, setPrevThumbnailSrc] = useState(thumbnailSrc)

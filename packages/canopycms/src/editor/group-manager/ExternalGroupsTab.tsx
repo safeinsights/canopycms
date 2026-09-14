@@ -1,9 +1,5 @@
 'use client'
 
-/**
- * External groups tab component
- */
-
 import React from 'react'
 import { Alert, Group, Loader, Paper, ScrollArea, Stack, Text, TextInput } from '@mantine/core'
 import { IconAlertCircle, IconBuilding, IconSearch } from '@tabler/icons-react'
@@ -28,7 +24,6 @@ export const ExternalGroupsTab: React.FC<ExternalGroupsTabProps> = ({
   onSearchQueryChange,
   canSearch,
 }) => {
-  // Read-only view (when !canEdit)
   if (!canEdit) {
     return (
       <div

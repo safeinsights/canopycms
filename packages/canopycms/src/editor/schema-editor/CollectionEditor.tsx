@@ -3,13 +3,10 @@
 /**
  * CollectionEditor - Modal for creating/editing collections.
  *
- * Collections are containers for content items with:
- * - name: Machine-readable identifier (e.g., "posts", "pages")
- * - label: Human-readable display name
- * - entries: Array of entry types defining what content can be created
- *
- * When creating a collection, at least one entry type is required.
- * When editing, only name and label can be changed (entry types are managed separately).
+ * A collection has a name (machine-readable id), label (display name), and
+ * entries (entry types defining what content can be created). Create mode
+ * requires at least one entry type; edit mode only allows changing name and
+ * label (entry types are managed separately).
  */
 
 import { useState, useCallback, useEffect } from 'react'
@@ -48,10 +45,6 @@ import { ConfirmDeleteModal } from '../components/ConfirmDeleteModal'
 import { getErrorMessage } from '../../utils/error'
 import type { SchemaOpResult } from '../hooks/useSchemaManager'
 
-// ============================================================================
-// Types
-// ============================================================================
-
 export interface CollectionFormData {
   name: string
   label: string
@@ -79,7 +72,6 @@ export interface ExistingCollection {
 }
 
 export interface CollectionEditorProps {
-  /** Whether the modal is open */
   isOpen: boolean
   /** Collection being edited (null for create mode) */
   editingCollection: ExistingCollection | null
@@ -105,17 +97,10 @@ export interface CollectionEditorProps {
     collectionPath: LogicalPath,
     entryTypeName: string,
   ) => Promise<SchemaOpResult> | void
-  /** Called when modal is closed */
   onClose: () => void
-  /** Whether a save operation is in progress */
   isSaving?: boolean
-  /** Error message to display */
   error?: string | null
 }
-
-// ============================================================================
-// Component
-// ============================================================================
 
 export function CollectionEditor({
   isOpen,
@@ -132,7 +117,6 @@ export function CollectionEditor({
 }: CollectionEditorProps) {
   const isEditMode = editingCollection !== null
 
-  // Form state
   const [formData, setFormData] = useState<CollectionFormData>({
     name: '',
     label: '',
@@ -142,24 +126,20 @@ export function CollectionEditor({
   // Slug field state (edit mode only)
   const [slug, setSlug] = useState('')
 
-  // Local validation error
   const [validationError, setValidationError] = useState<string | null>(null)
 
-  // Entry type editor state
   const [entryTypeEditorOpen, setEntryTypeEditorOpen] = useState(false)
   const [editingEntryType, setEditingEntryType] = useState<ExistingEntryType | null>(null)
   const [editingEntryTypeIndex, setEditingEntryTypeIndex] = useState<number | null>(null)
   const [entryTypeSaving, setEntryTypeSaving] = useState(false)
   const [entryTypeError, setEntryTypeError] = useState<string | null>(null)
 
-  // Delete entry type confirmation state
   const [deleteEntryTypeModalOpen, setDeleteEntryTypeModalOpen] = useState(false)
   const [deletingEntryType, setDeletingEntryType] = useState<{
     entryType: ExistingEntryType | CreateEntryTypeInput
     index: number
   } | null>(null)
 
-  // Reset form when modal opens or editing item changes
   useEffect(() => {
     if (isOpen) {
       if (editingCollection) {
@@ -168,7 +148,7 @@ export function CollectionEditor({
           label: editingCollection.label || '',
           entries: [], // Entry types are managed separately in edit mode
         })
-        // Extract slug from logical path (e.g., "content/posts.abc123" -> "posts")
+        // Slug is the logical path's last segment before its embedded id (e.g. "posts.abc123" -> "posts").
         const pathParts = editingCollection.logicalPath.split('/')
         const lastPart = pathParts[pathParts.length - 1]
         const slugPart = lastPart?.split('.')[0] || ''
@@ -185,7 +165,6 @@ export function CollectionEditor({
     }
   }, [isOpen, editingCollection])
 
-  // Update a form field
   const updateField = useCallback(
     <K extends keyof CollectionFormData>(field: K, value: CollectionFormData[K]) => {
       setFormData((prev) => ({ ...prev, [field]: value }))
@@ -194,14 +173,13 @@ export function CollectionEditor({
     [],
   )
 
-  // Validate form
   const validate = useCallback((): boolean => {
     if (!formData.name.trim()) {
       setValidationError('Name is required')
       return false
     }
-    // Enforced in both create and edit mode (UI-M3): the server rejects
-    // unsafe names, but validate here for immediate feedback.
+    // Enforced in both create and edit mode: the server rejects unsafe
+    // names too, but this validates for immediate feedback.
     if (!/^[a-z][a-z0-9-]*$/.test(formData.name)) {
       setValidationError(
         'Name must start with a letter and contain only lowercase letters, numbers, and hyphens',
@@ -219,12 +197,10 @@ export function CollectionEditor({
     return true
   }, [formData, isEditMode])
 
-  // Handle save
   const handleSave = useCallback(() => {
     if (!validate()) return
 
     if (isEditMode) {
-      // Only include changed fields for update
       const updates: UpdateCollectionInput = {}
       if (formData.name !== (editingCollection?.name || '')) {
         updates.name = formData.name.trim() || undefined
@@ -232,7 +208,6 @@ export function CollectionEditor({
       if (formData.label !== (editingCollection?.label || '')) {
         updates.label = formData.label || undefined
       }
-      // Include slug if changed
       const pathParts = editingCollection?.logicalPath.split('/') || []
       const lastPart = pathParts[pathParts.length - 1]
       const currentSlug = lastPart?.split('.')[0] || ''
@@ -241,7 +216,6 @@ export function CollectionEditor({
       }
       onSave(updates, false)
     } else {
-      // Create new collection
       const createData: CreateCollectionInput = {
         name: formData.name.trim(),
         entries: formData.entries,
@@ -256,7 +230,6 @@ export function CollectionEditor({
     }
   }, [formData, slug, isEditMode, editingCollection, parentPath, validate, onSave])
 
-  // Entry type management (create mode)
   const handleOpenAddEntryType = useCallback(() => {
     setEditingEntryType(null)
     setEditingEntryTypeIndex(null)
@@ -274,7 +247,6 @@ export function CollectionEditor({
   const handleEntryTypeSave = useCallback(
     async (data: CreateEntryTypeInput | Partial<CreateEntryTypeInput>, isNew: boolean) => {
       if (isEditMode && editingCollection) {
-        // In edit mode, delegate to parent handlers
         setEntryTypeSaving(true)
         setEntryTypeError(null)
         try {
@@ -294,9 +266,8 @@ export function CollectionEditor({
             return
           }
         } catch (err) {
-          // Genuine last resort: onAddEntryType/onUpdateEntryType return result
-          // objects by contract and are not expected to throw, but guard here
-          // in case a caller violates that contract.
+          // Last resort: onAddEntryType/onUpdateEntryType return result objects
+          // by contract and aren't expected to throw; guards a caller violating it.
           setEntryTypeError(getErrorMessage(err))
           return
         } finally {
@@ -358,7 +329,6 @@ export function CollectionEditor({
     setDeletingEntryType(null)
   }, [deletingEntryType, isEditMode, editingCollection, onRemoveEntryType])
 
-  // Get entry types to display
   const displayEntryTypes: (ExistingEntryType | CreateEntryTypeInput)[] = isEditMode
     ? editingCollection?.entries || []
     : formData.entries
@@ -386,7 +356,7 @@ export function CollectionEditor({
             </Alert>
           )}
 
-          {/* Name - metadata field in .collection.json, independent of directory slug */}
+          {/* Name is metadata in .collection.json, independent of the directory slug */}
           <TextInput
             label="Name"
             description="Machine-readable identifier (e.g., posts, pages, articles)"
@@ -396,7 +366,6 @@ export function CollectionEditor({
             required
           />
 
-          {/* Label */}
           <TextInput
             label="Label"
             description="Human-readable display name"
@@ -405,7 +374,6 @@ export function CollectionEditor({
             onChange={(e) => updateField('label', e.target.value)}
           />
 
-          {/* Slug - only shown in edit mode */}
           {isEditMode && (
             <TextInput
               label="Slug"
@@ -425,7 +393,6 @@ export function CollectionEditor({
             </Text>
           )}
 
-          {/* Entry Types Section */}
           <Divider label="Entry Types" labelPosition="left" mt="md" />
 
           {displayEntryTypes.length === 0 ? (
@@ -503,7 +470,6 @@ export function CollectionEditor({
             Add Entry Type
           </Button>
 
-          {/* Actions */}
           <Group justify="flex-end" gap="sm" mt="md">
             <Button variant="subtle" onClick={onClose} disabled={isSaving}>
               Cancel
@@ -515,7 +481,6 @@ export function CollectionEditor({
         </Stack>
       </Modal>
 
-      {/* Entry Type Editor Modal */}
       <EntryTypeEditor
         isOpen={entryTypeEditorOpen}
         editingEntryType={editingEntryType}
@@ -532,7 +497,6 @@ export function CollectionEditor({
         error={entryTypeError}
       />
 
-      {/* Delete Entry Type Confirmation Modal */}
       <ConfirmDeleteModal
         isOpen={deleteEntryTypeModalOpen}
         title="Remove Entry Type"

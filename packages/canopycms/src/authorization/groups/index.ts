@@ -1,7 +1,3 @@
-/**
- * Groups module exports
- */
-
 export {
   GroupsFileSchema,
   createDefaultGroupsFile,

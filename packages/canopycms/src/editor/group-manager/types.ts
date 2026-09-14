@@ -1,13 +1,8 @@
-/**
- * Type definitions for GroupManager module
- */
-
 import type { UserSearchResult, GroupMetadata } from '../../auth/types'
 import type { CanopyGroupId, CanopyUserId } from '../../types'
 import type { InternalGroup } from '../../authorization'
 import type { ExternalGroup } from '../../api/groups'
 
-// Re-export commonly used types for convenience
 export type { UserSearchResult, GroupMetadata, InternalGroup, ExternalGroup }
 export type { CanopyGroupId, CanopyUserId }
 

@@ -1,13 +1,9 @@
 'use client'
 
 /**
- * API Client Context
- *
- * Provides dependency injection for the API client via context-based pattern
- * pattern that was duplicated across 6 hooks. This enables:
- * - Clean testing via provider (no more resetApiClient() hacks)
- * - Explicit dependency
- * - No global mutable state
+ * Provides the API client via context-based dependency injection rather than
+ * a module-global singleton, so tests can inject a mock client through the
+ * provider instead of resetting global state between tests.
  */
 
 import React, { createContext, useContext, useMemo } from 'react'

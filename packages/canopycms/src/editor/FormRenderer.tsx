@@ -66,7 +66,6 @@ export interface FormRendererProps {
   onChange: (next: FormValue) => void
   customRenderers?: CustomFieldRenderers
   branch?: string // Current branch for loading reference options
-  // Comment integration
   comments?: CommentThread[]
   currentEntryPath?: string
   currentUserId?: string
@@ -81,7 +80,6 @@ export interface FormRendererProps {
     threadId?: string,
   ) => Promise<void>
   onResolveThread?: (threadId: string) => Promise<void>
-  // Reference resolution for live preview
   onResolvedValueChange?: (resolved: FormValue) => void
   onLoadingStateChange?: (loadingState: FormValue) => void
   /** True when this entry's content conflicts with a recent change on the base branch */
@@ -90,7 +88,7 @@ export interface FormRendererProps {
    * Per-field validation errors keyed by canonical canopy path (e.g.
    * `blocks[0].title`). Rendered as a summary alert plus an inline message
    * under each offending field. Produced by the save-path schema validation
-   * in useDraftManager (ED-H1) and by server 422 rejections.
+   * in useDraftManager and by server 422 rejections.
    */
   fieldErrors?: Record<string, string>
 }
@@ -114,7 +112,6 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
   conflictNotice = false,
   fieldErrors,
 }) => {
-  // Use the extracted reference resolution hook for live preview
   useReferenceResolution({
     value,
     fields,
@@ -156,7 +153,6 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
     const fieldId = `field-${fieldKey(path).replace(/[^a-zA-Z0-9_-]/g, '-')}`
     const canopyPath = normalizeCanopyPath(path)
 
-    // Filter comments for this specific field
     const fieldThreads =
       currentEntryPath && onAddComment
         ? comments.filter(
@@ -181,7 +177,6 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
         </div>
       )
 
-      // Wrap custom fields with FieldWrapper if comments enabled
       if (currentEntryPath && currentUserId && onAddComment && onResolveThread) {
         return (
           <FieldWrapper
@@ -206,7 +201,6 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
 
     const label = field.label ?? field.name
 
-    // Helper to wrap field with FieldWrapper if comments enabled
     const wrapWithComments = (renderedField: React.ReactNode) => {
       if (currentEntryPath && currentUserId && onAddComment && onResolveThread) {
         return (
@@ -469,24 +463,14 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
           )
         }
 
-        // Non-list object: unlike the list branch above (where each item has
-        // its own Remove button), this field had no way to return to
-        // `undefined` once given a value. That mattered because a required
-        // child field inside it can be filled and then cleared back to `''`,
-        // which `isEmptyForRequired` treats as empty (entry-validator.ts) --
-        // but the object as a whole only reads as "absent" when it is
-        // `undefined`/`null`, not when its children are individually empty.
-        // Without a way to unset the object, that state was permanently
-        // invalid. The Clear button (wired through ObjectField's onRemove)
-        // fixes that by resetting to `undefined`, never `{}` (which would
-        // still carry a required-but-empty child into validation).
-        //
-        // Shown only when the field is optional (a required object should
-        // not be clearable back to a missing state) and only once it
-        // actually has a value (nothing to clear otherwise). Labeled
-        // "Clear" rather than "Remove" so it doesn't read as deleting the
-        // field from the schema, the way "Remove" correctly does for a list
-        // item above.
+        // Unlike the list branch above (each item has its own Remove button), a
+        // non-list object has no other way back to `undefined`: a required child
+        // filled and cleared to `''` reads as empty via `isEmptyForRequired`
+        // (entry-validator.ts), but the object itself only reads "absent" when
+        // `undefined`/`null`. The Clear button (ObjectField's `onRemove`) resets to
+        // `undefined`, never `{}` -- shown only when the field is optional and
+        // already has a value, and labeled "Clear" rather than "Remove" so it
+        // doesn't read as deleting the field from the schema.
         const hasValue = currentValue !== undefined && currentValue !== null
         const canClear = objectField.required !== true && hasValue
 
@@ -526,7 +510,6 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
 
   return (
     <Stack gap="md" data-form-renderer>
-      {/* Entry-level comments at top of form */}
       {currentEntryPath && currentUserId && onAddComment && onResolveThread && (
         <EntryComments
           comments={comments}

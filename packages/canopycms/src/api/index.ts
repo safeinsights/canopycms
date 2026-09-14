@@ -1,4 +1,3 @@
-// Re-export all response types
 export type { ApiResponse, ApiRequest, ApiContext } from './types'
 export type {
   BranchResponse,

@@ -23,7 +23,6 @@ import {
 } from '@tabler/icons-react'
 import { notifications } from '@mantine/notifications'
 
-// TreeController type from Mantine's useTree hook
 type TreeController = ReturnType<typeof useTree>
 
 import type { ContentFormat, EntrySchema } from '../config'
@@ -40,7 +39,6 @@ import { GroupManager } from './GroupManager'
 import { PermissionManager } from './PermissionManager'
 import { SystemHealthPanel } from './admin/SystemHealthPanel'
 // Import directly from helpers to avoid server-only code in authorization barrel
-// (same rationale as BranchManager.tsx's identical import)
 import { isAdmin } from '../authorization/helpers'
 import type { CommentThread } from '../comment-store'
 import { buildPreviewSrc, buildCollectionLabels, buildBreadcrumbSegments } from './editor-utils'
@@ -143,7 +141,6 @@ export interface EditorProps {
    * just from a direct `FormRenderer` usage.
    */
   customRenderers?: CustomFieldRenderers
-  // Auth UI handlers from config
   AccountComponent?: React.ComponentType
   onAccountClick?: () => void
   onLogoutClick?: () => void
@@ -179,7 +176,6 @@ export const Editor: React.FC<EditorProps> = ({
   onLogoutClick,
   customRenderers,
 }) => {
-  // Per-resource loading states
   const [branchesLoading, setBranchesLoading] = useState(false)
   const [entriesLoading, setEntriesLoading] = useState(false)
   const [commentsLoading] = useState(false)
@@ -191,7 +187,6 @@ export const Editor: React.FC<EditorProps> = ({
   const [mediaLibraryOpen, setMediaLibraryOpen] = useState(false)
   const [systemHealthOpen, setSystemHealthOpen] = useState(false)
 
-  // Schema editor state
   const [collectionEditorOpen, setCollectionEditorOpen] = useState(false)
   const [editingCollection, setEditingCollection] = useState<ExistingCollection | null>(null)
   const [collectionEditorParentPath, setCollectionEditorParentPath] = useState<
@@ -199,13 +194,11 @@ export const Editor: React.FC<EditorProps> = ({
   >(undefined)
   const [collectionEditorError, setCollectionEditorError] = useState<string | null>(null)
 
-  // Rename entry modal state
   const [renameModalOpen, setRenameModalOpen] = useState(false)
   const [renamingEntry, setRenamingEntry] = useState<EditorEntry | null>(null)
   const [renameModalError, setRenameModalError] = useState<string | null>(null)
   const [renameModalSaving, setRenameModalSaving] = useState(false)
 
-  // Delete confirmation modal state
   const [deleteCollectionModalOpen, setDeleteCollectionModalOpen] = useState(false)
   const [deletingCollectionPath, setDeletingCollectionPath] = useState<LogicalPath | null>(null)
   const [deleteEntryModalOpen, setDeleteEntryModalOpen] = useState(false)
@@ -220,18 +213,15 @@ export const Editor: React.FC<EditorProps> = ({
     null,
   )
 
-  // API client for schema operations
   const apiClient = useApiClient()
 
-  // Fetch current user context for permission checks
   const { userContext } = useUserContext()
 
-  // The System Health panel (PR-U1) is admin-only -- gate both the sidebar
+  // The System Health panel is admin-only -- gate both the sidebar
   // menu item and the modal mount on it, same pattern BranchManager.tsx uses
   // for its own admin-only actions.
   const showSystemHealth = isAdmin(userContext?.groups)
 
-  // Use custom hooks for layout, entry, draft, group, permission, comment, and branch management
   const { layout, setLayout, highlightEnabled, setHighlightEnabled, headerRef, headerHeight } =
     useEditorLayout()
 
@@ -263,21 +253,11 @@ export const Editor: React.FC<EditorProps> = ({
   // computed server-side by the same getBranchProtection() call the writableBranch
   // guard uses, so the UI can never drift from what the API will accept.
   //
-  // Fail CLOSED (`?? true`) when `currentBranch` is undefined or the wire didn't
-  // carry `writeBlocked` at all (branches-list fetch still in flight/failed, or
-  // editor/server version skew where an older server doesn't emit the flag). This
-  // is a deliberately inverted default from the OLD client-side derivation this
-  // flag replaced (`branchStatus !== 'editing'`), which locked correctly even with
-  // zero data from the server -- "no answer yet" and "not editing" both compute to
-  // locked when the fallback is itself a status comparison. Moving the decision
-  // server-side was the right call (the API guard and the UI now read one source
-  // of truth instead of two independent derivations that could drift), but an
-  // `?? false` default silently flipped what "no answer yet" means: a client that
-  // can't hear the server's answer now assumed UNLOCKED instead of LOCKED. A brief
-  // flash of locked (corrected the moment the branch list loads) is strictly safer
-  // than a flash of unlocked that invites a click the server is going to reject --
-  // and the pane is already showing a loading state during that same window, so
-  // the flash is not even visible in practice.
+  // `?? true`: with no answer from the server (branches fetch in flight or
+  // failed, or an older server without the flag) the editor must stay locked. A
+  // brief flash of locked, corrected when the list loads, is safer than a flash
+  // of unlocked that invites a click the server rejects -- and the pane shows a
+  // loading state during that window anyway.
   const branchContentLocked = currentBranch?.writeBlocked ?? true
 
   // 2. Entry manager (depends on branchNameState, owns selectedPath)
@@ -320,12 +300,10 @@ export const Editor: React.FC<EditorProps> = ({
     setBusy: setEntriesLoading,
   })
 
-  // Keep the entry-type list referentially stable for as long as the create
-  // modal is showing the same collection. Building it inline in the JSX handed
-  // EntryCreateModal a new array on every render of this component, which its
-  // form-seeding effect used to treat as a reason to reset the user's input.
-  // That effect no longer keys on the array, but a stable prop is still the
-  // right thing to pass: it also keeps Mantine's Select `data` identity steady.
+  // Keeps the entry-type list referentially stable while the create modal shows
+  // the same collection: a new array on every render would churn Mantine's
+  // Select `data` identity and give EntryCreateModal's form-seeding effect a
+  // spurious reason to reset the user's input.
   const createModalEntryTypes = useMemo<EntryType[]>(
     () =>
       createModalCollection?.entryTypes?.map((et) => ({
@@ -449,8 +427,6 @@ export const Editor: React.FC<EditorProps> = ({
   )
   const schema = currentEntry?.schema ?? []
 
-  // Effect to load entry data when selection changes.
-  //
   // Gated on `loadedValues[contentId]` (not `drafts[contentId]`) so a
   // restored-from-localStorage draft never skips the load: skipping left
   // `loadedValues[contentId]` permanently undefined, which made dirty-
@@ -511,7 +487,7 @@ export const Editor: React.FC<EditorProps> = ({
         // under its own key.
         if (currentBranchRef.current !== requestBranch) return
         setLoadedValues((prev) => ({ ...prev, [contentId]: loaded }))
-        // NOTE: no draft is seeded here. `effectiveValue` is
+        // No draft is seeded here. `effectiveValue` is
         // `drafts[id] ?? loadedValues[id]`, so the form renders from the line
         // above alone; seeding `drafts[id] = loaded` only manufactured a
         // pristine draft for every entry the user merely OPENED, which
@@ -547,13 +523,11 @@ export const Editor: React.FC<EditorProps> = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps -- stable setters, run only on entry/path/branch/loadedValues change
   }, [currentEntry, loadedValues, selectedPath, branchNameState])
 
-  // Schema editor handlers
   const handleOpenCollectionEditor = async (
     collection: EditorCollection | null,
     parentPath?: LogicalPath,
   ) => {
     if (collection) {
-      // Edit mode - fetch full collection data with usage counts
       try {
         const result = await apiClient.schema.getCollection({
           branch: branchNameState,
@@ -561,7 +535,6 @@ export const Editor: React.FC<EditorProps> = ({
         })
 
         if (result.ok && result.data && result.data.collection) {
-          // Use entry types with usage counts from API if available
           const entries: ExistingEntryType[] = result.data.entryTypesWithUsage
             ? result.data.entryTypesWithUsage.map(
                 (et): ExistingEntryType => ({
@@ -593,7 +566,6 @@ export const Editor: React.FC<EditorProps> = ({
           }
           setEditingCollection(existingCollection)
         } else {
-          // Fallback to using EditorCollection data
           const existingCollection: ExistingCollection = {
             name: collection.name,
             label: collection.label,
@@ -612,7 +584,6 @@ export const Editor: React.FC<EditorProps> = ({
           setEditingCollection(existingCollection)
         }
       } catch {
-        // Fallback on error
         const existingCollection: ExistingCollection = {
           name: collection.name,
           label: collection.label,
@@ -632,7 +603,6 @@ export const Editor: React.FC<EditorProps> = ({
       }
       setCollectionEditorParentPath(undefined)
     } else {
-      // Create mode
       setEditingCollection(null)
       setCollectionEditorParentPath(parentPath)
     }
@@ -703,7 +673,6 @@ export const Editor: React.FC<EditorProps> = ({
     try {
       const result = await deleteEntry(deletingEntryPath)
       if (result.ok && selectedPath === deletingEntryPath) {
-        // If we deleted the currently selected entry, clear selection
         setSelectedPath('')
       }
       setDeleteEntryModalOpen(false)
@@ -746,7 +715,6 @@ export const Editor: React.FC<EditorProps> = ({
     contentId: string,
     direction: 'up' | 'down',
   ) => {
-    // Find the collection to get its current order array
     const findCollection = (
       cols: EditorCollection[] | undefined,
       path: string,
@@ -759,21 +727,13 @@ export const Editor: React.FC<EditorProps> = ({
       }
       return undefined
     }
-    // Resolve against `collectionsFromApi`, NOT `activeCollections`. The
-    // latter falls back to the build-time `collections` prop whenever the
-    // fetched list is empty (`activeCollections = collectionsFromApi.length >
-    // 0 ? collectionsFromApi : collections`, above) -- which is exactly the
-    // state mid-branch-switch, before the new branch's entries/collections
-    // fetch has committed. Resolving a WRITE against that fallback meant this
-    // guard could never fire during a switch: it would happily find the OLD
-    // branch's collection in the stale build-time props and send ITS `order`
-    // array as a PATCH to the NEW branch. Reading `collectionsFromApi`
-    // directly makes "not yet loaded for this branch" and "loaded, has no
-    // such collection" the same (correct) not-found outcome, so the guard
-    // below is reachable again. See the correction to PR #196's "unreachable
-    // with entries empty" claim in
-    // .claude/future-tasks/resolved/program-b-final-review-followups.md for the write
-    // hazard this closes -- found by the 2026-08-12 adversarial review.
+    // Resolve against `collectionsFromApi`, NOT `activeCollections`: the latter
+    // falls back to the build-time `collections` prop whenever the fetch is
+    // still empty -- exactly the state mid-branch-switch. A write resolved
+    // against that fallback would silently PATCH the OLD branch's `order` onto
+    // the NEW branch instead of hitting the not-found guard below; reading
+    // `collectionsFromApi` directly makes "not yet loaded" and "loaded, no such
+    // collection" the same not-found outcome.
     const collection = findCollection(collectionsFromApi, collectionPath)
     if (!collection) {
       // A silent no-op on a clicked menu item reads as a broken button --
@@ -788,13 +748,10 @@ export const Editor: React.FC<EditorProps> = ({
       return
     }
 
-    // Use the collection's order array as the source of truth
-    // If no order array exists, build one from current entries and children
     let currentOrder: string[]
     if (collection.order && collection.order.length > 0) {
       currentOrder = [...collection.order]
     } else {
-      // Fallback: build order from entries and children
       const collectionEntries = entriesState.filter((e) => e.collectionPath === collectionPath)
       const entryIds = collectionEntries
         .map((e) => e.contentId)
@@ -805,19 +762,15 @@ export const Editor: React.FC<EditorProps> = ({
       currentOrder = [...entryIds, ...subCollectionIds]
     }
 
-    // Find current position
     const currentIndex = currentOrder.indexOf(contentId)
     if (currentIndex === -1) return
 
-    // Calculate new position
     const newIndex = direction === 'up' ? currentIndex - 1 : currentIndex + 1
     if (newIndex < 0 || newIndex >= currentOrder.length) return
 
-    // Swap positions
     const newOrder = [...currentOrder]
     ;[newOrder[currentIndex], newOrder[newIndex]] = [newOrder[newIndex], newOrder[currentIndex]]
 
-    // Update via API
     await updateOrder(collectionPath, newOrder)
   }
 
@@ -852,7 +805,6 @@ export const Editor: React.FC<EditorProps> = ({
       const entries = grouped.get(node.path) ?? []
       const children = node.children?.map((child) => build(child)) ?? []
 
-      // Pass entries, children, and order to EntryNavigator for interleaved ordering
       return {
         path: node.path,
         label: node.label ?? node.name,
@@ -890,7 +842,6 @@ export const Editor: React.FC<EditorProps> = ({
   // Tree expansion state - persists across drawer close/open
   const treeExpandedStateRef = useRef<Record<string, boolean>>({})
 
-  // Tree controller ref for collapse/expand all functionality
   const treeControllerRef = useRef<TreeController | null>(null)
 
   const handleTreeControllerReady = (controller: TreeController) => {
@@ -903,17 +854,14 @@ export const Editor: React.FC<EditorProps> = ({
 
   const handleCollapseAll = () => {
     treeControllerRef.current?.collapseAllNodes()
-    // Sync the ref to empty state
     treeExpandedStateRef.current = {}
   }
 
   const handleExpandAll = () => {
     treeControllerRef.current?.expandAllNodes()
-    // Sync the ref with all expanded nodes from controller
     treeExpandedStateRef.current = treeControllerRef.current?.expandedState ?? {}
   }
 
-  // Resolve entry:ID links in body content for live preview
   const { resolveEntryLinks } = useEntryLinkResolution({
     entries: entriesState,
     contentRoot,
@@ -942,7 +890,6 @@ export const Editor: React.FC<EditorProps> = ({
     [entriesState],
   )
 
-  // Helper component for centered messages
   const CenteredMessage = ({ children }: { children: React.ReactNode }) => (
     <div
       style={{
@@ -1065,13 +1012,7 @@ export const Editor: React.FC<EditorProps> = ({
               // the one in-app retry for a failed branches fetch, and the fetch
               // is terminal on its own: SWRProvider sets shouldRetryOnError and
               // revalidateOnFocus false, and useBranchesData's refreshInterval
-              // is 0 without data. This used to be gated on `!branchNameState`,
-              // which was harmless while a failed fetch merely left the UI
-              // unlocked -- but content writes now fail CLOSED on missing branch
-              // data, so with a pinned branch (every ordinary adopter setup)
-              // that gate turned one network blip into a session-long lockout
-              // whose only escape was a page reload, behind a "Manage Branches"
-              // button that pointedly did not retry. Reloading is idempotent.
+              // is 0 without data. Reloading is idempotent.
               loadBranches().catch(console.error)
             }}
             onCommentsPanelOpen={() => setCommentsPanelOpen(true)}
@@ -1347,7 +1288,6 @@ export const Editor: React.FC<EditorProps> = ({
             />
           )}
 
-          {/* Group Manager Modal */}
           <Drawer
             opened={groupManagerOpen}
             onClose={() => setGroupManagerOpen(false)}
@@ -1376,7 +1316,6 @@ export const Editor: React.FC<EditorProps> = ({
             />
           </Drawer>
 
-          {/* Permission Manager Modal */}
           <Drawer
             opened={permissionManagerOpen}
             onClose={() => setPermissionManagerOpen(false)}
@@ -1407,7 +1346,6 @@ export const Editor: React.FC<EditorProps> = ({
             />
           </Drawer>
 
-          {/* System Health Panel (admin-only) */}
           {showSystemHealth && (
             <SystemHealthPanel
               opened={systemHealthOpen}
@@ -1415,14 +1353,12 @@ export const Editor: React.FC<EditorProps> = ({
             />
           )}
 
-          {/* Media Library Drawer */}
           <MediaLibrary
             opened={mediaLibraryOpen}
             onClose={() => setMediaLibraryOpen(false)}
             mode="manage"
           />
 
-          {/* Collection Editor Modal */}
           <CollectionEditor
             isOpen={collectionEditorOpen}
             editingCollection={editingCollection}
@@ -1445,7 +1381,6 @@ export const Editor: React.FC<EditorProps> = ({
             error={collectionEditorError}
           />
 
-          {/* Rename Entry Modal */}
           {renamingEntry && (
             <RenameEntryModal
               isOpen={renameModalOpen}
@@ -1462,7 +1397,6 @@ export const Editor: React.FC<EditorProps> = ({
             />
           )}
 
-          {/* Entry Create Modal */}
           {createModalCollection && (
             <EntryCreateModal
               isOpen={createModalOpen}
@@ -1476,7 +1410,6 @@ export const Editor: React.FC<EditorProps> = ({
             />
           )}
 
-          {/* Delete Collection Confirmation Modal */}
           <ConfirmDeleteModal
             isOpen={deleteCollectionModalOpen}
             title="Delete Collection"
@@ -1490,7 +1423,6 @@ export const Editor: React.FC<EditorProps> = ({
             loading={deleteInProgress}
           />
 
-          {/* Delete Entry Confirmation Modal */}
           <ConfirmDeleteModal
             isOpen={deleteEntryModalOpen}
             title="Delete Entry"

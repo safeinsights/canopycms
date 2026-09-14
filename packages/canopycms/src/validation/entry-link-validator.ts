@@ -1,10 +1,8 @@
 /**
- * EntryLinkValidator validates that entry:ID patterns in body/markdown fields
- * reference existing entries.
- *
- * Returns warnings (not errors) — saves are never blocked by broken entry links.
- * This parallels ReferenceValidator but operates on inline links in text content
- * rather than structured reference fields.
+ * Scans body/markdown/mdx fields for `entry:ID` links and checks that each ID
+ * resolves to an existing entry. Warns rather than blocks — a save is never
+ * rejected over a broken entry link. Parallels `ReferenceValidator`, but for
+ * inline links in text rather than structured reference fields.
  */
 
 import type { ContentIdIndex } from '../content-id-index'
@@ -23,12 +21,6 @@ export interface EntryLinkValidationResult {
   warnings: EntryLinkWarning[]
 }
 
-/**
- * Validate entry links in body/markdown/mdx fields of the provided data.
- *
- * Scans all markdown and mdx fields for entry:ID patterns
- * and checks that each referenced ID exists in the content index.
- */
 export function validateEntryLinks(
   data: Record<string, unknown>,
   schema: readonly FieldConfig[],
@@ -42,7 +34,6 @@ export function validateEntryLinks(
     checkText(bodyContent, 'body', 'body', idIndex, warnings)
   }
 
-  // Check markdown/mdx fields in structured data
   const markdownTypes = ['markdown', 'mdx'] as const
   for (const fieldType of markdownTypes) {
     const contexts = findFieldsByType(schema, data, fieldType)
