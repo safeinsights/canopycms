@@ -29,3 +29,7 @@ ratchet measures today, so they wait for a maintenance pass.
 - `findLongListItems` ends an item at a blank line, so a list item continued after a blank
   line is measured as two items.
 - `--list-long-items` is not mentioned in the warning line it extends.
+- A budget entry with a MISSING key is silently unchecked: the marker check guards on
+  `historyMarkers !== null`, so deleting `words` or `historyMarkers` from an entry drops
+  that check with no complaint. Require `words` and `maxSectionWords` to be numbers and
+  `historyMarkers` a number or null, and fail otherwise.
