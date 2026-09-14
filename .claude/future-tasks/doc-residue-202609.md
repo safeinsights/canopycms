@@ -2,7 +2,7 @@
 
 **Status:** Open. Filed 2026-09-14 from the `docs-architecture` and `docs-developing` runs in the
 bookkeeping PR of [resolved/baseline-quality-202609.md](resolved/baseline-quality-202609.md).
-Each fix is small; none was taken there because the files' word budgets sit at their actuals.
+Each fix is small and was outside that PR's scope.
 
 ## `docs/concurrency.md`: history phrasing the marker regex does not catch
 
