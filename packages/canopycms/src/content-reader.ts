@@ -176,7 +176,6 @@ export const createContentReader = (options: ContentReaderOptions): ContentReade
     const context = await resolveBranchContext(branchName)
     const { branchRoot } = resolveBranchPaths(context, operatingMode, basePathOverride)
 
-    // Load per-branch schema dynamically
     const branchSchemaCache = services.branchSchemaCache
     const contentRootName = services.config.contentRoot || 'content'
     const { flatSchema: branchFlatSchema } = await branchSchemaCache.getSchema(
@@ -208,7 +207,6 @@ export const createContentReader = (options: ContentReaderOptions): ContentReade
       .map((segment) => encodeURIComponent(segment))
       .join('/')
 
-  // Build preview paths using simple path construction
   const contentRoot = trimSlashes(services.config.contentRoot ?? 'content')
   // The `val === contentRoot` branch matters as much as the prefix one: a root-level entry's
   // collectionPath IS the content root, which does not start with `${contentRoot}/`, so without
@@ -231,7 +229,6 @@ export const createContentReader = (options: ContentReaderOptions): ContentReade
     slug?: string
     branch?: string
   }) => {
-    // Construct preview path from collectionPath
     const stripped = stripRoot(opts.collectionPath)
     const base = stripped ? `/${stripped}` : '/'
 
@@ -365,10 +362,8 @@ export const createContentReader = (options: ContentReaderOptions): ContentReade
     const body = docRecord.body as string | undefined
     const bodyFieldName = (docRecord.bodyFieldName as string | undefined) ?? 'body'
 
-    // Merge body into data first, then resolve entry links across all fields
     let data = (body != null ? { ...rawData, [bodyFieldName]: body } : rawData) as T
 
-    // Resolve entry:ID links in all string values (body + nested markdown fields)
     if (input.resolveEntryLinks ?? true) {
       const idIndex = await store.idIndex()
       data = resolveEntryLinksInData(data, idIndex, contentRoot, services.config.entryLinkUrl) as T

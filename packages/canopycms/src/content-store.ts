@@ -594,10 +594,6 @@ export class ContentStore {
     return matches.sort()
   }
 
-  /**
-   * Get all schema items for iteration.
-   * Used internally by ReferenceResolver for path matching.
-   */
   public getSchemaItems(): IterableIterator<FlatSchemaItem> {
     return this.schemaIndex.values()
   }
@@ -734,9 +730,6 @@ export class ContentStore {
    * Refuse a create/rename that would give a second entry a `urlPath` another entry already
    * holds. See url-collision.ts for the two shapes that count, and the legitimate
    * landing-page-beside-a-collection shape that deliberately does not.
-   *
-   * @param collectionDir Absolute physical directory the entry will live in.
-   * @param slug The entry's slug, as it will be written.
    */
   private async assertUrlPathAvailable(collectionDir: string, slug: string): Promise<void> {
     const claimant = await findUrlPathClaimant({
@@ -770,9 +763,6 @@ export class ContentStore {
    *
    * This validation is performed BEFORE file I/O in resolveDocumentPath(),
    * ensuring permission checks happen before any file system access.
-   *
-   * @param options.existingId - Optional ID to use (for edits). If not provided, generates new ID.
-   * @param options.entryTypeName - For collections with multiple entry types, specify which one to use. Defaults to the default entry type.
    */
   private async buildPaths(
     schemaItem: FlatSchemaItem,
@@ -828,7 +818,6 @@ export class ContentStore {
           'NO_SCHEMA_ITEM',
         )
       }
-      // Use provided slug, falling back to entry type name
       const effectiveSlug = slug || schemaItem.name
       return this.buildPaths(parentCollection, effectiveSlug, {
         ...options,
@@ -845,10 +834,8 @@ export class ContentStore {
       // Security: Validate slug format (prevents ../../../etc/passwd)
       validateSlug(safeSlug)
 
-      // Determine which entry type to use
       let entryTypeConfig: EntryTypeConfig | undefined
       if (options.entryTypeName) {
-        // Use specified entry type
         entryTypeConfig = schemaItem.entries?.find((e) => e.name === options.entryTypeName)
         if (!entryTypeConfig) {
           throw new ContentStoreError(
@@ -857,7 +844,6 @@ export class ContentStore {
           )
         }
       } else {
-        // Use default entry type
         entryTypeConfig = getDefaultEntryType(schemaItem.entries)
       }
 
@@ -880,18 +866,15 @@ export class ContentStore {
         throw new ContentStoreError('Path traversal detected', 'VALIDATION')
       }
 
-      // Check if file already exists (editing case)
       let id = options.existingId
       let existingFilename: string | undefined
       let existingEntryType: string | undefined
       let foundExisting = false
 
       if (!id) {
-        // Try to find existing file with this slug
         const entries = await fs.readdir(collectionRoot, { withFileTypes: true }).catch(() => [])
         const existingFile = entries.find((entry) => {
           if (entry.isDirectory()) return false
-          // Extract entry type from filename to check slug properly
           const fileEntryType = extractEntryTypeFromFilename(entry.name)
           const existingSlug = extractSlugFromFilename(entry.name, fileEntryType || undefined)
           return existingSlug === safeSlug
@@ -907,28 +890,18 @@ export class ContentStore {
         }
       }
 
-      // An entry "existed" if the directory scan above found it, OR the
-      // caller asserted an existingId (a presumed edit -- see buildPaths()'s
-      // doc comment on options.existingId). Not the same as `id` being
-      // truthy: a brand-new entry gets a freshly generated id below too.
       const existed = foundExisting || Boolean(options.existingId)
 
-      // For existing entries, preserve the entry type (immutable after creation)
-      // For new entries, use the specified entry type
       const finalEntryTypeName = existingEntryType || entryTypeName
 
-      // Build filename: use existing filename if found, or generate new one with ID
       let filename: string
       if (existingFilename) {
         // Existing file found - use its original filename to preserve on-disk casing
         filename = existingFilename
       } else {
-        // Generate new ID if needed
         if (!id) {
           id = generateId()
         }
-        // Build filename with embedded ID: type.slug.id.ext
-        // Use finalEntryTypeName to preserve entry type for existing entries
         filename = `${finalEntryTypeName}.${safeSlug}.${id}${ext}`
       }
       const resolved = path.resolve(collectionRoot, filename)
@@ -1013,7 +986,6 @@ export class ContentStore {
     let fields: EntrySchema
 
     if (schemaItem.type === 'entry-type') {
-      // Entry type from unified model
       format = schemaItem.format
       fields = schemaItem.schema
     } else {
@@ -1075,7 +1047,6 @@ export class ContentStore {
       }
     }
 
-    // Automatic reference resolution (defaults to true)
     if (options.resolveReferences !== false) {
       doc.data = await this.resolveReferencesInData(doc.data, fields)
     }
@@ -1102,7 +1073,6 @@ export class ContentStore {
       expectedFormat = schemaItem.format
       fields = schemaItem.schema
     } else {
-      // For collections, determine format from specified or default entry type
       let entryTypeConfig: EntryTypeConfig | undefined
       if (entryTypeName) {
         entryTypeConfig = schemaItem.entries?.find((e) => e.name === entryTypeName)
@@ -1370,7 +1340,6 @@ export class ContentStore {
           const existingRaw =
             input.format === 'json' ? undefined : await readFileIfExists(absolutePath)
 
-          // Serialize content string
           let content: string
           if (input.format === 'json') {
             content = `${JSON.stringify(input.data ?? {}, null, 2)}\n`
@@ -1480,7 +1449,6 @@ export class ContentStore {
   }
 
   /**
-   * Get the ID for an entry given its collection and slug.
    * Returns null if no ID exists yet.
    */
   async getIdForEntry(collectionPath: LogicalPath, slug: Slug): Promise<ContentId | null> {
@@ -1612,7 +1580,6 @@ export class ContentStore {
           }
           const { absolutePath, relativePath } = inLock
 
-          // Delete file
           await fs.unlink(absolutePath)
 
           // Remove from the LIVE index — lookup and mutation in one synchronous
@@ -1636,12 +1603,6 @@ export class ContentStore {
   /**
    * Rename an entry by changing its slug (middle segment of filename).
    * Entry filename pattern: {entryTypeName}.{slug}.{id}.{ext}
-   *
-   * @param collectionPath - Logical path to the collection
-   * @param currentSlug - Current slug of the entry
-   * @param newSlug - New slug (must be unique within collection)
-   * @returns Object with new logical path
-   * @throws ContentStoreError if entry doesn't exist, new slug conflicts, or validation fails
    */
   async renameEntry(
     collectionPath: LogicalPath,
@@ -1659,7 +1620,6 @@ export class ContentStore {
       throw new ContentStoreError('New slug cannot be empty', 'VALIDATION')
     }
 
-    // If slugs are the same, no-op
     if (currentSlug === safeNewSlug) {
       return { newPath: `${collectionPath}/${currentSlug}` as LogicalPath }
     }
@@ -1748,7 +1708,6 @@ export class ContentStore {
 
             const { absolutePath: currentPath, relativePath: currentRelPath } = inLock
 
-            // Extract entry type name and extension from current filename
             const currentFilename = path.basename(currentPath)
             const parts = currentFilename.split('.')
             if (parts.length < 4) {
@@ -1762,7 +1721,6 @@ export class ContentStore {
             const contentId = parts[parts.length - 2]
             const ext = `.${parts[parts.length - 1]}`
 
-            // Build new filename with new slug
             const newFilename = `${entryTypeName}.${safeNewSlug}.${contentId}${ext}`
             const parentDir = path.dirname(currentPath)
             const newPath = path.join(parentDir, newFilename)
@@ -1834,7 +1792,6 @@ export class ContentStore {
             }
             await this.recordOwnMutation(liveIndex)
 
-            // Return new logical path
             return { newPath: `${collectionPath}/${safeNewSlug}` as LogicalPath }
           },
         )
@@ -1846,13 +1803,6 @@ export class ContentStore {
     })
   }
 
-  /**
-   * List all entries in a collection tree (including subcollections).
-   * For example, passing 'content/data-catalog' returns entries from
-   * 'content/data-catalog', 'content/data-catalog/partner-a', etc.
-   * Returns array of entry metadata (relativePath, collection, slug).
-   * Returns empty array if the collection doesn't exist.
-   */
   /**
    * Resolve a schema collection referenced by name or logical path.
    *
@@ -1869,12 +1819,9 @@ export class ContentStore {
    * same-named collections.
    */
   resolveCollectionItem(collectionPath: string): FlatSchemaItem | undefined {
-    // The schema index uses normalized logical paths like "content/authors"
     const normalized = normalizeFilesystemPath(collectionPath as LogicalPath)
     let item = this.schemaIndex.get(normalized)
 
-    // If not found by full path, try matching the last segment
-    // (handles cases where caller passes "posts" instead of "content/posts")
     if (!item) {
       for (const schemaItem of this.schemaIndex.values()) {
         if (schemaItem.type === 'collection') {
@@ -1899,16 +1846,13 @@ export class ContentStore {
   > {
     const idIndex = await this.idIndex()
 
-    // Return empty array if collection doesn't exist or isn't a collection
     const collection = this.resolveCollectionItem(collectionPath)
     if (!collection) {
       return []
     }
 
-    // Get entries from this collection and all subcollections via tree traversal
     const treeEntries = idIndex.getEntriesInCollectionTree(collection.logicalPath)
 
-    // Filter and map to required format
     const entries: Array<{
       relativePath: PhysicalPath
       collection: LogicalPath
@@ -1955,10 +1899,6 @@ export class ContentStore {
     return this.resolveReferencesInData(data, fields, cache)
   }
 
-  /**
-   * Recursively resolve reference fields in data.
-   * This traverses objects, arrays, and blocks to find and resolve all reference fields.
-   */
   private async resolveReferencesInData(
     data: Record<string, unknown>,
     fields: EntrySchema,
@@ -1986,7 +1926,6 @@ export class ContentStore {
         // to it is a property of the field, declared once in the schema -- not of the call,
         // which routinely contains both kinds at once. See ReferenceFieldConfig.includeBody.
         const includeBody = (field as ReferenceFieldConfig).includeBody === true
-        // Single reference
         if (typeof value === 'string' && value) {
           resolved[field.name] = await this.resolveSingleReference(
             value,
@@ -1994,9 +1933,7 @@ export class ContentStore {
             includeBody,
             cache,
           )
-        }
-        // Array of references (list: true)
-        else if (field.list && Array.isArray(value)) {
+        } else if (field.list && Array.isArray(value)) {
           resolved[field.name] = await Promise.all(
             value.map((id) =>
               typeof id === 'string'
@@ -2005,9 +1942,7 @@ export class ContentStore {
             ),
           )
         }
-      }
-      // Recursively handle nested objects
-      else if (field.type === 'object' && value) {
+      } else if (field.type === 'object' && value) {
         const objectField = field as ObjectFieldConfig
         if (!objectField.fields) continue
         if (objectField.list && Array.isArray(value)) {
@@ -2029,9 +1964,7 @@ export class ContentStore {
             cache,
           )
         }
-      }
-      // Recursively handle blocks
-      else if (field.type === 'block' && Array.isArray(value)) {
+      } else if (field.type === 'block' && Array.isArray(value)) {
         const blockField = field as BlockFieldConfig
         resolved[field.name] = await Promise.all(
           (value as unknown[]).map(async (block) => {

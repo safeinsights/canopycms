@@ -1,7 +1,5 @@
 /**
  * Shared content-listing utilities used by both the entries API and the content tree builder.
- *
- * Extracted from api/entries.ts to avoid duplication.
  */
 
 import fs from 'node:fs/promises'
@@ -111,10 +109,6 @@ export const readEntryData = async (
 // this is where callers -- and `canopycms/server` -- have always imported it from.
 export { parseTypedFilename } from './utils/typed-filename'
 import { parseTypedFilename } from './utils/typed-filename'
-
-// ---------------------------------------------------------------------------
-// Batch listing types and function
-// ---------------------------------------------------------------------------
 
 /**
  * A flat entry item from listEntries.
@@ -239,10 +233,6 @@ export interface ContentVisibilityOptions {
 /** A collection node from the flattened schema. */
 export type CollectionSchemaItem = Extract<FlatSchemaItem, { type: 'collection' }>
 
-// ---------------------------------------------------------------------------
-// Reference resolution for batch listings
-// ---------------------------------------------------------------------------
-
 /**
  * Build the `ContentStore` + shared cache that a batch listing resolves references through.
  *
@@ -315,12 +305,6 @@ export const resolveCollectionItemReferences = async (
  * artifact named `{contentId}.suffix.ext` per the `entryTransforms`/`readSibling` convention
  * documented in the README — is not this guard's failure mode and never throws, in or out of
  * build mode. See `looksLikeMalformedEntry` for the exact shape test.
- *
- * @param branchRoot - Absolute path to the branch workspace root
- * @param flatSchema - Flattened schema items (from flattenSchema)
- * @param contentRootName - The content root name (e.g. "content")
- * @param options - Listing options (extract, filter, rootPath, sort, resolveReferences)
- * @param visibility - Internal path-ACL predicate; see `ContentVisibilityOptions`
  */
 export async function listEntries<T = Record<string, unknown>>(
   branchRoot: string,
@@ -334,7 +318,6 @@ export async function listEntries<T = Record<string, unknown>>(
   const filter = options?.filter
   const customSort = options?.sort
 
-  // Find all collections under rootPath
   const collections = flatSchema.filter(
     (item): item is CollectionSchemaItem =>
       item.type === 'collection' &&
@@ -390,13 +373,11 @@ export async function listEntries<T = Record<string, unknown>>(
     )
   }
 
-  // Flatten and map to ListEntriesItem
   const contentPrefix = contentRootName ? `${contentRootName}/` : ''
   const items: ListEntriesItem<T>[] = []
 
   for (const results of collectionResults) {
     for (const { entry, collection } of results) {
-      // Compute pathSegments: strip content root prefix, split on /
       const pathWithoutRoot = entry.logicalPath.startsWith(contentPrefix)
         ? entry.logicalPath.slice(contentPrefix.length)
         : entry.logicalPath
@@ -451,10 +432,6 @@ export async function listEntries<T = Record<string, unknown>>(
 
   return items
 }
-
-// ---------------------------------------------------------------------------
-// Shared utilities
-// ---------------------------------------------------------------------------
 
 /**
  * Sort items by a content ID order array.
@@ -557,7 +534,6 @@ export const listCollectionEntries = async (
 
   const entryTypes = collection.entries as readonly EntryTypeConfig[]
 
-  // Build a map of extension to entry types for efficient lookup
   const extToTypes = new Map<string, EntryTypeConfig[]>()
   for (const entryType of entryTypes) {
     const ext = getFormatExtension(entryType.format)
@@ -568,7 +544,6 @@ export const listCollectionEntries = async (
 
   const validExts = Array.from(extToTypes.keys())
 
-  // Resolve the full collection path with embedded IDs
   const collectionRoot = await resolveCollectionPath(root, collection.logicalPath)
   if (!collectionRoot) {
     return []
