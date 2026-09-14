@@ -19,7 +19,7 @@
  * - An output too large for the Function URL's ~6 MiB buffered-response cap is
  *   answered with a 302 carrying `Cache-Control: no-store`, so the REDIRECT
  *   itself is never cached at the CloudFront layer - the "cached-redirect trap"
- *   in the design record (.claude/future-tasks/assets-media-system.md). The
+ *   in the design record (.claude/future-tasks/resolved/assets-media-system.md). The
  *   other half of that trap is closed by the custom minTtl-0 cache policy
  *   `AssetSupport` attaches to this behavior instead of the managed
  *   CACHING_OPTIMIZED, whose 1s min TTL would cache the `no-store` anyway.

@@ -1,7 +1,7 @@
 #!/usr/bin/env tsx
 /**
  * `canopy-assets-canary` - the sandbox proving ground for `AssetSupport`
- * (design record: .claude/future-tasks/assets-media-system.md). NOT a real
+ * (design record: .claude/future-tasks/resolved/assets-media-system.md). NOT a real
  * deployment target and NOT a separate package: a small CDK app living inside
  * `canopycms-cdk` so it exercises that package's own source directly
  * (`../../src`), the way a real consumer's CDK app would after installing it.

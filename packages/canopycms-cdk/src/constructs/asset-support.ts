@@ -839,7 +839,7 @@ export function assetUploadBehavior(
 
 /**
  * Per-site CDK construct for the asset/media delivery system (see
- * `.claude/future-tasks/assets-media-system.md` for the full design record).
+ * `.claude/future-tasks/resolved/assets-media-system.md` for the full design record).
  * Wires:
  *
  * - The bucket's asset-prefix lifecycle rule + CORS (standalone mode only).
@@ -1198,7 +1198,7 @@ export class AssetSupport extends Construct {
         // never reveals object existence) - CloudFront's own S3 origin
         // handling can still surface 404 in some paths, so both are
         // configured. Confirmed working end-to-end by the sandbox spike
-        // (.claude/future-tasks/assets-media-system.md's SPIKE RESULT).
+        // (.claude/future-tasks/resolved/assets-media-system.md's SPIKE RESULT).
         fallbackStatusCodes: [403, 404],
       }),
       viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,

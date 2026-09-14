@@ -6,13 +6,13 @@
  * fires on sharp 0.34's entry point `sharp/lib/index.js`; sharp 0.35 ships `dist/index.{cjs,mjs}`
  * instead, so it's missed — on a Next 16.1.7 Turbopack standalone build this leaves
  * `lib/libvips-cpp.so.*` untraced, and the built server fails to load sharp with ERR_DLOPEN_FAILED
- * (`.claude/future-tasks/cms-image-build-epic.md`, "The tracer misses the `.so`"). A webpack build
- * under pnpm fails differently: Next 15.5.21's webpack bundles sharp's JS into a server chunk, so
- * the bundled copy cannot reach its native binding regardless of this include (root cause in
- * `.claude/future-tasks/webpack-standalone-sharp-bundled.md`). An npm install and Next 16's
- * `next build --webpack` have not been checked. Where the JS tracer does trace the library itself,
- * this include merges into one Set rather than duplicating it (upstream: next.js#97973, sharp
- * #4567/#4543 — fixed there, this module goes).
+ * (`.claude/future-tasks/resolved/cms-image-build-epic.md`, "The tracer misses the `.so`"). A
+ * webpack build under pnpm fails differently: Next 15.5.21's webpack bundles sharp's JS into a
+ * server chunk, so the bundled copy cannot reach its native binding regardless of this include
+ * (root cause in `.claude/future-tasks/webpack-standalone-sharp-bundled.md`). An npm install and
+ * Next 16's `next build --webpack` have not been checked. Where the JS tracer does trace the
+ * library itself, this include merges into one Set rather than duplicating it (upstream:
+ * next.js#97973, sharp #4567/#4543 — fixed there, this module goes).
  *
  * **Locating the directory.** Walk up the `node_modules` hierarchy the way a bundler resolves a
  * bare specifier, never glob one package manager's layout: from the `canopycms` the project
