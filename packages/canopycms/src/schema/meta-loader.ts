@@ -37,17 +37,11 @@ const entryTypeMetaSchema = z.object({
 })
 
 /**
- * Zod schema for .collection.json files
- *
- * A collection folder can contain:
- * - entries: Array of entry types with their own schemas
- * - collections: Nested collections (discovered via their own .collection.json files)
- *
- * Note: We can't validate `schema` against entry schema registry keys at parse time because:
- * 1. Entry schema registry is passed at runtime (not available during Zod schema definition)
- * 2. Would create circular dependency (loader → services → config → loader)
- *
- * Validation of schema references happens in resolution functions with clear error messages.
+ * Zod schema for .collection.json files. `schema` can't be validated against
+ * the entry schema registry here — the registry is only available at
+ * runtime, and checking at parse time would create a loader → services →
+ * config → loader circular dependency — so schema references are checked in
+ * the resolution functions instead, with clear error messages.
  */
 const collectionMetaSchema = z
   .object({
@@ -93,32 +87,22 @@ export type RootCollectionMeta = {
   order?: string[] // Embedded IDs for ordering items
 }
 
+/** Extracts the slug only — e.g. "post.hello-world.{id}.md" -> "hello-world" (the entry-type prefix and extension are dropped too, not just the ID). */
+function stripEmbeddedIdFromName(name: string): string {
+  return extractSlugFromFilename(name)
+}
+
 /**
- * Recursively scans a directory for .collection.json files.
- *
- * Discovery Rules:
- * - Scans recursively from the base directory (content root)
- * - Each directory can have at most ONE .collection.json file
- * - Collection path is derived from the directory structure (e.g., "docs/api" for content/docs/api/)
- * - Collection name comes from the "name" field in .collection.json, NOT the directory name
- * - Directories without .collection.json are still scanned for nested collections
- * - Invalid .collection.json files cause the entire scan to fail with a descriptive error
+ * Recursively scans a directory for .collection.json files. Each directory
+ * has at most one; a directory without one is still scanned for nested
+ * collections beneath it. A collection's name comes from `.collection.json`'s
+ * "name" field, not the directory name. An invalid file fails the whole scan
+ * with a descriptive error.
  *
  * @param baseDir - The directory to scan (absolute path)
  * @param relativePath - Current path relative to content root (used for recursion)
  * @returns Array of collection metadata with resolved paths
  */
-
-/**
- * Strip embedded ID from a directory or file name, leaving the slug.
- * e.g., "docs.bChqT78gcaLd" -> "docs"
- * e.g., "post.hello-world.vh2WdhwAFiSL.md" -> "hello-world" (the SLUG, not the entry type)
- * e.g., "home.index.agfzDt2RLpSn.json" -> "index"
- */
-function stripEmbeddedIdFromName(name: string): string {
-  return extractSlugFromFilename(name)
-}
-
 async function scanForCollectionMeta(
   baseDir: string,
   relativePath: string = '',
