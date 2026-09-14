@@ -24,4 +24,6 @@ contradicting the code stays untouched and becomes a task.
 - (b) The comment is right: a manager/admin-only lockdown must override an ACL that names an
   editor. Then the branch changes, and the tests beside it in `authorization/` with it.
 
-Either way the doc and the code must say the same thing afterwards.
+Either way the doc and the code must say the same thing afterwards, and so must the two docs that
+restate the lockdown-above-ACL ordering: `ARCHITECTURE.md` (The Permission Model, the branch-ACL
+precedence list, around line 375) and `README.md` (branch access precedence, around line 1452).

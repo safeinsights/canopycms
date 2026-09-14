@@ -63,7 +63,7 @@ Three suspicions, each tested:
 
 ## After: exports and docs
 
-- knip (`--production --tags=-internal`): 182 unused exports + 90 unused types → 0 / 0. The sweep removed `export` from 125 in-file-only symbols, tagged 95 test seams and 13 no-importer symbols `@internal`, and removed 22 unused default exports and 15 dead re-exports.
+- knip (`--production --tags=-internal`): 182 unused exports + 90 unused types → 0 / 0. The sweep removed `export` from 125 in-file-only symbols, tagged 95 test seams and 14 no-importer symbols `@internal`, and removed 22 unused default exports and 15 dead re-exports.
 
 `node scripts/check-docs.mjs --report` (words outside code spans and fences), `c25035d2` → after:
 
@@ -104,8 +104,7 @@ Every doc budget sits at or below actual + 3%, rounded up; README, CODEBASE_GUID
 - [cdk-comment-second-pass.md](../../.claude/future-tasks/cdk-comment-second-pass.md): ~380 more cdk comment lines can go with no rule lost; target ratio ~1.1.
 - [worker-test-seams-dependency-injection.md](../../.claude/future-tasks/worker-test-seams-dependency-injection.md): inject octokit, URL builder and push function instead of patching `CmsWorker` instances.
 - [knip-scope-gaps.md](../../.claude/future-tasks/knip-scope-gaps.md): barrel re-exports, unused files and dependencies are not checked.
-- [knip-no-importer-deletion-candidates.md](../../.claude/future-tasks/knip-no-importer-deletion-candidates.md): 13 symbols tagged `@internal` that nothing imports.
+- [knip-no-importer-deletion-candidates.md](../../.claude/future-tasks/knip-no-importer-deletion-candidates.md): 14 symbols tagged `@internal` that nothing imports.
 - [comment-guard-scope-gaps.md](../../.claude/future-tasks/comment-guard-scope-gaps.md): `apps/`, hardcoded package roots, test scaffolding, multi-line block directives.
 - [branch-lockdown-vs-acl-precedence.md](../../.claude/future-tasks/branch-lockdown-vs-acl-precedence.md): comment and code disagree on lockdown vs explicit ACL; an authorization decision.
 - [check-docs-heading-anchors.md](../../.claude/future-tasks/check-docs-heading-anchors.md): link `#anchors` are not resolved.
-- [readme-ispermissionerror-claims-eperm.md](../../.claude/future-tasks/readme-ispermissionerror-claims-eperm.md): README claims `EPERM` coverage the code lacks.

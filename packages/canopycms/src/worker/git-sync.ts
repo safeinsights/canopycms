@@ -84,7 +84,7 @@ function parseTrashStamp(stamp: string): Date | null {
 /**
  * Per-cycle outcome of `reconcileTrackedBranches()`, folded by `syncGit()` into
  * the worker's self-reported status (`WorkerStatusReport.lastGitSync.tracked`,
- * see worker-status.ts).
+ * see task-queue/worker-status.ts).
  */
 interface TrackedBranchSummary {
   /** GitHub branches with no corresponding local `refs/heads/<name>` yet -- created at GitHub's tip. */
