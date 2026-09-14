@@ -1,7 +1,7 @@
 # [P3] knip: ten exports with no importer, tagged instead of deleted
 
 **Status:** Open. Filed 2026-09-14 from the manager's review of the Chip B encapsulation PR in
-[baseline-quality-202609.md](baseline-quality-202609.md).
+[baseline-quality-202609.md](resolved/baseline-quality-202609.md).
 
 `pnpm lint:exports` (knip, production mode, `--tags=-internal`) reported these exports with no
 importer anywhere, tests included. The chip's rule was "do not delete code", and removing

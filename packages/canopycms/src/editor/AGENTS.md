@@ -3,11 +3,6 @@
 The largest subsystem in the package: **176 files** (109 excluding tests and stories),
 ~20,900 LOC, roughly 29% of `packages/canopycms/src`.
 
-Created 2026-08-23. Until then this directory's entire entry in the root `AGENTS.md` was
-five words — "React editor components and hooks" — while `static/` (841 LOC) had 976.
-Documentation depth had become inversely proportional to subsystem size, because the root
-file recorded where bugs had hurt rather than where code lives.
-
 As everywhere else in this package, **the code comment at the point of a rule is
 authoritative**. This file is the map.
 

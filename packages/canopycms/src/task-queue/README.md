@@ -57,28 +57,28 @@ if (task) {
 
 ### Core operations
 
-| Function                                                 | Description                                                                |
-| -------------------------------------------------------- | -------------------------------------------------------------------------- |
-| `enqueueTask(taskDir, { action, payload, maxRetries? })` | Create a pending task. Returns the task ID.                                |
-| `dequeueTask(taskDir)`                                   | Get the oldest ready task, move it to processing. Returns `null` if empty. |
-| `completeTask(taskDir, taskId, result)`                  | Mark a task as completed with a result object.                             |
-| `failTask(taskDir, taskId, error)`                       | Mark a task as permanently failed.                                         |
-| `retryTask(taskDir, taskId, error)`                      | Move a task back to pending with exponential backoff.                      |
+| Function                                                 | Description                                                |
+| -------------------------------------------------------- | ---------------------------------------------------------- |
+| `enqueueTask(taskDir, { action, payload, maxRetries? })` | Create a pending task. Returns the task ID.                |
+| `dequeueTask(taskDir)`                                   | Move the oldest ready task to processing; `null` if empty. |
+| `completeTask(taskDir, taskId, result)`                  | Mark a task as completed with a result object.             |
+| `failTask(taskDir, taskId, error)`                       | Mark a task as permanently failed.                         |
+| `retryTask(taskDir, taskId, error)`                      | Move a task back to pending with exponential backoff.      |
 
 ### Recovery & maintenance
 
-| Function                                   | Description                                                                   |
-| ------------------------------------------ | ----------------------------------------------------------------------------- |
-| `recoverOrphanedTasks(taskDir, maxAgeMs?)` | Move stale processing tasks back to pending. Call on startup. Default: 5 min. |
-| `cleanupOldTasks(taskDir, maxAgeMs?)`      | Delete old completed/failed tasks. Default: 30 days.                          |
+| Function                                   | Description                                                                                                                                    |
+| ------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| `recoverOrphanedTasks(taskDir, maxAgeMs?)` | Move stale processing tasks back to pending (default age 5 min). The worker calls it at boot and every poll with `orphanRecoveryMaxAgeMs(ctx)` |
+| `cleanupOldTasks(taskDir, maxAgeMs?)`      | Delete old completed/failed tasks. Default: 30 days.                                                                                           |
 
 ### Query (for UIs, monitoring)
 
-| Function                             | Description                                                                           |
-| ------------------------------------ | ------------------------------------------------------------------------------------- |
-| `getTask(taskDir, taskId)`           | Find a task by ID in any status directory.                                            |
-| `listTasks(taskDir, status, limit?)` | List tasks in a status directory, sorted by createdAt.                                |
-| `getQueueStats(taskDir)`             | Count of tasks in each status: `{ pending, processing, completed, failed, corrupt }`. |
+| Function                             | Description                                                                    |
+| ------------------------------------ | ------------------------------------------------------------------------------ |
+| `getTask(taskDir, taskId)`           | Find a task by ID in any status directory.                                     |
+| `listTasks(taskDir, status, limit?)` | List tasks in a status directory, sorted by createdAt.                         |
+| `getQueueStats(taskDir)`             | Task counts per status: `{ pending, processing, completed, failed, corrupt }`. |
 
 ## Retry behavior
 

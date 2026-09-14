@@ -1,7 +1,7 @@
 # [P2] Branch ACL: the manager/admin lockdown is documented above an explicit ACL but runs only without one
 
 **Status:** Open. Filed 2026-09-14 from the manager's review of the A2 comment-compression PR in
-[baseline-quality-202609.md](baseline-quality-202609.md). Decide it alongside
+[baseline-quality-202609.md](resolved/baseline-quality-202609.md). Decide it alongside
 [authorization-enforcement-consolidation.md](authorization-enforcement-consolidation.md), which
 already covers the ACL matchers' divergence.
 

@@ -519,7 +519,7 @@ pnpm test:e2e                                             # playwright test --wo
 pnpm exec playwright test branch-workflow --workers=1     # single spec: pass the flag yourself
 ```
 
-The whole suite shares **one** `.canopy-dev` workspace and **one** dev server port, so two workers fight over the same git working tree. What comes back is not a recognizable contention error but dozens of failures reading `Failed to ensure main branch`, `spawn git ENOENT`, `TypeError: fetch failed` — noise that impersonates the subsystem under test. A run at `--workers=2` produced ~135 such failures with no real defect behind any of them. **If you are touching `git-manager.ts`, `branch-workspace.ts` or branch metadata and the suite suddenly reports broad git breakage, check your worker count before debugging the code.**
+The whole suite shares **one** `.canopy-dev` workspace and **one** dev server port, so two workers fight over the same git working tree. What comes back is not a recognizable contention error but dozens of failures reading `Failed to ensure main branch`, `spawn git ENOENT`, `TypeError: fetch failed` — noise that impersonates the subsystem under test. **If you are touching `git-manager.ts`, `branch-workspace.ts` or branch metadata and the suite suddenly reports broad git breakage, check your worker count before debugging the code.**
 
 The same constraint holds across processes: **only one Playwright run per machine at a time.** Parallel agent sessions or a second terminal must serialise, or both runs corrupt each other's workspace and both report phantom failures. CI is unaffected — it shards across separate runners, each with its own workspace.
 
@@ -856,7 +856,7 @@ it('logs error when something fails', () => {
 
 `toHaveErrored`, `toHaveWarned` and `toHaveLogged` match `console.error`/`warn`/`log`, taking a substring or a RegExp; `consoleSpy.all()` dumps everything captured, by method, when an assertion is not matching. Other packages import `mockConsole()` from `canopycms/test-utils`; a plain `vi.spyOn(console, 'warn').mockImplementation(() => {})`, asserted and `mockRestore()`d in a `finally`, works too.
 
-**Keep the reporter "all dots".** The `dot` reporter prints a `stdout | <file> > <test>` block for any test that writes to the console, which buries real problems; GitHub Actions sets `CI=true`, so the existing `pnpm test` step enforces the guard with no extra workflow step. `vitest.shared.ts` names the reporter explicitly because Vitest 4 otherwise switches to its `agent` reporter under an AI coding agent (`CLAUDECODE`, `AI_AGENT`, …), and that reporter hides passing tests' console output so the guard never fires — which is how `canopycms-cdk` printed ~950 lines of aws-cdk-lib deprecation warnings per CI run that no agent saw locally. When CI fails with this error, swallow and assert the output, or remove the stray log; do **not** silence the guard.
+**Keep the reporter "all dots".** The `dot` reporter prints a `stdout | <file> > <test>` block for any test that writes to the console, which buries real problems; GitHub Actions sets `CI=true`, so the existing `pnpm test` step enforces the guard with no extra workflow step. `vitest.shared.ts` names the reporter explicitly; its comment says why an unnamed reporter blinds the guard under an AI coding agent. When CI fails with this error, swallow and assert the output, or remove the stray log; do **not** silence the guard.
 
 **`canopycms-cdk` also sets `JSII_DEPRECATED=fail`**, so calling a deprecated aws-cdk-lib API throws a `DeprecationError` at the call site — locally too, and inside `scaffold-synth.test.ts`'s subprocess synth, whose stderr the console guard never sees. Migrate the call; do not relax the setting.
 
@@ -1014,7 +1014,7 @@ Moving a builder out of a construct can pass every existing test while changing 
 
 The check that does prove it: synth the same stack against both versions of the file, dump `Template.fromStack(stack).toJSON()` each time (a throwaway script is fine — see `newTestApp()` above for synthesizing without leaking a `cdk.out`), and diff the two. An identical diff is the proof that the refactor preserves behavior. Reach for this on any extraction out of a construct. Restore the pre-refactor file from a scratchpad copy afterwards, not `git checkout --` (see [Testing Authorization Defaults](#testing-authorization-defaults-defaultbranchaccess--defaultpathaccess)).
 
-**A mutation only counts once you have confirmed it changed the source.** Across 13 break-and-rerun mutations on 16 tests, two "passed" and proved nothing: one edited a property that does not affect the behavior it claimed to break (adding `customHeaders: {}` to an origin does not turn on origin access control), and one never applied at all because shell quoting mangled the patch script. Both looked like a weak test and were neither. Before trusting a green or red mutation result, check the intended edit is actually present in the file — not just that the test command ran.
+**A mutation only counts once you have confirmed it changed the source.** A mutation that edits something irrelevant to the behavior it claims to break (adding `customHeaders: {}` to an origin does not turn on origin access control), or a patch that shell quoting mangled, looks like a weak test and is neither. Before trusting a green or red result, check the intended edit is present in the file.
 
 ### Testing a Repo Script as a Subprocess (`scripts/bump-version.mjs`)
 
@@ -1159,9 +1159,7 @@ The editor reaches browsers through `canopycms/client` and `canopycms-next/clien
 pnpm lint:bundle
 ```
 
-`dependency-cruiser` enforces the reachability directly. It runs in CI right after ESLint, and in the pre-commit hook whenever a commit touches either package's `src/`; config lives in [.dependency-cruiser.mjs](.dependency-cruiser.mjs). `tsPreCompilationDeps` stays off on purpose, so `import type` edges (erased at compile time) are not followed and type-only imports of server modules stay legal. A second rule fails on unresolvable relative imports, since an import the resolver cannot follow is a subtree the reachability rule cannot see.
-
-A violation prints the whole chain from the entry to the built-in, which is usually the fastest way to see where the boundary broke:
+It runs in CI and in the pre-commit hook whenever a commit touches either package's `src/`. The header of [.dependency-cruiser.mjs](.dependency-cruiser.mjs) states the scope, including why `import type` edges stay legal and why `node_modules` is not followed. A violation prints the whole chain from the entry to the built-in:
 
 ```
 error client-bundle-no-node-builtins: packages/canopycms/src/client.ts → fs/promises
@@ -1171,23 +1169,26 @@ error client-bundle-no-node-builtins: packages/canopycms/src/client.ts → fs/pr
     fs/promises
 ```
 
-The fix is normally to import the dependency-free sibling — `paths/branch-name` (not `paths/branch` or the `paths` barrel), `assets/asset-prefixes` (not `assets/keys`), `assets/transform-directives` (not `assets/transform`) — or to make the import `import type`. When client-reachable code genuinely needs new browser-safe logic that currently sits in a node-importing file, extract that logic into its own dependency-free module rather than widening the rule.
+Import the dependency-free sibling the rule's `comment` names, or make the import `import type`. When client-reachable code needs browser-safe logic that sits in a node-importing file, extract it into its own dependency-free module rather than widening the rule.
 
-One limit: the check does not follow into `node_modules`, so a server-only npm package (`sharp`, `simple-git`, the S3 SDK) imported from client code slips past it. The e2e production `next build` is the backstop.
-
-### Import-Cycle Check
-
-The same `dependency-cruiser` config carries a `no-circular` rule over both packages' `src/`:
+### Import-Cycle and Module-Boundary Check
 
 ```bash
 pnpm lint:cycles
 ```
 
-Both packages are at **zero cycles**, so any violation is one you just introduced. Under ESM a runtime import cycle makes module-init order load-order dependent, and the symptom — an undefined binding at first use — points nowhere near the cause, so this is much cheaper to catch here than to debug later.
+Runs every rule in [.dependency-cruiser.mjs](.dependency-cruiser.mjs) over both packages' `src/`: `no-circular`, plus the module-boundary rules `http-reaches-api-only-via-routes`, `api-never-imports-worker`, `editor-imports-api-only-client-index-constants` and `core-no-github-app-auth`. Each rule's `comment` states the rule and its fix. CI and the pre-commit hook run it alongside `lint:bundle`.
 
-`tsPreCompilationDeps` being off matters more for this rule than for the bundle one: `import type` edges are erased and can never trip it, so a type-only back-import from an extracted module to the one it came from is legal. Only value imports count.
+Both packages are at **zero cycles**, so any violation is one you just introduced. Cycles bite hardest when splitting a class whose methods called each other: hoist the shared piece into a third module (`worker/history-rewrite.ts`) or pass the collaborator in through a context object (`worker/worker-context.ts`).
 
-The rule bites hardest when splitting a class whose methods called each other freely, since the extracted modules easily end up mutually importing. Break the edge the way the worker split did: hoist the shared piece into a third module that imports neither (`worker/history-rewrite.ts`), or pass the collaborator in through a context object rather than importing it (`worker/worker-context.ts`).
+### Comment and Doc Budgets
+
+Both budgets run in CI and in the pre-commit hook. Each script's header comment carries its rules.
+
+- `pnpm lint:comments` — [scripts/check-comment-budget.mjs](scripts/check-comment-budget.mjs) against `scripts/comment-budget.json`: history markers in source comments, comment run length and comment/code ratio. `--report` prints per-file, per-directory and per-package tables; `--markers` lists marker lines.
+- `pnpm lint:docs` — [scripts/check-docs.mjs](scripts/check-docs.mjs) against `scripts/docs-budgets.json`: paths, links and package imports must resolve, plus word ceilings per file and per H2 section, history markers, and list-item and table-cell length in `CODEBASE_GUIDE.md` and module `AGENTS.md`. `--report`, `--report --sections <file>` and `--list-long-items` print the numbers.
+- `--write-baseline` on either script rewrites its budget file from actuals, `--margin=<pct>` adds headroom, and a rewrite that would raise any number is refused without `--allow-raise`: a raise is a reviewed decision stated in the commit message.
+- For a comment-only change, `node scripts/diff-comments-only.mjs <git-range>` proves nothing but TypeScript comments changed by comparing parser token streams on both sides; its header lists what else must match.
 
 ### Published-Package ESM Import Check
 

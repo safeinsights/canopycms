@@ -3,78 +3,78 @@
   "files": {
     ".claude/agents/branch-review.md": {
       "historyMarkers": 0,
-      "maxSectionWords": 95,
-      "words": 95
+      "maxSectionWords": 98,
+      "words": 98
     },
     ".claude/agents/codebase-guide.md": {
       "historyMarkers": 0,
-      "maxSectionWords": 86,
-      "words": 86
+      "maxSectionWords": 89,
+      "words": 89
     },
     ".claude/agents/debug.md": {
-      "historyMarkers": 1,
-      "maxSectionWords": 76,
-      "words": 239
+      "historyMarkers": 0,
+      "maxSectionWords": 79,
+      "words": 247
     },
     ".claude/agents/docs-architecture.md": {
       "historyMarkers": 0,
-      "maxSectionWords": 174,
-      "words": 587
+      "maxSectionWords": 180,
+      "words": 605
     },
     ".claude/agents/docs-developing.md": {
       "historyMarkers": 0,
-      "maxSectionWords": 174,
-      "words": 414
+      "maxSectionWords": 180,
+      "words": 427
     },
     ".claude/agents/docs-readme.md": {
       "historyMarkers": 0,
-      "maxSectionWords": 174,
-      "words": 446
+      "maxSectionWords": 180,
+      "words": 460
     },
     ".claude/agents/init-maintenance.md": {
       "historyMarkers": 0,
-      "maxSectionWords": 68,
-      "words": 336
+      "maxSectionWords": 71,
+      "words": 347
     },
     ".claude/agents/review.md": {
-      "historyMarkers": 1,
-      "maxSectionWords": 309,
-      "words": 602
+      "historyMarkers": 0,
+      "maxSectionWords": 319,
+      "words": 621
     },
     ".claude/agents/test.md": {
       "historyMarkers": 0,
-      "maxSectionWords": 65,
-      "words": 208
+      "maxSectionWords": 67,
+      "words": 215
     },
     ".claude/agents/typecheck.md": {
       "historyMarkers": 0,
-      "maxSectionWords": 54,
-      "words": 201
+      "maxSectionWords": 56,
+      "words": 208
     },
     ".claude/agents/update-codebase-guide.md": {
       "historyMarkers": 0,
-      "maxSectionWords": 174,
-      "words": 502
+      "maxSectionWords": 180,
+      "words": 518
     },
     "AGENTS.md": {
       "historyMarkers": 0,
-      "maxSectionWords": 323,
-      "words": 1245
+      "maxSectionWords": 333,
+      "words": 1283
     },
     "ARCHITECTURE.md": {
       "historyMarkers": 0,
       "maxSectionWords": 2901,
-      "words": 24004
+      "words": 23940
     },
     "CODEBASE_GUIDE.md": {
       "historyMarkers": 0,
       "maxSectionWords": 744,
-      "words": 4131
+      "words": 4114
     },
     "DEVELOPING.md": {
       "historyMarkers": 0,
-      "maxSectionWords": 5655,
-      "words": 13005
+      "maxSectionWords": 5580,
+      "words": 12986
     },
     "README.md": {
       "historyMarkers": 0,
@@ -87,9 +87,9 @@
       "words": 13294
     },
     "docs/concurrency.md": {
-      "historyMarkers": 8,
-      "maxSectionWords": 1256,
-      "words": 5554
+      "historyMarkers": 0,
+      "maxSectionWords": 1280,
+      "words": 5475
     },
     "docs/deploying-to-aws.md": {
       "historyMarkers": 0,
@@ -97,79 +97,79 @@
       "words": 8980
     },
     "packages/canopycms/src/AGENTS.md": {
-      "historyMarkers": 1,
-      "maxSectionWords": 832,
-      "words": 913
+      "historyMarkers": 0,
+      "maxSectionWords": 857,
+      "words": 921
     },
     "packages/canopycms/src/ai/AGENTS.md": {
-      "historyMarkers": 1,
-      "maxSectionWords": 235,
-      "words": 286
+      "historyMarkers": 0,
+      "maxSectionWords": 243,
+      "words": 276
     },
     "packages/canopycms/src/api/AGENTS.md": {
-      "historyMarkers": 1,
-      "maxSectionWords": 63,
-      "words": 200
+      "historyMarkers": 0,
+      "maxSectionWords": 65,
+      "words": 206
     },
     "packages/canopycms/src/assets/AGENTS.md": {
-      "historyMarkers": 2,
-      "maxSectionWords": 134,
-      "words": 188
+      "historyMarkers": 0,
+      "maxSectionWords": 136,
+      "words": 173
     },
     "packages/canopycms/src/authorization/AGENTS.md": {
-      "historyMarkers": 1,
-      "maxSectionWords": 57,
-      "words": 129
+      "historyMarkers": 0,
+      "maxSectionWords": 51,
+      "words": 106
     },
     "packages/canopycms/src/build/AGENTS.md": {
-      "historyMarkers": 1,
-      "maxSectionWords": 263,
-      "words": 318
+      "historyMarkers": 0,
+      "maxSectionWords": 271,
+      "words": 308
     },
     "packages/canopycms/src/cli/AGENTS.md": {
-      "historyMarkers": 1,
-      "maxSectionWords": 153,
-      "words": 278
+      "historyMarkers": 0,
+      "maxSectionWords": 158,
+      "words": 267
     },
     "packages/canopycms/src/editor/AGENTS.md": {
-      "historyMarkers": 1,
-      "maxSectionWords": 90,
-      "words": 501
+      "historyMarkers": 0,
+      "maxSectionWords": 81,
+      "words": 459
     },
     "packages/canopycms/src/editor/hooks/README.md": {
-      "historyMarkers": 3,
-      "maxSectionWords": 372,
-      "words": 375
+      "historyMarkers": 0,
+      "maxSectionWords": 370,
+      "words": 373
     },
     "packages/canopycms/src/operating-mode/AGENTS.md": {
       "historyMarkers": 0,
-      "maxSectionWords": 96,
-      "words": 151
+      "maxSectionWords": 86,
+      "words": 86
     },
     "packages/canopycms/src/static/AGENTS.md": {
-      "historyMarkers": 2,
-      "maxSectionWords": 444,
-      "words": 936
+      "historyMarkers": 0,
+      "maxSectionWords": 458,
+      "words": 944
     },
     "packages/canopycms/src/task-queue/README.md": {
       "historyMarkers": 0,
-      "maxSectionWords": 103,
-      "words": 318
+      "maxSectionWords": 107,
+      "words": 327
     },
     "packages/canopycms/src/utils/AGENTS.md": {
       "historyMarkers": 0,
-      "maxSectionWords": 219,
-      "words": 583
+      "maxSectionWords": 170,
+      "words": 206
     },
     "packages/canopycms/src/validation/AGENTS.md": {
-      "historyMarkers": 1,
-      "maxSectionWords": 380,
-      "words": 435
+      "historyMarkers": 0,
+      "maxSectionWords": 392,
+      "words": 429
     },
     "packages/canopycms/src/worker/AGENTS.md": {
       "historyMarkers": 0,
-      "maxSectionWords": 347,
-      "words": 1164
+      "maxSectionWords": 220,
+      "words": 531
     }
   }
 }

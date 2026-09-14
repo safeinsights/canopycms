@@ -1,7 +1,7 @@
 # [P3] knip guard: what `pnpm lint:exports` cannot see
 
 **Status:** Open. Filed 2026-09-14 from the manager's review of the Chip B encapsulation PR in
-[baseline-quality-202609.md](baseline-quality-202609.md). Sibling of
+[baseline-quality-202609.md](resolved/baseline-quality-202609.md). Sibling of
 [comment-guard-scope-gaps.md](comment-guard-scope-gaps.md).
 
 `knip.json` judges unused-ness at the declaration site only:

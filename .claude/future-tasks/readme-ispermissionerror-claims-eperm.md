@@ -1,7 +1,7 @@
 # README says `isPermissionError` covers EPERM; the code tests EACCES only
 
 **Status:** Open. **Priority: P3.** Found 2026-09-14 during the chip A1 comment pass in
-[baseline-quality-202609.md](baseline-quality-202609.md).
+[baseline-quality-202609.md](resolved/baseline-quality-202609.md).
 
 `README.md` (the `canopycms/utils/error` section, around line 2136) says
 `isNotFoundError` / `isPermissionError` / `isFileExistsError` classify `ENOENT`,
