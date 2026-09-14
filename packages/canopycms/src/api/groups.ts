@@ -173,11 +173,10 @@ const updateInternalGroupsHandler = async (
 
     const { context, mode } = result
 
-    // Load -> compare -> reconcile -> validate -> write all happen atomically
-    // under the cross-host layered lock (see
-    // authorization/settings-file-store.ts), against the mutator's own
-    // freshly-reloaded file — no separate pre-read here, so there's no
-    // TOCTOU window between the version/reconciliation checks and the write.
+    // Load -> compare -> reconcile -> validate -> write all happen atomically under the
+    // cross-host layered lock (see authorization/settings-file-store.ts), against the mutator's
+    // own freshly-reloaded file — no separate pre-read, so no TOCTOU window between the
+    // version/reconciliation checks and the write.
     await mutateGroupsFile(context.branchRoot, mode, (currentFile, version) => {
       if (body.expectedContentVersion !== undefined && body.expectedContentVersion !== version) {
         throw new SettingsVersionConflictError(
@@ -248,6 +247,8 @@ const updateInternalGroupsHandler = async (
       }
     })
 
+    // A failed push is returned to the client as an error, never a bare 200 (see
+    // CommitSettingsResult in settings-helpers.ts).
     const commitResult = await commitSettings(ctx, {
       context,
       branchRoot: context.branchRoot,

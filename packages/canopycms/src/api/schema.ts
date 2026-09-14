@@ -310,16 +310,12 @@ async function getSchemaOps(
 }
 
 /**
- * `collectionPath`: matchRoute now
- * decodes every matched param exactly once, uniformly for `:param` and
- * catch-all alike, and `collectionParamsSchema`'s `logicalPathSchema`
- * already re-validates that single decoded value for traversal before this
- * handler ever runs. Decoding again here would be a second, unauthorized
- * decode pass on an already-decoded value - exactly the "double-encoding
- * smuggles a traversal sequence" hazard this function's own re-validation
- * was written to defend against, just relocated. This is now a passthrough;
- * kept as a named function (rather than inlined at each call site) so a
- * future re-validation need has one place to add it back.
+ * `collectionPath` is already decoded exactly once by matchRoute (uniformly for `:param` and
+ * catch-all segments) and re-validated for traversal by `collectionParamsSchema`'s
+ * `logicalPathSchema` before this handler runs. Decoding it again here would be a second,
+ * unauthorized decode pass — the "double-encoding smuggles a traversal sequence" hazard this
+ * function exists to guard against. A passthrough today; kept as a named function so a future
+ * re-validation need has one place to add it back.
  */
 function decodeCollectionPath(
   collectionPath: LogicalPath,
@@ -581,13 +577,10 @@ const updateEntryTypeHandler = async (
   }
   const collectionPath = decodedPath.path
 
-  // Note: the breaking-change usage guard (blocking format/schema changes
-  // while entries still use this type) used to live here, checked BEFORE
-  // calling the store. It moved into SchemaOps.updateEntryType itself so the
-  // usage count is read under the same schema lock that guards the write —
-  // otherwise a concurrent write could land a new entry between this
-  // handler's count and its call to the store (TOCTOU). See
-  // schema-store.ts's updateEntryTypeInner.
+  // The breaking-change usage guard (blocking format/schema changes while entries still use this
+  // type) lives in SchemaOps.updateEntryType, not here: the usage count must be read under the
+  // same schema lock that guards the write, or a concurrent write could land a new entry between
+  // this handler's count and the store call (TOCTOU). See schema-store.ts's updateEntryTypeInner.
   try {
     await storeResult.store.updateEntryType(
       collectionPath,

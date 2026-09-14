@@ -130,14 +130,11 @@ const toCollectionItem = (
 /**
  * List entries in a single collection, mapped to API CollectionItem type.
  *
- * Deliberately does NOT resolve `reference` fields, unlike the `resolveReferences` option
- * that `listEntries`/`buildContentTree` grew for the same underlying primitive. This is a
- * paginated admin table rendering slug/title/canEdit — it never reads inside a reference —
- * and resolution here would land in the worst possible place: it runs BEFORE pagination
- * (`filterWithAccessControl` walks the full collection, `slice` happens at the end), on a
- * request path, so every keystroke in the admin search box would pay a full ContentId index
- * scan plus one read per distinct referenced entry. Revisit only if a column ever needs to
- * display a reference's content.
+ * Deliberately does NOT resolve `reference` fields (unlike the `resolveReferences` option
+ * elsewhere on the same primitive): this runs BEFORE pagination (`slice` happens at the end) on
+ * a search request path, so resolving would cost a full ContentId scan plus one read per
+ * referenced entry on every keystroke. Revisit only if a column needs to display a reference's
+ * content.
  */
 const listCollectionEntries = async (
   root: string,
@@ -316,13 +313,10 @@ export type DeleteEntryResponse = ApiResponse<{
   deleted: boolean
   contentId?: string
   /**
-   * Set when the entry itself was deleted successfully but the collection's
-   * order array could not be updated afterward (C6: order cleanup is
-   * best-effort hygiene that runs AFTER the delete, so its failure must not
-   * present as a failed delete - see content.ts's `validationWarnings` for
-   * the same "warn, don't fail" precedent on the write path). The order
-   * array still contains the now-nonexistent id until a later schema
-   * mutation cleans it up.
+   * Set when the entry deleted successfully but the collection's order array couldn't be updated
+   * afterward (C6: best-effort hygiene after the delete, so its failure must not present as a
+   * failed delete — see content.ts's `validationWarnings`). The order array keeps the
+   * now-nonexistent id until the next schema mutation cleans it up.
    */
   warning?: string
 }>
@@ -412,6 +406,8 @@ const deleteEntryHandler = async (
     if (isNotFoundError(err)) {
       return { ok: false, status: 404, error: 'Entry not found' }
     }
+    // C2: same rule as content.ts's writeContentHandler catch (ContentStoreError -> 400,
+    // everything else -> 500).
     if (err instanceof ContentStoreError) {
       return { ok: false, status: 400, error: 'Invalid entry path' }
     }
@@ -441,13 +437,10 @@ const deleteEntryHandler = async (
 
     await contentStore.delete(collectionLogicalPath, entrySlug)
 
-    // Update the collection's order array to remove the deleted item.
-    // Construct exactly like api/schema.ts's getSchemaOps: the configured
-    // content root as the first argument, the branch root passed explicitly as
-    // the fourth, and with services, so updateOrder's .collection.json write
-    // bumps the schema generation marker. Without the bump, every host durably
-    // serves the stale cached order (still containing the deleted entry) until
-    // the next unrelated schema mutation — prod has no mtime backstop.
+    // Construct exactly like api/schema.ts's getSchemaOps (content root, registry, services,
+    // branch root) so updateOrder's write bumps the schema generation marker — without it, every
+    // host keeps serving the stale cached order (still containing the deleted entry) until the
+    // next unrelated schema mutation, since prod has no mtime backstop.
     if (contentId && collection.type === 'collection' && collection.order) {
       const contentRootName = ctx.services.config.contentRoot || 'content'
       const schemaStore = new SchemaOps(
@@ -461,13 +454,9 @@ const deleteEntryHandler = async (
         try {
           await schemaStore.updateOrder(collectionPath as LogicalPath, newOrder as string[])
         } catch (err) {
-          // C6: order cleanup is best-effort hygiene that runs AFTER the
-          // entry is already deleted, so no failure here - busy schema lock,
-          // ENOSPC, a bug, anything - is allowed to turn an otherwise-
-          // successful delete into an error response (the entry is gone; a
-          // client that sees an error and retries the delete would just get
-          // a confusing 404). Surface it as a warning on the success
-          // response instead (mirrors content.ts's write-path `validationWarnings`).
+          // C6: order cleanup is best-effort hygiene after the entry is already deleted, so no
+          // failure here may turn an otherwise-successful delete into an error (a retry would
+          // just 404). Surface it as a warning instead (mirrors content.ts's `validationWarnings`).
           const reason =
             err instanceof SchemaStoreBusyError ? 'schema is busy' : getErrorMessage(err)
           log.warn('delete-entry', 'Skipped order cleanup', {
@@ -489,9 +478,8 @@ const deleteEntryHandler = async (
     if (isNotFoundError(err)) {
       return { ok: false, status: 404, error: 'Entry not found' }
     }
-    // [SYNC-C1] Contention with the worker's rebase (or another editor) is a
-    // retriable conflict, not a server fault -- 409, with the syncing
-    // variant's own "try again" message when that is what happened.
+    // [SYNC-C1] Contention with the worker's rebase (or another editor) is a retriable conflict,
+    // not a server fault — 409, with the syncing variant's own "try again" message.
     if (err instanceof ContentConflictError) {
       return {
         ok: false,

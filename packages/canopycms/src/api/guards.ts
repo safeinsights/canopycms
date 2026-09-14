@@ -1,19 +1,7 @@
 /**
- * Declarative guard system for API endpoints.
- *
- * Guards run before the handler and either:
- * - Return an error response (404, 403, 500) to short-circuit
- * - Produce a guard context (e.g., branch context with schema) for the handler
- *
- * Usage in defineEndpoint:
- * ```ts
- * defineEndpoint({
- *   guards: ['branchAccessWithSchema'] as const,
- *   handler: async (gc, ctx, req, params) => {
- *     // gc.branchContext is guaranteed non-null with flatSchema
- *   }
- * })
- * ```
+ * Declarative guard system for API endpoints: guards run before the handler and either return an
+ * error response (404/403/500) to short-circuit, or produce a guard context (e.g. branch context
+ * with schema) for the handler. See api/AGENTS.md for the full guard reference.
  */
 
 import type { BranchContext, BranchContextWithSchema } from '../types'
