@@ -160,7 +160,9 @@ const TRANSFORM_CACHE_MAX_TTL = Duration.days(365)
  * There is no legitimate form of that: both instances attach the same two
  * patterns, so the second is always wrong whichever construct owns it.
  *
- * The marker is a bare `Construct`, which emits nothing into the template.
+ * The marker is a bare `Construct`, which emits nothing into the template. A child construct
+ * rather than a module-level `WeakSet` keyed on the distribution: the scoping is then a property
+ * of the tree, not of process lifetime, and `node.children` lets a test assert the guard's state.
  */
 const ATTACHED_MARKER_ID = 'CanopyAssetBehaviorsAttached'
 
