@@ -796,9 +796,11 @@ a secret. The reclassification is about not teaching that the Lambda handles sec
 
 **Worth checking while you are here.** Confirm your own `bin/app.ts` passes
 `CLERK_SECRET_KEY` to `CanopyCmsService` as `clerkSecretKeySecretArn` (a Secrets Manager
-ARN read by the EC2 worker) and **not** as an entry in the Lambda's `environment`. No
-Lambda code path reads that value, so passing it there gains nothing and makes a real
-secret readable by anyone holding `lambda:GetFunctionConfiguration`.
+ARN read by the EC2 worker) and **not** as an entry in the Lambda's `environment`.
+CanopyCMS's own Lambda code never reads that value, so passing it there gains nothing and
+makes a real secret readable by anyone holding `lambda:GetFunctionConfiguration`. The
+exception is `clerkMiddleware`, if you keep it: it needs the secret wherever it runs (see
+the Security Model in [deploying-to-aws.md](deploying-to-aws.md#security-model)).
 
 ### `basePath` deployments are supported, and `assetUrl`'s `baseUrl` is now safe for path prefixes (#24)
 
@@ -1515,6 +1517,86 @@ instead — but check its operator first: written with `??` rather than `||`, an
 empty-string environment variable survives, clears Next's `typeof buildId !== 'string'` guard,
 and ships an **empty** build id. Also deletable: any post-build step that rewrites or strips the
 manifest's `generated` field to make output comparable.
+
+### The CMS image builds without git, `CanopyCmsService` defaults to arm64, and the CDK app is type-checked — **breaking (deploy), for a stack that sets `platform` without `architecture`**
+
+**What changed.** Six changes to how the CMS editor image is built and deployed. They matter most
+if you ran `canopycms init-deploy aws` before them, or copied `Dockerfile.cms.template` by hand.
+
+1. **Build-time reads come from the working tree.** `next build` reads content from the files in
+   the build context, in either operating mode, and never touches git, a branch clone or
+   `.canopy-dev`. The generated `Dockerfile.cms` builder stage no longer installs git or commits a
+   snapshot repository. It sets `ENV CANOPY_BUILD_MODE=true`, so anything else the build command
+   runs, such as `canopycms generate-ai-content`, reads the working tree too. The runner stage
+   still installs git.
+2. **The pnpm install sees `pnpm-workspace.yaml`.** The pnpm variant of the Dockerfile copies it
+   before installing (`COPY package.json pnpm-lock.yaml pnpm-workspace.yam[l] ./`). pnpm 11 keeps
+   its `allowBuilds` decisions there and fails the install without them.
+3. **`init-deploy aws` keeps `infrastructure/` out of the app.** It adds `infrastructure` to your
+   `tsconfig.json` `exclude` (or asks you to, when it cannot edit the file) and to the generated
+   `.dockerignore`, so `next build` no longer type-checks the CDK app.
+4. **The CDK app is type-checked separately.** `init-deploy aws` scaffolds
+   `infrastructure/tsconfig.json`, which extends your `tsconfig.json`, and the generated workflow
+   runs `tsc --noEmit -p infrastructure` before `cdk deploy`. `cdk.json` runs the app through tsx,
+   which does not check types, so without that step a misspelled `CanopyCmsService` prop is dropped
+   silently. The workflow also runs on a change to `tsconfig.json` alone.
+5. **`CanopyCmsService` defaults to `Architecture.ARM_64`**, where it used to leave Lambda's own
+   `X86_64` default, and always passes the resolved architecture to the function. CDK derives a
+   `fromImageAsset` image's build platform from it. The generated workflow runs on
+   `ubuntu-24.04-arm`, so that image builds natively.
+6. **`withCanopy()` makes a Turbopack standalone server able to load sharp.** For any build except
+   a static export it adds sharp's libvips to Next's file tracing. On Next 16 and later it also sets
+   `turbopack: {}` when your config has neither `turbopack` nor your own `webpack` and it can read
+   your installed Next version. A webpack build still fails its image transforms: on Next 15.5.21
+   with pnpm, sharp is bundled into a server chunk (see
+   [deploying-to-aws.md](deploying-to-aws.md#dual-build-support)).
+
+**Breaking, for one stack shape.** A stack that sets `platform` on `fromImageAsset` and leaves
+`architecture` unset used to get an x86_64 function. It now gets an arm64 one, while the explicit
+`platform` still decides the image, so `platform: Platform.LINUX_AMD64` builds an x86_64 image that
+the arm64 function cannot run. The stack `init-deploy aws` generated before this change sets both
+`platform: Platform.LINUX_ARM64` and `architecture: lambda.Architecture.ARM_64`, which still agree.
+A stack that sets neither moves its function from x86_64 to arm64 on the next deploy, with an image
+built to match: natively on an arm64 host, and on an x86 one only under QEMU emulation (see
+[Where the image is built](deploying-to-aws.md#where-the-image-is-built)).
+
+**To adopt.**
+
+1. In your CDK stack, delete `platform` from `fromImageAsset`, with its `Platform` import, and set
+   `architecture` on `CanopyCmsService` only if you want x86_64. Read "Where the image is built" in
+   [deploying-to-aws.md](deploying-to-aws.md#where-the-image-is-built) before changing the
+   architecture or the workflow's runner.
+2. Re-run `canopycms init-deploy aws`. Without `--force` it asks before replacing each file you
+   already have, and `--non-interactive` skips them without asking. Either way it adds
+   `infrastructure/tsconfig.json` if you don't have one, and adds `infrastructure` to
+   `tsconfig.json`'s `exclude`. For the `Dockerfile.cms`, `.dockerignore`, workflow and stack you
+   keep, bring the rest across by hand:
+   - the workflow's "Type-check the CDK app" step, before "Configure AWS credentials", and
+     `tsconfig.json` in its `on.push.paths` (`examples/aws-deployment/deploy-cms.yml` has both,
+     rendered for npm);
+   - `runs-on: ubuntu-24.04-arm` in the workflow, if yours still says `ubuntu-latest`, so the arm64
+     image builds natively (see
+     [Where the image is built](deploying-to-aws.md#where-the-image-is-built));
+   - an `infrastructure` line in `.dockerignore`;
+   - with pnpm, `pnpm-workspace.yam[l]` in the Dockerfile's first `COPY`.
+
+   `--force` replaces every generated file instead, including a stack you have edited.
+
+3. An existing hand-copied `Dockerfile.cms` builds as it did before this change: `next build` no
+   longer reads its snapshot repository. Update it when convenient by deleting the builder's git
+   install and snapshot commit and adding `ENV CANOPY_BUILD_MODE=true` before the build command.
+
+**Now deletable.**
+
+- In a hand-copied `Dockerfile.cms`, the builder's git install and snapshot commit, and any step
+  added to create or check out your base branch there so that the build could find it.
+- In CI that runs `next build`, a step that attaches a detached HEAD or creates the base branch
+  locally only so that the build's content reads resolve.
+- In your CDK stack, `platform` on `fromImageAsset` and its `Platform` import.
+- If you use `withCanopy()`: a hand-written `outputFileTracingIncludes` entry for sharp's libvips
+  (`withCanopy()` adds its own and keeps yours), and a `turbopack: {}` added only to get past Next
+  16's error about `withCanopy()`'s `webpack` function, as long as `withCanopy()` can read your Next
+  version. It cannot under Yarn PnP.
 
 ---
 

@@ -1,5 +1,7 @@
 # `examples/aws-deployment/deploy-cms.yml` has drifted from its template
 
+**Duplicate of [example-aws-deployment-drift-from-template.md](../example-aws-deployment-drift-from-template.md), merged during the base merge (#341).**
+
 **Priority:** P2
 **Found:** 2026-09-12, while wiring the GitHub App props (PR B3 of adopter request #45)
 

@@ -17,6 +17,35 @@ vi.mock('node:module', () => ({
   })),
 }))
 
+/**
+ * `./sharp-tracing` has its own real-filesystem test suite (sharp-tracing.test.ts). Here it's
+ * mocked to a controllable stub, driven by `tracing`, so withCanopy's own logic — which key to
+ * write under, how to merge, when to warn — can be tested without touching the filesystem.
+ * `vi.hoisted` is required because `vi.mock`'s factory is hoisted above these imports, so the
+ * state and spies it closes over must be created inside that same hoisted call.
+ */
+const { tracing, sharpTracingIncludesMock, installedNextMajorMock, hasNextConfigMock } = vi.hoisted(
+  () => {
+    const tracing = {
+      result: { includes: [] as string[], problem: undefined as string | undefined },
+      nextMajor: 16 as number | null,
+      hasConfig: true,
+    }
+    return {
+      tracing,
+      sharpTracingIncludesMock: vi.fn(() => tracing.result),
+      installedNextMajorMock: vi.fn(() => tracing.nextMajor),
+      hasNextConfigMock: vi.fn(() => tracing.hasConfig),
+    }
+  },
+)
+
+vi.mock('./sharp-tracing', () => ({
+  sharpTracingIncludes: sharpTracingIncludesMock,
+  installedNextMajor: installedNextMajorMock,
+  hasNextConfig: hasNextConfigMock,
+}))
+
 import { withCanopy } from './with-canopy'
 
 /** Helper to invoke the webpack function from a withCanopy result */
@@ -25,9 +54,28 @@ function invokeWebpack(config: NextConfig, webpackConfig: unknown) {
   return webpackFn(webpackConfig as any, {} as any)
 }
 
+/**
+ * Builds a NextConfig from a value that would not type-check as one directly (e.g. a malformed
+ * `outputFileTracingIncludes`) -- without reaching for `any`. `unknown` plus this one guard is
+ * the whole cast; callers construct genuinely-malformed fixtures, so the guard only rules out
+ * non-objects, not the shape withCanopy itself is meant to reject at runtime.
+ */
+function asNextConfig(value: unknown): NextConfig {
+  if (typeof value !== 'object' || value === null) {
+    throw new Error('test fixture must be an object')
+  }
+  return value as NextConfig
+}
+
 describe('withCanopy', () => {
   beforeEach(() => {
     unresolvablePackages = []
+    tracing.result = { includes: [], problem: undefined }
+    tracing.nextMajor = 16
+    tracing.hasConfig = true
+    sharpTracingIncludesMock.mockClear()
+    installedNextMajorMock.mockClear()
+    hasNextConfigMock.mockClear()
   })
 
   describe('transpilePackages', () => {
@@ -113,11 +161,69 @@ describe('withCanopy', () => {
     })
   })
 
-  describe('turbopack limitation', () => {
+  describe('turbopack', () => {
     it('does not set turbopack aliases (absolute paths unsupported)', () => {
-      const result = withCanopy({}) as any
-      expect(result.turbopack).toBeUndefined()
+      const result = withCanopy({})
+      expect(result.turbopack?.resolveAlias).toBeUndefined()
       expect(result.experimental?.turbo).toBeUndefined()
+    })
+
+    // Next 16 exits a `next build` or `next dev` that defaulted to Turbopack when the config has
+    // a `webpack` key and no `turbopack` key -- and the alias function above is such a key.
+    it.each([16, 17])(
+      'sets an empty turbopack config on Next %i, answering for its own webpack function',
+      (major) => {
+        tracing.nextMajor = major
+        const result = withCanopy({})
+        expect(result.webpack).toBeTypeOf('function')
+        expect(result.turbopack).toEqual({})
+      },
+    )
+
+    it('does the same for a static export build', () => {
+      expect(withCanopy({ output: 'export' }, { staticBuild: true }).turbopack).toEqual({})
+    })
+
+    // Next 15 only warns; Next 13 and 14 report an unknown top-level `turbopack` as invalid.
+    it.each([13, 14, 15])('leaves turbopack unset on Next %i', (major) => {
+      tracing.nextMajor = major
+      expect(withCanopy({})).not.toHaveProperty('turbopack')
+    })
+
+    it('leaves turbopack unset when the Next version cannot be read', () => {
+      tracing.nextMajor = null
+      expect(withCanopy({})).not.toHaveProperty('turbopack')
+    })
+
+    // An adopter who already worked around the guard with `turbopack: {}` keeps their own value.
+    it.each([{}, { resolveAlias: { foo: './bar' } }])(
+      "keeps the adopter's own turbopack config (%o)",
+      (turbopack) => {
+        expect(withCanopy({ turbopack }).turbopack).toBe(turbopack)
+      },
+    )
+
+    it("does not mutate the adopter's config object", () => {
+      const nextConfig: NextConfig = { reactStrictMode: true }
+      const result = withCanopy(nextConfig)
+      expect(result.turbopack).toEqual({})
+      expect(nextConfig).toEqual({ reactStrictMode: true })
+    })
+
+    it("treats turbopack: null as unset, as Next's guard does", () => {
+      expect(withCanopy(asNextConfig({ turbopack: null })).turbopack).toEqual({})
+    })
+
+    it("leaves Next's guard in place for the adopter's own webpack config", () => {
+      const result = withCanopy({ webpack: (config) => config })
+      expect(result).not.toHaveProperty('turbopack')
+    })
+
+    it('adds nothing when there is no webpack function to answer for', () => {
+      unresolvablePackages = ['react', 'react-dom']
+      const result = withCanopy({})
+      expect(result.webpack).toBeUndefined()
+      expect(result).not.toHaveProperty('turbopack')
     })
   })
 
@@ -371,6 +477,404 @@ describe('withCanopy', () => {
       expect(rewrites.beforeFiles).toEqual([])
       expect(rewrites.fallback).toEqual([])
       expect(rewrites.afterFiles).toEqual([{ source: '/x', destination: '/y' }, ASSETS_REWRITE])
+    })
+  })
+
+  describe('sharp libvips tracing (outputFileTracingIncludes)', () => {
+    afterEach(() => {
+      // Several tests below spy on or stub console.warn; restore between tests so a leaked spy
+      // from one test cannot swallow or misattribute another test's warning.
+      vi.restoreAllMocks()
+    })
+
+    it('adds the tracer include under "/**" for a server build and for output: standalone', () => {
+      tracing.result = { includes: ['node_modules/@img/sharp-libvips-linux-arm64/lib/**/*'] }
+
+      const server = withCanopy({})
+      expect(server.outputFileTracingIncludes).toEqual({
+        '/**': ['node_modules/@img/sharp-libvips-linux-arm64/lib/**/*'],
+      })
+
+      const standalone = withCanopy({ output: 'standalone' })
+      expect(standalone.outputFileTracingIncludes).toEqual({
+        '/**': ['node_modules/@img/sharp-libvips-linux-arm64/lib/**/*'],
+      })
+    })
+
+    it('skips tracing entirely for a static export, without calling the tracer', () => {
+      tracing.result = { includes: ['node_modules/@img/sharp-libvips-linux-arm64/lib/**/*'] }
+
+      const exported = withCanopy({ output: 'export' })
+      expect(exported).not.toHaveProperty('outputFileTracingIncludes')
+
+      const staticBuild = withCanopy({}, { staticBuild: true })
+      expect(staticBuild).not.toHaveProperty('outputFileTracingIncludes')
+
+      expect(sharpTracingIncludesMock).not.toHaveBeenCalled()
+    })
+
+    it('merges into an existing "/**", dedupes, keeps other route keys, and does not mutate the input', () => {
+      tracing.result = { includes: ['new/glob/**/*'] }
+
+      const input = Object.freeze({
+        outputFileTracingIncludes: Object.freeze({
+          '/**': Object.freeze(['existing/glob/**/*', 'new/glob/**/*']),
+          '/api/*': Object.freeze(['other/glob/**/*']),
+        }),
+      })
+      const snapshot: unknown = JSON.parse(JSON.stringify(input))
+
+      const result = withCanopy(input)
+
+      expect(result.outputFileTracingIncludes?.['/**']).toHaveLength(2)
+      expect(result.outputFileTracingIncludes?.['/**']).toEqual(
+        expect.arrayContaining(['existing/glob/**/*', 'new/glob/**/*']),
+      )
+      expect(result.outputFileTracingIncludes?.['/api/*']).toEqual(['other/glob/**/*'])
+
+      // Freezing above makes any real mutation throw; this is the belt-and-suspenders check that
+      // the value withCanopy handed back is a genuinely separate object from the frozen input.
+      expect(input).toEqual(snapshot)
+    })
+
+    it('adds no key when includes are empty and the adopter had none, and leaves an existing value untouched', () => {
+      tracing.result = { includes: [] }
+
+      const withoutExisting = withCanopy({})
+      expect(withoutExisting).not.toHaveProperty('outputFileTracingIncludes')
+
+      const existingValue = { '/**': ['keep/me/**/*'] }
+      const withExisting = withCanopy({ outputFileTracingIncludes: existingValue })
+      expect(withExisting.outputFileTracingIncludes).toEqual(existingValue)
+    })
+
+    it('passes projectDir, outputFileTracingRoot, and turbopack.root through to the tracer', () => {
+      withCanopy({
+        outputFileTracingRoot: '../shared-root',
+        turbopack: { root: '../turbo-root' },
+      })
+
+      expect(sharpTracingIncludesMock).toHaveBeenCalledWith({
+        projectDir: process.cwd(),
+        outputFileTracingRoot: '../shared-root',
+        turbopackRoot: '../turbo-root',
+        lockfileRoot: 'outermost',
+      })
+    })
+
+    it('writes under experimental for Next < 15, merging with an existing experimental value', () => {
+      tracing.nextMajor = 14
+      tracing.result = { includes: ['glob/**/*'] }
+
+      const result = withCanopy({
+        experimental: {
+          outputFileTracingIncludes: { '/**': ['existing/**/*'] },
+          outputFileTracingRoot: '../root-a',
+          optimizeCss: true,
+        },
+      })
+
+      expect(result).not.toHaveProperty('outputFileTracingIncludes')
+      expect(result.experimental).toEqual({
+        optimizeCss: true,
+        outputFileTracingRoot: '../root-a',
+        outputFileTracingIncludes: { '/**': ['existing/**/*', 'glob/**/*'] },
+      })
+      expect(sharpTracingIncludesMock).toHaveBeenCalledWith(
+        expect.objectContaining({ outputFileTracingRoot: '../root-a' }),
+      )
+    })
+
+    it('writes at the top level when the installed Next major is unreadable (null)', () => {
+      tracing.nextMajor = null
+      tracing.result = { includes: ['glob/**/*'] }
+
+      const result = withCanopy({})
+      expect(result.outputFileTracingIncludes).toEqual({ '/**': ['glob/**/*'] })
+      expect(result).not.toHaveProperty('experimental')
+    })
+
+    it('merges under experimental on Next 15+ when the adopter still uses that spelling, since Next copies it over the top-level key', () => {
+      tracing.nextMajor = 16
+      tracing.result = { includes: ['glob/**/*'] }
+
+      const result = withCanopy(
+        asNextConfig({ experimental: { outputFileTracingIncludes: { '/**': ['legacy/**/*'] } } }),
+      )
+
+      expect(result).not.toHaveProperty('outputFileTracingIncludes')
+      expect(result.experimental).toEqual({
+        outputFileTracingIncludes: { '/**': ['legacy/**/*', 'glob/**/*'] },
+      })
+    })
+
+    it('takes experimental.outputFileTracingRoot over the top-level value on Next 15+, as Next does', () => {
+      tracing.nextMajor = 16
+
+      withCanopy(
+        asNextConfig({
+          outputFileTracingRoot: '../top-level-root',
+          experimental: { outputFileTracingRoot: '../legacy-root' },
+        }),
+      )
+
+      expect(sharpTracingIncludesMock).toHaveBeenLastCalledWith(
+        expect.objectContaining({ outputFileTracingRoot: '../legacy-root' }),
+      )
+    })
+
+    it('reads experimental.turbo.root on Next 15 only, with turbopack.root winning', () => {
+      tracing.nextMajor = 15
+      withCanopy(asNextConfig({ experimental: { turbo: { root: '../legacy-turbo' } } }))
+      expect(sharpTracingIncludesMock).toHaveBeenLastCalledWith(
+        expect.objectContaining({ turbopackRoot: '../legacy-turbo' }),
+      )
+
+      withCanopy(
+        asNextConfig({
+          turbopack: { root: '../turbopack' },
+          experimental: { turbo: { root: '../legacy-turbo' } },
+        }),
+      )
+      expect(sharpTracingIncludesMock).toHaveBeenLastCalledWith(
+        expect.objectContaining({ turbopackRoot: '../turbopack' }),
+      )
+
+      // Next 16 dropped the `experimental.turbo` migration, so the legacy value no longer counts.
+      tracing.nextMajor = 16
+      withCanopy(asNextConfig({ experimental: { turbo: { root: '../legacy-turbo' } } }))
+      expect(sharpTracingIncludesMock).toHaveBeenLastCalledWith(
+        expect.objectContaining({ turbopackRoot: undefined }),
+      )
+    })
+
+    it.each([undefined, null])(
+      'treats experimental.outputFileTracingIncludes: %s as unset on Next 15+, since Next drops it before migrating',
+      (legacy) => {
+        tracing.nextMajor = 16
+        tracing.result = { includes: ['glob/**/*'] }
+
+        const result = withCanopy(
+          asNextConfig({
+            outputFileTracingIncludes: { '/api/x': ['data/**/*'] },
+            experimental: { outputFileTracingIncludes: legacy },
+          }),
+        )
+
+        expect(result.outputFileTracingIncludes).toEqual({
+          '/api/x': ['data/**/*'],
+          '/**': ['glob/**/*'],
+        })
+      },
+    )
+
+    it.each([undefined, null])(
+      'treats experimental.outputFileTracingRoot: %s as unset on Next 15+, keeping the top-level root',
+      (legacy) => {
+        tracing.nextMajor = 16
+
+        withCanopy(
+          asNextConfig({
+            outputFileTracingRoot: '../top-level-root',
+            experimental: { outputFileTracingRoot: legacy },
+          }),
+        )
+
+        expect(sharpTracingIncludesMock).toHaveBeenLastCalledWith(
+          expect.objectContaining({ outputFileTracingRoot: '../top-level-root' }),
+        )
+      },
+    )
+
+    it('treats a null outputFileTracingIncludes as unset rather than malformed', () => {
+      tracing.nextMajor = 16
+      tracing.result = { includes: ['glob/**/*'] }
+
+      const result = withCanopy(asNextConfig({ outputFileTracingIncludes: null }))
+
+      expect(result.outputFileTracingIncludes).toEqual({ '/**': ['glob/**/*'] })
+    })
+
+    it('ignores an experimental value that is not an object, instead of throwing', () => {
+      tracing.nextMajor = 16
+      tracing.result = { includes: ['glob/**/*'] }
+
+      const result = withCanopy(asNextConfig({ experimental: true }))
+
+      expect(result.outputFileTracingIncludes).toEqual({ '/**': ['glob/**/*'] })
+    })
+
+    it('lets a root key on turbopack beat experimental.turbo.root on Next 15, even an empty one', () => {
+      tracing.nextMajor = 15
+
+      withCanopy(
+        asNextConfig({
+          turbopack: { root: undefined },
+          experimental: { turbo: { root: '../legacy-turbo' } },
+        }),
+      )
+
+      expect(sharpTracingIncludesMock).toHaveBeenLastCalledWith(
+        expect.objectContaining({ turbopackRoot: undefined }),
+      )
+    })
+
+    it('asks for the closest-lockfile root on Next < 15 and the outermost on 15+, as each infers it', () => {
+      tracing.nextMajor = 14
+      withCanopy({})
+      expect(sharpTracingIncludesMock).toHaveBeenLastCalledWith(
+        expect.objectContaining({ lockfileRoot: 'closest', outputFileTracingRoot: undefined }),
+      )
+
+      tracing.nextMajor = 16
+      withCanopy({})
+      expect(sharpTracingIncludesMock).toHaveBeenLastCalledWith(
+        expect.objectContaining({ lockfileRoot: 'outermost' }),
+      )
+
+      // An unreadable version is treated as Next 15 or later for the root, as it is for the key.
+      tracing.nextMajor = null
+      withCanopy({})
+      expect(sharpTracingIncludesMock).toHaveBeenLastCalledWith(
+        expect.objectContaining({ lockfileRoot: 'outermost' }),
+      )
+    })
+
+    it('leaves a malformed existing outputFileTracingIncludes value untouched', () => {
+      tracing.result = { includes: ['glob/**/*'] }
+      const malformed = asNextConfig({ outputFileTracingIncludes: { '/**': 'nope' } })
+
+      const result = withCanopy(malformed)
+
+      expect(result.outputFileTracingIncludes).toEqual({ '/**': 'nope' })
+      // Detected and rejected before the tracer would even be asked to run.
+      expect(sharpTracingIncludesMock).not.toHaveBeenCalled()
+    })
+
+    describe('warns once per module instance when standalone tracing fails', () => {
+      // The warned-once flag is module-level state (see with-canopy.ts's `warnedAboutSharpTracing`),
+      // so every test here gets its own fresh module instance via vi.resetModules() + a dynamic
+      // import -- the vi.mock('./sharp-tracing', ...) factory above still applies to it -- rather
+      // than sharing the top-level `withCanopy` import the rest of this file uses. Without that,
+      // whichever of these tests runs first would "use up" the flag for the others.
+
+      it('does not call the tracer when there is no next.config, and the warning says so', async () => {
+        tracing.hasConfig = false
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+        vi.resetModules()
+        try {
+          const fresh = await import('./with-canopy')
+          fresh.withCanopy({ output: 'standalone' })
+
+          expect(sharpTracingIncludesMock).not.toHaveBeenCalled()
+          expect(warn).toHaveBeenCalledWith(expect.stringContaining('no next.config'))
+        } finally {
+          vi.resetModules()
+        }
+      })
+
+      it('warns exactly once across two withCanopy calls in the same module instance', async () => {
+        tracing.result = { includes: [], problem: 'boom' }
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+        vi.resetModules()
+        try {
+          const fresh = await import('./with-canopy')
+          fresh.withCanopy({ output: 'standalone' })
+          fresh.withCanopy({ output: 'standalone' })
+
+          expect(warn).toHaveBeenCalledTimes(1)
+          const message = warn.mock.calls[0]?.[0]
+          expect(message).toEqual(expect.stringContaining('boom'))
+          expect(message).toEqual(
+            expect.stringContaining(
+              'node_modules/.pnpm/@img+sharp-libvips-*/node_modules/@img/*/lib/**/*',
+            ),
+          )
+          expect(message).toEqual(
+            expect.stringContaining('node_modules/@img/sharp-libvips-*/lib/**/*'),
+          )
+        } finally {
+          vi.resetModules()
+        }
+      })
+
+      it('does not warn for a non-standalone build even with empty includes', async () => {
+        tracing.result = { includes: [], problem: 'boom' }
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+        vi.resetModules()
+        try {
+          const fresh = await import('./with-canopy')
+          fresh.withCanopy({})
+          expect(warn).not.toHaveBeenCalled()
+        } finally {
+          vi.resetModules()
+        }
+      })
+
+      it('warns on a standalone build when the Next version is unreadable and the include went top-level', async () => {
+        tracing.nextMajor = null
+        tracing.result = { includes: ['glob/**/*'] }
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+        vi.resetModules()
+        try {
+          const fresh = await import('./with-canopy')
+          const result = fresh.withCanopy({ output: 'standalone' })
+          // A second evaluation in the same module instance must not warn again.
+          fresh.withCanopy({ output: 'standalone' })
+
+          expect(result.outputFileTracingIncludes).toEqual({ '/**': ['glob/**/*'] })
+          expect(warn).toHaveBeenCalledTimes(1)
+          expect(warn.mock.calls[0]?.[0]).toEqual(
+            expect.stringContaining('experimental.outputFileTracingIncludes'),
+          )
+        } finally {
+          vi.resetModules()
+        }
+      })
+
+      it('does not warn about the version when it is readable, or when a legacy experimental include decides the key', async () => {
+        tracing.result = { includes: ['glob/**/*'] }
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+        vi.resetModules()
+        try {
+          const fresh = await import('./with-canopy')
+          tracing.nextMajor = 16
+          fresh.withCanopy({ output: 'standalone' })
+          // Written under `experimental`, which every Next version reads, so the version is moot.
+          tracing.nextMajor = null
+          fresh.withCanopy(
+            asNextConfig({ output: 'standalone', experimental: { outputFileTracingIncludes: {} } }),
+          )
+
+          expect(warn).not.toHaveBeenCalled()
+        } finally {
+          vi.resetModules()
+        }
+      })
+
+      it('adds the version note to the nothing-found warning when the version is unreadable too', async () => {
+        tracing.nextMajor = null
+        tracing.result = { includes: [], problem: 'boom' }
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+        vi.resetModules()
+        try {
+          const fresh = await import('./with-canopy')
+          fresh.withCanopy({ output: 'standalone' })
+
+          expect(warn).toHaveBeenCalledTimes(1)
+          expect(warn.mock.calls[0]?.[0]).toEqual(
+            expect.stringContaining('version could not be read'),
+          )
+        } finally {
+          vi.resetModules()
+        }
+      })
     })
   })
 })

@@ -32,6 +32,7 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
+import { Manifest } from 'aws-cdk-lib/cloud-assembly-schema'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
 const execFileAsync = promisify(execFile)
@@ -126,6 +127,13 @@ let resources: unknown[]
  * UserData `Fn::Join`. Same reasoning as the branch-probe test below.
  */
 let renderedTemplates: string
+/**
+ * The `platform` of every Docker image asset in the asset manifests `beforeAll`'s synth wrote.
+ * Captured here rather than read by the test asserting on it, because the GitHub App test
+ * re-synths into the same `cdk.out` and relies on no other test reading that directory after
+ * `beforeAll`.
+ */
+let imagePlatforms: (string | undefined)[]
 
 function readJsonField(value: unknown, field: string): unknown {
   return typeof value === 'object' && value !== null && field in value
@@ -215,6 +223,13 @@ beforeAll(async () => {
       if (typeof type === 'string') resourceTypes.add(type)
     }
   }
+
+  // CDK records the image's platform in the asset manifest, not the template.
+  imagePlatforms = []
+  for (const file of (await fs.readdir(outDir)).filter((f) => f.endsWith('.assets.json'))) {
+    const dockerImages = Manifest.loadAssetManifest(path.join(outDir, file)).dockerImages ?? {}
+    for (const image of Object.values(dockerImages)) imagePlatforms.push(image.source.platform)
+  }
 }, TIMEOUT_MS)
 
 afterAll(async () => {
@@ -272,10 +287,11 @@ describe('canopycms init-deploy aws produces a synthesizable CDK app', () => {
     )
     expect(stackSource).toContain("NEXT_PUBLIC_CANOPY_MODE: 'prod'")
 
-    // The image itself must NOT bake the server half in: `next build` runs its
-    // content reads in dev mode, and a prod-mode build read would look for a
-    // branch workspace that cannot exist in a builder. Build arg in, runtime
-    // variable out -- that pairing is the whole mechanism.
+    // The image itself must NOT bake the server half in: the image's `next build`
+    // stays in dev mode. Build reads come from the working tree in either mode, so
+    // nothing there needs prod, and prod would hold the builder to checks it has
+    // no reason to meet (see mode-env.ts). Build arg in, runtime variable out --
+    // that pairing is the whole mechanism.
     const dockerfile = await fs.readFile(path.join(scaffoldDir, 'Dockerfile.cms'), 'utf-8')
     expect(dockerfile).toContain('ARG NEXT_PUBLIC_CANOPY_MODE')
     expect(dockerfile).not.toContain('ENV CANOPY_MODE=prod')
@@ -353,6 +369,26 @@ describe('canopycms init-deploy aws produces a synthesizable CDK app', () => {
   )
 
   /**
+   * The image's architecture is the platform `cdk deploy` builds it for, and
+   * CDK records that platform in the asset manifest, never in the
+   * CloudFormation template -- so no template assertion can see a mismatch.
+   * Asserting both halves together is what catches one: an image built for
+   * the host rather than the function cannot run on it.
+   */
+  it('builds the CMS image for the architecture its Lambda runs on (linux/arm64)', () => {
+    expect(imagePlatforms).toEqual(['linux/arm64'])
+
+    const imageFunctionArchitectures = resources
+      .filter(
+        (resource) =>
+          readJsonField(resource, 'Type') === 'AWS::Lambda::Function' &&
+          readJsonField(readJsonField(resource, 'Properties'), 'PackageType') === 'Image',
+      )
+      .map((fn) => readJsonField(readJsonField(fn, 'Properties'), 'Architectures'))
+    expect(imageFunctionArchitectures).toEqual([['arm64']])
+  })
+
+  /**
    * The scaffold half of adopter request #46. Four files carry this wiring --
    * `bin/app.ts`, `lib/cms-stack.ts`'s props, that file's pass-through to
    * `CanopyCmsService`, and the workflow's `env:` block -- and a break in any
@@ -390,9 +426,9 @@ describe('canopycms init-deploy aws produces a synthesizable CDK app', () => {
    * absence of `GITHUB_TOKEN_SECRET_ARN` -- configuring both is refused at
    * synth, so it cannot share `beforeAll`'s environment. It deliberately reuses
    * `cdk.out` (see CDK_OUTDIR's note above, which is a correctness constraint
-   * rather than a preference); every assertion in this file other than this one
-   * reads state captured in `beforeAll`, so overwriting it here is invisible to
-   * them.
+   * rather than a preference); no other test in this file reads `cdk.out` after
+   * `beforeAll` has captured what it needs, so overwriting it here is invisible
+   * to them.
    */
   it(
     'carries the GitHub App inputs through bin/app.ts and cms-stack.ts into the worker .env',
@@ -527,4 +563,200 @@ describe('canopycms init-deploy aws produces a synthesizable CDK app', () => {
     expect(deployedStack).not.toBe('--all')
     expect(synthesizedStacks).toContain(deployedStack)
   })
+})
+
+/**
+ * A tsconfig.json in create-next-app 16.1.7's shape, as `scripts/smoke/standalone-image.mjs` writes
+ * one. The generated infrastructure/tsconfig.json extends it, inheriting its `paths` alias and
+ * turning its `incremental` off.
+ */
+const NEXT_APP_TSCONFIG = {
+  compilerOptions: {
+    target: 'ES2017',
+    lib: ['dom', 'dom.iterable', 'esnext'],
+    allowJs: true,
+    skipLibCheck: true,
+    strict: true,
+    noEmit: true,
+    esModuleInterop: true,
+    module: 'esnext',
+    moduleResolution: 'bundler',
+    resolveJsonModule: true,
+    isolatedModules: true,
+    jsx: 'react-jsx',
+    incremental: true,
+    plugins: [{ name: 'next' }],
+    paths: { '@/*': ['./*'] },
+  },
+  include: [
+    'next-env.d.ts',
+    '**/*.ts',
+    '**/*.tsx',
+    '.next/types/**/*.ts',
+    '.next/dev/types/**/*.ts',
+    '**/*.mts',
+  ],
+  exclude: ['node_modules'],
+}
+
+/**
+ * The synth above cannot catch a type error: cdk.json runs the app through tsx, which strips types
+ * without checking them. So a misspelled `CanopyCmsService` prop synthesizes, and the deploy uses
+ * that prop's default. The generated workflow's type-check step is the only check, and these tests
+ * run its command, read from the workflow the way `appCommand` is read from cdk.json.
+ *
+ * They use a scaffold of their own, because the one above has no tsconfig.json and an adopter's
+ * Next app does. In this workspace `canopycms` and `canopycms-cdk` resolve to their `src/`, so a
+ * failure here can come from those packages' sources as well as from the templates.
+ */
+describe('the generated workflow type-checks the CDK app', () => {
+  let appDir: string
+
+  beforeAll(async () => {
+    appDir = await fs.mkdtemp(path.join(SCAFFOLD_PARENT, 'typecheck-'))
+    await fs.writeFile(
+      path.join(appDir, 'tsconfig.json'),
+      `${JSON.stringify(NEXT_APP_TSCONFIG, null, 2)}\n`,
+      'utf-8',
+    )
+    for (const command of [['init'], ['init-deploy', 'aws']]) {
+      await execFileAsync(
+        process.execPath,
+        ['--import', 'tsx', CLI_ENTRY, ...command, '--non-interactive', '--force'],
+        { cwd: appDir, timeout: TIMEOUT_MS },
+      )
+    }
+  }, TIMEOUT_MS)
+
+  afterAll(async () => {
+    if (appDir) await fs.rm(appDir, { recursive: true, force: true })
+  })
+
+  async function typeCheckCommand(): Promise<string> {
+    const workflow = await fs.readFile(
+      path.join(appDir, '.github/workflows/deploy-cms.yml'),
+      'utf-8',
+    )
+    const command = workflow
+      .split('\n')
+      .map((line) => line.trim())
+      .find((line) => line.startsWith('npx tsc '))
+    if (!command) throw new Error('generated workflow has no `npx tsc` type-check command')
+    return command
+  }
+
+  /** tsc prints its diagnostics to stdout, which execFile's rejection message leaves out. */
+  async function runInApp(command: string): Promise<string> {
+    try {
+      const { stdout } = await execFileAsync('sh', ['-c', command], {
+        cwd: appDir,
+        timeout: TIMEOUT_MS,
+      })
+      return stdout
+    } catch (err) {
+      throw new Error(`\`${command}\` failed:\n${String(readJsonField(err, 'stdout'))}`)
+    }
+  }
+
+  it(
+    'passes on the scaffold, and checks the CDK app without the rest of the Next app',
+    async () => {
+      const command = await typeCheckCommand()
+      await runInApp(command)
+
+      // Imports are followed, so canopycms.config.ts is checked with the stack that imports it.
+      // Nothing else from the project may be: app/, middleware.ts and next.config.ts need the
+      // Next app's dependencies.
+      const listed = await runInApp(`${command} --listFilesOnly`)
+      const projectFiles = listed
+        .split('\n')
+        .map((file) => path.relative(appDir, file.trim()))
+        .filter((file) => file && !file.startsWith('..'))
+      expect(projectFiles.sort()).toEqual([
+        'canopycms.config.ts',
+        'infrastructure/bin/app.ts',
+        'infrastructure/lib/cms-stack.ts',
+      ])
+
+      // The app's `incremental: true` is inherited unless the generated file turns it off.
+      expect(existsSync(path.join(appDir, 'infrastructure/tsconfig.tsbuildinfo'))).toBe(false)
+    },
+    TIMEOUT_MS,
+  )
+
+  it(
+    "resolves the app's `paths` aliases, as tsx does",
+    async () => {
+      const configPath = path.join(appDir, 'canopycms.config.ts')
+      const probePath = path.join(appDir, 'alias-probe.ts')
+      const original = await fs.readFile(configPath, 'utf-8')
+      await fs.writeFile(probePath, "export const aliasProbe = 'probe'\n", 'utf-8')
+      // `@/*` is the alias create-next-app configures, and canopycms.config.ts is where an adopter
+      // adds imports of their own.
+      await fs.writeFile(
+        configPath,
+        `import { aliasProbe } from '@/alias-probe'\nvoid aliasProbe\n${original}`,
+        'utf-8',
+      )
+
+      try {
+        await runInApp(await typeCheckCommand())
+      } finally {
+        await fs.writeFile(configPath, original, 'utf-8')
+        await fs.rm(probePath, { force: true })
+      }
+    },
+    TIMEOUT_MS,
+  )
+
+  it(
+    "passes when the app's tsconfig.json sets options tsx does not apply to infrastructure/",
+    async () => {
+      const rootPath = path.join(appDir, 'tsconfig.json')
+      const original = await fs.readFile(rootPath, 'utf-8')
+      const root: unknown = JSON.parse(original)
+      const compilerOptions = readJsonField(root, 'compilerOptions')
+      if (typeof compilerOptions !== 'object' || compilerOptions === null) {
+        throw new Error("the scaffold's tsconfig.json has no compilerOptions")
+      }
+      // Each one, inherited, fails the type-check, and tsx applies none of them to infrastructure/.
+      Object.assign(compilerOptions, {
+        verbatimModuleSyntax: true,
+        exactOptionalPropertyTypes: true,
+        noPropertyAccessFromIndexSignature: true,
+        composite: true,
+      })
+      await fs.writeFile(rootPath, JSON.stringify(root), 'utf-8')
+
+      try {
+        await runInApp(await typeCheckCommand())
+      } finally {
+        await fs.writeFile(rootPath, original, 'utf-8')
+        await fs.rm(path.join(appDir, 'infrastructure/tsconfig.tsbuildinfo'), { force: true })
+      }
+    },
+    TIMEOUT_MS,
+  )
+
+  it(
+    'fails on a misspelled CanopyCmsService prop',
+    async () => {
+      const stackPath = path.join(appDir, 'infrastructure/lib/cms-stack.ts')
+      const original = await fs.readFile(stackPath, 'utf-8')
+      // Anchored on a prop the template is known to set, so a change to the template fails here
+      // loudly rather than misspelling nothing.
+      expect(original).toContain('memorySize: 2048,')
+      await fs.writeFile(stackPath, original.replace('memorySize: 2048,', 'memorySzie: 2048,'))
+
+      try {
+        // The diagnostic, not just a non-zero exit: a missing tsconfig.json fails too.
+        await expect(runInApp(await typeCheckCommand())).rejects.toThrow(
+          /error TS2561: .*'memorySzie' does not exist in type 'CanopyCmsServiceProps'/,
+        )
+      } finally {
+        await fs.writeFile(stackPath, original, 'utf-8')
+      }
+    },
+    TIMEOUT_MS,
+  )
 })

@@ -66,6 +66,6 @@ enforces this).
 
 - `packages/canopycms/src/dev-content-watcher.ts` — the terminal half, and the module doc
   comment that points here.
-- [dev-mode-build-reads-branch-clone-not-working-tree.md](dev-mode-build-reads-branch-clone-not-working-tree.md)
+- [dev-mode-build-reads-branch-clone-not-working-tree.md](resolved/dev-mode-build-reads-branch-clone-not-working-tree.md)
   — the adjacent working-tree-vs-branch-clone confusion, same root cause in the mental
-  model.
+  model (resolved 2026-09-12: a build now reads the working tree).

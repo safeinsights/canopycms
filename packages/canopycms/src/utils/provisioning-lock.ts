@@ -141,9 +141,9 @@ export async function acquireProvisioningLock(
   await fs.mkdir(lockTargetDir, { recursive: true })
   const lockPath = path.join(lockTargetDir, lockName)
 
-  // Generous, jittered retries: many waiters (one per build worker process, each
-  // prerendering several pages) may contend, and the holder can take several
-  // seconds to init + clone/push. `randomize` de-syncs the herd so a waiter isn't
+  // Generous, jittered retries: several processes may contend for one workspace
+  // (e.g. Lambda containers cold-starting together against one EFS root), and
+  // the holder can take several seconds to init + clone/push. `randomize` de-syncs the herd so a waiter isn't
   // perpetually colliding on the same tick. `stale` stays modest because proper-
   // lockfile auto-refreshes a live holder's lock, so it only expires when a
   // process actually dies.
@@ -161,10 +161,10 @@ export async function acquireProvisioningLock(
 /**
  * Zero-retry variant of {@link acquireProvisioningLock}, for admin actions
  * running inside a synchronous request/response cycle (e.g. a Lambda-backed
- * API handler). `acquireProvisioningLock`'s ~600-retry budget is sized for a
- * build worker that can afford to wait several minutes for a live
- * provisioner to finish; an admin request must fail fast on contention
- * instead (409 immediately) rather than hang the request for that long.
+ * API handler). `acquireProvisioningLock`'s ~600-retry budget waits minutes
+ * for a live provisioner to finish; an admin request must fail fast on
+ * contention instead (409 immediately) rather than hang the request for that
+ * long.
  *
  * `stale: 30_000` is unchanged from the patient variant: a genuinely stale
  * lock (holder crashed more than 30s ago) is still taken over normally --

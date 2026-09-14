@@ -5,6 +5,7 @@ import os from 'node:os'
 import { init, initDeployAws, workerRunOnce } from './init'
 import { CDK_DEPENDENCIES } from './project-detect'
 import { mockConsole } from '../test-utils/console-spy'
+import * as p from '@clack/prompts'
 
 // Mock @clack/prompts to avoid interactive prompts in tests
 vi.mock('@clack/prompts', () => ({
@@ -484,16 +485,29 @@ describe('canopycms init-deploy aws', () => {
     expect(dockerfile).toContain('mkdir -p public')
   })
 
-  it('Dockerfile.cms synthesizes a git repo for dev-mode build reads and never bakes prod mode into the build', async () => {
+  it('Dockerfile.cms builds from the copied files with no git in the builder, and never bakes prod mode into the build', async () => {
     await initDeployAws({ cloud: 'aws', projectDir: tmpDir, force: false, nonInteractive: true })
 
     const dockerfile = await fs.readFile(path.join(tmpDir, 'Dockerfile.cms'), 'utf-8')
-    // Dev-mode build-time content reads require a git repo; .dockerignore
-    // excludes .git, so the builder must create one from the copied files.
-    expect(dockerfile).toContain('git init -q -b main')
-    expect(dockerfile).toContain('image build snapshot')
-    // Prod-mode build reads would need an EFS remote.git inside the builder;
-    // validated to fail in the deploy-test harness. Prod is runtime-only.
+    const [builder, runner] = dockerfile.split(/^FROM .* AS runner$/m)
+    expect(runner, 'expected a runner stage').toBeDefined()
+    // The split consumes the runner's own FROM line, so check its base separately:
+    // `FROM builder AS runner` would inherit the builder's ENV (CANOPY_BUILD_MODE=true)
+    // and make the deployed CMS read /app as the synthetic build user.
+    const runnerBase = /^FROM (\S+) AS runner$/m.exec(dockerfile)?.[1]
+    expect(runnerBase, 'expected a runner stage FROM line').toBeDefined()
+    expect(runnerBase).not.toBe('builder')
+    // A build reads the working tree (readsFromCheckout in build-mode.ts), so
+    // the builder needs neither git nor a synthesized repository. The runner
+    // still installs git: the deployed CMS does real branch operations.
+    expect(builder).not.toMatch(/apt-get install[^\n]*\bgit\b/)
+    expect(builder).not.toContain('git init')
+    expect(runner).toMatch(/apt-get install[^\n]*\bgit\b/)
+    // Scripts {{DOCKER_BUILD}} runs outside `next build` read the working tree
+    // too. Docker ENV is per stage, so this never reaches the runtime image.
+    expect(builder).toContain('ENV CANOPY_BUILD_MODE=true')
+    expect(runner).not.toContain('CANOPY_BUILD_MODE')
+    // Nothing in the build needs prod; prod is run-time only.
     expect(dockerfile).not.toContain('ENV CANOPY_MODE=prod')
   })
 
@@ -517,16 +531,6 @@ describe('canopycms init-deploy aws', () => {
     expect(stack).toContain("NEXT_PUBLIC_CANOPY_MODE: 'prod'")
   })
 
-  it('Dockerfile.cms keeps node_modules out of the synthesized snapshot repo without touching adopter files', async () => {
-    await initDeployAws({ cloud: 'aws', projectDir: tmpDir, force: false, nonInteractive: true })
-
-    const dockerfile = await fs.readFile(path.join(tmpDir, 'Dockerfile.cms'), 'utf-8')
-    // npm ci runs before git init, so node_modules exists at `git add -A` time;
-    // .git/info/exclude keeps it out even when the adopter repo has no .gitignore.
-    expect(dockerfile).toContain('.git/info/exclude')
-    expect(dockerfile).toContain('node_modules\\n.next\\n')
-  })
-
   it('creates .dockerignore that excludes host node_modules but keeps vendor/', async () => {
     await initDeployAws({ cloud: 'aws', projectDir: tmpDir, force: false, nonInteractive: true })
 
@@ -542,6 +546,9 @@ describe('canopycms init-deploy aws', () => {
       .filter((line) => line.length > 0 && !line.startsWith('#'))
     expect(ignoreLines).not.toContain('vendor')
     expect(ignoreLines).not.toContain('vendor/')
+    // infrastructure/ is the CDK app, which the image never runs. In the build context
+    // `next build` would type-check it, and fail wherever aws-cdk-lib is not installed.
+    expect(ignoreLines).toContain('infrastructure')
   })
 
   it('skips existing .dockerignore in non-interactive mode', async () => {
@@ -563,6 +570,137 @@ describe('canopycms init-deploy aws', () => {
     const content = await fs.readFile(dockerignorePath, 'utf-8')
     expect(content).not.toBe('existing')
     expect(content).toContain('node_modules')
+  })
+
+  // A Next app's tsconfig.json includes `**/*.ts`, so without an exclude the app's own
+  // `next build` type-checks infrastructure/ and fails wherever aws-cdk-lib is not installed.
+  // Found by the standalone image smoke test's first real build.
+  describe('tsconfig.json exclusion of infrastructure/', () => {
+    const tsconfigPath = () => path.join(tmpDir, 'tsconfig.json')
+    const runInitDeploy = () =>
+      initDeployAws({ cloud: 'aws', projectDir: tmpDir, force: false, nonInteractive: true })
+    const readTsconfig = async (): Promise<unknown> =>
+      JSON.parse(await fs.readFile(tsconfigPath(), 'utf-8'))
+    const warnings = () => vi.mocked(p.log.warn).mock.calls.map(([message]) => String(message))
+    // create-next-app 16.1.7's tsconfig.json, trimmed to a few representative keys.
+    const nextAppTsconfig = {
+      compilerOptions: { strict: true, jsx: 'react-jsx', plugins: [{ name: 'next' }] },
+      include: ['next-env.d.ts', '**/*.ts', '**/*.tsx', '.next/types/**/*.ts'],
+      exclude: ['node_modules'],
+    }
+
+    beforeEach(() => {
+      vi.mocked(p.log.warn).mockClear()
+    })
+
+    it('adds infrastructure to exclude and keeps every other key', async () => {
+      await fs.writeFile(tsconfigPath(), JSON.stringify(nextAppTsconfig, null, 2), 'utf-8')
+
+      await runInitDeploy()
+
+      expect(await readTsconfig()).toEqual({
+        ...nextAppTsconfig,
+        exclude: ['node_modules', 'infrastructure'],
+      })
+    })
+
+    it('keeps node_modules excluded when the tsconfig had no exclude list', async () => {
+      // Setting `exclude` replaces TypeScript's default list rather than adding to it.
+      const withoutExclude = {
+        compilerOptions: nextAppTsconfig.compilerOptions,
+        include: nextAppTsconfig.include,
+      }
+      await fs.writeFile(tsconfigPath(), JSON.stringify(withoutExclude), 'utf-8')
+
+      await runInitDeploy()
+
+      expect(await readTsconfig()).toEqual({
+        ...withoutExclude,
+        exclude: ['node_modules', 'infrastructure'],
+      })
+    })
+
+    it('adds the entry once across re-runs', async () => {
+      await fs.writeFile(tsconfigPath(), JSON.stringify(nextAppTsconfig), 'utf-8')
+
+      await runInitDeploy()
+      await runInitDeploy()
+
+      expect(await readTsconfig()).toEqual({
+        ...nextAppTsconfig,
+        exclude: ['node_modules', 'infrastructure'],
+      })
+    })
+
+    it.each(['infrastructure', './infrastructure/', 'infrastructure/**', 'infrastructure/**/*'])(
+      'leaves a tsconfig that already excludes %s byte-for-byte untouched',
+      async (pattern) => {
+        // Unindented, so any rewrite would show as a byte difference.
+        const text = JSON.stringify({ ...nextAppTsconfig, exclude: ['node_modules', pattern] })
+        await fs.writeFile(tsconfigPath(), text, 'utf-8')
+
+        await runInitDeploy()
+
+        expect(await fs.readFile(tsconfigPath(), 'utf-8')).toBe(text)
+      },
+    )
+
+    it('does not rewrite a tsconfig.json with comments, and asks for the edit instead', async () => {
+      // Legal in a tsconfig.json, rejected by JSON.parse. A rewrite would delete the comment.
+      const text =
+        '{\n  // strict mode\n  "compilerOptions": { "strict": true },\n  "exclude": ["node_modules"]\n}\n'
+      await fs.writeFile(tsconfigPath(), text, 'utf-8')
+
+      await runInitDeploy()
+
+      expect(await fs.readFile(tsconfigPath(), 'utf-8')).toBe(text)
+      expect(
+        warnings().some((m) => m.includes('not plain JSON') && m.includes('"infrastructure"')),
+      ).toBe(true)
+    })
+
+    it('leaves a tsconfig that inherits its exclude through extends untouched, and asks for the edit', async () => {
+      // An exclude written into this file would replace the base config's list, dropping its entries.
+      const text = JSON.stringify({ extends: './tsconfig.base.json', include: ['**/*.ts'] })
+      await fs.writeFile(tsconfigPath(), text, 'utf-8')
+
+      await runInitDeploy()
+
+      expect(await fs.readFile(tsconfigPath(), 'utf-8')).toBe(text)
+      expect(
+        warnings().some((m) => m.includes('"extends"') && m.includes('"infrastructure"')),
+      ).toBe(true)
+    })
+
+    it('adds to an exclude list that an extending tsconfig writes itself', async () => {
+      const withExtends = { extends: './tsconfig.base.json', exclude: ['node_modules', 'dist'] }
+      await fs.writeFile(tsconfigPath(), JSON.stringify(withExtends), 'utf-8')
+
+      await runInitDeploy()
+
+      expect(await readTsconfig()).toEqual({
+        ...withExtends,
+        exclude: ['node_modules', 'dist', 'infrastructure'],
+      })
+    })
+
+    it('asks for the edit when there is no tsconfig.json', async () => {
+      await runInitDeploy()
+
+      await expect(fs.access(tsconfigPath())).rejects.toThrow()
+      expect(
+        warnings().some(
+          (m) => m.includes('No tsconfig.json found') && m.includes('"infrastructure"'),
+        ),
+      ).toBe(true)
+      // The scaffolded infrastructure/tsconfig.json extends the missing file, so the deploy's
+      // type-check fails until it exists.
+      expect(
+        warnings().some(
+          (m) => m.includes('No tsconfig.json found') && m.includes('infrastructure/tsconfig.json'),
+        ),
+      ).toBe(true)
+    })
   })
 
   it('creates GitHub Actions workflow', async () => {
@@ -624,6 +762,45 @@ describe('canopycms init-deploy aws', () => {
     const stack = await fs.readFile(path.join(tmpDir, 'infrastructure/lib/cms-stack.ts'), 'utf-8')
     expect(stack).toContain('CanopyCmsService')
     expect(stack).toContain("from 'canopycms-cdk'")
+  })
+
+  it('type-checks the CDK app with infrastructure/tsconfig.json before touching AWS', async () => {
+    await initDeployAws({ cloud: 'aws', projectDir: tmpDir, force: false, nonInteractive: true })
+
+    // tsx runs the CDK app without type-checking it, and the app's tsconfig.json excludes
+    // infrastructure/, so this step is the only check a misspelled CanopyCmsService prop meets.
+    // scaffold-synth.test.ts (canopycms-cdk) runs the command; this pins that it exists and when.
+    const tsconfig = await fs.readFile(path.join(tmpDir, 'infrastructure/tsconfig.json'), 'utf-8')
+    expect(tsconfig).toContain('"noEmit": true')
+
+    const workflow = await fs.readFile(
+      path.join(tmpDir, '.github/workflows/deploy-cms.yml'),
+      'utf-8',
+    )
+    const lines = workflow.split('\n').map((line) => line.trim())
+    const typeCheck = lines.indexOf('npx tsc --noEmit -p infrastructure')
+    const credentials = lines.findIndex((line) =>
+      line.startsWith('uses: aws-actions/configure-aws-credentials'),
+    )
+    const deploy = lines.findIndex((line) => line.startsWith('run: npx cdk deploy'))
+    // All three present, or the ordering below would pass on a missing line.
+    expect(typeCheck).toBeGreaterThan(-1)
+    expect(credentials).toBeGreaterThan(-1)
+    expect(deploy).toBeGreaterThan(-1)
+    expect(typeCheck).toBeLessThan(credentials)
+    expect(typeCheck).toBeLessThan(deploy)
+  })
+
+  it('keeps an existing infrastructure/tsconfig.json unless --force', async () => {
+    const tsconfigPath = path.join(tmpDir, 'infrastructure/tsconfig.json')
+    await fs.mkdir(path.dirname(tsconfigPath), { recursive: true })
+    await fs.writeFile(tsconfigPath, 'existing', 'utf-8')
+
+    await initDeployAws({ cloud: 'aws', projectDir: tmpDir, force: false, nonInteractive: true })
+    expect(await fs.readFile(tsconfigPath, 'utf-8')).toBe('existing')
+
+    await initDeployAws({ cloud: 'aws', projectDir: tmpDir, force: true, nonInteractive: true })
+    expect(await fs.readFile(tsconfigPath, 'utf-8')).toContain('"noEmit": true')
   })
 
   it('ships no CDKv1 feature flags in cdk.json context', async () => {
@@ -692,6 +869,8 @@ describe('canopycms init-deploy aws', () => {
     // Lambda keeps running the old tree until an unrelated content change
     // happens to ship it.
     expect(workflow).toContain("- 'cdk.json'")
+    // infrastructure/tsconfig.json extends it, so a change to it alone can fail the type-check.
+    expect(workflow).toContain("- 'tsconfig.json'")
     expect(workflow).toContain("- 'package.json'")
     expect(workflow).toContain("- 'package-lock.json'")
   })
@@ -757,7 +936,11 @@ describe('canopycms init-deploy aws', () => {
     expect(workflow).toContain('pnpm install --frozen-lockfile')
     expect(workflow).toContain("- 'pnpm-lock.yaml'")
     expect(workflow).not.toContain('run: npm ci')
-    expect(dockerfile).toContain('COPY package.json pnpm-lock.yaml ./')
+    // pnpm-workspace.yaml carries pnpm 11's allowBuilds decisions, without which
+    // the image's frozen install fails on unapproved dependency build scripts
+    // (es5-ext through the editor, sharp through Next). The `[l]` glob keeps it
+    // optional for projects that have none.
+    expect(dockerfile).toContain('COPY package.json pnpm-lock.yaml pnpm-workspace.yam[l] ./')
     expect(dockerfile).toContain('RUN corepack enable && pnpm install --frozen-lockfile')
     expect(dockerfile).toContain('RUN pnpm run build')
     expect(dockerfile).not.toContain('npm ci')

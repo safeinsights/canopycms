@@ -3,6 +3,10 @@
 From the human review of [PR #229](https://github.com/safeinsights/canopycms/pull/229#pullrequestreview-4938780868)
 (`integration-202608-a` → `main`, **approved** with two fix-first findings), 2026-08-14.
 
+§1 (below) was updated by [cms-image-build-epic.md](cms-image-build-epic.md) PR 6: the PR-UI
+claim is corrected, and an adopter case plus a build-time divergence are recorded. Its runtime
+mismatch check is still open.
+
 The two fix-first findings (#1 `NumberField` sign loss, #2 settings-workspace 503 taking
 down `/admin`) and the small fold-ins (#3 `GitRemoteRefMissingError` over-classification,
 #4 message advertising an unreachable action, #5a lock-message wording, #6 permanently
@@ -21,15 +25,28 @@ statement didn't claim."
 
 `packages/canopycms/src/cli/template-files/Dockerfile.cms.template` declares
 `ARG NEXT_PUBLIC_CANOPY_MODE=dev`, so an image built **without** the build arg produces a
-dev-mode editor bundle against a prod server — it sends dev-auth headers at a server
-enforcing Clerk (every editor call rejected) and hides the pull-request UI.
+dev-mode editor bundle against a prod server: the scaffolded edit page
+(`edit-page.tsx.template`) selects dev auth, and the server accepts only Clerk tokens.
 `operating-mode/mode-env.ts`'s stated principle is that a wrong mode must fail loudly
 ("a typo here would silently deploy dev auth semantics"), and the default does the opposite
 by construction.
 
+**Corrected 2026-09-12.** This section also said a dev-mode bundle "hides the pull-request
+UI". No client-side check does that. `supportsBranching`, `supportsStatusBadge` and
+`supportsComments` return `true` in both strategies (`operating-mode/client-safe-strategy.ts`),
+and `supportsPullRequests`, the one that differs, is only called server-side (`api/github-sync.ts`,
+`services.ts`, `github-service.ts`). Auth selection is the only client-side consequence.
+
 The generated CDK stack passes `prod`, so `canopycms init-deploy aws` is fine. The exposure
 is the hand-built image — which `docs/deploying-to-aws.md` explicitly anticipates, i.e.
 exactly the case a runtime check would earn its keep.
+
+**Seen at an adopter, 2026-09.** An image built without the variable, whose config derived its
+literal as `process.env.CANOPY_MODE === 'prod' ? 'prod' : 'dev'`: the server render resolved
+`prod`, the browser `dev`, and neither side warned, because each half's environment agreed with
+its own literal. `docs/deploying-to-aws.md`'s Operating mode section now says to set
+`NEXT_PUBLIC_CANOPY_MODE=prod` as a constant build value and not to derive the literal from
+either variable. The runtime check below is still missing.
 
 **Fix direction:** the server knows both halves at request time (`CANOPY_MODE` on the
 server; the client bundle's belief is observable from what the editor sends). Either a
@@ -41,6 +58,14 @@ inlined value, converts a silent misconfiguration into a diagnosable one.
 different modes whenever only one variable is set. The reviewer could not construct a real
 divergence in the documented deployment (both are `prod`, and the editor page is dynamic),
 but the invariant "both variables must agree" is currently unwritten and unchecked.
+
+**2026-09-12: the "editor page is dynamic" premise doesn't hold.** Measured on Next 15.5.21 in
+`apps/dual-build-fixture`: `/edit` is prerendered at `next build` unless a server component in its
+tree opts out, and a `dynamic` export from the `'use client'` edit page was ignored. The scaffold's
+edit page exports none. So a prerendered `/edit` has its server render at build, where
+`CANOPY_MODE` is unset and the `dev` literal wins, while the browser resolves `prod` from
+`NEXT_PUBLIC_CANOPY_MODE`. That is a divergence inside the documented deployment. Nothing has been
+seen to break from it, but nobody has looked.
 
 ## 2. `branchHealth` scans every branch's whole content tree inside a 60s Lambda (review finding #8)
 

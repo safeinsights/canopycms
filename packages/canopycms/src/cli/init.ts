@@ -311,7 +311,7 @@ export async function init(options: InitOptions): Promise<void> {
 export async function initDeployAws(options: InitDeployOptions): Promise<void> {
   const { projectDir, force, nonInteractive } = options
   const writeOpts = { force, nonInteractive }
-  const { dockerfileCms, dockerignore, githubWorkflowCms, cdkJson, cdkApp, cmsStack } =
+  const { dockerfileCms, dockerignore, githubWorkflowCms, cdkJson, cdkApp, cmsStack, cdkTsconfig } =
     await import('./templates')
   const {
     detectPackageManager,
@@ -345,7 +345,8 @@ export async function initDeployAws(options: InitDeployOptions): Promise<void> {
   if (!dockerignoreWritten) {
     p.log.warn(
       'Existing .dockerignore kept — verify it excludes .env* (secrets would otherwise ' +
-        'enter the build context) and does NOT exclude vendor/ (needed by the ' +
+        "enter the build context) and infrastructure (the image's next build would otherwise " +
+        'type-check the CDK app), and does NOT exclude vendor/ (needed by the ' +
         'Dockerfile.cms install step with file: deps).',
     )
   }
@@ -383,6 +384,41 @@ export async function initDeployAws(options: InitDeployOptions): Promise<void> {
     await cmsStack(),
     writeOpts,
   )
+  // The only type-check the CDK app gets. tsx runs it without one, and the exclusion below keeps
+  // `next build` out of it, so the generated workflow runs `tsc --noEmit -p infrastructure` with
+  // this file before deploying. It extends the project's tsconfig.json, which tsx reads too.
+  await writeFile(
+    path.join(projectDir, 'infrastructure/tsconfig.json'),
+    await cdkTsconfig(),
+    writeOpts,
+  )
+
+  // A Next app's tsconfig.json includes `**/*.ts`, so unexcluded, the app's own `next build`
+  // type-checks infrastructure/ under the app's compiler options: it fails with "Cannot find
+  // module 'aws-cdk-lib'" wherever the CDK packages are not installed, and on options such as
+  // verbatimModuleSyntax that reject the generated stack. The image build is covered separately:
+  // the generated .dockerignore keeps infrastructure/ out of its context.
+  const tsconfigResult = await excludeFromTsconfig(projectDir, 'infrastructure')
+  if (tsconfigResult === 'added') {
+    p.log.success('updated: tsconfig.json (infrastructure/ excluded from type-checking)')
+  } else if (tsconfigResult !== 'already-excluded') {
+    const reason = {
+      missing: 'No tsconfig.json found',
+      unreadable:
+        'tsconfig.json is not plain JSON, or its "exclude" is not a list of strings, so it was left alone',
+      'inherits-exclude':
+        'tsconfig.json inherits its "exclude" list through "extends", so it was left alone ' +
+        '(an "exclude" in the file replaces the base config\'s list rather than adding to it)',
+    }[tsconfigResult]
+    p.log.warn(
+      `${reason}. Add "infrastructure" to its "exclude" list, or \`next build\` type-checks the ` +
+        'CDK app and fails unless aws-cdk-lib is installed in the app.' +
+        (tsconfigResult === 'missing'
+          ? ' infrastructure/tsconfig.json, as init-deploy writes it, extends it too, so the ' +
+            "deploy workflow's type-check fails until it exists."
+          : ''),
+    )
+  }
 
   // An adopter with their own CDK app keeps it (writeFile skips), which leaves
   // the scaffolded infrastructure/ unreachable. Say so: the generated workflow
@@ -471,6 +507,72 @@ export async function initDeployAws(options: InitDeployOptions): Promise<void> {
   )
 
   p.outro('Done!')
+}
+
+/** What `excludeFromTsconfig` did. */
+type TsconfigExcludeResult =
+  | 'added'
+  | 'already-excluded'
+  | 'missing'
+  | 'unreadable'
+  | 'inherits-exclude'
+
+/**
+ * Add `dir` to the project's tsconfig.json `exclude`, keeping every other key.
+ *
+ * Only plain JSON is rewritten. A tsconfig.json may legally carry comments and trailing commas,
+ * which `JSON.parse` rejects, and re-serializing such a file would delete them, so the caller asks
+ * for the edit by hand instead. The rewrite uses two-space indentation, as create-next-app does.
+ *
+ * An absent `exclude` becomes `['node_modules', dir]` rather than `[dir]`: setting `exclude`
+ * replaces TypeScript's default list, and create-next-app spells `node_modules` out too.
+ */
+async function excludeFromTsconfig(
+  projectDir: string,
+  dir: string,
+): Promise<TsconfigExcludeResult> {
+  const tsconfigPath = path.join(projectDir, 'tsconfig.json')
+  let text: string
+  try {
+    text = await fs.readFile(tsconfigPath, 'utf-8')
+  } catch (err) {
+    if (isNotFoundError(err)) return 'missing'
+    throw err
+  }
+
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(text)
+  } catch {
+    return 'unreadable'
+  }
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return 'unreadable'
+
+  const exclude: unknown = 'exclude' in parsed ? parsed.exclude : undefined
+  const isStringArray = (value: unknown): value is string[] =>
+    Array.isArray(value) && value.every((item) => typeof item === 'string')
+  if (exclude !== undefined && !isStringArray(exclude)) return 'unreadable'
+  // With `extends`, an absent `exclude` means the base config's list, and an `exclude` written here
+  // would replace that list, not add to it. Writing one would silently drop the base's entries.
+  if (exclude === undefined && 'extends' in parsed) return 'inherits-exclude'
+
+  const current = exclude ?? ['node_modules']
+  // `infrastructure`, `./infrastructure/`, `infrastructure/**` and `infrastructure/**/*` all
+  // exclude the same tree.
+  const coversDir = (pattern: string) => {
+    let root = pattern.startsWith('./') ? pattern.slice(2) : pattern
+    const suffix = ['/**/*', '/**', '/'].find((ending) => root.endsWith(ending))
+    if (suffix) root = root.slice(0, -suffix.length)
+    return root === dir
+  }
+  if (current.some(coversDir)) return 'already-excluded'
+
+  await fs.writeFile(
+    tsconfigPath,
+    `${JSON.stringify({ ...parsed, exclude: [...current, dir] }, null, 2)}\n`,
+    'utf-8',
+  )
+  return 'added'
 }
 
 /**

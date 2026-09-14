@@ -384,9 +384,9 @@ export class GitManager {
     // Create new lock promise
     const lockPromise = log.timed('git', 'ensureLocalSimulatedRemote', async () => {
       // The in-memory lock above only serializes within one process; take a
-      // cross-process lock too so parallel build workers can't both create the
-      // bare remote and race ("cannot mkdir remote.git: File exists"). Released
-      // in the finally below.
+      // cross-process lock too so two processes provisioning against the same
+      // workspace root can't both create the bare remote and race ("cannot
+      // mkdir remote.git: File exists"). Released in the finally below.
       let releaseLock: (() => Promise<void>) | undefined
       try {
         log.debug('git', 'Initializing local simulated remote', {

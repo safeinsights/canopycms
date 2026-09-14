@@ -581,7 +581,7 @@ CanopyCMS distinguishes between two branch config fields:
 
 **Auto-detection in dev mode:**
 
-Both branch identity fields are resolved once at service creation and baked into config: `defaultActiveBranch` is auto-detected from the current git HEAD (`createActiveBranchDetector()` in `services.ts`), and `defaultBaseBranch` follows the same dev-mode HEAD detection when unset (matching `resolveBaseBranch()`). `refreshActiveBranch()` then re-detects **both** per-request (with a 5-second cache) — each field only when not explicitly configured; explicit config values are never overridden. Both the HTTP API handler and `getCanopy()`/`getContext()` perform this refresh (previously only the HTTP handler did), so server-component reads follow branch switches too. This means if you switch from `main` to `my-feature` while the dev server is running, the CMS silently starts serving content from the `my-feature` workspace — no restart needed. The workspace is lazily created on the first content request if it doesn't exist. On a detached HEAD or outside a git repo, detection falls back to `defaultBaseBranch ?? 'main'` (the active-branch detector passes the base branch as the `detectHeadBranch` fallback). Static deployments (`deployedAs: 'static'`) never shell out to git for branch detection — they fall back to `defaultBaseBranch ?? 'main'`.
+Both branch identity fields are resolved once at service creation and baked into config: `defaultActiveBranch` is auto-detected from the current git HEAD (`createActiveBranchDetector()` in `services.ts`), and `defaultBaseBranch` follows the same dev-mode HEAD detection when unset (matching `resolveBaseBranch()`). `refreshActiveBranch()` then re-detects **both** per-request (with a 5-second cache) — each field only when not explicitly configured; explicit config values are never overridden. Both the HTTP API handler and `getCanopy()`/`getContext()` perform this refresh (previously only the HTTP handler did), so server-component reads follow branch switches too. This means if you switch from `main` to `my-feature` while the dev server is running, the CMS silently starts serving content from the `my-feature` workspace — no restart needed. The workspace is lazily created on the first content request if it doesn't exist. On a detached HEAD or outside a git repo, detection falls back to `defaultBaseBranch ?? 'main'` (the active-branch detector passes the base branch as the `detectHeadBranch` fallback). Static deployments and any build (`readsFromCheckout()` in `build-mode.ts`) never shell out to git for branch detection — they fall back to `defaultBaseBranch ?? 'main'`.
 
 This only affects non-editor content serving (public site, `getCanopy()`, AI content). The editor is pinned to its own branch via URL params and stores drafts per-branch in localStorage.
 
@@ -1369,7 +1369,7 @@ Both of these paths surface a `TransformRejection` with a real HTTP status (`400
 Two things about this check are worth knowing before touching it:
 
 - **A `.resize()` to a tiny throwaway output, not `.metadata()`.** `metadata()` only reads header fields -- the exact class of check that misses a corrupt IDAT. Forcing a real (if tiny) decode is what actually exercises libvips's decoder.
-- **`sharp` is loaded with a dynamic `await import('sharp')`, not `transform.ts`'s static `import sharp from 'sharp'`.** This is deliberate: if the native binary can't load in some environment (wrong platform/arch), a static import would throw at module load and take down finalize entirely. The dynamic import lets `pipeline.ts` catch that specific failure and **fail open** (log a warning, skip validation, let the upload through -- same as pre-fix behavior) -- but only for "no decoder available." If sharp loads fine and its decoder rejects the bytes, that's a real fact about the file, and the pipeline **fails closed** (422, generic user-facing message, never the raw libvips string). Keep that split explicit if you touch this function -- don't let "sharp failed to import" and "sharp decoded and said no" collapse into the same branch.
+- **`sharp` is loaded through `loadSharp()` (`assets/sharp-loader.ts`); no non-test module imports it statically.** If the native binary can't load (wrong platform/arch, or a libvips `.so` missing from a standalone image), a static import fails whatever imports that module graph -- under Turbopack that was every route of an adopter's editor, because `transform.ts` sits under `canopycms/http`. `loadSharp()` instead rejects on first use, logging one error per process, which lets `pipeline.ts` catch that specific failure and **fail open** (log a warning, skip validation, let the upload through -- same as pre-fix behavior) -- but only for "no decoder available." `transform.ts` lets the same rejection propagate, so a transform there is a 500, never a 422. `@typescript-eslint/no-restricted-imports` in `eslint.config.mjs` rejects a static value import of `sharp` under `packages/canopycms/src` outside tests. If sharp loads fine and its decoder rejects the bytes, that's a real fact about the file, and the pipeline **fails closed** (422, generic user-facing message, never the raw libvips string). Keep that split explicit if you touch this function -- don't let "sharp failed to import" and "sharp decoded and said no" collapse into the same branch.
 
 Test fixtures for this area must be genuinely sharp-decodable, not the hand-built header-only base64 constants that used to live in `pipeline.test.ts`. Build fixtures with `sharp({ create: {...} })` (see `transform.test.ts`'s `makePng` or `pipeline.test.ts`'s local copy) rather than hand-crafted bytes -- a header-only fixture will now be correctly rejected by `rasterIsDecodable`, so it can no longer stand in for "a valid raster." `pipeline.test.ts` keeps exactly one deliberately-corrupt fixture (`makeCorruptPng`, built by flipping bytes well past the fixed-offset header fields) for the rejection test itself; the fail-open path (sharp unavailable) is covered separately in `pipeline.sharp-unavailable.test.ts`, which mocks the `sharp` module -- kept out of `pipeline.test.ts` because that file's own fixtures need the real thing.
 
@@ -1623,9 +1623,7 @@ When adding a new mutator, follow the existing pattern: a thin public method tha
 
 ### Dev Content Sync (`dev.contentSync`)
 
-In dev mode, the editor, the dev server **and `next build`** all read content from a branch clone under `.canopy-dev/content-branches/<branch>/` — never from the working tree. The clone is seeded from **git-committed** state. So when you edit working-tree `content/**` outside the editor, all three keep reading the stale clone.
-
-> **`next build` reads the clone too — this doc used to claim otherwise.** `listEntries`/`buildContentTree` resolve `branchRoot` through `resolveSchemaContext` unconditionally; there is no build-mode branch in that path. Add or rename a file in the working tree, run `next build`, and the build is **green while silently reading the old content** — the only tells are content-level (a stale `<loc>` in the emitted sitemap, `_not-found` markup in a prerendered page). Staging is not enough, and `rm -rf .canopy-dev` does **not** help: the workspace is re-provisioned from git, reproducing the stale content exactly. Commit the change, or run `canopycms sync push`. Whether a one-shot static build _should_ bypass the branch-clone machinery is an open design question — see [dev-mode-build-reads-branch-clone-not-working-tree.md](.claude/future-tasks/dev-mode-build-reads-branch-clone-not-working-tree.md).
+In dev mode, the editor and the dev server read content from a branch clone under `.canopy-dev/content-branches/<branch>/`, seeded from **git-committed** state. `next build` does not: every build-time read comes straight from the working tree, uncommitted files included, and never touches git or `.canopy-dev` (`readsFromCheckout` in `build-mode.ts`). So a working-tree edit made outside the editor reaches the next build at once but leaves the editor and dev server on the stale clone, and an editor save reaches a build only after `canopycms sync pull` copies it out.
 
 The `dev.contentSync` config field (in `CanopyConfig`, `DevContentSyncMode`) controls how this divergence is handled. It is dev-mode only (ignored when `mode !== 'dev'`):
 
@@ -3152,15 +3150,10 @@ Two things about this gate are easy to miss:
   re-checked separately here -- `assertNoDuplicateUrlPaths` already runs during a normal
   `next build` via the sitemap and static-params calls, so a real collision already fails the
   build outright.
-- **The CI job needs a `git checkout -B main` step, for a build-time reason, not just a
-  request-time one.** `apps/example1` is always CanopyCMS `mode: 'dev'`, and dev mode's
-  base-branch resolution (`resolveBaseBranch`/`detectHeadBranch` in `utils/git.ts`) falls back
-  to the literal branch name `main` on a detached HEAD -- exactly what `actions/checkout`
-  leaves it as. That fallback fires for this app's build-time content read too. Without
-  attaching HEAD to a real branch pointing at the checked-out commit first (the same fix
-  `dual-build` above already needed), the job would silently build against whatever `main`
-  happens to resolve to instead of the PR's own content, defeating the gate while still
-  reporting green.
+- **The CI job builds on the detached HEAD `actions/checkout` leaves, with no git setup.** A
+  build reads the working tree, never a branch clone, so it reads exactly the PR's content; a
+  green run is the live proof, and `build-verify.test.ts` also asserts the build creates no
+  `.canopy-dev`. `dual-build` above still attaches HEAD, for its request-time reads.
 
 ### Scaffold-and-Synth Verification (`canopycms-cdk/src/scaffold-synth.test.ts`)
 
@@ -3176,6 +3169,7 @@ pnpm --filter canopycms-cdk exec vitest run src/scaffold-synth.test.ts
 - **Why this test lives in `canopycms-cdk`, not next to the CLI it exercises.** The synth needs `aws-cdk-lib`, `constructs`, and a resolvable `canopycms-cdk` -- this is the one package where all three are guaranteed present. Scratch projects are created under `packages/canopycms-cdk/.scaffold-synth/` (gitignored) with **no `package.json` of their own**, and that omission is load-bearing: it's what lets Node's self-reference resolution find `canopycms-cdk` from the generated stack by walking up to this package's own manifest via its `exports` field. Adding a `package.json` in the scratch project would break that resolution. The scratch directory sits at the package root, never under `src/`, so a crashed run that skips cleanup can't start failing `pnpm lint`/`pnpm typecheck` with generated files -- both globs cover `src/`.
 - **`CDK_OUTDIR` + `CDK_CONTEXT_JSON` are how the CDK CLI drives an app.** The first triggers auto-synth; the second delivers `cdk.json`'s `context` block. A test that runs the generated `app` command without passing the context can't catch a bad context value -- e.g. a CDKv1-only feature flag that CDKv2 rejects at synth (`UnsupportedFeatureFlag`) -- because a context-free run never reaches that code path.
 - **Fails loudly, never skips, when `packages/canopycms-cdk/worker/dist` is missing.** The package's own `test` script builds it via `build:test-fixtures` first; running this file in isolation (as above) requires that step too. A skip here would restore exactly the going-green-without-checking property the test exists to remove.
+- **A synth proves nothing about types.** `cdk.json` runs the app through tsx, which strips types, so the file also runs the generated workflow's `npx tsc --noEmit -p infrastructure`, read out of the workflow as `appCommand` is read out of `cdk.json`, and expects it to fail on a misspelled `CanopyCmsService` prop. Here that check resolves `canopycms` and `canopycms-cdk` to their workspace `src/`, not the published `.d.ts`.
 
 ### Test-Owned CDK Synth Output (`newTestApp()`)
 
@@ -3203,6 +3197,10 @@ Two layers enforce this mechanically rather than relying on convention, and the 
 Interrupting a run needs no cleanup from you. Ctrl-C makes vitest exit without running globalSetup teardown, so the root survives; the root's name carries the owning pid and the next run's `setup` removes any root whose process is gone. Only `ESRCH` licenses that delete, so a live run's root -- including a concurrent one -- is never touched.
 
 `test-support/` is treated like `lambda/`, `canary/`, and `worker/`: a non-shipped directory with its own `tsconfig.json`, appended to the package's `typecheck` and `lint` scripts. That config also includes `../src/**/*.test.ts`, which nothing else typechecks -- the package `tsconfig.json` is its build/publish config and excludes test files -- and it sets no `rootDir`, which is what lets those suites' deliberate cross-package imports resolve.
+
+### Testing a Docker Image Asset's Build (Without Docker)
+
+`DockerImageCode.fromEcr(...)` -- what every other synth in `cms-deploy.test.ts` uses -- has no build step, so it can't exercise build-time behavior like the `--platform` CDK picks. For that, use `fromImageAsset(...)` pointed at the Dockerfile-only fixture `test-support/fixtures/docker-image-asset/`: `cdk synth` stages and fingerprints it as an image asset without ever invoking `docker build`. The platform lands in the synthesized **asset manifest**, not the CloudFormation template; read it via `app.synth().artifacts.filter(AssetManifestArtifact.isAssetManifestArtifact)` (`aws-cdk-lib/cx-api`) then `Manifest.loadAssetManifest(artifact.file).dockerImages[*].source.platform` (`aws-cdk-lib/cloud-assembly-schema`). See `synthWithImageAsset` in `cms-deploy.test.ts` and the equivalent check in `scaffold-synth.test.ts`.
 
 ### Diffing Synthesized Output Across a Construct Refactor
 
@@ -3628,6 +3626,77 @@ This pass covers **every published subpath, not just the runtime-testable ones**
 The rewrite pattern is the most fragile part and fails silently in both directions -- too narrow and a relative specifier ships unrewritten (a bare `.` did exactly that), too wide and a bare package name gets a spurious `.js` welded on. `node scripts/add-js-extensions.mjs --self-test` asserts the pattern's classification table plus an end-to-end rewrite (directory expansion, bare dot, already-suffixed specifiers, `.d.ts` alongside `.js`, and idempotence). `pnpm check:esm` runs it first, so it executes in CI.
 
 When changing either the rewrite or the guard, verify the guard still fails. Strip a `.js` off one relative specifier in a built `dist/**/*.d.ts` and re-run `pnpm check:esm`: the runtime probe should stay green and the type pass should go red. Deleting a built `.d.ts` outright should also go red. If either stays green, the guard is not testing what it claims -- and confirm the mutation actually landed before trusting the result (see [Diffing Synthesized Output Across a Construct Refactor](#diffing-synthesized-output-across-a-construct-refactor)).
+
+### Standalone CMS Image Smoke Test (`standalone-image` CI job)
+
+`scripts/smoke/standalone-image.mjs` builds the CMS editor image that `canopycms init-deploy aws`
+generates (`Dockerfile.cms.template`), boots it, and sends it real requests. Its header comment
+is authoritative on the why -- read it before changing the script. In short:
+
+- **Scaffolded OUTSIDE this workspace.** A Next 16.1.7 app installs `pnpm pack` tarballs of
+  `canopycms`, `canopycms-next`, and `canopycms-auth-dev` (`npm pack` won't do -- only pnpm
+  applies `publishConfig` and rewrites `workspace:` ranges). In this workspace those packages are
+  workspace links compiled through `transpilePackages`, which is not what an adopter installs.
+  The registry-shaped install, built with Next 16's default Turbopack, externalizes sharp as
+  `.next/node_modules/sharp-<hash>`, the shape the libvips defect shows in. A webpack build under
+  pnpm bundles sharp instead (seen on Next 15.5.21; see
+  [webpack-standalone-sharp-bundled.md](.claude/future-tasks/webpack-standalone-sharp-bundled.md)).
+- **Runs in dev mode**, with a git checkout of the scaffold's `content/` on a non-`main`
+  `release-base` branch copied in before boot -- see the header comment for why. The page's title
+  in the working tree, which `next build` reads, differs from its title in the `release-base`
+  commit, which requests read, so a check can tell which copy served a response.
+- **Checks (`assertContainer`, 14 in all):**
+  - `whoami` answers 200;
+  - `/hello` renders the `release-base` title (a request-time read of the branch clone), not the
+    working-tree one;
+  - `/sitemap.xml` lists the page's URL. Its slug is the same in the working tree and the
+    `release-base` commit, so this check cannot yet tell a build-time read from a request-time one
+    ([cms-image-pr5-review-followups.md](.claude/future-tasks/cms-image-pr5-review-followups.md),
+    item 5);
+  - `/no-such-page` is a 404 carrying the `release-base` title (the root layout's request-time
+    read); `/no/such/route` is a 404 carrying the working-tree title (Next serves it from the
+    not-found page `next build` prerendered); `/favicon.ico` is not a 5xx;
+  - an asset round trip: presign -> proxied upload/finalize -> the `orig` identity transform
+    (through sharp) as a PNG -> WebP resize;
+  - sharp externalized as a `.next/node_modules/sharp-*` alias; each alias has the libvips-cpp its
+    own sharp declares; each alias loads and encodes;
+  - zero `ERR_DLOPEN_FAILED` in the container logs.
+
+Run it locally (needs Docker running, Node >= 22.2, pnpm, and corepack for `--pm pnpm`):
+
+```bash
+node scripts/smoke/standalone-image.mjs --pm pnpm
+node scripts/smoke/standalone-image.mjs --pm npm
+```
+
+Flags: `--pm pnpm|npm`, `--next <version>` (default 16.1.7), `--pnpm-version` (default 11.27.0,
+written as the scaffold's `packageManager`), `--tarballs <dir>` (reuse pre-packed tarballs instead
+of packing; exactly one per package), `--work-dir <dir>` (must be outside the repo, checked as
+given and through the real path of its nearest existing ancestor before it is created), `--keep`
+(keep the container, the image, and the scaffold they were built from).
+
+**When it fails.** Once the container exists, the script writes its whole log to
+`<work-dir>/container.log` on every exit path, and prints the last 200 lines when a check failed or
+the run stopped before the checks. Without `--work-dir` the work dir is a temp directory, deleted
+only after a fully green run without `--keep`. In CI a failed leg uploads `container.log` as an
+artifact.
+
+**Red-before-green:** `pnpm pack --pack-destination <dir>` from `packages/<name>` against a
+deliberately broken copy of that package, copy the other two tarballs into the same directory,
+then run with `--tarballs <dir>`. Restore the source from a scratch copy afterward -- never
+`git checkout --`.
+
+**Pitfall:** a fixture that bundles sharp instead of externalizing it fails the "externalized"
+check on purpose -- that's the guard working, not a fixture bug.
+
+CI runs it as `standalone-image`, matrixed over pnpm+npm on `ubuntu-latest` and pnpm on
+`ubuntu-24.04-arm` (the Lambda's default architecture). Gated by `dorny/paths-filter` like
+`dual-build` -- the job always reports, only the expensive build+boot steps are skipped -- on
+every source and packaging input of the three packages (each one's `src/**`, `package.json`,
+`tsconfig.json` and `tsconfig.build.json`, plus `packages/canopycms/scripts/**`,
+`scripts/add-js-extensions.mjs` and `tsconfig.base.json`), the lockfile, the root `package.json`
+and `.nvmrc`, and the script and workflow themselves. `ci.yml` has the list and why it is this
+wide.
 
 ### Future-Tasks Backlog Check
 

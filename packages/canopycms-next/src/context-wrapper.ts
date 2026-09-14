@@ -355,10 +355,11 @@ export async function createNextCanopyContext(
   //
   // No base-branch context resolution here (unlike the previous copy):
   // that call existed only to source groups.json from the (wrong) content
-  // branch. Actual content reads (buildContentTree/listEntries/read) already
-  // provision the base/active branch themselves via loadOrCreateBranchContext
-  // (see context.ts's resolveSchemaContext), so dropping it here removes a
-  // redundant per-request EFS round-trip rather than losing provisioning.
+  // branch. Actual request-time content reads (buildContentTree/listEntries/
+  // read) already provision the base/active branch themselves via
+  // loadOrCreateBranchContext (see context.ts's resolveSchemaContext; build-time
+  // reads never provision, they read the checkout), so dropping it here removes
+  // a redundant per-request EFS round-trip rather than losing provisioning.
   const extractUser = async (): Promise<CanopyUser> => {
     const headersList = await headers()
     const authResult = await authPlugin.authenticate(headersList)

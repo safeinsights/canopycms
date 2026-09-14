@@ -589,11 +589,18 @@ export interface CanopyCmsServiceProps {
   reservedConcurrency?: number
 
   /**
-   * Lambda architecture (default: `Architecture.X86_64`, Lambda's own
-   * default). MUST match the platform the Docker image was built for - e.g.
-   * an image built for `Platform.LINUX_ARM64` requires
-   * `Architecture.ARM_64` here, or the function fails at invoke time with
-   * an exec format error.
+   * Lambda architecture (default: `Architecture.ARM_64`, matching the EC2
+   * worker and AssetSupport's transform Lambda).
+   *
+   * This also decides the image's architecture for
+   * `DockerImageCode.fromImageAsset`: the construct always passes a resolved
+   * architecture to the function, and CDK derives the Docker build platform
+   * from it. So omit `platform` on `fromImageAsset`. An explicit `platform`
+   * overrides the derived one, and an image built for the other architecture
+   * cannot run on the function: an arm64 image on an x86_64 function fails at
+   * invoke with `Runtime.InvalidEntrypoint` (see "Where the image is built" in
+   * docs/deploying-to-aws.md). A prebuilt image (`DockerImageCode.fromEcr`) has
+   * no build for CDK to steer, so it must already be built for this architecture.
    */
   architecture?: lambda.Architecture
 
@@ -1070,10 +1077,13 @@ export class CanopyCmsService extends Construct {
     // ------------------------------------------------------------------
     //
     // The adopter's `canopycms.config.ts` is shared by local dev, the image
-    // build and this deployment, and it must say `dev` for the first two (a
-    // prod-mode `next build` would try to open an EFS branch workspace that
-    // cannot exist in an image builder). So the deployed mode is supplied
-    // here, at run time: `resolveOperatingMode`
+    // build and this deployment, and it says `dev`. `next dev` needs that, and
+    // the image build should stay in dev mode too: build-time reads come from
+    // the working tree in either mode (`readsFromCheckout` in canopycms's
+    // build-mode.ts), so nothing in a build needs prod, while prod would hold
+    // the image builder to checks it has no reason to meet (gitBotAuthorName/
+    // gitBotAuthorEmail, a credential-verifying auth plugin). So the deployed
+    // mode is supplied here, at run time: `resolveOperatingMode`
     // (packages/canopycms/src/operating-mode/mode-env.ts) reads CANOPY_MODE
     // and it wins over the config literal. Without it the Lambda runs dev
     // mode, resolves its workspace to `<cwd>/.canopy-dev`, and fails EROFS on
@@ -1227,6 +1237,14 @@ export class CanopyCmsService extends Construct {
       attachLambdaExecutionPolicies(props.lambdaRole, { vpc: true })
     }
 
+    // Always resolved, never passed through as `undefined`. DockerImageFunction
+    // hands it to the image code's `_bind`, and for `fromImageAsset` that is
+    // what sets the Docker build platform. Unset, CDK sets no platform at all:
+    // Docker builds for whatever machine runs `cdk deploy` (arm64 on Apple
+    // Silicon, amd64 on an x86 CI runner) while the function stays x86_64, and
+    // the mismatch only shows at invoke. See `architecture`'s doc comment.
+    const architecture = props.architecture ?? lambda.Architecture.ARM_64
+
     this.lambdaFunction = new lambda.DockerImageFunction(this, 'CmsFunction', {
       code: props.cmsDockerImage,
       // Default (unset) leaves CDK to create the execution role, with its own
@@ -1235,7 +1253,7 @@ export class CanopyCmsService extends Construct {
       memorySize: props.memorySize ?? 2048,
       timeout: this.timeout,
       reservedConcurrentExecutions: props.reservedConcurrency ?? 10,
-      architecture: props.architecture,
+      architecture,
       vpc: this.vpc,
       vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_ISOLATED },
       securityGroups: [lambdaSg],

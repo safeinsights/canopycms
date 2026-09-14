@@ -55,14 +55,15 @@ Add an example1 build step to CI. Two parts, the second being the one that carri
    A tiny node script over `.next/server/app/` is enough; this does not need Playwright.
 
 Note the interaction with
-[dev-mode-build-reads-branch-clone-not-working-tree.md](../dev-mode-build-reads-branch-clone-not-working-tree.md):
+[dev-mode-build-reads-branch-clone-not-working-tree.md](dev-mode-build-reads-branch-clone-not-working-tree.md)
+(itself resolved 2026-09-12 -- a build now reads the working tree, so this note is historical):
 a `mode: 'dev'` build reads the git-committed branch clone, so in CI (a fresh clone of the commit
 under test) it reads exactly the committed content — which is what you want here, but it does mean
 a local run of the same check needs the content committed first.
 
 ## Related
 
-- [../dev-mode-build-reads-branch-clone-not-working-tree.md](../dev-mode-build-reads-branch-clone-not-working-tree.md)
+- [dev-mode-build-reads-branch-clone-not-working-tree.md](dev-mode-build-reads-branch-clone-not-working-tree.md)
   — why a local build of this app can disagree with the working tree
 - [../adopter-request-log-intake.md](../adopter-request-log-intake.md) — item #20, the change that
   surfaced this

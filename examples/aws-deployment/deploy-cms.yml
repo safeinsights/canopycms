@@ -102,6 +102,8 @@ on:
       - 'Dockerfile.cms'
       - 'infrastructure/**'
       - 'cdk.json'
+      # infrastructure/tsconfig.json extends it, so it decides the type-check below.
+      - 'tsconfig.json'
       # A dependency bump alone changes what the image contains, so it has to
       # trigger a deploy too -- otherwise the Lambda keeps running the old
       # dependency tree until the next content change happens to ship it.
@@ -118,7 +120,14 @@ concurrency:
 
 jobs:
   deploy:
-    runs-on: ubuntu-latest
+    # An arm64 runner, because `cdk deploy` builds the CMS image right here and
+    # the stack's `architecture` is arm64. On an x86 runner that build would
+    # run under QEMU emulation (docker/setup-qemu-action), which Docker's docs
+    # warn can be much slower than a native build.
+    # This image ships Docker and Buildx (github.com/actions/partner-runner-images);
+    # in a private repository it has 2 vCPUs. Change it together with
+    # `architecture` in infrastructure/lib/cms-stack.ts.
+    runs-on: ubuntu-24.04-arm
     permissions:
       id-token: write # required for OIDC
       contents: read
@@ -148,6 +157,26 @@ jobs:
             echo "::error::Install them with: npm install --save-dev canopycms-cdk aws-cdk-lib constructs tsx aws-cdk"
             exit 1
           fi
+
+      # The only type-check the CDK app gets. cdk.json runs it through tsx,
+      # which strips types without checking them, and `init-deploy aws`
+      # excludes infrastructure/ from the app's tsconfig.json, so `next build`
+      # skips it too. Unchecked, a misspelled CanopyCmsService prop is dropped
+      # silently and the deploy uses that prop's default. The compiler
+      # settings are in infrastructure/tsconfig.json, which extends
+      # tsconfig.json.
+      #
+      # typescript is checked first: without it, `npx tsc` runs a deprecated
+      # npm package named `tsc` instead of the TypeScript compiler. Next.js
+      # requires typescript in a TypeScript app anyway.
+      - name: Type-check the CDK app
+        run: |
+          if [ ! -e node_modules/typescript ]; then
+            echo "::error::typescript is not installed, so the CDK app cannot be type-checked"
+            echo "::error::Install it with: npm install --save-dev typescript @types/node"
+            exit 1
+          fi
+          npx tsc --noEmit -p infrastructure
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@cbe3b392738ccf3f987d68400dafcf4b0624a56c # v6.2.4

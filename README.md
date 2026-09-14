@@ -130,13 +130,17 @@ export default withCanopy({
 })
 ```
 
-`withCanopy()` handles three things:
+`withCanopy()` handles:
 
 - **Transpilation** — Canopy packages export raw TypeScript; the wrapper auto-detects which Canopy packages are installed and adds only those to `transpilePackages`. You never need to maintain this list manually.
 - **React deduplication** — When developing locally with `file:` references or linked packages (`npm link`, `pnpm link`, etc.), the bundler can follow symlinks and load a second copy of React from the linked package's `node_modules`, causing "Invalid hook call" crashes. The wrapper adds module aliases so React always resolves to your project's copy.
 - **Dual-build page extensions** — By default, adds `server.ts` and `server.tsx` to Next.js `pageExtensions`, enabling the dual-build convention (see below).
+- **Standalone image tracing** — For any build except a static export, adds sharp's libvips shared library to Next's file tracing, so a Turbopack `output: 'standalone'` server (Next 16's default bundler) can load sharp. Next can miss that library for sharp 0.35 ([vercel/next.js#97973](https://github.com/vercel/next.js/issues/97973)), and a standalone build that finds nothing to add warns. It does not fix a webpack build, where sharp is bundled into a server chunk and image transforms fail (seen on Next 15.5.21 with pnpm). If you don't use `withCanopy()`, see the manual snippet in [Dual Build Support](docs/deploying-to-aws.md#dual-build-support), which also describes the webpack case.
+- **Turbopack guard (Next 16+)** — On Next 16 and later, sets `turbopack: {}` if your config has neither `turbopack` nor your own `webpack` and `withCanopy()` can read your installed Next version, since Next 16 defaults `next build`/`next dev` to Turbopack and exits when it sees the React-aliasing `webpack` function above with no `turbopack` config. Your own `webpack` or `turbopack` config is always left as-is, so a `turbopack: {}` you already added keeps working.
 
 The React aliases are harmless when not strictly needed (e.g., when installing from npm), so `withCanopy()` is the recommended configuration for all adopters.
+
+If you combine `withCanopy()` with other config plugins, make it the outermost wrapper: `withCanopy(withBundleAnalyzer({ ... }))`, not `withBundleAnalyzer(withCanopy({ ... }))`. `withCanopy()` decides whether to add `turbopack: {}` from the config it receives, and a plugin wrapped around it adds its `webpack` afterwards. On Next 16 that `turbopack: {}` then silences the error Next would otherwise raise about the plugin's `webpack`, which Turbopack does not run.
 
 #### Dual-Build Sites (Static Export + CMS Server)
 
@@ -206,7 +210,7 @@ If you are not doing dual-build deployment (most setups), you can ignore this op
 
 > **Note:** `withCanopy()` adds `server.ts`/`server.tsx` (or, with `staticBuild: true`, `static.ts`/`static.tsx`) to Next.js `pageExtensions`. If you already have files ending in `.server.ts`, `.server.tsx`, `.static.ts`, or `.static.tsx` inside your app directory for non-CMS purposes, they will be treated as pages/routes by Next.js. Rename them or use a different naming convention to avoid conflicts.
 
-Using Clerk (or another auth SDK) with dual-build? Its provider component can't go in the root layout above -- see [Where a Clerk provider goes](docs/deploying-to-aws.md#dual-build-support) for the `.server.tsx`-scoped layout that keeps it out of the static export, and what is (and isn't yet) verified about sharing one Docker image across Clerk instances.
+Using Clerk (or another auth SDK) with dual-build? Its provider component can't go in the root layout above -- see [Where a Clerk provider goes](docs/deploying-to-aws.md#dual-build-support) for the `.server.tsx`-scoped layout that keeps it out of the static export, and how one Docker image can serve several Clerk instances.
 
 ### 4. Customize your schemas
 
@@ -214,7 +218,9 @@ Edit `{appDir}/schemas.ts` with your content types. See [Schema Registry and Ref
 
 ### 5. Protect editor routes
 
-The `init` command generates a `middleware.ts` that matches `/edit` and `/api/canopycms` routes. By default it is a passthrough (suitable for dev auth mode). For Clerk auth, replace the file contents with the commented example inside, or use this:
+The `init` command generates a `middleware.ts` that matches `/edit` and `/api/canopycms` routes. By default it is a passthrough (suitable for dev auth mode). For Clerk auth, replace the file contents with the commented example inside, or with the snippet below.
+
+The Clerk middleware is optional. CanopyCMS's own API authentication checks every `/api/canopycms` request and rejects unauthenticated calls without it; what the middleware adds is turning signed-out requests away before they reach the app. On a deployed CMS Lambda it costs `CLERK_SECRET_KEY` there (see [Security Model](docs/deploying-to-aws.md#security-model)) and a publishable key baked into each Docker image (see [Dual Build Support](docs/deploying-to-aws.md#dual-build-support)), so deleting `middleware.ts` is a supported choice.
 
 `middleware.ts` is written into the PARENT of your app directory, not always the project root -- Next.js only loads middleware from there. With the default `--app-dir app` that's still the project root, but with `--app-dir src/app` it's `src/middleware.ts`. If you move the app directory later, move `middleware.ts` alongside it (or re-run `init --force`).
 
@@ -725,6 +731,8 @@ This is separate from the `validateEntry` hook above: that one is yours to defin
 ### Local Development Sync
 
 When working in `dev` mode, your content lives in two places: the working tree of your repo and the branch workspaces inside `.canopy-dev/content-branches/` that the CMS editor reads from. If you edit files in the working tree directly (or pull from GitHub) while the dev server serves a branch clone, the two can drift — the classic "builds fine, but the dev editor shows blank/stale content" trap.
+
+The same split runs the other way for `next build`: a build reads only the working tree, never `.canopy-dev`, so an editor's saved changes aren't part of a build until `canopycms sync pull` copies them out.
 
 **Automatic divergence detection.** The `dev.contentSync` config option controls how the dev server detects and reports working-tree edits that have drifted from the served branch clone (dev mode only; ignored when `mode !== 'dev'`):
 
@@ -1652,7 +1660,7 @@ export default async function PostPage({ params, searchParams }) {
 
 - **Automatic authentication**: Current user extracted from request headers via auth plugin
 - **Bootstrap admin groups**: Admin users automatically get `admins` group membership
-- **Build mode support**: Permissions bypassed during `next build` for static generation
+- **Build mode support**: During `next build`, permissions are bypassed and content is read from the working tree, never a branch workspace, so a build renders exactly what is on disk
 - **Type-safe**: Full TypeScript support with inferred types from your schema
 - **Per-request caching**: Context is cached using React's `cache()` for the request lifecycle
 
@@ -3285,7 +3293,7 @@ CanopyCMS is designed for minimal integration effort. Run `npx canopycms init` t
 - **Static export**: Use the bound `contentStaticParams` helper from `lib/canopy.ts` to drive `generateStaticParams` (supports `shape`, `rootPath`, and `basePath` for nested catch-all routes); see [Static Export with generateStaticParams](#static-export-with-generatestaticparams)
 - **AI content route**: `{appDir}/ai/[...path]/route.ts` -- serve content as AI-readable markdown; generated by default during `init` (see [AI-Ready Content](#ai-ready-content))
 
-Setting the `CANOPY_AUTH_MODE` environment variable (`dev` or `clerk`) switches auth providers for `canopy.ts` and the edit page at runtime, with no regeneration needed for those two files. `middleware.ts` is the exception: it is generated once, frozen to the auth provider chosen at `init` time, and does not read `CANOPY_AUTH_MODE`. If you switch auth providers after init (or just flip the env var), you must regenerate (`npx canopycms init --force`) or manually swap `middleware.ts` to match -- otherwise the passthrough middleware keeps `/edit` and `/api/canopycms` unprotected at the edge. This is a defense-in-depth gap rather than a full auth bypass (the Clerk auth plugin still rejects unauthenticated API calls, and the core fails closed in prod mode), but it should not be left unaddressed. The generated passthrough `middleware.ts` logs a warning if it detects `CANOPY_AUTH_MODE=clerk` at runtime to help catch this mismatch.
+Setting the `CANOPY_AUTH_MODE` environment variable (`dev` or `clerk`) switches auth providers for `canopy.ts` and the edit page at runtime, with no regeneration needed for those two files. `middleware.ts` is the exception: it is generated once, frozen to the auth provider chosen at `init` time, and does not read `CANOPY_AUTH_MODE`. If you switch auth providers after init (or just flip the env var), regenerate it (`npx canopycms init --force`) or manually swap it to match. Under Clerk auth, a passthrough `middleware.ts` behaves like having no middleware: CanopyCMS's own API authentication still rejects unauthenticated calls, but signed-out requests reach the app instead of being turned away first. That is a supported shape (see [Protect editor routes](#5-protect-editor-routes)), and deleting the file is the deliberate version of it, so the choice is between the Clerk middleware and none. The generated passthrough logs a warning when it detects `CANOPY_AUTH_MODE=clerk` at runtime, so that ending up without one is a choice rather than an oversight.
 
 Everything else (branch management, content storage, permissions, comments, bootstrap admin groups, meta file loading) is handled automatically by CanopyCMS.
 
@@ -3297,13 +3305,15 @@ npx canopycms init-deploy aws
 
 Scaffolds a complete, deployable CDK app for the recommended AWS architecture (Lambda, no internet access, + an EC2 worker + EFS, with optional CloudFront/Route53) alongside the Dockerfile and CI workflow:
 
-| File                               | Purpose                                                                                                                                                                     |
-| ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `Dockerfile.cms` / `.dockerignore` | Lambda Web Adapter image; install/build commands match your detected package manager (npm, pnpm, or Yarn — from `packageManager`, else the lockfile)                        |
-| `.github/workflows/deploy-cms.yml` | CI/CD workflow; triggers on your repo's default branch (detected from `origin/HEAD`) and deploys the stack **by name**, so it can't touch unrelated stacks in the same repo |
-| `cdk.json`                         | CDK app entry point                                                                                                                                                         |
-| `infrastructure/bin/app.ts`        | CDK app; reads its configuration from environment variables and refuses to synth if a required one is missing                                                               |
-| `infrastructure/lib/cms-stack.ts`  | the stack itself, yours to edit (memory/concurrency, media support, an existing distribution, etc.)                                                                         |
+| File                               | Purpose                                                                                                                                                                                                                                                                                                                                                            |
+| ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `Dockerfile.cms` / `.dockerignore` | Lambda Web Adapter image; install/build commands match your detected package manager (npm, pnpm, or Yarn — from `packageManager`, else the lockfile); on pnpm, also copies `pnpm-workspace.yaml` if present (pnpm 11 keeps its `allowBuilds` decisions there and fails the install without them); `.dockerignore` keeps `infrastructure/` out of the image context |
+| `.github/workflows/deploy-cms.yml` | CI/CD workflow; triggers on your repo's default branch (detected from `origin/HEAD`), type-checks the CDK app, and deploys the stack **by name**, so it can't touch unrelated stacks in the same repo                                                                                                                                                              |
+| `cdk.json`                         | CDK app entry point                                                                                                                                                                                                                                                                                                                                                |
+| `infrastructure/bin/app.ts`        | CDK app; reads its configuration from environment variables and refuses to synth if a required one is missing                                                                                                                                                                                                                                                      |
+| `infrastructure/lib/cms-stack.ts`  | the stack itself, yours to edit (memory/concurrency, media support, an existing distribution, etc.)                                                                                                                                                                                                                                                                |
+| `infrastructure/tsconfig.json`     | compiler settings for the workflow's `tsc --noEmit -p infrastructure`. `cdk.json` runs the CDK app through tsx, which doesn't check types, and the `tsconfig.json` edit below excludes `infrastructure/` from `next build`, so without this step a misspelled construct prop is dropped silently. It extends your `tsconfig.json`                                  |
+| `tsconfig.json`                    | adds `infrastructure` to `exclude` so `next build` doesn't type-check the CDK app; warns instead, and leaves the file alone, if it has comments or inherits `exclude` through `extends` with no list of its own; also warns if there is no `tsconfig.json`                                                                                                         |
 
 Install the CDK dependencies it needs — the CLI, and the generated workflow, both warn if any are missing:
 
@@ -3311,7 +3321,7 @@ Install the CDK dependencies it needs — the CLI, and the generated workflow, b
 npm install --save-dev canopycms canopycms-cdk aws-cdk-lib constructs tsx aws-cdk
 ```
 
-Like `init`, this command never overwrites files you already have; pass `--force` to regenerate them.
+Like `init`, this command never overwrites a file you already have without asking (and `--non-interactive` skips them); pass `--force` to regenerate them.
 
 Full walkthrough — required secrets/variables, filling in the stack, and troubleshooting — lives in [docs/deploying-to-aws.md](docs/deploying-to-aws.md).
 
@@ -3361,7 +3371,7 @@ CLERK_JWT_KEY=...           # Public JWKS PEM. Optional locally; load-bearing on
 CLERK_AUTHORIZED_PARTIES=... # Optional: comma-separated domains
 ```
 
-`CLERK_SECRET_KEY` is resolved lazily, on the first authenticated request -- not at build/startup. This means a zero-editor static/public build (`deployedAs: 'static'`, no auth plugin exercised) never needs the secret at all. It's still required wherever authentication actually runs: the CMS server build/deployment and the worker daemon's auth-cache refresh.
+`CLERK_SECRET_KEY` is resolved lazily, the first time the plugin calls Clerk's backend API -- not at build/startup. This means a zero-editor static/public build (`deployedAs: 'static'`, no auth plugin exercised) never needs the secret at all. It is needed only where that API is called: the worker daemon's auth-cache refresh, and in dev mode the dev server's lazy refresh. A deployed CMS server verifies tokens with `CLERK_JWT_KEY` alone, unless it also runs `clerkMiddleware`, which needs the secret wherever it runs (see [Security Model](docs/deploying-to-aws.md#security-model)).
 
 For GitHub integration (production mode), the worker authenticates with either a personal
 access token (default) or a GitHub App:

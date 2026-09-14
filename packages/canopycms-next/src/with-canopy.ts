@@ -1,6 +1,7 @@
 import { createRequire } from 'node:module'
 import path from 'node:path'
 import type { NextConfig } from 'next'
+import { hasNextConfig, installedNextMajor, sharpTracingIncludes } from './sharp-tracing'
 
 /** The core package — always required when using withCanopy. */
 const REQUIRED_PACKAGES = ['canopycms']
@@ -207,6 +208,205 @@ function resolveStaticBuildId(): string | null {
   return trimmed
 }
 
+/** Next's `outputFileTracingIncludes` shape: a route glob mapped to project-relative file globs. */
+type TracingIncludes = Record<string, string[]>
+
+/**
+ * Every route. Both tracers match include keys as a "contains" glob against the route:
+ * - Turbopack against "/" plus the page name (`crates/next-api/src/nft_json.rs` lines 56 and 312 at
+ *   v16.1.7);
+ * - the JS tracer through picomatch with `contains: true` (`next/dist/build/collect-build-traces.js`
+ *   lines 464 and 475 in 16.1.7).
+ */
+const ALL_ROUTES = '/**'
+
+function isTracingIncludes(value: unknown): value is TracingIncludes {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    Object.values(value).every(
+      (globs: unknown) =>
+        Array.isArray(globs) && globs.every((g: unknown) => typeof g === 'string'),
+    )
+  )
+}
+
+/** `value[key]` for any object, else undefined: for config keys Next's types no longer declare. */
+function readProperty(value: unknown, key: string): unknown {
+  return typeof value === 'object' && value !== null ? Reflect.get(value, key) : undefined
+}
+
+function stringOrUndefined(value: unknown): string | undefined {
+  return typeof value === 'string' ? value : undefined
+}
+
+/**
+ * Whether Next treats a config value as set.
+ *
+ * `assignDefaults` in `next/dist/server/config.js` (`assignDefaultsAndValidate` in 16.1.7) drops
+ * `undefined` and `null` values before it migrates legacy keys. That covers top-level keys and, for
+ * object options such as `experimental`, their direct keys. It does not cover Next 15's
+ * `experimental.turbo` merge, which runs on the raw config earlier.
+ */
+function isSet(value: unknown): boolean {
+  return value !== undefined && value !== null
+}
+
+/** `includes` added under `'/**'`, deduped. Every entry the adopter already wrote is kept as written. */
+function mergeTracingIncludes(
+  existing: TracingIncludes | undefined,
+  includes: string[],
+): TracingIncludes {
+  return {
+    ...existing,
+    [ALL_ROUTES]: [...new Set([...(existing?.[ALL_ROUTES] ?? []), ...includes])],
+  }
+}
+
+function sharpTracingWarning(problem: string | undefined, nextVersionUnknown: boolean): string {
+  return (
+    "CanopyCMS: could not add sharp's libvips to this standalone build's file tracing" +
+    (problem ? ` (${problem})` : '') +
+    '. Next.js file tracing can miss that library for sharp 0.35 ' +
+    '(https://github.com/vercel/next.js/issues/97973), and the built server then fails to load ' +
+    'sharp with ERR_DLOPEN_FAILED. Add it in next.config yourself, with paths relative to the ' +
+    "project directory. For pnpm: outputFileTracingIncludes: { '/**': " +
+    "['node_modules/.pnpm/@img+sharp-libvips-*/node_modules/@img/*/lib/**/*'] }. For npm: " +
+    "outputFileTracingIncludes: { '/**': ['node_modules/@img/sharp-libvips-*/lib/**/*'] }." +
+    (nextVersionUnknown
+      ? ' The installed Next.js version could not be read either: on Next 13 or 14, put ' +
+        'outputFileTracingIncludes under experimental.'
+      : '')
+  )
+}
+
+/**
+ * The warning for an include that WAS written, under a key chosen without knowing the Next version.
+ *
+ * That choice is always the top-level key. Next 13 and 14 ignore it, because their config schema
+ * declares the option only under `experimental` (`server/config-schema.ts` line 311 in 14.2.25).
+ */
+function unknownNextVersionWarning(projectDir: string): string {
+  return (
+    `CanopyCMS: could not read the version of the next package installed for ${projectDir}, so ` +
+    "sharp's libvips was added to the top-level outputFileTracingIncludes key, which Next 15 and " +
+    'later read. Next 13 and 14 ignore that key: on those versions, move the entry under ' +
+    'experimental.outputFileTracingIncludes.'
+  )
+}
+
+/**
+ * Whether the warning has fired in this module instance.
+ *
+ * A Turbopack build evaluates the config in the main process and again in a worker thread with its
+ * own module registry (`next/dist/build/turbopack-build/index.js:26` and `impl.js:209` in 16.1.7).
+ * So "once" means once per process or thread, not once per build.
+ */
+let warnedAboutSharpTracing = false
+
+/**
+ * The config keys that make a Turbopack `output: 'standalone'` server able to load sharp.
+ *
+ * The rules live in `./sharp-tracing`. This function decides only whether to apply them, and under
+ * which key.
+ */
+function sharpTracingConfig(
+  nextConfig: NextConfig,
+  options: WithCanopyOptions,
+): Pick<NextConfig, 'outputFileTracingIncludes' | 'experimental'> {
+  // A static export has no server, so there is nothing to trace for.
+  if (options.staticBuild || nextConfig.output === 'export') return {}
+
+  const projectDir = process.cwd()
+  const nextMajor = installedNextMajor(projectDir)
+  // May not be an object in an untyped config (`experimental: true` loads fine in Next), which is why
+  // every read of it below goes through `readProperty`, never an `in` check.
+  const experimental = nextConfig.experimental ?? {}
+
+  // Read and write each option where Next reads it (`loadConfig` in `next/dist/server/config.js`).
+  // A legacy `experimental` value of `undefined` or `null` counts as unset, because Next drops those
+  // before migrating legacy keys (see `isSet`).
+  // - Next 13 and 14 read the tracing options only under `experimental`.
+  //   - A top-level key is reported as an invalid option and ignored. Their config schema is a
+  //     strict object, and only `images` errors stop the build (`server/config.ts:84-90` in 14.2.25).
+  //   - A root nobody configured comes from the CLOSEST lockfile there (`findRootDir`, called from
+  //     `assignDefaults`), not the outermost.
+  // - Next 15 and 16 still accept the `experimental` spellings, and copy any that is set over the
+  //   top-level key (`warnOptionHasBeenMovedOutOfExperimental`, `config.js:542-544` in 16.1.7 and
+  //   `:546-548` in 15.5.21). So a legacy value wins, and an include written only at the top level
+  //   would be silently replaced.
+  // - Only Next 15 merges `experimental.turbo` into `turbopack`, as `{ ...turbo, ...turbopack }`
+  //   (`config.js:1190` in 15.5.21). Any `root` key on `turbopack` therefore wins, even an empty one.
+  const experimentalOnly = nextMajor !== null && nextMajor < 15
+  const includesUnderExperimental =
+    experimentalOnly || isSet(readProperty(experimental, 'outputFileTracingIncludes'))
+  const rootUnderExperimental =
+    experimentalOnly || isSet(readProperty(experimental, 'outputFileTracingRoot'))
+
+  const writtenIncludes: unknown = includesUnderExperimental
+    ? readProperty(experimental, 'outputFileTracingIncludes')
+    : nextConfig.outputFileTracingIncludes
+  const existing = isSet(writtenIncludes) ? writtenIncludes : undefined
+  // A malformed value is Next's to reject. Merging into it could only turn that into a crash here.
+  if (existing !== undefined && !isTracingIncludes(existing)) return {}
+
+  const configuredRoot = stringOrUndefined(
+    rootUnderExperimental
+      ? readProperty(experimental, 'outputFileTracingRoot')
+      : nextConfig.outputFileTracingRoot,
+  )
+  const turbopack: unknown = nextConfig.turbopack
+  const turbopackHasRootKey =
+    typeof turbopack === 'object' && turbopack !== null && 'root' in turbopack
+  const legacyTurbopackRoot =
+    nextMajor === 15 && !turbopackHasRootKey
+      ? stringOrUndefined(readProperty(readProperty(experimental, 'turbo'), 'root'))
+      : undefined
+  const turbopackRoot = experimentalOnly
+    ? undefined
+    : (stringOrUndefined(readProperty(turbopack, 'root')) ?? legacyTurbopackRoot)
+
+  // Next never changes directory for `next build <dir>`: in 16.1.7 its only `process.chdir` is in
+  // the generated standalone `server.js` (`next/dist/build/utils.js:1111`). So a working directory
+  // with no config file in it is not the project, and any glob computed relative to it would be
+  // wrong.
+  const { includes, problem } = hasNextConfig(projectDir)
+    ? sharpTracingIncludes({
+        projectDir,
+        outputFileTracingRoot: configuredRoot,
+        turbopackRoot,
+        lockfileRoot: experimentalOnly ? 'closest' : 'outermost',
+      })
+    : {
+        includes: [],
+        problem: `the working directory ${projectDir} has no next.config file, so withCanopy cannot tell where the project is`,
+      }
+
+  const nextVersionUnknown = nextMajor === null
+  if (includes.length === 0) {
+    if (nextConfig.output === 'standalone' && !warnedAboutSharpTracing) {
+      warnedAboutSharpTracing = true
+      console.warn(sharpTracingWarning(problem, nextVersionUnknown))
+    }
+    return {}
+  }
+
+  const merged = mergeTracingIncludes(existing, includes)
+  if (!includesUnderExperimental) {
+    // An unreadable version falls back to the key Next 15 and later read. A standalone build says
+    // so: Next 13 and 14 ignore that key, so libvips would not be traced.
+    if (nextVersionUnknown && nextConfig.output === 'standalone' && !warnedAboutSharpTracing) {
+      warnedAboutSharpTracing = true
+      console.warn(unknownNextVersionWarning(projectDir))
+    }
+    return { outputFileTracingIncludes: merged }
+  }
+  // Built as a variable, not returned as a literal, because Next 15's `ExperimentalConfig` type no
+  // longer declares this key.
+  const legacyExperimental = { ...experimental, outputFileTracingIncludes: merged }
+  return { experimental: legacyExperimental }
+}
+
 /**
  * Wrap your Next.js config to set up module transpilation and React
  * resolution for CanopyCMS packages.
@@ -224,6 +424,20 @@ function resolveStaticBuildId(): string | null {
  * - With `staticBuild: true`, honors `CANOPY_BUILD_ID` as Next's build id (Next's default is
  *   random, which puts two builds of one source tree in different `_next/static/` directories).
  *   Unset, or on a non-static build, Next's default is used unchanged.
+ * - Outside a static export, adds sharp's libvips directory to `outputFileTracingIncludes['/**']`,
+ *   so a Turbopack `output: 'standalone'` server can load sharp. Next's file tracing can miss that
+ *   library for sharp 0.35. This does not fix a webpack build: under pnpm, Next 15.5.21 bundles
+ *   sharp into a server chunk that cannot load its native binding.
+ *   - The key follows your Next version (under `experimental` on 13 and 14) and any legacy
+ *     `experimental` spelling you already use.
+ *   - Your own includes are kept.
+ *   - A standalone build warns if the directory cannot be found, or if the Next version cannot be
+ *     read and the entry went under the top-level key.
+ * - On Next 16 and later, sets `turbopack: {}` when your config has neither `turbopack` nor
+ *   `webpack` and the installed Next version can be read (an unreadable version gets no key).
+ *   Next 16 builds and runs `next dev` with Turbopack by default, and exits when the
+ *   config has a `webpack` function (the React aliases above add one) but no `turbopack` config.
+ *   A `turbopack` you already set, `turbopack: {}` included, is kept as it is.
  *
  * **When you need this:**
  * - Always recommended — it replaces manual `transpilePackages` configuration
@@ -307,6 +521,33 @@ export function withCanopy(
   // file: symlinks must use `next dev --webpack` for local development.
   // Turbopack works fine when canopycms is installed from npm (no symlinks).
 
+  // Next 16 defaults both `next build` and `next dev` to Turbopack, marking the default with
+  // `TURBOPACK=auto` (`next/dist/lib/bundler.js:76`), and then exits with "This build is using
+  // Turbopack, with a `webpack` config and no `turbopack` config" whenever the exported config's
+  // `webpack` is truthy, its `turbopack` is not, and it has no `experimental.turbo*` key
+  // (`validateTurboNextConfig` in `next/dist/lib/turbopack-warning.js:137-138` and `:158-174`,
+  // 16.1.7).
+  //
+  // The `webpack` function above is withCanopy's own, and Turbopack never runs a `webpack`
+  // function, so its React aliases never applied under Turbopack. That is why the NOTE above sends
+  // `file:` symlink installs to `next dev --webpack`, and why answering the guard with an empty
+  // `turbopack` object is safe for this function. The rules:
+  // - Only when withCanopy added that function and the adopter wrote no `webpack` of their own.
+  //   For theirs, Next's guard is the right one.
+  // - Never over a `turbopack` the adopter set, so a config that already has `turbopack: {}` keeps
+  //   its own value.
+  // - Only on a detected Next 16 or later. Next 15 only warns here (`turbopack-warning.js:172-175`,
+  //   15.5.21), and Next 13 and 14 report an unknown top-level `turbopack` as an invalid option
+  //   (their config schema is a strict object with no such key), so an unreadable version gets no
+  //   key.
+  const nextMajor = installedNextMajor(process.cwd())
+  const answerTurbopackGuard =
+    webpack !== undefined &&
+    !isSet(existingWebpack) &&
+    !isSet(nextConfig.turbopack) &&
+    nextMajor !== null &&
+    nextMajor >= 16
+
   // Dual-build support: a static build gets STATIC_PAGE_EXTENSIONS (e.g. `page.static.tsx`)
   // instead of CMS_PAGE_EXTENSIONS, so CMS-only files (`route.server.ts`, `page.server.tsx`)
   // are excluded from static export while the static-only page variants are included.
@@ -344,8 +585,10 @@ export function withCanopy(
     pageExtensions,
     webpack,
     rewrites: withAssetsRewrite(nextConfig.rewrites),
+    ...sharpTracingConfig(nextConfig, options),
     // Spread conditionally: emitting `generateBuildId: undefined` would be a key Next has to
     // reason about, where absence is unambiguous.
     ...(generateBuildId ? { generateBuildId } : {}),
+    ...(answerTurbopackGuard ? { turbopack: {} } : {}),
   }
 }

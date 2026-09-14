@@ -318,7 +318,7 @@ const deleteAssetHandler = async (
 const TRANSFORM_CACHE_CONTROL = 'public, max-age=31536000, immutable'
 
 /**
- * Lazy dev-mode emulation of the prod transform Lambda (PR 7 reuses
+ * Lazy dev-mode emulation of the prod transform Lambda (which reuses
  * `parseTransformPath`/`formatDirectives`/`applyTransform` unchanged): parse
  * the request, load the original, transform it, write the result back under
  * its CANONICAL key (so a non-canonically-ordered directive string still

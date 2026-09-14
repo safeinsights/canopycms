@@ -51,10 +51,11 @@ export async function canopyContext(options: {
       ? [
           '// Auth plugin selection — fails closed. The dev plugin performs NO real credential',
           "// verification, so it is only ever used when mode is 'dev'. In prod, Clerk is always",
-          '// used: if CLERK_SECRET_KEY is missing, createClerkAuthPlugin throws at the first',
-          '// authenticated request (construction is cheap, so the zero-editor static build can',
-          '// import canopy.ts without the secret), instead of silently falling back to',
-          '// unauthenticated dev auth.',
+          '// used. Constructing the plugin never throws, so the zero-editor static build can',
+          '// import canopy.ts without Clerk keys; a missing CLERK_JWT_KEY throws at the first',
+          '// authenticated request instead of silently falling back to unauthenticated dev auth.',
+          "// CLERK_SECRET_KEY is read only where Clerk's backend API is called: the auth-cache",
+          '// refresh (the worker in prod, lazily on the dev server in dev).',
           'const authPlugin =',
           "  config.server.mode === 'prod' || process.env.CANOPY_AUTH_MODE === 'clerk'",
           '    ? createClerkAuthPlugin({ useOrganizationsAsGroups: true })',
@@ -167,4 +168,8 @@ export async function cdkApp(options: {
 
 export async function cmsStack(): Promise<string> {
   return readTemplate('cms-stack.ts.template')
+}
+
+export async function cdkTsconfig(): Promise<string> {
+  return readTemplate('cdk-tsconfig.json.template')
 }
