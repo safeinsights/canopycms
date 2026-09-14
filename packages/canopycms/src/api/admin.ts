@@ -38,10 +38,6 @@ export type {
   RepairContentDuplicatesResponse,
 } from './admin-branch-health'
 
-// ============================================================================
-// Worker lock liveness
-// ============================================================================
-
 /**
  * 60_000 = DEFAULT_LOCK_STALE_MS in worker/cms-worker.ts, hardcoded here
  * rather than imported/threaded through config: an adopter overriding
@@ -143,10 +139,6 @@ async function getOldestPendingAgeMs(taskDir: string): Promise<number | undefine
   return oldestMtimeMs === undefined ? undefined : Math.max(0, Date.now() - oldestMtimeMs)
 }
 
-// ============================================================================
-// Response types
-// ============================================================================
-
 export interface AdminStatusData {
   generatedAt: string
   mode: OperatingMode
@@ -181,10 +173,6 @@ export interface AdminDeleteTaskData {
 /** Response type for DELETE /admin/tasks/:status/:fileName */
 export type AdminDeleteTaskResponse = ApiResponse<AdminDeleteTaskData>
 
-// ============================================================================
-// Zod Schemas for Validation
-// ============================================================================
-
 const adminTaskStatusSchema = z.enum(['pending', 'processing', 'completed', 'failed', 'corrupt'])
 
 const listAdminTasksParamsSchema = z.object({
@@ -215,10 +203,6 @@ const deleteTaskParamsSchema = z.object({
     .refine((v) => !v.includes('..'), { message: 'fileName must not contain ..' }),
 })
 export type DeleteTaskParams = z.infer<typeof deleteTaskParamsSchema>
-
-// ============================================================================
-// Handlers
-// ============================================================================
 
 const getAdminStatusHandler = async (
   _gc: Record<string, never>,
@@ -363,13 +347,8 @@ const deleteTaskHandler = async (
   }
 }
 
-// ============================================================================
-// Route Definitions with defineEndpoint
-// ============================================================================
-
 /**
  * Task queue stats + worker liveness snapshot
- * GET /admin/status
  */
 const getAdminStatus = defineEndpoint({
   namespace: 'admin',
@@ -391,7 +370,6 @@ const getAdminStatus = defineEndpoint({
 
 /**
  * List task files for a given status (or quarantined corrupt/ files)
- * GET /admin/tasks/:status
  */
 const listAdminTasks = defineEndpoint({
   namespace: 'admin',
@@ -408,7 +386,6 @@ const listAdminTasks = defineEndpoint({
 
 /**
  * Requeue a failed task as a fresh pending task
- * POST /admin/tasks/:taskId/retry
  */
 const retryTask = defineEndpoint({
   namespace: 'admin',
@@ -425,7 +402,6 @@ const retryTask = defineEndpoint({
 
 /**
  * Delete a task file from pending/, failed/, or corrupt/
- * DELETE /admin/tasks/:status/:fileName
  */
 const deleteTask = defineEndpoint({
   namespace: 'admin',

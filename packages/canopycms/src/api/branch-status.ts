@@ -157,14 +157,6 @@ const submitBranchForMergeHandler = async (
   return { ok: true, status: 200, data: { branch: updated.branch } }
 }
 
-// ============================================================================
-// Route Definitions with defineEndpoint
-// ============================================================================
-
-/**
- * Get branch status
- * GET /:branch/status
- */
 const getBranchStatus = defineEndpoint({
   namespace: 'workflow',
   name: 'getStatus',
@@ -187,10 +179,6 @@ const getBranchStatus = defineEndpoint({
   handler: getBranchStatusHandler,
 })
 
-/**
- * Submit branch for merge/review
- * POST /:branch/submit
- */
 const submitBranchForMerge = defineEndpoint({
   namespace: 'workflow',
   name: 'submit',
@@ -216,9 +204,6 @@ const submitBranchForMerge = defineEndpoint({
   handler: submitBranchForMergeHandler,
 })
 
-/**
- * Exported routes for router registration
- */
 export const WORKFLOW_ROUTES = {
   getStatus: getBranchStatus,
   submit: submitBranchForMerge,

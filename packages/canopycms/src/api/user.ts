@@ -7,7 +7,6 @@ export type UserInfoResponse = ApiResponse<{
 }>
 
 /**
- * Get current user info
  * This is a PUBLIC endpoint - no special permissions required
  */
 const getUserInfoHandler = async (ctx: ApiContext, req: ApiRequest): Promise<UserInfoResponse> => {
@@ -22,10 +21,6 @@ const getUserInfoHandler = async (ctx: ApiContext, req: ApiRequest): Promise<Use
   }
 }
 
-/**
- * Get current user information
- * GET /whoami
- */
 const getUserInfo = defineEndpoint({
   namespace: 'user',
   name: 'whoami',

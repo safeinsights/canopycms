@@ -16,7 +16,7 @@ export async function getSettingsBranchContext(
   const mode = ctx.services.config.mode
   const strategy = operatingStrategy(mode)
 
-  // Determine which branch name to use (for git operations). Pass the whole
+  // Pass the whole
   // config (not a hand-picked subset) so deploymentName flows through too -
   // omitting it here used to make this always compute the mode-default
   // settings branch, ignoring any deploymentName/CANOPYCMS_DEPLOYMENT_NAME

@@ -18,7 +18,7 @@ import { simpleGit } from 'simple-git'
 import type { BranchAccessControl, BranchMetadata, BranchStatus } from '../types'
 import { BranchMetadataFileManager, getBranchMetadataFileManager } from '../branch-metadata'
 // Same constants the reader uses, rather than a second copy of the two string
-// literals -- they were declared independently here until 2026-08-23.
+// literals.
 import { BRANCH_META_DIR, BRANCH_META_FILE } from '../branch-metadata-file'
 import { scanBranchHealth, type BranchHealthEntry } from '../branch-health'
 import { ContentIdIndex } from '../content-id-index'
@@ -35,19 +35,11 @@ import { getErrorMessage, isNodeError, isNotFoundError } from '../utils/error'
 import type { ApiContext, ApiRequest, ApiResponse } from './types'
 import { defineEndpoint } from './route-builder'
 
-// ============================================================================
-// Constants
-// ============================================================================
-
 /** [H1] A fresh (< 5 min old) init lock blocks purge -- provisioning may be running. */
 const PROVISIONING_LOCK_FRESH_MS = 5 * 60_000
 
 /** An orphan dir younger than this may still be a clone in progress; corrupt dirs are exempt. */
 const ORPHAN_YOUTH_THRESHOLD_MS = 15 * 60_000
-
-// ============================================================================
-// Response types
-// ============================================================================
 
 export interface BranchHealthData {
   entries: BranchHealthEntry[]
@@ -105,10 +97,6 @@ export interface RepairContentDuplicatesData {
 /** Response type for POST /admin/branch-dirs/:dirName/repair-content-duplicates */
 export type RepairContentDuplicatesResponse = ApiResponse<RepairContentDuplicatesData>
 
-// ============================================================================
-// Zod schemas
-// ============================================================================
-
 // Mirrors deleteTaskHandler's fileName pattern in admin.ts: conservative
 // charset plus explicit traversal/dot-prefix refinements (the regex alone
 // technically excludes '/' already, but the refinements keep intent explicit
@@ -121,10 +109,6 @@ const dirNameSchema = z
 
 const branchDirParamsSchema = z.object({ dirName: dirNameSchema })
 export type BranchDirParams = z.infer<typeof branchDirParamsSchema>
-
-// ============================================================================
-// Shared helpers
-// ============================================================================
 
 /** Compact UTC stamp for trash/archive names: `YYYYMMDDTHHMMSSZ` (no colons -- portability). */
 function formatTrashStamp(date: Date): string {
@@ -157,10 +141,6 @@ class RepairPreconditionError extends Error {
   }
 }
 
-// ============================================================================
-// Handlers
-// ============================================================================
-
 const getBranchHealthHandler = async (
   _gc: Record<string, never>,
   ctx: ApiContext,
@@ -191,7 +171,7 @@ const getBranchHealthHandler = async (
  * sweeps trash older than 30 days, see cleanupTrashedBranchDirs in
  * worker/rebase.ts).
  *
- * Safety rails (see the PR's design review for the finding IDs):
+ * Safety rails:
  * - [always] the base branch directory can never be purged.
  * - Server re-derives live/corrupt/orphan state itself -- never trusts the
  *   client's view of the world.
@@ -225,7 +205,7 @@ const purgeBranchDirHandler = async (
     return { ok: false, status: 400, error: 'Invalid directory name' }
   }
 
-  // [MEDIUM-1 rider] The directory must actually exist -- otherwise
+  // The directory must actually exist -- otherwise
   // withOccFileLock's `mkdir -p` below would CREATE it, and purge would
   // "succeed" with a phantom `.trash-*` entry for a directory that was
   // never there. Must run before anything below treats "no branch.json" as
@@ -359,7 +339,7 @@ const purgeBranchDirHandler = async (
  * save() actually running -- save() would then resurrect a metadata-only
  * ghost of a directory purge just moved to trash.
  *
- * ## Reset, not recovered -- and why (August 2026 baseline review)
+ * ## Reset, not recovered -- and why
  *
  * save()'s defaults-merge sees no existing record once branch.json is
  * archived out of the way, so a `submitted` (write-locked) branch comes back
@@ -397,7 +377,7 @@ const repairBranchDirHandler = async (
     return { ok: false, status: 400, error: 'Invalid directory name' }
   }
 
-  // [MEDIUM-1 rider] Same stat guard as purge: the directory must actually
+  // Same stat guard as purge: the directory must actually
   // exist, otherwise withOccFileLock's `mkdir -p` below would CREATE it.
   const dirExists = await fs
     .stat(dirPath)
@@ -652,13 +632,8 @@ const repairContentDuplicatesHandler = async (
   }
 }
 
-// ============================================================================
-// Route definitions
-// ============================================================================
-
 /**
  * Branch directory health scan (healthy/corrupt-metadata/orphan)
- * GET /admin/branch-health
  */
 const getBranchHealth = defineEndpoint({
   namespace: 'admin',
@@ -674,7 +649,6 @@ const getBranchHealth = defineEndpoint({
 
 /**
  * Purge a corrupt-metadata or orphan branch directory (reversible trash-rename)
- * POST /admin/branch-dirs/:dirName/purge
  */
 const purgeBranchDir = defineEndpoint({
   namespace: 'admin',
@@ -691,7 +665,6 @@ const purgeBranchDir = defineEndpoint({
 
 /**
  * Repair a corrupt branch.json by archiving it and recreating defaults
- * POST /admin/branch-dirs/:dirName/repair-metadata
  */
 const repairBranchDir = defineEndpoint({
   namespace: 'admin',
@@ -722,7 +695,6 @@ const repairBranchDir = defineEndpoint({
  * archiving the quarantined (losing) file(s) with a dot-prefixed name --
  * see content-id-index.ts's "Duplicate-ID quarantine" section and
  * repairContentDuplicatesHandler's doc comment.
- * POST /admin/branch-dirs/:dirName/repair-content-duplicates
  */
 const repairContentDuplicates = defineEndpoint({
   namespace: 'admin',
